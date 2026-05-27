@@ -1,280 +1,302 @@
-Sprint 3B v2.1 — execution-plan APPROVED с 9 поправками (§A1–§A10).
-Документ: `.lovable/proofs/package_documents_sprint3b_v2_execution_plan_2026_05.md`.
-Статус: `approved_as_execution_plan; pre_execution_amendments_required` — миграция/edge/UI не выполняются до отдельного approve на фактический execution.
+# да, согласен, с учетом правок:
 
-Ключевые ограничения, добавленные при approve:
-- `document_token_aliases` без anon-доступа; write только service_role.
-- Discovery аналога alias-таблицы обязателен до `CREATE TABLE IF NOT EXISTS`.
-- `entity_type` нового person FLD — только из существующих значений `fields_registry`.
-- Прямой `{{field:FLD-...|role=...}}` запрещён до parser-proof; alias-wrapper = единственный путь.
-- Alias на metadata.position — `context_kind='package_metadata'`, `source_field_public_id=NULL`, CHECK-консистентность, без записи в `document_token_registry`.
-- `next_fld_public_id()` — discovery перед использованием, либо advisory-lock max+1 путь.
-- `feature_flags` — discovery до INSERT; если таблицы нет — hard-coded false в resolver, отдельный sprint.
-- Plan year — исключён из Sprint 3B v2, переведён в backlog.
-- Город приказа — reuse существующей city-колонки или deferred; auto-parse адреса запрещён.
-- Regex-scan активных шаблонов (0 rows) обязателен дважды: до миграции и до flip feature flag.
+1. **План стал намного ближе к правильной архитектуре**
 
----
+Теперь логика правильная:
 
-# Sprint 3A.1 — Corrective Discovery (completed)
+- не создаются отдельные FLD под `company_head.full_name` и `responsible_person.full_name`;
+- создаётся **один canonical person FLD**:
+  - `legal_details_persons.full_name`;
+- роли в пакете реализуются через **alias**, а не через дублирование реквизитов;
+- `position` берётся из `document_package_session_participants.metadata.position`;
+- `plan_year` не создаётся;
+- `canonical-document-generate-strict` не трогается;
+- feature flag выключен;
+- генерация не запускается.
 
-(история ниже сохраняется для контекста; решения 3A.1 учтены в 3B v2.1)
+Это уже соответствует твоей логике: **реквизиты одни, роли разные, пакет только выбирает, кого и в каком качестве использовать.**
 
 ---
 
-ранее: да, согласен, с учетом правок:
-
-1. **document_token_aliases не выдавать anon**  
-В плане сейчас:  
-GRANT SELECT ON public.document_token_aliases TO anon, authenticated;
-2. CREATE POLICY "aliases readable to all" ... USING (true);  
-Заменить на:`document_token_aliases` не получает anon-доступ.
-3. SELECT — только authenticated / service*_role.*
-4. *Admin/service write — только service_*role/admin.  
-Это служебный registry. Публичный anon-доступ здесь не нужен.
-5. **Не создавать document_token_aliases, если уже есть аналог**  
-Перед CREATE TABLE IF NOT EXISTS добавить обязательный discovery:
-6. **Entity type для нового person FLD не выбирать произвольно**  
-Сейчас написано:  
-person или legal_details_person — уточнить по конвенции  
-Лучше жестче:
-7. **Не разрешать прямой синтаксис {{field:FLD-PERSON-FULL-NAME|role=...}} без parser-proof**  
-Оставить alias-wrapper как основной путь.  
-Прямой |role= — только после отдельного proof, что parser/render поддерживает новый модификатор без регрессии.
-8. **Alias для должности без source_field_public_id допустим, но это не “token alias”, а metadata-token**  
-Для:  
-[package.role.company](http://package.role.company)_head.position
-9. package.role.responsible_person.position  
-уточнить:
-10. **feature_flags не создавать вслепую**  
-Добавить:
-11. **next_fld_public_id() проверить до миграции**  
-В плане написан псевдовызов:  
-next_fld_public_id()  
-Добавить:
-12. **Город приказа — deferred, если нет отдельного city field**  
-Уточнить:
-13. **Plan year в Sprint 3B не включать без отдельного решения**  
-В execution plan оставить только:
-14. **Proof по отсутствию новых токенов в активных шаблонах**
-
-Добавить в DoD execution:
-
-До включения feature flag ни один активный шаблон не содержит новых alias-token.
-
-Если содержит — execution стоп.
-
-**Итог**
-
-План можно одобрять **только как execution-plan**, но перед фактическим execution нужно внести эти правки.
-
-Ключевое: да, теперь направление правильное — **1 canonical person FLD + alias-wrapper roles + metadata.position**, без создания отдельных FLD под каждую роль.
-
-&nbsp;
-
-Все плейсэолдеры должны быть только через их id  никаких slug имен быть не должно  
-
-&nbsp;
-
-# Sprint 3B v2 — Execution Plan (awaiting separate approve)
-
-Статус: `planned, awaiting_execution_approve`. Никаких INSERT / migration / edge / UI изменений до отдельного approve.
-
-## 0. Инварианты (наследуются из 3A closure + 3A.1)
-
-- Reuse-first. Existing `legal_details` FLD (47) — единственный source для requisite-полей.
-- Default-deny: без `package_session_id` / без явного `role_key` → `unresolved` warning. Никакого silent fallback (включая `legal_details_entity_person_links`).
-- Billing / customer / executor resolver и `canonical-document-generate-strict` signature — **без изменений**.
-- Alias-wrapper НЕ имеет собственного source: только ссылка на canonical source FLD + `role_key`.
-- Auto-fill plan_year из текущей даты — запрещён.
-- Hard DELETE запрещён; rollback = soft-disable через `archived_at` + feature flag.
-
-## 1. FLD-дельта (max 1, possibly +1)
-
-### 1.1 Canonical person FLD — `FLD-PERSON-FULL-NAME` (создаём, generic)
+## **Что нужно поправить перед approve**
 
 
-| Поле             | Значение                                                                                                                                                                         |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key`            | `legal_details_persons.full_name`                                                                                                                                                |
-| `label`          | ФИО физлица (legal_details_persons)                                                                                                                                              |
-| `entity_type`    | `person` (или `legal_details_person` — уточнить по существующей конвенции `fields_registry` в момент миграции; **выбрать тот, что уже используется проектом**, не вводить новый) |
-| `data_type`      | `string`                                                                                                                                                                         |
-| `category`       | `person`                                                                                                                                                                         |
-| `source_table`   | `legal_details_persons`                                                                                                                                                          |
-| `source_column`  | `full_name`                                                                                                                                                                      |
-| `template_scope` | `generic` (не `package`, не `billing`)                                                                                                                                           |
-| `archived_at`    | `NULL`                                                                                                                                                                           |
-| `is_alias`       | `false`                                                                                                                                                                          |
 
+### **1. Проверить, почему создается**
 
-Назначение: единый canonical FLD ФИО физлица. Без привязки к идеологии, без role binding.
+`legal_details_persons.full_name`
 
-### 1.2 Plan year — отложено в §6, не создаётся в этом sprint без явного выбора варианта.
+Перед созданием нового canonical person FLD нужно еще раз проверить: нет ли уже ФИО физлица под другим `entity_type`.
 
-### 1.3 Role-specific FLD ФИО / должности — **НЕ создаются** (явный запрет из user message).
-
-## 2. Alias-wrappers (создаются в `document_token_aliases` или эквивалент; **не** в `fields_registry`)
-
-Перед миграцией: discovery — существует ли таблица `document_token_aliases`. Если нет — создаётся в этой же миграции с минимальной схемой:
+Добавить в pre-check:
 
 ```sql
-CREATE TABLE IF NOT EXISTS public.document_token_aliases (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  alias_token text NOT NULL UNIQUE,
-  source_field_public_id text NOT NULL,  -- FK-логика на fields_registry.public_id
-  role_key text NULL,                    -- например 'company_head' | 'responsible_person'
-  context_kind text NOT NULL,            -- 'package_role' | 'package_metadata' | ...
-  notes text NULL,
-  archived_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-GRANT SELECT ON public.document_token_aliases TO anon, authenticated;
-GRANT ALL ON public.document_token_aliases TO service_role;
-ALTER TABLE public.document_token_aliases ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "aliases readable to all" ON public.document_token_aliases FOR SELECT USING (true);
--- write — только service_role (никаких user-policies).
+SELECT id, public_id, key, label, entity_type
+FROM fields_registry
+WHERE archived_at IS NULL
+  AND (
+    key ILIKE '%full_name%'
+    OR key ILIKE '%fio%'
+    OR key ILIKE '%last_name%'
+    OR key ILIKE '%first_name%'
+    OR key ILIKE '%middle_name%'
+    OR label ILIKE '%ФИО%'
+    OR label ILIKE '%фамил%'
+    OR label ILIKE '%имя%'
+    OR label ILIKE '%отчеств%'
+  );
 ```
 
-Aliases (INSERT в той же миграции):
+Если уже есть FLD для ФИО физлица — **новый** `legal_details_persons.full_name` **не создавать**, а alias делать на existing FLD.
 
+---
 
-| alias_token                                 | source_field_public_id                 | role_key             | context_kind       |
-| ------------------------------------------- | -------------------------------------- | -------------------- | ------------------ |
-| `package.role.company_head.full_name`       | `FLD-PERSON-FULL-NAME`                 | `company_head`       | `package_role`     |
-| `package.role.responsible_person.full_name` | `FLD-PERSON-FULL-NAME`                 | `responsible_person` | `package_role`     |
-| `package.role.company_head.position`        | *(нет source FLD — alias на metadata)* | `company_head`       | `package_metadata` |
-| `package.role.responsible_person.position`  | *(нет source FLD — alias на metadata)* | `responsible_person` | `package_metadata` |
+### **2. Уточнить entity_type для canonical person FLD**
 
+Не фиксировать заранее `legal_details_persons`.
 
-Для `position` `source_field_public_id` остаётся NULL, resolver читает `document_package_session_participants.metadata->>'position'` по `role_key`. Проверка `|case=` для строки должности — §5.
+Правильно:
 
-Шаблоны могут использовать либо alias, либо `{{field:FLD-PERSON-FULL-NAME|role=company_head|case=nom}}` напрямую — после A/B решения по поддержке `|role=` модификатора (§5).
-
-## 3. Resolver — `_shared/resolve-package-tokens.ts` (новый модуль)
-
-Контракт:
-
-```ts
-resolvePackageTokens(ctx: {
-  package_session_id: string;
-  token: { kind: 'field'|'alias', field_public_id?: string, alias_token?: string, role_key?: string, case?: string }
-}): { resolved: boolean, value?: string, warning?: string, source_trace: {...} }
+```md
+entity_type выбирается по фактической модели registry.
+Если уже существует entity_type='person' или 'entity_person' для физлиц — использовать существующий стандарт, а не создавать новый entity_type.
 ```
 
-Резолвинг alias:
+Иначе появится еще один новый тип, который потом будет мешать.
 
-1. Lookup в `document_token_aliases` по `alias_token`, `archived_at IS NULL`.
-2. Если `source_field_public_id` задан → читаем `fields_registry` → `legal_details_persons.full_name` по `person_id`, выбранному через `document_package_session_participants` (filter `role_key`, `package_session_id`). Несколько матчей → error `multiple_participants_for_role:<role_key>`.
-3. Если `source_field_public_id` IS NULL и `context_kind='package_metadata'` → читаем `document_package_session_participants.metadata->>'position'` по `role_key`.
-4. Применяем `|case=` если задано и тип строки поддерживает (§5).
-5. On miss → `{ resolved:false, warning:'package_role_unassigned:<role_key>' | 'package_role_metadata_missing:<role_key>.<field>' }`. **Никаких** fallback на `legal_details_entity_person_links`.
+---
 
-Routing-точка в `canonical-document-generate-strict`:
+### **3. Alias-токены лучше назвать единообразно**
 
-```ts
-if (token.startsWith('package.') || token is alias in document_token_aliases) {
-  return resolvePackageTokens(ctx);
-}
-// billing-path без изменений
+Сейчас:
+
+```text
+package.role.company_head.full_name
+package.role.responsible_person.full_name
 ```
 
-Гейтинг: `feature_flags.documents_package_resolver_enabled` (default `false`). При `false` → resolver возвращает `unresolved` с warning `package_resolver_disabled`; billing path не затрагивается.
+Лучше использовать множественное число, как в предыдущей модели:
 
-## 4. Покрытие первого приказа (фиксируется до execution)
+```text
+package.roles.company_head.full_name
+package.roles.responsible_person.full_name
+```
 
+Чтобы не было двух стандартов `role` и `roles`.
 
-| Поле приказа                         | Источник                                                                                                                           | Действие                                |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Наименование организации, УНП, адрес | existing `legal_details.*` (47 FLD)                                                                                                | reuse, без изменений                    |
-| Город                                | existing legal_details city/address FLD — подтвердить наличие; если только внутри full address → **deferred decision**, не парсить | discovery в Sprint 3B execution prelude |
-| Дата приказа                         | existing document/system FLD (`FLD-000069/070` подтверждены generic в 3A.1)                                                        | reuse                                   |
-| Номер приказа                        | existing document/system FLD                                                                                                       | reuse                                   |
-| ФИО руководителя                     | alias `package.role.company_head.full_name` → `FLD-PERSON-FULL-NAME`                                                               | new alias                               |
-| Должность руководителя               | alias `package.role.company_head.position` → metadata                                                                              | new alias, без source FLD               |
-| ФИО ответственного                   | alias `package.role.responsible_person.full_name` → `FLD-PERSON-FULL-NAME`                                                         | new alias                               |
-| Должность ответственного             | alias `package.role.responsible_person.position` → metadata                                                                        | new alias, без source FLD               |
-| Плановый год                         | см. §6                                                                                                                             | **deferred until §6 decision**          |
+Исправить все 4 alias:
 
+```text
+package.roles.company_head.full_name
+package.roles.company_head.position
+package.roles.responsible_person.full_name
+package.roles.responsible_person.position
+```
 
-Если city не закрыт existing FLD как чистое поле — выносится отдельным manifest decision, в этом sprint не создаётся.
+---
 
-## 5. `|case=` модификатор — A/B проверка перед execution
+### **4. Alias-таблица должна быть service-role only**
 
-Discovery (read-only, до миграции):
+В плане написано:
 
-- `_shared/case-format.ts` — какие input типы поддерживает (только канонические ФИО vs произвольная строка).
-- Применимо ли к произвольной строке должности из metadata.
+service_role only, no anon, RLS write-closed
 
-Решение:
+Добавить:
 
-- **A.** Если `|case=` работает на canonical person FLD + role-context → шаблон может использовать `{{field:FLD-PERSON-FULL-NAME|role=responsible_person|case=gen}}` напрямую, alias становится опциональным синтаксическим сахаром.
-- **B.** Если `|role=` модификатор не поддержан render-движком → используем alias-wrappers как основной путь, `|case=` применяется resolver-ом после lookup.
-- Для строки должности: если `|case=` некорректен на произвольной строке → склонение должности **не поддерживается** в этом sprint, фиксируется в proof.
+```md
+authenticated не должен иметь INSERT/UPDATE/DELETE в `document_token_aliases`.
+SELECT для authenticated — только если picker реально должен читать alias. Если picker пока не подключается — authenticated SELECT не выдавать.
+```
 
-Изменения в render-движке в этом sprint **запрещены**. Если ни A, ни B полностью не покрывает шаблон — escalate, не создавать новые FLD.
+Так как сейчас UI не меняется, лучше:
 
-## 6. Plan year — отдельная микро-discovery + выбор варианта (до миграции)
+```text
+service_role ALL
+anon — нет
+authenticated — нет
+```
 
-Discovery:
+---
 
-- `SELECT public_id, key, label, entity_type, category FROM fields_registry WHERE public_id='FLD-000082'` — действительно ли semantically generic (`report_year`) или meeting-specific (`meeting.report_year`).
-- Поиск любых других существующих year-FLD (`current_year`, `next_year`, `report_year`, `plan_year`).
+### **5. Не создавать feature flag row, если feature flag infra непонятна**
 
-Варианты решения (фиксируется в proof, выбор — отдельным approve):
+Пункт нормальный, но нужно добавить:
 
-- **A.** Reuse `FLD-000082` — если `entity_type`/`category` допускают generic использование. Без новых FLD. Alias `package.context.plan_year` опционально.
-- **B.** Создать один generic context FLD `package_session.metadata.plan_year` (source: `document_package_sessions.metadata->>'plan_year'`, data_type `number`). Только если A невозможен.
-- **C.** Deferred — резолвер возвращает `unresolved` с warning `package_context_plan_year_missing`, шаблон рендерит плейсхолдер до отдельного approve.
+```md
+Если `feature_flags` существует, но используется в другом формате/схеме — не вставлять row автоматически. Сначала адаптировать к фактической структуре.
+```
 
-Auto-fill из текущей даты — **запрещён во всех вариантах**.
+---
 
-## 7. Migration — структура (один `BEGIN; ... COMMIT;`)
+### **6. Resolver skeleton не должен импортироваться production-кодом**
 
-Порядок:
+Сейчас указано, что `canonical-document-generate-strict` не меняется, но при этом в плане есть “routing-точка” в `canonical-document-generate-strict`.
 
-1. Duplicate check (raise notice если найдено): `fields_registry` по `key='legal_details_persons.full_name'`; `document_token_aliases` по 4 alias_token. Если ненулевые — миграция abort.
-2. `CREATE TABLE IF NOT EXISTS document_token_aliases` (если отсутствует) + GRANT + RLS + policy (см. §2).
-3. INSERT 1 FLD в `fields_registry` (§1.1), public_id выделяется existing generator.
-4. INSERT в `document_token_registry` для нового FLD (template_scope `generic`, source_module = canonical person resolver).
-5. INSERT 4 alias-строк в `document_token_aliases`.
-6. `INSERT INTO feature_flags(key, enabled) VALUES ('documents_package_resolver_enabled', false) ON CONFLICT DO NOTHING`.
-7. По §6: либо ничего (вариант A/C), либо +1 FLD для plan_year (вариант B) — только после явного выбора варианта.
+Это противоречие.
 
-Никаких изменений в billing-резолвере, никаких UPDATE по существующим 47 `legal_details` FLD, никаких изменений в `document_token_registry` для billing-токенов.
+Нужно выбрать один вариант.
 
-## 8. Rollback / disable
+Для этого спринта лучше так:
 
-- Default = soft-disable: `archived_at = now()` для новых FLD и aliases; `feature_flags.documents_package_resolver_enabled = false`.
-- После soft-disable resolver новых alias-токенов возвращает `unresolved`; billing полностью не затронут.
-- Hard DELETE — только отдельным approve и только при 0 использований во всех таблицах: `document_templates`, `document_template_versions.tokens`, `token_manifest_snapshot`, `source_trace`, `ai_generated_documents`.
+```md
+Sprint 3B v2.1 создаёт только:
+- migration;
+- alias registry;
+- `resolve-package-tokens.ts` как отдельный неиспользуемый модуль.
 
-## 9. Proof package (готовится одновременно с execution-патчем)
+`canonical-document-generate-strict` не изменяется вообще.
+Routing-точка переносится в Sprint 3C после отдельного approve.
+```
 
-1. Duplicate check before — SQL + 0 rows.
-2. Discovery `|case=` capability (§5) — выбор A/B зафиксирован.
-3. Discovery plan_year (§6) — выбор A/B/C зафиксирован.
-4. Discovery city FLD (§4) — reuse или deferred зафиксирован.
-5. Migration SQL — финальный текст.
-6. Resolver diff — только новый файл `_shared/resolve-package-tokens.ts` + минимальная routing-точка в `canonical-document-generate-strict` (≤ ~10 строк).
-7. Billing regression proof: diff `document_token_registry WHERE token_key LIKE 'cf.legal_details.%' OR LIKE 'customer.%' OR LIKE 'executor.%'` до/после — идентичен.
-8. Signature unchanged proof: request/response edge-функции, `idempotency_key`, `snapshot`, `source_trace`, `template_version_id` — diff пуст.
-9. No generation proof: ни один активный `document_templates` не содержит новых alias/токенов до явного включения; regex-scan.
-10. Feature flag default `false` — подтверждено INSERT-ом.
+Иначе это уже изменение edge-function.
 
-## 10. DoD (только plan, не execution)
+---
 
-- 1 canonical generic person FLD зафиксирован (§1.1), без role-specific FLD.
-- 4 alias-wrapper зафиксированы (§2), без собственного source.
-- Должность — только из participants.metadata.position, без отдельных FLD (§2, §5).
-- Номер/дата приказа — reuse existing document FLD (§4).
-- Город — reuse или deferred, без auto-parse (§4).
-- Plan year — отдельная A/B/C discovery, без auto-fill (§6).
-- Запрет fallback на `legal_details_entity_person_links` зафиксирован (§0, §3).
-- Resolver — отдельный модуль, минимальная routing-точка (§3).
-- Feature flag default `false`, soft-disable default rollback (§7, §8).
-- Билинг и signature не меняются (§0, §9.7, §9.8).
-- Approval ревьюера на plan v2.
-- Только после approval: отдельный execution-запрос (миграция + edge-патч + proof).
+## **Исправленный ответ Lovable**
 
-В рамках этого документа не выполняются INSERT, migration, deploy_edge_functions, UI-патчи.
+```md
+да, согласен, с учетом правок:
+
+1. Перед созданием `legal_details_persons.full_name` выполнить расширенный поиск existing person FLD по key/label/entity_type: ФИО, full_name, фамилия, имя, отчество. Если existing FLD найден — новый canonical person FLD не создавать, alias указывать на existing FLD.
+
+2. Не фиксировать заранее `entity_type='legal_details_persons'`. Использовать фактический стандарт registry для физлиц (`person`, `entity_person`, `legal_details_persons` или иной существующий), подтвержденный discovery.
+
+3. Alias keys привести к единому формату `package.roles.*`, не `package.role.*`:
+   - `package.roles.company_head.full_name`
+   - `package.roles.company_head.position`
+   - `package.roles.responsible_person.full_name`
+   - `package.roles.responsible_person.position`
+
+4. `document_token_aliases` сделать service-role only. Не выдавать anon. Не выдавать authenticated SELECT/INSERT/UPDATE/DELETE, пока picker не подключается к alias-таблице.
+
+5. Feature flag row создавать только если `feature_flags` существует и схема соответствует ожидаемой. Если формат другой — не вставлять, оставить hard-coded disabled и вынести flag integration отдельно.
+
+6. В Sprint 3B v2.1 не менять `canonical-document-generate-strict` вообще. Routing-точка переносится в отдельный Sprint 3C после approve. Сейчас можно создать только отдельный resolver skeleton `resolve-package-tokens.ts`, который не импортируется production-кодом.
+
+7. В proof добавить:
+   - expanded person FLD search result;
+   - выбранный entity_type для person FLD;
+   - подтверждение, что `canonical-document-generate-strict/index.ts` git diff = empty;
+   - подтверждение, что resolver skeleton нигде не импортируется production-кодом.
+
+После этих правок можно approve Sprint 3B v2.1 execution.
+```
+
+## **Итог**
+
+План можно утверждать **только после этих правок**.
+
+Главное изменение: **не трогать** `canonical-document-generate-strict` **в Sprint 3B v2.1**. Сейчас достаточно создать безопасную основу: canonical person FLD/alias/resolver skeleton. Routing и реальное подключение — отдельный следующий шаг.
+
+&nbsp;
+
+План: Sprint 3B v2.1 execution
+
+Выполнение строго по утвержденному v2.1 (`.lovable/proofs/package_documents_sprint3b_v2_execution_plan_2026_05.md`).
+
+## Этап 1 — Pre-migration read-only checks (proof обязателен)
+
+1. **Duplicate check canonical person FLD**
+  ```sql
+   SELECT id, public_id, key, entity_type
+   FROM fields_registry
+   WHERE key = 'legal_details_persons.full_name';
+  ```
+   Ожидается 0 строк. Если ≥1 — execution стоп, переходим к reuse.
+2. **Alias-механизм discovery (§A2)**
+  - Проверить наличие таблиц: `document_token_aliases`, `document_alias`, `token_alias`.
+  - Проверить колонки `document_token_registry`: `alias_for`, `aliased_field_id`, `role_key`, `context_kind`.
+  - Если найден existing alias-слой → адаптер поверх него, без новой таблицы.
+  - Если ничего нет → создать `public.document_token_aliases` по §A1/§A4.
+3. **Feature flag storage discovery (§A7)**
+  ```sql
+   SELECT to_regclass('public.feature_flags');
+  ```
+  - Если есть — INSERT `documents_package_resolver_enabled=false`.
+  - Если нет — hard-coded `false` в resolver, отдельный sprint для flag-инфраструктуры.
+4. **FLD public_id generator discovery (§A6)**
+  ```sql
+   SELECT proname FROM pg_proc WHERE proname = 'next_fld_public_id';
+  ```
+  - Есть → использовать.
+  - Нет → `SELECT 'FLD-' || lpad((max(...)+1)::text, 6, '0')` под `pg_advisory_xact_lock`.
+5. **entity_type discovery (§A3)** — `SELECT DISTINCT entity_type FROM fields_registry` для выбора корректного значения для person FLD.
+6. **Template regex-scan #1 (§A10)** — 0 active templates содержат `package.role.*` токены. При >0 → стоп.
+
+## Этап 2 — Migration (single BEGIN/COMMIT)
+
+Порядок строго:
+
+1. (Условно) `CREATE TABLE public.document_token_aliases` с GRANT (service_role only, no anon, RLS write-closed) + CHECK по §A4.
+2. INSERT 1 canonical person FLD:
+  - `key='legal_details_persons.full_name'`
+  - `entity_type=<из §A3 discovery>`
+  - `template_scope='generic'`
+  - `data_type='string'`
+  - `public_id` через generator из §A6
+3. INSERT 4 alias rows:
+  - `package.role.company_head.full_name` → person FLD + `role_key='company_head'`, `context_kind='package_person'`
+  - `package.role.responsible_person.full_name` → person FLD + `role_key='responsible_person'`, `context_kind='package_person'`
+  - `package.role.company_head.position` → `source_field_public_id=NULL`, `context_kind='package_metadata'`, source=`document_package_session_participants.metadata->>'position'`
+  - `package.role.responsible_person.position` → аналогично
+4. (Условно) INSERT `feature_flags(documents_package_resolver_enabled, enabled=false)`.
+
+**Не создаётся:** `plan_year` FLD, role-specific full_name FLD, anon grants, billing-токены.
+
+## Этап 3 — Resolver skeleton
+
+Создать `supabase/functions/_shared/resolve-package-tokens.ts`:
+
+- Lookup alias по `alias_token`.
+- Если `context_kind='package_person'` → читать `document_package_session_participants` по `role_key` → `legal_details_persons.full_name`. Поддержка `|case=` через существующий `_shared/case-format.ts`.
+- Если `context_kind='package_metadata'` → читать `participants.metadata->>field`.
+- Default-deny: нет alias / нет участника / нет session → `{ resolved: false, warning: '...' }`.
+- Никаких fallback на `legal_details_entity_person_links`.
+- Никаких изменений billing resolver или signature `canonical-document-generate-strict`.
+- Resolver НЕ вызывается production-кодом (flag=false). Только модульное добавление.
+
+## Этап 4 — Template regex-scan #2 (§A10)
+
+Повторный scan активных шаблонов: 0 совпадений с новыми alias-токенами. Это финальная проверка перед закрытием sprint (flag всё равно остаётся false).
+
+## Этап 5 — Proof artifact
+
+Создать `.lovable/proofs/package_documents_sprint3b_v2_1_execution_report_2026_05.md`:
+
+- Pre-check results (duplicate, alias discovery, flag discovery, generator discovery, entity_type, scan #1).
+- Migration SQL (точный текст).
+- Созданный person FLD public_id.
+- Alias list (4 строки).
+- Resolver diff (новый файл, ноль изменений в существующих edge functions).
+- **Billing regression proof:** diff `document_token_registry WHERE token_key LIKE 'cf.legal_details.%' OR 'customer.%' OR 'executor.%'` до/после = идентичен; billing resolver не тронут.
+- **Signature unchanged proof:** `canonical-document-generate-strict/index.ts` не модифицирован (git diff пустой по этому файлу).
+- **No generation proof:** 0 вызовов resolver из production; flag=false; scan #2 = 0.
+- **Rollback/soft-disable proof:** `UPDATE fields_registry SET archived_at=now() WHERE public_id=<новый>` + `UPDATE document_token_aliases SET archived_at=now()` + `UPDATE feature_flags SET enabled=false` — dry-run SQL зафиксирован.
+
+## Этап 6 — Финализация
+
+Обновить `.lovable/plan.md`:
+
+```
+Sprint 3B v2.1: completed: package person FLD + role aliases + resolver skeleton added; feature flag disabled; generation deferred
+```
+
+## Ограничения (жёсткие)
+
+- ❌ `plan_year` FLD не создавать.
+- ❌ Role-specific FLD для ФИО/должностей не создавать.
+- ❌ Anon grants на alias/token registry не выдавать.
+- ❌ Billing/customer/executor resolver не менять.
+- ❌ Signature `canonical-document-generate-strict` не менять.
+- ❌ Feature flag не включать.
+- ❌ Генерацию документов не запускать.
+- ❌ Templates не модифицировать.
+
+## DoD
+
+- Pre-checks выполнены, proof зафиксирован.
+- Migration применена (1 FLD + 4 aliases + optionally table + optionally flag row).
+- Resolver skeleton создан, не вызывается production-кодом.
+- Scan #2 = 0.
+- Все 8 proof-секций в отчёте.
+- `.lovable/plan.md` обновлён финальным статусом.
