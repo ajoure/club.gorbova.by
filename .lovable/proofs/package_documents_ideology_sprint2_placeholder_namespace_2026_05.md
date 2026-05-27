@@ -1,5 +1,9 @@
 # Sprint 2 — Package placeholders registry audit + namespace design (Идеология)
 
+> ⚠️ **SUPERSEDED (частично) — 2026-05-27.** Разделы про per-package namespace `documents:package:ideology` и вывод «все 8 FLD `entity_type='package'` корпоративные и для идеологии непригодны» **отменены**.
+> Корректная модель: единый generic namespace `documents:package` + `document_package_role_catalog` как адаптационный слой. См. `package_documents_sprint2_3_generic_model_correction_2026_05.md`.
+> Discovery-факты по таблицам и Sprint 1 verify checklist остаются в силе.
+
 **Тип:** read-only audit + design.
 **Запись в `fields_registry` / `document_token_registry` / picker / resolver: НЕ выполнялась.**
 **Затронуты только новые markdown-артефакты (этот proof + backlog).**
