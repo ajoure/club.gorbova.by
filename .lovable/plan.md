@@ -1,4 +1,28 @@
-да, согласен, с учетом правок:
+Sprint 3B v2.1 — execution-plan APPROVED с 9 поправками (§A1–§A10).
+Документ: `.lovable/proofs/package_documents_sprint3b_v2_execution_plan_2026_05.md`.
+Статус: `approved_as_execution_plan; pre_execution_amendments_required` — миграция/edge/UI не выполняются до отдельного approve на фактический execution.
+
+Ключевые ограничения, добавленные при approve:
+- `document_token_aliases` без anon-доступа; write только service_role.
+- Discovery аналога alias-таблицы обязателен до `CREATE TABLE IF NOT EXISTS`.
+- `entity_type` нового person FLD — только из существующих значений `fields_registry`.
+- Прямой `{{field:FLD-...|role=...}}` запрещён до parser-proof; alias-wrapper = единственный путь.
+- Alias на metadata.position — `context_kind='package_metadata'`, `source_field_public_id=NULL`, CHECK-консистентность, без записи в `document_token_registry`.
+- `next_fld_public_id()` — discovery перед использованием, либо advisory-lock max+1 путь.
+- `feature_flags` — discovery до INSERT; если таблицы нет — hard-coded false в resolver, отдельный sprint.
+- Plan year — исключён из Sprint 3B v2, переведён в backlog.
+- Город приказа — reuse существующей city-колонки или deferred; auto-parse адреса запрещён.
+- Regex-scan активных шаблонов (0 rows) обязателен дважды: до миграции и до flip feature flag.
+
+---
+
+# Sprint 3A.1 — Corrective Discovery (completed)
+
+(история ниже сохраняется для контекста; решения 3A.1 учтены в 3B v2.1)
+
+---
+
+ранее: да, согласен, с учетом правок:
 
 1. **document_token_aliases не выдавать anon**  
 В плане сейчас:  
