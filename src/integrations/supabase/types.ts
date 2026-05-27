@@ -3601,6 +3601,53 @@ export type Database = {
         }
         Relationships: []
       }
+      document_package_token_aliases: {
+        Row: {
+          alias_token: string
+          archived_at: string | null
+          canonical_field_public_id: string | null
+          context_kind: string
+          created_at: string
+          id: string
+          metadata: Json
+          role_key: string
+          source_path: string | null
+          updated_at: string
+        }
+        Insert: {
+          alias_token: string
+          archived_at?: string | null
+          canonical_field_public_id?: string | null
+          context_kind: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          role_key: string
+          source_path?: string | null
+          updated_at?: string
+        }
+        Update: {
+          alias_token?: string
+          archived_at?: string | null
+          canonical_field_public_id?: string | null
+          context_kind?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          role_key?: string
+          source_path?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dpta_canonical_fk"
+            columns: ["canonical_field_public_id"]
+            isOneToOne: false
+            referencedRelation: "fields_registry"
+            referencedColumns: ["public_id"]
+          },
+        ]
+      }
       document_template_versions: {
         Row: {
           created_at: string
@@ -4816,7 +4863,7 @@ export type Database = {
           key: string
           label: string
           options: Json | null
-          public_id: string | null
+          public_id: string
           updated_at: string | null
           updated_by: string | null
         }
@@ -4832,7 +4879,7 @@ export type Database = {
           key: string
           label: string
           options?: Json | null
-          public_id?: string | null
+          public_id: string
           updated_at?: string | null
           updated_by?: string | null
         }
@@ -4848,7 +4895,7 @@ export type Database = {
           key?: string
           label?: string
           options?: Json | null
-          public_id?: string | null
+          public_id?: string
           updated_at?: string | null
           updated_by?: string | null
         }
