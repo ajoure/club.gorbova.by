@@ -1,359 +1,263 @@
-# Package Documents — Sprint Status
-
-- **Sprint 3A:** `completed with clarifications` — см. `.lovable/proofs/package_documents_sprint3a_closure_clarifications_2026_05.md`
-- **Sprint 3B:** `plan_required_before_execution` — см. `.lovable/proofs/package_documents_sprint3b_implementation_plan_2026_05.md`. Все 5 корректировок ревьюера учтены: company-role fallback запрещён, rollback = soft-disable, `resolvePackageTokens` — отдельный модуль, покрытие первого приказа — checklist перед execution, `plan_year` только из session metadata. **Никаких** INSERT/migration/edge/UI изменений не производилось.
-
----
-
-# да, согласен, с учетом правок:
-
-1. **Главное: план стал правильным по логике**
-
-Lovable наконец зафиксировал верную модель:
-
-- existing `legal_details` FLD переиспользуются как **source definition**, а не как billing/customer context;
-- для пакетов используется отдельный package-aware resolver;
-- `package_session_id` обязателен;
-- без session/role assignment — только `unresolved + warning`;
-- silent fallback запрещён;
-- `documents:package:ideology` не создаётся;
-- новые FLD — только минимально и только потому, что нет `legal_details_person` в registry.
-
-Это соответствует тому, что ты хотел: **реквизиты одни, контексты использования разные**.
-
----
-
-## **Что нужно поправить перед approve Sprint 3B-plan**
-
-### **1. Убрать идею “company-role fallback” вообще из Sprint 3B**
-
-Сейчас он пишет:
-
-company_head fallback из `legal_details_entity_person_links` под флагом
-
-Я бы это **не разрешал даже как зарезервированную ветку** в Sprint 3B.
-
-Причина: ты хочешь, чтобы в анкете пакета пользователь явно назначал роли. Если включить fallback, система опять начнет “догадываться”.
-
-Заменить на:
-
-```md
-Company-role fallback через `legal_details_entity_person_links` в Sprint 3B не реализуется и не резервируется в коде.
-
-Руководитель компании для package-документов берется только через явное назначение `role_key='company_head'` в `document_package_session_participants`.
-
-`legal_details_entity_person_links` можно использовать только как UI-подсказку при выборе лица, но не как resolver fallback.
-```
-
----
-
-### **2. Не создавать rollback через hard DELETE без строгого запрета использования**
-
-Он предлагает rollback:
-
-```sql
-DELETE FROM document_token_registry ...
-DELETE FROM fields_registry ...
-```
-
-Лучше не давать ему привычку удалять registry entries.
-
-Заменить на:
-
-```md
-Rollback strategy по умолчанию — soft-disable через `archived_at`.
-
-Hard DELETE допустим только если:
-- токены не использованы ни в одном шаблоне;
-- нет snapshot/source_trace;
-- нет token_manifest_snapshot;
-- нет document_template_versions;
-- есть отдельный approve.
-
-В обычном rollback использовать только `archived_at`.
-```
-
----
-
-### **3. “Новая независимая функция resolvePackageTokens” — хорошо, но не “не editing existing”**
-
-Он пишет:
-
-только новая независимая функция `resolvePackageTokens` (новый файл, не editing existing)
-
-Это правильно как направление, но подключение всё равно потребует минимальной точки интеграции.
-
-Уточнить:
-
-```md
-`resolvePackageTokens` должен быть отдельным файлом/модулем.
-
-Разрешена только минимальная интеграционная точка в существующем pipeline для маршрутизации по `template_scope='package'`.
-
-Billing path не менять. Любое изменение billing resolver запрещено.
-```
-
----
-
-### **4. Проверить, что 5 новых FLD действительно достаточны для первого приказа**
-
-Для приказа нужны минимум:
-
-- наименование организации;
-- город;
-- дата приказа;
-- номер приказа;
-- ответственное лицо;
-- должность ответственного;
-- руководитель/подписант;
-- ФИО руководителя;
-- год плана.
-
-Он предлагает 5 новых FLD:
-
-```text
-package.roles.company_head.full_name
-package.roles.company_head.position
-package.roles.responsible_person.full_name
-package.roles.responsible_person.position
-package.context.plan_year
-```
-
-Это нормально, **если** остальные поля переиспользуются из existing `legal_details` и existing document/system fields:
-
-- организация → existing legal_details FLD;
-- дата/номер приказа → existing document/system FLD или отдельный документный контекст;
-- город → existing legal_details address/city или document field.
-
-Добавить проверку:
-
-```md
-Перед Sprint 3B execution подтвердить, что для первого приказа все поля закрыты:
-- existing FLD;
-- новые 5 package FLD;
-- existing document/system FLD.
-
-Если дата/номер/город приказа не закрыты existing FLD — не создавать их автоматически, а вынести отдельным manifest decision.
-```
-
----
-
-
-
-### **5. Уточнить**
-
-`package.context.plan_year`
-
-`plan_year` — это не реквизит юрлица и не физлицо. Это **контекст пакета/документа**.
-
-Нужно явно указать:
-
-```md
-`package.context.plan_year` хранится в `document_package_sessions.metadata.plan_year`.
-
-Если `plan_year` отсутствует — unresolved/warning или blocking validation для документов, где год обязателен.
-
-Не брать год из текущей даты автоматически без подтверждения пользователя.
-```
-
----
-
-## **Готовый ответ Lovable**
-
-```md
 да, согласен, с учетом правок:
 
-1. Логика Sprint 3A подтверждена: direct reuse existing `legal_details` FLD означает reuse source definition, а не подключение billing/customer context к пакетам. Это правильно.
+1. **3A.1 нужен. Sprint 3B v1 правильно поставить на паузу**  
+Текущий Sprint 3B execution plan v1 действительно преждевременный. До любых новых FLD нужно доказать, что существующих FLD для ФИО, падежей, номера, даты, года и города нет или они непригодны.
+2. **Уточнить синтаксис role-aware placeholder**  
+В варианте A не фиксировать заранее синтаксис:  
+{{cf.person.FLD-XXXXXX|role=responsible_person}}  
+Нужно написать безопаснее:
+3. **plan_year не считать обычным system field автоматически**  
+Да, сначала нужно проверить existing year/system FLD. Но если “год плана” — это значение, которое пользователь выбирает в анкете пакета, то это не всегда равно текущему/следующему году.  
+Добавить:
+4. **Должность: правильно, это role-context**  
+Подтверждаю: должность не надо делать как “должность физлица” навсегда. Один человек в разных пакетах может иметь разные роли/должности.  
+Оставить:
+5. **Добавить проверку склонения должности из metadata**  
+Если должность хранится в participants.metadata.position, нужно проверить, сможет ли текущая морфология склонять эту строку.  
+Добавить в DoD:
+6. **Расширить поиск по token registry и aliases**  
+Кроме fields_registry, добавить read-only проверку:  
+Проверить `document_token_registry`, `document_token_aliases`, token manifests и template snapshots на наличие person/date/year/document aliases.  
+Иначе можно не найти уже существующий alias.
+7. **Номер и дата приказа: проверить не только FLD-000069/070**  
+В счете-акте действительно есть поля номера и даты документа: FLD-000069 и FLD-000070.    
+Но нужно подтвердить, что они универсальны для всех документов, а не только для счета-акта.  
+Добавить:
+8. **Город приказа: не создавать новый до проверки адресной модели**  
+Верно: сначала брать из выбранного юрлица. Но нужно проверить, есть ли отдельная колонка города, а не только полный адрес.  
+Добавить:
+9. **Coverage matrix должна иметь статус “existing FLD найден, но context не подтвержден”**  
+Добавить decision:  
+existing*_found_*but*_context_*unconfirmed  
+Это важно для FLD, которые есть, но могут быть billing-specific.
+10. **Итоговый статус 3A.1**
 
-2. Перед Sprint 3B внести правку: company-head fallback через `legal_details_entity_person_links` не реализовывать и не резервировать в коде. Руководитель для package-документов берется только через явное назначение `role_key='company_head'` в `document_package_session_participants`. `legal_details_entity_person_links` можно использовать только как UI-подсказку, но не как resolver fallback.
+Добавить финальные варианты:
 
-3. Rollback strategy изменить: по умолчанию только soft-disable через `archived_at`. Hard DELETE из `fields_registry` / `document_token_registry` допустим только отдельным approve и только если токены нигде не использовались: templates, template_versions, token_manifest_snapshot, source_trace, generated documents.
+completed: all first-order fields covered by existing FLD + role-context, no new FLD required
 
-4. `resolvePackageTokens` делать отдельным модулем. В существующем pipeline разрешена только минимальная routing-точка по `template_scope='package'`. Billing resolver/path не менять.
+или
 
-5. Перед Sprint 3B execution подтвердить, что первый шаблон приказа закрывается:
-   - existing `legal_details` FLD для организации;
-   - existing document/system FLD для даты/номера/города, если они уже есть;
-   - 5 новыми generic package FLD только для package-role/context полей.
-   
-   Если дата/номер/город приказа не закрыты existing FLD — не создавать их автоматически, а вынести отдельным manifest decision.
+completed: minimal new alias/wrapper tokens required, source fields reused
 
-6. `package.context.plan_year` хранить только в `document_package_sessions.metadata.plan_year`. Не брать год автоматически из текущей даты без подтверждения пользователя. Если год отсутствует — unresolved/warning или blocking validation, в зависимости от документа.
+или
 
-После этих правок можно закрывать Sprint 3A и переходить к Sprint 3B implementation plan. Само выполнение INSERT/миграций/edge-патчей — только после отдельного approve Sprint 3B-plan.
-```
+blocked: existing FLD/context insufficient, architecture decision required
 
-## **Итог**
+**Итог**
 
-Он сейчас понял задачу **почти правильно**.  
-Нужно только убрать опасный fallback на руководителя из company-links и запретить hard delete registry entries как стандартный rollback.
+План 3A.1 правильный. Его можно запускать как read-only discovery.
 
-&nbsp;
+Главная цель: **не создавать FLD для ФИО/даты/номера/года/города, пока не доказано, что существующие поля нельзя безопасно использовать в package context**.
 
-План Sprint 3A closure + Sprint 3B pre-INSERT implementation plan
+# План: Sprint 3A.1 — Corrective Discovery (reuse-first, до Sprint 3B execution)
 
-## Часть 1. Подтверждение двух уточнений (Sprint 3A)
+Документ-результат: `.lovable/proofs/package_documents_sprint3a1_corrective_discovery_2026_05.md`
+Обновления:
 
-### Уточнение 1 — semantics of "direct reuse" для 47 existing `legal_details` FLD
+- `.lovable/plan.md` — Sprint 3B execution = **PAUSED**, статус: `blocked_by_sprint_3a1_corrective_discovery`.
+- Sprint 3A closure clarifications — добавить ссылку на 3A.1 как обязательное pre-condition.
 
-**Подтверждаю:**
+В рамках 3A.1 НЕ выполняется ни одна миграция, INSERT, deploy, UI-патч. Это read-only discovery + reuse-first manifest.
 
-- `direct reuse` НЕ означает прямое подключение billing/customer token context к пакету.
-- Existing 47 FLD (`legal_details.*`, например `FLD-000009` UNP, `FLD-000011` name) — это **переиспользование source definition** (registry-запись + column mapping в `client_legal_details`), а не переиспользование resolver binding из актов.
-- В **актах** existing FLD продолжает означать заказчика/исполнителя в billing context (`order.customer_legal_details_id` / `order.executor_legal_details_id`) — это не меняется.
-- В **пакетах** тот же FLD резолвится **только** через package context:
-  ```
-  package_session_id
-    → document_package_sessions.selected_legal_entity_id
-      → client_legal_details (по этому UUID)
-        → колонка по fields_registry.key (например leg_unp)
-  ```
-- Без `package_session_id` package-context резолвинг возвращает `unresolved` warning.
-- Silent fallback на первого клиента / первое юрлицо / `legal_details_entity_person_links` — **запрещён**.
-- Билинг-резолвинг и пакет-резолвинг — две независимые ветки в `canonical-document-generate-strict`; разделение по `template_scope` (`billing` vs `package`).
+## 1. Причина паузы
 
-Если уточнение не подтверждается ревьюером — **Sprint 3B стоп**, повторный discovery.
+В черновике Sprint 3B execution plan предложено создать 5 новых package FLD, включая:
 
-### Уточнение 2 — почему 5 новых generic package FLD необходимы
+- `package.roles.company_head.full_name`
+- `package.roles.responsible_person.full_name`
+- `package.context.plan_year`
 
-**Подтверждаю:**
+Это нарушает reuse-first canon: ФИО физлица, падежи ФИО, год/дата/номер документа, город юрлица уже должны существовать как FLD. Discovery в 3A был слишком узким (только `entity_type='legal_details_person'`) и не доказал отсутствие.
 
-- Новые FLD нужны исключительно потому, что:
-  - `legal_details_person` отсутствует в `fields_registry` (0 entries по discovery);
-  - 8 existing package FLD (`FLD-000093..102`) — legacy corporate (meetings), не подходят по семантике;
-  - нет existing FLD для физлиц в package-role context.
-- Новые FLD будут:
-  - **generic** (без слова `ideology`, без слова `meeting`);
-  - namespace только `documents:package` (через `entity_type='package'` + `key` префикс `package.roles.*` / `package.context.*`);
-  - source только через `document_package_session_participants.role_key` → `person_id` → `legal_details_persons`;
-  - **без** fallback на `legal_details_entity_person_links`, кроме одного отдельно утверждаемого company-role сценария (см. §3.4 ниже — требует явного approval перед включением).
-
----
-
-## Часть 2. Финальный статус Sprint 3A
-
-```
-Sprint 3A:
-completed: reuse-first manifest approved;
-Sprint 3B requires implementation plan before registry/resolver changes
-```
-
-Никаких INSERT/UPDATE/edge/UI изменений в рамках Sprint 3A не производилось и не будет.
-
----
-
-## Часть 3. Sprint 3B implementation plan (pre-INSERT, требует отдельного approval)
-
-Перед любым `INSERT` в `fields_registry` / `document_token_registry` будет создан отдельный proof-файл со всеми разделами ниже.
-
-### 3.1. Точный список создаваемых FLD (5 шт, generic)
-
-
-| key                                          | label                                    | data_type | entity_type | назначение                                         |
-| -------------------------------------------- | ---------------------------------------- | --------- | ----------- | -------------------------------------------------- |
-| `package.roles.company_head.full_name`       | ФИО руководителя компании в пакете       | string    | package     | role_key=`company_head`                            |
-| `package.roles.company_head.position`        | Должность руководителя компании в пакете | string    | package     | role_key=`company_head` (из participants.metadata) |
-| `package.roles.responsible_person.full_name` | ФИО ответственного лица в пакете         | string    | package     | role_key=`responsible_person`                      |
-| `package.roles.responsible_person.position`  | Должность ответственного лица в пакете   | string    | package     | role_key=`responsible_person` (metadata)           |
-| `package.context.plan_year`                  | Плановый год пакета                      | number    | package     | из `document_package_sessions.metadata.plan_year`  |
-
-
-Public IDs (`FLD-XXXXXX`) — выделяются последовательно через существующий generator; точные номера фиксируются в proof-файле в момент исполнения.
-
-### 3.2. Source mapping (per-FLD)
-
-Для каждого FLD в proof:
-
-- источник: таблица.колонка или JSONB-путь;
-- предусловие резолвинга: какой `role_key` / какое поле `package_session` должно присутствовать;
-- поведение при отсутствии: всегда `unresolved` warning, без fallback.
-
-Пример для `package.roles.company_head.full_name`:
+## 2. Корректная модель (фиксируется как инвариант)
 
 ```
-require: package_session_id
-join:    document_package_session_participants
-filter:  role_key = 'company_head'
-         AND package_session_id = <ctx>
-take:    person_id (первый и единственный — иначе error 'multiple_company_heads')
-join:    legal_details_persons by id
-read:    full_name
-on_miss: { resolved: false, warning: 'package_role_unassigned:company_head' }
+роль в пакете (role_key)  =  кто выбран (person_id или legal_entity_id)
+поле физлица/юрлица (FLD) =  какое значение взять
 ```
 
-### 3.3. Duplicate check (обязательный шаг перед INSERT)
+- ФИО / фамилия / имя / отчество / падежи — **existing person FLD**, выбираются через package role assignment.
+- Должность в пакете — `document_package_session_participants.metadata.position` (может отличаться от пакета к пакету; **не** свойство карточки физлица).
+- Номер/дата приказа — **existing document/system FLD** (например `FLD-000069`, `FLD-000070`).
+- Город — из адреса выбранного юрлица (`package_session.selected_legal_entity_id → client_legal_details.*`).
+- Год плана — сначала проверить existing system/document year FLD; новый FLD создавать только при доказанном отсутствии.
 
-В proof:
+Новые FLD разрешены **только** для значений, которые реально не существуют как existing FLD.
+
+## 3. Discovery scope (read-only SQL)
+
+### 3.1 Existing person FLD — расширенный поиск
 
 ```sql
-SELECT id, public_id, key, entity_type
+SELECT id, public_id, key, label, entity_type, data_type, category, description, archived_at
 FROM fields_registry
-WHERE entity_type = 'package'
-  AND key IN (
-    'package.roles.company_head.full_name',
-    'package.roles.company_head.position',
-    'package.roles.responsible_person.full_name',
-    'package.roles.responsible_person.position',
-    'package.context.plan_year'
+WHERE archived_at IS NULL
+  AND (
+    entity_type IN ('person','legal_details_person','legal_details_persons',
+                    'individual','entity_person','natural_person','contact')
+    OR key ILIKE '%person%'
+    OR key ILIKE '%individual%'
+    OR key ILIKE '%full_name%'
+    OR key ILIKE '%surname%' OR key ILIKE '%last_name%'
+    OR key ILIKE '%first_name%' OR key ILIKE '%middle_name%' OR key ILIKE '%patronymic%'
+    OR key ILIKE '%passport%'
+    OR label ILIKE '%физ%' OR label ILIKE '%ФИО%'
+    OR label ILIKE '%фамил%' OR label ILIKE '%имя%' OR label ILIKE '%отчеств%'
+    OR label ILIKE '%паспорт%' OR label ILIKE '%должност%'
+    OR category ILIKE '%person%' OR category ILIKE '%физ%'
+  )
+ORDER BY entity_type, key;
+```
+
+### 3.2 Падежи ФИО
+
+```sql
+SELECT id, public_id, key, label, entity_type
+FROM fields_registry
+WHERE archived_at IS NULL
+  AND (
+    key ILIKE '%genitive%' OR key ILIKE '%dative%' OR key ILIKE '%accusative%'
+    OR key ILIKE '%instrumental%' OR key ILIKE '%prepositional%'
+    OR key ILIKE '%case%'
+    OR label ILIKE '%родительн%' OR label ILIKE '%дательн%'
+    OR label ILIKE '%винительн%' OR label ILIKE '%творительн%' OR label ILIKE '%предложн%'
+    OR label ILIKE '%падеж%'
   );
 ```
 
-Ожидаемый результат: 0 строк. Если ≥1 — INSERT блокируется, decision rule меняется на `reuse_existing`.
-
-Аналогично для `document_token_registry`:
+### 3.3 Document/system FLD (номер, дата, год)
 
 ```sql
-SELECT id, field_id, token_key
-FROM document_token_registry
-WHERE token_key IN (...);
+SELECT id, public_id, key, label, entity_type
+FROM fields_registry
+WHERE archived_at IS NULL
+  AND (
+    entity_type IN ('document','system','order','common')
+    OR key ILIKE '%document.number%' OR key ILIKE '%doc_number%'
+    OR key ILIKE '%document.date%'   OR key ILIKE '%doc_date%'
+    OR key ILIKE '%year%' OR key ILIKE '%current_year%'
+    OR key ILIKE '%next_year%' OR key ILIKE '%previous_year%'
+    OR label ILIKE '%номер документ%' OR label ILIKE '%дата документ%'
+    OR label ILIKE '%год%'
+  )
+ORDER BY entity_type, key;
 ```
 
-### 3.4. Company-role fallback сценарий (требует отдельного approval)
+Дополнительно: явно подтвердить наличие `FLD-000069` (номер) и `FLD-000070` (дата) и их семантику.
 
-Единственный потенциальный fallback: если для `role_key='company_head'` participant не назначен, **разрешается** опционально подтянуть head из `legal_details_entity_person_links` (where `legal_details_id = package_session.selected_legal_entity_id AND role='head'`).
+### 3.4 Legal_details: город / адрес / место нахождения
 
-- По умолчанию **выключен**.
-- Включается флагом `package_resolver.company_head_link_fallback_enabled` в `app_settings` (default `false`).
-- В Sprint 3B будет только зарезервирован флаг + код-ветка под флагом; включение — отдельное решение.
+```sql
+SELECT id, public_id, key, label
+FROM fields_registry
+WHERE archived_at IS NULL
+  AND entity_type = 'legal_details'
+  AND (
+    key ILIKE '%city%' OR key ILIKE '%address%' OR key ILIKE '%location%'
+    OR label ILIKE '%город%' OR label ILIKE '%адрес%' OR label ILIKE '%место%'
+  );
+```
 
-### 3.5. Rollback / disable strategy
+### 3.5 Связки данных physical-person
 
-- Все 5 INSERT идут одной миграцией с `BEGIN; ... COMMIT;`.
-- Rollback миграция готовится одновременно (отдельный файл): `DELETE FROM document_token_registry WHERE field_id IN (...); DELETE FROM fields_registry WHERE public_id IN (...);` — только если FLD не использованы ни в одном `document_template_versions.tokens` (предварительная проверка в rollback-скрипте).
-- Soft-disable: `UPDATE fields_registry SET archived_at = now() WHERE public_id IN (...)` — резолвер новых FLD после archive возвращает `unresolved`, billing-токены не затрагиваются.
-- Feature flag `documents_package_resolver_enabled` (default `false`) гейтит чтение новых FLD в `canonical-document-generate-strict`. Включается отдельно после dry-run.
+- Проверить структуру `legal_details_persons` (колонки full_name / surname / first_name / middle_name / падежи / passport / position).
+- Проверить структуру `document_package_session_participants` (наличие `metadata` JSONB, `role_key`, `person_id`).
+- Проверить, есть ли существующий resolver / column-mapping для `legal_details_persons` в `fields_registry` (по `description` или `meta`).
 
-### 3.6. Proof: billing/customer/executor tokens не изменяются
+## 4. Coverage Matrix первого приказа (заполняется по итогам 3.1–3.5)
 
-В proof перед INSERT:
 
-- diff списка billing-токенов (`document_token_registry WHERE token_key LIKE 'cf.legal_details.%' OR token_key LIKE 'customer.%' OR token_key LIKE 'executor.%'`) до/после миграции — должен быть **идентичен**;
-- regex-scan активных `document_templates` подтверждает: ни один существующий template не содержит новых package-токенов до их явного включения;
-- resolver-функция для billing-context (`resolveBillingTokens`) не получает изменений в сигнатуре или поведении — только новая независимая функция `resolvePackageTokens` (новый файл, не editing existing).
+| Поле приказа              | Кандидат existing FLD (public_id, key) | Источник (table/column)                          | Решение                                                |
+| ------------------------- | -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| Наименование организации  | ?                                      | client_legal_details.*                           | reuse                                                  |
+| УНП                       | FLD-000009 (ожидаемо)                  | client_legal_details.leg_unp                     | reuse                                                  |
+| Юр. адрес                 | ?                                      | client_legal_details.*                           | reuse                                                  |
+| Город приказа             | ? (поиск в 3.4)                        | client_legal_details.city/address                | reuse / нужен новый только при доказанном отсутствии   |
+| Номер приказа             | FLD-000069 (верифицировать)            | document.number                                  | reuse                                                  |
+| Дата приказа              | FLD-000070 (верифицировать)            | document.date                                    | reuse                                                  |
+| Год плана                 | ? (поиск в 3.3)                        | system year / package_session.metadata.plan_year | reuse system FLD приоритет; иначе — обоснованный новый |
+| ФИО руководителя          | existing person ФИО (поиск в 3.1)      | legal_details_persons.full_name                  | reuse через role=company_head                          |
+| ФИО руководителя (падежи) | existing (поиск в 3.2)                 | legal_details_persons.* падежи                   | reuse                                                  |
+| Должность руководителя    | participants.metadata.position         | participants (role_key=company_head)             | role-context, не новый FLD-источник                    |
+| ФИО ответственного        | existing person ФИО                    | legal_details_persons.full_name                  | reuse через role=responsible_person                    |
+| Должность ответственного  | participants.metadata.position         | participants (role_key=responsible_person)       | role-context                                           |
 
-### 3.7. Proof: `canonical-document-generate-strict` signature не меняется
 
-- Внешняя request/response схема edge-функции остаётся прежней.
-- Внутри добавляется ветка `if (template.template_scope === 'package') { ... }` — изолированная, не затрагивает billing-путь.
-- Контракт `idempotency_key`, `snapshot`, `source_trace`, `template_version_id` — без изменений.
-- Proof включает diff-блок сигнатуры edge-функции (до/после) с пометкой `signature unchanged`.
+Любая ячейка «нужен новый» допускается только с phrase **«доказано отсутствие existing FLD: <SQL+результат>»**.
 
-### 3.8. DoD Sprint 3B (только plan, не execution)
+## 5. Архитектурное решение role-context (фиксируется в 3A.1 manifest)
 
-- Proof-файл `package_documents_sprint3b_implementation_plan_2026_05.md` создан с разделами 3.1–3.7.
-- Duplicate check выполнен (SELECT, read-only) — 0 совпадений.
-- Template regex-scan подтверждает отсутствие конфликтов.
-- Approval от ревьюера на сам plan.
-- **Только после approval** — отдельный запрос на migration + edge-патч.
+Две альтернативы переходят в Sprint 3B planning:
 
-В рамках Sprint 3B-plan **никакие** `INSERT`, `migration`, `deploy_edge_functions`, UI-патчи не выполняются.
+**Вариант A — role-aware placeholder (предпочтительный, если рендер поддерживает модификаторы):**
 
----
+```
+{{cf.person.FLD-XXXXXX|role=responsible_person}}
+{{cf.person.FLD-XXXXXX|role=company_head|case=genitive}}
+```
 
-## Часть 4. Файлы, которые будут изменены/созданы (после switch в build mode)
+- Источник данных — existing person FLD.
+- Role/case — модификаторы резолвинга, не новые FLD.
 
-- **Создан** `.lovable/proofs/package_documents_sprint3a_closure_clarifications_2026_05.md` — фиксация двух уточнений и финального статуса 3A.
-- **Создан** `.lovable/proofs/package_documents_sprint3b_implementation_plan_2026_05.md` — pre-INSERT implementation plan по §3.1–3.8.
-- **Обновлён** `.lovable/plan.md` — Sprint 3A → `completed with clarifications`; Sprint 3B → `plan_required_before_execution`.
+**Вариант B — alias/wrapper (если рендер не умеет модификаторов):**
 
-Никаких изменений в `fields_registry`, `document_token_registry`, edge-функциях, UI, миграциях.
+- Создаётся wrapper-токен `package.role.responsible_person.full_name`, который НЕ имеет собственного источника данных, а ссылается на existing person FLD `source_field_id` + `role_key`.
+- В `fields_registry` фиксируется как `is_alias=true` (или эквивалент); column mapping отсутствует.
+- Удобно для UI picker'а, но физически дублирующих источников не создаёт.
+
+Решение между A и B принимается в 3A.1 на основе capability check текущего DOCX-рендера (`{{field:FLD-XXXXXX}}` синтаксис: умеет ли pipe-модификаторы).
+
+## 6. Должность как role-context
+
+- Должность хранится **только** в `document_package_session_participants.metadata.position`.
+- Discovery: проверить, есть ли существующий generic FLD «должность физлица» в карточке физлица. Если есть — он **не** используется в package-документах (должность пакет-специфична).
+- Если в карточке физлица есть «текущая должность» как справочное поле — это UI-подсказка для предзаполнения `participants.metadata.position`, не источник package-токена.
+
+## 7. Запрет на новые FLD (до доказательства)
+
+Запрещено в Sprint 3A.1 и Sprint 3B execution создавать FLD:
+
+- `package.roles.*.full_name` (любого варианта роли) — без доказательства отсутствия existing person ФИО.
+- `package.roles.*.full_name_genitive/dative/...` — без доказательства отсутствия existing падежей.
+- `package.context.plan_year` — без доказательства отсутствия existing system/document year FLD.
+- `package.context.document_number/date/city` — без доказательства отсутствия existing document/legal_details FLD.
+
+## 8. DoD Sprint 3A.1
+
+- Выполнены SQL §3.1–§3.4 (read-only), результаты приложены к proof-файлу.
+- Подтверждены/опровергнуты `FLD-000069`, `FLD-000070` как номер/дата документа.
+- Coverage matrix §4 заполнена с конкретными `public_id` и SQL-доказательствами.
+- Зафиксирован capability check рендера (поддержка `|role=` / `|case=` модификаторов).
+- Принято решение A vs B (§5) с обоснованием.
+- Зафиксирован контракт «должность = participants.metadata.position» (§6).
+- Список разрешённых новых FLD (если такие останутся) с доказательством отсутствия existing — отдельным разделом proof-файла.
+
+## 9. Что НЕ делается в 3A.1
+
+- Никаких миграций, INSERT, UPDATE, DELETE.
+- Никаких deploy edge functions.
+- Никаких UI-патчей.
+- Никакого создания `resolvePackageTokens`.
+- Никакого включения feature flag.
+
+## 10. Условия для Sprint 3B execution plan v2
+
+Sprint 3B execution plan переписывается **после** одобрения 3A.1 со следующими свойствами:
+
+- Список новых FLD сокращён до доказанно отсутствующих (потенциально 0).
+- Resolver `resolvePackageTokens` оперирует existing person/document/legal_details FLD + `role_key` + `case` модификаторами (или alias-wrapper'ами по варианту B).
+- Минимальная routing-точка по `template_scope='package'` сохраняется.
+- Feature flag `documents_package_resolver_enabled=false` по умолчанию — сохраняется.
+- Soft-disable rollback через `archived_at` — сохраняется (применим к alias-токенам или к минимальному набору доказанно-новых FLD).
+- Billing/customer/executor resolver не затрагивается.
+- Sprint 3B execution v2 не стартует без отдельного approve.
+
+## 11. Статусы (обновлено 2026-05-27)
+
+- Sprint 3B execution plan v1 — **отозван** (`superseded_by_sprint_3a1`).
+- Sprint 3A.1 — **`completed: minimal new alias/wrapper tokens required, source fields reused`**.
+  - Proof: `.lovable/proofs/package_documents_sprint3a1_corrective_discovery_2026_05.md`.
+  - Ключевые факты: 0 person FLD в registry; падежи реализованы через render-модификатор `|case=`; FLD-000069/070 (document.number/date) — generic; city FLD есть для всех типов юрлица (FLD-000039/047/031); meeting.report_year (FLD-000082) — кандидат на «год плана» (Опция R) vs новый `package.context.plan_year` (Опция N); выбран **Вариант B** (alias-wrapper через `document_token_aliases`).
+  - Реальный объём новых FLD: 1 гарантированно (`legal_details_persons.full_name`) + до 1 опционально (`package.context.plan_year`). Прежний драфт v1 предлагал 5.
+- Sprint 3B execution v2 — `blocked: awaiting approval to draft v2 based on 3A.1 manifest`. См. §8 proof-документа.
