@@ -1,327 +1,212 @@
 # да, согласен, с учетом правок:
 
-1. **Уточнить, что Sprint 2 в основном read-only/design, а не cleanup в БД**
+1. **Название спринта корректное, но нужно явно указать superseded-логику**
   &nbsp;
-  В названии и цели лучше заменить формулировку:
-  ```md
-  Package placeholders registry cleanup
+  Добавить в начало:
+2. **Уточнить: generic namespace не означает один фиксированный список ролей навсегда**
+  &nbsp;
+  Сейчас можно неверно понять, что все будущие роли должны быть только из списка:
+  ```text
+  company_head, responsible_person, document_signer...
   ```
-  на:
+  Добавить:
+3. **Не “переименовать label позже” без проверки влияния на UI**
+  &nbsp;
+  В решениях по FLD заменить:
   ```md
-  Package placeholders registry audit + namespace design
+  rename_label_only_later
   ```
-  Потому что по плану физически ничего не удаляем и почти ничего не меняем в registry. Иначе Lovable может воспринять `cleanup` как разрешение на правки `fields_registry`.
-2. **Запретить запись в** `fields_registry` **в Sprint 2 полностью**
+  на более безопасное:
+  ```md
+  candidate_for_label_generalization_later
+  ```
+  Потому что даже label может быть связан с UX, документацией, manifest или snapshot. Любое переименование — отдельный PATCH.
+4. **Уточнить, что** `FLD-000093…102` **нельзя автоматически считать generic**
   &nbsp;
-  Сейчас есть фраза:
-  Не менять `fields_registry` без duplicate proof.
-  Лучше жёстче:
-3. **Уточнить Этап E: “минимальный фильтр” не делать без отдельного approve**
+  Добавить:
+5. **Добавить проверку source resolver для старых package FLD**
   &nbsp;
-  Сейчас написано:
-  Context-aware picker (только design + минимальный фильтр)
-  Это может привести к UI-правкам picker-а. Лучше:
-4. **Этап G не должен менять UI postponed-группы**
+  В discovery-шаги добавить:
+6. **Не фиксировать** `documents:package` **как единственный technical context, пока не проверен текущий picker**
   &nbsp;
-  Сейчас:
-  UI: скрыть postponed по умолчанию или вынести…
-  Это уже реализация. Для Sprint 2 лучше:
-5. **Добавить проверку использования FLD не только в** `ai_generated_documents.meta.file_name_template_snapshot`
+  Формулировку лучше сделать так:
+7. **Добавить проверку массивов как отдельный риск**
   &nbsp;
-  В Этап A добавить:
-6. **Добавить отдельную проверку Word-шаблонов**
+  Токены:
+  ```text
+  package.participants[]
+  package.notified_persons[]
+  ```
+  могут требовать loop/render support. Добавить:
+8. **Добавить связь generic tokens с package_session scope**
   &nbsp;
-  Так как акт выполненных работ реально использует `{{field:FLD-...}}`, нужно добавить:
-7. **Развести** `document_token_registry` **и** `fields_registry`
-  &nbsp;
-  В плане они идут рядом, но нужно потребовать mapping:
-8. **Добавить проверку “package FLD = корпоративные собрания”**
-  &nbsp;
-  Discovery уже показал, что существующие `package` FLD относятся к корпоративным собраниям. В Этап A добавить:
-9. **Добавить** `no-write proof`
-  &nbsp;
-  В proof добавить секцию:
-10. **Hardening по** `save()` **не тестировать через failing constraint, если это может затронуть данные**
+  В generic source mapping добавить:
+9. **Добавить explicit anti-fallback rule**
+10. **Добавить proof по сохранению billing template**
 
-В §2 фраза:
-
-regression-тест на «отказ insert не оставляет пустой session» через failing constraint в dry-run
-
-Лучше заменить:
+В DoD добавить:
 
 ```md
-В Sprint 2 не ломать реальные данные и не создавать искусственные failing constraints в production. Проверку atomicity провести только как code-path analysis / local dry-run / test environment, если доступен. В production — только зафиксировать follow-up RPC.
+Приложенный шаблон счета-акта остается protected billing template.
+Его FLD не переиспользуются для package tokens и не меняются.
 ```
 
-11. **Уточнить финальный статус**
+11. **Roadmap после Sprint 2.3 скорректировать**
 
-В §14 добавить:
+В Sprint 3 лучше не писать сразу “создать/переиспользовать tokens”, а разделить:
 
 ```md
-Если Sprint 2 выполнен полностью как read-only/design без registry/UI изменений:
-`completed: package placeholder namespace audited and designed; implementation deferred to Sprint 3`
+Sprint 3A — approve final generic token manifest.
+Sprint 3B — registry implementation + picker grouping + resolver skeleton.
+Sprint 4 — generation.
 ```
 
-12. **Добавить запрет на “переименование групп”**
+Иначе Lovable может сразу полезть в registry до утверждения финального manifest.
 
-Чтобы не сломать текущий picker актов:
+12. **Добавить финальный STOP**
 
 ```md
-В Sprint 2 запрещено переименовывать существующие группы плейсхолдеров:
-- Заказчик ФЛ;
-- Заказчик ЮЛ;
-- Заказчик ИП;
-- Исполнитель ЮЛ;
-- Документ;
-- Сделка;
-- Оплата;
-- Системные поля;
-- Технические / override.
-Все предложения по переименованию — только в proof.
+Если после Sprint 2.3 окажется, что существующие FLD-000093…102 не подходят как generic, это не blocker. В таком случае Sprint 3 должен создать новый generic manifest, но только после approve.
 ```
 
-После этих правок план безопасный. Главная корректировка: **Sprint 2 должен быть аудитом и проектированием namespace, без фактических правок registry/picker/resolver**.
+В остальном план правильный. Главное: **пакеты документов должны использовать общие реквизиты и generic package placeholders, а смысл конкретного пакета задается через** `package_code` **и** `document_package_role_catalog`**, не через отдельный namespace токенов.**
 
 &nbsp;
 
-План: Sprint 2 — Package placeholders registry cleanup + ideology token namespace
+План: Sprint 2.3 — Corrective discovery package placeholders (generic model)
 
-## 0. Правила исполнения
+## 0. Причина
 
-- Все артефакты (план, отчет, proof, комментарии в коде/SQL) — только на русском.
-- Порядок: DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY. Пропуск этапов запрещён.
-- Add-only. Все связи только через UUID/id. Связи по названию/УНП/email/slug/тексту запрещены.
-- НЕ трогать: `payments_v2`, `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `tariff_offers`, `allocate_document_number`, `document_scenarios`, Contact Center, морфологию, refund/access-repair, billing/customer/executor resolver, existing FLD-токены актов, `canonical-document-generate-strict` signature.
-- Генерация документов в этом sprint НЕ подключается.
-- Перед Sprint 2 — короткий final UI verify Sprint 1 (см. §1) и hardening-замечание по `save()` (см. §2).
+В отчете Sprint 2 закрепился ошибочный вывод: «делаем отдельный namespace `documents:package:ideology`, а старые 8 FLD `entity_type='package'` относятся только к корпоративным собраниям и для идеологии непригодны». Это ведёт к плодению доменов под каждый будущий пакет и к дублированию реквизитов.
 
----
+Правильная модель: **одна база реквизитов (юрлица/ИП/физлица) + один generic namespace `documents:package` + role catalog как адаптационный слой пакета**. Идеология — это просто `package_code='ideology'` со своими ярлыками ролей, а не отдельный токен-домен.
 
-## 1. Pre-Sprint: Final UI verify Sprint 1
+## 1. Жёсткие правила
 
-Перед стартом Sprint 2 закрыть Sprint 1 чек-листом и приложить результат в proof Sprint 1:
+- Только русский в артефактах, proof, audit, code-комментариях.
+- Порядок: DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY.
+- Sprint 2.3 — **read-only**. Никаких миграций, INSERT/UPDATE, изменений edge functions, изменений UI-логики.
+- Все связи — только UUID/id. Запрещено матчить по названию/УНП/email/slug/тексту.
+- STOP-зоны (не трогать ни в discovery, ни в последующих спринтах без отдельного approve): `payments_v2`, `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `tariff_offers`, `allocate_document_number`, `document_scenarios`, billing/customer/executor resolver, существующие FLD актов выполненных работ, signature `canonical-document-generate-strict`.
+- Запрещено: отдельные token-домены под пакет, отдельные реквизиты под «Идеологию», дублирование `client_legal_details` / `legal_details_persons`.
 
-1. `/ai` и `/admin/ai` — видна только Gorbova AI, документов нет.
-2. `/admin/documents` — нет дубля вкладки «Документы»; присутствуют: Плейсхолдеры / Шаблоны / Пакеты документов / История / Исполнители.
-3. `/admin/documents → Пакеты документов → Идеология` — пакет открывается.
-4. `/document-generation → Идеология`:
-  - бейджа «локально» нет;
-  - юрлицо/ИП single-select;
-  - после reload выбор сохраняется;
-  - физлицам назначаются роли из `document_package_role_catalog`;
-  - required checklist работает;
-  - статус: «Сохранено» / «Требует заполнения».
-5. Incognito/другой браузер — данные подтягиваются из backend (не из localStorage).
-6. RLS — чужие реквизиты/sessions/participants не видны.
-7. Кнопка «Сформировать пакет» disabled с понятным пояснением (генерация — Sprint 4).
-8. Результаты добавить в `package_documents_ideology_sprint1_persisted_session_2026_05.md`.
+## 2. Что пересмотреть в Sprint 2
 
-## 2. Hardening-замечание Sprint 1 (фиксируем как follow-up)
+Вывод «8 FLD `entity_type='package'` принадлежат домену корпоративных собраний и к идеологии не относятся» — переоценить. Для каждого FLD (FLD-000093 … FLD-000102) собрать таблицу:
 
-`save()` сейчас = upsert session + delete-then-insert participants на клиенте через supabase-js. Зафиксировать в backlog (`document_package_session_save_atomicity.md`):
+| FLD | текущий label | canonical key | source | используется в шаблонах | пригоден как generic package token | решение |
 
-- `delete` обязан фильтроваться по `package_session_id` владельца (RLS уже это гарантирует — подтвердить тестом).
-- При ошибке `insert` — session не должна остаться без participants (риск пустого состояния).
-- Целевое решение: RPC `package_session_replace_participants(session_id, participants[])` в одной транзакции.
-- В Sprint 2 RPC НЕ внедряется — только фиксируется follow-up + добавляется regression-тест на «отказ insert не оставляет пустой session» (через failing constraint в dry-run).
+Решения из закрытого списка:
 
----
+- `reuse_as_generic_package_token` — токен по сути про роль/участника/компанию, переименовать label позже, оставить ID.
+- `keep_as_legacy_corporate_token` — токен узко про процедуру собрания (председатель собрания, секретарь собрания, кандидат в совет), не использовать для других пакетов.
+- `rename_label_only_later` — generic по смыслу, но текущий label привязан к собраниям.
+- `do_not_use_for_ideology` — узкий legacy, для идеологии нужен новый generic.
+- `needs_new_generic_token` — generic роли (responsible_person, document_preparer, control_person, notified_person) сейчас нет, требуется новый.
+- `defer_until_resolver` — решение откладывается до проектирования resolver в Sprint 3.
 
-## 3. Цель Sprint 2
+Если FLD нигде не используется в активных шаблонах — не удалять и не пересоздавать без анализа.
 
-Привести в порядок package placeholders и подготовить namespace + resolver design для пакетов документов (в первую очередь «Идеология»), не сломав акты выполненных работ.
+## 3. Целевая generic-модель (документируется, не реализуется)
 
-Итог:
+Единая UI-группа в picker: **«Пакеты документов»** с подгруппами:
 
-1. В `/admin/documents → Плейсхолдеры` появляется верхнеуровневая группа **«Пакеты документов»** с подгруппами:
-  - Общие поля пакета;
-  - Компания пакета;
-  - Роли пакета;
-  - Физлица пакета (массивы);
-  - Пакет «Идеология».
-2. Для «Идеологии» определён proposed token list с понятным источником.
-3. Все новые токены — в namespace `documents:package` и `documents:package:ideology`.
-4. Existing billing/customer/executor tokens **не изменены**.
-5. Генерация документов не подключена.
+1. Компания пакета
+2. Физлица пакета
+3. Роли пакета
+4. Участники пакета
+5. Документы пакета / служебные поля
 
----
-
-## 4. Этап A — Discovery текущих package placeholders
-
-Read-only выборки:
-
-1. `fields_registry`: `entity_type='package'`; label содержит «пакет/участник/идеология»; group/category содержит `package`.
-2. `document_token_registry`: записи с category/context `package`, `document`, `postponed`.
-3. Все «postponed / нет источника» поля: причина, где используются, можно ли скрыть.
-4. Использование package-FLD в `document_templates`, file templates, token manifests, `ai_generated_documents.meta.file_name_template_snapshot`.
-
-Сформировать таблицу в proof:
-
-
-| FLD | label | entity_type | group/category | source | в шаблонах | статус | решение |
-| --- | ----- | ----------- | -------------- | ------ | ---------- | ------ | ------- |
-
-
-Решения: `keep_as_is` / `move_to_package_general` / `move_to_ideology` / `hide_as_postponed` / `deprecated_do_not_use` / `needs_source` / `conflict_with_billing_token`.
-
-## 5. Этап B — Защита актов выполненных работ
-
-Зафиксировать **protected groups** (изменения запрещены: FLD-ID, label, source mapping, resolver, token format, category/group, падежи, formatting, billing resolver):
-
-- Заказчик ФЛ / ЮЛ / ИП
-- Исполнитель ЮЛ
-- Документ / Сделка / Оплата
-- Системные / Технические / override
-
-Proof-таблица:
-
-
-| protected FLD | label | group | используется в billing template | action    |
-| ------------- | ----- | ----- | ------------------------------- | --------- |
-| FLD-…         | …     | …     | yes                             | no change |
-
-
-DoD: доказать, что Sprint 2 не задевает ни один protected FLD.
-
-## 6. Этап C — Целевая структура package placeholders
+Generic token list (черновой, финализируется в proof):
 
 ```text
-Пакеты документов
-  1. Общие поля пакета     → package.session.*, package.template.*, package.status, package.created_at
-  2. Компания пакета       → package.company.* (head: full_name/position/authority_basis)
-  3. Роли пакета           → package.roles.<role_key>.full_name|position|phone|email|authority_basis
-  4. Физлица пакета (arr)  → package.participants[], package.notified_persons[], package.ideology_active_members[]
-  5. Пакет «Идеология»     → ideology.order.*, ideology.plan.*, ideology.responsible.*,
-                              ideology.components.list, ideology.activities[]
+package.company.full_name
+package.company.short_name
+package.company.unp
+package.company.legal_address
+package.company.head.full_name
+package.company.head.position
+
+package.roles.company_head.full_name
+package.roles.responsible_person.full_name
+package.roles.document_signer.full_name
+package.roles.document_preparer.full_name
+package.roles.control_person.full_name
+
+package.participants[].full_name
+package.participants[].position
+package.notified_persons[].full_name
+package.notified_persons[].position
 ```
 
-Источники:
+Никаких `documents:package:ideology`, `documents:package:corporate_meeting`, `documents:package:<future>`. Единственный контекст — `documents:package`.
 
-- `document_package_sessions.selected_legal_entity_id → client_legal_details`
-- `document_package_session_participants + document_package_role_catalog + legal_details_persons`
+## 4. Role catalog как адаптационный слой
 
-Правила:
-
-- если source/resolver не готов — proposed token остаётся в proof как `postponed`, в registry **не пишется**;
-- запрещено смешивать с billing tokens;
-- любые массивы (`[]`) описываются как future-feature (Sprint 3+), в registry в Sprint 2 не материализуются.
-
-## 7. Этап D — Duplicate guard
-
-Перед добавлением любого токена:
-
-- exact canonical key duplicate;
-- exact system token duplicate;
-- exact/fuzzy label duplicate;
-- конфликт с billing/customer/executor/existing package токеном.
-
-Proof-таблица:
+`document_package_role_catalog` — единственное место, где пакет задаёт смысл ролей. Generic role_key остаётся общим, label меняется per-package.
 
 
-| proposed token | duplicate found | conflict type | action |
-| -------------- | --------------- | ------------- | ------ |
+| generic role_key   | label в «Идеология»                    |
+| ------------------ | -------------------------------------- |
+| company_head       | Руководитель организации               |
+| responsible_person | Ответственный за идеологическую работу |
+| document_signer    | Подписант документов                   |
+| document_preparer  | Составитель документов                 |
+| control_person     | Лицо, контролирующее исполнение        |
+| participant        | Участник идеологической работы         |
+| notified_person    | Ознакомленное лицо                     |
 
 
-При конфликте — токен **не создаётся**, решение фиксируется письменно.
+Новый пакет = новые записи в role catalog + новый `package_code` + (опционально) новые role_keys. **Никогда** не новый token namespace.
 
-## 8. Этап E — Context-aware picker (только design + минимальный фильтр)
+## 5. Артефакт спринта (single deliverable)
 
-Контексты:
+Один proof-файл: `.lovable/proofs/package_documents_sprint2_3_generic_model_correction_2026_05.md`
 
-- `documents:billing`, `documents:order`, `documents:payment` — для актов;
-- `documents:package` — общие package;
-- `documents:package:ideology` — для шаблонов «Идеологии».
+Структура:
 
-Правило: шаблон акта видит billing/customer/executor; шаблон пакета — package; шаблон «Идеологии» — package + ideology.
+1. Corrective note: package placeholders are generic, not per-domain.
+2. Existing package FLD reuse analysis (таблица по 8 FLD + решения).
+3. Generic package token model (финальный список токенов + source mapping на `document_package_sessions` / `_participants` / `client_legal_details` / `legal_details_persons`).
+4. Role catalog as package-specific adaptation layer (snapshot текущих ролей «Идеологии» + mapping на generic role_keys).
+5. Why ideology must not have isolated token namespace (явный запрет в memory).
+6. Updated roadmap: Sprint 2.3 (этот) → Sprint 3 (generic tokens + resolver) → Sprint 4 (generation).
+7. Финальный статус Sprint 2 — одно из трёх:
+  - `completed with correction: package placeholders must be generic; implementation deferred to Sprint 3`
+  - `completed with correction: existing package FLD are legacy-specific; new generic package tokens required in Sprint 3`
+  - `partial: package FLD classification requires additional review`
 
-Если текущий `tokenRegistry.ts` / `TokenizedRichInput` не поддерживает context filtering — Sprint 2 ограничивается **discovery + UI plan**, без переключения шаблонов актов.
+Дополнительно — обновить `.lovable/plan.md` (заменить блок Sprint 3/4 на новый roadmap) и `.lovable/proofs/package_documents_ideology_sprint2_placeholder_namespace_2026_05.md` (вставить ссылку на corrective proof и пометить ошибочные выводы как superseded).
 
-## 9. Этап F — Resolver design (без wiring)
+## 6. Discovery-шаги (read-only)
 
-Описать (не подключать) package resolver:
+1. `SELECT` по `fields_registry` где `entity_type='package'` — полный список 8 FLD с label, key, source, meta.
+2. `SELECT` по `document_token_registry` где `category` пересекается с package — посмотреть category/token_key/field_id.
+3. Поиск использования каждого FLD в активных `document_templates` (regex по `{{field:FLD-XXXXXX}}` и по canonical token_key).
+4. `SELECT` по `document_package_role_catalog` — текущие 11 ролей идеологии + их generic-эквиваленты.
+5. Проверка `document_package_sessions` / `_participants` schema — какие источники данных уже доступны для resolver (без проектирования самого resolver — это Sprint 3).
+6. Заполнение таблицы решений из §2 и финального generic token list из §3.
 
-```text
-package_session_id
-  → document_package_sessions → selected_legal_entity_id → client_legal_details
-  → document_package_session_participants
-       → document_package_role_catalog.role_key
-       → legal_details_persons / client_legal_details
-```
+## 7. Roadmap после Sprint 2.3
 
-Routing по template context:
+- **Sprint 3 — Generic package tokens + resolver**: создать/переиспользовать generic package tokens в `documents:package` (один namespace), спроектировать package resolver поверх `document_package_sessions` + `_participants` + `role_catalog` + `client_legal_details` + `legal_details_persons`; picker показывает одну группу «Пакеты документов»; role labels подтягиваются из role catalog текущего `package_code`.
+- **Sprint 4 — Package generation**: генерация одного документа и всего пакета, `package_session_id` в snapshot, source_trace, warnings, validation. Только после Sprint 3.
 
-- billing template → billing resolver (без изменений);
-- package template → package resolver;
-- ideology template → package resolver + ideology role map.
+## 8. DoD Sprint 2.3
 
-В Sprint 2 generation не подключается; helper можно подготовить только если он не импортируется ни одной рабочей цепочкой.
+- Создан corrective proof со всеми 7 секциями.
+- Таблица по 8 FLD заполнена, каждому присвоено решение из закрытого списка.
+- Финальный generic token list зафиксирован + source mapping.
+- Role catalog mapping (generic role_key ↔ label «Идеологии») зафиксирован.
+- Roadmap в `.lovable/plan.md` обновлён.
+- Sprint 2 proof помечен как superseded в части ошибочного namespace-разделения.
+- Memory-правило (черновик для core): «package placeholders — единый generic namespace `documents:package`; per-package token namespaces запрещены; адаптация пакета — только через `document_package_role_catalog` и `package_code`».
+- Ни одного `INSERT/UPDATE/ALTER/CREATE` в БД, ни одного edge function deploy, ни одного изменения UI-логики.
 
-## 10. Этап G — Cleanup группы «Нет источника данных (postponed)»
+## 9. STOP
 
-Разобрать содержимое:
-
-- отложенные billing fields;
-- будущие package fields;
-- технические/мусор;
-- поля без source, уже используемые в шаблонах (→ помечать `needs_source`).
-
-UI: скрыть postponed по умолчанию или вынести в отдельную подгруппу «Черновики токенов» внутри «Пакеты документов». **Физически ничего не удалять.**
-
-## 11. Что НЕ делать
-
-- Не генерировать документы; не менять `canonical-document-generate-strict`.
-- Не менять billing resolver и existing billing FLD.
-- Не удалять старые/postponed токены.
-- Не менять `fields_registry` без duplicate proof.
-- Не создавать role-token placeholders без resolver/source proof.
-- Не трогать payments/orders/subscriptions/entitlements/access.
-
-## 12. Proof
-
-Файл: `.lovable/proofs/package_documents_ideology_sprint2_placeholder_namespace_2026_05.md`
-
-Секции:
-
-1. Sprint 1 final UI verify (перенести из §1).
-2. Hardening follow-up по `save()` (§2).
-3. Inventory: billing / customer / executor / package / postponed placeholders.
-4. Billing protected FLD list.
-5. Target structure «Пакеты документов».
-6. Proposed ideology token list (с источниками).
-7. Duplicate guard results.
-8. Conflict matrix.
-9. Context-aware picker analysis.
-10. Package resolver separation design.
-11. Cleanup recommendation для postponed.
-12. What remains deferred (Sprint 3 — реализация tokens+resolver; Sprint 4 — генерация).
-13. Final status.
-
-## 13. DoD
-
-- Sprint 1 final UI verify приложен.
-- Hardening follow-up по `save()` зафиксирован в backlog.
-- Ясно, какие FLD принадлежат актам, какие — package, какие — мусор.
-- Есть целевая структура группы «Пакеты документов».
-- Есть proposed token list для «Идеологии» с источниками.
-- Есть duplicate guard + conflict matrix.
-- Есть решение по picker context separation (минимум — design).
-- Есть package resolver design (без wiring).
-- Акты выполненных работ не сломаны (доказано таблицей protected FLD).
-- Генерация документов не подключалась.
-
-## 14. Финальный статус
-
-- Все DoD выполнены → `completed: package placeholder namespace designed; generation still deferred`.
-- Picker/registry требует реализации → `partial: namespace designed, implementation patch required`.
-- Найден риск регрессии актов → `blocked: billing regression risk`.
-
-## 15. Затронутые сущности (read/inventory only)
-
-- Таблицы: `fields_registry`, `document_token_registry`, `document_token_aliases`, `document_templates`, `document_package_templates`, `document_package_sessions`, `document_package_session_participants`, `document_package_role_catalog`, `client_legal_details`, `legal_details_persons`, `ai_generated_documents` (meta-снапшоты).
-- UI: `src/pages/admin/AdminDocuments.tsx`, `src/components/ai-documents/*`, `src/components/admin/TokenizedRichInput.tsx`, `src/lib/tokens/tokenRegistry.ts`.
-- Edge functions: только read; `canonical-document-generate-strict` не меняется.
-
-## 16. Дорожная карта после Sprint 2
-
-- Sprint 3 — реализация package tokens + package resolver (по утверждённому в Sprint 2 namespace).
-- Sprint 4 — генерация одного документа / всего пакета через `package_session_id` + snapshot.
+- Не начинать Sprint 3 до approve corrective proof.
+- Не трогать существующие FLD актов выполненных работ.
+- Не создавать `documents:package:ideology` ни в коде, ни в registry, ни в плане.
+- Не создавать дублирующие таблицы реквизитов под идеологию или любой будущий пакет.
+- Не подключать генерацию документов.
