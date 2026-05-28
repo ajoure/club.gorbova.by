@@ -371,10 +371,63 @@ export const PACKAGE_GROUP_META: Array<{
     hint: "Физлицо по выбранной роли в анкете пакета (company_head / responsible_person / …). Роль выбирается там же, не здесь.",
     source_summary: SESSION_PERSON,
   },
+  {
+    id: "package_roles",
+    label_ru: "Пакет: Роли",
+    hint: "Роли пакета с физлицом, выбранным в анкете. Один токен на роль: {{package.role.PKR-XXXXXX}}. Содержимое подставляется по output_template роли (по умолчанию «должность, ФИО»).",
+    source_summary:
+      "document_package_role_catalog.public_id → document_package_session_participants.role_key → legal_details_persons + metadata.position",
+  },
 ];
 
 export function getPackagePlaceholdersByGroup(
   groupId: PackageGroupId,
 ): PackagePlaceholderItem[] {
   return PACKAGE_PLACEHOLDER_CATALOG.filter((i) => i.groupId === groupId);
+}
+
+/**
+ * Sprint 3F §D/E: Построить items группы «Пакет: Роли» из БД-каталога ролей.
+ * Сами роли (включая custom) хранятся в `document_package_role_catalog`;
+ * этот хелпер — read-only адаптер для UI каталога плейсхолдеров.
+ *
+ * Канонический Word-токен: `{{package.role.PKR-XXXXXX}}`.
+ * Старый формат `{{package.roles.<role_key>.<attr>}}` остаётся как deprecated alias,
+ * см. document_package_token_aliases.
+ */
+export interface PackageRoleCatalogRow {
+  public_id: string;          // PKR-XXXXXX
+  role_key: string;
+  label: string;              // ru
+  description: string | null;
+  is_system: boolean;
+  is_active: boolean;
+  package_template_id: string;
+  package_template_name: string;
+  output_template: string | null;
+  sort_order: number;
+}
+
+export function buildPackageRoleItems(
+  rows: PackageRoleCatalogRow[],
+): PackagePlaceholderItem[] {
+  return rows
+    .filter((r) => r.is_active)
+    .map<PackagePlaceholderItem>((r) => ({
+      groupId: "package_roles",
+      label_ru: `${r.package_template_name} — ${r.label}`,
+      source_table: "legal_details_persons",
+      source_path:
+        `document_package_role_catalog.public_id='${r.public_id}' → ` +
+        `document_package_session_participants WHERE role_key='${r.role_key}'`,
+      billing_fld_analog: null,
+      reused_fld: null,
+      package_token: `{{package.role.${r.public_id}}}`,
+      package_resolver_hint:
+        r.output_template
+          ? `output_template: ${r.output_template}`
+          : 'output_template (NULL) → дефолт «{{position}}, {{full_name}}»',
+      status: "copy_ready",
+      tech_key: `package.role.${r.public_id}`,
+    }));
 }
