@@ -428,18 +428,22 @@ export function PlaceholdersCatalogTab() {
     }> = [];
     for (const meta of PACKAGE_GROUP_META) {
       if (groupFilter !== "all" && groupFilter !== meta.id) continue;
-      const items = PACKAGE_PLACEHOLDER_CATALOG
-        .filter((i) => i.groupId === meta.id)
-        .filter((i) => {
-          if (!q) return true;
-          return (
-            i.label_ru.toLowerCase().includes(q) ||
-            i.tech_key.toLowerCase().includes(q) ||
-            (i.reused_fld ?? "").toLowerCase().includes(q) ||
-            (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
-            meta.label_ru.toLowerCase().includes(q)
-          );
-        });
+      // Sprint 3F: «Пакет: Роли» строится из БД (включая custom-роли).
+      const baseItems: PackagePlaceholderItem[] =
+        meta.id === "package_roles"
+          ? buildPackageRoleItems(packageRoleRows)
+          : PACKAGE_PLACEHOLDER_CATALOG.filter((i) => i.groupId === meta.id);
+      const items = baseItems.filter((i) => {
+        if (!q) return true;
+        return (
+          i.label_ru.toLowerCase().includes(q) ||
+          i.tech_key.toLowerCase().includes(q) ||
+          (i.reused_fld ?? "").toLowerCase().includes(q) ||
+          (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
+          (i.package_token ?? "").toLowerCase().includes(q) ||
+          meta.label_ru.toLowerCase().includes(q)
+        );
+      });
       if (items.length === 0) continue;
       groups.push({
         id: meta.id,
@@ -450,7 +454,7 @@ export function PlaceholdersCatalogTab() {
       });
     }
     return groups;
-  }, [search, groupFilter]);
+  }, [search, groupFilter, packageRoleRows]);
 
   const packageItemsCount = packageSections.reduce((a, s) => a + s.items.length, 0);
 
