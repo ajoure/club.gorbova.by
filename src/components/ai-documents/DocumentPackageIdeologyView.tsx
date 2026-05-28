@@ -277,35 +277,69 @@ export function DocumentPackageIdeologyView() {
                 <div className="space-y-1.5">
                   {persons.map((p) => {
                     const currentRole = personRoles[p.id] ?? "";
+                    const needsPos = ROLES_WITH_POSITION.has(currentRole);
+                    const currentPos = personPositions[p.id] ?? "";
+                    const posMissing = needsPos && currentPos.trim().length === 0;
                     return (
-                      <div key={p.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-accent/30">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium truncate">{p.full_name ?? "—"}</div>
-                          <div className="text-[10px] text-muted-foreground truncate">
-                            {p.is_active ? "активен" : "архив"}
+                      <div key={p.id} className="px-2 py-1 rounded hover:bg-accent/30">
+                        <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium truncate">{p.full_name ?? "—"}</div>
+                            <div className="text-[10px] text-muted-foreground truncate">
+                              {p.is_active ? "активен" : "архив"}
+                            </div>
                           </div>
+                          <Select
+                            value={currentRole}
+                            onValueChange={(v) => {
+                              const next = !v || v === "__none__" ? "" : v;
+                              setPersonRoles((prev) => {
+                                const out = { ...prev };
+                                if (!next) delete out[p.id];
+                                else out[p.id] = next;
+                                return out;
+                              });
+                              // Если новая роль не требует position — чистим стейт.
+                              if (!ROLES_WITH_POSITION.has(next)) {
+                                setPersonPositions((prev) => {
+                                  if (!(p.id in prev)) return prev;
+                                  const out = { ...prev };
+                                  delete out[p.id];
+                                  return out;
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-7 text-[11px] w-[180px]">
+                              <SelectValue placeholder="Без роли" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
+                              {personRoleOptions.map((r) => (
+                                <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <Select
-                          value={currentRole}
-                          onValueChange={(v) => setPersonRoles((prev) => {
-                            const next = { ...prev };
-                            if (!v || v === "__none__") delete next[p.id];
-                            else next[p.id] = v;
-                            return next;
-                          })}
-                        >
-                          <SelectTrigger className="h-7 text-[11px] w-[180px]">
-                            <SelectValue placeholder="Без роли" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
-                            {personRoleOptions.map((r) => (
-                              <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
-                                {r.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {needsPos && (
+                          <div className="mt-1 ml-1 flex items-center gap-1.5">
+                            <Input
+                              value={currentPos}
+                              onChange={(e) =>
+                                setPersonPositions((prev) => ({ ...prev, [p.id]: e.target.value }))
+                              }
+                              placeholder="Должность (например, Директор)"
+                              className="h-7 text-[11px] flex-1"
+                            />
+                            {posMissing && (
+                              <span className="flex items-center gap-1 text-[10px] text-amber-700">
+                                <AlertCircle className="h-3 w-3" /> заполните должность
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
