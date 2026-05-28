@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, User, FileText, MapPin, Phone, Info } from 'lucide-react';
+import { Loader2, User, FileText, MapPin, Phone, Info, Landmark } from 'lucide-react';
 import { StructuredAddressBlock } from '@/components/shared/StructuredAddressBlock';
 import { DatePicker } from '@/components/ui/date-picker';
 import { CopyablePlainLabel } from '@/components/ui/CopyablePlainLabel';
@@ -85,6 +85,12 @@ const PERSON_FIELD_KEYS: Record<string, string> = {
   passport_valid_until: 'ind_passport_valid_until',
   phone: 'phone',
   email: 'email',
+  // Sprint 3E: банковские реквизиты физлица (для пакетных документов).
+  // Source path: legal_details_persons.bank_account / bank_name / bank_code.
+  // Используем общие FLD биллинга (FLD-000004/5/6) через те же ключи.
+  bank_account: 'bank_account',
+  bank_name: 'bank_name',
+  bank_code: 'bank_code',
 };
 
 export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: PersonFieldsFormProps) {
@@ -115,6 +121,10 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
   const [notes, setNotes] = useState(initialData?.notes || '');
   const [isActive, setIsActive] = useState(initialData?.is_active ?? true);
   const [address, setAddress] = useState<StructuredAddress>(() => parseAddress(initialData?.address_structured));
+  // Sprint 3E: банк-реквизиты физлица (для пакетных документов).
+  const [bankAccount, setBankAccount] = useState<string>((initialData as any)?.bank_account || '');
+  const [bankName, setBankName] = useState<string>((initialData as any)?.bank_name || '');
+  const [bankCode, setBankCode] = useState<string>((initialData as any)?.bank_code || '');
 
   /** Get publicId for a person field from registry */
   const pid = (formField: string) => fieldsMap.get(PERSON_FIELD_KEYS[formField])?.publicId;
@@ -171,10 +181,14 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
       notes: notes || null,
       is_active: isActive,
       address_structured: addressToStructured(address),
+      // Sprint 3E: bank fields (nullable, без формат-валидации в Sprint 3E).
+      bank_account: bankAccount.trim() ? bankAccount.trim().toUpperCase() : null,
+      bank_name: bankName.trim() || null,
+      bank_code: bankCode.trim() ? bankCode.trim().toUpperCase() : null,
     };
 
     await onSubmit(data);
-  }, [fullName, birthDate, personalNumber, passportFull, passportIssuedBy, passportIssuedDate, passportValidUntil, phone, email, notes, isActive, address, onSubmit]);
+  }, [fullName, birthDate, personalNumber, passportFull, passportIssuedBy, passportIssuedDate, passportValidUntil, phone, email, notes, isActive, address, bankAccount, bankName, bankCode, onSubmit]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -313,6 +327,43 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
             <div>
               <CopyablePlainLabel htmlFor="pf-email" label="Email" publicId={pid('email')} />
               <Input id="pf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ivan@example.com" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Bank details (Sprint 3E) — для пакетных документов. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+            <Landmark className="w-4 h-4" />
+            Банковские реквизиты
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <CopyablePlainLabel htmlFor="pf-bank-account" label="Расчётный счёт (IBAN)" publicId={pid('bank_account')} />
+            <Input
+              id="pf-bank-account"
+              value={bankAccount}
+              onChange={(e) => setBankAccount(e.target.value.toUpperCase())}
+              placeholder="BY00XXXX00000000000000000000"
+              maxLength={28}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <CopyablePlainLabel htmlFor="pf-bank-name" label="Банк" publicId={pid('bank_name')} />
+              <Input id="pf-bank-name" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder='ЗАО "Альфа-Банк"' />
+            </div>
+            <div>
+              <CopyablePlainLabel htmlFor="pf-bank-code" label="БИК / Код банка" publicId={pid('bank_code')} />
+              <Input
+                id="pf-bank-code"
+                value={bankCode}
+                onChange={(e) => setBankCode(e.target.value.toUpperCase())}
+                placeholder="ALFABY2X"
+              />
             </div>
           </div>
         </CardContent>
