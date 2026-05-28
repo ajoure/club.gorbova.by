@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +24,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
+import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
@@ -31,6 +33,16 @@ import {
   type PersonAssignment,
   type PackageSessionDisplayStatus,
 } from "@/hooks/useDocumentPackageSession";
+
+/**
+ * Sprint 3C: для каких ролей UI показывает поле «Должность» и пишет его
+ * в `participants.metadata.position`. Whitelist hardcoded только на этот спринт;
+ * перенос в `document_package_role_catalog.metadata.requires_position` — backlog.
+ */
+const ROLES_WITH_POSITION = new Set<string>([
+  "company_head",
+  "ideology_responsible",
+]);
 
 const LEGACY_LS_KEY = "document_package_questionnaire_ideology_v1";
 
