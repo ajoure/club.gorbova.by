@@ -279,6 +279,42 @@ export function PlaceholdersCatalogTab() {
   const [onlyRequired, setOnlyRequired] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
+  const [packageRoleRows, setPackageRoleRows] = useState<PackageRoleCatalogRow[]>([]);
+
+  // Sprint 3F §D: загрузка ролей пакетов (с учётом custom) из document_package_role_catalog
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select(`
+          public_id, role_key, label, description, is_system, is_active,
+          package_template_id, output_template, sort_order,
+          package:document_package_templates!document_package_role_catalog_package_template_id_fkey(name)
+        `)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      if (!mounted) return;
+      if (error) {
+        console.warn("[catalog] failed to load package roles", error);
+        return;
+      }
+      const mapped: PackageRoleCatalogRow[] = (data ?? []).map((r: any) => ({
+        public_id: r.public_id,
+        role_key: r.role_key,
+        label: r.label,
+        description: r.description,
+        is_system: !!r.is_system,
+        is_active: !!r.is_active,
+        package_template_id: r.package_template_id,
+        package_template_name: r.package?.name ?? "—",
+        output_template: r.output_template ?? null,
+        sort_order: r.sort_order ?? 0,
+      }));
+      setPackageRoleRows(mapped);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
