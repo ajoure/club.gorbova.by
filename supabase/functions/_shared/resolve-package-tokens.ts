@@ -1,52 +1,79 @@
 // ============================================================================
-// resolve-package-tokens.ts — Sprint 3B v2.1 SKELETON (isolated, NOT WIRED)
+// resolve-package-tokens.ts — Sprint 3C
 // ----------------------------------------------------------------------------
 // Резолвер пакетных alias-токенов (`package.roles.<role_key>.<field>`).
 //
-// СТАТУС: ИЗОЛИРОВАННЫЙ SKELETON. Не импортируется production-кодом.
-//        `canonical-document-generate-strict` НЕ изменён. Feature flag
-//        отсутствует в БД → жёстко выключен через HARDCODED_ENABLED=false.
-//        Routing-точка переносится в Sprint 3C.
+// СТАТУС:
+//   • Публичная функция `resolvePackageToken` — guarded by HARDCODED_ENABLED=false.
+//     Production-код её НЕ импортирует, canonical-document-generate-strict
+//     НЕ изменён. Routing-точка переносится в Sprint 3D.
+//   • `resolvePackageTokenCore` — pure-logic функция, доступная только для:
+//        - изолированной dry-run edge-функции `package-tokens-dry-run`
+//          (super_admin only, не пишет в snapshot/storage/generation);
+//        - Deno-тестов.
+//     Импорт `resolvePackageTokenCore` в production-пайплайн ЗАПРЕЩЁН.
 //
 // Контракты:
 //   - SOT alias'ов:        public.document_package_token_aliases
 //   - SOT персон:          public.legal_details_persons (по person_id)
 //   - SOT участников роли: public.document_package_session_participants
 //   - Field-ID first:      canonical_field_public_id → fields_registry.public_id
+//   - Source-path канонически:
+//       package_person     → читает person.full_name
+//       package_metadata   → читает participant.metadata.<source_path tail>
+//                            source_path для position ОБЯЗАН быть 'metadata.position'.
 //
-// Default-deny: любой неразрешённый случай возвращает { resolved:false, warning }.
-// Запрещено: fallback на legal_details_entity_person_links, чтение из legacy
-//            document_token_aliases, вызов billing/customer/executor резолверов.
+// Default-deny: любой неразрешённый случай возвращает { resolved:false, ... }.
+// Запрещено: fallback на legal_details_entity_person_links, чтение legacy
+// document_token_aliases, вызов billing/customer/executor резолверов.
 // ============================================================================
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { isCaseModifier, type CaseContext } from './case-format.ts';
 
-/** Жёсткий выключатель Sprint 3B v2.1. Включение — отдельный Sprint 3C. */
+/** Жёсткий выключатель: production-вызов всегда возвращает FEATURE_DISABLED. */
 export const HARDCODED_ENABLED = false;
 
 export interface PackageTokenResolveInput {
-  /** Полный токен вида `package.roles.<role>.<field>` или с модификатором `|case=genitive`. */
   rawToken: string;
-  /** uuid сессии пакета документов (document_package_sessions.id). */
   packageSessionId: string;
-  /** Supabase client с правами на чтение трёх SOT-таблиц (обычно service-role). */
   supabase: SupabaseClient;
-  /** Опциональный контекст для |case= (передаётся напрямую в case-format). */
   caseContext?: Omit<CaseContext, 'tokenKey'>;
 }
 
+export type PackageTokenResolveCode =
+  | 'feature_off'
+  | 'alias_missing'
+  | 'participant_missing'
+  | 'multiple_role_assignments'
+  | 'no_person'
+  | 'person_missing'
+  | 'empty_value'
+  | 'config_error';
+
 export type PackageTokenResolveResult =
-  | { resolved: true; value: string; aliasId: string; canonicalFieldPublicId: string }
-  | { resolved: false; warning: string; code: string };
+  | {
+      resolved: true;
+      value: string;
+      aliasId: string;
+      canonicalFieldPublicId: string;
+      roleKey: string;
+      contextKind: string;
+    }
+  | {
+      resolved: false;
+      code: PackageTokenResolveCode;
+      warning: string;
+      aliasId?: string;
+      roleKey?: string;
+    };
 
 const FEATURE_DISABLED = (): PackageTokenResolveResult => ({
   resolved: false,
-  warning: 'package_resolver_disabled',
   code: 'feature_off',
+  warning: 'package_resolver_disabled',
 });
 
-/** Парсит `alias|mod1=val1|mod2=val2` → { aliasToken, modifiers }. */
 function parseRawToken(raw: string): { aliasToken: string; caseMod?: string } {
   const parts = raw.split('|').map((s) => s.trim());
   const aliasToken = parts[0];
@@ -58,9 +85,9 @@ function parseRawToken(raw: string): { aliasToken: string; caseMod?: string } {
   return { aliasToken, caseMod };
 }
 
-/** Безопасный jsonpath-walker: `metadata.position` → obj.metadata?.position. */
 function readJsonPath(root: unknown, path: string): unknown {
   if (root == null || !path) return undefined;
+  // deno-lint-ignore no-explicit-any
   let cur: any = root;
   for (const seg of path.split('.')) {
     if (cur == null || typeof cur !== 'object') return undefined;
@@ -70,16 +97,12 @@ function readJsonPath(root: unknown, path: string): unknown {
 }
 
 /**
- * Resolve package alias token.
- *
- * Реализация — minimal viable skeleton. Полная интеграция (case-format,
- * routing в canonical-document-generate-strict) — Sprint 3C.
+ * Pure resolver core. Use ONLY in dry-run edge function or in tests.
+ * Не оборачивает feature-flag. Не пишет в БД. Не зовёт generation/snapshot.
  */
-export async function resolvePackageToken(
+export async function resolvePackageTokenCore(
   input: PackageTokenResolveInput,
 ): Promise<PackageTokenResolveResult> {
-  if (!HARDCODED_ENABLED) return FEATURE_DISABLED();
-
   const { aliasToken, caseMod } = parseRawToken(input.rawToken);
 
   // 1. Найти активный alias
@@ -91,30 +114,57 @@ export async function resolvePackageToken(
     .maybeSingle();
 
   if (aliasErr || !alias) {
-    return { resolved: false, warning: `alias_not_found:${aliasToken}`, code: 'alias_missing' };
+    return { resolved: false, code: 'alias_missing', warning: `alias_not_found:${aliasToken}` };
   }
 
-  // 2. Найти участника роли в сессии пакета
-  const { data: participant, error: partErr } = await input.supabase
+  // 2. Найти участника(ов) роли в сессии пакета.
+  //    Явно достаём массив, чтобы детектировать multiple_role_assignments.
+  const { data: participants, error: partErr } = await input.supabase
     .from('document_package_session_participants')
-    .select('person_id, metadata')
+    .select('person_id, metadata, entity_type')
     .eq('package_session_id', input.packageSessionId)
-    .eq('role_key', alias.role_key)
-    .maybeSingle();
+    .eq('role_key', alias.role_key);
 
-  if (partErr || !participant) {
+  if (partErr) {
     return {
       resolved: false,
-      warning: `participant_not_found:${alias.role_key}`,
       code: 'participant_missing',
+      warning: `participant_query_error:${alias.role_key}`,
+      aliasId: alias.id,
+      roleKey: alias.role_key,
     };
   }
+  if (!participants || participants.length === 0) {
+    return {
+      resolved: false,
+      code: 'participant_missing',
+      warning: `participant_not_found:${alias.role_key}`,
+      aliasId: alias.id,
+      roleKey: alias.role_key,
+    };
+  }
+  if (participants.length > 1) {
+    return {
+      resolved: false,
+      code: 'multiple_role_assignments',
+      warning: `multiple_role_assignments:${alias.role_key}:n=${participants.length}`,
+      aliasId: alias.id,
+      roleKey: alias.role_key,
+    };
+  }
+  const participant = participants[0];
 
   // 3. Достать значение по context_kind
   let rawValue: unknown;
   if (alias.context_kind === 'package_person') {
     if (!participant.person_id) {
-      return { resolved: false, warning: `person_id_null:${alias.role_key}`, code: 'no_person' };
+      return {
+        resolved: false,
+        code: 'no_person',
+        warning: `person_id_null:${alias.role_key}`,
+        aliasId: alias.id,
+        roleKey: alias.role_key,
+      };
     }
     const { data: person, error: personErr } = await input.supabase
       .from('legal_details_persons')
@@ -122,29 +172,52 @@ export async function resolvePackageToken(
       .eq('id', participant.person_id)
       .maybeSingle();
     if (personErr || !person) {
-      return { resolved: false, warning: `person_not_found`, code: 'person_missing' };
+      return {
+        resolved: false,
+        code: 'person_missing',
+        warning: 'person_not_found',
+        aliasId: alias.id,
+        roleKey: alias.role_key,
+      };
     }
-    rawValue = person.full_name;
+    rawValue = (person as { full_name?: string | null }).full_name;
   } else if (alias.context_kind === 'package_metadata') {
     if (!alias.source_path) {
-      return { resolved: false, warning: 'source_path_missing', code: 'config_error' };
+      return {
+        resolved: false,
+        code: 'config_error',
+        warning: 'source_path_missing',
+        aliasId: alias.id,
+        roleKey: alias.role_key,
+      };
     }
     rawValue = readJsonPath({ metadata: participant.metadata }, alias.source_path);
   } else {
-    return { resolved: false, warning: `unknown_context_kind`, code: 'config_error' };
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `unknown_context_kind:${alias.context_kind}`,
+      aliasId: alias.id,
+      roleKey: alias.role_key,
+    };
   }
 
   if (rawValue == null || rawValue === '') {
-    return { resolved: false, warning: `value_empty:${aliasToken}`, code: 'empty_value' };
+    return {
+      resolved: false,
+      code: 'empty_value',
+      warning: `value_empty:${aliasToken}`,
+      aliasId: alias.id,
+      roleKey: alias.role_key,
+    };
   }
 
-  let value = String(rawValue);
+  const value = String(rawValue);
 
-  // 4. |case= модификатор (placeholder — полная интеграция в Sprint 3C)
+  // |case= модификатор — placeholder. Полная интеграция inflectRu/inflectCompanyName
+  // через case-format.ts произойдёт при wiring в Sprint 3D.
   if (caseMod && isCaseModifier(caseMod)) {
-    // NOTE: пока возвращаем исходное значение; интеграция inflectRu/inflectCompanyName
-    // через case-format.ts произойдёт при wiring в canonical-document-generate-strict.
-    // Это безопасно: default behaviour = identity, как и в case-format при unsupported.
+    // identity для Sprint 3C; безопасно совпадает с case-format default-fallback.
   }
 
   return {
@@ -152,5 +225,18 @@ export async function resolvePackageToken(
     value,
     aliasId: alias.id,
     canonicalFieldPublicId: alias.canonical_field_public_id!,
+    roleKey: alias.role_key,
+    contextKind: alias.context_kind,
   };
+}
+
+/**
+ * Public, feature-flag-guarded entry point. Production-imports допустимы только
+ * через эту функцию; пока HARDCODED_ENABLED=false — всегда возвращает FEATURE_DISABLED.
+ */
+export async function resolvePackageToken(
+  input: PackageTokenResolveInput,
+): Promise<PackageTokenResolveResult> {
+  if (!HARDCODED_ENABLED) return FEATURE_DISABLED();
+  return resolvePackageTokenCore(input);
 }
