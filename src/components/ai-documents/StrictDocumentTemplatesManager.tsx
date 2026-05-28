@@ -1101,6 +1101,53 @@ export function StrictDocumentTemplatesManager({
                 </div>
               ) : null}
             </div>
+
+            {/* Sprint 3F Phase 2c: тип шаблона и выбор пакета. Радио показывается
+                только если категория не пред-зафиксирована (categoryFilter), —
+                иначе скрываем, чтобы не сбивать вложенные сценарии. */}
+            {!categoryFilter && (
+              <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+                <Label className="text-xs">Тип шаблона</Label>
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="upload-scope"
+                      checked={uploadScope === "billing"}
+                      onChange={() => setUploadScope("billing")}
+                    />
+                    <span>Биллинговый документ</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="upload-scope"
+                      checked={uploadScope === "package"}
+                      onChange={() => setUploadScope("package")}
+                    />
+                    <span>Пакет документов</span>
+                  </label>
+                </div>
+                {uploadScope === "package" && (
+                  <div className="pt-1">
+                    <Label className="text-xs">Пакет документов</Label>
+                    <select
+                      className="mt-1 w-full border rounded-md h-9 px-2 text-sm bg-background"
+                      value={uploadPackageId}
+                      onChange={(e) => setUploadPackageId(e.target.value)}
+                    >
+                      <option value="">— выберите пакет —</option>
+                      {uploadPackages.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Шаблон будет привязан к пакету и сразу появится в его составе.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <Label>Файл .docx</Label>
               <Input
