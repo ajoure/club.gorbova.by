@@ -13,6 +13,7 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
 import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
+import { PackageAdminPanel } from "@/components/ai-documents/packages/PackageAdminPanel";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,7 @@ import {
   Loader2,
   Paperclip,
   Tag,
+  Shield,
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
@@ -60,7 +62,7 @@ const LazyExecutorsContent = lazy(() =>
 type Section = "ai" | "documents" | "doc-packages" | "requisites";
 // Sprint 11 C1: legacy ids ("generate", "canonical-acts", "aliases") оставлены в типе,
 // чтобы старые ссылки не падали; рендер их игнорирует — guard сбросит на DEFAULT_SUB.
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders" | "pkg-ideology";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders" | "pkg-ideology" | "pkg-admin";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
@@ -153,6 +155,16 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-emerald-500/20 to-teal-500/15",
     borderColor: "border-emerald-400/20",
     iconColor: "text-emerald-500",
+  },
+  {
+    id: "pkg-admin",
+    label: "Админ. пакеты",
+    icon: Shield as any,
+    gradient: "from-emerald-500/10 to-teal-500/8",
+    activeGradient: "from-emerald-500/20 to-teal-500/15",
+    borderColor: "border-emerald-400/20",
+    iconColor: "text-emerald-600",
+    adminOnly: true,
   },
   {
     id: "history",
@@ -895,6 +907,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       {activeSubTab === "pkg-ideology" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <DocumentPackageIdeologyView />
+        </div>
+      )}
+
+      {/* Document packages → Admin (Sprint 3F Phase 2b): роли + привязка шаблонов + валидация */}
+      {activeSubTab === "pkg-admin" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <PackageAdminPanel />
         </div>
       )}
 
