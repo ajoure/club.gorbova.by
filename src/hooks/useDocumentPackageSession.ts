@@ -232,16 +232,21 @@ export function useDocumentPackageSession(packageCode: string) {
 
       const rows = input.personAssignments
         .filter((a) => a.person_id && a.role_key)
-        .map((a) => ({
-          package_session_id: currentSessionId!,
-          role_key: a.role_key,
-          role_catalog_id: a.role_catalog_id,
-          entity_type: "person",
-          person_id: a.person_id,
-          legal_entity_id: null,
-          created_by: user.id,
-          updated_by: user.id,
-        }));
+        .map((a) => {
+          const pos = typeof a.position === "string" ? a.position.trim() : "";
+          const meta: Record<string, unknown> = pos.length > 0 ? { position: pos } : {};
+          return {
+            package_session_id: currentSessionId!,
+            role_key: a.role_key,
+            role_catalog_id: a.role_catalog_id,
+            entity_type: "person",
+            person_id: a.person_id,
+            legal_entity_id: null,
+            metadata: meta,
+            created_by: user.id,
+            updated_by: user.id,
+          };
+        });
 
       if (rows.length > 0) {
         const { error: insPartErr } = await supabase
