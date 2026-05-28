@@ -377,7 +377,45 @@ export function PlaceholdersCatalogTab() {
       .filter((s) => s.rows.length > 0);
   }, [filtered]);
 
-  const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
+  // Sprint 3D — пакетные группы (UL/IP/FL), статический каталог.
+  // Фильтруются тем же search/groupFilter; не зависят от typeFilter/onlyRequired.
+  const packageSections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const groups: Array<{
+      id: PackageGroupId;
+      label: string;
+      hint: string;
+      source_summary: string;
+      items: PackagePlaceholderItem[];
+    }> = [];
+    for (const meta of PACKAGE_GROUP_META) {
+      if (groupFilter !== "all" && groupFilter !== meta.id) continue;
+      const items = PACKAGE_PLACEHOLDER_CATALOG
+        .filter((i) => i.groupId === meta.id)
+        .filter((i) => {
+          if (!q) return true;
+          return (
+            i.label_ru.toLowerCase().includes(q) ||
+            i.tech_key.toLowerCase().includes(q) ||
+            (i.reused_fld ?? "").toLowerCase().includes(q) ||
+            (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
+            meta.label_ru.toLowerCase().includes(q)
+          );
+        });
+      if (items.length === 0) continue;
+      groups.push({
+        id: meta.id,
+        label: meta.label_ru,
+        hint: meta.hint,
+        source_summary: meta.source_summary,
+        items,
+      });
+    }
+    return groups;
+  }, [search, groupFilter]);
+
+  const packageItemsCount = packageSections.reduce((a, s) => a + s.items.length, 0);
+
     setRowSettings(prev => {
       const next = new Map(prev);
       const current = next.get(id) ?? { format: null, caseModifier: null };
