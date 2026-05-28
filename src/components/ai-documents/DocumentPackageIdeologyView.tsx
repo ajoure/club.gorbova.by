@@ -166,10 +166,13 @@ export function DocumentPackageIdeologyView() {
       .filter(([, role]) => !!role)
       .map(([person_id, role_key]) => {
         const def = pkg.roleCatalog.find((r) => r.role_key === role_key);
+        const needsPos = ROLES_WITH_POSITION.has(role_key!);
+        const pos = needsPos ? (personPositions[person_id] ?? "").trim() : "";
         return {
           person_id,
           role_key: role_key!,
           role_catalog_id: def?.id ?? null,
+          position: pos.length > 0 ? pos : null,
         };
       });
     try {
