@@ -1,79 +1,68 @@
 ---
 name: Package Token Aliases v1
-description: SOT package-context плейсхолдеров поверх существующей базы реквизитов; namespace {{package.ul|ip|fl.FLD-XXXXXX}}; resolver через session/session_participants; HARDCODED_ENABLED=false; никаких записей в fields_registry без manifest. Sprint 3E: jsonb-path для адресов + bank_* в legal_details_persons.
+description: Sprint 3F canonical role-token model — package-aware namespace (`{{package.ul|ip|fl.FLD-XXXXXX}}` + `{{package.role.PKR-XXXXXX}}`); legacy `package.roles.<role_key>.<attr>` deprecated; per-package custom roles via `document_package_role_catalog`; validator scope rules; FLD-000209 = «Сегодня прописью»
 type: feature
 ---
 
-# Package Token Aliases v1 (Sprint 3D approved, Sprint 3E extended)
+# Package Token Aliases — canonical model (Sprint 3F)
 
-Архитектура: **одна база реквизитов + два разных контекста выбора + отдельный package resolver.**
+## 1. Canonical syntax
 
-```
-Billing source path:  orders_v2 / customer / executor
-Package source path:  document_package_sessions / document_package_session_participants
-```
+| Назначение | Token | Источник |
+|---|---|---|
+| Реквизиты ЮЛ пакета | `{{package.ul.FLD-XXXXXX}}` | `client_legal_details` (через `document_package_sessions.selected_legal_entity_id`) |
+| Реквизиты ИП пакета | `{{package.ip.FLD-XXXXXX}}` | `client_legal_details` (ent_*) |
+| Реквизиты ФЛ пакета | `{{package.fl.FLD-XXXXXX}}` | `legal_details_persons` (через `document_package_session_participants.role_key`) |
+| Роль пакета (физлицо + должность) | **`{{package.role.PKR-XXXXXX}}`** | `document_package_role_catalog.public_id` → `document_package_session_participants` → `legal_details_persons` + `metadata.position` |
 
-## Copy-token syntax (Variant B, утверждено Sprint 3D §5)
+Один токен на роль. Никаких `.full_name / .short_name / .position` — формат вывода управляется полем `output_template` роли (NULL → дефолт `«{{position}}, {{full_name}}»`).
 
-- `{{package.ul.FLD-XXXXXX}}` — реквизиты ЮЛ пакета.
-- `{{package.ip.FLD-XXXXXX}}` — реквизиты ИП пакета.
-- `{{package.fl.FLD-XXXXXX}}` — реквизиты физлица пакета (по выбранной роли).
+## 2. Custom roles per package
 
-Биллинговый `{{field:FLD-XXXXXX}}` в пакетных шаблонах **НЕ copy-ready** — он резолвится через billing context (заказчик заказа), не через package_session.
+`document_package_role_catalog` (per-package: FK `package_template_id`):
+- `public_id` — `PKR-XXXXXX`, авто-назначается триггером `assign_package_role_public_id`, стабильный (не меняется при переименовании роли);
+- `is_system` — `true` для системных (11 ролей пакета «Идеология» из Sprint 3B), `false` для custom;
+- `output_template` — шаблон вывода роли, поддерживает `{{full_name}} / {{short_name}} / {{position}}`.
 
-## Sprint-3B alias'ы
+Custom-роль создаётся админом → автоматически получает PKR-код → сразу появляется в dropdown анкеты и в UI каталога плейсхолдеров (группа «Пакет: Роли»). Переименование role label не ломает Word-шаблоны.
 
-`package.roles.company_head.FLD-XXX`, `package.roles.responsible_person.FLD-XXX` (поверх FLD-000372/373) — реюзаются под тот же namespace; роль определяет выборку физлица из `session_participants`, не отдельную группу плейсхолдеров.
+## 3. Legacy / deprecated
 
-## Sprint 3E: jsonb-path source для адресов
+Sprint 3B alias-токены `{{package.roles.<role_key>.<attr>}}` остаются в `document_package_token_aliases` как **read-only deprecated** (для совместимости со старыми шаблонами). Validator принимает их как valid syntax, но эмитит warning `deprecated_package_roles_syntax` с подсказкой мигрировать на `{{package.role.PKR-XXXXXX}}`. `package.roles.company_head.*` отдельно помечается deprecated: «дублирует Пакет: ЮЛ → Руководитель *» — для руководителя ЮЛ/ИП используются package-requisite FLD, не package-role.
 
-Плоских колонок `*_address_street/house/...country` в `client_legal_details` **нет** — данные хранятся только в JSONB `leg_address_structured` / `ent_address_structured` (для ФЛ — `legal_details_persons.address_structured`). Resolver-path:
+## 4. Validator scope rules
 
-```
-client_legal_details.leg_address_structured->>'street'   → {{package.ul.FLD-000035}}
-client_legal_details.ent_address_structured->>'street'   → {{package.ip.FLD-000043}}
-legal_details_persons.address_structured->>'street'      → {{package.fl.FLD-000032}}
-```
+Точка валидации upload: `canonical-template-apply-markup` (server) + `StrictDocumentTemplatesManager.strictValidate` (client mirror).
 
-Канонические JSON-ключи (соответствуют StructuredAddress): `street, house, building, apartment, city, city_district, region, district, postal_code, country`. FLD-определения переиспользуются из биллинговой базы FLD-000028..050 (label/type общие); package source path — jsonb.
+- `{{field:FLD-XXXXXX}}` — valid в любом scope; системные (FLD-000209 «Сегодня прописью», FLD-000211 «Текущий год»), документные (FLD-000069 «Номер документа»), общие — разрешены в package-template **без warning**.
+- `{{package.ul|ip|fl.FLD-XXXXXX}}` — valid syntax всегда; scope (package vs billing template) проверяется controlled-validation панелью / runtime резолвером, **не** на upload.
+- `{{package.role.PKR-XXXXXX}}` — valid syntax всегда; существование PKR — controlled validation; роль должна принадлежать тому же `package_template_id`, что и привязка шаблона.
+- `{{package.roles.<role_key>.<attr>}}` — valid + warning `deprecated_package_roles_syntax`.
+- `{{document.*}} / {{customer.*}} / {{executor.*}} / {{deal.*}} / {{cf.*}}` — по-прежнему error `legacy_placeholder_format_detected`.
 
-## Sprint 3E: bank_* в legal_details_persons
+В **package-template** биллинговый `{{field:FLD-XXXXXX}}` из групп «Заказчик ЮЛ/ИП/ФЛ» или «Исполнитель ЮЛ» планируется как warning `billing_token_in_package_template_warning` (controlled validation, фаза следующая).
 
-Миграция `2026_05_28` добавила в `legal_details_persons` nullable колонки `bank_account, bank_name, bank_code`. Package-токены ФЛ переиспользуют биллинговые FLD-000004/5/6:
+## 5. Template scope SOT
 
-```
-legal_details_persons.bank_account → {{package.fl.FLD-000004}}
-legal_details_persons.bank_name    → {{package.fl.FLD-000005}}
-legal_details_persons.bank_code    → {{package.fl.FLD-000006}}
-```
+`document_package_template_items` — source of truth: если строка `template_id` есть → шаблон package-scoped. `document_templates.template_scope` существует и используется как denormalized hint, обновляется явно при link/unlink (без триггера).
 
-UI ввода — `PersonFieldsForm` (карточка «Банковские реквизиты»). Никаких отдельных таблиц/FLD не создавалось.
+## 6. FLD-000209 ≠ номер документа
 
-## Resolver contract (read-only описание, не реализовано)
+FLD-000209 = «Сегодня прописью» (системный токен текущей даты прописью). Номер документа = FLD-000069 (`document.number`). Текущий год = FLD-000211 (`system.year`). Документация и тесты обновлены, в плановых артефактах не путать.
 
-- UL/IP → `client_legal_details WHERE id = session.selected_legal_entity_id`.
-- FL → `legal_details_persons WHERE id = (SELECT person_id FROM document_package_session_participants WHERE session_id=? AND role_key=?)`.
-- `metadata.position` → `session_participants.metadata->>'position'` по той же выборке.
+## 7. Что НЕ делается
 
-## Жёсткие ограничения
+- Не создаются новые package-role токены типа `company_head.*`, `document_signer.*`, `document_preparer.*`, `control_person.*`, `ideology_responsible.*` как отдельные namespace. Всё это — строки в `document_package_role_catalog` с собственным PKR.
+- Не создаются новые FLD без manifest-proof.
+- `canonical-document-generate-strict` / Gotenberg / `ai_generated_documents` / billing-резолвер — не трогаются.
+- HARDCODED_ENABLED в `resolve-package-tokens.ts` остаётся `false` — реальная генерация по package-токенам deferred.
 
-- `_shared/resolve-package-tokens.ts` — `HARDCODED_ENABLED=false`, 0 production-импортов.
-- `canonical-document-generate-strict`, Gotenberg, `ai_generated_documents`, billing/customer/executor resolver — не трогаются.
-- Никаких новых FLD без manifest-proof; пробелы → backlog (`pending_field` / `missing_source_column` / `deferred`).
-- В UI только русские группы «Пакет: ЮЛ / ИП / ФЛ»; «Пакет: Исполнитель ЮЛ» не существует.
-- Биллинговые FLD-000004..050 и FLD-000273..346 НЕ изменяются.
+## 8. Файлы
 
-## Pending / deferred (Sprint 3E backlog)
-
-- UL/IP «Адрес: район / район города» — есть jsonb-source, нет FLD в `fields_registry` для `leg_address_district / leg_address_city_district / ent_address_district / ent_address_city_district`. Биллинг тоже без них.
-- FL «Адрес: полный / корпус / район города / страна» — есть jsonb-source, нет FLD `ind_address_full / ind_address_building / ind_address_city_district / ind_address_country`.
-
-Все они создаются только после manifest-proof, не в этом спринте.
-
-## SOT каталога
-
-`src/utils/packagePlaceholderCatalog.ts` (frontend static) + `mem://architecture/documents/package-token-aliases-v1` (этот файл).
-
-## Pre-flight RLS
-
-`document_package_template_items`: политики «Owner can ... own package items» + admin/super_admin покрывают INSERT/UPDATE/DELETE для авторизованного владельца пакета. Direct INSERT из frontend безопасен — отдельный RPC не требуется.
+- `src/utils/packagePlaceholderCatalog.ts` — frontend SOT каталога UL/IP/FL + `buildPackageRoleItems`.
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` — UI каталога с четырьмя группами.
+- `supabase/functions/canonical-template-apply-markup/index.ts` — upload validator (server).
+- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx` — client validator mirror.
+- `supabase/functions/_shared/resolve-package-tokens.ts` — package resolver (HARDCODED_ENABLED=false).
+- `document_package_role_catalog` — SOT ролей пакета (с `public_id`, `is_system`, `output_template`).
+- `document_package_token_aliases` — Sprint 3B legacy aliases (read-only deprecated).

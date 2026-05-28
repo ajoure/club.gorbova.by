@@ -45,9 +45,11 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import {
   PACKAGE_GROUP_META,
   PACKAGE_PLACEHOLDER_CATALOG,
+  buildPackageRoleItems,
   type PackageGroupId,
   type PackagePlaceholderItem,
   type PackagePlaceholderStatus,
+  type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
 import { useRbac } from "@/hooks/useRbac";
 
@@ -277,6 +279,42 @@ export function PlaceholdersCatalogTab() {
   const [onlyRequired, setOnlyRequired] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
+  const [packageRoleRows, setPackageRoleRows] = useState<PackageRoleCatalogRow[]>([]);
+
+  // Sprint 3F §D: загрузка ролей пакетов (с учётом custom) из document_package_role_catalog
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select(`
+          public_id, role_key, label, description, is_system, is_active,
+          package_template_id, output_template, sort_order,
+          package:document_package_templates!document_package_role_catalog_package_template_id_fkey(name)
+        `)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      if (!mounted) return;
+      if (error) {
+        console.warn("[catalog] failed to load package roles", error);
+        return;
+      }
+      const mapped: PackageRoleCatalogRow[] = (data ?? []).map((r: any) => ({
+        public_id: r.public_id,
+        role_key: r.role_key,
+        label: r.label,
+        description: r.description,
+        is_system: !!r.is_system,
+        is_active: !!r.is_active,
+        package_template_id: r.package_template_id,
+        package_template_name: r.package?.name ?? "—",
+        output_template: r.output_template ?? null,
+        sort_order: r.sort_order ?? 0,
+      }));
+      setPackageRoleRows(mapped);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -390,18 +428,22 @@ export function PlaceholdersCatalogTab() {
     }> = [];
     for (const meta of PACKAGE_GROUP_META) {
       if (groupFilter !== "all" && groupFilter !== meta.id) continue;
-      const items = PACKAGE_PLACEHOLDER_CATALOG
-        .filter((i) => i.groupId === meta.id)
-        .filter((i) => {
-          if (!q) return true;
-          return (
-            i.label_ru.toLowerCase().includes(q) ||
-            i.tech_key.toLowerCase().includes(q) ||
-            (i.reused_fld ?? "").toLowerCase().includes(q) ||
-            (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
-            meta.label_ru.toLowerCase().includes(q)
-          );
-        });
+      // Sprint 3F: «Пакет: Роли» строится из БД (включая custom-роли).
+      const baseItems: PackagePlaceholderItem[] =
+        meta.id === "package_roles"
+          ? buildPackageRoleItems(packageRoleRows)
+          : PACKAGE_PLACEHOLDER_CATALOG.filter((i) => i.groupId === meta.id);
+      const items = baseItems.filter((i) => {
+        if (!q) return true;
+        return (
+          i.label_ru.toLowerCase().includes(q) ||
+          i.tech_key.toLowerCase().includes(q) ||
+          (i.reused_fld ?? "").toLowerCase().includes(q) ||
+          (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
+          (i.package_token ?? "").toLowerCase().includes(q) ||
+          meta.label_ru.toLowerCase().includes(q)
+        );
+      });
       if (items.length === 0) continue;
       groups.push({
         id: meta.id,
@@ -412,7 +454,7 @@ export function PlaceholdersCatalogTab() {
       });
     }
     return groups;
-  }, [search, groupFilter]);
+  }, [search, groupFilter, packageRoleRows]);
 
   const packageItemsCount = packageSections.reduce((a, s) => a + s.items.length, 0);
 

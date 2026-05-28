@@ -547,6 +547,7 @@ Deno.serve(async (req) => {
     // --- re-extract tokens & validate strict
     const parsed = extractDocxTokensWithLocations(outBytes);
     const validationErrors: any[] = [];
+    const validationWarningsEarly: any[] = [];
     const recognizedTokens: Array<{
       placeholder: string;
       field_public_id: string;
@@ -554,8 +555,44 @@ Deno.serve(async (req) => {
       case_modifier: string | null;
     }> = [];
     const allFldInDoc: string[] = [];
+
+    // Sprint 3F §B.2: package-aware syntax (whitelist on upload).
+    // {{package.ul|ip|fl.FLD-XXXXXX}} — package requisites (Пакет: ЮЛ/ИП/ФЛ)
+    // {{package.role.PKR-XXXXXX}}     — package roles (Пакет: Роли)
+    // Эти токены — валидный синтаксис платформы; scope (package vs billing template)
+    // и существование PKR/FLD проверяются позже резолвером / controlled validation.
+    // Здесь они НЕ должны падать как legacy_placeholder_format_detected.
+    const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
+    const RX_PACKAGE_ROLE = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
+    const RX_PACKAGE_ROLES_LEGACY = /^package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?$/;
+
+    const packageTokens: Array<{ placeholder: string; kind: 'requisite' | 'role' | 'role_legacy' }>
+      = [];
+
     for (const tk of parsed.tokens) {
       const inside = tk.trim();
+
+      // 3F: package-aware — recognized syntax, не падает как legacy
+      if (RX_PACKAGE_REQ.test(inside)) {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'requisite' });
+        continue;
+      }
+      if (RX_PACKAGE_ROLE.test(inside)) {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role' });
+        continue;
+      }
+      if (RX_PACKAGE_ROLES_LEGACY.test(inside)) {
+        // Sprint 3B alias-формат — принимаем как valid, но помечаем warning
+        // (рекомендуем мигрировать на {{package.role.PKR-XXXXXX}}).
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role_legacy' });
+        validationWarningsEarly.push({
+          code: 'deprecated_package_roles_syntax',
+          placeholder: `{{${inside}}}`,
+          message: 'Устаревший формат {{package.roles.<role_key>.*}}. Используйте {{package.role.PKR-XXXXXX}} — стабильный публичный ID роли пакета.',
+        });
+        continue;
+      }
+
       // Legacy формат: document.*, executor.*, customer.*, deal.*, cf.*
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         validationErrors.push({
@@ -570,7 +607,7 @@ Deno.serve(async (req) => {
         validationErrors.push({
           code: 'legacy_placeholder_format_detected',
           placeholder: `{{${inside}}}`,
-          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}}.`,
+          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} или package-aware ({{package.ul|ip|fl.FLD-XXXXXX}}, {{package.role.PKR-XXXXXX}}).`,
         });
         continue;
       }
@@ -677,6 +714,10 @@ Deno.serve(async (req) => {
         message: 'В шаблоне не найдено ни одного плейсхолдера.',
       });
     }
+    // Sprint 3F: merge early package-aware warnings (deprecated syntax, etc.)
+    if (validationWarningsEarly.length > 0) {
+      validationWarnings.push(...validationWarningsEarly);
+    }
     const validationStatus = validationErrors.length === 0 ? 'valid' : 'invalid';
 
     // --- token_manifest: field_public_id + format + case_modifier + label + data_type
@@ -695,6 +736,20 @@ Deno.serve(async (req) => {
         label: meta?.label ?? null,
         data_type: meta?.data_type ?? null,
         required: meta?.required ?? false,
+      });
+    }
+    // Sprint 3F: добавить package-aware токены в manifest (без field_public_id).
+    for (const pt of packageTokens) {
+      manifestMap.set(`pkg|${pt.placeholder}`, {
+        field_public_id: null,
+        placeholder: pt.placeholder,
+        is_package_token: true,
+        package_token_kind: pt.kind, // 'requisite' | 'role' | 'role_legacy'
+        format: null,
+        case_modifier: null,
+        label: null,
+        data_type: null,
+        required: false,
       });
     }
     const tokenManifest = Array.from(manifestMap.values());

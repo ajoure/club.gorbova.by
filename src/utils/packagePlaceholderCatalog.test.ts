@@ -3,17 +3,20 @@ import {
   PACKAGE_PLACEHOLDER_CATALOG,
   PACKAGE_GROUP_META,
   getPackagePlaceholdersByGroup,
+  buildPackageRoleItems,
+  type PackageRoleCatalogRow,
 } from "./packagePlaceholderCatalog";
 
-describe("packagePlaceholderCatalog — Sprint 3D", () => {
-  it("содержит ровно три группы: Пакет ЮЛ / ИП / ФЛ; нет «Пакет: Исполнитель ЮЛ»", () => {
+describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
+  it("содержит четыре группы: Пакет ЮЛ / ИП / ФЛ / Роли", () => {
     expect(PACKAGE_GROUP_META.map((g) => g.id).sort()).toEqual(
-      ["package_fl", "package_ip", "package_ul"].sort(),
+      ["package_fl", "package_ip", "package_roles", "package_ul"].sort(),
     );
     const labels = PACKAGE_GROUP_META.map((g) => g.label_ru);
     expect(labels).toContain("Пакет: ЮЛ");
     expect(labels).toContain("Пакет: ИП");
     expect(labels).toContain("Пакет: ФЛ");
+    expect(labels).toContain("Пакет: Роли");
     expect(labels).not.toContain("Пакет: Исполнитель ЮЛ");
   });
 
@@ -113,5 +116,57 @@ describe("packagePlaceholderCatalog — Sprint 3D", () => {
       expect(i.source_table).toBe("legal_details_persons");
       expect(i.source_path).toMatch(/^legal_details_persons\.bank_/);
     }
+  });
+
+  // Sprint 3F §D/E: buildPackageRoleItems — PKR-XXXXXX токены
+  it("buildPackageRoleItems генерирует ровно один {{package.role.PKR-XXXXXX}} токен на роль", () => {
+    const rows: PackageRoleCatalogRow[] = [
+      {
+        public_id: "PKR-000003",
+        role_key: "ideology_responsible",
+        label: "Ответственный за идеологическую работу",
+        description: null,
+        is_system: true,
+        is_active: true,
+        package_template_id: "pkg-1",
+        package_template_name: "Идеология",
+        output_template: null,
+        sort_order: 3,
+      },
+      {
+        public_id: "PKR-000099",
+        role_key: "custom_role_x",
+        label: "Кастомная роль X",
+        description: null,
+        is_system: false,
+        is_active: true,
+        package_template_id: "pkg-1",
+        package_template_name: "Идеология",
+        output_template: "{{full_name}} ({{position}})",
+        sort_order: 99,
+      },
+    ];
+    const items = buildPackageRoleItems(rows);
+    expect(items.length).toBe(2);
+    expect(items[0].package_token).toBe("{{package.role.PKR-000003}}");
+    expect(items[1].package_token).toBe("{{package.role.PKR-000099}}");
+    expect(items[0].groupId).toBe("package_roles");
+    expect(items[0].status).toBe("copy_ready");
+    // Никакого full_name/short_name/position в токене
+    for (const i of items) {
+      expect(i.package_token).not.toMatch(/\.(full_name|short_name|position)/);
+    }
+  });
+
+  it("buildPackageRoleItems отфильтровывает is_active=false", () => {
+    const rows: PackageRoleCatalogRow[] = [
+      {
+        public_id: "PKR-000001", role_key: "x", label: "X",
+        description: null, is_system: true, is_active: false,
+        package_template_id: "p", package_template_name: "P",
+        output_template: null, sort_order: 1,
+      },
+    ];
+    expect(buildPackageRoleItems(rows)).toEqual([]);
   });
 });

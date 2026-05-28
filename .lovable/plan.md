@@ -1,263 +1,544 @@
-# да, согласен, с учетом правок:
 
-## **Решения по открытым вопросам**
 
-1. **Адреса ЮЛ/ИП/ФЛ — использовать** `address_structured`**, не создавать плоские колонки.**
+да, согласен, с учетом правок:
 
-Подтверждаю вариант:
+## **1. Исправить модель role-токенов**
+
+В плане нельзя использовать формат:
 
 ```text
-leg_address_structured->>'street'
-ent_address_structured->>'street'
-legal_details_persons.address_structured->>'street'
+{{package.roles.<role_key>.full_name}}
+{{package.roles.<role_key>.short_name}}
+{{package.roles.<role_key>.position}}
 ```
 
-Плоские колонки типа `leg_address_street`, `ent_address_house` и т.п. **не создавать**, чтобы не получить два источника правды.
+Нам не нужны отдельные токены `full_name`, `short_name`, `position`.
 
-2. **SOT для “Пакет: ФЛ” —** `legal_details_persons`**.**
-
-Подтверждаю:
+Канонический формат role-placeholder должен быть один:
 
 ```text
-document_package_session_participants.person_id
+{{package.role.PKR-000001}}
+```
+
+Где `PKR-000001` — стабильный `public_id` роли из `document_package_role_catalog`.
+
+## **2. Роль = package-scoped entity**
+
+Каждая роль создаётся внутри конкретного пакета документов.
+
+Пример:
+
+```text
+Пакет: Идеология
+Роль: Ответственный за идеологическую работу
+public_id: PKR-000001
+placeholder: {{package.role.PKR-000001}}
+```
+
+Такая же по названию роль в другом пакете должна получить другой `public_id`.
+
+Пример:
+
+```text
+Пакет: Ответ по балансу
+Роль: Ответственный за подготовку ответа
+public_id: PKR-000025
+placeholder: {{package.role.PKR-000025}}
+```
+
+Нельзя делать глобальную роль по названию, которая потом будет сквозить через все пакеты.
+
+## **3. Не использовать role_key как публичный token-id**
+
+`role_key` можно оставить как внутреннее техническое поле для совместимости, но он не должен использоваться в Word-шаблонах.
+
+Запрещённый формат:
+
+```text
+{{package.roles.ideology_responsible.full_name}}
+{{package.roles.responsible_person.position}}
+```
+
+Правильный формат:
+
+```text
+{{package.role.PKR-000001}}
+```
+
+## **4. Добавить public_id для ролей пакета**
+
+Если в `document_package_role_catalog` ещё нет стабильного публичного ID, добавить:
+
+```text
+public_id text NOT NULL UNIQUE
+```
+
+Формат:
+
+```text
+PKR-000001
+PKR-000002
+PKR-000003
+```
+
+Существующим 11 ролям пакета «Идеология» присвоить `public_id`.
+
+## **5. Группа плейсхолдеров «Пакет: Роли»**
+
+В UI `/admin/documents → Плейсхолдеры` должна быть группа:
+
+```text
+Пакет: Роли
+```
+
+Внутри — подгруппы по пакетам:
+
+```text
+Пакет: Роли → Идеология
+Пакет: Роли → Ответ по балансу
+```
+
+Внутри каждой подгруппы показываются роли конкретного пакета.
+
+Пример:
+
+```text
+Пакет: Роли → Идеология
+
+Ответственный за идеологическую работу
+{{package.role.PKR-000001}}
+
+Составитель документов
+{{package.role.PKR-000002}}
+
+Ознакомленное лицо
+{{package.role.PKR-000003}}
+```
+
+Технический ID можно показывать только в debug-колонке для super_admin.
+
+
+
+## **6. Что подставляет**
+
+`{{package.role.PKR-000001}}`
+
+Этот плейсхолдер должен возвращать готовое значение роли, сформированное из:
+
+```text
+document_package_role_catalog.public_id
+→ document_package_session_participants.role_catalog_id
 → legal_details_persons
+→ metadata.position
 ```
 
-Не использовать `client_legal_details.ind_*` для пакетных физлиц, потому что это физлицо-плательщик/клиент, а в пакетах физлица — это отдельные участники, руководители, ответственные и т.д.
+То есть система берёт физлицо, назначенное на эту роль в конкретной package session, и подставляет его данные.
 
-3. `bank_*` **для** `legal_details_persons` **— добавить nullable колонки.**
+Формат вывода роли должен храниться в настройках роли или package role metadata.
 
-Подтверждаю миграцию:
-
-```sql
-ALTER TABLE public.legal_details_persons
-  ADD COLUMN IF NOT EXISTS bank_account text,
-  ADD COLUMN IF NOT EXISTS bank_name text,
-  ADD COLUMN IF NOT EXISTS bank_code text;
-```
-
-Без backfill. Без новых таблиц. Без изменения RLS, если текущие policies уже покрывают таблицу.
-
----
-
-## **Обязательные уточнения перед execution**
-
-Добавь в план:
-
-```md
-1. Для адресов ЮЛ/ИП/ФЛ использовать только structured JSONB source:
-   - `client_legal_details.leg_address_structured`;
-   - `client_legal_details.ent_address_structured`;
-   - `legal_details_persons.address_structured`.
-
-   Плоские address-колонки не создавать.
-
-2. Для `Пакет: ФЛ` source of truth = `legal_details_persons`.
-   `client_legal_details.ind_*` не использовать для пакетных физлиц.
-
-3. Добавить в `legal_details_persons` только недостающие банковские поля:
-   - `bank_account`;
-   - `bank_name`;
-   - `bank_code`.
-
-4. После миграции UI физлица должен позволять заполнять:
-   - ФИО;
-   - паспортные данные;
-   - личный номер;
-   - структурированный адрес;
-   - банк;
-   - расчётный счёт / IBAN;
-   - БИК / код банка;
-   - телефон;
-   - email.
-
-5. Проверить, что форма физлица пишет именно в `legal_details_persons`, а не в `client_legal_details.ind_*`.
-
-6. Проверить, что форма ЮЛ/ИП пишет адрес в `leg_address_structured` / `ent_address_structured`, и эти же поля читаются пакетными плейсхолдерами.
-
-7. Не запускать генерацию и не трогать `canonical-document-generate-strict`.
-```
-
-## **Финальный approve**
-
-Можно выполнять Sprint 3E по плану:
+Например:
 
 ```text
-jsonb-path для адресов;
-legal_details_persons как SOT для ФЛ;
-bank_* добавить в legal_details_persons;
-без генерации;
-без новых таблиц реквизитов;
-без изменения биллинговых FLD.
-
-План: Sprint 3E — выравнивание пакетных реквизитов UL / IP / FL
+position + full_name
 ```
+
+или другой утверждённый формат.
+
+Но в Word-шаблоне должен быть один placeholder:
+
+```text
+{{package.role.PKR-000001}}
+```
+
+А не отдельные:
+
+```text
+full_name
+short_name
+position
+```
+
+## **7. Custom roles**
+
+В настройках пакета должна быть возможность добавить роль вручную:
+
+```text
+Название роли: Ответственный за идеологическую работу
+```
+
+После сохранения система:
+
+1. создаёт запись в `document_package_role_catalog`;
+2. присваивает `public_id`;
+3. показывает эту роль в dropdown анкеты пакета;
+4. показывает её в каталоге плейсхолдеров;
+5. создаёт копируемый placeholder:
+
+```text
+{{package.role.PKR-000001}}
+```
+
+## **8. Переименование роли не должно ломать шаблоны**
+
+Если роль переименовали:
+
+```text
+Ответственный за идеологическую работу
+```
+
+в:
+
+```text
+Специалист по идеологической работе
+```
+
+Word-шаблон не меняется, потому что в нём остаётся:
+
+```text
+{{package.role.PKR-000001}}
+```
+
+## **9. Validator**
+
+Validator должен принимать:
+
+```text
+{{package.role.PKR-000001}}
+```
+
+Проверки:
+
+- `PKR-000001` существует в `document_package_role_catalog`;
+- роль относится к тому пакету, к которому привязан шаблон;
+- роль активна;
+- в текущей анкете пакета есть физлицо, назначенное на эту роль;
+- если физлицо не назначено — validation warning/error с понятным текстом.
+
+## **10. Оставить системные и document-плейсхолдеры**
+
+В package-template разрешены:
+
+```text
+{{field:FLD-000069}}  // номер документа
+{{field:FLD-000209}}  // сегодня прописью
+{{field:FLD-000211}}  // текущий год
+```
+
+Системные, документные и общие поля можно использовать в пакетных документах.
+
+Запрет касается только использования биллинговых реквизитов заказчика/исполнителя вместо package-aware реквизитов.
+
+## **11. Не делать**
+
+- Не создавать `{{package.roles.<role_key>.full_name}}`.
+- Не создавать `{{package.roles.<role_key>.position}}`.
+- Не создавать `{{package.roles.<role_key>.short_name}}`.
+- Не использовать русское название роли в токене.
+- Не использовать `role_key` как публичный идентификатор Word-плейсхолдера.
+- Не создавать отдельные роли глобально для всех пакетов.
+- Не создавать новые таблицы реквизитов.
+- Не трогать billing resolver.
+- Не трогать `canonical-document-generate-strict`.
+- Не запускать генерацию.
+
+## **12. Исправить Sprint 3F план**
+
+В Sprint 3F заменить весь блок:
+
+```text
+Пакет: Роли — full_name / short_name / position
+```
+
+на модель:
+
+```text
+Пакет: Роли → <Название пакета>
+{{package.role.PKR-XXXXXX}}
+```
+
+Роль — это одна сущность с одним стабильным ID и одним копируемым placeholder.
+
+## **Итог**
+
+Твоя схема правильная:
+
+```text
+Пакет → роли пакета → каждая роль получает ID → этот ID вставляется в Word.
+```
+
+Не нужно плодить:
+
+```text
+full_name
+short_name
+position
+```
+
+Это должен решать resolver/настройка роли, а не Word-шаблон.
+
+&nbsp;
+
+Sprint 3F — Package placeholders completion + template binding + custom roles + validator scope
 
 ## 0. Цель
 
-Довести пакетные группы плейсхолдеров до 1:1 соответствия с биллинговыми «Заказчик ЮЛ / ИП / ФЛ»:
+После Sprint 3F администратор может:
 
-- `Пакет: ЮЛ` = 24/24 поля,
-- `Пакет: ИП` = 24/24 поля,
-- `Пакет: ФЛ` = 26/26 поля.
+- Видеть полные группы плейсхолдеров: **Пакет: ЮЛ / ИП / ФЛ / Пакет: Роли**.
+- Скопировать package-aware токены в DOCX.
+- Загрузить DOCX-приказ, привязать к пакету «Идеология» и получить per-token validation report **без генерации**.
+- В анкете пакета **добавлять свои роли** для физлиц (не только из захардкоженного списка).
 
-Каждое поле должно быть либо `copy_ready` (есть source path + package-aware token Variant B), либо явно `deferred` с письменной причиной. UI заполнения реквизитов должен быть один и тот же для биллинга и пакета (одна база `client_legal_details` / `legal_details_persons`).
+Реальная генерация, Gotenberg, `ai_generated_documents`, `canonical-document-generate-strict`, billing resolver — НЕ трогаются.
 
-## 1. Жёсткие ограничения (повторяют Sprint 3D и расширяют)
+---
 
-- Не трогать `canonical-document-generate-strict`, Gotenberg, `ai_generated_documents`, billing resolver.
-- Не запускать генерацию (ни single, ни package).
-- Не менять существующие биллинговые FLD групп «Заказчик ЮЛ / ИП / ФЛ» и «Исполнитель ЮЛ» (FLD-000273..346).
-- Не копировать данные из `orders_v2` в пакетные сессии.
-- Использовать только существующие таблицы: `client_legal_details`, `legal_details_persons`, `document_package_sessions`, `document_package_session_participants`. Новых таблиц реквизитов не создавать.
-- Новые FLD создавать только после duplicate-check по `fields_registry` (uniq на `(entity_type, key)`); дубликаты биллинговых FLD-000004..050 запрещены.
-- Package token — только Variant B: `{{package.ul|ip|fl.FLD-XXXXXX}}`. Биллинговый `{{field:FLD-...}}` в пакетных группах не copy-ready.
-- `_shared/resolve-package-tokens.ts` остаётся `HARDCODED_ENABLED=false` (резолвер не активируется — Sprint 3F).
+## 1. Discovery (выполнено, факты)
 
-## 2. Discovery (обязателен до любых миграций)
+- `**document_package_token_aliases**` уже использует canonical **plural** формат: `package.roles.company_head.full_name|position`, `package.roles.ideology_responsible.full_name|position`. `role_key = ideology_responsible` (НЕ `responsible_person`). Реюзают FLD-000372/373.
+- `**fields_registry**`: FLD-000069 = «Номер документа», FLD-000209 = «Сегодня прописью», FLD-000211 = «Текущий год».
+- `**document_templates.template_scope text**` уже существует — миграция не нужна.
+- `**document_package_role_catalog**` per-package_template (FK `package_template_id`), колонки: `role_key, label, description, allowed_entity_types, required, min_count, max_count, sort_order, is_active, metadata`. Сейчас 11 системных ролей для пакета «Идеология». Это уже готовая база для custom roles.
 
-### 2.1. Реальная схема `client_legal_details` (уже снято)
+---
 
-- ЮЛ: `leg_org_form, leg_name, leg_unp, leg_address, leg_address_structured (jsonb), leg_director_position, leg_director_name, leg_acts_on_basis`.
-- ИП: `ent_name, ent_unp, ent_address, ent_address_structured (jsonb), ent_acts_on_basis`.
-- ФЛ (внутри `client_legal_details`): `ind_full_name, ind_birth_date, ind_passport_*, ind_personal_number, ind_address_index/region/district/city/street/house/apartment, ind_address_structured (jsonb)`.
-- Общие banking/contact: `bank_account, bank_name, bank_code, phone, email`.
-- **Плоских колонок `leg_address_street/house/building/apartment/city/region/postal_code/country` и `ent_address_*` НЕТ** — данные живут только в `leg_address_structured` / `ent_address_structured`.
+## 2. Жёсткие правила (canonical decisions)
 
-### 2.2. Реальная схема `legal_details_persons`
+### 2.1 Role-token формат — **plural**
 
-- Есть: `full_name, birth_date, personal_number, passport_series, passport_number, passport_number_full, passport_issued_by, passport_issued_date, passport_valid_until, phone, email, address_structured (jsonb), is_active, notes`.
-- **Нет**: плоских адресных колонок, банк-реквизитов (`bank_account/bank_name/bank_code`).
+Единственный canonical формат: `**{{package.roles.<role_key>.<attr>}}**`. `package.role.*` (singular) НЕ используется нигде — ни в каталоге, ни в валидаторе, ни в alias-таблице.
 
-### 2.3. Реальные FLD в `fields_registry` (entity_type=`legal_details`)
+### 2.2 Role keys = реальные ключи из `document_package_role_catalog`
 
-- FLD-000004..050 — биллинговая база (все нужные ЮЛ/ИП/ФЛ поля уже есть, включая адресный breakdown ЮЛ FLD-000035..042 и ИП FLD-000043..050, ФЛ FLD-000020..034).
-- Биллинговые группы «Заказчик ЮЛ / ИП / ФЛ» (FLD-000273..346) — это формирующий слой биллинга, не реестр legal_details. Не трогаем.
+Каноническая роль ответственного — `**ideology_responsible**` (не `responsible_person`). Existing aliases остаются как есть.
 
-### 2.4. Несогласованности текущего каталога Sprint 3D (зафиксированы как баги, требующие фикса)
-
-1. `PACKAGE_UL` ссылается на `client_legal_details.leg_address_street/...country` — **колонок нет**. Должно быть `leg_address_structured->>'street'` и т.д.
-2. `PACKAGE_IP` ссылается на `ent_address_street/...country` — **колонок нет**. Должно быть `ent_address_structured->>'...'`.
-3. `PACKAGE_FL` указывает SOT `legal_details_persons` для всех 26 полей, но банк-реквизитов в `legal_details_persons` нет — поля помечены `missing_source_column` без обоснования выбора таблицы. Нужно решить SOT для FL (см. §3.3).
-4. UL/IP: «Адрес: район / район города» помечены `missing_source_column`, хотя `*_address_structured` уже содержит эти ключи. Это `pending_field` с jsonb-source, не отсутствие колонки.
-
-## 3. Решения (требуют утверждения вместе с планом)
-
-### 3.1. Адресный breakdown ЮЛ/ИП — БЕЗ новых колонок
-
-Использовать существующие `leg_address_structured` / `ent_address_structured` (jsonb) как source. Resolver-path:
+### 2.3 Минимальный набор role-токенов (для приказа идеологии)
 
 ```
-client_legal_details.leg_address_structured->>'street'
-client_legal_details.leg_address_structured->>'house'
-... (building, apartment, city, district, city_district, region, postal_code, country)
+{{package.roles.ideology_responsible.full_name}}     ФИО ответственного
+{{package.roles.ideology_responsible.short_name}}    ФИО кратко
+{{package.roles.ideology_responsible.position}}      Должность (из metadata.position)
 ```
 
-FLD-000035..050 уже существуют и переиспользуются (`reuse_existing_field_definition` = label/type/mapping; package source path — jsonb). Это убирает необходимость в миграции «добавить плоские колонки» и сохраняет одну SOT-форму ввода (одна structured-форма для биллинга и пакета).
+**Не создавать** package-role-токены для `company_head` как "руководитель организации" — руководитель ЮЛ/ИП уже идёт из реквизитов (`{{package.ul.FLD-...}}` директор/должность/основание). Existing `package.roles.company_head.*` aliases — оставить как есть (legacy, не удалять), но в Sprint 3F **не показывать** в UI каталога как первичные; пометить deprecated с комментарием «дублирует Пакет: ЮЛ → Руководитель *».
 
-Альтернатива (если отклонишь) — миграция с плоскими колонками; больше работы, риск рассинхрона с structured. По умолчанию принимаем jsonb-path.
+### 2.4 Validator scope (правка к B.3)
 
-### 3.2. Адресный breakdown ИП — `ent_address_structured`
+Шаблон классифицируется по факту привязки в `document_package_template_items`:
 
-Сейчас `ent_address_structured` есть, но в UI `EntrepreneurDetailsForm` нужно проверить, что оно реально заполняется (см. §5). Если нет — добавить тот же structured-блок (без новых колонок).
+- `template_id ∈ document_package_template_items` → **package template**;
+- иначе → **billing template**.
 
-### 3.3. SOT для «Пакет: ФЛ» — `legal_details_persons` + миграция
+В **package template** разрешены:
 
-`document_package_session_participants` уже ссылается на `person_id → legal_details_persons` (см. memory). Значит SOT = `legal_details_persons`. Требуются миграции:
+- `{{field:FLD-XXXXXX}}` любого scope — системные (FLD-000209 «Сегодня прописью», FLD-000211 «Текущий год»), документные (FLD-000069 «Номер документа»), общие. Они НЕ блокируются.
+- `{{package.ul|ip|fl.FLD-XXXXXX}}` — package-aware реквизиты.
+- `{{package.roles.<role_key>.<attr>}}` где `role_key` присутствует в `document_package_role_catalog` для этого `package_template_id`.
 
-1. `ALTER TABLE legal_details_persons ADD COLUMN bank_account text, ADD COLUMN bank_name text, ADD COLUMN bank_code text;` — пустые/nullable, без backfill.
-2. FLD не дублируем — переиспользуем биллинговые FLD-000004/5/6 (label/type/format те же), package token = `{{package.fl.FLD-000004}}` и т.д., source path = `legal_details_persons.bank_*`.
-3. Адресный breakdown ФЛ — по принципу §3.1: jsonb-path `legal_details_persons.address_structured->>'street'`, FLD-000028..034 + FLD-000301/302 (страна/район — если нет в реестре, см. §3.4).
+**Warning (не error)** в package template: `{{field:FLD-XXXXXX}}`, чей FLD принадлежит группам «Заказчик ЮЛ / ИП / ФЛ» или «Исполнитель ЮЛ»:
 
-### 3.4. Недостающие FLD (после duplicate-check)
+> «Этот плейсхолдер относится к биллинговым реквизитам. Для реквизитов пакета используйте package-aware плейсхолдер из групп Пакет: ЮЛ / ИП / ФЛ.»
 
-Сверка показывает: для биллинга есть всё, для пакета новых FLD не нужно (всё переиспользуется через `reuse_existing_field_definition`). Если duplicate-check на этапе исполнения покажет пробел (например, отсутствует FLD «страна» для ФЛ) — создаём строго после manifest-proof, с `key = legal_details.ind_address_country` и т.п., и фиксируем в proof.
+В **billing template** — без изменений: `package.*` запрещены как error.
 
-### 3.5. UI заполнения реквизитов — одна форма, один SOT
+### 2.5 Что НЕ запрещать
 
-- `OrganizationDetailsForm` / `LegalEntityDetailsForm` (ЮЛ): должны записывать `leg_address_structured` через Google Maps autocomplete (`useGoogleMapsLoader`) + ручная правка; UNP autofill (`useLegalDetails` / соответствующий хук) пишет в `client_legal_details.leg_*`, а не в billing-only слой.
-- `EntrepreneurDetailsForm` (ИП): то же самое для `ent_*` + `ent_address_structured`. Если structured-блок отсутствует — добавить, переиспользуя компонент адреса из ЮЛ.
-- `IndividualDetailsForm` / `PersonFieldsForm` (ФЛ): structured-адрес для `legal_details_persons.address_structured` + новые поля `bank_*` после миграции; ФИО/паспорт/личный номер уже есть.
-- Никакой отдельной «package-only» формы. Анкета пакета использует те же формы через `selected_legal_entity_id` / `person_id`.
+`legacy_placeholder_format_detected` НЕ должен срабатывать на `{{package.*}}` ни в каком scope (для billing — другая категория error: `package_token_in_billing_template`).
 
-## 4. Шаги исполнения
+---
 
-1. **Discovery proof** — снимок реальной схемы (см. §2), полная mapping-таблица 24/24/26 c колонкой «Решение» (jsonb-path / новая колонка / переиспользуемый FLD / deferred).
-2. **Миграция (минимальная)**:
-  - `ALTER TABLE legal_details_persons ADD COLUMN bank_account text, bank_name text, bank_code text;`
-  - Никаких изменений в `client_legal_details` (структурированные адреса уже есть).
-  - Никаких новых FLD по умолчанию; если §3.4 покажет пробел — отдельная вставка в `fields_registry` через `supabase--insert` с duplicate-guard.
-3. **Обновить `src/utils/packagePlaceholderCatalog.ts**`:
-  - UL/IP адресные элементы: статус `copy_ready`, `source_path = '<table>_address_structured->>"<key>"'`, package token остаётся.
-  - FL: после миграции — `bank_*` → `copy_ready`; адресный breakdown — `copy_ready` через `address_structured->>...`; всё остаётся одинаковым по форме `package.fl.FLD-XXXXXX`.
-  - Убрать ложные `missing_source_column` там, где есть jsonb-source.
-4. **UI patch (frontend, без бизнес-логики биллинга)**:
-  - В `EntrepreneurDetailsForm` подключить тот же structured-address блок, что и в `OrganizationDetailsForm`, если он отсутствует.
-  - В `IndividualDetailsForm` / `PersonFieldsForm` добавить поля `bank_account / bank_name / bank_code` и structured-адрес, сохраняющий в `legal_details_persons.address_structured` (без дублирования в `client_legal_details.ind_*`).
-  - Проверить, что UNP-autofill пишет в `client_legal_details`, не в billing-only слой (читаем `useLegalDetails.tsx`).
-5. **UI smoke (без генерации)**:
-  - Открыть `/admin/documents` → вкладка плейсхолдеров: «Пакет: ЮЛ/ИП/ФЛ» — все строки `copy_ready`, кроме явно deferred.
-  - Создать тест-ЮЛ через UNP autofill → проверить, что structured-адрес заполнился и доступен через тот же UI.
-  - Создать тест-ФЛ → банковские поля + structured-адрес сохраняются.
-6. **Billing regression (без генерации)**:
-  - Группы «Заказчик ЮЛ/ИП/ФЛ» и «Исполнитель ЮЛ» отображаются без изменений.
-  - FLD-000004..050 не модифицированы (SQL diff пустой).
-  - Существующие шаблоны (акт/счёт) открываются, плейсхолдеры рендерятся как раньше.
-7. **Update memory + proof**:
-  - `mem://architecture/documents/package-token-aliases-v1` — расширить разделом «jsonb-path source + bank_* для FL».
-  - `.lovable/proofs/package_documents_sprint3e_requisites_alignment_2026_05.md` со всеми секциями из §8.
+## 3. Этап A — Preflight (read-only)
 
-## 5. Технические детали
+- Извлечь токены загруженного DOCX-приказа через `extractDocxPlaceholders.ts`. Свести таблицу `raw_token | kind | recognized | source | required_action`.
+- Сверить `packagePlaceholderCatalog.ts` (62/74 copy_ready по факту Sprint 3E) → таблица оставшихся 12 с решением `make_copy_ready_now | needs_new_fld (manifest) | keep_deferred`.
+- Pre-flight RLS: подтвердить, что admin/super_admin могут писать в `document_package_template_items` и `document_package_role_catalog`.
 
-### 5.1. Resolver contract (read-only, не активируется)
+Артефакт: `.lovable/proofs/package_documents_sprint3f_preflight_2026_05.md`.
+
+---
+
+## 4. Этап B — Validator: package-aware scope rules
+
+### B.1 Локализовать validator
+
+Найти источник ошибки `legacy_placeholder_format_detected` (вероятно `StrictDocumentTemplatesManager`/`TemplateMarkupDialog`/edge `validate-template`). Подтвердить точку расширения regex/whitelist.
+
+### B.2 Расширить grammar
+
+Принимаемые формы в package scope:
 
 ```
-package.ul.FLD-000035 → client_legal_details.leg_address_structured->>'street'
-                       WHERE id = document_package_sessions.selected_legal_entity_id
-package.ip.FLD-000043 → client_legal_details.ent_address_structured->>'street'  (тот же id)
-package.fl.FLD-000032 → legal_details_persons.address_structured->>'street'
-                       WHERE id = (SELECT person_id FROM document_package_session_participants
-                                   WHERE session_id=? AND role_key=?)
-package.fl.FLD-000004 → legal_details_persons.bank_account (после миграции)
+{{field:FLD-\d{6}(\|[^}]+)?}}
+{{package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?}}
+{{package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?}}
 ```
 
-### 5.2. SQL миграции
+Резолюция `role_key`: чтение `document_package_role_catalog WHERE package_template_id = ? AND is_active`. Если ключа нет → error `unknown_package_role`.
 
-```sql
-ALTER TABLE public.legal_details_persons
-  ADD COLUMN IF NOT EXISTS bank_account text,
-  ADD COLUMN IF NOT EXISTS bank_name    text,
-  ADD COLUMN IF NOT EXISTS bank_code    text;
--- RLS/GRANTs не изменяются: используется существующая политика persons.
+### B.3 Тесты (Vitest)
+
+- `{{field:FLD-000069}}` в package template → **valid** (документный «Номер документа»).
+- `{{field:FLD-000209}}` в package template → **valid** (системный «Сегодня прописью»). **Исправление к предыдущему черновику: FLD-000209 — не номер документа, а «Сегодня прописью».**
+- `{{field:FLD-000211}}` в package template → **valid** (системный «Текущий год»).
+- `{{field:FLD-<billing UL>}}` в package template → **warning** `billing_token_in_package_template_warning` (НЕ error, генерация/copy не блокируется).
+- `{{package.ul.FLD-000039}}` в package template → **valid**.
+- `{{package.roles.ideology_responsible.full_name}}` в package template (роль есть в каталоге) → **valid**.
+- `{{package.roles.unknown_role.full_name}}` → **error** `unknown_package_role`.
+- `{{package.ul.FLD-000039}}` в billing template → **error** `package_token_in_billing_template`.
+- `{{ul.FLD-...}}` без префикса `package.` → **error** `invalid_syntax`.
+
+---
+
+## 5. Этап C — Полные группы Пакет: ЮЛ / ИП / ФЛ
+
+Целевые числа: UL 24/24, IP 24/24, FL 26/26 — либо явный `keep_deferred` с причиной.
+
+Для полей, где source есть, а FLD нет → **manifest-proof в proof** (`label, data_type, source_table, source_path, package_group, billing_analog, duplicate_check, reason`). **FLD создаём только по одобренному manifest'у**, без авто-создания.
+
+Для полей без source → `keep_deferred` с фиксацией причины (отсутствие колонки/jsonb-ключа).
+
+---
+
+## 6. Этап D — Пакет: Роли (минимальный + custom)
+
+### D.1 UI-группа «Пакет: Роли» в каталоге плейсхолдеров
+
+Показывает токены, построенные из `document_package_role_catalog` для каждого активного package_template'а:
+
+```
+{{package.roles.<role_key>.full_name}}
+{{package.roles.<role_key>.short_name}}
+{{package.roles.<role_key>.position}}
 ```
 
-Никаких CHECK на формат — валидация UI/triggers по аналогии с `client_legal_details.bank_*` (если нужно — отдельным шагом, не в этом спринте).
+Для пакета «Идеология» (текущие 11 ролей) — первичный показ только `ideology_responsible` (3 токена). Остальные системные роли (`document_signer`, `document_preparer`, `control_person`, `ideology_active_member`, `ideology_participant`, `notified_person`, `report_participant`, `external_specialist`) — отображаются под expand-секцией «Дополнительные роли» с пометкой «опциональные». `company_head` помечен `deprecated: дублирует Пакет: ЮЛ → Руководитель *`. `package_company` — не показывается (это сам package company entity, не физлицо).
 
-### 5.3. Pre-flight для FLD-insert (если §3.4 сработает)
+### D.2 Resolver contract (documentation only, generation deferred)
 
-```sql
-SELECT 1 FROM fields_registry
- WHERE entity_type='legal_details' AND key=$1 AND archived_at IS NULL;
+```
+person = legal_details_persons WHERE id = (
+  SELECT person_id FROM document_package_session_participants
+  WHERE session_id = ? AND role_key = ?
+)
+position = document_package_session_participants.metadata->>'position'
+short_name = existing formatter over legal_details_persons.full_name
 ```
 
-Insert только если пусто; в proof — `duplicate_check: passed`.
+### D.3 Aliases
 
-## 6. DoD
+Existing aliases (`package.roles.company_head.*`, `package.roles.ideology_responsible.*`) — не трогаем. Для `short_name` добавляем alias-row только если выбрана стратегия «alias-резолвер»; альтернатива — резолвить через runtime formatter без alias-записи (предпочтительно, чтобы не плодить aliases на каждый attr). Решение зафиксировать в proof.
 
-- Mapping-таблица: ЮЛ 24/24, ИП 24/24, ФЛ 26/26 — каждая строка имеет `copy_ready` или explicit `deferred` + reason.
-- `legal_details_persons.bank_*` колонки существуют.
-- `packagePlaceholderCatalog.ts` обновлён: jsonb-path source для адресных полей UL/IP/FL; bank_* для FL — `copy_ready`.
-- UI `EntrepreneurDetailsForm`, `IndividualDetailsForm`/`PersonFieldsForm` поддерживают все нужные поля.
-- UNP autofill + Google Maps пишут в общую базу (`client_legal_details`), не в billing-only слой — подтверждено чтением хука.
-- Billing FLD-000004..050 не изменены (SQL-diff пуст); биллинговые группы открываются.
-- Генерация не запускалась; Gotenberg/`ai_generated_documents`/`canonical-document-generate-strict` не тронуты.
-- Memory + proof обновлены; финальный статус:
-`completed: package UL/IP/FL requisites aligned with billing requisites structure; missing fields resolved or explicitly deferred; package placeholders ready for real DOCX authoring; generation still deferred`.
+---
 
-## 7. Открытые вопросы (требуют твоего ответа до execute)
+## 7. Этап E — Custom roles per package (новое)
 
-1. **§3.1/§3.3 jsonb-path vs новые плоские колонки** — по умолчанию идём через `*_address_structured->>'...'`. Подтверди или попроси плоские колонки.
-2. **§3.3 SOT для «Пакет: ФЛ»** — `legal_details_persons` (+ миграция bank_*). Альтернатива: использовать `client_legal_details.ind_*` (там адрес уже плоский и есть banking через общие поля). Что выбираем?
-3. *§5.2 миграция bank_ для persons** — добавляем nullable колонки без backfill. OK?
+### E.1 Источник правды
 
-Жду подтверждения; после approve выполняю строго по плану.
+`document_package_role_catalog` уже per-package_template — миграция структуры не нужна. Достаточно UI + permissions.
+
+### E.2 UI «Пакеты документов → <Пакет> → Роли пакета»
+
+Новая секция в admin под «Состав пакета»:
+
+- Таблица ролей: `label | role_key | required | min/max | sort_order | is_active | actions`.
+- Кнопка «Добавить роль»: форма (`label` ru, `role_key` — auto-slug из label с превью, `description`, `required` чекбокс, `min_count`, `max_count`, `sort_order`).
+- Edit/Archive (soft через `is_active=false`, не DELETE — чтобы не сломать существующих participants).
+- Системные роли (`metadata.is_system=true` — добавить признак миграцией) защищены от удаления и переименования `role_key`, можно редактировать только `label/required/sort_order/is_active`.
+
+### E.3 role_key validation
+
+- snake_case, regex `^[a-z][a-z0-9_]{1,40}$`;
+- unique per `(package_template_id, role_key)` (уже подразумевается; добавить partial unique index если нет);
+- запрещены reserved keys: `package_company`.
+
+### E.4 Wiring в анкету пакета
+
+Dropdown «Роль» в `document_package_session_participants` UI читает `document_package_role_catalog WHERE package_template_id = current AND is_active` — автоматически подхватит custom-роли без кода.
+
+### E.5 Wiring в каталог плейсхолдеров
+
+Сразу после создания custom-роли в каталоге появляются 3 токена (`full_name/short_name/position`) под той же группой «Пакет: Роли → <Пакет>». Никаких aliases для custom-ролей не пишем — resolver работает по generic правилу (см. D.2) с lookup `role_key` в каталоге.
+
+### E.6 Permissions
+
+`document_package_role_catalog` write-операции — только admin/super_admin. По pre-flight RLS (этап A): если direct INSERT/UPDATE/DELETE из frontend безопасен под текущими policies — использовать direct path; иначе — edge-функции `package-role-upsert` / `package-role-archive` + `audit_logs.action ∈ {package_role_created, package_role_updated, package_role_archived}`.
+
+### E.7 Миграция
+
+Добавить колонку (если ещё нет) `is_system boolean default false` в `document_package_role_catalog` и проставить `true` для 11 текущих строк пакета «Идеология». Никаких других схемных изменений.
+
+---
+
+## 8. Этап F — Template-to-package binding
+
+### F.1 Source of truth
+
+`document_package_template_items` (template_id присутствует → package-template). `document_templates.template_scope` уже существует — используем как denormalized hint (синхронизировать триггером ИЛИ обновлять явно при link/unlink). Решение: **обновлять явно** в link/unlink action, без триггера, чтобы избежать побочных эффектов на billing-шаблоны.
+
+### F.2 UI «Шаблоны документов»
+
+Селект «Тип шаблона»: `Биллинговый | Пакет документов`. При выборе «Пакет» — селект пакета (`document_package_templates`) и кнопка «Привязать». UPSERT в `document_package_template_items` + UPDATE `document_templates.template_scope='package'`.
+
+### F.3 UI «Пакеты документов → <Пакет> → Состав пакета»
+
+Уже есть пустой плейсхолдер «Состав пакета». Заполнить: список привязанных шаблонов (название, версия, validation status из B, required/optional, sort_order, кнопки «Открыть»/«Отвязать»).
+
+### F.4 Permissions
+
+По pre-flight RLS. Если нужны edge — `link-template-to-package`/`unlink-template-from-package` (super_admin/admin) + `audit_logs.action ∈ {package_template_item_linked, package_template_item_unlinked}`.
+
+---
+
+## 9. Этап G — Controlled validation (no generation)
+
+В диалоге шаблона: кнопка «Проверить плейсхолдеры». Использует `extractDocxPlaceholders` + новый валидатор (B). Per-token статус: green/yellow(warning)/red(error) с точной причиной из набора: `unknown_package_group | unknown_fld | unknown_package_role | no_source_path | invalid_syntax | billing_token_in_package_template_warning | package_token_in_billing_template`.
+
+Запрещено вызывать: Gotenberg, `canonical-document-generate-strict`, запись в `ai_generated_documents`, storage write, snapshot/source_trace write.
+
+---
+
+## 10. Этап H — Proof
+
+`.lovable/proofs/package_documents_sprint3f_placeholder_completion_and_template_binding_2026_05.md`:
+
+1. **Before**: скриншот ошибок `legacy_placeholder_format_detected` на текущем DOCX.
+2. Validator diff + Vitest run (B.3).
+3. Таблицы UL 24/24, IP 24/24, FL 26/26 (или manifest для пробелов).
+4. Таблица «Пакет: Роли» (3 первичных + список системных + механика custom).
+5. Custom roles: UI скрины, RLS proof, audit_logs sample.
+6. Template-to-package binding: UI скрины, RLS proof, audit sample.
+7. Validation proof по приказу идеологии (per-token).
+8. **After**: те же токены валидны / warning / error по новым правилам.
+9. Billing regression: `{{field:FLD-...}}` в billing-шаблонах работает; группы «Заказчик/Исполнитель» не изменились; `canonical-document-generate-strict` diff пуст.
+10. No-generation proof: 0 Gotenberg, 0 `ai_generated_documents` за окно.
+
+Memory update `mem://architecture/documents/package-token-aliases-v1`: добавить разделы (a) canonical formato = plural, (b) FLD-000209 = «Сегодня прописью» (не номер документа), (c) custom roles per package_template через `document_package_role_catalog`, (d) validator scope rules (warning vs error), (e) template_scope SOT = `document_package_template_items`.
+
+---
+
+## 11. DoD
+
+- Validator принимает `{{field:FLD-...}}` (системные/документные), `{{package.ul|ip|fl.FLD-...}}`, `{{package.roles.<role_key>.<attr>}}` в package-template; billing FLD из заказчик/исполнитель групп → warning.
+- DOCX приказа больше не падает с `legacy_placeholder_format_detected` по package-aware токенам.
+- Каталог: 4 группы; «Пакет: Роли» показывает custom-роли мгновенно после их создания.
+- В UI пакета «Идеология» можно добавить произвольную роль; она появляется в dropdown анкеты и в каталоге плейсхолдеров.
+- Шаблон можно привязать к пакету; привязка видна в «Состав пакета»; права — admin/super_admin only.
+- Validation работает без генерации; Gotenberg/ai_generated_documents/strict не вызывались.
+- Billing-шаблоны не сломаны.
+
+---
+
+## 12. Финальный статус
+
+```
+completed: package placeholders ready for DOCX authoring (UL/IP/FL/Roles incl. custom per-package);
+package-aware syntax accepted by validator;
+billing tokens in package template raise warning, not error;
+template-to-package binding implemented (UI + permissions);
+ideology DOCX linked and validation-ready;
+real generation remains deferred
+```
+
+## 13. Вне scope
+
+Реальная генерация, Gotenberg, `ai_generated_documents`, подключение package resolver в `canonical-document-generate-strict`, snapshot/source_trace, отдельный namespace `documents:package:ideology`, новые таблицы реквизитов, изменения billing FLD и группы «Заказчик/Исполнитель», удаление legacy `document_package_token_aliases`.
