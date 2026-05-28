@@ -42,6 +42,14 @@ import {
 } from "./extensions/FieldChipNode";
 import { classifyDataType } from "./FieldFormatPicker";
 import { copyToClipboard } from "@/utils/clipboardUtils";
+import {
+  PACKAGE_GROUP_META,
+  PACKAGE_PLACEHOLDER_CATALOG,
+  type PackageGroupId,
+  type PackagePlaceholderItem,
+  type PackagePlaceholderStatus,
+} from "@/utils/packagePlaceholderCatalog";
+import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
   id: string;
@@ -257,6 +265,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 }
 
 export function PlaceholdersCatalogTab() {
+  const { isSuperAdmin } = useRbac();
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [runtimeCount, setRuntimeCount] = useState(0);
   const [postponedCount, setPostponedCount] = useState(0);
@@ -315,8 +324,11 @@ export function PlaceholdersCatalogTab() {
     return () => { mounted = false; };
   }, []);
 
-  // Группа = одна из 9 секций. «Все группы» = все секции по порядку.
-  const groupOptions = SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label }));
+  // Группа = одна из 9 секций + 3 пакетные. «Все группы» = все секции по порядку.
+  const groupOptions = [
+    ...SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label })),
+    ...PACKAGE_GROUP_META.map((g) => ({ id: g.id, label: g.label_ru })),
+  ];
 
   const typeOptions = useMemo(() => {
     const set = new Set(rows.map(r => r.data_type).filter(Boolean) as string[]);
@@ -364,6 +376,45 @@ export function PlaceholdersCatalogTab() {
       .map((s) => ({ id: s.id, label: s.label, rows: map.get(s.id) ?? [] }))
       .filter((s) => s.rows.length > 0);
   }, [filtered]);
+
+  // Sprint 3D — пакетные группы (UL/IP/FL), статический каталог.
+  // Фильтруются тем же search/groupFilter; не зависят от typeFilter/onlyRequired.
+  const packageSections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const groups: Array<{
+      id: PackageGroupId;
+      label: string;
+      hint: string;
+      source_summary: string;
+      items: PackagePlaceholderItem[];
+    }> = [];
+    for (const meta of PACKAGE_GROUP_META) {
+      if (groupFilter !== "all" && groupFilter !== meta.id) continue;
+      const items = PACKAGE_PLACEHOLDER_CATALOG
+        .filter((i) => i.groupId === meta.id)
+        .filter((i) => {
+          if (!q) return true;
+          return (
+            i.label_ru.toLowerCase().includes(q) ||
+            i.tech_key.toLowerCase().includes(q) ||
+            (i.reused_fld ?? "").toLowerCase().includes(q) ||
+            (i.billing_fld_analog ?? "").toLowerCase().includes(q) ||
+            meta.label_ru.toLowerCase().includes(q)
+          );
+        });
+      if (items.length === 0) continue;
+      groups.push({
+        id: meta.id,
+        label: meta.label_ru,
+        hint: meta.hint,
+        source_summary: meta.source_summary,
+        items,
+      });
+    }
+    return groups;
+  }, [search, groupFilter]);
+
+  const packageItemsCount = packageSections.reduce((a, s) => a + s.items.length, 0);
 
   const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
     setRowSettings(prev => {
@@ -429,6 +480,11 @@ export function PlaceholdersCatalogTab() {
               {postponedCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
                   <Info className="h-3.5 w-3.5" /> postponed (нет источника): {postponedCount}
+                </span>
+              )}
+              {packageItemsCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" /> пакетные (UL/IP/FL): {packageItemsCount}
                 </span>
               )}
             </p>
@@ -501,7 +557,7 @@ export function PlaceholdersCatalogTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.length === 0 ? (
+                  {filtered.length === 0 && packageItemsCount === 0 ? (
                     <TableRow>
                       <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                         Ничего не найдено
@@ -716,6 +772,123 @@ export function PlaceholdersCatalogTab() {
                       }),
                     ])
                   )}
+                  {packageSections.flatMap((section) => [
+                    <TableRow key={`pkg-sec-${section.id}`} className="bg-muted/60 hover:bg-muted/60">
+                      <TableCell colSpan={9} className="py-2">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span>{section.label}</span>
+                          <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
+                            ({section.items.length})
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-normal normal-case">
+                            package context
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
+                          {section.hint}
+                        </div>
+                        {isSuperAdmin && (
+                          <div className="mt-1 text-[10px] font-mono text-muted-foreground/60">
+                            source: {section.source_summary}
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>,
+                    ...section.items.map((p) => {
+                      const isReady = p.status === "copy_ready";
+                      const statusLabel: Record<PackagePlaceholderStatus, string> = {
+                        copy_ready: "готов",
+                        source_available: "ждёт синтаксиса",
+                        pending_field: "нет FLD",
+                        missing_source_column: "нет колонки",
+                        deferred: "Sprint 3E",
+                      };
+                      return (
+                        <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
+                          <TableCell />
+                          <TableCell className="py-2">
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              {section.label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium text-sm py-2">
+                            {p.label_ru}
+                            {isSuperAdmin && (
+                              <span className="block text-[10px] font-mono text-muted-foreground">
+                                {p.tech_key}
+                                {p.source_path ? ` · ${p.source_path}` : ""}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {p.reused_fld ? (
+                              <Badge variant="secondary" className="font-mono text-[10px]">
+                                {p.reused_fld}
+                              </Badge>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">—</span>
+                            )}
+                            {isSuperAdmin && p.billing_fld_analog && (
+                              <div className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">
+                                ↔ billing {p.billing_fld_analog}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Badge
+                              variant={isReady ? "default" : "outline"}
+                              className={cn(
+                                "text-[10px]",
+                                !isReady && "border-dashed text-muted-foreground",
+                              )}
+                            >
+                              {statusLabel[p.status]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2 text-[10px] text-muted-foreground italic">
+                            {isReady ? "без модификаторов (Sprint 3E)" : "—"}
+                          </TableCell>
+                          <TableCell className="py-2 text-xs text-foreground/80">
+                            {isReady ? (
+                              <span className="text-muted-foreground/60 italic">— примера нет —</span>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
+                                {p.package_resolver_hint.length > 60
+                                  ? p.package_resolver_hint.slice(0, 60) + "…"
+                                  : p.package_resolver_hint}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {p.package_token ? (
+                              <code className="text-[11px] text-foreground/90 break-all font-mono">
+                                {p.package_token}
+                              </code>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground/60 italic">— не готов к копированию —</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            {p.package_token && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7"
+                                    onClick={() => copyPlaceholder(p.package_token!)}
+                                  >
+                                    <Copy className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }),
+                  ])}
                 </TableBody>
               </Table>
             </div>
