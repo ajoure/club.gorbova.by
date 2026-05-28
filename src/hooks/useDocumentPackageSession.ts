@@ -50,6 +50,8 @@ export interface PackageParticipant {
   legal_entity_id: string | null;
   person_id: string | null;
   is_primary: boolean;
+  /** Sprint 3C: участник-специфичный JSONB. Канонически содержит {position?: string}. */
+  metadata: Record<string, unknown> | null;
 }
 
 export interface PackageSessionRow {
