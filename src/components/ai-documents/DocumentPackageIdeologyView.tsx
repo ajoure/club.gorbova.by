@@ -25,6 +25,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
 import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
+import { InlineCreateRoleDialog } from "./packages/InlineCreateRoleDialog";
+import { useRbac } from "@/hooks/useRbac";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
@@ -89,6 +91,8 @@ export function DocumentPackageIdeologyView() {
   const aiEntities = useAiEntities();
   const aiPersons = useAiPersons();
   const pkg = useDocumentPackageSession("ideology");
+  const rbac = useRbac();
+  const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
 
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
@@ -315,14 +319,24 @@ export function DocumentPackageIdeologyView() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
-                              {personRoleOptions.map((r) => (
-                                <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
-                                  {r.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                               {personRoleOptions.map((r) => (
+                                 <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
+                                   {r.label}
+                                 </SelectItem>
+                               ))}
+                               {isAdmin && pkg.templateId && (
+                                 <div className="mt-1 pt-1 border-t">
+                                   <InlineCreateRoleDialog
+                                     packageTemplateId={pkg.templateId}
+                                     onCreated={(roleKey) => {
+                                       setPersonRoles((prev) => ({ ...prev, [p.id]: roleKey }));
+                                     }}
+                                   />
+                                 </div>
+                               )}
+                             </SelectContent>
+                           </Select>
+                         </div>
                         {needsPos && (
                           <div className="mt-1 ml-1 flex items-center gap-1.5">
                             <Input
