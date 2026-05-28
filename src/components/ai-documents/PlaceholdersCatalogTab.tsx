@@ -42,6 +42,14 @@ import {
 } from "./extensions/FieldChipNode";
 import { classifyDataType } from "./FieldFormatPicker";
 import { copyToClipboard } from "@/utils/clipboardUtils";
+import {
+  PACKAGE_GROUP_META,
+  PACKAGE_PLACEHOLDER_CATALOG,
+  type PackageGroupId,
+  type PackagePlaceholderItem,
+  type PackagePlaceholderStatus,
+} from "@/utils/packagePlaceholderCatalog";
+import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
   id: string;
