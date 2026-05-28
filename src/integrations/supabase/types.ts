@@ -3280,11 +3280,14 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean
+          is_system: boolean
           label: string
           max_count: number | null
           metadata: Json
           min_count: number | null
+          output_template: string | null
           package_template_id: string
+          public_id: string
           required: boolean
           role_key: string
           sort_order: number
@@ -3298,11 +3301,14 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          is_system?: boolean
           label: string
           max_count?: number | null
           metadata?: Json
           min_count?: number | null
+          output_template?: string | null
           package_template_id: string
+          public_id: string
           required?: boolean
           role_key: string
           sort_order?: number
@@ -3316,11 +3322,14 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          is_system?: boolean
           label?: string
           max_count?: number | null
           metadata?: Json
           min_count?: number | null
+          output_template?: string | null
           package_template_id?: string
+          public_id?: string
           required?: boolean
           role_key?: string
           sort_order?: number
