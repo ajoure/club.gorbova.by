@@ -265,6 +265,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 }
 
 export function PlaceholdersCatalogTab() {
+  const { isSuperAdmin } = useRbac();
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [runtimeCount, setRuntimeCount] = useState(0);
   const [postponedCount, setPostponedCount] = useState(0);
