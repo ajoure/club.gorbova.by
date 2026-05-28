@@ -133,9 +133,11 @@ export function usePackageRoleCatalog(packageTemplateId: string | null) {
         is_system: false,
         output_template: input.output_template ?? null,
       };
+      // public_id is auto-assigned by BEFORE INSERT trigger (assign_package_role_public_id).
+      // Cast to any to bypass generated types that require public_id at insert-time.
       const { data, error } = await supabase
         .from("document_package_role_catalog")
-        .insert([payload])
+        .insert([payload as any])
         .select("*")
         .single();
       if (error) throw error;
