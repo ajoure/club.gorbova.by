@@ -714,6 +714,10 @@ Deno.serve(async (req) => {
         message: 'В шаблоне не найдено ни одного плейсхолдера.',
       });
     }
+    // Sprint 3F: merge early package-aware warnings (deprecated syntax, etc.)
+    if (validationWarningsEarly.length > 0) {
+      validationWarnings.push(...validationWarningsEarly);
+    }
     const validationStatus = validationErrors.length === 0 ? 'valid' : 'invalid';
 
     // --- token_manifest: field_public_id + format + case_modifier + label + data_type
