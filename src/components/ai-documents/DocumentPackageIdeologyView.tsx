@@ -383,6 +383,9 @@ export function DocumentPackageIdeologyView() {
             <Save className="h-4 w-4 mr-1" /> {pkg.isSaving ? "Сохранение…" : "Сохранить анкету"}
           </Button>
         </div>
+
+        {/* Sprint 3C: dev-only dry-run панель, видна только super_admin. */}
+        <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
       </GlassCard>
 
       {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}
