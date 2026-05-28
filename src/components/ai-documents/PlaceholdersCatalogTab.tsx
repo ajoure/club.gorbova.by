@@ -416,6 +416,7 @@ export function PlaceholdersCatalogTab() {
 
   const packageItemsCount = packageSections.reduce((a, s) => a + s.items.length, 0);
 
+  const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
     setRowSettings(prev => {
       const next = new Map(prev);
       const current = next.get(id) ?? { format: null, caseModifier: null };
