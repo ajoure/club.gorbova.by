@@ -136,3 +136,19 @@ ok | 10 passed | 0 failed
 - include `position` в обязательные required-чек;
 - alias-picker UI с grant'ом для admin/editor;
 - inflectRu/inflectCompanyName в `|case=` пакетных токенов.
+
+## 9. Role key compatibility mapping (addendum, 2026-05-28)
+
+- Alias-токены остаются generic:
+    - `package.roles.company_head.{full_name,position}`
+    - `package.roles.responsible_person.{full_name,position}`
+- Внутри `document_package_token_aliases.role_key` для responsible_person временно хранится `'ideology_responsible'` — это **compatibility mapping** под уже созданный `document_package_role_catalog` пакета «Идеология».
+- Это **НЕ** создание ideology namespace; generic `alias_token` не меняется и остаётся видимой нормой для шаблонов и резолвера.
+- Запрещено:
+    - создавать alias-токены вида `package.roles.ideology_responsible.*`;
+    - читать `role_key='ideology_responsible'` из шаблонов/резолверов под видом нормы — только через generic `alias_token`.
+- В Sprint 3D/3E принимается одно из решений:
+    1. **Нормализация каталога:** переименовать `role_key` `ideology_responsible` → `responsible_person` в `document_package_role_catalog` + UPDATE alias-таблицы. Простой для шаблонов, требует миграции каталога.
+    2. **Mapping-слой:** ввести колонку/таблицу `generic_role_key → package_role_key`, alias-таблица ссылается на generic. Сложнее, но без переименования живых ролей.
+- До принятия решения: любая новая person-роль в каталоге обязана следовать generic-имени (`responsible_person`, не `*_responsible`).
+- Рекомендуемое направление (для Sprint 3D proof): вариант 1 — нормализация. Сама миграция в Sprint 3D НЕ выполняется.
