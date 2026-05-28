@@ -69,6 +69,8 @@ export interface PersonAssignment {
   person_id: string;
   role_key: string;
   role_catalog_id: string | null;
+  /** Sprint 3C: пишется в participants.metadata.position; null/'' → не сохраняется. */
+  position?: string | null;
 }
 
 export interface SaveSessionInput {
