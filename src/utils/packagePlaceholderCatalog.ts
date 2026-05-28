@@ -21,7 +21,7 @@
  * заказчика заказа, а не компанию/лицо пакета.
  */
 
-export type PackageGroupId = "package_ul" | "package_ip" | "package_fl";
+export type PackageGroupId = "package_ul" | "package_ip" | "package_fl" | "package_roles";
 
 export type PackagePlaceholderStatus =
   | "source_available"
