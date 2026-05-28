@@ -328,6 +328,22 @@ export function StrictDocumentTemplatesManager({
   const [uploadName, setUploadName] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Sprint 3F Phase 2c: тип шаблона и выбор пакета при загрузке.
+  const [uploadScope, setUploadScope] = useState<"billing" | "package">("billing");
+  const [uploadPackageId, setUploadPackageId] = useState<string>("");
+  const [uploadPackages, setUploadPackages] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    if (!uploadOpen) return;
+    (async () => {
+      const { data } = await supabase
+        .from("document_package_templates")
+        .select("id, name, is_active")
+        .eq("is_active", true)
+        .order("name");
+      setUploadPackages((data ?? []).map((p: any) => ({ id: p.id, name: p.name })));
+    })();
+  }, [uploadOpen]);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [markupVersion, setMarkupVersion] = useState<VersionRow | null>(null);
