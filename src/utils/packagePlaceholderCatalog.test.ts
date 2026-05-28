@@ -3,17 +3,20 @@ import {
   PACKAGE_PLACEHOLDER_CATALOG,
   PACKAGE_GROUP_META,
   getPackagePlaceholdersByGroup,
+  buildPackageRoleItems,
+  type PackageRoleCatalogRow,
 } from "./packagePlaceholderCatalog";
 
-describe("packagePlaceholderCatalog — Sprint 3D", () => {
-  it("содержит ровно три группы: Пакет ЮЛ / ИП / ФЛ; нет «Пакет: Исполнитель ЮЛ»", () => {
+describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
+  it("содержит четыре группы: Пакет ЮЛ / ИП / ФЛ / Роли", () => {
     expect(PACKAGE_GROUP_META.map((g) => g.id).sort()).toEqual(
-      ["package_fl", "package_ip", "package_ul"].sort(),
+      ["package_fl", "package_ip", "package_roles", "package_ul"].sort(),
     );
     const labels = PACKAGE_GROUP_META.map((g) => g.label_ru);
     expect(labels).toContain("Пакет: ЮЛ");
     expect(labels).toContain("Пакет: ИП");
     expect(labels).toContain("Пакет: ФЛ");
+    expect(labels).toContain("Пакет: Роли");
     expect(labels).not.toContain("Пакет: Исполнитель ЮЛ");
   });
 
