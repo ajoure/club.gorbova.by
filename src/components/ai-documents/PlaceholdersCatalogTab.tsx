@@ -45,10 +45,13 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import {
   PACKAGE_GROUP_META,
   PACKAGE_PLACEHOLDER_CATALOG,
+  buildPackageRoleItems,
   type PackageGroupId,
   type PackagePlaceholderItem,
   type PackagePlaceholderStatus,
+  type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
+import { supabase } from "@/integrations/supabase/client";
 import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
