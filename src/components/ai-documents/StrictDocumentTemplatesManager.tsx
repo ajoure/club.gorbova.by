@@ -202,8 +202,9 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
           code: "legacy_placeholder_format_detected",
           placeholder: `{{${inside}}}`,
           message:
-            `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} ` +
-            `с опциональными |format=...|case=...`,
+            `Невалидный плейсхолдер «{{${inside}}}». Допустим {{field:FLD-XXXXXX}} ` +
+            `с опциональными |format=...|case=..., либо package-aware ` +
+            `({{package.ul|ip|fl.FLD-XXXXXX}}, {{package.role.PKR-XXXXXX}}).`,
         });
       }
       continue;
