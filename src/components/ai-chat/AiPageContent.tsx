@@ -13,7 +13,9 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
 import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
-import { PackageAdminPanel } from "@/components/ai-documents/packages/PackageAdminPanel";
+// Sprint 3F Phase 2c: PackageAdminPanel больше не подключён здесь —
+// его подкомпоненты (PackageRolesManager, TemplateBindingControl,
+// PackageTemplateValidationPanel) встроены в PackagesWorkspace.
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -48,7 +50,6 @@ import {
   Loader2,
   Paperclip,
   Tag,
-  Shield,
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
