@@ -319,14 +319,24 @@ export function DocumentPackageIdeologyView() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
-                              {personRoleOptions.map((r) => (
-                                <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
-                                  {r.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                               {personRoleOptions.map((r) => (
+                                 <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
+                                   {r.label}
+                                 </SelectItem>
+                               ))}
+                               {isAdmin && pkg.templateId && (
+                                 <div className="mt-1 pt-1 border-t">
+                                   <InlineCreateRoleDialog
+                                     packageTemplateId={pkg.templateId}
+                                     onCreated={(roleKey) => {
+                                       setPersonRoles((prev) => ({ ...prev, [p.id]: roleKey }));
+                                     }}
+                                   />
+                                 </div>
+                               )}
+                             </SelectContent>
+                           </Select>
+                         </div>
                         {needsPos && (
                           <div className="mt-1 ml-1 flex items-center gap-1.5">
                             <Input
