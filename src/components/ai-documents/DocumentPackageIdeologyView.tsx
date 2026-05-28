@@ -25,6 +25,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
 import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
+import { InlineCreateRoleDialog } from "./packages/InlineCreateRoleDialog";
+import { useRbac } from "@/hooks/useRbac";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
