@@ -16156,6 +16156,18 @@ export type Database = {
       offer_archive: { Args: { p_offer_id: string }; Returns: Json }
       offer_delete_safety_check: { Args: { p_offer_id: string }; Returns: Json }
       offer_hard_delete: { Args: { p_offer_id: string }; Returns: Json }
+      package_template_bind_template: {
+        Args: {
+          _package_template_id: string
+          _sort_order?: number
+          _template_id: string
+        }
+        Returns: string
+      }
+      package_template_unbind_template: {
+        Args: { _package_template_id?: string; _template_id: string }
+        Returns: number
+      }
       products_bulk_delete_dryrun: {
         Args: { product_ids: string[] }
         Returns: {
