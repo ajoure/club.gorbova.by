@@ -135,7 +135,7 @@ export function usePackageRoleCatalog(packageTemplateId: string | null) {
       };
       const { data, error } = await supabase
         .from("document_package_role_catalog")
-        .insert(payload)
+        .insert([payload])
         .select("*")
         .single();
       if (error) throw error;
