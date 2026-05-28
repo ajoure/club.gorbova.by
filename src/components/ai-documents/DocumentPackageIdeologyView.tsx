@@ -91,6 +91,8 @@ export function DocumentPackageIdeologyView() {
   const aiEntities = useAiEntities();
   const aiPersons = useAiPersons();
   const pkg = useDocumentPackageSession("ideology");
+  const rbac = useRbac();
+  const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
 
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
