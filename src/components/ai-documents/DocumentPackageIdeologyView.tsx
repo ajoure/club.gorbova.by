@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +24,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
+import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
@@ -31,6 +33,16 @@ import {
   type PersonAssignment,
   type PackageSessionDisplayStatus,
 } from "@/hooks/useDocumentPackageSession";
+
+/**
+ * Sprint 3C: для каких ролей UI показывает поле «Должность» и пишет его
+ * в `participants.metadata.position`. Whitelist hardcoded только на этот спринт;
+ * перенос в `document_package_role_catalog.metadata.requires_position` — backlog.
+ */
+const ROLES_WITH_POSITION = new Set<string>([
+  "company_head",
+  "ideology_responsible",
+]);
 
 const LEGACY_LS_KEY = "document_package_questionnaire_ideology_v1";
 
@@ -82,6 +94,8 @@ export function DocumentPackageIdeologyView() {
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
   // person_id -> role_key
   const [personRoles, setPersonRoles] = useState<Record<string, string | undefined>>({});
+  // Sprint 3C: person_id -> position (только для ролей из ROLES_WITH_POSITION)
+  const [personPositions, setPersonPositions] = useState<Record<string, string>>({});
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from session/participants (or legacy LS draft if no session yet)
@@ -91,13 +105,20 @@ export function DocumentPackageIdeologyView() {
 
     if (pkg.session) {
       setLegalEntityId(pkg.session.selected_legal_entity_id ?? null);
-      const map: Record<string, string> = {};
+      const roleMap: Record<string, string> = {};
+      const posMap: Record<string, string> = {};
       for (const p of pkg.participants) {
         if (p.entity_type === "person" && p.person_id) {
-          map[p.person_id] = p.role_key;
+          roleMap[p.person_id] = p.role_key;
+          const meta = (p.metadata ?? {}) as Record<string, unknown>;
+          const pos = meta.position;
+          if (typeof pos === "string" && pos.length > 0) {
+            posMap[p.person_id] = pos;
+          }
         }
       }
-      setPersonRoles(map);
+      setPersonRoles(roleMap);
+      setPersonPositions(posMap);
     } else {
       // Legacy LS draft as one-time read fallback (will be wiped on first save).
       const legacy = readLegacyDraft();
@@ -105,7 +126,6 @@ export function DocumentPackageIdeologyView() {
         if (legacy.selectedEntityIds.length > 0) {
           setLegalEntityId(legacy.selectedEntityIds[0]); // single-select migration
         }
-        // No roles in legacy draft → leave personRoles empty; user must reassign.
       }
     }
     setHydrated(true);
@@ -146,10 +166,13 @@ export function DocumentPackageIdeologyView() {
       .filter(([, role]) => !!role)
       .map(([person_id, role_key]) => {
         const def = pkg.roleCatalog.find((r) => r.role_key === role_key);
+        const needsPos = ROLES_WITH_POSITION.has(role_key!);
+        const pos = needsPos ? (personPositions[person_id] ?? "").trim() : "";
         return {
           person_id,
           role_key: role_key!,
           role_catalog_id: def?.id ?? null,
+          position: pos.length > 0 ? pos : null,
         };
       });
     try {
@@ -254,35 +277,69 @@ export function DocumentPackageIdeologyView() {
                 <div className="space-y-1.5">
                   {persons.map((p) => {
                     const currentRole = personRoles[p.id] ?? "";
+                    const needsPos = ROLES_WITH_POSITION.has(currentRole);
+                    const currentPos = personPositions[p.id] ?? "";
+                    const posMissing = needsPos && currentPos.trim().length === 0;
                     return (
-                      <div key={p.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-accent/30">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium truncate">{p.full_name ?? "—"}</div>
-                          <div className="text-[10px] text-muted-foreground truncate">
-                            {p.is_active ? "активен" : "архив"}
+                      <div key={p.id} className="px-2 py-1 rounded hover:bg-accent/30">
+                        <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium truncate">{p.full_name ?? "—"}</div>
+                            <div className="text-[10px] text-muted-foreground truncate">
+                              {p.is_active ? "активен" : "архив"}
+                            </div>
                           </div>
+                          <Select
+                            value={currentRole}
+                            onValueChange={(v) => {
+                              const next = !v || v === "__none__" ? "" : v;
+                              setPersonRoles((prev) => {
+                                const out = { ...prev };
+                                if (!next) delete out[p.id];
+                                else out[p.id] = next;
+                                return out;
+                              });
+                              // Если новая роль не требует position — чистим стейт.
+                              if (!ROLES_WITH_POSITION.has(next)) {
+                                setPersonPositions((prev) => {
+                                  if (!(p.id in prev)) return prev;
+                                  const out = { ...prev };
+                                  delete out[p.id];
+                                  return out;
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-7 text-[11px] w-[180px]">
+                              <SelectValue placeholder="Без роли" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
+                              {personRoleOptions.map((r) => (
+                                <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <Select
-                          value={currentRole}
-                          onValueChange={(v) => setPersonRoles((prev) => {
-                            const next = { ...prev };
-                            if (!v || v === "__none__") delete next[p.id];
-                            else next[p.id] = v;
-                            return next;
-                          })}
-                        >
-                          <SelectTrigger className="h-7 text-[11px] w-[180px]">
-                            <SelectValue placeholder="Без роли" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
-                            {personRoleOptions.map((r) => (
-                              <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
-                                {r.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {needsPos && (
+                          <div className="mt-1 ml-1 flex items-center gap-1.5">
+                            <Input
+                              value={currentPos}
+                              onChange={(e) =>
+                                setPersonPositions((prev) => ({ ...prev, [p.id]: e.target.value }))
+                              }
+                              placeholder="Должность (например, Директор)"
+                              className="h-7 text-[11px] flex-1"
+                            />
+                            {posMissing && (
+                              <span className="flex items-center gap-1 text-[10px] text-amber-700">
+                                <AlertCircle className="h-3 w-3" /> заполните должность
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -326,6 +383,9 @@ export function DocumentPackageIdeologyView() {
             <Save className="h-4 w-4 mr-1" /> {pkg.isSaving ? "Сохранение…" : "Сохранить анкету"}
           </Button>
         </div>
+
+        {/* Sprint 3C: dev-only dry-run панель, видна только super_admin. */}
+        <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
       </GlassCard>
 
       {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}

@@ -50,6 +50,8 @@ export interface PackageParticipant {
   legal_entity_id: string | null;
   person_id: string | null;
   is_primary: boolean;
+  /** Sprint 3C: участник-специфичный JSONB. Канонически содержит {position?: string}. */
+  metadata: Record<string, unknown> | null;
 }
 
 export interface PackageSessionRow {
@@ -67,6 +69,8 @@ export interface PersonAssignment {
   person_id: string;
   role_key: string;
   role_catalog_id: string | null;
+  /** Sprint 3C: пишется в participants.metadata.position; null/'' → не сохраняется. */
+  position?: string | null;
 }
 
 export interface SaveSessionInput {
@@ -169,7 +173,7 @@ export function useDocumentPackageSession(packageCode: string) {
       if (!sessionId) return [] as PackageParticipant[];
       const { data, error } = await supabase
         .from("document_package_session_participants")
-        .select("id, role_key, role_catalog_id, entity_type, legal_entity_id, person_id, is_primary")
+        .select("id, role_key, role_catalog_id, entity_type, legal_entity_id, person_id, is_primary, metadata")
         .eq("package_session_id", sessionId);
       if (error) throw error;
       return (data ?? []) as PackageParticipant[];
@@ -228,16 +232,21 @@ export function useDocumentPackageSession(packageCode: string) {
 
       const rows = input.personAssignments
         .filter((a) => a.person_id && a.role_key)
-        .map((a) => ({
-          package_session_id: currentSessionId!,
-          role_key: a.role_key,
-          role_catalog_id: a.role_catalog_id,
-          entity_type: "person",
-          person_id: a.person_id,
-          legal_entity_id: null,
-          created_by: user.id,
-          updated_by: user.id,
-        }));
+        .map((a) => {
+          const pos = typeof a.position === "string" ? a.position.trim() : "";
+          const meta: Record<string, string> = pos.length > 0 ? { position: pos } : {};
+          return {
+            package_session_id: currentSessionId!,
+            role_key: a.role_key,
+            role_catalog_id: a.role_catalog_id,
+            entity_type: "person",
+            person_id: a.person_id,
+            legal_entity_id: null,
+            metadata: meta,
+            created_by: user.id,
+            updated_by: user.id,
+          };
+        });
 
       if (rows.length > 0) {
         const { error: insPartErr } = await supabase
