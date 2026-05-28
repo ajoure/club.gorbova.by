@@ -738,6 +738,20 @@ Deno.serve(async (req) => {
         required: meta?.required ?? false,
       });
     }
+    // Sprint 3F: добавить package-aware токены в manifest (без field_public_id).
+    for (const pt of packageTokens) {
+      manifestMap.set(`pkg|${pt.placeholder}`, {
+        field_public_id: null,
+        placeholder: pt.placeholder,
+        is_package_token: true,
+        package_token_kind: pt.kind, // 'requisite' | 'role' | 'role_legacy'
+        format: null,
+        case_modifier: null,
+        label: null,
+        data_type: null,
+        required: false,
+      });
+    }
     const tokenManifest = Array.from(manifestMap.values());
 
     // --- insert new version row
