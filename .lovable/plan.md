@@ -1,4 +1,29 @@
-# да, согласен, с учетом правок:
+# Sprint 3C — COMPLETED (2026-05-28)
+
+Status: `completed: package person FLD + role aliases + resolver core + dry-run edge + UI metadata.position; HARDCODED_ENABLED=false; generation deferred`.
+
+Proof: `.lovable/proofs/package_documents_sprint3c_execution_report_2026_05.md`.
+
+Дельта vs план:
+- Alignment-fix: alias role_key `responsible_person` → `ideology_responsible` (соответствие SOT-каталогу). Alias_token не менялся.
+- 10/10 Deno-тестов resolver зелёные.
+- Dry-run edge `package-tokens-dry-run` deployed (super_admin only, rate-limit 5s, no DB writes vs business state).
+- UI: поле «Должность» для whitelist `['company_head','ideology_responsible']`, collapsible dev-блок внутри карточки «Анкета пакета» (super_admin only).
+
+## Sprint 3D — Package resolver routing plan + controlled template dry-run (planned, not started)
+
+Цели (не выполнять без отдельного approve):
+1. Routing-точка `resolvePackageToken` в `canonical-document-generate-strict` за фича-флагом в БД.
+2. Backend-флаг `document_package_role_catalog.metadata.requires_position` вместо UI hardcode.
+3. Controlled template dry-run: запуск рендера 1 шаблона на тестовой сессии БЕЗ записи в `ai_generated_documents` (snapshot-only).
+4. `|case=` для пакетных токенов через `inflectRu/inflectCompanyName`.
+5. Alias-picker UI для admin.
+
+---
+
+# Архив: Sprint 3C — Approved plan
+
+
 
 1. **Whitelist ролей с должностью — принять hardcoded только на Sprint 3C**
   &nbsp;
