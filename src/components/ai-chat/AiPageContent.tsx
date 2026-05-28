@@ -12,7 +12,7 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 // CanonicalTemplateVersionsPanel / AliasesTab оставлены как dead-code до cleanup-коммита.
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
-import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
+import { PackagesWorkspace } from "@/components/ai-documents/packages/PackagesWorkspace";
 // Sprint 3F Phase 2c: PackageAdminPanel больше не подключён здесь —
 // его подкомпоненты (PackageRolesManager, TemplateBindingControl,
 // PackageTemplateValidationPanel) встроены в PackagesWorkspace.
@@ -897,10 +897,10 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
         </div>
       )}
 
-      {/* Document packages → Идеология: пользовательская анкета + read-only состав пакета */}
+      {/* Sprint 3F Phase 2c: Workspace пакетов (Состав / Шаблоны / Анкета / Роли / Проверка). */}
       {activeSubTab === "pkg-ideology" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <DocumentPackageIdeologyView />
+          <PackagesWorkspace />
         </div>
       )}
 
