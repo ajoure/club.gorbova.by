@@ -324,8 +324,11 @@ export function PlaceholdersCatalogTab() {
     return () => { mounted = false; };
   }, []);
 
-  // Группа = одна из 9 секций. «Все группы» = все секции по порядку.
-  const groupOptions = SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label }));
+  // Группа = одна из 9 секций + 3 пакетные. «Все группы» = все секции по порядку.
+  const groupOptions = [
+    ...SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label })),
+    ...PACKAGE_GROUP_META.map((g) => ({ id: g.id, label: g.label_ru })),
+  ];
 
   const typeOptions = useMemo(() => {
     const set = new Set(rows.map(r => r.data_type).filter(Boolean) as string[]);
