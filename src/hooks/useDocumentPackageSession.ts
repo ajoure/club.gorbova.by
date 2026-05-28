@@ -234,7 +234,7 @@ export function useDocumentPackageSession(packageCode: string) {
         .filter((a) => a.person_id && a.role_key)
         .map((a) => {
           const pos = typeof a.position === "string" ? a.position.trim() : "";
-          const meta: Record<string, unknown> = pos.length > 0 ? { position: pos } : {};
+          const meta: Record<string, string> = pos.length > 0 ? { position: pos } : {};
           return {
             package_session_id: currentSessionId!,
             role_key: a.role_key,
