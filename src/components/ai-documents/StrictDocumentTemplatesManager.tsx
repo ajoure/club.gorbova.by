@@ -528,8 +528,28 @@ export function StrictDocumentTemplatesManager({
         .single();
       if (verErr) throw verErr;
 
+      // Sprint 3F Phase 2c: если при загрузке выбран тип «Пакет документов» и пакет —
+      // сразу привязываем шаблон к пакету через канонический RPC (он выставляет
+      // template_scope='package', вставляет document_package_template_items и
+      // пишет audit). Не блокируем загрузку, если bind упал — выведем toast.
+      let boundPackageName: string | null = null;
+      if (!reusedTemplate && uploadScope === "package" && uploadPackageId) {
+        const pkg = uploadPackages.find((p) => p.id === uploadPackageId);
+        const { error: bindErr } = await supabase.rpc("package_template_bind_template", {
+          _template_id: templateId,
+          _package_template_id: uploadPackageId,
+        });
+        if (bindErr) {
+          toast.error(`Шаблон загружен, но привязать к пакету не удалось: ${bindErr.message}`);
+        } else {
+          boundPackageName = pkg?.name ?? null;
+        }
+      }
+
       if (reusedTemplate) {
         toast.success(`Добавлена версия v${nextVersionNumber} к шаблону «${templateName}»`);
+      } else if (boundPackageName) {
+        toast.success(`Шаблон «${templateName}» загружен и привязан к пакету «${boundPackageName}»`);
       } else {
         toast.success(`Создан шаблон «${templateName}» (v1, ${detected.length} плейсхолдеров)`);
       }
