@@ -767,6 +767,123 @@ export function PlaceholdersCatalogTab() {
                       }),
                     ])
                   )}
+                  {packageSections.flatMap((section) => [
+                    <TableRow key={`pkg-sec-${section.id}`} className="bg-muted/60 hover:bg-muted/60">
+                      <TableCell colSpan={9} className="py-2">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span>{section.label}</span>
+                          <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
+                            ({section.items.length})
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-normal normal-case">
+                            package context
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
+                          {section.hint}
+                        </div>
+                        {isSuperAdmin && (
+                          <div className="mt-1 text-[10px] font-mono text-muted-foreground/60">
+                            source: {section.source_summary}
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>,
+                    ...section.items.map((p) => {
+                      const isReady = p.status === "copy_ready";
+                      const statusLabel: Record<PackagePlaceholderStatus, string> = {
+                        copy_ready: "готов",
+                        source_available: "ждёт синтаксиса",
+                        pending_field: "нет FLD",
+                        missing_source_column: "нет колонки",
+                        deferred: "Sprint 3E",
+                      };
+                      return (
+                        <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
+                          <TableCell />
+                          <TableCell className="py-2">
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              {section.label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium text-sm py-2">
+                            {p.label_ru}
+                            {isSuperAdmin && (
+                              <span className="block text-[10px] font-mono text-muted-foreground">
+                                {p.tech_key}
+                                {p.source_path ? ` · ${p.source_path}` : ""}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {p.reused_fld ? (
+                              <Badge variant="secondary" className="font-mono text-[10px]">
+                                {p.reused_fld}
+                              </Badge>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">—</span>
+                            )}
+                            {isSuperAdmin && p.billing_fld_analog && (
+                              <div className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">
+                                ↔ billing {p.billing_fld_analog}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Badge
+                              variant={isReady ? "default" : "outline"}
+                              className={cn(
+                                "text-[10px]",
+                                !isReady && "border-dashed text-muted-foreground",
+                              )}
+                            >
+                              {statusLabel[p.status]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2 text-[10px] text-muted-foreground italic">
+                            {isReady ? "без модификаторов (Sprint 3E)" : "—"}
+                          </TableCell>
+                          <TableCell className="py-2 text-xs text-foreground/80">
+                            {isReady ? (
+                              <span className="text-muted-foreground/60 italic">— примера нет —</span>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
+                                {p.package_resolver_hint.length > 60
+                                  ? p.package_resolver_hint.slice(0, 60) + "…"
+                                  : p.package_resolver_hint}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {p.package_token ? (
+                              <code className="text-[11px] text-foreground/90 break-all font-mono">
+                                {p.package_token}
+                              </code>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground/60 italic">— не готов к копированию —</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            {p.package_token && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7"
+                                    onClick={() => copyPlaceholder(p.package_token!)}
+                                  >
+                                    <Copy className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }),
+                  ])}
                 </TableBody>
               </Table>
             </div>
