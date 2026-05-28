@@ -6241,6 +6241,9 @@ export type Database = {
       legal_details_persons: {
         Row: {
           address_structured: Json | null
+          bank_account: string | null
+          bank_code: string | null
+          bank_name: string | null
           birth_date: string | null
           created_at: string
           email: string | null
@@ -6261,6 +6264,9 @@ export type Database = {
         }
         Insert: {
           address_structured?: Json | null
+          bank_account?: string | null
+          bank_code?: string | null
+          bank_name?: string | null
           birth_date?: string | null
           created_at?: string
           email?: string | null
@@ -6281,6 +6287,9 @@ export type Database = {
         }
         Update: {
           address_structured?: Json | null
+          bank_account?: string | null
+          bank_code?: string | null
+          bank_name?: string | null
           birth_date?: string | null
           created_at?: string
           email?: string | null

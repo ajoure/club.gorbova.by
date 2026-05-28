@@ -92,4 +92,26 @@ describe("packagePlaceholderCatalog — Sprint 3D", () => {
       expect(allowed.has(i.status)).toBe(true);
     }
   });
+
+  it("Sprint 3E: адресный breakdown UL/IP/FL имеет jsonb-path source", () => {
+    const addr = PACKAGE_PLACEHOLDER_CATALOG.filter(
+      (i) => i.status === "copy_ready" && /Адрес:/.test(i.label_ru) && i.label_ru !== "Юридический адрес (полный)" && i.label_ru !== "Адрес полный",
+    );
+    expect(addr.length).toBeGreaterThan(0);
+    for (const i of addr) {
+      expect(i.source_path).toMatch(/_structured->>'[a-z_]+'$/);
+    }
+  });
+
+  it("Sprint 3E: банк-реквизиты ФЛ — copy_ready через legal_details_persons.bank_*", () => {
+    const flBank = getPackagePlaceholdersByGroup("package_fl").filter((i) =>
+      /package\.fl\.bank_/.test(i.tech_key),
+    );
+    expect(flBank.length).toBe(3);
+    for (const i of flBank) {
+      expect(i.status).toBe("copy_ready");
+      expect(i.source_table).toBe("legal_details_persons");
+      expect(i.source_path).toMatch(/^legal_details_persons\.bank_/);
+    }
+  });
 });
