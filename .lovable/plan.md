@@ -195,7 +195,10 @@ ORDER BY entity_type, public_id;
 
 ## 14. Финальный статус Sprint 3D
 
-`completed: UL/IP/FL package placeholder catalog prepared over existing requisites base (one base + two contexts + dedicated package resolver); package-aware copy-token syntax approved; statuses source_available/copy_ready/pending_field/missing_source_column/deferred; Исполнитель ЮЛ не зеркалится; template→package binding gated by RLS check; no new FLDs; generation and dry-run deferred to Sprint 3E`
+`completed: UL/IP/FL package placeholder catalog prepared over existing requisites base (one base + two contexts + dedicated package resolver); package-aware copy-token syntax approved (Variant B {{package.ul|ip|fl.FLD-XXXXXX}}); statuses source_available/copy_ready/pending_field/missing_source_column/deferred; Исполнитель ЮЛ не зеркалится; template→package binding gated by RLS check (direct INSERT через useDocumentPackageItems.addItem); no new FLDs; generation and dry-run deferred to Sprint 3E`
+
+Proof: `.lovable/proofs/package_documents_sprint3d_ul_ip_fl_placeholders_2026_05.md`.
+Memory: `mem://architecture/documents/package-token-aliases-v1` (обновлена).
 
 ## 15. Sprint 3E (после)
 
