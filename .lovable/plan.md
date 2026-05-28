@@ -1,34 +1,47 @@
 # Plan
 
-## Sprint 3B v2.1 — DONE
+## Sprint 3B v2.1 — DONE (with addendum)
 
-**Status:** `completed: package person FLD + role aliases + resolver skeleton added; feature flag disabled; generation deferred`
+**Status:** `completed: package person FLD + role aliases + resolver skeleton added; pre-req proof verified; feature flag disabled; generation deferred`
 
-**Proof:** `.lovable/proofs/package_documents_sprint3b_v2_1_execution_report_2026_05.md`
+**Proofs:**
+- `.lovable/proofs/package_documents_sprint3b_v2_1_execution_report_2026_05.md` — основной отчёт.
+- `.lovable/proofs/package_documents_sprint3b_v2_1_addendum_2026_05.md` — pre-req `fields_registry.public_id NOT NULL UNIQUE` + 4 verification-блока.
 
-### Что сделано
-- Pre-req: `fields_registry.public_id` → `NOT NULL` + `UNIQUE` (для FK target; данные уже соответствовали, 368/368).
-- Создана таблица `public.document_package_token_aliases` (service_role only, RLS default-deny, partial-unique по `alias_token WHERE archived_at IS NULL`, FK на `fields_registry.public_id`, CHECK на `context_kind`+consistency).
-- Созданы 2 canonical FLD: `FLD-000372 legal_details_persons.full_name`, `FLD-000373 legal_details_persons.position` (entity_type=`person`).
-- Зарегистрированы 4 alias-токена: `package.roles.{company_head,responsible_person}.{full_name,position}`.
-- Создан изолированный resolver: `supabase/functions/_shared/resolve-package-tokens.ts`, `HARDCODED_ENABLED=false`, **0 production imports**.
-- Memory: `mem://architecture/documents/package-token-aliases-v1`.
+### Verified (2026-05-28, read-only)
+- `fields_registry`: 370 строк, `public_id` NOT NULL + UNIQUE, FK `dpta_canonical_fk` valid.
+- `document_package_token_aliases`: RLS on, 0 policies, 0 grants для anon/authenticated → service_role only.
+- FLD-000372/000373 `entity_type='person'` → НЕ в billing/customer/executor picker-группах.
+- `resolve-package-tokens.ts`: 0 production imports, `HARDCODED_ENABLED=false`.
+- 0 active templates / versions ссылаются на FLD-000372/000373 или `package.roles.*`.
 
-### Что НЕ сделано (по контракту)
-- `feature_flags` row — таблицы нет, flag hard-coded `false` в коде.
-- `plan_year` FLD — deferred.
-- Role-specific full_name/position FLD — отказались.
-- Изменения в `canonical-document-generate-strict`, billing/customer/executor резолверах, шаблонах — НЕ ТРОГАЛИСЬ.
+### Backlog → Sprint 3C
+- UI ролей участников пакета НЕ имеет поля «Должность», `document_package_session_participants.metadata.position` нигде не пишется. Без этого alias-токены `package.roles.*.position` всегда вернут `unresolved`.
 
 ---
 
-## Sprint 3C — TODO (отдельный approve)
+## Sprint 3C — Package role metadata UI + resolver dry-run integration plan (TODO, отдельный approve)
 
-1. Routing-точка пакетных aliases в `canonical-document-generate-strict` (за фича-флагом).
-2. Полная интеграция `|case=` через `_shared/case-format.ts` в resolver.
-3. UI picker для пакетных alias-токенов в редакторе шаблонов (тогда выдать `authenticated` SELECT грант с RLS-policy).
-4. Включение flag → smoke-тесты на тестовом шаблоне → раскатка.
-5. Обсуждение `package.context.plan_year`:
+**Цель:** добавить/проверить должности в анкете пакета и подготовить безопасный dry-run resolver, **без реальной генерации документов**.
+
+1. **UI metadata.position** (обязательно):
+   - В форме участников пакета (`DocumentPackageIdeologyView` + связанный save-path в `useDocumentPackageSession`) добавить поле «Должность» для ролей `company_head` / `responsible_person`.
+   - Save-path: писать в `document_package_session_participants.metadata.position` (НЕ создавать column).
+   - Read-path: подтянуть в UI существующее значение.
+
+2. **Resolver dry-run integration plan** (план, без включения flag):
+   - Routing-точка в `canonical-document-generate-strict` за фича-флагом (`HARDCODED_ENABLED=false`).
+   - Полная интеграция `|case=` через `_shared/case-format.ts` в resolver.
+   - Dry-run контракт: `{ resolved, value, warnings[] }` без записи в snapshot / source_trace, без обращения к Gotenberg.
+   - Smoke-фикстуры по обеим ролям и обоим FLD.
+
+3. **UI picker для пакетных alias-токенов** (опционально, после §1/§2):
+   - Если решим открыть picker — выдать `authenticated` SELECT грант на `document_package_token_aliases` с RLS-policy `USING (true)`.
+   - Иначе оставить service_role only.
+
+4. **Включение flag → раскатка** — отдельный спринт после успешного dry-run.
+
+5. **Обсуждение `package.context.plan_year`** (deferred-decision):
    - A) reuse `FLD-000082 meeting.report_year` если не meeting-specific;
    - B) generic package context token из `document_package_sessions.metadata.plan_year`;
    - C) deferred.
