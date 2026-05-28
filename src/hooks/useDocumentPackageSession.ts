@@ -173,7 +173,7 @@ export function useDocumentPackageSession(packageCode: string) {
       if (!sessionId) return [] as PackageParticipant[];
       const { data, error } = await supabase
         .from("document_package_session_participants")
-        .select("id, role_key, role_catalog_id, entity_type, legal_entity_id, person_id, is_primary")
+        .select("id, role_key, role_catalog_id, entity_type, legal_entity_id, person_id, is_primary, metadata")
         .eq("package_session_id", sessionId);
       if (error) throw error;
       return (data ?? []) as PackageParticipant[];
