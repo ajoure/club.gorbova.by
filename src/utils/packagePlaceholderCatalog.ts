@@ -92,6 +92,37 @@ function ready(
 }
 
 /**
+ * Sprint 3E: copy_ready item с jsonb-path source (например, `leg_address_structured->>'street'`).
+ * Используется для адресных полей UL/IP/FL, которые хранятся только в JSONB
+ * (`*_address_structured`). FLD-определение переиспользуется (label/type/mapping),
+ * но package source path — это JSON-path, не плоская колонка.
+ */
+function readyJson(
+  group: PackageGroupId,
+  label_ru: string,
+  billing_fld_analog: string,
+  reused_fld: string,
+  source_table: "client_legal_details" | "legal_details_persons",
+  jsonColumn: string,
+  jsonKey: string,
+  tech_key: string,
+): PackagePlaceholderItem {
+  return {
+    groupId: group,
+    label_ru,
+    source_table,
+    source_path: `${source_table}.${jsonColumn}->>'${jsonKey}'`,
+    billing_fld_analog,
+    reused_fld,
+    package_token: packageToken(group, reused_fld),
+    package_resolver_hint:
+      source_table === "client_legal_details" ? SESSION_LE : SESSION_PERSON,
+    status: "copy_ready",
+    tech_key,
+  };
+}
+
+/**
  * Item помечен как deferred — есть колонка-источник, но FLD ещё не привязан
  * к package-контексту, или ждёт авторства реального шаблона.
  */
