@@ -94,6 +94,8 @@ export function DocumentPackageIdeologyView() {
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
   // person_id -> role_key
   const [personRoles, setPersonRoles] = useState<Record<string, string | undefined>>({});
+  // Sprint 3C: person_id -> position (только для ролей из ROLES_WITH_POSITION)
+  const [personPositions, setPersonPositions] = useState<Record<string, string>>({});
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from session/participants (or legacy LS draft if no session yet)
@@ -103,13 +105,20 @@ export function DocumentPackageIdeologyView() {
 
     if (pkg.session) {
       setLegalEntityId(pkg.session.selected_legal_entity_id ?? null);
-      const map: Record<string, string> = {};
+      const roleMap: Record<string, string> = {};
+      const posMap: Record<string, string> = {};
       for (const p of pkg.participants) {
         if (p.entity_type === "person" && p.person_id) {
-          map[p.person_id] = p.role_key;
+          roleMap[p.person_id] = p.role_key;
+          const meta = (p.metadata ?? {}) as Record<string, unknown>;
+          const pos = meta.position;
+          if (typeof pos === "string" && pos.length > 0) {
+            posMap[p.person_id] = pos;
+          }
         }
       }
-      setPersonRoles(map);
+      setPersonRoles(roleMap);
+      setPersonPositions(posMap);
     } else {
       // Legacy LS draft as one-time read fallback (will be wiped on first save).
       const legacy = readLegacyDraft();
@@ -117,7 +126,6 @@ export function DocumentPackageIdeologyView() {
         if (legacy.selectedEntityIds.length > 0) {
           setLegalEntityId(legacy.selectedEntityIds[0]); // single-select migration
         }
-        // No roles in legacy draft → leave personRoles empty; user must reassign.
       }
     }
     setHydrated(true);
