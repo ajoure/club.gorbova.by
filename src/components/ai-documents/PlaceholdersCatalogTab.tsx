@@ -51,7 +51,6 @@ import {
   type PackagePlaceholderStatus,
   type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
-import { supabase } from "@/integrations/supabase/client";
 import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
