@@ -1,14 +1,17 @@
 /**
- * PackageRolesManager — Sprint 3F Phase 2.
+ * PackageRolesManager — Sprint 3F Phase 2c (UX simplified).
  *
- * Admin CRUD per-package для `document_package_role_catalog`.
  *  • Один token-формат для роли в Word: `{{package.role.PKR-XXXXXX}}`.
  *  • PKR (public_id) — стабильный ID, неизменяемый после создания (защищено триггером БД).
- *  • Системные роли (is_system=true): нельзя удалить, нельзя менять public_id / role_key
- *    (защищено триггером БД); UI не показывает кнопку удаления и поле role_key для них.
- *  • Удаление любой роли — только soft archive (is_active=false). Hard delete заблокирован.
- *  • Output_template управляет ВЫВОДОМ в документе: `{{full_name}} / {{short_name}} / {{position}}`.
- *    NULL → дефолт «{{position}}, {{full_name}}» в резолвере.
+ *  • Системные роли (is_system=true): нельзя удалить, нельзя менять public_id / role_key.
+ *  • Удаление любой роли — только soft archive (is_active=false).
+ *
+ * Sprint 3F Phase 2c: форма роли сведена к минимуму — только название и описание.
+ * Поля required / min_count / max_count / sort_order / output_template / role_key
+ * скрыты из UI: они либо имеют разумные дефолты, либо технические и не нужны
+ * администратору. Любая роль multi-assignable: одну роль можно назначить
+ * нескольким физлицам в анкете пакета. Формат вывода в DOCX определяется
+ * дефолтом резолвера («должность + ФИО») и подключается в Sprint 3G.
  */
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
@@ -16,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -37,9 +39,6 @@ import {
 interface Props {
   packageTemplateId: string | null;
 }
-
-const DEFAULT_OUTPUT_HINT =
-  "Доступные переменные: {{full_name}}, {{short_name}}, {{position}}. Пусто → «{{position}}, {{full_name}}».";
 
 export function PackageRolesManager({ packageTemplateId }: Props) {
   const { roles, isLoading, create, creating, update, updating, archive, restore } =
@@ -68,8 +67,8 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
         <div>
           <h3 className="font-semibold text-sm">Роли пакета</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Один placeholder на роль: <code className="text-[11px]">{`{{package.role.PKR-XXXXXX}}`}</code>.
-            Вывод управляется полем «Как выводить в документе».
+            Один плейсхолдер на роль: <code className="text-[11px]">{`{{package.role.PKR-XXXXXX}}`}</code>.
+            Одну роль можно назначить нескольким физлицам в анкете пакета.
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} disabled={creating}>
@@ -91,7 +90,7 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
               className={`p-3 grid grid-cols-12 gap-3 items-center text-sm ${r.is_active ? "" : "opacity-60"}`}
             >
               <div className="col-span-3 min-w-0">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <code className="text-[11px] font-mono bg-muted px-1.5 py-0.5 rounded">
                     {r.public_id}
                   </code>
@@ -104,39 +103,22 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
                           </Badge>
                         </TooltipTrigger>
                         <TooltipContent>
-                          Нельзя удалить, нельзя менять public_id и role_key.
+                          Системные роли нельзя удалить и переименовать (защищено триггером БД).
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   )}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1 truncate font-mono">
-                  {r.role_key}
+                  {!r.is_active && (
+                    <Badge variant="outline" className="h-5 text-[10px]">архив</Badge>
+                  )}
                 </div>
               </div>
-              <div className="col-span-5 min-w-0">
+              <div className="col-span-7 min-w-0">
                 <div className="font-medium truncate">{r.label}</div>
                 {r.description && (
-                  <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                  <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
                     {r.description}
                   </div>
-                )}
-                {r.output_template && (
-                  <div className="text-[11px] text-muted-foreground mt-1">
-                    Вывод: <code className="font-mono">{r.output_template}</code>
-                  </div>
-                )}
-              </div>
-              <div className="col-span-2 text-xs text-muted-foreground space-y-0.5">
-                <div>порядок: {r.sort_order}</div>
-                <div>
-                  {r.required ? "обязательна" : "опциональна"}
-                  {r.min_count != null || r.max_count != null
-                    ? ` · ${r.min_count ?? 0}–${r.max_count ?? "∞"}`
-                    : ""}
-                </div>
-                {!r.is_active && (
-                  <Badge variant="outline" className="h-4 text-[10px]">архивирована</Badge>
                 )}
               </div>
               <div className="col-span-2 flex justify-end gap-1">
@@ -144,7 +126,7 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
                   size="icon"
                   variant="ghost"
                   onClick={() => copyToken(r.public_id)}
-                  title="Скопировать placeholder"
+                  title="Скопировать плейсхолдер"
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
@@ -158,7 +140,7 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
                 </Button>
                 {r.is_active ? (
                   r.is_system ? (
-                    <Button size="icon" variant="ghost" disabled title="Системную роль архивировать осторожно">
+                    <Button size="icon" variant="ghost" disabled title="Системную роль нельзя архивировать">
                       <Lock className="h-3.5 w-3.5" />
                     </Button>
                   ) : (
@@ -220,10 +202,10 @@ function ArchiveButton({ role, onArchive }: { role: PackageRoleRow; onArchive: (
         <AlertDialogHeader>
           <AlertDialogTitle>Архивировать роль «{role.label}»?</AlertDialogTitle>
           <AlertDialogDescription>
-            Роль будет помечена неактивной (is_active=false). Существующие участники не пострадают,
-            но новые участники с этой ролью не смогут быть назначены через анкету. Hard delete заблокирован
-            политикой — placeholder {`{{package.role.${role.public_id}}}`} в старых DOCX продолжит
-            давать понятный warning, а не молчаливую ошибку.
+            Роль будет помечена неактивной. Существующие назначения сохранятся,
+            но новых физлиц с этой ролью назначить нельзя. Удалить роль навсегда
+            нельзя по архитектурному правилу — плейсхолдер
+            {` {{package.role.${role.public_id}}}`} в старых DOCX продолжит работать.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -235,28 +217,30 @@ function ArchiveButton({ role, onArchive }: { role: PackageRoleRow; onArchive: (
   );
 }
 
-function CreateRoleDialog({
-  open, onOpenChange, creating, onCreate,
+export interface CreateRoleSimpleInput {
+  label: string;
+  description?: string | null;
+}
+
+/**
+ * Sprint 3F Phase 2c: предельно простая форма — только название и описание.
+ * Экспортируется, чтобы переиспользовать в inline-сценарии «+ Добавить роль»
+ * прямо из dropdown анкеты пакета.
+ */
+export function CreateRoleDialog({
+  open, onOpenChange, creating, onCreate, title,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   creating: boolean;
-  onCreate: (input: {
-    label: string;
-    description?: string | null;
-    required?: boolean;
-    sort_order?: number;
-    output_template?: string | null;
-  }) => void;
+  onCreate: (input: CreateRoleSimpleInput) => void;
+  title?: string;
 }) {
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
-  const [outputTemplate, setOutputTemplate] = useState("");
-  const [required, setRequired] = useState(false);
-  const [sortOrder, setSortOrder] = useState(100);
 
   function reset() {
-    setLabel(""); setDescription(""); setOutputTemplate(""); setRequired(false); setSortOrder(100);
+    setLabel(""); setDescription("");
   }
 
   return (
@@ -266,9 +250,11 @@ function CreateRoleDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Новая роль пакета</DialogTitle>
+          <DialogTitle>{title ?? "Новая роль пакета"}</DialogTitle>
           <DialogDescription>
-            PKR-код будет назначен автоматически и не будет меняться при переименовании роли.
+            Система автоматически присвоит роли код PKR-XXXXXX. Он не меняется
+            при переименовании роли, поэтому шаблоны с этим плейсхолдером
+            продолжат работать.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -277,7 +263,7 @@ function CreateRoleDialog({
             <Input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Например: Ответственный за подготовку"
+              placeholder="Например: Ответственный за идеологическую работу"
               autoFocus
             />
           </div>
@@ -286,32 +272,9 @@ function CreateRoleDialog({
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Кто это и зачем — для администратора"
+              placeholder="Краткое пояснение — необязательно"
               rows={2}
             />
-          </div>
-          <div>
-            <Label>Как выводить в документе (output_template)</Label>
-            <Input
-              value={outputTemplate}
-              onChange={(e) => setOutputTemplate(e.target.value)}
-              placeholder="Например: {{position}}, {{full_name}}"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">{DEFAULT_OUTPUT_HINT}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-center justify-between gap-3 border border-border/40 rounded-md px-3 py-2">
-              <Label className="text-sm">Обязательна</Label>
-              <Switch checked={required} onCheckedChange={setRequired} />
-            </div>
-            <div>
-              <Label className="text-sm">Сортировка</Label>
-              <Input
-                type="number"
-                value={sortOrder}
-                onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
-              />
-            </div>
           </div>
         </div>
         <DialogFooter>
@@ -321,9 +284,6 @@ function CreateRoleDialog({
             onClick={() => onCreate({
               label: label.trim(),
               description: description.trim() || null,
-              required,
-              sort_order: sortOrder,
-              output_template: outputTemplate.trim() || null,
             })}
           >
             Создать
@@ -343,30 +303,15 @@ function EditRoleDialog({
   onSave: (patch: {
     label?: string;
     description?: string | null;
-    required?: boolean;
-    sort_order?: number;
-    output_template?: string | null;
-    min_count?: number | null;
-    max_count?: number | null;
   }) => void;
 }) {
   const [label, setLabel] = useState(row?.label ?? "");
   const [description, setDescription] = useState(row?.description ?? "");
-  const [outputTemplate, setOutputTemplate] = useState(row?.output_template ?? "");
-  const [required, setRequired] = useState(row?.required ?? false);
-  const [sortOrder, setSortOrder] = useState(row?.sort_order ?? 100);
-  const [minCount, setMinCount] = useState<string>(row?.min_count?.toString() ?? "");
-  const [maxCount, setMaxCount] = useState<string>(row?.max_count?.toString() ?? "");
 
   useEffect(() => {
     if (row) {
       setLabel(row.label ?? "");
       setDescription(row.description ?? "");
-      setOutputTemplate(row.output_template ?? "");
-      setRequired(row.required ?? false);
-      setSortOrder(row.sort_order ?? 100);
-      setMinCount(row.min_count?.toString() ?? "");
-      setMaxCount(row.max_count?.toString() ?? "");
     }
   }, [row]);
 
@@ -379,9 +324,8 @@ function EditRoleDialog({
             Редактирование роли · <span className="font-mono text-sm">{row.public_id}</span>
           </DialogTitle>
           <DialogDescription>
-            {row.is_system
-              ? "Системная роль. role_key и public_id защищены триггером БД и не меняются."
-              : "Custom-роль. public_id зафиксирован при создании и не меняется."}
+            Плейсхолдер роли: <code>{`{{package.role.${row.public_id}}}`}</code>.
+            Код PKR не меняется и не зависит от названия.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -397,47 +341,6 @@ function EditRoleDialog({
               rows={2}
             />
           </div>
-          <div>
-            <Label>Как выводить в документе (output_template)</Label>
-            <Input
-              value={outputTemplate ?? ""}
-              onChange={(e) => setOutputTemplate(e.target.value)}
-              placeholder="{{position}}, {{full_name}}"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">{DEFAULT_OUTPUT_HINT}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-center justify-between gap-3 border border-border/40 rounded-md px-3 py-2">
-              <Label className="text-sm">Обязательна</Label>
-              <Switch checked={required} onCheckedChange={setRequired} />
-            </div>
-            <div>
-              <Label className="text-sm">Сортировка</Label>
-              <Input
-                type="number"
-                value={sortOrder}
-                onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
-              />
-            </div>
-            <div>
-              <Label className="text-sm">min_count</Label>
-              <Input
-                type="number"
-                value={minCount}
-                onChange={(e) => setMinCount(e.target.value)}
-                placeholder="—"
-              />
-            </div>
-            <div>
-              <Label className="text-sm">max_count</Label>
-              <Input
-                type="number"
-                value={maxCount}
-                onChange={(e) => setMaxCount(e.target.value)}
-                placeholder="—"
-              />
-            </div>
-          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
@@ -446,11 +349,6 @@ function EditRoleDialog({
             onClick={() => onSave({
               label: label.trim(),
               description: description?.trim() || null,
-              output_template: outputTemplate?.trim() || null,
-              required,
-              sort_order: sortOrder,
-              min_count: minCount.trim() === "" ? null : Number(minCount),
-              max_count: maxCount.trim() === "" ? null : Number(maxCount),
             })}
           >
             Сохранить

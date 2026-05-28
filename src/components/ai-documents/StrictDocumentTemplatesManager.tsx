@@ -328,6 +328,22 @@ export function StrictDocumentTemplatesManager({
   const [uploadName, setUploadName] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Sprint 3F Phase 2c: тип шаблона и выбор пакета при загрузке.
+  const [uploadScope, setUploadScope] = useState<"billing" | "package">("billing");
+  const [uploadPackageId, setUploadPackageId] = useState<string>("");
+  const [uploadPackages, setUploadPackages] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    if (!uploadOpen) return;
+    (async () => {
+      const { data } = await supabase
+        .from("document_package_templates")
+        .select("id, name, is_active")
+        .eq("is_active", true)
+        .order("name");
+      setUploadPackages((data ?? []).map((p: any) => ({ id: p.id, name: p.name })));
+    })();
+  }, [uploadOpen]);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [markupVersion, setMarkupVersion] = useState<VersionRow | null>(null);
@@ -512,8 +528,28 @@ export function StrictDocumentTemplatesManager({
         .single();
       if (verErr) throw verErr;
 
+      // Sprint 3F Phase 2c: если при загрузке выбран тип «Пакет документов» и пакет —
+      // сразу привязываем шаблон к пакету через канонический RPC (он выставляет
+      // template_scope='package', вставляет document_package_template_items и
+      // пишет audit). Не блокируем загрузку, если bind упал — выведем toast.
+      let boundPackageName: string | null = null;
+      if (!reusedTemplate && uploadScope === "package" && uploadPackageId) {
+        const pkg = uploadPackages.find((p) => p.id === uploadPackageId);
+        const { error: bindErr } = await supabase.rpc("package_template_bind_template", {
+          _template_id: templateId,
+          _package_template_id: uploadPackageId,
+        });
+        if (bindErr) {
+          toast.error(`Шаблон загружен, но привязать к пакету не удалось: ${bindErr.message}`);
+        } else {
+          boundPackageName = pkg?.name ?? null;
+        }
+      }
+
       if (reusedTemplate) {
         toast.success(`Добавлена версия v${nextVersionNumber} к шаблону «${templateName}»`);
+      } else if (boundPackageName) {
+        toast.success(`Шаблон «${templateName}» загружен и привязан к пакету «${boundPackageName}»`);
       } else {
         toast.success(`Создан шаблон «${templateName}» (v1, ${detected.length} плейсхолдеров)`);
       }
@@ -1065,6 +1101,53 @@ export function StrictDocumentTemplatesManager({
                 </div>
               ) : null}
             </div>
+
+            {/* Sprint 3F Phase 2c: тип шаблона и выбор пакета. Радио показывается
+                только если категория не пред-зафиксирована (categoryFilter), —
+                иначе скрываем, чтобы не сбивать вложенные сценарии. */}
+            {!categoryFilter && (
+              <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+                <Label className="text-xs">Тип шаблона</Label>
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="upload-scope"
+                      checked={uploadScope === "billing"}
+                      onChange={() => setUploadScope("billing")}
+                    />
+                    <span>Биллинговый документ</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="upload-scope"
+                      checked={uploadScope === "package"}
+                      onChange={() => setUploadScope("package")}
+                    />
+                    <span>Пакет документов</span>
+                  </label>
+                </div>
+                {uploadScope === "package" && (
+                  <div className="pt-1">
+                    <Label className="text-xs">Пакет документов</Label>
+                    <select
+                      className="mt-1 w-full border rounded-md h-9 px-2 text-sm bg-background"
+                      value={uploadPackageId}
+                      onChange={(e) => setUploadPackageId(e.target.value)}
+                    >
+                      <option value="">— выберите пакет —</option>
+                      {uploadPackages.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Шаблон будет привязан к пакету и сразу появится в его составе.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <Label>Файл .docx</Label>
               <Input
