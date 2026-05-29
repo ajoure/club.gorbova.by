@@ -37,9 +37,16 @@ export const HARDCODED_ENABLED = false;
 export interface PackageTokenResolveInput {
   rawToken: string;
   packageSessionId: string;
+  /**
+   * Sprint 3G: per-document scope. Когда указан — резолвер читает
+   * `document_package_item_role_assignments` (document-level SOT),
+   * а не legacy `document_package_session_participants`.
+   */
+  packageTemplateItemId?: string | null;
   supabase: SupabaseClient;
   caseContext?: Omit<CaseContext, 'tokenKey'>;
 }
+
 
 export type PackageTokenResolveCode =
   | 'feature_off'
@@ -118,12 +125,61 @@ export async function resolvePackageTokenCore(
   }
 
   // 2. Найти участника(ов) роли в сессии пакета.
-  //    Явно достаём массив, чтобы детектировать multiple_role_assignments.
-  const { data: participants, error: partErr } = await input.supabase
-    .from('document_package_session_participants')
-    .select('person_id, metadata, entity_type')
-    .eq('package_session_id', input.packageSessionId)
-    .eq('role_key', alias.role_key);
+  //    Sprint 3G: если задан packageTemplateItemId — читаем document-level
+  //    SOT (`document_package_item_role_assignments`). Иначе — legacy
+  //    package-scope participants.
+  let participants: Array<{ person_id: string | null; metadata: unknown; entity_type?: string | null }> | null;
+  let partErr: unknown;
+  if (input.packageTemplateItemId) {
+    // Резолвим role_catalog_id по PKR/role_key + package_template_id текущего item.
+    const { data: itemRow, error: itemErr } = await input.supabase
+      .from('document_package_template_items')
+      .select('package_template_id')
+      .eq('id', input.packageTemplateItemId)
+      .maybeSingle();
+    if (itemErr || !itemRow) {
+      return {
+        resolved: false,
+        code: 'participant_missing',
+        warning: `package_template_item_not_found:${input.packageTemplateItemId}`,
+        aliasId: alias.id,
+        roleKey: alias.role_key,
+      };
+    }
+    const { data: roleRow, error: roleErr } = await input.supabase
+      .from('document_package_role_catalog')
+      .select('id')
+      .eq('package_template_id', (itemRow as { package_template_id: string }).package_template_id)
+      .eq('role_key', alias.role_key)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (roleErr || !roleRow) {
+      return {
+        resolved: false,
+        code: 'participant_missing',
+        warning: `role_catalog_not_found:${alias.role_key}`,
+        aliasId: alias.id,
+        roleKey: alias.role_key,
+      };
+    }
+    const { data: rows, error } = await input.supabase
+      .from('document_package_item_role_assignments')
+      .select('person_id, metadata')
+      .eq('package_session_id', input.packageSessionId)
+      .eq('package_template_item_id', input.packageTemplateItemId)
+      .eq('role_catalog_id', (roleRow as { id: string }).id)
+      .eq('is_active', true);
+    participants = (rows ?? []) as typeof participants;
+    partErr = error;
+  } else {
+    const { data: rows, error } = await input.supabase
+      .from('document_package_session_participants')
+      .select('person_id, metadata, entity_type')
+      .eq('package_session_id', input.packageSessionId)
+      .eq('role_key', alias.role_key);
+    participants = (rows ?? []) as typeof participants;
+    partErr = error;
+  }
 
   if (partErr) {
     return {
@@ -153,6 +209,7 @@ export async function resolvePackageTokenCore(
     };
   }
   const participant = participants[0];
+
 
   // 3. Достать значение по context_kind
   let rawValue: unknown;
