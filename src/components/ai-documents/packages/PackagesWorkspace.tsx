@@ -135,7 +135,7 @@ export function PackagesWorkspace() {
               </TabsTrigger>
             )}
             <TabsTrigger value="anketa">
-              <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкета пакета
+              <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкеты документов
             </TabsTrigger>
             {isAdmin && (
               <TabsTrigger value="roles">
