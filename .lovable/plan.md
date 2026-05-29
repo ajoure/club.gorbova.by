@@ -450,3 +450,38 @@ Strict pipeline (`canonical-document-generate-strict`), Gotenberg, `ai_generated
 
 - **При PASS:** `completed: Phase 3I-A backend runtime proof passed; package generation through canonical strict passed; orchestrator remains thin; ready for Phase 3I-B UI`.
 - **При FAIL:** Phase 3I-A остаётся OPEN, в proof — точный список оставшихся блокеров, memory не трогается.
+---
+
+## Phase 3I-A — CLOSED (2026-05-29)
+
+Все блокеры закрыты, runtime PASS на пакете «Идеология».
+
+### Что сделано в финальном раунде
+
+1. **UI validator fix** (`src/components/ai-documents/TemplateMarkupDialog.tsx`):
+   - Удалён старый `LEGACY_PLACEHOLDER_RE`, который считал legacy всё, что не начинается с `field:`.
+   - Введён scope-resolver (`document_templates.template_scope` → `document_package_template_items` → `unknown`).
+   - Введён `classifyTemplateToken(token, scope)` с тремя состояниями: `valid` / `package_in_billing` / `legacy`.
+   - Раздельные счётчики в футере: валидных плейсхолдеров / ручных замен / устаревших / package-в-billing.
+   - CSS-класс `.docx-package-in-billing` (оранжевый) для scope-нарушений.
+   - `getAcceptedReplacementsWithFLD` НЕ тронут.
+
+2. **F2 verification** (read-only psql):
+   - Активные DOCX «Приказ» v3 и «Положение» v1 имеют `validation_status='valid'` от strict-валидатора → PKR-токенов в активных версиях нет.
+   - `ln-000012` существует и активен в `document_package_role_catalog` для пакета «Идеология».
+
+3. **Runtime PASS** (`ai-generate-document-package`, `run_mode='admin_test'`, session `b0b229b7-…`):
+   - `success: true`, `generated: 2`, `blocked: 0`, `errors: 0`.
+   - Оба item: `context_type='package_session'`, idempotency_key `pkg:<batch>:<item>`, DOCX + PDF в `documents/generated/package/<session>/...`, `meta.strict=true`, `meta.source='package_orchestrator'`.
+   - Generation_error IS NULL для обоих → нет нерезолвленных `{{...}}` (Docxtemplater strict throw on null).
+
+### Proof
+
+`.lovable/proofs/sprint_3i_a_ui_validator_fix_and_runtime_pass_2026_05.md`.
+
+### Готовность к Phase 3I-B
+
+- Backend orchestrator thin + canonical strict pipeline проверены на real-runtime;
+- DOCX-шаблоны «Идеология» актуальны (PKR удалён, ln-канон);
+- UI validator больше не врёт про package/ln-токены;
+- Можно строить UI «Сформировать пакет документов» поверх существующего edge function без backend-изменений.
