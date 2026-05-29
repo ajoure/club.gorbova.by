@@ -19,14 +19,16 @@ export interface PackageGenerationItemResult {
   status: "generated" | "blocked" | "error" | "skipped";
   document_id?: string;
   document_number?: string;
+  document_date?: string;
   download_url?: string;
   errors?: string[];
+  details?: unknown;
 }
 
 export interface PackageGenerationResult {
   success: boolean;
   batch_id: string;
-  status: "pending" | "generated" | "partial" | "failed";
+  status: "pending" | "generated" | "partial" | "failed" | "blocked";
   total: number;
   generated: number;
   blocked?: number;
