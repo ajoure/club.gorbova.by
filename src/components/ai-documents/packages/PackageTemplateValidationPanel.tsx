@@ -245,7 +245,8 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
         .eq("is_active", true);
       if (error) throw error;
       const s = new Set<string>();
-      for (const r of (data ?? []) as ItemAssignmentRow[]) {
+      const rows = (data ?? []) as unknown as ItemAssignmentRow[];
+      for (const r of rows) {
         if (r.role_catalog_id) s.add(r.role_catalog_id);
       }
       return s;
