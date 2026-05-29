@@ -127,6 +127,25 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     enabled: !!packageTemplateId,
   });
 
+  // Sprint 3G: загружаем mapping FLD-XXXXXX → entity_type для классификации
+  // биллинговых полей. Без этого все системные FLD выглядели как warning.
+  const fldEntityTypesQuery = useQuery({
+    queryKey: ["fields-registry-entity-types"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("fields_registry")
+        .select("public_id, entity_type")
+        .is("archived_at", null);
+      if (error) throw error;
+      const map = new Map<string, string>();
+      for (const r of (data ?? []) as any[]) {
+        if (r.public_id && r.entity_type) map.set(r.public_id, r.entity_type);
+      }
+      return map;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const isPackageScope = true; // validation runs in package context by definition
 
   const runOnArrayBuffer = useCallback(async (ab: ArrayBuffer, label: string) => {
@@ -136,11 +155,12 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       const text = result.value ?? "";
       const seen = new Set<string>();
       const out: Finding[] = [];
+      const fldMap = fldEntityTypesQuery.data ?? new Map<string, string>();
       for (const m of text.matchAll(ANY_PLACEHOLDER_RE)) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        out.push(classify(inside, isPackageScope));
+        out.push(classify(inside, isPackageScope, fldMap));
       }
       setFindings(out);
       setSourceLabel(label);
@@ -153,7 +173,7 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     } finally {
       setScanning(false);
     }
-  }, [isPackageScope]);
+  }, [isPackageScope, fldEntityTypesQuery.data]);
 
   const handleFile = async (file: File | null) => {
     if (!file) return;
