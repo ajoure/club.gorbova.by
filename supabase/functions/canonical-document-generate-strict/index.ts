@@ -304,49 +304,92 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    // ── Sprint 3I-A: package-mode early dispatch ─────────────────────────
-    // packageContext is allowed ONLY for internal service-role calls from
-    // ai-generate-document-package. Regular UI / user-JWT cannot reach the
-    // package handler. Order path below is byte-for-byte unchanged.
-    const _rawBody = await req.clone().json().catch(() => ({}));
-    if (_rawBody && typeof _rawBody === 'object' && _rawBody.packageContext) {
-      const internalMarker = req.headers.get('x-internal-call');
-      const apikeyHeader = req.headers.get('apikey') || '';
-      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-      if (internalMarker !== 'package-orchestrator' || !serviceKey || apikeyHeader !== serviceKey) {
-        return json({ error: 'package_context_forbidden' }, 403);
-      }
-      const { handlePackageStrict } = await import('../_shared/package-strict-handler.ts');
-      return handlePackageStrict(
-        { mode: _rawBody.mode === 'generate' ? 'generate' : 'preview', packageContext: _rawBody.packageContext },
-        corsHeaders,
-      );
-    }
+    // ── Sprint 3I-A-1: single unified pipeline (order + package_session) ──
+    // Body is parsed ONCE. `packageContext` opts into package-mode value
+    // preparation; there is NO second renderer/PDF/persist below — both
+    // modes converge on the same Docxtemplater / convertDocxToPdf /
+    // storage.upload / ai_generated_documents calls further down.
+    const body = await req.json().catch(() => ({}));
+    const mode: 'preview' | 'generate' = body?.mode === 'generate' ? 'generate' : 'preview';
+    const rawPackageCtx = body?.packageContext && typeof body.packageContext === 'object'
+      ? body.packageContext : null;
+    const generationContext: 'order' | 'package_session' = rawPackageCtx ? 'package_session' : 'order';
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    const auth = req.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-    if (!ud?.user) return json({ error: 'unauthorized' }, 401);
-    const userId = ud.user.id;
-
-    const { data: roleRows } = await supabase
-      .from('user_roles_v2')
-      .select('roles!inner(code)')
-      .eq('user_id', userId);
-    const codes = (roleRows || []).map((r: any) => r.roles?.code);
-    const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
-
-    const { data: prof } = await supabase.from('profiles').select('id').eq('user_id', userId).maybeSingle();
-    if (!prof) return json({ error: 'profile_not_found' }, 400);
-
-    const body = await req.json().catch(() => ({}));
-    const mode: 'preview' | 'generate' = body?.mode === 'generate' ? 'generate' : 'preview';
-    const orderId: string | null = body?.order_id || null;
+    let userId: string | null = null;
+    let isAdmin = false;
+    let prof: { id: string } | null = null;
+    let orderId: string | null = body?.order_id || null;
     let templateId: string | null = body?.template_id || null;
     const adminForce: boolean = body?.admin_force === true;
-    if (!orderId) return json({ error: 'order_id_required' }, 400);
+    type PackageCtx = {
+      template_id: string;
+      package_session_id: string;
+      package_template_id: string;
+      package_template_item_id: string;
+      generation_batch_id: string;
+      profile_id: string;
+      title_override?: string | null;
+      preresolved_fields: Record<string, { value: string; source: string }>;
+      preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
+      preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }>;
+    };
+    let packageContext: PackageCtx | null = null;
+
+    if (generationContext === 'package_session') {
+      // Strict service-role guard. Orchestrator MUST send all three signals.
+      const internalMarker = req.headers.get('x-internal-call');
+      const apikeyHeader = req.headers.get('apikey') || '';
+      const authHeader = req.headers.get('Authorization') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (
+        internalMarker !== 'package-orchestrator' ||
+        !serviceKey ||
+        apikeyHeader !== serviceKey ||
+        authHeader !== `Bearer ${serviceKey}`
+      ) {
+        return json({ error: 'package_context_forbidden' }, 403);
+      }
+      const requiredKeys: Array<keyof PackageCtx> = [
+        'template_id', 'package_session_id', 'package_template_id',
+        'package_template_item_id', 'generation_batch_id', 'profile_id',
+      ];
+      for (const k of requiredKeys) {
+        const v = (rawPackageCtx as any)?.[k];
+        if (typeof v !== 'string' || !v) return json({ error: `package_context_invalid:${k}` }, 400);
+      }
+      packageContext = {
+        ...(rawPackageCtx as any),
+        preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
+        preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
+        preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+      } as PackageCtx;
+      // Package-mode: orchestrator is the trust anchor for profile_id /
+      // ownership. Strict acts as system actor — no user JWT.
+      prof = { id: packageContext.profile_id };
+      templateId = packageContext.template_id;
+      orderId = null;
+    } else {
+      const auth = req.headers.get('Authorization');
+      if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
+      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+      if (!ud?.user) return json({ error: 'unauthorized' }, 401);
+      userId = ud.user.id;
+
+      const { data: roleRows } = await supabase
+        .from('user_roles_v2')
+        .select('roles!inner(code)')
+        .eq('user_id', userId);
+      const codes = (roleRows || []).map((r: any) => r.roles?.code);
+      isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
+
+      const { data: profRow } = await supabase.from('profiles').select('id').eq('user_id', userId).maybeSingle();
+      if (!profRow) return json({ error: 'profile_not_found' }, 400);
+      prof = profRow;
+
+      if (!orderId) return json({ error: 'order_id_required' }, 400);
+    }
 
     // ── PATCH-A: load order для общих проверок (hard-stop guards) ─────────
     const { data: ordRow } = await supabase
