@@ -304,50 +304,104 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    // ── Sprint 3I-A: package-mode early dispatch ─────────────────────────
-    // packageContext is allowed ONLY for internal service-role calls from
-    // ai-generate-document-package. Regular UI / user-JWT cannot reach the
-    // package handler. Order path below is byte-for-byte unchanged.
-    const _rawBody = await req.clone().json().catch(() => ({}));
-    if (_rawBody && typeof _rawBody === 'object' && _rawBody.packageContext) {
-      const internalMarker = req.headers.get('x-internal-call');
-      const apikeyHeader = req.headers.get('apikey') || '';
-      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-      if (internalMarker !== 'package-orchestrator' || !serviceKey || apikeyHeader !== serviceKey) {
-        return json({ error: 'package_context_forbidden' }, 403);
-      }
-      const { handlePackageStrict } = await import('../_shared/package-strict-handler.ts');
-      return handlePackageStrict(
-        { mode: _rawBody.mode === 'generate' ? 'generate' : 'preview', packageContext: _rawBody.packageContext },
-        corsHeaders,
-      );
-    }
+    // ── Sprint 3I-A-1: single unified pipeline (order + package_session) ──
+    // Body is parsed ONCE. `packageContext` opts into package-mode value
+    // preparation; there is NO second renderer/PDF/persist below — both
+    // modes converge on the same Docxtemplater / convertDocxToPdf /
+    // storage.upload / ai_generated_documents calls further down.
+    const body = await req.json().catch(() => ({}));
+    const mode: 'preview' | 'generate' = body?.mode === 'generate' ? 'generate' : 'preview';
+    const rawPackageCtx = body?.packageContext && typeof body.packageContext === 'object'
+      ? body.packageContext : null;
+    const generationContext: 'order' | 'package_session' = rawPackageCtx ? 'package_session' : 'order';
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    const auth = req.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-    if (!ud?.user) return json({ error: 'unauthorized' }, 401);
-    const userId = ud.user.id;
-
-    const { data: roleRows } = await supabase
-      .from('user_roles_v2')
-      .select('roles!inner(code)')
-      .eq('user_id', userId);
-    const codes = (roleRows || []).map((r: any) => r.roles?.code);
-    const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
-
-    const { data: prof } = await supabase.from('profiles').select('id').eq('user_id', userId).maybeSingle();
-    if (!prof) return json({ error: 'profile_not_found' }, 400);
-
-    const body = await req.json().catch(() => ({}));
-    const mode: 'preview' | 'generate' = body?.mode === 'generate' ? 'generate' : 'preview';
-    const orderId: string | null = body?.order_id || null;
+    let userId: string | null = null;
+    let isAdmin = false;
+    let prof: { id: string } | null = null;
+    let orderId: string | null = body?.order_id || null;
     let templateId: string | null = body?.template_id || null;
     const adminForce: boolean = body?.admin_force === true;
-    if (!orderId) return json({ error: 'order_id_required' }, 400);
+    type PackageCtx = {
+      template_id: string;
+      package_session_id: string;
+      package_template_id: string;
+      package_template_item_id: string;
+      generation_batch_id: string;
+      profile_id: string;
+      title_override?: string | null;
+      preresolved_fields: Record<string, { value: string; source: string }>;
+      preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
+      preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }>;
+    };
+    let packageContext: PackageCtx | null = null;
 
+    if (generationContext === 'package_session') {
+      // Strict service-role guard. Orchestrator MUST send all three signals.
+      const internalMarker = req.headers.get('x-internal-call');
+      const apikeyHeader = req.headers.get('apikey') || '';
+      const authHeader = req.headers.get('Authorization') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (
+        internalMarker !== 'package-orchestrator' ||
+        !serviceKey ||
+        apikeyHeader !== serviceKey ||
+        authHeader !== `Bearer ${serviceKey}`
+      ) {
+        return json({ error: 'package_context_forbidden' }, 403);
+      }
+      const requiredKeys: Array<keyof PackageCtx> = [
+        'template_id', 'package_session_id', 'package_template_id',
+        'package_template_item_id', 'generation_batch_id', 'profile_id',
+      ];
+      for (const k of requiredKeys) {
+        const v = (rawPackageCtx as any)?.[k];
+        if (typeof v !== 'string' || !v) return json({ error: `package_context_invalid:${k}` }, 400);
+      }
+      packageContext = {
+        ...(rawPackageCtx as any),
+        preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
+        preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
+        preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+      } as PackageCtx;
+      // Package-mode: orchestrator is the trust anchor for profile_id /
+      // ownership. Strict acts as system actor — no user JWT.
+      prof = { id: packageContext.profile_id };
+      templateId = packageContext.template_id;
+      orderId = null;
+    } else {
+      const auth = req.headers.get('Authorization');
+      if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
+      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+      if (!ud?.user) return json({ error: 'unauthorized' }, 401);
+      userId = ud.user.id;
+
+      const { data: roleRows } = await supabase
+        .from('user_roles_v2')
+        .select('roles!inner(code)')
+        .eq('user_id', userId);
+      const codes = (roleRows || []).map((r: any) => r.roles?.code);
+      isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
+
+      const { data: profRow } = await supabase.from('profiles').select('id').eq('user_id', userId).maybeSingle();
+      if (!profRow) return json({ error: 'profile_not_found' }, 400);
+      prof = profRow;
+
+      if (!orderId) return json({ error: 'order_id_required' }, 400);
+    }
+
+    // ── Order-mode preflight + snapshot + B97 fallback ───────────────────
+    // Package-mode skips this block entirely: orchestrator already
+    // pre-resolved every value into packageContext.
+    let order: any;
+    let docFields: Record<string, any>;
+    let b97FallbackApplied = 0;
+    let b97FallbackNonEmpty = 0;
+    let b97LiveCustomer: any = null;
+    let b97LiveExecutor: any = null;
+
+    if (generationContext === 'order') {
     // ── PATCH-A: load order для общих проверок (hard-stop guards) ─────────
     const { data: ordRow } = await supabase
       .from('orders_v2')
@@ -481,8 +535,25 @@ Deno.serve(async (req) => {
         meta: { order_id: orderId, template_id: templateId, skipped_guards: guardSkipped, warnings: guardWarnings },
       });
     }
+    } // end of generationContext === 'order' (guards block)
 
-    // Load template + active version (guard: must be active and not archived)
+    // ── Sprint 3I-A-1 hotfix gate ────────────────────────────────────────
+    // Parallel package renderer (_shared/package-strict-handler.ts) was
+    // deleted. Full package-mode wiring into the single render/PDF/persist
+    // pipeline below is deferred to Phase 3I-A-2. Until then, package-mode
+    // calls short-circuit with a clear, non-fatal error so the orchestrator
+    // records per-item `package_mode_not_wired_in_strict` instead of
+    // silently dispatching to a non-existent module.
+    if (generationContext === 'package_session') {
+      return json({
+        error: 'package_mode_not_wired_in_strict',
+        message:
+          'Sprint 3I-A-1 hotfix: parallel renderer removed; canonical strict '
+          + 'pipeline integration pending Phase 3I-A-2.',
+      }, 501);
+    }
+
+    // Load template + active version — common to order and package modes.
     const { data: tpl } = await supabase
       .from('document_templates')
       .select('id, name, current_version_id, is_active, template_status')
@@ -507,89 +578,104 @@ Deno.serve(async (req) => {
       return json({ error: 'active_version_invalid', validation_status: ver.validation_status }, 400);
     }
 
-    // Load order + snapshot
-    let { data: order } = await supabase
-      .from('orders_v2')
-      .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (!order) return json({ error: 'order_not_found' }, 404);
-
-    // ── PATCH-DOC-PLACEHOLDERS-2026-05 F5 ──────────────────────────────────
-    // Backend-guaranteed rebuild of document_data snapshot before resolving
-    // FLDs. Frontend may also call rebuild as optimization, but the SOT is
-    // here: any change to payer_type, payment, customer card, template/executor
-    // override, scenario must reflect in the generated document.
-    // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
-    if (order.status === 'paid') {
-      const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
-      if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
-        const { data: reloaded } = await supabase
-          .from('orders_v2')
-          .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
-          .eq('id', orderId)
-          .maybeSingle();
-        if (reloaded) order = reloaded;
-      }
-    }
-
-    const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
-
-    // B-97 live overlay: snapshot may pre-date the typed-FLD writer. Strict
-    // generator должен подставлять typed customer/executor значения для FLD из
-    // B97 mapping, если snapshot их не содержит (или пуст). Идемпотентно:
-    // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
-    // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
-    const docDataMeta: any = (order.meta as any)?.document_data || {};
-    const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
-    const executorIdSnap = docDataMeta?.executor_id || null;
-    let b97LiveCustomer: any = null;
-    let b97LiveExecutor: any = null;
-    if (customerLdId) {
-      const { data: ld } = await supabase
-        .from('client_legal_details')
-        .select('*')
-        .eq('id', customerLdId)
+    // Load order + snapshot — order-mode only; package-mode uses stub `order`.
+    if (generationContext === 'order') {
+      const { data: ordLoaded } = await supabase
+        .from('orders_v2')
+        .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
+        .eq('id', orderId)
         .maybeSingle();
-      b97LiveCustomer = ld || null;
-    }
-    if (!b97LiveCustomer && order.profile_id) {
-      const payerType = (order as any).payer_type;
-      const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
-        : payerType === 'entrepreneur' ? 'entrepreneur'
-        : 'individual';
-      const { data: lds } = await supabase
-        .from('client_legal_details')
-        .select('*')
-        .eq('profile_id', order.profile_id)
-        .eq('client_type', wantedClientType)
-        .order('is_default', { ascending: false })
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      b97LiveCustomer = (lds && lds[0]) || null;
-    }
-    if (executorIdSnap) {
-      const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
-      b97LiveExecutor = ex || null;
-    }
-    const b97Values = buildTypedB97FieldValues(b97LiveCustomer, b97LiveExecutor);
-    let b97FallbackApplied = 0;
-    let b97FallbackNonEmpty = 0;
-    const nowIsoB97 = new Date().toISOString();
-    for (const [fid] of Object.entries(B97_FLD_TO_TOKEN_KEY)) {
-      const existing = docFields[fid];
-      if (existing && existing.manual_override === true) continue;
-      const existingValue = existing?.value;
-      if (existingValue && String(existingValue).length > 0) continue;
-      const liveVal = b97Values[fid] ?? '';
-      docFields[fid] = {
-        value: liveVal,
-        source: 'b97_live_fallback',
-        manual_override: false,
-        updated_at: nowIsoB97,
+      if (!ordLoaded) return json({ error: 'order_not_found' }, 404);
+      order = ordLoaded;
+
+      // ── PATCH-DOC-PLACEHOLDERS-2026-05 F5 ──────────────────────────────────
+      // Backend-guaranteed rebuild of document_data snapshot before resolving
+      // FLDs. Frontend may also call rebuild as optimization, but the SOT is
+      // here: any change to payer_type, payment, customer card, template/executor
+      // override, scenario must reflect in the generated document.
+      // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
+      if (order.status === 'paid') {
+        const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
+        if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
+          const { data: reloaded } = await supabase
+            .from('orders_v2')
+            .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
+            .eq('id', orderId)
+            .maybeSingle();
+          if (reloaded) order = reloaded;
+        }
+      }
+
+      docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
+
+      // B-97 live overlay: snapshot may pre-date the typed-FLD writer. Strict
+      // generator должен подставлять typed customer/executor значения для FLD из
+      // B97 mapping, если snapshot их не содержит (или пуст). Идемпотентно:
+      // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
+      // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
+      const docDataMeta: any = (order.meta as any)?.document_data || {};
+      const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
+      const executorIdSnap = docDataMeta?.executor_id || null;
+      if (customerLdId) {
+        const { data: ld } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('id', customerLdId)
+          .maybeSingle();
+        b97LiveCustomer = ld || null;
+      }
+      if (!b97LiveCustomer && order.profile_id) {
+        const payerType = (order as any).payer_type;
+        const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
+          : payerType === 'entrepreneur' ? 'entrepreneur'
+          : 'individual';
+        const { data: lds } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('profile_id', order.profile_id)
+          .eq('client_type', wantedClientType)
+          .order('is_default', { ascending: false })
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        b97LiveCustomer = (lds && lds[0]) || null;
+      }
+      if (executorIdSnap) {
+        const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
+        b97LiveExecutor = ex || null;
+      }
+      const b97Values = buildTypedB97FieldValues(b97LiveCustomer, b97LiveExecutor);
+      const nowIsoB97 = new Date().toISOString();
+      for (const [fid] of Object.entries(B97_FLD_TO_TOKEN_KEY)) {
+        const existing = docFields[fid];
+        if (existing && existing.manual_override === true) continue;
+        const existingValue = existing?.value;
+        if (existingValue && String(existingValue).length > 0) continue;
+        const liveVal = b97Values[fid] ?? '';
+        docFields[fid] = {
+          value: liveVal,
+          source: 'b97_live_fallback',
+          manual_override: false,
+          updated_at: nowIsoB97,
+        };
+        b97FallbackApplied += 1;
+        if (liveVal.length > 0) b97FallbackNonEmpty += 1;
+      }
+    } else {
+      // Package-mode stub: `order` is purely a carrier for shared downstream
+      // code (profile_id, id, currency). docFields is built from packageContext
+      // preresolved bags during value resolution below.
+      order = {
+        id: packageContext!.package_session_id,
+        order_number: null,
+        profile_id: packageContext!.profile_id,
+        user_id: null,
+        payer_type: null,
+        meta: {},
+        final_price: null,
+        currency: null,
+        status: 'paid',
       };
-      b97FallbackApplied += 1;
-      if (liveVal.length > 0) b97FallbackNonEmpty += 1;
+      docFields = {};
     }
 
     // C5-G: канонические FLD для номера и даты документа

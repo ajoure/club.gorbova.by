@@ -1,40 +1,54 @@
 /**
  * Hook for generating a package of documents via edge function.
+ *
+ * Sprint 3I-A-1 contract: the orchestrator accepts ONLY
+ *   { package_session_id, run_mode? }
+ * Everything else (template/items/legal entity/persons) is resolved
+ * server-side from the package session. Per-item results are returned as
+ * an aggregated batch; rendering itself is delegated to
+ * canonical-document-generate-strict.
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
+export interface PackageGenerationItemResult {
+  item_id: string;
+  template_id?: string;
+  status: "generated" | "blocked" | "error" | "skipped";
+  document_id?: string;
+  document_number?: string;
+  download_url?: string;
+  errors?: string[];
+}
+
 export interface PackageGenerationResult {
   success: boolean;
   batch_id: string;
-  batch_number: string;
-  status: string;
+  status: "pending" | "generated" | "partial" | "failed";
   total: number;
   generated: number;
+  blocked?: number;
   errors: number;
-  results: Array<{
-    item_id: string;
-    document_id?: string;
-    document_number?: string;
-    download_url?: string;
-    error?: string;
-    status: string;
-  }>;
+  results: PackageGenerationItemResult[];
+}
+
+export interface GeneratePackageParams {
+  package_session_id: string;
+  run_mode?: "user_generate" | "admin_test";
 }
 
 export function useAiDocumentPackageGeneration() {
-  const { user } = useAuth();
+  // useAuth currently unused but retained for future ownership UI hints.
+  useAuth();
   const queryClient = useQueryClient();
 
   const generatePackage = useMutation({
-    mutationFn: async (params: {
-      package_template_id: string;
-      legal_details_id?: string;
-      person_id?: string;
-      signer_link_id?: string;
-    }) => {
+    mutationFn: async (params: GeneratePackageParams) => {
+      if (!params?.package_session_id) {
+        throw new Error("package_session_id_required");
+      }
       const { data, error } = await supabase.functions.invoke(
         "ai-generate-document-package",
         { body: params }
@@ -44,8 +58,8 @@ export function useAiDocumentPackageGeneration() {
       return data as PackageGenerationResult;
     },
     onSuccess: (data) => {
-      // Invalidate documents history
       queryClient.invalidateQueries({ queryKey: ["ai-generated-documents"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-document-generation-batches"] });
       if (data.status === "generated") {
         toast.success(`Пакет сформирован: ${data.generated} документ(ов)`);
       } else if (data.status === "partial") {
