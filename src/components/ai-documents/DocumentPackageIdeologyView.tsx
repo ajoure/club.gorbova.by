@@ -197,19 +197,8 @@ export function DocumentPackageIdeologyView() {
 
   return (
     <div className="space-y-4">
-      {/* Блок A. Состав пакета (read-only) */}
-      <GlassCard className="p-4">
-        <StrictDocumentTemplatesManager
-          embedded
-          readOnly
-          categoryFilter="ideology"
-          title="Состав пакета «Идеология»"
-          subtitle={<>Шаблоны документов, входящие в пакет. Список наполняется администратором.</>}
-          emptyText="В пакете «Идеология» пока нет готовых шаблонов. Администратор добавит их позже."
-        />
-      </GlassCard>
-
-      {/* Блок B. Анкета */}
+      {/* Анкета пакета (Sprint 3F Phase 2d: блок «Состав пакета» убран —
+          состав показывается в отдельной подвкладке «Состав»). */}
       <GlassCard className="p-4">
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <FileText className="h-5 w-5 text-indigo-500" />
