@@ -22,9 +22,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
+import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2, FlaskConical, Loader2, FileDown } from "lucide-react";
 import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
 import { InlineCreateRoleDialog } from "./packages/InlineCreateRoleDialog";
+import { PackageGenerationHistory } from "./packages/PackageGenerationHistory";
+import { useAiDocumentPackageGeneration, type PackageGenerationResult } from "@/hooks/useAiDocumentPackageGeneration";
+import { useDocumentPackageItems } from "@/hooks/useDocumentPackages";
+import { getDocumentDownloadUrl } from "@/utils/buildDocumentDownloadUrl";
 import { useRbac } from "@/hooks/useRbac";
 import { useSuperAdmin } from "@/hooks/useSuperAdmin";
 import { useAiEntities } from "@/hooks/useAiEntities";
