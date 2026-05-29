@@ -374,30 +374,47 @@ function renderInteractiveHtml(
     }
   }
 
-  // 2) Highlight legacy placeholders not yet handled.
+  // 2) Highlight ONLY non-valid placeholders. Valid {{field:FLD-…}},
+  //    {{package.ul|ip|fl.FLD-…}}, {{ln-XXXXXX}} остаются как обычный текст —
+  //    backend (strict + package-resolver) уже считает их корректными.
+  //    `package_in_billing` — оранжевая подсветка (scope-нарушение),
+  //    `legacy` — жёлтая (старый/неизвестный токен).
   const walker2 = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  const legacyNodes: Text[] = [];
+  const candidateNodes: Text[] = [];
   let m: Node | null;
   while ((m = walker2.nextNode())) {
     if ((m.parentNode as Element)?.closest?.("[data-chip-id]")) continue;
-    if ((m.nodeValue ?? "").match(LEGACY_PLACEHOLDER_RE)) legacyNodes.push(m as Text);
+    if ((m.nodeValue ?? "").indexOf("{{") >= 0) candidateNodes.push(m as Text);
   }
-  for (const node of legacyNodes) {
+  for (const node of candidateNodes) {
     if (!node.parentNode) continue;
     const s = node.nodeValue ?? "";
-    LEGACY_PLACEHOLDER_RE.lastIndex = 0;
+    ANY_PLACEHOLDER_RE.lastIndex = 0;
     const frag = doc.createDocumentFragment();
     let last = 0;
+    let touched = false;
     let match: RegExpExecArray | null;
-    while ((match = LEGACY_PLACEHOLDER_RE.exec(s))) {
+    while ((match = ANY_PLACEHOLDER_RE.exec(s))) {
+      const token = match[0];
+      const kind = classifyTemplateToken(token, scope);
+      if (kind === "valid") continue;
       if (match.index > last) frag.appendChild(doc.createTextNode(s.slice(last, match.index)));
       const mark = doc.createElement("mark");
-      mark.className = "docx-legacy";
-      mark.setAttribute("data-legacy-text", match[0]);
-      mark.textContent = match[0];
+      mark.className = kind === "package_in_billing" ? "docx-package-in-billing" : "docx-legacy";
+      mark.setAttribute("data-legacy-text", token);
+      mark.setAttribute("data-token-kind", kind);
+      mark.setAttribute(
+        "title",
+        kind === "package_in_billing"
+          ? "package/ln-токен в billing-шаблоне — не поддерживается этим scope"
+          : "Устаревший/неподдерживаемый плейсхолдер — кликните, чтобы заменить на FLD-поле",
+      );
+      mark.textContent = token;
       frag.appendChild(mark);
-      last = match.index + match[0].length;
+      last = match.index + token.length;
+      touched = true;
     }
+    if (!touched) continue;
     if (last < s.length) frag.appendChild(doc.createTextNode(s.slice(last)));
     node.parentNode.replaceChild(frag, node);
   }
