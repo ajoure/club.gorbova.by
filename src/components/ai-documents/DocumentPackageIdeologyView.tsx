@@ -103,6 +103,30 @@ export function DocumentPackageIdeologyView() {
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("debug") === "1";
 
+  const { generatePackage, isGenerating } = useAiDocumentPackageGeneration();
+  const { items: packageItems } = useDocumentPackageItems(pkg.templateId);
+  const [lastResult, setLastResult] = useState<PackageGenerationResult | null>(null);
+  const [lastRunMode, setLastRunMode] = useState<"user_generate" | "admin_test" | null>(null);
+
+  const itemLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of packageItems ?? []) {
+      map.set((it as any).id, (it as any).title_override || (it as any).template_name || "Документ");
+    }
+    return map;
+  }, [packageItems]);
+
+  const handleGenerate = async (runMode: "user_generate" | "admin_test") => {
+    if (!pkg.session?.id) return;
+    setLastRunMode(runMode);
+    try {
+      const data = await generatePackage({ package_session_id: pkg.session.id, run_mode: runMode });
+      setLastResult(data);
+    } catch {
+      /* toast handled in hook */
+    }
+  };
+
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
   // person_id -> role_key
