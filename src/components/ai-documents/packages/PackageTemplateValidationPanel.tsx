@@ -412,12 +412,15 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
         <span className="text-muted-foreground shrink-0">
           Сессия (опционально, для проверки анкет документа):
         </span>
-        <Select value={selectedSessionId} onValueChange={setSelectedSessionId}>
+        <Select
+          value={selectedSessionId || "__none__"}
+          onValueChange={(v) => setSelectedSessionId(v === "__none__" ? "" : v)}
+        >
           <SelectTrigger className="h-8">
             <SelectValue placeholder="Без проверки assignments" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">— без сессии —</SelectItem>
+            <SelectItem value="__none__">— без сессии —</SelectItem>
             {(sessionsQuery.data ?? []).map((s) => (
               <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
             ))}
