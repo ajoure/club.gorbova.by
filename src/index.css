@@ -505,3 +505,16 @@ body.impersonation-active .impersonation-offset {
   background: hsl(45 100% 70% / 0.9);
   border-color: hsl(35 91% 50%);
 }
+
+/* Sprint 3I-A UI-fix: package/ln токен в billing-шаблоне — scope violation.
+   Не legacy, но и не valid: оранжевая, не жёлтая, не кликабельная для замены. */
+.docx-preview mark.docx-package-in-billing {
+  background: hsl(25 95% 85% / 0.7);
+  color: hsl(20 90% 30%);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  border: 1px dashed hsl(20 90% 50% / 0.6);
+}
+

@@ -217,8 +217,53 @@ function sanitizeMammothHtml(html: string): string {
   return html.replace(/<script[\s\S]*?<\/script>/gi, "");
 }
 
-/** Все известные шаблоны legacy-плейсхолдеров, которые нужно подсветить как кликабельные. */
-const LEGACY_PLACEHOLDER_RE = /\{\{(?!field:)[^{}]+\}\}/g;
+/**
+ * Sprint 3I-A UI-fix: scope-aware классификация плейсхолдеров.
+ *
+ * Раньше «legacy» считалось всё, что не начинается с `field:`, и из-за этого
+ * валидные package/ln-токены (`{{package.ul.FLD-…}}`, `{{ln-XXXXXX}}`)
+ * подсвечивались жёлтым и считались «непринятыми заменами». Бэкенд при этом
+ * (strict-валидатор, package-резолвер) уже считает их valid.
+ *
+ * Теперь:
+ *   - сканируем ВСЕ `{{...}}` плейсхолдеры (`ANY_PLACEHOLDER_RE`);
+ *   - классифицируем каждый через `classifyToken(token, scope)`;
+ *   - «жёлтым» подсвечиваем только реально устаревшие или scope-нарушающие.
+ */
+export type TemplateMarkupScope = "billing" | "package" | "unknown";
+export type TokenKind = "valid" | "package_in_billing" | "legacy";
+
+const ANY_PLACEHOLDER_RE = /\{\{[^{}]+\}\}/g;
+
+/** {{field:FLD-XXXXXX}} с опциональными модификаторами |case=… / |format=…  */
+const RE_FIELD_FLD = /^\{\{field:FLD-\d{6}(?:\|(?:case|format)=[a-z_]+)*\}\}$/;
+/** {{package.ul|ip|fl.FLD-XXXXXX}} */
+const RE_PACKAGE_ENTITY_FLD = /^\{\{package\.(?:ul|ip|fl)\.FLD-\d{6}\}\}$/;
+/** {{ln-XXXXXX}} — канон роли (Sprint 3H-fix) */
+const RE_LN_ROLE = /^\{\{ln-\d{6}\}\}$/;
+/** Реально legacy: {{package.role.PKR-…}} / {{package.roles.<key>.*}} */
+const RE_LEGACY_PKR = /^\{\{package\.role\.PKR-\d{6}\}\}$/;
+const RE_LEGACY_PACKAGE_ROLES = /^\{\{package\.roles\.[^{}]+\}\}$/;
+
+/**
+ * Классифицирует один `{{...}}` токен по scope текущего шаблона.
+ *
+ *  - `valid`               — корректный токен для этого scope.
+ *  - `package_in_billing`  — package/ln-токен в billing-шаблоне (scope-нарушение).
+ *  - `legacy`              — реально устаревший или неизвестный токен.
+ *
+ * В scope `unknown` package/ln трактуются как valid (не подсвечиваем без причины);
+ * рискованных подсветок «по умолчанию» не делаем — это требование Phase 3I-A.
+ */
+export function classifyTemplateToken(token: string, scope: TemplateMarkupScope): TokenKind {
+  if (RE_FIELD_FLD.test(token)) return "valid";
+  if (RE_PACKAGE_ENTITY_FLD.test(token) || RE_LN_ROLE.test(token)) {
+    if (scope === "billing") return "package_in_billing";
+    return "valid";
+  }
+  if (RE_LEGACY_PKR.test(token) || RE_LEGACY_PACKAGE_ROLES.test(token)) return "legacy";
+  return "legacy";
+}
 
 /** Короткое русское название формата/падежа для подписи под chip. */
 function formatSuffix(format: FieldFormat | null, caseModifier: FieldCase | null): string {
@@ -245,6 +290,7 @@ function formatSuffix(format: FieldFormat | null, caseModifier: FieldCase | null
 function renderInteractiveHtml(
   baseHtml: string,
   replacements: Replacement[],
+  scope: TemplateMarkupScope,
 ): string {
   if (!baseHtml) return "";
   const parser = new DOMParser();
@@ -328,30 +374,47 @@ function renderInteractiveHtml(
     }
   }
 
-  // 2) Highlight legacy placeholders not yet handled.
+  // 2) Highlight ONLY non-valid placeholders. Valid {{field:FLD-…}},
+  //    {{package.ul|ip|fl.FLD-…}}, {{ln-XXXXXX}} остаются как обычный текст —
+  //    backend (strict + package-resolver) уже считает их корректными.
+  //    `package_in_billing` — оранжевая подсветка (scope-нарушение),
+  //    `legacy` — жёлтая (старый/неизвестный токен).
   const walker2 = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  const legacyNodes: Text[] = [];
+  const candidateNodes: Text[] = [];
   let m: Node | null;
   while ((m = walker2.nextNode())) {
     if ((m.parentNode as Element)?.closest?.("[data-chip-id]")) continue;
-    if ((m.nodeValue ?? "").match(LEGACY_PLACEHOLDER_RE)) legacyNodes.push(m as Text);
+    if ((m.nodeValue ?? "").indexOf("{{") >= 0) candidateNodes.push(m as Text);
   }
-  for (const node of legacyNodes) {
+  for (const node of candidateNodes) {
     if (!node.parentNode) continue;
     const s = node.nodeValue ?? "";
-    LEGACY_PLACEHOLDER_RE.lastIndex = 0;
+    ANY_PLACEHOLDER_RE.lastIndex = 0;
     const frag = doc.createDocumentFragment();
     let last = 0;
+    let touched = false;
     let match: RegExpExecArray | null;
-    while ((match = LEGACY_PLACEHOLDER_RE.exec(s))) {
+    while ((match = ANY_PLACEHOLDER_RE.exec(s))) {
+      const token = match[0];
+      const kind = classifyTemplateToken(token, scope);
+      if (kind === "valid") continue;
       if (match.index > last) frag.appendChild(doc.createTextNode(s.slice(last, match.index)));
       const mark = doc.createElement("mark");
-      mark.className = "docx-legacy";
-      mark.setAttribute("data-legacy-text", match[0]);
-      mark.textContent = match[0];
+      mark.className = kind === "package_in_billing" ? "docx-package-in-billing" : "docx-legacy";
+      mark.setAttribute("data-legacy-text", token);
+      mark.setAttribute("data-token-kind", kind);
+      mark.setAttribute(
+        "title",
+        kind === "package_in_billing"
+          ? "package/ln-токен в billing-шаблоне — не поддерживается этим scope"
+          : "Устаревший/неподдерживаемый плейсхолдер — кликните, чтобы заменить на FLD-поле",
+      );
+      mark.textContent = token;
       frag.appendChild(mark);
-      last = match.index + match[0].length;
+      last = match.index + token.length;
+      touched = true;
     }
+    if (!touched) continue;
     if (last < s.length) frag.appendChild(doc.createTextNode(s.slice(last)));
     node.parentNode.replaceChild(frag, node);
   }
@@ -377,6 +440,15 @@ export function TemplateMarkupDialog({
   const [showReplacements, setShowReplacements] = useState(false);
   const [showAutoSuggest, setShowAutoSuggest] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  /**
+   * Scope шаблона. Используется только для классификации plain-токенов в DOCX.
+   * Источник истины (по приоритету):
+   *   1. `document_templates.template_scope` — если 'package' или 'billing';
+   *   2. наличие строки в `document_package_template_items` → 'package';
+   *   3. иначе 'unknown' — package/ln считаются valid (не подсвечиваются).
+   * Никаких слепых default='package'/'billing' — это требование Phase 3I-A.
+   */
+  const [templateScope, setTemplateScope] = useState<TemplateMarkupScope>("unknown");
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   // Picker state — single FieldPickerPopover used for: header button, legacy click, chip click
@@ -402,24 +474,37 @@ export function TemplateMarkupDialog({
       setDraftLoaded(false);
       setShowReplacements(false);
       setShowAutoSuggest(false);
+      setTemplateScope("unknown");
       try {
         const { data: blob, error } = await supabase.storage
           .from(templateVersion.storage_bucket)
           .download(templateVersion.storage_path);
         if (error) throw error;
         const ab = await blob.arrayBuffer();
-        const [rawTxt, htmlRes, registry, draftRow] = await Promise.all([
+        const [rawTxt, htmlRes, registry, draftRow, scopeRow, pkgItemRow] = await Promise.all([
           mammoth.extractRawText({ arrayBuffer: ab }),
           mammoth.convertToHtml({ arrayBuffer: ab }),
           loadRegistryRefs(),
           supabase.from("document_template_versions")
             .select("markup_draft").eq("id", templateVersion.id).maybeSingle(),
+          supabase.from("document_templates")
+            .select("template_scope").eq("id", templateVersion.template_id).maybeSingle(),
+          supabase.from("document_package_template_items")
+            .select("id").eq("template_id", templateVersion.template_id).limit(1).maybeSingle(),
         ]);
         if (cancelled) return;
         const txt = rawTxt.value;
         setPlainText(txt);
         setPreviewHtml(sanitizeMammothHtml(htmlRes.value));
         setRefs(registry);
+
+        // scope resolution: ts → package binding → unknown
+        const rawScope = (scopeRow.data?.template_scope ?? null) as string | null;
+        let resolvedScope: TemplateMarkupScope = "unknown";
+        if (rawScope === "package") resolvedScope = "package";
+        else if (rawScope && rawScope !== "package") resolvedScope = "billing";
+        else if (pkgItemRow.data?.id) resolvedScope = "package";
+        setTemplateScope(resolvedScope);
 
         const draft = (draftRow.data?.markup_draft ?? null) as unknown as MarkupDraft | null;
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
@@ -474,11 +559,26 @@ export function TemplateMarkupDialog({
     return m;
   }, [refs]);
 
-  // ── render interactive HTML with chips + legacy marks ──
+  // ── render interactive HTML with chips + scope-aware highlight ──
   const interactiveHtml = useMemo(
-    () => renderInteractiveHtml(previewHtml, replacements),
-    [previewHtml, replacements],
+    () => renderInteractiveHtml(previewHtml, replacements, templateScope),
+    [previewHtml, replacements, templateScope],
   );
+
+  // ── token stats: считаем сырые токены в DOCX по scope ──
+  const tokenStats = useMemo(() => {
+    const stats = { valid: 0, packageInBilling: 0, legacy: 0 };
+    if (!plainText) return stats;
+    ANY_PLACEHOLDER_RE.lastIndex = 0;
+    const matches = plainText.match(ANY_PLACEHOLDER_RE) ?? [];
+    for (const tok of matches) {
+      const kind = classifyTemplateToken(tok, templateScope);
+      if (kind === "valid") stats.valid++;
+      else if (kind === "package_in_billing") stats.packageInBilling++;
+      else stats.legacy++;
+    }
+    return stats;
+  }, [plainText, templateScope]);
 
   // ── autosave draft (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1083,7 +1183,18 @@ export function TemplateMarkupDialog({
         <DialogFooter className="flex-shrink-0 px-5 py-3 border-t bg-background sm:justify-between">
           <div className="text-[11px] text-muted-foreground space-y-0.5 max-w-[60%]">
             <div>
-              Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+              Используются FLD/package/ln плейсхолдеры
+              <span className="ml-1 text-[10px] opacity-70">· scope: {templateScope}</span>
+            </div>
+            <div>
+              Валидных плейсхолдеров: <b>{tokenStats.valid}</b>
+              {" · "}Ручных замен: <b>{acceptedCount}</b>
+              {" · "}Устаревших/неподдерживаемых: <b className={tokenStats.legacy > 0 ? "text-amber-700" : ""}>{tokenStats.legacy}</b>
+              {tokenStats.packageInBilling > 0 && (
+                <>
+                  {" · "}<span className="text-orange-600">package/ln в billing: <b>{tokenStats.packageInBilling}</b></span>
+                </>
+              )}
             </div>
             {templateVersion?.validation_status === "valid" && replacements.length === 0 && (
               <div className="text-emerald-700 inline-flex items-center gap-1">

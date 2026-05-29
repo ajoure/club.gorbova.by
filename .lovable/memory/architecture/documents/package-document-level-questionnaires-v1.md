@@ -59,12 +59,30 @@ type: feature
 - Менять `canonical-document-generate-strict`, вызывать Gotenberg или
   писать в `ai_generated_documents` в рамках Sprint 3H-fix.
 
+## UI markup-preview (Sprint 3I-A)
+
+Редактор разметки `TemplateMarkupDialog` использует scope-aware классификатор:
+
+- scope резолвится по `document_templates.template_scope`, затем по
+  `document_package_template_items` (если шаблон привязан к пакету), иначе `unknown`;
+- valid (без жёлтой подсветки): `{{field:FLD-XXXXXX}}` (+ опц. `|case=…`/`|format=…`),
+  `{{package.ul|ip|fl.FLD-XXXXXX}}`, `{{ln-XXXXXX}}` (последние два — в `package`/`unknown` scope);
+- `package_in_billing` — package/ln-токен в billing-шаблоне → оранжевая подсветка
+  (не legacy, не valid);
+- `legacy` — `{{package.role.PKR-…}}`, `{{package.roles.<key>.*}}`,
+  `{{document|executor|customer|deal|cf.*}}` и любые неизвестные → жёлтая.
+
+Раздельные счётчики: «Валидных плейсхолдеров», «Ручных замен» (через FieldPicker,
+логика `getAcceptedReplacementsWithFLD` не тронута), «Устаревших/неподдерживаемых»,
+«package/ln в billing». Никаких default-scope='package'/'billing' вслепую.
+
 ## Файлы
 
 - Migration (Sprint 3G): `supabase/migrations/20260529133454_*.sql`
 - Migration (Sprint 3H — PKR→ln rename): `supabase/migrations/20260529150913_*.sql`
 - Validator: `src/components/ai-documents/packages/PackageTemplateValidationPanel.tsx`
 - Strict validator: `src/components/ai-documents/StrictDocumentTemplatesManager.tsx`
+- Markup dialog (Sprint 3I-A): `src/components/ai-documents/TemplateMarkupDialog.tsx`
 - Catalog: `src/utils/packagePlaceholderCatalog.ts` (+ `.test.ts`)
 - Hook: `src/hooks/useDocumentItemRoleAssignments.ts`
 - Resolver: `supabase/functions/_shared/resolve-package-tokens.ts`
@@ -72,3 +90,5 @@ type: feature
 - Proofs:
   - `.lovable/proofs/package_documents_sprint3g_document_level_questionnaires_2026_05.md`
   - `.lovable/proofs/package_documents_sprint3h_role_assignment_missing_and_orchestrator_2026_05.md`
+  - `.lovable/proofs/sprint_3i_a_ui_validator_fix_and_runtime_pass_2026_05.md`
+
