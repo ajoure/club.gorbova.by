@@ -668,7 +668,19 @@ Deno.serve(async (req) => {
         currency: null,
         status: 'paid',
       };
+      // Pre-fill docFields from packageContext.preresolved_fields so the
+      // existing field:FLD-* resolver picks values up without modification.
+      // Keys in preresolved_fields are bare 'FLD-XXXXXX' (matches docFields).
       docFields = {};
+      const _nowPkg = new Date().toISOString();
+      for (const [fid, entry] of Object.entries(packageContext!.preresolved_fields || {})) {
+        if (!entry) continue;
+        docFields[fid] = {
+          value: (entry as any).value,
+          source: (entry as any).source || 'package_preresolved',
+          updated_at: _nowPkg,
+        };
+      }
     }
 
     // C5-G: канонические FLD для номера и даты документа
