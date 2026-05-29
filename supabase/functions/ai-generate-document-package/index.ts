@@ -269,9 +269,16 @@ Deno.serve(async (req) => {
             itemErrors.push(`field_entity_type_not_allowed_in_package:${fld}:${et}`);
             continue;
           }
-          // We don't have a generic system FLD value resolver in 3I-A scope —
-          // any non-{069,070} system FLD that lacks a resolver becomes an item
-          // error so we never silently emit empty strings.
+          // Sprint 3I-A-2 F1: резолв «чистых» system FLD через shared helper.
+          // Формат 1-в-1 с order-mode (общий _shared/ru-date.ts).
+          if (SYSTEM_FIELD_VALUE_IDS.has(fld)) {
+            preresolved_fields[fld] = {
+              value: sysVals[fld],
+              source: 'system_field_value',
+            };
+            continue;
+          }
+          // Любой system FLD вне whitelist → error (никаких silent empty).
           itemErrors.push(`system_field_resolver_not_implemented:${fld}`);
           continue;
         }
