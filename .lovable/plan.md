@@ -1,453 +1,435 @@
-# Да, согласен, с учетом правок. План правильный: это именно тот hotfix, который нужен перед runtime-proof. Но нужно добавить несколько уточнений, чтобы не получить скрытую вторую логику внутри strict.
+# План в целом правильный: это уже **не разработка**, а фактическая проверка, что backend foundation работает. Но есть несколько опасных мест: нельзя создавать/удалять тестовые данные без отдельного rollback, нельзя менять реальные шаблоны, и `run_mode: "real"` лучше заменить на утверждённые значения.
+
+Готовый ответ Lovable:
 
 да, согласен, с учетом правок:
 
-## **1. Package-mode не должен принимать legacy/billing runtime tokens**
 
-В token parser уточнить:
 
-В package-mode разрешены только:
+## **1. Не использовать**
 
-```text
-{{field:FLD-XXXXXX}}
-{{field:FLD-XXXXXX|...}}
-{{package.ul.FLD-XXXXXX}}
-{{package.ip.FLD-XXXXXX}}
-{{package.fl.FLD-XXXXXX}}
-{{ln-XXXXXX}}
-```
+`run_mode: "real"`
 
-Старые/чужие форматы:
-
-```text
-{{customer.*}}
-{{executor.*}}
-{{deal.*}}
-{{cf.*}}
-{{package.role.PKR-*}}
-{{package.roles.*}}
-```
-
-в package-mode должны давать error, а не проходить через старую legacy-ветку.
-
-Иначе можно случайно протащить billing-context в пакетный документ.
-
----
-
-## **2. Модификаторы для package/ln токенов**
-
-Если parser уже поддерживает модификаторы для `{{field:FLD-...|case=...}}`, нужно либо:
-
-### **Вариант A — поддержать сразу**
-
-Разрешить:
-
-```text
-{{package.ul.FLD-XXXXXX|case=genitive}}
-{{package.ip.FLD-XXXXXX|case=genitive}}
-{{package.fl.FLD-XXXXXX|case=genitive}}
-{{ln-XXXXXX|case=genitive}}
-```
-
-и применить тот же modifier pipeline, что для обычных `field:FLD`.
-
-### **Вариант B — явно запретить пока**
-
-Если сейчас это сложно, тогда такие токены должны давать понятную ошибку:
-
-```text
-package_token_modifier_not_supported
-```
-
-Нельзя молча игнорировать `|case=`.
-
-Лучше выбрать Вариант A, если существующий modifier pipeline можно переиспользовать без отдельной логики.
-
----
-
-
-
-
-
-## **3. Ключи**
-
-`preresolved_fields` **нужно нормализовать**
-
-В контракте `packageContext.preresolved_fields` ключи указаны как:
-
-```text
-FLD-XXXXXX
-```
-
-А render/resolved использует:
-
-```text
-field:FLD-XXXXXX
-```
-
-Нужно явно сделать нормализацию:
-
-```ts
-for (const [fid, entry] of Object.entries(packageContext.preresolved_fields)) {
-  const normalizedKey = fid.startsWith('field:') ? fid : `field:${fid}`;
-  docFields[fid] = ...
-  resolved[normalizedKey] = String(entry.value ?? '');
-}
-```
-
-Иначе `{{field:FLD-000209}}` может не найти значение.
-
----
-
-
-
-
-
-## **4.**
-
-`packageContext.template_id` **обязателен**
-
-В плане упомянуто, что strict берёт `templateId = packageContext.template_id`. Нужно зафиксировать:
-
-```text
-Если packageContext есть, но packageContext.template_id отсутствует:
-400 template_id_required
-```
-
-И orchestrator должен передавать `template_id` и на верхнем уровне body, и внутри `packageContext`.
-
----
-
-
-
-
-
-## **5.**
-
-`package_token_not_preresolved` **должен применяться ко всем package-токенам**
-
-Hard error должен быть для:
-
-```text
-{{ln-XXXXXX}}
-{{package.ul.FLD-XXXXXX}}
-{{package.ip.FLD-XXXXXX}}
-{{package.fl.FLD-XXXXXX}}
-```
-
-Если токен есть в DOCX, но его нет в соответствующем bag:
-
-```text
-package_token_not_preresolved
-```
-
-Никаких `String(undefined ?? '')`.
-
----
-
-
-
-
-
-## **6. Для**
-
-`field:FLD-*` **в package-mode тоже не должно быть silent empty**
-
-Если в DOCX есть:
-
-```text
-{{field:FLD-XXXXXX}}
-```
-
-и это поле не системное/document и не пришло в `preresolved_fields`, strict должен вернуть ошибку до render:
-
-```text
-package_field_not_preresolved
-```
-
-Не ждать, пока оно уйдёт в пустую строку через missing/required check.
-
----
-
-
-
-## **7. Pre-create row и**
-
-`created_by`
-
-В package-mode `created_by: null` допустим, но в audit/meta нужно явно писать:
+В текущем плане указано:
 
 ```json
-{
-  "actor_type": "system",
-  "source": "package_orchestrator",
-  "package_session_id": "...",
-  "generation_batch_id": "..."
-}
+{ "package_session_id": "...", "run_mode": "real" }
 ```
 
-Чтобы потом было понятно, кто создал документ.
-
----
-
-
-
-## **8. Не добавлять новые**
-
-`.from('ai_generated_documents')`
-
-В DoD оставить строгую проверку:
-
-```bash
-rg -c "\.from\(['\"]ai_generated_documents['\"]\)" supabase/functions/canonical-document-generate-strict/index.ts
-```
-
-Количество должно быть равно hotfix-baseline.
-
-Если количество увеличилось — blocker.
-
----
-
-
-
-## **9. Проверить**
-
-`storage.upload`
-
-Допускается только параметризация `pathPrefix`.
-
-Запрещено:
+Но ранее канон был:
 
 ```text
-новый uploadDocxPackage()
-новый uploadPdfPackage()
-новый отдельный storage.from('documents').upload(...)
+user_generate
+admin_test
 ```
 
-Количество upload-блоков не должно увеличиться.
+Для runtime proof использовать:
+
+```json
+{ "package_session_id": "...", "run_mode": "admin_test" }
+```
+
+`real` не вводить как новый режим, чтобы не плодить несовместимые статусы.
 
 ---
 
-## **10. Orchestrator: PizZip только для чтения токенов**
 
-В `ai-generate-document-package` PizZip допустим только для preflight/extract tokens.
 
-Добавить grep:
 
-```bash
-rg -n "setData|render\(|generate\(" supabase/functions/ai-generate-document-package
-```
 
-Ожидание: 0.
+## **2. Не создавать и не удалять тестовые данные через**
 
----
+`insert/delete`**, если можно обойтись существующими**
 
-## **11. Proof обязателен в этом заходе**
+В шаге 4.1 написано, что можно создать тестовый item через `supabase--insert`, а потом удалить.
 
-Создать:
+Правка:
 
 ```text
-.lovable/proofs/sprint_3i_a_1b_package_mode_wired_2026_05.md
+По умолчанию использовать только существующие данные.
+Любой INSERT/DELETE для тестовой фикстуры запрещён без отдельного mini-plan + rollback proof.
 ```
 
-Минимально:
+Если для guard-сценария нет подходящих данных:
 
-1. `package_mode_not_wired_in_strict` удалён.
-2. Второго renderer нет.
-3. Package-mode использует тот же Docxtemplater/Gotenberg/storage/ai_generated_documents path.
-4. Orchestrator не содержит render/PDF/persist.
-5. Количество `ai_generated_documents` write-points не увеличилось.
-6. Количество storage upload-блоков не увеличилось.
-7. Build/typecheck зелёный.
+- зафиксировать `SKIPPED: no safe fixture`;
+- не мутировать production.
 
-Runtime generation пока не делать — это Phase 3I-A-2.
+Исключение — только если отдельно согласовано.
 
 ---
 
-## **12. Финальный статус этого захода**
+## **3. Не править шаблоны в БД ради guard-сценариев**
 
-После выполнения статус должен быть:
+В шаге 4.2 и 4.4 нельзя временно вставлять неправильные токены в реальные DOCX/шаблоны.
+
+Правка:
 
 ```text
-completed: package-mode wired into canonical strict pipeline;
-no second renderer;
-no second Gotenberg path;
-no second ai_generated_documents write path;
-ready for Phase 3I-A-2 runtime proof
+Guard-сценарии проверять только на уже существующих шаблонах или через безопасный isolated test template, если он уже есть.
+Production DOCX не модифицировать.
 ```
 
-Не закрывать весь Sprint 3I-A до baseline/regression/runtime proof.
+Если нет шаблона с нужным неправильным токеном:
+
+```text
+SKIPPED with reason: no safe fixture
+```
+
+---
+
+
+
+
+
+## **4. Для order-mode regression не вызывать**
+
+`mode=generate`**, если это создаёт новый документ без необходимости**
+
+Если strict поддерживает `mode=preview`, сначала использовать preview.
+
+Порядок:
+
+1. `mode=preview` — основной regression.
+2. `mode=generate` — только если нужно доказать DOCX/PDF и есть безопасный idempotency_key.
+
+Для generate использовать явный тестовый ключ:
+
+```text
+idempotency_key = regression:3i-a-2:<order_id>:<template_id>
+```
+
+Чтобы не плодить дубли.
+
+---
+
+## **5. Уточнить idempotency для package runtime**
+
+Повторный вызов может создать новый batch, но документы item должны быть идемпотентны по:
+
+```text
+pkg:${batch_id}:${item_id}
+```
+
+Если batch_id каждый раз новый, то idempotency будет новым и документы тоже могут создаваться заново.
+
+Нужно выбрать один из двух вариантов и зафиксировать:
+
+### **Вариант A — batch reuse**
+
+Для одного `package_session_id + run_mode + template set` переиспользовать открытый/последний batch.
+
+### **Вариант B — новый batch каждый запуск**
+
+Тогда idempotency документа должен быть не от batch_id, а от стабильного ключа:
+
+```text
+pkg:${package_session_id}:${package_template_item_id}:admin_test
+```
+
+Иначе повторный вызов не проверяет идемпотентность, а создаёт новые документы.
+
+Для proof лучше выбрать **B-stable idempotency for admin_test**.
+
+---
+
+
+
+
+
+## **6. Проверка “нет голых**
+
+`{{...}}`**” в DOCX/PDF**
+
+Для DOCX это можно проверить через unzip `word/document.xml`.
+
+Для PDF автоматическая проверка может быть ненадёжной.
+
+Правка:
+
+```text
+DOCX: обязательно проверить XML на отсутствие raw placeholders.
+PDF: проверить наличие pdf_url + размер файла > 0; визуальный/текстовый анализ PDF опционален.
+```
+
+---
+
+## **7. Проверить не только URL, но и storage object exists**
+
+Для каждого generated item проверить:
+
+```text
+docx_url not null
+pdf_url not null
+storage object exists
+file size > 0
+```
+
+Это важнее, чем просто наличие URL.
+
+---
+
+
+
+
+
+## **8.**
+
+`ai_document_generation_batches` **— уточнить фактическое имя таблицы**
+
+В плане используются оба варианта:
+
+```text
+ai_document_generation_batches
+document_package_generation_batches
+```
+
+Нужно использовать только фактическую таблицу.
+
+По предыдущему discovery это:
+
+```text
+ai_document_generation_batches
+```
+
+В proof не использовать неправильное имя `document_package_generation_batches`.
+
+---
+
+## **9. Проверка service-role guard**
+
+Для 4.3 нужно проверить два сценария:
+
+1. `packageContext` без `x-internal-call`;
+2. `packageContext` с `x-internal-call`, но без service-role.
+
+Оба должны вернуть:
+
+```text
+403 package_context_forbidden
+```
+
+---
+
+## **10. Billing field guard**
+
+Для `billing_field_in_package_template` не менять шаблон.
+
+Если нет безопасного package-template с billing-FLD, зафиксировать:
+
+```text
+SKIPPED: no safe fixture
+```
+
+Не вставлять billing-FLD в реальный приказ ради теста.
+
+---
+
+## **11. Grep-инварианты оставить, но добавить build/typecheck**
+
+Добавить обязательный пункт:
+
+```text
+Build/typecheck после runtime proof — PASS.
+```
+
+Ошибки типов не оставлять.
+
+---
+
+## **12. Memory обновлять только при полном PASS**
+
+Если runtime package generation прошёл, но часть guard-сценариев SKIPPED из-за отсутствия безопасных фикстур, memory можно обновлять только с пометкой:
+
+```text
+completed with skipped guard fixtures
+```
+
+Если есть FAIL — memory не обновлять как completed.
+
+---
+
+## **Обновлённый итоговый статус**
+
+Если всё PASS:
+
+```text
+completed: Phase 3I-A backend runtime proof passed;
+order-mode regression passed;
+package generation through canonical strict passed;
+DOCX/PDF created through existing pipeline;
+orchestrator remains thin;
+ready for Phase 3I-B UI generation buttons
+```
+
+Если часть guard-сценариев SKIPPED:
+
+```text
+completed with fixture gaps: core runtime passed, skipped guards documented;
+ready for Phase 3I-B only after deciding whether skipped guards need dedicated test fixtures
+```
+
+Если есть FAIL:
+
+```text
+OPEN: Phase 3I-A runtime proof failed; fix required before UI Phase 3I-B
+```
+
+Ключевая правка: **не мутировать реальные шаблоны/данные ради guard-тестов** и не использовать новый `run_mode: real`. Для proof достаточно безопасного `admin_test` и существующих данных.
 
 &nbsp;
 
-План: Phase 3I-A-1.B — wiring package-mode в canonical strict pipeline
+План: Phase 3I-A-2 — runtime proof package generation
 
 ## Цель
 
-Убрать временный short-circuit `501 package_mode_not_wired_in_strict` и пропустить package-mode через **те же** Docxtemplater / Gotenberg / storage.upload / `ai_generated_documents` блоки, что и order-mode. Никакого второго renderer, никакого второго insert.
+Доказать фактически на проде, что:
 
-## Текущее состояние
+1. Order-mode `canonical-document-generate-strict` не сломан hotfix'ом.
+2. Package-mode реально проходит через тот же strict pipeline (Docxtemplater → Gotenberg → storage → `ai_generated_documents`).
+3. `ai-generate-document-package` остаётся thin orchestrator.
+4. Guard-сценарии возвращают канонические error codes без silent empty / без второго renderer.
 
-- Body парсится один раз, `generationContext: 'order' | 'package_session'` уже введён (line 316).
-- Service-role guard для `packageContext` уже есть (lines 340–353).
-- Order-only preflight/snapshot/B97 обёрнуты `if (generationContext === 'order')` (line 404+).
-- Package-mode сейчас возвращает `501` на lines 547–554 — это блок, который надо удалить.
-- Шаги ниже (load template/version, numbering, resolve, Docxtemplater render, Gotenberg, storage upload, persist в `ai_generated_documents`) выполняются для обоих контекстов, **но** жёстко привязаны к `order` (idempotency key, pre-create `context_type='order'`, storage prefix `generated/{order.id}`, persist `context_type='order'`, audit `order_id`).
-- Package-mode stub `order` уже подготовлен на lines 663–678 (id = `package_session_id`, profile_id из ctx).
-- В `resolved` ключи — это `t.raw_inside` (например `field:FLD-000069`). Custom parser Docxtemplater (line 1043) читает весь inside как имя переменной — значит для `package.ul.FLD-XXX` и `ln-XXX` ключ тоже совпадёт с `inside`.
+Никакого UI, никаких новых функций — только runtime-verification и proof.
 
-## Изменения (только в `canonical-document-generate-strict/index.ts` и минимально в orchestrator)
+---
 
-### 1. Удалить `501`-gate (lines 540–554)
+## Шаг 1. Подготовка фикстур (read-only DB)
 
-Полностью убрать early-return; пайплайн просто пойдёт дальше.
+1.1. Через `supabase--read_query`:
 
-### 2. Token parser (lines ~703–717)
+- Найти один paid order с активным `tariff_offers.meta.document_scenarios` и шаблоном, который уже успешно генерировался ранее (для order baseline).
+- Найти `package_session` пакета «Идеология» с готовым `client_legal_details` (ЮЛ или ИП) и минимум одним `document_package_item_role_assignments` для item с `{{ln-XXXXXX}}`.
+- Зафиксировать `order_id`, `template_id`, `package_session_id`, `package_template_id`, список item_id + их шаблонов.
 
-В цикле по `ANY_TOKEN_RE` добавить ветки **до** legacy-check:
+1.2. По каждому пакетному template_item проверить DOCX (через `storage.from('documents').download` → unzip → `document.xml`) и убедиться, что в шаблоне есть как минимум:
 
-- `^package\.(ul|ip|fl)\.FLD-\d+$` → если `generationContext==='package_session'`: записать в отдельный set `packageTokens`, добавить `raw_inside` в `parsedPackageRawInside`. Иначе → push в новый массив `packageTokensOutsideContext` → hard error `package_token_outside_package_context`.
-- `^ln-\d+$` → аналогично; в order-mode → `ln_token_outside_package_context`.
-- Существующая ветка `(document|executor|customer|deal|cf)\.` — оставить как есть.
-- Существующий `parseStrictTokenInside` — без изменений (он покрывает `field:FLD-XXX|...`).
+- один `{{ln-XXXXXX}}`;
+- один `{{package.(ul|ip).FLD-XXXXXX}}`;
+- один системный `{{field:FLD-000069}}` или `{{field:FLD-000070}}`.
 
-### 3. Numbering / pre-create row (lines 770–846)
+Если такого item нет — выбрать другой пакет/item; ничего в шаблонах не править.
 
-Параметризовать:
+---
 
-- `idempotencyKey`:
-  - order-mode: оставить `strict:${tpl.id}:${ver.id}:${order.id}` (или `body.idempotency_key`).
-  - package-mode: `pkg:${packageContext.generation_batch_id}:${packageContext.package_template_item_id}`.
-- `pre-create` insert (line 794): в package-mode заменить
-  - `context_type: 'package_session'`
-  - `context_id: packageContext.package_session_id`
-  - добавить в `meta`: `{ strict: true, c5g_pre_created: true, package_template_id, package_item_id, generation_batch_id }`
-  - `created_by: null` (system actor — `userId` в package-mode = null)
-  - `title`: использовать `packageContext.title_override` или `tpl.name`.
-- `allocate_document_number` RPC — **без изменений**: она работает по `document_id`. FLD-000069/000070 заполняются в общий `docFields` как раньше.
+## Шаг 2. Order-mode regression smoke
 
-### 4. Resolve values (lines 848–933)
+2.1. `supabase--curl_edge_functions` POST `/canonical-document-generate-strict` с реальным order_id + template_id + payer/payment_channel из meta. Без `packageContext`.
 
-После основного цикла `for (const t of parsedTokens)` (строки 879–933) добавить **в package-mode** ещё один проход по новым токенам:
+2.2. Зафиксировать в proof:
 
-```ts
-if (generationContext === 'package_session') {
-  for (const rawInside of packageTokensOrLn) {
-    const bag = rawInside.startsWith('ln-')
-      ? packageContext.preresolved_ln_tokens
-      : packageContext.preresolved_package_fields;
-    if (!Object.prototype.hasOwnProperty.call(bag, rawInside)) {
-      return json({ error: 'package_token_not_preresolved', token: `{{${rawInside}}}` }, 400);
-    }
-    resolved[rawInside] = String(bag[rawInside]?.value ?? '');
-    sourceTrace[rawInside] = { status: 'resolved', source: bag[rawInside]?.source ?? 'package_preresolved', value: resolved[rawInside] };
-  }
-}
+- request body (sanitized);
+- HTTP status;
+- response: `resolver_version`, `context_type='order'`, `idempotency_key`, `token_manifest_snapshot`, `warnings`, `docx_url`, `pdf_url`;
+- запись в `ai_generated_documents` (через read_query): `context_type`, `context_id`, `meta`.
+
+2.3. Сравнить с прошлым успешным snapshot этого шаблона (если есть в `ai_generated_documents`). Если pre-hotfix baseline отсутствует — явно зафиксировать как **post-hotfix regression smoke (no pre-hotfix baseline)**.
+
+DoD: status=200, `docx_url` + `pdf_url` непустые, новая запись в `ai_generated_documents` создана/реюзнута идемпотентно.
+
+---
+
+## Шаг 3. Package runtime generation (happy path)
+
+3.1. `supabase--curl_edge_functions` POST `/ai-generate-document-package` body `{ package_session_id, run_mode: "real" }`. Авторизация — super_admin JWT текущего preview-пользователя.
+
+3.2. Через `read_query` зафиксировать:
+
+- `document_package_generation_batches`: батч создан, статус terminal;
+- per-item status (`generated` / `blocked` / `error`);
+- `ai_generated_documents` для каждого `generated` item: `context_type='package_session'`, `context_id=package_session_id`, `meta.generation_batch_id`, `meta.package_template_id`, `meta.package_item_id`, `meta.actor_type='system'`, `meta.source='package_orchestrator'`;
+- `idempotency_key` соответствует `pkg:${batch_id}:${item_id}`;
+- DOCX/PDF URL под префиксом `generated/package/${package_session_id}/`.
+
+3.3. Скачать один DOCX + PDF через storage signed URL — убедиться, что placeholders фактически подставлены (нет голых `{{...}}` в видимом тексте).
+
+3.4. Повторный вызов с тем же `package_session_id` (idempotency check):
+
+- новых записей в `ai_generated_documents` не появилось;
+- `idempotency_key` сматчился;
+- HTTP 200, batch reuse или новый batch с уже-готовыми items.
+
+---
+
+## Шаг 4. Guard-сценарии
+
+Все вызовы через `supabase--curl_edge_functions`, фиксируем status + error code в proof.
+
+4.1. **Missing role assignment** — найти/создать (через `supabase--insert` если нужен тестовый item) item с `{{ln-XXXXXX}}`, но без записи в `document_package_item_role_assignments` для этой роли. Запустить orchestrator.
+
+- Ожидание: strict для item НЕ вызывается, item.status=`blocked`/`error`, error=`role_assignment_missing`.
+
+4.2. **Package field not ready** — выбрать item, в шаблоне которого есть `{{package.ul.FLD-XXXXXX}}`, отсутствующий в `copy_ready` каталоге (либо временно ЮЛ не выбран в session).
+
+- Ожидание: strict не вызывается ИЛИ возвращает `package_field_not_ready` / `package_token_not_preresolved`. Без silent empty.
+
+4.3. **PackageContext forbidden** — прямой вызов `/canonical-document-generate-strict` с `packageContext` под обычным authenticated user JWT (не service-role, без `x-internal-call: package-orchestrator`).
+
+- Ожидание: HTTP 403, error=`package_context_forbidden`.
+
+4.4. **Package/ln token в order-mode** — вызов order-mode strict с шаблоном, где есть `{{ln-XXXXXX}}` или `{{package.ul.FLD-XXXXXX}}`, БЕЗ `packageContext`.
+
+- Ожидание: error=`ln_token_outside_package_context` или `package_token_outside_package_context`. Без silent empty.
+
+---
+
+## Шаг 5. Grep-инварианты (no-new-renderer proof)
+
+```
+rg -n "package-strict-handler" supabase/functions                                    → 0
+rg -n "Docxtemplater|new Docxtemplater" supabase/functions/ai-generate-document-package → 0
+rg -n "gotenberg|convertDocxToPdf"      supabase/functions/ai-generate-document-package → 0
+rg -n "from\(['\"]ai_generated_documents['\"]\)" supabase/functions/ai-generate-document-package → 0
+rg -c "new Docxtemplater"  supabase/functions/canonical-document-generate-strict/index.ts → 1
+rg -c "convertDocxToPdf"   supabase/functions/canonical-document-generate-strict/index.ts → ≤3
+rg -c "\.from\(['\"]ai_generated_documents['\"]\)" …/canonical-document-generate-strict/index.ts → 5 (baseline 3I-A-1.B)
+rg -c "storage\.from\(['\"]documents['\"]\)\.upload" …/canonical-document-generate-strict/index.ts → 2
 ```
 
-Hard-error без silent empty. Для существующих `field:FLD-XXX` в package-mode:
+Вывод приклеить в proof. Любое отклонение от baseline 3I-A-1.B = FAIL → Phase 3I-A остаётся OPEN.
 
-- В `docFields` (line 678 = `{}`) предзаполнить из `packageContext.preresolved_fields` **до** numbering-блока:
-  ```ts
-  } else {
-    order = { ... };  // как сейчас
-    docFields = {};
-    for (const [fid, entry] of Object.entries(packageContext.preresolved_fields)) {
-      docFields[fid] = { value: entry.value, source: entry.source, updated_at: new Date().toISOString() };
-    }
-  }
-  ```
-- FLD-000069 / FLD-000070 затем перезапишутся allocate-блоком (как и в order-mode).
-- Если `field:FLD-XXX` найден в DOCX, но FLD отсутствует и в `preresolved_fields`, и в numbering → попадёт в `missing` → если `required` → `required_fields_empty` (это и есть «no silent empty»).
+---
 
-### 5. Storage prefix (lines 1141–1142)
+## Шаг 6. Proof файл
 
-```ts
-const pathPrefix = generationContext === 'package_session'
-  ? `generated/package/${packageContext.package_session_id}`
-  : `generated/${order.id}`;
-const docxPath = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.docx`;
-const pdfPath  = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
-```
+Создать `.lovable/proofs/sprint_3i_a_2_runtime_package_generation_2026_05.md` с секциями:
 
-Один и тот же `storage.from('documents').upload(...)` блок — не дублировать.
+1. Order-mode regression smoke (фикстура + request/response + DB snapshot).
+2. Package runtime generation (batch + per-item + storage URLs + idempotency повтор).
+3. Guard-сценарии (4 × case с request/response/audit).
+4. Grep-инварианты (вывод rg).
+5. Batch / `ai_generated_documents` snapshot table.
+6. No-new-renderer proof (3I-A-1.B baseline diff = 0).
+7. Final verdict: PASS / FAIL по каждому DoD.
 
-### 6. Persist в `ai_generated_documents` (lines 1207–1270)
+---
 
-В `docCommon` параметризовать:
+## Шаг 7. Memory + closeout
 
-- `context_type`: `'package_session'` vs `'order'`.
-- `context_id`: `package_session_id` vs `order.id`.
-- В package-mode добавить в `meta`: `package_template_id`, `package_item_id`, `generation_batch_id`.
-- `title` в package-mode: `packageContext.title_override ||` ${tpl.name}`` (без `order.order_number`).
-- `created_by`: `userId` (в package-mode = null — допустимо для system actor).
+Только если **все** runtime checks и guards PASS:
 
-Количество `.from('ai_generated_documents')` вхождений **не увеличивается** (остаются те же 4: pre-create select, pre-create insert, final update, final insert).
+- Обновить `mem://architecture/documents/package-document-level-questionnaires-v1`: статус → "Sprint 3I-A backend foundation complete; package generation runs through canonical strict pipeline".
+- Добавить новую memory `mem://architecture/documents/package-generation-orchestrator-v1`: orchestrator-only contract, strict — единственный render/PDF/persist path, idempotency `pkg:{batch}:{item}`, storage prefix, guard error codes.
+- Обновить `mem://index.md` (Core или Memories — описание ниже).
+- Финальный статус Phase 3I-A: `completed: backend package generation foundation ready; ai-generate-document-package thin orchestrator; canonical-document-generate-strict sole render/PDF/persist; order regression passed; package runtime passed; guards passed; ready for Phase 3I-B`.
 
-### 7. Audit log (line 1277)
+Если хотя бы один guard или runtime check FAIL — memory НЕ обновляется как completed, в proof пишется FAIL + причина, Phase 3I-A остаётся OPEN, эскалация в чат.
 
-Параметризовать `meta`: в package-mode `package_session_id/package_template_id/package_item_id/generation_batch_id` вместо `order_id`. Action остаётся `document.generated`. Аналогично для `document.pdf_converted` / `document.pdf_failed` (lines 1122/1131) — заменить `order_id` на context-aware поле.
+---
 
-### 8. Orchestrator (`ai-generate-document-package/index.ts`)
+## Что НЕ делается в этом заходе
 
-Проверить, что в body передаётся `template_id` на верхнем уровне (strict ожидает его через `body?.template_id` → перетирается в package-mode `templateId = packageContext.template_id`, так что это не критично, но для совместимости — продублировать). Per-item обработка ответа: больше нет `501`, ловить только `success: true` / `error: ...`. Никаких новых render/PDF/persist путей не добавлять.
+- UI кнопки (user / admin test) — Phase 3I-B.
+- История пакетов — Phase 3I-B.
+- Любые правки кода strict / orchestrator (только если runtime обнаружит регрессию — тогда отдельный hotfix-план).
+- Любые правки шаблонов в БД.
+- Любые миграции.
 
-### 9. Hook
+---
 
-`useAiDocumentPackageGeneration.ts` — без изменений (контракт уже `{ package_session_id, run_mode? }`).
+## Технические детали
 
-## Grep-инварианты (после изменений)
-
-```bash
-rg -n "package-strict-handler" supabase/functions                       # 0
-rg -n "package_mode_not_wired_in_strict" supabase/functions             # 0
-rg -n "Docxtemplater|new Docxtemplater" supabase/functions/ai-generate-document-package   # 0
-rg -n "gotenberg|convertDocxToPdf" supabase/functions/ai-generate-document-package        # 0
-rg -n "from\(['\"]ai_generated_documents['\"]\)" supabase/functions/ai-generate-document-package   # 0
-rg -c "new Docxtemplater" supabase/functions/canonical-document-generate-strict/index.ts  # 1
-rg -c "convertDocxToPdf" supabase/functions/canonical-document-generate-strict/index.ts   # 2
-rg -c "\.from\(['\"]ai_generated_documents['\"]\)" supabase/functions/canonical-document-generate-strict/index.ts  # = hotfix baseline (4)
-rg -c "storage.from\(['\"]documents['\"]\)\.upload" supabase/functions/canonical-document-generate-strict/index.ts # 2 (docx+pdf, без увеличения)
-```
-
-## Build / typecheck
-
-Прогнать существующий проектный build/typecheck. Ошибки типов не оставлять (особенно по `packageContext!` в новой ветке pre-create и по `userId` = null в `created_by`).
-
-## Proof
-
-Создать `.lovable/proofs/sprint_3i_a_1b_package_mode_wired_2026_05.md`:
-
-1. `501 package_mode_not_wired_in_strict` удалён (diff hunk).
-2. Package-mode проходит через тот же render/PDF/persist (line-mapping).
-3. Второго renderer/upload/insert нет (grep-инварианты).
-4. Orchestrator всё ещё thin.
-5. Build зелёный.
-6. Order-path: статический diff не задевает order-only логику; runtime regression отложен на Phase 3I-A-2.
-
-## Что НЕ делать в этом заходе
-
-- Никакой runtime генерации (ни order, ни package).
-- Никакого UI (пользовательская кнопка, admin test, история пакетов).
-- Никаких обновлений memory как completed.
-- Sprint 3I-A не закрывается.
-
-## DoD Phase 3I-A-1.B
-
-
-| #   | Критерий                                                                             | Проверка             |
-| --- | ------------------------------------------------------------------------------------ | -------------------- |
-| 1   | `501 package_mode_not_wired_in_strict` удалён                                        | `rg`                 |
-| 2   | Package-mode использует единственный Docxtemplater/Gotenberg/upload/persist          | line-mapping в proof |
-| 3   | Token parser принимает `package.(ul|ip|fl).FLD-XXX` и `ln-XXX` только в package-mode | code review          |
-| 4   | Order-mode hard-error на `package.*` / `ln-*` (no leakage)                           | code review          |
-| 5   | Hard-error `package_token_not_preresolved` (no silent empty)                         | code review          |
-| 6   | Idempotency `pkg:${batch}:${item}`                                                   | code review          |
-| 7   | Storage prefix `generated/package/{session_id}/...`                                  | code review          |
-| 8   | `ai_generated_documents` insert/update — те же 4 точки                               | `rg -c`              |
-| 9   | Orchestrator не содержит render/PDF/persist                                          | `rg`                 |
-| 10  | Build зелёный                                                                        | typecheck            |
-| 11  | Proof файл создан                                                                    | exists               |
-
-
-После выполнения — следующий шаг **Phase 3I-A-2**: baseline order generation → runtime package proof → snapshot regression → memory/closeout.
+- Все DB-вызовы — через `supabase--read_query` (диагностика) и `supabase--insert` (только если нужен тестовый role_assignment для guard 4.1; помечается `meta.test_fixture=true` и удаляется в конце — через migration с DELETE).
+- Edge function вызовы — `supabase--curl_edge_functions`, для guard 4.3 — с явным `Authorization: Bearer <не-service-role JWT>`.
+- Storage download — через `supabase.storage.from('documents').createSignedUrl` (read-only).
+- Никаких изменений в `supabase/config.toml`, `.env`, типах.
