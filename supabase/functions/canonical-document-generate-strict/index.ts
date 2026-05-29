@@ -693,11 +693,9 @@ Deno.serve(async (req) => {
     const buf = await dl.data.arrayBuffer();
 
     // Parse tokens — допустимы:
-    //   field:FLD-XXXXXX
-    //   field:FLD-XXXXXX|format=words
-    //   field:FLD-XXXXXX|format=text
-    //   field:FLD-XXXXXX|case=<allowed>
-    //   field:FLD-XXXXXX|format=words|case=<allowed>
+    //   field:FLD-XXXXXX[|format=...][|case=...]                — order + package
+    //   package.(ul|ip|fl).FLD-XXXXXX[|case=...]                 — package only
+    //   ln-XXXXXX[|case=...]                                     — package only
     const zip = new PizZip(buf);
     const rawXml = extractDocumentXmlText(zip);
     const flat = stripXml(rawXml);
@@ -705,12 +703,82 @@ Deno.serve(async (req) => {
     const legacyTokens: string[] = [];
     const unknownModifierTokens: string[] = [];
     const parsedTokens: ParsedToken[] = [];
+    // Sprint 3I-A-1.B: package/ln tokens collected here (package_session only).
+    interface ParsedPkgToken {
+      raw_inside: string;
+      kind: 'package' | 'ln';
+      bag_key: string;
+      case_modifier: string | null;
+    }
+    const parsedPackageTokens: ParsedPkgToken[] = [];
+    const packageTokensOutsideContext: string[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
+
+      // 1) Legacy package-role syntaxes ({{package.role.PKR-…}}, {{package.roles.<key>.*}})
+      //    are forbidden everywhere — canonical роль теперь {{ln-XXXXXX}}.
+      if (LEGACY_PKG_ROLE_RE.test(inside)) {
+        legacyTokens.push(`{{${inside}}}`);
+        continue;
+      }
+
+      // 2) Package requisite token {{package.(ul|ip|fl).FLD-XXX[|case=…]}}
+      const pkgMatch = inside.match(PKG_REQ_RE);
+      if (pkgMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (pkgMatch[3] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'package',
+          bag_key: `package.${pkgMatch[1]}.${pkgMatch[2]}`,
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+      // 3) Role token {{ln-XXXXXX[|case=…]}}
+      const lnMatch = inside.match(LN_TOKEN_RE);
+      if (lnMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (lnMatch[2] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'ln',
+          bag_key: lnMatch[1],
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+      // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
         continue;
       }
+
+      // 5) Strict field:FLD-XXX parser (with format/case).
       const p = parseStrictTokenInside(inside);
       if ('error' in p) {
         if (p.error === 'unknown_modifier') unknownModifierTokens.push(`{{${inside}}}`);
@@ -735,6 +803,51 @@ Deno.serve(async (req) => {
         unknown_modifier_tokens: Array.from(new Set(unknownModifierTokens)),
       }, 400);
     }
+    if (packageTokensOutsideContext.length > 0) {
+      // package.* or ln-* used in an order-mode template — never silent.
+      return json({
+        error: 'package_token_outside_package_context',
+        tokens: Array.from(new Set(packageTokensOutsideContext)),
+      }, 400);
+    }
+
+    // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
+    // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
+    // preresolved and is not a system-allocated FLD (000069/000070).
+    if (generationContext === 'package_session') {
+      const missingPkg: string[] = [];
+      for (const pt of parsedPackageTokens) {
+        const bag = pt.kind === 'ln'
+          ? packageContext!.preresolved_ln_tokens
+          : packageContext!.preresolved_package_fields;
+        if (!bag || !Object.prototype.hasOwnProperty.call(bag, pt.bag_key)) {
+          missingPkg.push(`{{${pt.raw_inside}}}`);
+        }
+      }
+      if (missingPkg.length > 0) {
+        return json({
+          error: 'package_token_not_preresolved',
+          tokens: Array.from(new Set(missingPkg)),
+        }, 400);
+      }
+      const _systemFlds = new Set<string>(['FLD-000069', 'FLD-000070']);
+      const preresolvedKeys = new Set<string>(
+        Object.keys(packageContext!.preresolved_fields || {}),
+      );
+      const missingFld: string[] = [];
+      for (const fid of foundIds) {
+        if (_systemFlds.has(fid)) continue;
+        if (!preresolvedKeys.has(fid)) missingFld.push(fid);
+      }
+      if (missingFld.length > 0) {
+        return json({
+          error: 'package_field_not_preresolved',
+          fields: missingFld,
+        }, 400);
+      }
+    }
+
+
 
     // Required map from token_manifest (если задано)
     const manifest = (Array.isArray(ver.token_manifest) ? ver.token_manifest : []) as any[];
