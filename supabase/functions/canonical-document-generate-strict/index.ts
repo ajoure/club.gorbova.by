@@ -535,8 +535,9 @@ Deno.serve(async (req) => {
         meta: { order_id: orderId, template_id: templateId, skipped_guards: guardSkipped, warnings: guardWarnings },
       });
     }
+    } // end of generationContext === 'order' (guards block)
 
-    // Load template + active version (guard: must be active and not archived)
+    // Load template + active version — common to order and package modes.
     const { data: tpl } = await supabase
       .from('document_templates')
       .select('id, name, current_version_id, is_active, template_status')
