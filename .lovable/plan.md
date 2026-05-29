@@ -1,249 +1,494 @@
-## да, согласен, с учетом правок:
+# Да, ты прав. Сейчас не нужно сохранять совместимость со старыми форматами, потому что реальных рабочих шаблонов с этими роль-плейсхолдерами ещё нет. Значит, правильная стратегия: **не поддерживать три формата одновременно**, а сделать один чистый канон и удалить/переписать всё старое.
 
-## **Главное уточнение**
-
-Да, правильно: **для будущей генерации пакета не нужно создавать отдельную новую систему генерации документов**.
-
-Нужно идти так:
-
-```text
-Пакет документов
-→ собирает контекст: пакет + шаблон + анкета документа + роли + ЮЛ/ИП/ФЛ
-→ передаёт этот контекст в существующий pipeline генерации
-→ существующий renderer / DOCX / PDF / Gotenberg / storage / ai_generated_documents работают как раньше
-```
-
-То есть в Sprint 3H нельзя делать отдельную «пакетную генерацию с нуля». Нужен **adapter/wrapper над существующей генерацией**, который только добавляет package-context.
-
----
-
-## **Обязательные правки к плану proof Sprint 3G**
-
-### **1. В Step 6 заменить проверку кнопки «Сформировать пакет»**
-
-Сейчас там написано только проверить, не вызывает ли она `ai-generate-document-package`.
-
-Нужно уточнить:
-
-```md
-Кнопка «Сформировать пакет» в Sprint 3G не должна запускать генерацию.
-
-Но в proof нужно зафиксировать архитектурное правило для Sprint 3H:
-
-- не создавать отдельный независимый generation engine;
-- не дублировать DOCX/PDF/render/storage логику;
-- будущая генерация пакета должна переиспользовать существующий pipeline генерации документов;
-- новый package-layer может только:
-  1. выбрать список шаблонов из `document_package_template_items`;
-  2. собрать package context;
-  3. подставить package-aware токены;
-  4. вызвать существующий renderer/generation pipeline для каждого шаблона;
-  5. объединить результаты в пакет / историю.
-```
-
----
+Главная правка к Sprint 3H: **не deprecated warning, а cleanup старой логики**.
 
 
 
-### **2. Добавить отдельный пункт**
+# **Правки к Sprint 3H — убрать старую логику role-placeholder и оставить один канон**
 
-`7.8 Future generation architecture`
+`{{ln-XXXXXX}}`
 
-В proof добавить секцию:
+## **0. Главная правка**
+
+Не нужно сохранять старые форматы role-placeholder как deprecated, потому что реальных заполненных документов и рабочих шаблонов с ними ещё нет.
+
+Старые форматы нужно не поддерживать, а удалить/переписать:
 
 ```text
-7.8 Future generation architecture — PASS/GAP
+Удалить / не использовать:
+{{package.role.PKR-XXXXXX}}
+{{package.roles.<role_key>.full_name}}
+{{package.roles.<role_key>.position}}
+{{package.roles.<role_key>.short_name}}
+
+Оставить единственный канон:
+{{ln-XXXXXX}}
 ```
 
-Проверить и зафиксировать:
+`PKR-XXXXXX` может оставаться только внутренним ID роли в БД, если он уже используется в `document_package_role_catalog.public_id`, но пользовательский плейсхолдер в Word должен быть только `{{ln-XXXXXX}}`.
 
-```md
-Sprint 3G не создаёт отдельную генерацию пакетов.
+---
 
-Для Sprint 3H утверждается правило:
+## **1. Изменить цель Sprint 3H**
 
-Package generation must reuse existing document generation infrastructure:
-- existing DOCX renderer;
-- existing placeholder parser / resolver chain;
-- existing PDF conversion path;
-- existing storage path;
-- existing ai_generated_documents / history model, если она применима;
-- existing validation_status / template_version logic.
+Было:
 
-Новый слой допустим только как package orchestrator:
-- загрузить package_session;
-- получить document_package_template_items;
-- для каждого template_item собрать контекст;
-- добавить package resolvers для `{{package.ul...}}`, `{{package.ip...}}`, `{{package.fl...}}`, `{{package.role.PKR...}}`;
-- вызвать существующий generation/render function;
-- записать результат так же, как обычный документ, но с package metadata.
+```text
+поддержать deprecated форматы как warning
+```
+
+Стало:
+
+```text
+полностью унифицировать role-placeholder на {{ln-XXXXXX}} и удалить старую role-placeholder логику из UI/каталога/валидатора/резолвера, так как рабочих шаблонов с ней нет
+```
+
+---
+
+## **2. Cleanup старых форматов**
+
+### **2.1 UI**
+
+В UI больше нигде не показывать:
+
+```text
+{{package.role.PKR-XXXXXX}}
+{{package.roles.<role_key>.*}}
+```
+
+Проверить и исправить:
+
+- `PlaceholdersCatalogTab`;
+- `packagePlaceholderCatalog`;
+- `PackageTemplateValidationPanel`;
+- `PackageRolesManager`;
+- `PackagesWorkspace`;
+- любые подсказки, tooltips, examples, empty states;
+- proof/memory/plan.
+
+В пользовательском UI везде должно быть только:
+
+```text
+{{ln-XXXXXX}}
+```
+
+### **2.2 Validator**
+
+Validator должен принимать как рабочий формат только:
+
+```text
+{{ln-XXXXXX}}
+```
+
+Старые форматы:
+
+```text
+{{package.role.PKR-XXXXXX}}
+{{package.roles.<role_key>.*}}
+```
+
+не нужно считать deprecated warning. Сейчас их можно считать `invalid_legacy_role_placeholder` или `unknown_placeholder`, потому что рабочих документов с ними нет.
+
+Сообщение на русском:
+
+```text
+Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли».
+```
+
+Если проще — просто error `invalid_syntax`, но текст должен быть понятным.
+
+### **2.3 Resolver**
+
+Resolver должен работать только с `ln-XXXXXX`.
+
+Если внутри resolver ещё есть ветки для:
+
+```text
+package.role.PKR
+package.roles.<role_key>
+```
+
+их нужно удалить или оставить только как закрытый debug/legacy parser, который не вызывается в production. Предпочтительно удалить, чтобы не плодить поддержку мусорных форматов.
+
+---
+
+## **3. Что делать с существующими PKR**
+
+Если `document_package_role_catalog.public_id` сейчас хранит `PKR-XXXXXX`, есть два варианта. Нужно выбрать один и зафиксировать в proof.
+
+### **Вариант A — переименовать public_id ролей из PKR в LN**
+
+Переименовать существующие manually-created роли:
+
+```text
+PKR-000012 → ln-000012
+```
+
+или в каноническом формате, который уже использует репозиторий:
+
+```text
+LN-000012 / ln-000012
+```
+
+Важно: формат должен совпадать с тем, что реально уже принято в коде и proof Sprint 3G.
+
+После этого в БД `document_package_role_catalog.public_id` сразу будет соответствовать Word-плейсхолдеру.
+
+### **Вариант B — оставить PKR как внутренний ID, но добавить отдельный placeholder_public_id**
+
+Если нельзя менять `public_id`, добавить отдельное поле:
+
+```sql
+placeholder_public_id text unique
+```
+
+Пример:
+
+```text
+public_id = PKR-000012              -- внутренний ID роли
+placeholder_public_id = ln-000012   -- ID для Word-плейсхолдера
+```
+
+В UI и Word показывать только:
+
+```text
+{{ln-000012}}
+```
+
+`PKR` скрыть в обычном UI.
+
+Рекомендация: если реальных данных мало и ничего не используется — лучше Вариант A, проще и чище.
+
+---
+
+## **4. Package UL/IP/FL токены**
+
+Для реквизитов пакета остаётся отдельный package-aware формат, потому что он нужен, чтобы не путать billing context и package context:
+
+```text
+{{package.ul.FLD-XXXXXX}}
+{{package.ip.FLD-XXXXXX}}
+{{package.fl.FLD-XXXXXX}}
+```
+
+Их не путать с role-placeholder.
+
+Итого:
+
+```text
+Реквизиты ЮЛ пакета: {{package.ul.FLD-XXXXXX}}
+Реквизиты ИП пакета: {{package.ip.FLD-XXXXXX}}
+Реквизиты ФЛ пакета: {{package.fl.FLD-XXXXXX}}
+Роли пакета: {{ln-XXXXXX}}
+Системные/документные поля: {{field:FLD-XXXXXX}}
 ```
 
 ---
 
 
 
+## **5. Системные и документные**
 
+`{{field:FLD-...}}`
 
-### **3. В**
+В package template разрешены:
 
-`Untouched artifacts` **добавить проверку на отсутствие нового генератора**
-
-В Step 7 добавить grep:
-
-```bash
-rg -n "generate-package|package-generate|ai-generate-document-package|document-package-generation|generateDocumentPackage" src supabase/functions
+```text
+{{field:FLD-000069}} — номер документа
+{{field:FLD-000209}} — сегодня прописью
+{{field:FLD-000211}} — текущий год
 ```
 
-И зафиксировать:
+и другие системные/документные поля.
 
-```md
-Если найден новый edge/function, который самостоятельно рендерит DOCX/PDF или пишет в storage/ai_generated_documents — это BLOCKER.
+Они должны быть `valid`, без warning.
 
-Допустимы только:
-- disabled-заглушка;
-- UI-кнопка без вызова;
-- будущий orchestrator, который вызывает существующий generation pipeline.
-```
+Warning допустим только для billing-реквизитов:
 
----
-
-### **4. Не путать validation и generation**
-
-Добавить в proof:
-
-```md
-Controlled validation не является генерацией.
-
-Validation может:
-- читать DOCX;
-- извлекать плейсхолдеры;
-- проверять синтаксис;
-- проверять наличие package context / roles / assignments.
-
-Validation не может:
-- вызывать Gotenberg;
-- создавать PDF;
-- писать `ai_generated_documents`;
-- сохранять generated file;
-- менять template/content/snapshot.
+```text
+Заказчик ЮЛ
+Заказчик ИП
+Заказчик ФЛ
+Исполнитель ЮЛ
 ```
 
 ---
 
-## **Готовый текст для Lovable**
 
-```md
-да, согласен, с учетом правок:
 
-1. В proof Sprint 3G добавь отдельную секцию `7.8 Future generation architecture`.
+## **6.**
 
-2. Зафиксируй принцип: будущая генерация пакета в Sprint 3H НЕ должна создавать новый независимый generation engine. Нужно переиспользовать существующий pipeline генерации документов: DOCX renderer, placeholder parser/resolver chain, PDF conversion/Gotenberg, storage, template_version/validation logic, историю/ai_generated_documents — если применимо.
+`role_assignment_missing`
 
-3. Новый package-layer может быть только orchestrator/wrapper:
-   - получить `package_session`;
-   - получить `document_package_template_items`;
-   - для каждого template_item собрать package context;
-   - добавить package resolvers для `{{package.ul...}}`, `{{package.ip...}}`, `{{package.fl...}}`, `{{package.role.PKR...}}`;
-   - вызвать существующий generation/render pipeline;
-   - сохранить результат тем же способом, что обычные документы, но с package metadata.
+В Sprint 3H обязательно закрыть GAP:
 
-4. В Step 6 по кнопке «Сформировать пакет» зафиксировать: в Sprint 3G кнопка не должна запускать генерацию. Если она живая и вызывает edge/function генерации — это blocker.
+Если в DOCX есть:
 
-5. В Step 7 добавить grep:
-   `rg -n "generate-package|package-generate|ai-generate-document-package|document-package-generation|generateDocumentPackage" src supabase/functions`
-
-   Если найден новый самостоятельный генератор, который сам рендерит DOCX/PDF, пишет в storage или `ai_generated_documents`, это blocker. Допустим только disabled stub либо будущий orchestrator, который вызывает существующие функции.
-
-6. В proof отдельно указать: controlled validation не является генерацией. Она может читать DOCX и проверять плейсхолдеры, но не может вызывать Gotenberg, создавать PDF, писать `ai_generated_documents`, storage или snapshot.
-
-7. Остальные пункты плана оставить без изменений: сейчас только proof/grep/read-only, без кода, миграций, UI и запуска генерации.
+```text
+{{ln-XXXXXX}}
 ```
 
-## **Итог**
+но в анкете конкретного документа не выбран человек на эту роль:
 
-План можно выполнять после этой правки.  
-Ключевая мысль: **Sprint 3G закрывает проверку и архитектурную готовность, а Sprint 3H должен подключать пакетную генерацию через существующую систему генерации, а не строить новую.**
+```text
+warning: role_assignment_missing
+```
+
+Русский текст:
+
+```text
+Для этой роли в анкете документа ещё не выбран человек. Заполните анкету документа перед генерацией.
+```
+
+Если `ln` принадлежит другому пакету:
+
+```text
+error: ln_token_outside_bound_package
+```
+
+Если `ln` не найден:
+
+```text
+error: ln_token_not_found
+```
+
+---
+
+## **7. Удалить старые данные/алиасы, если они больше не нужны**
+
+Проверить и удалить/очистить, если не используется:
+
+- `document_package_token_aliases` со старыми `package.roles.*`;
+- legacy alias rows для `package.roles.company_head.*`;
+- legacy alias rows для `package.roles.ideology_responsible.*`;
+- старые тестовые references в proof/plan/memory;
+- старые UI labels с `PKR`.
+
+Если таблица `document_package_token_aliases` больше не нужна вообще — не удалять таблицу сразу, но:
+
+- очистить мусорные строки;
+- пометить таблицу как legacy/internal;
+- не использовать в новом UI и resolver.
+
+---
+
+## **8. Package generation orchestrator**
+
+Генерация пакета в Sprint 3H должна идти только через существующую генерацию документов.
+
+Запрещено создавать новый independent generation engine.
+
+Правильно:
+
+```text
+ai-generate-document-package
+  → orchestrator
+  → получает package_session
+  → получает document_package_template_items
+  → для каждого item собирает package context
+  → resolve package tokens:
+       {{package.ul.FLD-...}}
+       {{package.ip.FLD-...}}
+       {{package.fl.FLD-...}}
+       {{ln-XXXXXX}}
+  → вызывает существующий canonical-document-generate-strict / renderer pipeline
+  → результат сохраняется стандартным способом
+```
+
+Нельзя:
+
+- дублировать DOCX renderer;
+- дублировать Gotenberg client;
+- напрямую вручную писать в `ai_generated_documents`, если это уже делает существующий pipeline;
+- ломать single-document generation.
+
+---
+
+## **9. Proof Sprint 3H**
+
+В proof добавить отдельный раздел:
+
+```text
+Legacy role-placeholder cleanup
+```
+
+Проверки:
+
+1. В UI больше нет `{{package.role.PKR-...}}`.
+2. В UI больше нет `{{package.roles.<key>.*}}`.
+3. Каталог ролей показывает только `{{ln-XXXXXX}}`.
+4. Validator рабочим считает только `{{ln-XXXXXX}}`.
+5. Старые role-format либо удалены, либо дают error с понятным русским текстом.
+6. Memory и plan переписаны на `ln`.
+7. Если `PKR` остался в БД — он скрыт из обычного UI.
+8. Нет рабочих шаблонов, использующих старый формат.
+9. Package generation orchestrator использует только `ln` для ролей.
+
+---
+
+## **10. DoD Sprint 3H**
+
+- Единственный пользовательский role-placeholder: `{{ln-XXXXXX}}`.
+- Старые role-placeholder форматы не показываются в UI.
+- Старые role-placeholder форматы не используются в новых шаблонах.
+- `role_assignment_missing` реализован.
+- Package validation работает с `ln`.
+- Package generation orchestrator готов/подключён через существующий pipeline.
+- Single-document generation не изменена.
+- Proof и memory обновлены.
+
+Коротко: **да, старое нужно не сохранять, а вычистить**, потому что у нас ещё нет боевых шаблонов с этими роль-плейсхолдерами. Оставляем один чистый стандарт: `{{ln-XXXXXX}}`.
 
 &nbsp;
 
-План: дополнение proof Sprint 3G секцией DoD-верификации
+План: Sprint 3H — role_assignment_missing validation + package generation orchestrator
 
-Скоуп: только дополнение файла `.lovable/proofs/package_documents_sprint3g_document_level_questionnaires_2026_05.md`. Никаких изменений в коде, миграциях, edge-функциях, UI. Перед записью — провести фактическую верификацию (чтение БД и grep по репо), и зафиксировать результаты в proof.
+## Контекст и фиксация канона
 
-### Шаг 1. Верификация PKR-каталога (UI)
-
-- Прочитать `src/components/ai-documents/placeholders/PlaceholdersCatalogTab.tsx` (и компонент группы «Пакет: Роли»), убедиться:
-  - таблица рендерит русские колонки (Группа, Название, ID, Тип, Пример, Плейсхолдер, Копировать);
-  - нет упоминаний `document_package_role_catalog`, `source_path`, `role_key`, raw JSON в обычном UI;
-  - copy-token формируется как `{{package.role.PKR-XXXXXX}}`.
-- Подтвердить тестом `src/utils/packagePlaceholderCatalog.test.ts` (`buildPackageRoleItems генерирует ровно один токен`).
-
-### Шаг 2. Верификация валидации системных FLD
-
-- В `PackageTemplateValidationPanel.tsx` + `src/utils/billingFldGroups.ts` подтвердить, что FLD-000209, FLD-000211, FLD-000069 имеют системный/документный `entity_type` (через `supabase--read_query` по `fields_registry`) и относятся к non-billing.
-- Зафиксировать вывод: для всех трёх → `valid` без warning.
-
-### Шаг 3. Верификация billing-FLD
-
-- Через `supabase--read_query` выбрать примеры FLD по `entity_type ∈ {customer*, executor_leg}`.
-- Подтвердить, что validator выдаёт warning `billing_fld_in_package_scope`, не error.
-
-### Шаг 4. Верификация `role_assignment_missing`
-
-- Проверить в `PackageTemplateValidationPanel.tsx` ветку для `{{package.role.PKR-XXXXXX}}`: если в `document_package_item_role_assignments` (active) для пары (session, package_template_item_id) нет назначения по этому `role_catalog_id` → warning `role_assignment_missing`.
-- Если в текущей реализации эта проверка делается только на уровне резолвера, а не валидатора UI — пометить в proof как **gap** и завести в backlog `package_validator_role_assignment_missing` (без правки кода в этом шаге плана).
-
-### Шаг 5. Верификация item-level анкет
-
-- Через `supabase--read_query` к `document_package_item_role_assignments` подтвердить DDL-инварианты:
-  - один `person_id` может встречаться на разные `(package_template_item_id, role_catalog_id)` в рамках одной `package_session_id`;
-  - на одну `(package_session_id, package_template_item_id, role_catalog_id)` можно вставить несколько активных `person_id`;
-  - partial unique index не даёт дубль `(package_session_id, package_template_item_id, role_catalog_id, person_id) WHERE is_active = true`.
-- Триггер `dpira_assert_package_match` проверить через `pg_trigger` / `pg_proc`.
-
-### Шаг 6. Верификация кнопки «Сформировать пакет»
-
-- Grep по `useAiDocumentPackageGeneration`, `ai-generate-document-package`, `DocumentPackageIdeologyView.tsx`, `DocumentPackageQuestionnairesView.tsx`, `PackagesWorkspace.tsx`.
-- Зафиксировать в proof одно из:
-  - кнопка disabled с tooltip «генерация будет подключена в Sprint 3H»;
-  - либо кнопка отсутствует / помечена заглушкой.
-- Если по факту кнопка живая и вызывает edge `ai-generate-document-package` — пометить как **blocker** для закрытия Sprint 3G и поставить задачу в Sprint 3G hotfix (без правки кода в этом плановом шаге).
-
-### Шаг 7. Grep/diff подтверждение неприкосновенных артефактов
-
-- `rg "canonical-document-generate-strict"` + `git`-нейтральная проверка (только просмотр файла) — подтвердить, что edge-функция не модифицирована в скоуп-коммитах Sprint 3G.
-- `rg -n "gotenberg"` в `supabase/functions/_shared/resolve-package-tokens.ts`, новых UI и хуке — отсутствие вызова.
-- `rg -n "ai_generated_documents"` в новых файлах Sprint 3G — отсутствие записи.
-- `rg -n "billing|customer_resolver|executor_resolver"` в новых файлах — отсутствие правок биллинг-резолвера.
-- Все четыре пункта зафиксировать как PASS/FAIL с конкретным выводом команд.
-
-### Шаг 8. Запись новой секции в proof
-
-Дописать в `.lovable/proofs/package_documents_sprint3g_document_level_questionnaires_2026_05.md` секцию:
+Sprint 3G закрыт. Перед стартом 3H фиксируем рабочий канон плейсхолдера роли в пакете:
 
 ```text
-## 7. DoD verification (Sprint 3G closeout)
-
-7.1 PKR catalog UI — PASS/FAIL + ссылки на файлы
-7.2 System FLD validation (FLD-000209/211/069) — PASS/FAIL
-7.3 Billing FLD validation — PASS/FAIL
-7.4 role_assignment_missing — PASS / GAP (+ backlog ref)
-7.5 Item-level invariants (DB) — PASS (DDL + index + trigger)
-7.6 «Сформировать пакет» — DISABLED / BLOCKER (+ ref)
-7.7 Untouched artifacts — PASS (4 grep-результата)
+Канон:        {{ln-XXXXXX}}
+Deprecated:   {{package.role.PKR-XXXXXX}}
+Deprecated:   {{package.roles.<role_key>.*}}
 ```
 
-Если какие-либо пункты — FAIL/BLOCKER, явно написать «Sprint 3G **не закрывается** до устранения», и перечислить blocker-задачи.
+Канон применяется во всех новых артефактах: планах, proof, UI, validator, placeholder catalog, memory, edge functions. `PKR-XXXXXX` остаётся внутренним идентификатором в БД (`document_package_role_catalog.public_id`), но в Word-плейсхолдерах и пользовательском UI не фигурирует. Старые форматы поддерживаются валидатором только как `deprecated_placeholder` warning.
 
-### Не входит в этот план
+## Цели Sprint 3H
 
-- Никаких изменений кода, миграций, edge-функций, UI, тестов.
-- Никакого реального запуска генерации (это Sprint 3H).
-- Никакой правки memory/index — обновление произойдёт только когда все 7 пунктов PASS.
+1. Закрыть единственный GAP Sprint 3G — controlled validation `role_assignment_missing`.
+2. Унифицировать терминологию `{{ln-XXXXXX}}` во всех точках Sprint 3G/3H.
+3. Включить пакетную генерацию как orchestrator поверх существующего pipeline генерации документов — без нового рендерера, Gotenberg-клиента и записи в `ai_generated_documents` собственной логикой.
 
-### DoD этого шага
+## Этап 1 — Терминологическая унификация (нулевой риск)
 
-- Proof-файл содержит секцию «7. DoD verification» со всеми 7 пунктами.
-- Для каждого пункта приведено наблюдение (файл/строка, SQL-результат, grep-вывод).
-- Явный вердикт closeout-а Sprint 3G: CLOSED или OPEN c blocker-списком.
+Только текстовые правки, без новой логики.
+
+- `.lovable/plan.md`: блок Sprint 3H пишем сразу в каноне `{{ln-XXXXXX}}`.
+- `.lovable/memory/architecture/documents/package-document-level-questionnaires-v1.md`: переписать секцию «Validator scope» — основной токен `{{ln-XXXXXX}}`, `{{package.role.PKR-XXXXXX}}` и `{{package.roles.<role_key>.*}}` отмечены как deprecated warning.
+- `src/utils/packagePlaceholderCatalog.ts`: убедиться, что copy-token и описание используют `{{ln-XXXXXX}}`. PKR оставляем только в технической колонке для super_admin.
+- `PlaceholdersCatalogTab.tsx` (вкладка «Пакет: Роли»): описание сверху и Пример используют `{{ln-XXXXXX}}`. Текст «Содержимое подставляется по output_template роли» сохраняется. Скриншот пользователя показывает остатки `{{package.role.PKR-XXXXXX}}` в шапке и в колонке «Плейсхолдер» — обновить шапку; колонка остаётся `{{ln-XXXXXX}}`.
+- `PackageTemplateValidationPanel.tsx`: коды и сообщения переходят на `ln-token`; коды `pkr_not_found`, `pkr_outside_bound_package` переименовываются в `ln_token_not_found`, `ln_token_outside_bound_package` (BREAKING внутри Sprint 3G/3H, наружу не торчат — только UI-строки).
+
+## Этап 2 — Controlled validation `role_assignment_missing`
+
+Цель: при загрузке/проверке DOCX-шаблона документа внутри package_session показывать warning, если `{{ln-XXXXXX}}` есть, но в анкете документа никто не назначен.
+
+Точка валидации — существующий `PackageTemplateValidationPanel.tsx` + хелпер парсинга плейсхолдеров `src/utils/extractDocxPlaceholders.ts` (read-only DOCX, без генерации).
+
+Логика проверки на пару `(package_session_id, package_template_item_id)`:
+
+```text
+для каждого ln-токена в DOCX:
+  1. resolve ln → document_package_role_catalog.public_id
+     - не найдено              → error: ln_token_not_found
+     - role.package_template_id ≠ item.package_template_id
+                                → error: ln_token_outside_bound_package  (он же role_outside_bound_package)
+  2. lookup document_package_item_role_assignments
+     where package_session_id = current
+       and package_template_item_id = current
+       and role_catalog_id = role.id
+       and is_active = true
+     - 0 строк                  → warning: role_assignment_missing
+     - ≥1 строк                 → valid (multi-value семантика — отдельный backlog)
+```
+
+Текст warning (русский, по требованию пользователя):
+
+> «Для этой роли в анкете документа ещё не выбран человек. Заполните анкету документа перед генерацией.»
+
+Параллельно отражаем то же правило в edge-резолвере `supabase/functions/_shared/resolve-package-tokens.ts` (контракт `multiple_role_assignments` уже там, добавляем `role_assignment_missing` как warning при пустом результате document-level branch). `HARDCODED_ENABLED` остаётся `false`.
+
+DoD этапа 2:
+
+- DOCX с `{{ln-XXXXXX}}` + пустая анкета документа → ровно одно warning `role_assignment_missing`, кнопка «Сформировать пакет» не блокируется (warning, не error).
+- Назначение человека в «Анкеты документов» → warning исчезает после refetch.
+- Роль другого пакета → error `ln_token_outside_bound_package`.
+- Несуществующий PKR в ln → error `ln_token_not_found`.
+- В edge-резолвере при пустых assignment'ах появляется `warnings: [{ code: 'role_assignment_missing', role_public_id, package_template_item_id }]`, токен не подставляется.
+
+## Этап 3 — Package generation orchestrator (поверх существующего pipeline)
+
+Жёсткое правило: НЕ создавать новый DOCX-рендерер, НЕ дублировать Gotenberg-клиент, НЕ писать руками в `ai_generated_documents`, НЕ трогать `canonical-document-generate-strict`, billing/customer/executor resolver.
+
+Архитектура:
+
+```text
+ai-generate-document-package (orchestrator, существует, сейчас не вызывается)
+  │
+  ├── load package_session + package_template_items (ordered)
+  ├── для каждого template_item:
+  │     ├── build packageTokenResolveInput { packageSessionId, packageTemplateItemId, ... }
+  │     ├── call resolve-package-tokens.ts (document-level branch)
+  │     ├── delegate to canonical-document-generate-strict  ← существующий генератор
+  │     │     с дополнительным context-слоем package-токенов
+  │     └── собрать ai_generated_documents.id, status, warnings
+  └── вернуть агрегат { items: [...], package_warnings: [...] }
+```
+
+Что меняется:
+
+- В `canonical-document-generate-strict` добавляется ОПЦИОНАЛЬНЫЙ вход `packageContext: { packageSessionId, packageTemplateItemId, packageTokenResolverWarnings[] }`. Если задан — после билдинга обычного контекста вызывается resolve-package-tokens и его результат мёрджится в плейсхолдеры. Если не задан — поведение НЕ меняется (proof: shadow-flag, default off, single-document путь идентичен byte-to-byte).
+- В UI `PackagesWorkspace` кнопка «Сформировать пакет»:
+  - предусловие: для каждого template_item все ln-токены либо assigned, либо warning подтверждён пользователем (чекбокс «Сформировать с пропусками» — пишет в meta);
+  - вызывает `ai-generate-document-package` с `package_session_id`;
+  - показывает per-item статус (generated / failed / skipped_missing_role).
+- Hook `useAiDocumentPackageGeneration` (уже существует) подключается как единственный consumer.
+
+DoD этапа 3:
+
+- Кнопка «Сформировать пакет» больше не disabled, но блокируется при наличии error-уровневых проблем хотя бы в одном template_item.
+- Каждый сгенерированный документ пакета имеет запись в `ai_generated_documents` через стандартный путь (не через orchestrator напрямую).
+- В single-document флоу (`canonical-document-generate-strict` без `packageContext`) поведение не изменилось — grep + smoke на одном существующем шаблоне.
+- Gotenberg вызывается только из существующего pipeline.
+- Audit: каждая операция orchestrator пишет одну запись в `audit_logs` со списком item_id + warnings.
+
+## Этап 4 — Proof + Memory
+
+- Создать `.lovable/proofs/package_documents_sprint3h_role_assignment_missing_and_orchestrator_2026_05.md` с разделами: канон ln-токена, validation matrix (8 кейсов), orchestrator контракт, доказательства непрямого касания `canonical-document-generate-strict` (diff: только новый необязательный параметр), grep подтверждение отсутствия нового рендерера/Gotenberg-клиента.
+- Обновить memory `architecture/documents/package-document-level-questionnaires-v1.md`: канон `{{ln-XXXXXX}}`, `role_assignment_missing` теперь реализован (убрать из GAP). При необходимости — отдельная memory `architecture/documents/package-generation-orchestrator-v1.md` со ссылкой на pipeline.
+- Обновить `mem://index.md`: добавить строку для новой memory (если создаётся), скорректировать описание существующей.
+
+## Технические детали (для разработчика)
+
+### Файлы под изменение
+
+- `src/utils/packagePlaceholderCatalog.ts` — каноничный токен `{{ln-XXXXXX}}` во всех описаниях/copy-token.
+- `src/components/ai-documents/templates/PlaceholdersCatalogTab.tsx` — шапка/описание блока «Пакет: Роли».
+- `src/components/ai-documents/packages/PackageTemplateValidationPanel.tsx` — добавить `role_assignment_missing`, переименовать pkr_* коды → ln_token_*, тексты на русском.
+- `src/utils/extractDocxPlaceholders.ts` — убедиться, что парсер выделяет `ln-XXXXXX` отдельным классом (не как FLD).
+- `src/components/ai-documents/packages/PackagesWorkspace.tsx` — включение кнопки «Сформировать пакет», вызов hook, отображение per-item статусов.
+- `supabase/functions/_shared/resolve-package-tokens.ts` — добавить warning `role_assignment_missing` в document-level branch.
+- `supabase/functions/canonical-document-generate-strict/*` — добавить опциональный `packageContext`; default-off; без изменений в single-document пути.
+- `supabase/functions/ai-generate-document-package/*` — orchestrator: per-item delegation в canonical-document-generate-strict, агрегация результата, audit.
+- `.lovable/plan.md`, proof, memory, `mem://index.md`.
+
+### Что НЕ трогаем
+
+- `canonical-template-audit` (вне scope).
+- `gotenberg-*` / PDF-конвертер.
+- Billing FLD resolvers (`customer_resolver`, `executor_resolver`).
+- `document_package_session_participants` (legacy read-only).
+- Триггеры/индексы на `document_package_item_role_assignments` (готовы в 3G).
+
+### Регрессионная карта
+
+- Single-document generation (DocumentGeneration page) — smoke на одном продакт-шаблоне до и после.
+- Существующие пакетные шаблоны с PKR-токенами в БД — валидатор должен показать deprecated warning, не error.
+- ItemRoleAssignment replace-save — без изменений.
+
+## Out of scope (backlog)
+
+- Multi-value role assignment generation семантика (one role → N people в одном документе): пока берём первого по `sort_order`, остальные → warning `multiple_role_assignments` (контракт уже есть).
+- Hard switch выключения `{{package.role.PKR-...}}` (полное удаление deprecated) — отдельный sprint после bulk-rewrite шаблонов.
+- Атомарность replace-save через RPC — отдельный backlog `document_package_session_save_atomicity`.
+
+## Definition of Done (Sprint 3H)
+
+1. Канон `{{ln-XXXXXX}}` зафиксирован в плане, proof, memory, UI, validator, resolver.
+2. `role_assignment_missing` работает и в UI-validator, и в edge-resolver; матрица из 8 кейсов проходит.
+3. `ln_token_outside_bound_package` (он же `role_outside_bound_package`) проверяется по `package_template_id`.
+4. Пакетная генерация работает через `ai-generate-document-package` → `canonical-document-generate-strict` без нового рендерера/Gotenberg-клиента/прямой записи в `ai_generated_documents`.
+5. Single-document путь не изменён (proof: diff + smoke).
+6. Proof + memory обновлены, `mem://index.md` синхронизирован.
