@@ -1,31 +1,28 @@
 /**
- * PackageTemplateValidationPanel — Sprint 3F Phase 2b.
+ * PackageTemplateValidationPanel — Sprint 3F Phase 2b + Sprint 3H-fix.
  *
  * Read-only controlled validation для DOCX-шаблонов пакета.
  *
- * Что делает:
- *  1. Принимает локальный .docx (drag/upload) либо читает уже загруженную
- *     активную версию шаблона через storage (опц., в будущей итерации).
- *  2. Извлекает текст через mammoth, ищет токены `{{...}}` (read-only).
- *  3. Классифицирует каждый токен:
- *     • valid       — `{{field:FLD-XXXXXX}}`, `{{package.ul|ip|fl.FLD-XXXXXX}}`,
- *                     `{{package.role.PKR-XXXXXX}}`;
- *     • warning     — `{{field:FLD-XXXXXX}}` в template_scope='package'
- *                     (биллинговое поле в package-шаблоне — не блокирует, но требует ревью);
- *                     `{{package.roles.<role_key>.<attr>}}` (deprecated синтаксис);
- *     • error       — legacy {{document|executor|customer|deal|cf.*}} или произвольный мусор.
+ * Sprint 3H-fix:
+ *  • Канон роли — `{{ln-XXXXXX}}` (Word-friendly).
+ *  • Legacy `{{package.role.PKR-XXXXXX}}` и `{{package.roles.<role_key>.*}}`
+ *    → error `invalid_legacy_role_placeholder`.
+ *  • `{{ln-XXXXXX}}` валидируется через `document_package_role_catalog`:
+ *      - роль не найдена → error `ln_token_not_found`;
+ *      - роль из другого пакета → error `ln_token_outside_bound_package`;
+ *  • Если выбрана сессия пакета и сканируем активную версию привязанного
+ *    шаблона (известен `package_template_item_id`) — проверяем active
+ *    assignments в `document_package_item_role_assignments`:
+ *      - 0 → warning `role_assignment_missing`.
  *
- * Чего НЕ делает:
+ * Чего НЕ делает (canon):
  *  • Не запускает canonical-document-generate-strict.
  *  • Не вызывает Gotenberg.
  *  • Не пишет в ai_generated_documents.
  *  • Не модифицирует document_templates / document_template_versions.
  *  • Не трогает billing-резолвер.
- *
- * Все мутирующие действия — отдельной кнопкой в админ-панели шаблонов,
- * через канонические пути (uploaded DOCX → version → markup → activate).
  */
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -51,36 +48,74 @@ interface Finding {
   hint: string;
 }
 
-interface TemplateChoice {
-  id: string;
+interface TemplateItemChoice {
+  item_id: string;            // document_package_template_items.id (= package_template_item_id)
+  template_id: string;
   name: string;
   template_scope: string | null;
+}
+
+interface SessionChoice {
+  id: string;
+  label: string;
+}
+
+interface RoleCatalogRow {
+  id: string;
+  public_id: string;          // ln-XXXXXX
+  role_key: string;
+  package_template_id: string;
+}
+
+interface ItemAssignmentRow {
+  role_catalog_id: string;
 }
 
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-// Sprint 3H canon — Word-friendly role token.
-const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
-// Sprint 3H legacy → error (не warning): реальных шаблонов нет (Sprint 3G §7).
+const RX_PACKAGE_ROLE_LN = /^(ln-\d{6})(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
 
 function classify(
   inside: string,
-  isPackageScope: boolean,
   fldEntityTypes: Map<string, string>,
+  /** ln-XXXXXX → catalog row (роли всех пакетов, чтобы отличить "не найдено" от "другой пакет") */
+  lnCatalog: Map<string, RoleCatalogRow>,
+  /** package_template_id текущего пакета (для проверки принадлежности роли) */
+  packageTemplateId: string | null,
+  /** role_catalog_id, у которых есть active assignment в текущем (session,item) */
+  assignedRoleCatalogIds: Set<string> | null,
 ): Finding {
   const token = `{{${inside}}}`;
+
   if (RX_PACKAGE_REQ.test(inside)) {
     return { token, severity: "valid", code: "package_requisite_ok",
       hint: "Package-aware реквизит, читается из document_package_sessions." };
   }
-  if (RX_PACKAGE_ROLE_LN.test(inside)) {
+
+  const lnMatch = inside.match(RX_PACKAGE_ROLE_LN);
+  if (lnMatch) {
+    const lnId = lnMatch[1];
+    const role = lnCatalog.get(lnId);
+    if (!role) {
+      return { token, severity: "error", code: "ln_token_not_found",
+        hint: `Роль ${lnId} не найдена в каталоге ролей пакетов. Проверьте плейсхолдер.` };
+    }
+    if (packageTemplateId && role.package_template_id !== packageTemplateId) {
+      return { token, severity: "error", code: "ln_token_outside_bound_package",
+        hint: `Роль ${lnId} принадлежит другому пакету. Используйте только роли текущего пакета.` };
+    }
+    if (assignedRoleCatalogIds && !assignedRoleCatalogIds.has(role.id)) {
+      return { token, severity: "warning", code: "role_assignment_missing",
+        hint: "Для этой роли в анкете документа ещё не выбран человек. Заполните анкету документа перед генерацией." };
+    }
     return { token, severity: "valid", code: "package_role_ok",
       hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
+
   if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
     return { token, severity: "error", code: "invalid_legacy_role_placeholder",
       hint: "Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли»." };
@@ -89,7 +124,7 @@ function classify(
     const m = inside.match(/FLD-\d{6}/);
     const fldId = m ? m[0] : null;
     const entityType = fldId ? fldEntityTypes.get(fldId) : null;
-    if (isPackageScope && entityType && isBillingEntityType(entityType)) {
+    if (entityType && isBillingEntityType(entityType)) {
       return { token, severity: "warning", code: "billing_fld_in_package_scope",
         hint: "Этот плейсхолдер относится к биллинговым реквизитам. Для реквизитов пакета используйте {{package.ul|ip|fl.FLD-XXXXXX}}." };
     }
@@ -108,29 +143,78 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
   const [scanning, setScanning] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [sourceLabel, setSourceLabel] = useState<string>("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [selectedItemId, setSelectedItemId] = useState<string>("");
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
 
-  const boundTemplatesQuery = useQuery({
-    queryKey: ["pkg-validation-templates", packageTemplateId],
+  // Items пакета (item_id + template).
+  const boundItemsQuery = useQuery({
+    queryKey: ["pkg-validation-items", packageTemplateId],
     queryFn: async () => {
-      if (!packageTemplateId) return [] as TemplateChoice[];
+      if (!packageTemplateId) return [] as TemplateItemChoice[];
       const { data: items } = await supabase
         .from("document_package_template_items")
-        .select("template_id")
+        .select("id, template_id")
         .eq("package_template_id", packageTemplateId);
-      const ids = (items ?? []).map((r: any) => r.template_id);
+      const rows = (items ?? []) as Array<{ id: string; template_id: string }>;
+      const ids = rows.map((r) => r.template_id);
       if (ids.length === 0) return [];
       const { data: tpls } = await supabase
         .from("document_templates")
         .select("id, name, template_scope")
         .in("id", ids);
-      return (tpls ?? []) as TemplateChoice[];
+      const tplMap = new Map<string, { name: string; template_scope: string | null }>();
+      for (const t of (tpls ?? []) as any[]) {
+        tplMap.set(t.id, { name: t.name, template_scope: t.template_scope });
+      }
+      return rows.map<TemplateItemChoice>((r) => ({
+        item_id: r.id,
+        template_id: r.template_id,
+        name: tplMap.get(r.template_id)?.name ?? "(без названия)",
+        template_scope: tplMap.get(r.template_id)?.template_scope ?? null,
+      }));
     },
     enabled: !!packageTemplateId,
   });
 
-  // Sprint 3G: загружаем mapping FLD-XXXXXX → entity_type для классификации
-  // биллинговых полей. Без этого все системные FLD выглядели как warning.
+  // Каталог ролей всех пакетов (для распознавания "из другого пакета").
+  const roleCatalogQuery = useQuery({
+    queryKey: ["pkg-role-catalog-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select("id, public_id, role_key, package_template_id")
+        .eq("is_active", true);
+      if (error) throw error;
+      const map = new Map<string, RoleCatalogRow>();
+      for (const r of (data ?? []) as RoleCatalogRow[]) {
+        if (r.public_id) map.set(r.public_id, r);
+      }
+      return map;
+    },
+    staleTime: 60 * 1000,
+  });
+
+  // Сессии пакета (опционально, для проверки role_assignment_missing).
+  const sessionsQuery = useQuery({
+    queryKey: ["pkg-validation-sessions", packageTemplateId],
+    queryFn: async () => {
+      if (!packageTemplateId) return [] as SessionChoice[];
+      const { data, error } = await supabase
+        .from("document_package_sessions")
+        .select("id, created_at")
+        .eq("package_template_id", packageTemplateId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return ((data ?? []) as any[]).map<SessionChoice>((r) => ({
+        id: r.id,
+        label: `${r.id.slice(0, 8)}… · ${new Date(r.created_at).toLocaleString("ru-RU")}`,
+      }));
+    },
+    enabled: !!packageTemplateId,
+  });
+
+  // FLD → entity_type.
   const fldEntityTypesQuery = useQuery({
     queryKey: ["fields-registry-entity-types"],
     queryFn: async () => {
@@ -148,7 +232,27 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     staleTime: 5 * 60 * 1000,
   });
 
-  const isPackageScope = true; // validation runs in package context by definition
+  // Active assignments для выбранной пары (session, item).
+  const assignmentsQuery = useQuery({
+    queryKey: ["pkg-validation-assignments", selectedSessionId, selectedItemId],
+    queryFn: async () => {
+      if (!selectedSessionId || !selectedItemId) return new Set<string>();
+      const { data, error } = await supabase
+        .from("document_package_item_role_assignments" as any)
+        .select("role_catalog_id")
+        .eq("package_session_id", selectedSessionId)
+        .eq("package_template_item_id", selectedItemId)
+        .eq("is_active", true);
+      if (error) throw error;
+      const s = new Set<string>();
+      const rows = (data ?? []) as unknown as ItemAssignmentRow[];
+      for (const r of rows) {
+        if (r.role_catalog_id) s.add(r.role_catalog_id);
+      }
+      return s;
+    },
+    enabled: !!selectedSessionId && !!selectedItemId,
+  });
 
   const runOnArrayBuffer = useCallback(async (ab: ArrayBuffer, label: string) => {
     setScanning(true);
@@ -158,11 +262,17 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       const seen = new Set<string>();
       const out: Finding[] = [];
       const fldMap = fldEntityTypesQuery.data ?? new Map<string, string>();
+      const lnMap = roleCatalogQuery.data ?? new Map<string, RoleCatalogRow>();
+      // Assignments-check включаем только если выбран и session, и item.
+      const assignedSet =
+        selectedSessionId && selectedItemId
+          ? assignmentsQuery.data ?? new Set<string>()
+          : null;
       for (const m of text.matchAll(ANY_PLACEHOLDER_RE)) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        out.push(classify(inside, isPackageScope, fldMap));
+        out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedSet));
       }
       setFindings(out);
       setSourceLabel(label);
@@ -175,7 +285,14 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     } finally {
       setScanning(false);
     }
-  }, [isPackageScope, fldEntityTypesQuery.data]);
+  }, [
+    fldEntityTypesQuery.data,
+    roleCatalogQuery.data,
+    assignmentsQuery.data,
+    selectedSessionId,
+    selectedItemId,
+    packageTemplateId,
+  ]);
 
   const handleFile = async (file: File | null) => {
     if (!file) return;
@@ -189,13 +306,15 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
   };
 
   const handleScanBound = async () => {
-    if (!selectedTemplateId) return;
+    if (!selectedItemId) return;
+    const item = (boundItemsQuery.data ?? []).find((x) => x.item_id === selectedItemId);
+    if (!item) return;
     setScanning(true);
     try {
       const { data: ver } = await supabase
         .from("document_template_versions")
         .select("storage_bucket, storage_path, file_name, template_id, is_current")
-        .eq("template_id", selectedTemplateId)
+        .eq("template_id", item.template_id)
         .eq("is_current", true)
         .maybeSingle();
       if (!ver) {
@@ -249,18 +368,18 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
 
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="flex-1 flex items-center gap-2">
-          <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+          <Select value={selectedItemId} onValueChange={setSelectedItemId}>
             <SelectTrigger>
               <SelectValue placeholder="Активная версия привязанного шаблона…" />
             </SelectTrigger>
             <SelectContent>
-              {(boundTemplatesQuery.data ?? []).length === 0 ? (
+              {(boundItemsQuery.data ?? []).length === 0 ? (
                 <div className="px-3 py-2 text-xs text-muted-foreground">
                   К пакету не привязано ни одного шаблона.
                 </div>
               ) : (
-                (boundTemplatesQuery.data ?? []).map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
+                (boundItemsQuery.data ?? []).map((t) => (
+                  <SelectItem key={t.item_id} value={t.item_id}>
                     {t.name} <span className="text-muted-foreground">({t.template_scope ?? "—"})</span>
                   </SelectItem>
                 ))
@@ -270,7 +389,7 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
           <Button
             size="sm"
             variant="secondary"
-            disabled={!selectedTemplateId || scanning}
+            disabled={!selectedItemId || scanning}
             onClick={handleScanBound}
           >
             {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Проверить"}
@@ -287,6 +406,23 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
             onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
           />
         </label>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-muted-foreground shrink-0">
+          Сессия (опционально, для проверки анкет документа):
+        </span>
+        <Select value={selectedSessionId} onValueChange={setSelectedSessionId}>
+          <SelectTrigger className="h-8">
+            <SelectValue placeholder="Без проверки assignments" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">— без сессии —</SelectItem>
+            {(sessionsQuery.data ?? []).map((s) => (
+              <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {sourceLabel && (
