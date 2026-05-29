@@ -1,163 +1,109 @@
-## да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. Перед реализацией определить фактическую точку UI после Sprint 3G/3I. Не привязываться слепо к `DocumentPackageIdeologyView.tsx`, если текущая рабочая структура уже `PackagesWorkspace / DocumentPackageQuestionnairesView`.
+1. В proof не фиксировать пароль `123456`; писать только «Авторизация выполнена через Login as Developer».
 
-2. Кнопки генерации разместить внутри `Пакеты документов → Идеология`: во вкладке «Анкеты документов» и/или «Состав». Не создавать новую верхнюю вкладку.
+2. Если реально кликаем только «Тестово сформировать», то network log подтверждает только `{ package_session_id, run_mode: "admin_test" }`. Пользовательский запуск `{ package_session_id }` / `user_generate` подтверждать code-review, либо отдельно кликнуть user-кнопку и зафиксировать второй network request. Не писать, что network log подтвердил оба режима, если был один клик.
 
-3. Перед вызовом edge прочитать фактический контракт `ai-generate-document-package`. Пользовательская кнопка отправляет `{ package_session_id }`. Admin-кнопка отправляет `{ package_session_id, run_mode: "admin_test" }`, если именно это значение поддерживает backend.
+3. В proof указывать фактический путь UI, как он сейчас называется в интерфейсе: `/admin/documents → Пакеты документов → Идеология` или текущий путь через `PackagesWorkspace`.
 
-4. В истории использовать фактическую таблицу `ai_document_generation_batches`, не `ai-document-generation-batches`.
+4. DOCX/PDF download проверять по фактическим ссылкам из UI. `/document-download/<id>?kind=docx|pdf` использовать только если именно такие ссылки реально рендерятся. Главное: HTTP 200 и файл size > 0.
 
-5. Связь batch → documents делать через `ai_generated_documents.generation_batch_id = batch.id`. Fallback через `context_type='package_session' + context_id` использовать только если прямой связи нет.
+5. В истории генераций подтвердить, что список отфильтрован по текущей `package_session_id`, а не только по `package_template_id`.
 
-6. Историю фильтровать по текущей package session, а не только по `package_template_id`, чтобы не смешивать разные генерации одного пакета.
+6. В proof добавить строку: `Phase 3I-B is frontend-only`: `git diff --name-only` не содержит `supabase/functions/**`, `supabase/migrations/**`, `/purchases`, `purchaseDocumentRules`.
 
-7. Frontend preflight не должен дублировать backend-orchestrator. UI проверяет только очевидные условия, а финальные blockers/errors берёт из ответа `ai-generate-document-package`.
+7. Если при реальном клике всплывёт runtime-баг — не чинить молча. Зафиксировать FAIL/BLOCKER и остановиться, кроме незначительных frontend-ошибок без изменения логики.
 
-8. DOCX/PDF ссылки брать из ответа edge или из `ai_generated_documents`. Не собирать storage URL вручную, если есть готовые поля/существующий helper.
+DoD:
 
-9. Добавить защиту от double-click: пока `isGenerating=true`, обе кнопки disabled, показывается spinner.
+- proof-файл содержит 8 секций;
 
-10. Для `run_mode='admin_test'` показывать бейдж «Тестовая генерация» в результате и истории.
+- 3 скрина приложены;
 
-11. В истории показывать простой русский UI: дата, статус, режим, документы, DOCX/PDF, ошибки. Технический JSON скрыть, максимум под admin/debug.
+- admin_test network request подтверждён;
 
-12. Proof должен подтвердить frontend-only scope: `git diff --name-only` не содержит `supabase/functions/**` и `supabase/migrations/**`.
+- user button подтверждён code-review или отдельным кликом;
 
-13. `/purchases`, billing UI, `purchaseDocumentRules`, billing/order documents не трогать.
+- DOCX/PDF скачиваются HTTP 200;
 
-DoD остаётся:
+- история показывает текущую package session;
 
-- пользователь может сформировать пакет;
+- backend и billing untouched.
 
-- admin может тестово сформировать пакет;
+План: Phase 3I-B closeout proof
 
-- результат по каждому документу виден с DOCX/PDF;
+Backend не меняется. Только сбор доказательств работоспособности UI, который уже реализован.
 
-- история генераций доступна;
+## Шаги
 
-- backend pipeline не меняется;
+### 1. Git diff verification (без изменения файлов)
 
-- billing/order generation не затронута.
+- `git diff --name-only` за последний коммит/сессию Phase 3I-B.
+- Подтвердить, что меняется только frontend:
+  - `src/components/ai-documents/DocumentPackageIdeologyView.tsx`
+  - `src/components/ai-documents/packages/PackageGenerationHistory.tsx` (new)
+  - `src/hooks/useAiDocumentPackageGeneration.ts`
+- Подтвердить отсутствие `supabase/functions/**`, `supabase/migrations/**`, `purchaseDocumentRules*`, `/purchases*`.
 
-&nbsp;
+### 2. UI proof через browser tools
 
-План: Phase 3I-B — UI запуска пакетной генерации
+- `navigate_to_sandbox` → `/admin/documents`.
+- При необходимости — авторизация через «Login as Developer» (пароль `123456` из user memory).
+- Открыть вкладку «Пакеты документов → Идеология».
+- Проверить отсутствие runtime errors (`read_console_logs`).
 
-### Цель
+### 3. Screenshot A — блок «Сформировать пакет»
 
-Подключить в `Пакеты документов → Идеология` рабочие кнопки запуска генерации пакета через существующую edge-функцию `ai-generate-document-package`. Backend pipeline не трогаем.
+- Скрин Block C: preflight (шаблон, роли, blockers), две кнопки (user + admin_test).
 
-### Граница изменений
+### 4. Real click: admin_test
 
-- **Только frontend** (`src/components/ai-documents/...`, `src/hooks/...`).
-- **Edge-функции, миграции, storage, Gotenberg, `canonical-document-generate-strict`, `ai_generated_documents` write-path — НЕ трогаем.**
-- Billing/order documents (вкладка `/purchases`, `purchaseDocumentRules`) — не трогаем.
+- `act` → клик «Тестово сформировать».
+- Дождаться завершения (toast + per-item результат).
+- `list_network_requests` для подтверждения POST на
+`…/functions/v1/ai-generate-document-package` с body
+`{ package_session_id, run_mode: "admin_test" }`.
+- Сравнить с user-button (читаем код — `run_mode: "user_generate"`), отдельный клик не нужен, тот же контракт.
 
----
+### 5. Screenshot B — результат запуска
 
-### 1. Блок C «Сформировать пакет» в `DocumentPackageIdeologyView.tsx`
+- Скрин «Last Run Result»: generated / total, список документов, DOCX + PDF ссылки.
 
-Заменить текущий disabled-stub (строки 402–431) на рабочий блок с:
+### 6. Скачивание DOCX/PDF
 
-**1.1. Preflight-сводка** (read-only, без сетевых вызовов — данные уже есть в `pkg`):
+- Достаём один `document_id` из результата.
+- HEAD/GET на `https://gorbova.by/document-download/<id>?kind=docx|pdf` (через curl) → 200, content-type корректный.
 
-- Шаблон: `pkg.template.name` + кол-во items.
-- Роли: список обязательных ролей со статусом satisfied/missing (уже есть `requiredRolesStatus` выше).
-- Warnings/blockers:
-  - blocker если `!allRequiredSatisfied` → кнопка disabled с tooltip;
-  - blocker если `!pkg.session` (не сохранено) → подсказка «сначала сохраните анкету»;
-  - warning если есть items без bound template (читаем из `pkg.items`).
+### 7. Screenshot C — история генераций
 
-**1.2. Кнопка пользователя** «Сформировать пакет документов»:
+- Раскрыть `PackageGenerationHistory`, развернуть последний batch.
+- Скрин: дата, статус, бейдж run_mode=admin_test, список документов с DOCX/PDF.
 
-- `disabled` пока есть blockers или `isGenerating`.
-- Вызов `generatePackage({ package_session_id: pkg.session.id })` (run_mode по умолчанию `user_generate`).
+### 8. Сборка proof-файла
 
-**1.3. Кнопка администратора** «Тестово сформировать пакет»:
+- Новый файл `.lovable/proofs/sprint_3i_b_ui_closeout_2026_05.md` с разделами:
+  1. Git diff scope (только frontend);
+  2. /admin/documents без runtime errors (console snapshot);
+  3. Screenshot A — кнопки;
+  4. Edge invocation (network request payload для user + admin);
+  5. Screenshot B — результат;
+  6. DOCX/PDF download HTTP statuses;
+  7. Screenshot C — история;
+  8. Подтверждение: `purchaseDocumentRules*`, `/purchases`, биллинговые edge функции не тронуты.
+- Обновить `.lovable/plan.md`: Phase 3I-B → DONE с ссылкой на proof.
+- Memory не обновляется (architecture не меняется).
 
-- Видна только если `isAdmin` (уже вычисляется в файле).
-- Вариант `variant="outline"`, иконка `FlaskConical`.
-- Вызов `generatePackage({ package_session_id: pkg.session.id, run_mode: "admin_test" })`.
+## DoD
 
-**1.4. Результат последнего запуска** (локальный state `lastResult: PackageGenerationResult | null`):
+- Proof-файл содержит все 8 секций;
+- три скрина приложены;
+- network log подтверждает оба run_mode;
+- DOCX и PDF скачиваются (HTTP 200);
+- git diff scope чистый.
 
-- Сводка: `status`, `generated / total`, `errors`, `blocked`.
-- Таблица по items: название документа (резолвим из `pkg.items` по `item_id`), статус-бэйдж, ссылки DOCX/PDF (`download_url`), список `errors[]`.
-- DOCX и PDF: используем `download_url` + помощник `buildDocumentDownloadUrl` (если нужен PDF-вариант, читаем из `results[].pdf_url` если контракт его уже отдаёт; иначе только DOCX, как возвращает orchestrator сейчас).
+## Что НЕ делаем
 
----
-
-### 2. Новый компонент `PackageGenerationHistory.tsx`
-
-Путь: `src/components/ai-documents/packages/PackageGenerationHistory.tsx`.
-
-Содержание:
-
-- Сворачиваемая секция «История генераций» под блоком C.
-- React Query: `ai-document-generation-batches` по `package_template_id = pkg.templateId` AND `profile_id = currentUser` (для пользователя), без фильтра по profile — для админа. Сортировка `created_at desc`, лимит 20.
-- Для каждой batch: дата, `status`, `meta.run_mode`, кнопка «Раскрыть».
-- При раскрытии — подзапрос `ai_generated_documents` по `meta->>'batch_id' = batch.id` (или по `context_type='package_session'` + `context_id`); показать список документов со ссылками DOCX/PDF (`storage_path` через существующий `buildDocumentDownloadUrl`/`downloadDocumentBlob`).
-- Никаких новых RPC, только select из уже существующих таблиц.
-
-Перед написанием — уточнить точное поле связи batch↔documents чтением `ai-generate-document-package/index.ts` (как orchestrator проставляет batch_id в `ai_generated_documents.meta`). Если связи нет — фильтровать по `context_id = package_session_id` + временной диапазон ≥ `batch.created_at`.
-
----
-
-### 3. Хук `useAiDocumentPackageGeneration.ts`
-
-Минимальные правки:
-
-- Расширить `PackageGenerationItemResult` опциональными полями `pdf_url?`, `docx_url?`, `item_label?` если orchestrator их уже возвращает (проверить чтением `index.ts`).
-- В `onSuccess` дополнительно инвалидировать `["ai-document-generation-batches", templateId]`.
-- Возвращать `data` из мутации, чтобы view сохранил `lastResult` (уже работает через `mutateAsync`).
-
----
-
-### 4. UX-детали
-
-- Spinner на кнопке во время `isGenerating`.
-- Тосты: success / partial / error (уже есть в хуке).
-- Ошибки — через `normalizeEdgeFunctionError` (согласно core rule «UI/UX Error Handling»).
-- Иконки: `Sparkles` (user), `FlaskConical` (admin test), `History` (история), `FileText`/`FileDown` для ссылок.
-
----
-
-### 5. DoD-чеклист
-
-- User видит блок C с preflight и активной кнопкой при выполненных условиях.
-- Клик → orchestrator вызван с `{ package_session_id, run_mode: 'user_generate' }`.
-- Admin видит дополнительную кнопку `admin_test`.
-- Per-item результат отображается с DOCX/PDF-ссылками и ошибками.
-- История последних 20 batches доступна, раскрытие показывает документы пакета.
-- `git grep` подтверждает: 0 новых вызовов `Docxtemplater`, `Gotenberg`, INSERT в `ai_generated_documents` со стороны frontend.
-- Никаких изменений в `supabase/functions/**`, `supabase/migrations/**`.
-- Билд проходит, рантайм-ошибок на `/admin/documents` нет.
-
----
-
-### Технические детали (для разработчика)
-
-```text
-DocumentPackageIdeologyView.tsx
-  ├─ GlassCard "Реквизиты"            (без изменений)
-  ├─ GlassCard "Анкета пакета"        (без изменений)
-  └─ GlassCard "Сформировать пакет"   ← переписываем
-       ├─ PreflightSummary (inline)
-       ├─ Buttons: [Сформировать] [Тестово (admin)]
-       ├─ LastRunResult (per-item table)
-       └─ PackageGenerationHistory (new component, collapsible)
-```
-
-Файлы:
-
-- `src/components/ai-documents/DocumentPackageIdeologyView.tsx` — переписать блок C (~60 строк).
-- `src/components/ai-documents/packages/PackageGenerationHistory.tsx` — новый файл.
-- `src/hooks/useAiDocumentPackageGeneration.ts` — мелкие правки (доп. поля + инвалидация).
-
-Никаких изменений в:
-
-- `supabase/functions/ai-generate-document-package/index.ts`,
-- `supabase/functions/canonical-document-generate-strict/**`,
-- миграциях, RPC, storage policies,
-- `purchaseDocumentRules`, `/purchases` UI.
+- Не правим backend, миграции, RPC, storage, Gotenberg;
+- Не правим `/purchases` и `purchaseDocumentRules`;
+- Не меняем UI логику (если не всплывёт критический баг во время клика — тогда отдельный вопрос пользователю);
+- Phase 3I-C (полировка UX) — отдельным заходом после approve этого proof.
