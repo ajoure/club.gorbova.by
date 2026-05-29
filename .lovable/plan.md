@@ -1,357 +1,582 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-## 1. Seed-роли удалить полностью, не архивировать
+План в целом правильный: он наконец переводит роли с уровня всего пакета на уровень конкретного документа внутри пакета. Это нужно, иначе один и тот же человек будет «сквозить» одной ролью во всех документах пакета.
 
-Подтверждаю: PKR-000001…PKR-000011 по пакету «Идеология» — тестовые seed/system-роли. Их нужно полностью удалить из системы.
+Нужно добавить/уточнить следующие пункты.
 
-Не архивировать.  
+```md
+## Обязательные правки к Sprint 3G
 
-Не оставлять в разделе «Системные».  
+### 1. Анкета документа должна быть привязана не к template_id, а к package_template_item_id
 
-Не показывать в каталоге плейсхолдеров.  
+Везде использовать `package_template_item_id`, а не просто `template_id`.
 
-Не восстанавливать при reload страницы.
+Причина:
+один и тот же шаблон теоретически может быть привязан к разным пакетам или переиспользован в будущем. Назначение ролей должно относиться к конкретному элементу пакета, а не к шаблону вообще.
 
-После удаления в пакете «Идеология» ролей быть не должно, пока администратор сам вручную не создаст первую роль.
+Правильно:
 
-## 2. Не использовать широкий bypass session_replication_role = replica, если можно иначе
+document_package_item_role_assignments.package_template_item_id
+→ document_package_template_items.id
 
-В Phase 2e заменить опасный вариант:
-
-SET LOCAL session_replication_role = replica
-
-на более безопасный controlled cleanup.
-
-Правильный порядок:
-
-1. В одной миграции временно изменить/расширить trigger guard_package_role_catalog_mutations, чтобы он разрешал hard-delete только для whitelist:
-
-sql package_template = 'Идеология' AND is_system = true AND public_id IN ('PKR-000001' ... 'PKR-000011') 
-
-2. Удалить связанные строки из document_package_session_participants.
-
-3. Удалить seed-роли из document_package_role_catalog.
-
-4. Вернуть trigger-защиту в строгий режим.
-
-5. Записать audit package_role_seed_cleanup_deleted.
-
-Если технически проще сделать SECURITY DEFINER cleanup-функцию — функция должна быть временной, whitelist-only, выполниться один раз и затем быть удалена. Не оставлять permanent bypass-функцию.
-
-## 3. Проверка использования не является STOP-условием
-
-Не делать блокирующую проверку «используются ли роли».
-
-Владелец проекта подтвердил: эти роли тестовые и не используются. Поэтому удаление выполняется без STOP по usage.
-
-Можно сделать snapshot до удаления только для proof, но он не должен блокировать выполнение.
-
-## 4. Отключить автосоздание seed-ролей
-
-Обязательно найти и отключить любые источники повторного создания системных ролей:
-
-- seedPackageRoles
-
-- ensureDefaultRoles
-
-- createDefaultPackageRoles
-
-- PKR-000001
-
-- Организация пакета
-
-- Руководитель организации
-
-- любые frontend fallback-списки ролей
-
-- edge/RPC/migration/seed-код, который создаёт роли автоматически
-
-Новое правило:
-
-text Пакет документов создаётся без ролей. Все роли создаёт администратор вручную. 
-
-## 5. Убрать dev dry-run из обычного UI
-
-Блок:
-
-text Dev: Dry-run пакетных alias-токенов 
-
-убрать из обычной анкеты пакета.
-
-Допускается оставить только при двойном guard:
-
-text super_admin + ?debug=1 
-
-В обычном UI не должно быть английских технических надписей, alias-token debug, resolver debug, dry-run debug.
-
-## 6. Убрать дубль «Состав пакета» из анкеты
-
-Вкладка «Анкета» должна содержать только:
-
-- выбор ЮЛ/ИП пакета;
-
-- список физлиц;
-
-- назначение ролей;
-
-- кнопку «Сохранить анкету».
-
-Состав пакета должен быть только в отдельной подвкладке:
-
-text Пакеты документов → Идеология → Состав 
-
-## 7. Роли: активные и архив отдельно
-
-Во вкладке «Роли» сделать разделение:
-
-text Активные Архив 
-
-Системные роли после cleanup должны отсутствовать.
-
-Архивные роли не должны отображаться в общем списке активных ролей и не должны попадать в dropdown анкеты и каталог плейсхолдеров.
-
-## 8. Каталог «Пакет: Роли»
-
-В каталоге плейсхолдеров показывать только активные роли текущих пакетов в формате:
-
-text {{package.role.PKR-XXXXXX}} 
-
-Не показывать:
-
-text {{package.roles.<key>.full_name}} {{package.roles.<key>.position}} {{package.roles.<key>.short_name}} 
-
-Старый формат может остаться только в валидаторе как deprecated warning, но не в UI.
-
-Если в пакете «Идеология» нет ролей, показывать empty state:
-
-text В этом пакете пока нет ролей. Создайте роль в анкете пакета или во вкладке «Роли». 
-
-## 9. Форма создания роли
-
-Форма создания роли должна быть простой:
-
-- Название роли — обязательно.
-
-- Описание — необязательно.
-
-Не показывать пользователю:
-
-- role_key
-
-- output_template
-
-- min_count
-
-- max_count
-
-- required
-
-- sort_order
-
-- is_system
-
-- технические подсказки на английском
-
-PKR создаётся автоматически и не меняется при переименовании роли.
-
-## 10. Шаблоны пакета
-
-Загрузка DOCX остаётся во вкладке «Шаблоны документов».
-
-При загрузке добавить выбор:
-
-text Тип шаблона: - Биллинговый документ - Пакет документов  Пакет: - Идеология 
-
-Если выбран пакет, шаблон должен автоматически появиться в:
-
-text Пакеты документов → Идеология → Состав 
-
-Не создавать отдельную загрузку шаблонов внутри анкеты пакета.
-
-## 11. Proof обязателен
-
-Создать proof:
-
-text .lovable/proofs/package_documents_sprint3f_phase2d_ux_cleanup_2026_[05.md](http://05.md) .lovable/proofs/package_documents_sprint3f_phase2e_hard_delete_seed_roles_2026_[05.md](http://05.md) 
-
-В proof зафиксировать:
-
-- PKR-000001…PKR-000011 удалены полностью;
-
-- в document_package_role_catalog по пакету «Идеология» больше нет системных ролей;
-
-- связанные assignments удалены;
-
-- reload страницы не пересоздаёт seed-роли;
-
-- dropdown анкеты пустой: только «— без роли —» и «+ Добавить роль»;
-
-- каталог «Пакет: Роли» пустой для «Идеологии», пока не создана новая роль;
-
-- dev dry-run скрыт из обычного UI;
-
-- дубль «Состав пакета» убран из анкеты;
-
-- canonical-document-generate-strict, Gotenberg, ai_generated_documents, billing resolver, billing FLD не тронуты.
-
-## 12. Финальный ожидаемый статус
-
-text completed: package UX cleaned; seed/system roles hard-deleted from Ideology package; roles are now admin-created only; PKR placeholders are per-package and rename-safe; ordinary UI contains no dev dry-run or technical role fields; template upload supports package binding; generation still deferred 
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-# План: Sprint 3F Phase 2d + 2e — UX cleanup пакетов и удаление seed-ролей
-
-## Цель
-
-Очистить UI пакетов документов от технических блоков и hard-delete все системные seed-роли пакета «Идеология» (PKR-000001…PKR-000011). После этого администратор работает по простой модели: создал роль вручную → получил PKR → вставил в Word → загрузил DOCX → проверил → готов к dry-run.
-
-**Не трогать:** `canonical-document-generate-strict`, Gotenberg, `ai_generated_documents`, billing resolver, billing FLD-токены, биллинговые шаблоны.
+Не делать назначение только по `template_id`.
 
 ---
 
-## Phase 2d — UX cleanup (frontend-only)
+### 2. Нужен уникальный soft-guard от дублей одной роли у одного и того же физлица
 
-### 1. Убрать Dev dry-run блок из анкеты
+План правильно пишет, что нельзя делать unique по `(session, item, role)`, потому что одну роль можно назначить нескольким физлицам.
 
-- В `DocumentPackageIdeologyView.tsx` снять рендер `<PackageTokensDryRunPanel />` из вкладки «Анкета».
-- Компонент `PackageTokensDryRunPanel.tsx` оставить в коде, но рендерить только при `?debug=1` в URL И `super_admin` (двойной guard).
-- DoD: в обычном UI анкеты блок не виден, нет английских технических надписей.
+Но нужно запретить дубль одной и той же связки:
 
-### 2. Убрать блок «Состав пакета» из анкеты
+```text
+package_session_id + package_template_item_id + role_catalog_id + person_id + is_active=true
+```
 
-- В `DocumentPackageIdeologyView.tsx` удалить секцию со списком шаблонов/состава пакета. Состав остаётся только в подвкладке «Состав» (`PackageContentsList`).
-- Внутри «Анкеты» оставить: выбор ЮЛ/ИП, список физлиц, назначение ролей, кнопку «Сохранить анкету», статус заполнения обязательных ролей.
+Иначе одного и того же человека можно случайно добавить два раза на одну роль в одном документе.
 
-### 3. Роли пакета: разделить активные / архив / системные
+Добавить partial unique index:
 
-В `PackageRolesManager.tsx` ввести три секции через переключатель/Tabs:
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS ux_document_package_item_role_assignments_active_person
+ON public.document_package_item_role_assignments
+(package_session_id, package_template_item_id, role_catalog_id, person_id)
+WHERE is_active = true AND person_id IS NOT NULL;
+```
 
-- **Активные** — `is_active=true AND is_system=false`. Действие: «Архивировать». Поиск — только по активным.
-- **Архив** — `is_active=false AND is_system=false`. Действие: «Восстановить». Hard-delete не показывать.
-- **Системные** — `is_system=true`, свернуты `<Collapsible>` по умолчанию. Только просмотр + копирование PKR. Без архивации/удаления в UI.
-
-После Phase 2e секция «Системные» будет пустой для «Идеологии» — это ожидаемо.
-
-### 4. Inline «+ Добавить роль» из анкеты
-
-Уже реализовано через `InlineCreateRoleDialog`. Проверить, что форма содержит только «Название» и «Описание» — без `role_key`, `output_template`, `required`, `min/max`, `sort_order`, `is_system`.
-
-### 5. Каталог плейсхолдеров → группа «Пакет: Роли»
-
-В `PlaceholdersCatalogTab.tsx`:
-
-- Показывать только `{{package.role.PKR-XXXXXX}}` (по одному на роль из `document_package_role_catalog` где `is_active=true`).
-- Скрыть legacy-форматы `{{package.roles.<key>.full_name|position|short_name}}` из UI каталога и picker.
-- Старый формат остаётся read-only в валидаторе как `deprecated_placeholder_format` warning.
-- Если ролей в пакете нет — empty state: «В этом пакете пока нет ролей. Создайте роль в анкете пакета или во вкладке „Роли“».
-
-### 6. Загрузка шаблона и привязка к пакету
-
-Уже реализовано в `StrictDocumentTemplatesManager` (выбор «Биллинговый» / «Пакет документов» → пакет → RPC `package_template_bind_template`).
-
-Проверить:
-
-- Что после загрузки шаблон сразу виден в `Пакеты → Идеология → Состав`.
-- Что подвкладка «Шаблоны» внутри пакета показывает тот же список через `document_package_template_items` (read-only), без отдельной загрузки.
-
-### 7. Валидация шаблона (read-only)
-
-В `PackageTemplateValidationPanel`:
-
-
-| Токен                                               | Статус                            |
-| --------------------------------------------------- | --------------------------------- |
-| `{{field:FLD-...}}` (системные/документные)         | valid                             |
-| `{{field:FLD-...}}` (биллинговые реквизиты)         | warning, не error                 |
-| `{{package.ul                                       | ip                                |
-| `{{package.role.PKR-...}}` принадлежит этому пакету | valid                             |
-| `{{package.role.PKR-...}}` из другого пакета        | error `pkr_outside_bound_package` |
-| `{{package.roles.<key>.<field>}}` (legacy)          | deprecated warning                |
-
-
-Активация шаблона блокируется только при наличии error, не warning. Проверка не вызывает генерацию.
+При этом несколько разных физлиц на одну роль разрешены.
 
 ---
 
-## Phase 2e — Hard-delete seed-ролей «Идеологии»
+### **3. Нужен отдельный порядок вывода нескольких физлиц**
 
-### 8. Миграция: cleanup PKR-000001…PKR-000011
+Добавить колонку:
 
-Один migration файл, всё в транзакции:
+```sql
+sort_order integer NOT NULL DEFAULT 100
+```
 
-1. **Резолв `package_template_id**` «Идеология» через подзапрос (без хардкода UUID): по `document_package_templates.name = 'Идеология'`.
-2. **Snapshot для proof** (SELECT в audit_logs.meta перед удалением).
-3. **DELETE назначений** в `document_package_session_participants` где `role_catalog_id` относится к PKR-000001…PKR-000011 «Идеологии».
-4. **DELETE из `document_package_role_catalog**` по whitelist `public_id IN (PKR-000001..PKR-000011) AND is_system=true AND package_template_id=<ideology>`.
-5. Если существующий trigger блокирует hard-delete системных ролей — использовать **Вариант A**: создать `SECURITY DEFINER` функцию `public.cleanup_ideology_seed_roles()` со встроенным whitelist, которая внутри себя обходит trigger через `SET LOCAL session_replication_role = replica` (или эквивалентный безопасный bypass), затем вызывать её один раз из миграции. После выполнения функцию `DROP`, чтобы не оставлять «чёрный ход». Защита trigger для будущих ролей сохраняется.
-6. **Audit log**: `action='package_role_seed_cleanup_deleted'`, `actor_type='system'`, `meta` содержит `package_template_id`, `deleted_public_ids[]`, `reason='Owner confirmed seed/system roles are test data'`, snapshot.
+Для множественных назначений одной роли порядок должен быть управляемым.
 
-### 9. Отключить автосоздание seed-ролей
-
-Поиск и нейтрализация любых источников пересоздания:
-
-- Сетка поиска: `seedPackageRoles`, `ensureDefaultRoles`, `createDefaultPackageRoles`, `PKR-000001`, `Организация пакета`, `Руководитель организации`, и т.п. — в `src/`, `supabase/functions/`, миграциях.
-- Если найден seed-код (RPC/edge/триггер/frontend fallback) — отключить вызов или удалить вставку.
-- Если найдена прошлая seed-миграция — её **не откатывать** (история), но в текущей миграции добавить idempotent guard, чтобы повторное создание не происходило.
-- Новое правило в коде комментарием: «Пакет создаётся без ролей. Роли создаёт администратор вручную».
-
-### 10. Empty state UI после удаления
-
-- Вкладка «Роли» → «Активные»: «Ролей пока нет. Добавьте первую роль вручную. После создания роль получит свой PKR-плейсхолдер для вставки в Word.» + кнопка «+ Добавить роль».
-- Dropdown роли физлица в анкете: только `— без роли —` и `+ Добавить роль`.
-- Каталог плейсхолдеров «Пакет: Роли»: empty state (см. п.5).
+В Sprint 3G можно не делать drag-and-drop, но в UI порядок должен быть стабильным:  
+`sort_order ASC, created_at ASC`.
 
 ---
 
-## Файлы
+### **4. Нужен source-of-truth для общего ЮЛ/ИП пакета**
+
+В плане указано, что `selected_legal_entity_id` остаётся на уровне session. Нужно дополнить:
+
+- если пользователь меняет ЮЛ/ИП пакета, это влияет на все документы пакета;
+- UI должен явно предупреждать: «Юрлицо/ИП применяется ко всем документам пакета»;
+- role assignments по документам при смене ЮЛ/ИП не удаляются.
+
+---
+
+
+
+
+
+### **5. Старую таблицу**
+
+`document_package_session_participants` **не использовать для новых назначений**
+
+План пишет, что она остаётся read-only legacy. Нужно жёстче:
+
+- новые сохранения ролей физлиц НЕ должны писать в `document_package_session_participants`;
+- новый UI «Анкеты документов» пишет только в `document_package_item_role_assignments`;
+- старый dev/dry-run блок, который использует `document_package_session_participants`, не показывать в обычном UI;
+- если он остаётся для debug, только `super_admin + ?debug=1`.
+
+---
+
+### **6. Проверить кнопку «Сформировать пакет»**
+
+Сейчас на экране есть кнопка «Сформировать пакет». В Sprint 3G генерации ещё нет.
+
+Нужно:
+
+- либо скрыть кнопку до Sprint 3H/3G-real-generation;
+- либо оставить disabled;
+- текст: «Генерация будет подключена после проверки шаблонов»;
+- кнопка не должна вызывать Gotenberg, `canonical-document-generate-strict`, `ai_generated_documents`.
+
+---
+
+### **7. Исправить controlled validation: системные FLD не должны давать warning**
+
+Обязательно проверить на реальном приказе:
+
+```text
+{{field:FLD-000209}} — Сегодня прописью → valid
+{{field:FLD-000211}} — Текущий год → valid
+{{field:FLD-000069}} — Номер документа → valid
+```
+
+Не warning.
+
+Warning только для FLD из групп:
+
+- Заказчик ФЛ;
+- Заказчик ЮЛ;
+- Заказчик ИП;
+- Исполнитель ЮЛ.
+
+---
+
+### **8. В validator нельзя определять billing-FLD только по номеру FLD**
+
+Нужно классифицировать не по диапазону FLD-ID, а по реальной группе/категории из registry/catalog.
+
+Если в системе нет стабильного `group_code`, discovery должен найти фактический источник группировки в текущем каталоге плейсхолдеров.
+
+DoD:
+
+- список billing-групп берётся из единого helper;
+- системные поля не попадают в billing warning;
+- package.ul/ip/fl поля валидируются по `packagePlaceholderCatalog`.
+
+---
+
+### **9. PKR должен проверяться по пакету, к которому привязан шаблон**
+
+Для `{{package.role.PKR-XXXXXX}}` validator должен проверять:
+
+```text
+PKR существует
+PKR активен
+PKR принадлежит package_template_id того пакета,
+к которому привязан проверяемый шаблон через document_package_template_items
+```
+
+Если PKR из другого пакета:
+
+```text
+error: pkr_outside_bound_package
+```
+
+Если PKR архивный:
+
+```text
+error: pkr_archived
+```
+
+Если PKR не найден:
+
+```text
+error: pkr_not_found
+```
+
+---
+
+### **10. В UI «Анкеты документов» роли должны показываться только активные**
+
+В выборе ролей:
+
+- показывать только `is_active=true`;
+- архивные роли не показывать;
+- если в старой анкете уже есть назначение на архивную роль — показывать предупреждение в конкретном документе: «Роль архивирована, замените роль».
+
+---
+
+### **11. Inline «+ Добавить роль» должен создавать роль только в текущем пакете**
+
+При создании роли из анкеты документа обязательно передавать текущий `package_template_id`.
+
+Не создавать глобальные роли.
+
+После создания:
+
+- роль появляется в «Роли пакета»;
+- появляется в выпадающих списках всех документов этого пакета;
+- появляется в группе плейсхолдеров «Пакет: Роли» именно под этим пакетом;
+- не появляется в других пакетах.
+
+---
+
+### **12. Нужен empty-state, если в пакете нет шаблонов**
+
+Если в пакете «Идеология» нет `document_package_template_items`, вкладка «Анкеты документов» должна показывать:
+
+```text
+В пакете пока нет шаблонов. Загрузите DOCX во вкладке «Шаблоны документов» и выберите пакет «Идеология».
+```
+
+Не показывать пустую/сломленную анкету.
+
+---
+
+### **13. Нужен статус заполненности по каждому документу**
+
+В аккордеоне каждого документа показывать бейдж:
+
+- «Не заполнено» — нет назначений;
+- «Частично заполнено» — часть PKR из шаблона не назначена;
+- «Заполнено» — все PKR, которые реально используются в DOCX, имеют назначение.
+
+Важно: проверять не все роли пакета, а только PKR, которые реально используются в конкретном шаблоне.
+
+---
+
+### **14. Связать validation report с анкетой документа**
+
+Controlled validation должна не только проверять синтаксис, но и показывать:
+
+- PKR есть в шаблоне;
+- PKR принадлежит этому пакету;
+- есть ли назначение в анкете этого документа.
+
+Если `{{package.role.PKR-000012}}` есть в DOCX, но в анкете этого документа не выбран человек:
+
+```text
+warning или error: role_assignment_missing
+```
+
+На Sprint 3G лучше сделать warning, потому что генерации ещё нет. В Sprint генерации это станет blocker.
+
+---
+
+### **15. Уточнить output PKR**
+
+Пока формат вывода роли:
+
+```text
+должность, ФИО
+```
+
+Но если `metadata.position` пустой, вывод должен быть:
+
+```text
+ФИО
+```
+
+Не должно появляться:
+
+```text
+, Иванов Иван Иванович
+```
+
+Если назначено несколько физлиц:
+
+- пока вывод через `;` ;
+- пример: `главный бухгалтер, Иванов Иван Иванович; юрист, Петров Пётр Петрович`;
+- финальные правила перечисления можно отложить.
+
+---
+
+### **16. Плейсхолдеры PKR в каталоге — без технических строк**
+
+В `PlaceholdersCatalogTab` основной UI должен показывать:
+
+```text
+Группа: Пакет: Роли
+Название: Идеология — Ответственный за координацию идеологической работы
+ID: PKR-000012
+Тип: Роль физлица
+Пример: должность, ФИО
+Плейсхолдер: {{package.role.PKR-000012}}
+```
+
+Не показывать в обычном UI:
+
+- `document_package_role_catalog.public_id`;
+- `document_package_session_participants`;
+- `source_path`;
+- raw JSON;
+- английские коды.
+
+Техническая информация — только `super_admin + ?debug=1`.
+
+---
+
+### **17. Template binding уже сделан — не переделывать**
+
+В Sprint 3G не надо заново делать загрузку шаблонов.
+
+Нужно только проверить:
+
+- при загрузке DOCX можно выбрать «Пакет документов» → «Идеология»;
+- шаблон появляется в «Пакеты документов → Идеология → Состав»;
+- validation работает по привязанному шаблону.
+
+Если уже работает — зафиксировать proof, не переписывать.
+
+---
+
+### **18. Proof должен содержать реальные сценарии**
+
+В proof добавить обязательные сценарии:
+
+1. В пакете «Идеология» есть минимум 1 DOCX-приказ.
+2. Создана роль PKR вручную.
+3. Эта роль вставлена в DOCX как `{{package.role.PKR-XXXXXX}}`.
+4. Для приказа выбран человек на эту роль.
+5. Для другого шаблона того же пакета этот же человек может иметь другую роль.
+6. Одна роль назначена двум физлицам в одном документе.
+7. `{{field:FLD-000209}}` и `{{field:FLD-000211}}` проходят validation без warning.
+8. Billing-FLD в package-template даёт warning, не error.
+9. Gotenberg / `canonical-document-generate-strict` / `ai_generated_documents` не вызывались.
+
+---
+
+### **19. Не начинать реальную генерацию в Sprint 3G**
+
+Sprint 3G — это ещё не генерация.
+
+Он должен закрыть:
+
+- document-level анкету;
+- корректную validation;
+- корректный каталог PKR;
+- готовность к генерации.
+
+Реальное подключение резолвера к `canonical-document-generate-strict`, Gotenberg и запись результата — отдельный Sprint 3H.
+
+```
+## Итог
+
+План хороший, но без этих правок есть риск снова получить «почти работает», но роли будут неправильно проверяться или назначаться не на тот документ.
+
+Главные правки:
+
+1. Назначения ролей должны быть **на уровне конкретного шаблона пакета**, не на весь пакет.
+2. PKR должен проверяться через `package_template_item_id`.
+3. Системные `{{field:FLD-000209}}`, `{{field:FLD-000211}}`, `{{field:FLD-000069}}` должны быть **valid без warning**.
+4. Валидация должна показывать, хватает ли назначений ролей для конкретного документа.
+5. Реальную генерацию пока не включать — это Sprint 3H.
+
+План: Sprint 3G — Document-level questionnaires + package validation hardening
+```
+
+## 0. Главная архитектурная правка
+
+Текущая модель «одна анкета на весь пакет» (`document_package_session_participants` на уровне `package_session_id`) недостаточна. Один человек в разных шаблонах одного пакета может иметь разные роли.
+
+Разделяем на три уровня:
+
+1. **Пакет** (`document_package_templates`) — например, «Идеология».
+2. **Шаблон внутри пакета** (`document_package_template_items` → `document_templates`).
+3. **Анкета по каждому шаблону** — назначение PKR → physical person делается отдельно для каждого `package_template_item_id`.
+
+ЮЛ/ИП пакета остаётся общим реквизитом на уровне session (`document_package_sessions.selected_legal_entity_id`). Меняется только модель ролей физлиц.
+
+---
+
+## 1. Discovery (обязательный первый шаг)
+
+До любых миграций прочитать и зафиксировать в proof:
+
+- `document_package_sessions` — есть ли уже `selected_legal_entity_id` / эквивалент.
+- `document_package_session_participants` — текущая schema, RLS, использование в коде.
+- `document_package_template_items` — структура, как привязан `template_id`.
+- `document_package_role_catalog` — `public_id` (PKR), `package_template_id`, триггеры.
+- Поиск любой существующей таблицы document-level assignment (`grep` на `item_role_assignments`, `template_item_participants`, и т.п.) — чтобы не дублировать.
+- Текущий код: `useDocumentPackageSession.ts`, `DocumentPackageIdeologyView.tsx`, `PackageTemplateValidationPanel.tsx`, `PlaceholdersCatalogTab.tsx`, `StrictDocumentTemplatesManager.tsx`.
+
+Только после discovery — переход к DB и UI.
+
+---
+
+## 2. DB: document-level role assignments
+
+Если discovery подтвердит отсутствие аналога — миграция:
+
+```sql
+CREATE TABLE public.document_package_item_role_assignments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_session_id uuid NOT NULL REFERENCES public.document_package_sessions(id) ON DELETE CASCADE,
+  package_template_item_id uuid NOT NULL REFERENCES public.document_package_template_items(id) ON DELETE CASCADE,
+  role_catalog_id uuid NOT NULL REFERENCES public.document_package_role_catalog(id) ON DELETE RESTRICT,
+  person_id uuid NULL, -- legal_details_persons.id
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb, -- {position?: string}
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- индексы по (package_session_id, package_template_item_id), (role_catalog_id)
+-- НЕТ unique по (session, item, role) — одну роль можно назначить нескольким физлицам.
+```
+
+GRANTs + RLS:
+
+- `authenticated`: SELECT/INSERT/UPDATE только в рамках своей `package_session_id` (через subselect к `document_package_sessions.profile_id = auth.uid()`).
+- `super_admin` / `admin` через `has_role_v2` — полный доступ.
+- DELETE запрещён (hard delete не нужен → `is_active=false`).
+- `service_role` — ALL.
+
+Триггер `assign_role_must_belong_to_package`: проверяет, что `role_catalog.package_template_id` совпадает с `package_template_item.package_template_id`. Иначе — `raise exception 'pkr_outside_bound_package'`.
+
+Audit: `audit_logs` записи `package_item_role_assignment_{created,updated,archived}` с `package_session_id`, `package_template_item_id`, `role_catalog_public_id`, `person_id`.
+
+Атомарность replace для одного (session,item): backlog (RPC `replace_item_role_assignments`) — в Sprint 3G выполняется через delete-soft+insert внутри хука, как обсуждалось в `document_package_session_save_atomicity.md`.
+
+---
+
+## 3. UI: «Анкеты документов» вместо «Анкета пакета»
+
+В `PackagesWorkspace.tsx` подвкладки пакета «Идеология»:
+
+```
+Состав | Шаблоны пакета | Анкеты документов | Роли пакета | Проверка шаблонов
+```
+
+Удаляем подвкладку «Анкета пакета», вместо неё — **«Анкеты документов»** (`DocumentPackageQuestionnairesView.tsx`, новый компонент).
+
+Внутри:
+
+- Верхний блок «ЮЛ/ИП пакета» (общий для всей session) — редактирование `document_package_sessions.selected_legal_entity_id`.
+- Аккордеон по каждому `package_template_item` пакета:
+  - Заголовок: название шаблона + бейдж статуса (заполнено / требует ролей).
+  - Внутри: список активных ролей пакета (`document_package_role_catalog`, `is_active=true`).
+  - Для каждой роли — выбор физлица из `legal_details_persons` (multi-add: «+ Добавить ещё человека на эту роль»).
+  - Кнопка «Сохранить анкету документа» (scoped к одному `item`).
+- Inline-кнопки «+ Добавить роль» и «+ Добавить физлицо» (используют существующие `InlineCreateRoleDialog`/`InlineCreatePersonDialog`).
+
+Старая «Анкета пакета» (`DocumentPackageIdeologyView` в части ролей) — деприкейтится: ЮЛ/ИП-часть перемещается в верх «Анкет документов», role-assignment блок удаляется. Hook `useDocumentPackageSession` урезается до session+ЮЛ; participant-логика перемещается в новый хук `useDocumentItemRoleAssignments(itemId)`.
+
+`document_package_session_participants` остаётся read-only legacy для уже сохранённых данных — миграция данных в Sprint 3G **не выполняется** (backlog: backfill в 3H, когда модель приживётся).
+
+---
+
+## 4. Validator fix — `PackageTemplateValidationPanel.tsx`
+
+Правило:
+
+- `{{field:FLD-XXXXXX}}` где FLD относится к **системным/документным** группам (Сегодня прописью, Текущий год, Номер документа, дата, и т.п.) → **valid**, без warning.
+- `{{field:FLD-XXXXXX}}` где FLD относится к биллинговым группам (`Заказчик ФЛ`, `Заказчик ЮЛ`, `Заказчик ИП`, `Исполнитель ЮЛ`) → **warning** `billing_fld_in_package_scope` с русским сообщением: «Этот плейсхолдер относится к биллинговым реквизитам. Для реквизитов пакета используйте Пакет: ЮЛ/ИП/ФЛ.»
+
+Реализация: классификация группы FLD через `fields_catalog.group_code` (или существующий аналог). Маппинг billing-групп — константа в `_shared/billing-fld-groups.ts` (frontend mirror в `src/utils/billingFldGroups.ts`). Discovery должен подтвердить точные коды групп.
+
+Прочие правила (см. memory `package-token-aliases-v1`):
+
+- `{{package.role.PKR-...}}` чужого пакета → **error** `pkr_outside_bound_package`.
+- Несуществующий PKR → **error** `pkr_not_found`.
+- `{{package.ul|ip|fl.FLD-...}}` отсутствует в каталоге → **error**.
+- Legacy `{{package.roles.<key>.*}}` → **warning** `deprecated_placeholder_format`.
+
+Проверка не вызывает Gotenberg, не пишет в `ai_generated_documents`, не зовёт `canonical-document-generate-strict`.
+
+---
+
+## 5. PlaceholdersCatalogTab — нормальный вид PKR
+
+Сейчас package-плейсхолдеры показываются техническим списком. Привести к виду обычных FLD:
+
+
+| Группа      | Название                                                       | ID         | Тип          | Пример                                  | Плейсхолдер                   | Copy |
+| ----------- | -------------------------------------------------------------- | ---------- | ------------ | --------------------------------------- | ----------------------------- | ---- |
+| Пакет: Роли | Идеология — Ответственный за координацию идеологической работы | PKR-000012 | Роль физлица | главный бухгалтер, Иванов Иван Иванович | `{{package.role.PKR-000012}}` | 📋   |
+
+
+Если пример нельзя посчитать без анкеты — показать строку: «Пример появится после заполнения анкеты документа». Без английских технических строк.
+
+Legacy `{{package.roles.<key>.full_name|position|short_name}}` — **скрыть из UI** (остаются read-only только в валидаторе как deprecated warning).
+
+Debug-блок (source-path, raw catalog JSON) — только под `super_admin + ?debug=1` (уже сделано для dry-run, тот же гард).
+
+---
+
+## 6. Template binding — `StrictDocumentTemplatesManager.tsx`
+
+При загрузке/редактировании шаблона:
+
+- Поле «Тип шаблона»: `Биллинговый документ` | `Пакет документов`.
+- Если выбран «Пакет документов» → обязательное поле «Пакет» (select из `document_package_templates`, активные).
+- На submit — RPC `package_template_bind_template` (уже существует, выставляет `template_scope='package'` и пишет audit).
+- После успеха — шаблон появляется в `Пакеты → Идеология → Состав`.
+
+Во вкладке «Пакеты → Идеология → Состав» (`PackageContentsList`) — только список и действия: Открыть / Проверить / Отвязать. Загрузки DOCX там нет. Подвкладка «Шаблоны пакета» (`TemplateBindingControl`) — admin-only список привязок с теми же действиями.
+
+---
+
+## 7. Resolver contract (документ-уровень) — read-only proof для 3G
+
+Реальной генерации в 3G нет. Но фиксируем контракт для 3H в proof + добавляем pure helper (без вызовов) `resolvePackageRolePlaceholder(token, ctx)`:
+
+```text
+{{package.role.PKR-000012}}
+  + ctx: { package_session_id, package_template_item_id }
+  → role_catalog by public_id → assert package_template_id match
+  → document_package_item_role_assignments WHERE session+item+role AND is_active
+  → person_id → legal_details_persons.full_name
+  → metadata.position
+  → output: "{position}, {full_name}" (если несколько — через ", ")
+```
+
+Helper лежит в `_shared/resolve-package-tokens.ts` под флагом `HARDCODED_ENABLED=false` (см. memory `package-token-aliases-v1`). Никаких новых FLD/edge-функций.
+
+---
+
+## 8. Что НЕ трогаем
+
+- `canonical-document-generate-strict`, Gotenberg, `ai_generated_documents`.
+- Billing resolver, billing FLD, реквизитные таблицы, `client_legal_details`, `legal_details_persons` (только чтение).
+- Новые FLD без manifest.
+- Не возвращаем seed-роли «Идеология».
+- `{{package.roles.<key>.*}}` остаётся только в валидаторе как deprecated read-only.
+- Backfill старых `document_package_session_participants` → новый item-level (в backlog 3H).
+
+---
+
+## 9. Файлы
+
+**Миграция:**
+
+- `supabase/migrations/<ts>_document_package_item_role_assignments.sql` (CREATE TABLE + GRANT + RLS + триггер + индексы).
+
+**Frontend (новые):**
+
+- `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx`
+- `src/components/ai-documents/packages/ItemRoleAssignmentsBlock.tsx`
+- `src/hooks/useDocumentItemRoleAssignments.ts`
+- `src/utils/billingFldGroups.ts`
 
 **Frontend (edit):**
 
-- `src/components/ai-documents/DocumentPackageIdeologyView.tsx` — убрать dry-run панель и блок «Состав»; debug-флаг для dry-run.
-- `src/components/ai-documents/packages/PackageRolesManager.tsx` — Tabs «Активные / Архив / Системные», правила действий.
-- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` — только PKR в группе «Пакет: Роли», скрыть legacy.
-- `src/components/ai-documents/packages/PackageTemplateValidationPanel.tsx` — billing FLD как warning, PKR-cross-package как error.
-- `src/components/ai-documents/packages/InlineCreateRoleDialog.tsx` — проверить минимальную форму.
+- `src/components/ai-documents/packages/PackagesWorkspace.tsx` — заменить tab `anketa` на `questionnaires`.
+- `src/components/ai-documents/DocumentPackageIdeologyView.tsx` — урезать до ЮЛ/ИП-части или удалить.
+- `src/components/ai-documents/packages/PackageTemplateValidationPanel.tsx` — billing-group классификация.
+- `src/components/ai-documents/packages/PlaceholdersCatalogTab.tsx` — табличный вид PKR.
+- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx` — селектор тип/пакет при загрузке.
+- `src/hooks/useDocumentPackageSession.ts` — снять participant-CRUD.
 
-**Backend (migration):**
+**Shared:**
 
-- Одна миграция: создать temp `cleanup_ideology_seed_roles()` → выполнить → drop; audit.
-- Поиск/нейтрализация seed-источников (edit/delete edge function или миграция-guard по обстоятельствам).
+- `supabase/functions/_shared/billing-fld-groups.ts`
+- `supabase/functions/_shared/resolve-package-tokens.ts` — добавить документ-уровневую ветку (флаг off).
 
 **Proof:**
 
-- `.lovable/proofs/package_documents_sprint3f_phase2d_ux_cleanup_2026_05.md`
-- `.lovable/proofs/package_documents_sprint3f_phase2e_hard_delete_seed_roles_2026_05.md`
+- `.lovable/proofs/package_documents_sprint3g_document_level_questionnaires_2026_05.md` (discovery findings + migration diff + screenshots + validator before/after).
+
+**Memory update:**
+
+- Дополнить `architecture/documents/package-token-aliases-v1` секцией про document-level assignment SOT и item-scoped resolution.
 
 ---
 
-## DoD (сводный)
+## 10. DoD
 
-- В `/admin/documents → Пакеты → Идеология → Анкета` нет dev dry-run блока и нет дубля «Состава».
-- Роли разделены: Активные / Архив / Системные (свернуто).
-- PKR-000001…PKR-000011 в `document_package_role_catalog` отсутствуют (0 строк по «Идеологии» с `is_system=true`).
-- Связанные `document_package_session_participants` для этих PKR удалены.
-- Автосоздание seed-ролей отключено; reload страницы не возвращает их.
-- Каталог плейсхолдеров «Пакет: Роли» не содержит PKR-000001…PKR-000011 и не содержит `.full_name/.position/.short_name`.
-- Inline создание роли из анкеты работает (форма: только «Название» + «Описание»), назначает роль физлицу, PKR rename-safe.
-- Шаблон приказа виден в `Состав` после загрузки с привязкой к пакету.
-- Валидация шаблона: billing FLD → warning, PKR cross-package → error, legacy `package.roles.*` → deprecated warning; генерация не вызывается.
-- `canonical-document-generate-strict`, Gotenberg, `ai_generated_documents`, billing resolver, биллинговые шаблоны и FLD — не тронуты (proof diff-grep).
-- Trigger-защита от hard-delete системных ролей сохранена для будущих ролей.
+- Document-level анкеты работают: один человек = разные роли в разных шаблонах одного пакета.
+- Одна роль в одном документе может иметь несколько физлиц.
+- `{{package.role.PKR-XXXXXX}}` логически резолвится в рамках конкретного item (helper готов, генерация не запускается).
+- `{{field:FLD-000209|211|069}}` в package template → valid (no warning).
+- Billing-FLD в package template → warning с русским текстом.
+- PKR в каталоге плейсхолдеров отображается по-русски в табличном виде.
+- Загрузка DOCX позволяет выбрать «Пакет документов» → пакет; шаблон появляется в Составе.
+- Controlled validation не зовёт Gotenberg / strict-generate / ai_generated_documents.
+- Proof + memory обновлены.
 
 ---
 
-## Порядок исполнения
+## 11. Порядок исполнения
 
-1. Phase 2d — frontend edits (без БД).
-2. Phase 2e — миграция (cleanup + drop временной функции + audit) — отдельный apply с подтверждением пользователя.
-3. Поиск и нейтрализация seed-источников.
-4. Verify через `read_query`: 0 строк seed-PKR; audit-запись есть.
-5. Записать оба proof-файла.
-
-Жду подтверждения, чтобы перейти в build mode и начать с Phase 2d.
+1. **Discovery** (read-only): схемы, существующие assignment-таблицы, коды billing-групп FLD. Записать в proof.
+2. **Migration** `document_package_item_role_assignments` + GRANT + RLS + триггер.
+3. **Hook + UI** анкет документов; урезание старого hook.
+4. **Validator fix** + `billingFldGroups`.
+5. **PlaceholdersCatalog** табличный вид PKR + скрытие legacy.
+6. **Template binding** UI в `StrictDocumentTemplatesManager`.
+7. **Helper** `resolve-package-tokens` document-level ветка (off).
+8. **Proof + memory update**.
+9. **QA**: ручная проверка на «Идеология» + реальный приказ (controlled validation должен пройти без блок-ошибок).
