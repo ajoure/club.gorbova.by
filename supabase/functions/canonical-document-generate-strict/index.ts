@@ -304,6 +304,25 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
+    // ── Sprint 3I-A: package-mode early dispatch ─────────────────────────
+    // packageContext is allowed ONLY for internal service-role calls from
+    // ai-generate-document-package. Regular UI / user-JWT cannot reach the
+    // package handler. Order path below is byte-for-byte unchanged.
+    const _rawBody = await req.clone().json().catch(() => ({}));
+    if (_rawBody && typeof _rawBody === 'object' && _rawBody.packageContext) {
+      const internalMarker = req.headers.get('x-internal-call');
+      const apikeyHeader = req.headers.get('apikey') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (internalMarker !== 'package-orchestrator' || !serviceKey || apikeyHeader !== serviceKey) {
+        return json({ error: 'package_context_forbidden' }, 403);
+      }
+      const { handlePackageStrict } = await import('../_shared/package-strict-handler.ts');
+      return handlePackageStrict(
+        { mode: _rawBody.mode === 'generate' ? 'generate' : 'preview', packageContext: _rawBody.packageContext },
+        corsHeaders,
+      );
+    }
+
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     const auth = req.headers.get('Authorization');
