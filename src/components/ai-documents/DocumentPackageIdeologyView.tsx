@@ -92,7 +92,12 @@ export function DocumentPackageIdeologyView() {
   const aiPersons = useAiPersons();
   const pkg = useDocumentPackageSession("ideology");
   const rbac = useRbac();
+  const { data: isSuperAdmin } = useSuperAdmin();
   const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
+  const showDevDryRun =
+    !!isSuperAdmin &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("debug") === "1";
 
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
