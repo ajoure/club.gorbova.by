@@ -56,7 +56,11 @@ export type PackageTokenResolveCode =
   | 'no_person'
   | 'person_missing'
   | 'empty_value'
-  | 'config_error';
+  | 'config_error'
+  // Sprint 3H-fix: ln-XXXXXX branch
+  | 'ln_token_not_found'
+  | 'ln_token_outside_bound_package'
+  | 'role_assignment_missing';
 
 export type PackageTokenResolveResult =
   | {
