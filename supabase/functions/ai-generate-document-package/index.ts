@@ -204,6 +204,10 @@ Deno.serve(async (req) => {
     let errors = 0;
     let blocked = 0;
 
+    // Sprint 3I-A-2 F1: системные FLD значения вычисляются один раз на запуск,
+    // чтобы все item'ы пакета видели одинаковые today/year/now.
+    const sysVals = buildSystemFieldValues(new Date());
+
     for (const item of items as any[]) {
       const tpl = tplMap.get(item.template_id);
       const ver = tpl ? verMap.get(tpl.current_version_id) : null;
