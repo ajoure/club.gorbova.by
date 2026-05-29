@@ -26,6 +26,10 @@ import {
   findByPackageToken,
   readSourcePath,
 } from '../_shared/packagePlaceholderCatalog.ts';
+import {
+  buildSystemFieldValues,
+  SYSTEM_FIELD_VALUE_IDS,
+} from '../_shared/system-field-values.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
