@@ -1394,7 +1394,7 @@ Deno.serve(async (req) => {
       template_source_path: ver.storage_path,
       template_version_id: ver.id,
       template_version: ver.version_number,
-      title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+      title: docTitle,
       status: 'generated',
       // PRIMARY = PDF (клиент видит только его)
       file_path: pdfPath,
@@ -1415,8 +1415,8 @@ Deno.serve(async (req) => {
       })(),
       source_trace: sourceTrace,
       resolver_version: RESOLVER_VERSION,
-      context_type: 'order',
-      context_id: order.id,
+      context_type: ctxType,
+      context_id: ctxId,
       idempotency_key: idempotencyKey,
       created_by: userId,
       meta: {
@@ -1430,6 +1430,7 @@ Deno.serve(async (req) => {
         file_name_template_source: fileNameTemplateSource,
         file_name_warnings: fileNameWarnings,
         ...gotenbergMeta,
+        ...packageMetaExtras,
       },
     } as any;
 
