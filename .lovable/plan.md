@@ -1,570 +1,566 @@
-# да, согласен, с учетом правок:
+Да, согласен, с учетом правок:
 
-План технически в правильном направлении: `ai-generate-document-package` должен стать **orchestrator**, а не отдельным генератором. Но в плане не хватает важного блока по UI-кнопкам и по режимам запуска для пользователя/админа.
+Главное: план уже правильный по архитектуре. Он делает именно то, что нужно: **не создаёт новый генератор**, а расширяет существующую генерацию через `canonical-document-generate-strict`. Но перед execution нужно добавить несколько защит, чтобы не сломать биллинговые документы и не получить полурабочую генерацию пакета.
 
-Ниже правки, которые нужно добавить перед approve.
+да, согласен, с учетом правок:
 
-```md
-## Обязательные правки к Sprint 3I
+## **1. Baseline биллинговой генерации — обязательный STOP-gate**
 
-### 1. Добавить UI-кнопки генерации пакета
+До любых правок `canonical-document-generate-strict`:
 
-Сейчас в UI нет понятной кнопки «Сформировать пакет». Это нужно добавить в двух местах:
+- снять baseline на одном реальном paid order;
+- сохранить request/response/snapshot;
+- после правок повторить тот же вызов;
+- если order-path изменился — Sprint 3I-A считается BLOCKED.
 
-#### 1.1. Пользовательский UI
-
-В пользовательском разделе пакета:
-
-```text
-/document-generation → Пакеты документов → Идеология
-```
-
-или в текущем рабочем пользовательском маршруте, где клиент заполняет анкету пакета.
-
-Добавить кнопку:
+В proof явно указать:
 
 ```text
-Сформировать пакет документов
+order-mode без packageContext = поведение не изменилось
+context_type='order'
+idempotency_key pattern прежний
+DOCX/PDF формируются
+billing resolver не изменился
 ```
 
-Кнопка должна быть видна пользователю после того, как:
 
-- выбран ЮЛ/ИП пакета;
-- в пакете есть хотя бы один привязанный шаблон;
-- по каждому документу заполнены обязательные роли, которые реально используются в DOCX;
-- validation не содержит error.
 
-Если есть warning, но нет error — кнопка может быть активна, но перед запуском показывать confirm:
+
+
+## **2.**
+
+`packageContext` **должен быть доступен только orchestrator-у**
+
+Нельзя разрешать обычному UI напрямую вызывать `canonical-document-generate-strict` с `packageContext`.
+
+Добавить guard:
 
 ```text
-В некоторых документах есть предупреждения. Вы можете сформировать пакет, но часть данных может быть неполной. Продолжить?
+packageContext allowed only for internal service-role call from ai-generate-document-package
 ```
 
-#### **1.2. Админский UI**
-
-В админке также нужна кнопка тестовой генерации:
+Если обычный JWT передал `packageContext`:
 
 ```text
-/admin/documents → Пакеты документов → Идеология
+403 package_context_forbidden
 ```
 
-Во вкладках:
+## **3. Выбираем вариант B, но только по copy_ready каталогу**
+
+Phase 3I-A должна покрыть:
 
 ```text
-Состав
-Проверка шаблонов
+{{ln-XXXXXX}}
+{{package.ul.FLD-XXXXXX}}
+{{package.ip.FLD-XXXXXX}}
+{{package.fl.FLD-XXXXXX}}
+{{field:FLD-XXXXXX}} системные/document поля
 ```
 
-добавить admin-only кнопку:
+Но только если поле есть в `packagePlaceholderCatalog` со статусом `copy_ready`.
+
+Если токен не найден в каталоге или статус не `copy_ready`:
 
 ```text
-Тестово сформировать пакет
+package_field_not_ready
 ```
 
-Назначение: админ может проверить пакет, не заходя под обычного пользователя.
+Запрещено подставлять пустую строку молча.
 
-Важно:
 
-- кнопка доступна только admin/super_admin;
-- она использует выбранную package_session;
-- если package_session нет, админ должен выбрать пользователя/session или создать тестовую session;
-- результат помечается как test/admin run в `audit_logs` и metadata.
 
----
 
-### **2. Добавить режимы запуска: user run и admin test run**
 
-В `ai-generate-document-package` добавить явное различие:
+## **4.**
+
+`package.fl.FLD-*` **нельзя оставлять пустым warning**
+
+Не принимать вариант, где `package.fl.FLD-*` рендерится пустой строкой.
+
+Если не получается определить физлицо для `package.fl.FLD-*`, должен быть blocker:
 
 ```text
-run_mode: 'user_generate' | 'admin_test'
+package_fl_role_context_missing
 ```
 
-#### **user_generate**
+Иначе мы получим документ, который формально сгенерирован, но фактически битый.
 
-- запускается пользователем из пользовательского UI;
-- работает только по его `package_session_id`;
-- проверяет ownership через `profile_id`;
-- сохраняет результат как обычную генерацию пользователя.
+## **5. Уточнить FL-логику**
 
-#### **admin_test**
-
-- запускается только admin/super_admin;
-- может выбрать package_session пользователя;
-- пишет audit:  
-`package_generation_admin_test_started`;
-- в metadata результата добавить:
-
-```json
-{
-  "run_mode": "admin_test",
-  "admin_user_id": "...",
-  "package_session_id": "...",
-  "package_template_id": "...",
-  "is_test_generation": true
-}
-```
-
----
-
-### **3. Не запускать генерацию, если анкеты документов не готовы**
-
-Перед вызовом `canonical-document-generate-strict` orchestrator обязан сделать preflight по каждому `package_template_item`.
-
-Проверки:
+Для `{{package.fl.FLD-XXXXXX}}` нужно явно описать, откуда берётся person:
 
 ```text
-1. template_item активен
-2. DOCX валиден
-3. нет validation error
-4. все {{ln-XXXXXX}} принадлежат текущему пакету
-5. для каждого обязательного ln есть assignment
-6. package.ul/ip/fl токены имеют source path
+package_session_id
++ package_template_item_id
++ document_package_item_role_assignments
++ person_id
+→ legal_details_persons
 ```
 
-Если есть error — item не отправлять в strict.
+Если в одном документе несколько ролей/несколько физлиц и токен `package.fl.FLD-*` не указывает, к какой роли относится, не делать fallback.
 
-Статусы item:
+Только ошибка:
 
 ```text
-ready
-skipped_validation_error
-skipped_missing_role_assignment
-generated
-failed
+package_fl_role_context_missing
 ```
 
----
 
 
-
-### **4. Уточнить**
+## **6.**
 
 `role_assignment_missing`
 
-В Sprint 3H-fix это warning. Но в генерации Sprint 3I нужно разделить:
+В validation это warning.
 
-- в validation UI — warning;
-- в generation preflight — blocker, если роль используется в DOCX и не назначена.
+В generation preflight это blocker.
 
 Правило:
 
 ```text
-role_assignment_missing в validation = warning
-role_assignment_missing перед generation = error/blocker
+Если в DOCX есть {{ln-XXXXXX}},
+но по текущему package_session_id + package_template_item_id + role_catalog_id
+нет active assignment,
+orchestrator НЕ вызывает strict для этого item.
 ```
 
-Сообщение:
+Вернуть:
 
 ```text
-Нельзя сформировать документ: для роли из шаблона не выбран человек в анкете документа.
+role_assignment_missing
 ```
+
+
+
+
+
+## **7.**
+
+`{{field:FLD-...}}` **в package-mode**
+
+В package-mode разрешены системные и документные поля:
+
+```text
+{{field:FLD-000069}} — номер документа
+{{field:FLD-000070}} — дата документа
+{{field:FLD-000209}} — сегодня прописью
+{{field:FLD-000211}} — текущий год
+```
+
+Но биллинговые реквизитные FLD в package-template должны быть blocker перед генерацией:
+
+```text
+billing_field_in_package_template
+```
+
+Пояснение:
+
+```text
+Для реквизитов пакета используйте плейсхолдеры Пакет: ЮЛ / ИП / ФЛ.
+```
+
+
+
+
+
+## **8.**
+
+`ai-generate-document-package` **— только orchestrator**
+
+В файле `ai-generate-document-package/index.ts` запрещены:
+
+```text
+Docxtemplater
+PizZip
+Gotenberg
+convertDocxToPdf
+storage upload generated files напрямую
+ai_generated_documents.insert напрямую
+```
+
+Разрешено только:
+
+```text
+load package_session
+load template_items
+preflight
+build packageContext
+invoke canonical-document-generate-strict
+aggregate results
+audit_logs
+update ai_document_generation_batches
+```
+
+## **9. DOCX/PDF должны идти через существующий strict**
+
+Результат каждого item:
+
+```text
+DOCX — через существующий strict/render path
+PDF — через существующий Gotenberg path внутри strict
+ai_generated_documents — только через strict
+```
+
+Orchestrator только собирает результат.
+
+## **10. Batch / history — без молчаливых миграций**
+
+Перед кодом проверить схему:
+
+```text
+ai_document_generation_batches
+ai_generated_documents.generation_batch_id
+ai_generated_documents.package_template_id
+ai_generated_documents.package_template_item_id
+ai_generated_documents.context_type/context_id
+```
+
+Если всё есть — использовать.
+
+Если чего-то нет — сначала discovery/proof, потом минимальная миграция. Не добавлять поля молча.
+
+## **11. Strict parser matrix**
+
+В order-mode:
+
+```text
+{{field:FLD-XXXXXX}} — valid
+{{ln-XXXXXX}} — error ln_token_outside_package_context
+{{package.ul.FLD-XXXXXX}} — error package_token_outside_package_context
+{{package.ip.FLD-XXXXXX}} — error package_token_outside_package_context
+{{package.fl.FLD-XXXXXX}} — error package_token_outside_package_context
+```
+
+В package-mode:
+
+```text
+{{field:FLD-XXXXXX}} — valid только для разрешённых системных/document полей
+{{ln-XXXXXX}} — valid, если preresolved
+{{package.ul.FLD-XXXXXX}} — valid, если preresolved
+{{package.ip.FLD-XXXXXX}} — valid, если preresolved
+{{package.fl.FLD-XXXXXX}} — valid, если preresolved
+```
+
+Если токен не preresolved:
+
+```text
+package_token_not_preresolved
+```
+
+## **12. UI в этой фазе не делать, но hook не ломать**
+
+Phase 3I-A не добавляет кнопки.
+
+Но `useAiDocumentPackageGeneration` можно привести к новому контракту:
+
+```text
+{ package_session_id, run_mode? }
+```
+
+Существующие места вызова не должны сломать build.
+
+Если кнопки ещё нет — это нормально. UI будет Phase 3I-B.
+
+## **13. Proof обязателен**
+
+В proof добавить:
+
+1. Baseline strict order до изменений.
+2. Regression strict order после изменений.
+3. Grep: нет Docxtemplater/PizZip в orchestrator.
+4. Grep: нет Gotenberg/convertDocxToPdf в orchestrator.
+5. Grep: нет прямого insert в `ai_generated_documents` из orchestrator.
+6. Runtime package generation через strict:
+  - минимум 1 item;
+  - минимум 1 `{{ln-XXXXXX}}`;
+  - минимум 1 `{{package.ul.FLD-XXXXXX}}` или `{{package.ip.FLD-XXXXXX}}`;
+  - минимум 1 системный `{{field:FLD-000069}}` или `{{field:FLD-000070}}`;
+  - результат: DOCX URL, PDF URL, `ai_generated_documents.context_type='package_session'`.
+7. Missing assignment:
+  - strict не вызывается;
+  - item получает `role_assignment_missing`.
+8. Package field not ready:
+  - strict не вызывается;
+  - item получает `package_field_not_ready`.
+9. Service-role guard:
+  - user JWT + packageContext → 403.
+10. Billing generation не изменилась.
+
+## **14. Финальный статус Phase 3I-A**
+
+После выполнения статус должен быть:
+
+```text
+completed: package backend foundation ready;
+ai-generate-document-package is thin orchestrator;
+canonical-document-generate-strict supports guarded packageContext;
+DOCX/PDF generated through existing strict pipeline;
+billing generation regression passed;
+UI generation buttons deferred to Phase 3I-B
+```
+
+## **Коротко**
+
+План можно утверждать, но только с этими условиями:
+
+1. **Выбираем B** — `ln + UL/IP/FL + system fields`, но только по `copy_ready`.
+2. **Никаких пустых строк молча**.
+3. **Сначала baseline биллинга, потом изменения, потом regression**.
+4. **Orchestrator не должен сам рендерить и писать документы**.
+5. **UI-кнопки оставляем на Phase 3I-B**, это нормально.
+6. &nbsp;
+7. План: Sprint 3I-A — Package generation backend foundation (B-ограниченный)
+
+## Цель
+
+Подключить пакетную генерацию документов через уже существующий `canonical-document-generate-strict` (DOCX + Gotenberg PDF + `ai_generated_documents`), без нового рендерера и без silent fallback. Вариант **B по уже утверждённому `packagePlaceholderCatalog**`: резолвить только `copy_ready` поля; всё остальное — explicit preflight error.
+
+Phase 3I-B (UI/admin/history) и 3I-C (финальный proof closeout) — отдельные заходы, в этой фазе не делаем.
 
 ---
 
-### **5. Не расширять strict-функцию слишком широко**
+## 0. Pre-work: baseline биллинговой генерации (BLOCKER)
 
-В плане написано добавить `packageContext` в `canonical-document-generate-strict`. Это допустимо, но нужно жёстко ограничить:
+До любых правок `canonical-document-generate-strict`:
 
-```md
-`packageContext` допускается только если:
-- вызов пришёл из `ai-generate-document-package`;
-- caller — service_role / internal call;
-- package_session_id и package_template_item_id уже проверены orchestrator;
-- single-document UI не может вручную передать packageContext.
-```
+1. Выбрать 1 существующий paid order с биллинговым шаблоном (есть `{{field:FLD-...}}`, DOCX + PDF исторически генерировался).
+2. Вызвать strict (`mode=generate`) и зафиксировать baseline в `.lovable/proofs/sprint_3i_a_strict_baseline_<date>.md`:
+  - request body;
+  - HTTP status, `resolver_version`;
+  - `token_manifest_snapshot`;
+  - warnings;
+  - `context_type='order'`, `idempotency_key` pattern;
+  - наличие `docx_url`, `pdf_url`, запись в `ai_generated_documents`.
+3. Этот baseline — обязательный референс для regression в п.7.
 
-Иначе можно случайно открыть bypass обычной order-логики.
+Если baseline снять невозможно (нет подходящего order) — фаза останавливается и эскалируется.
 
 ---
 
-### **6. Вызов strict из orchestrator**
+## 1. `canonical-document-generate-strict` — минимально-инвазивная package-ветка
 
-Уточнить, как orchestrator вызывает `canonical-document-generate-strict`.
+### 1.1 Контракт
 
-Рекомендуемая модель:
+Добавить опциональный `packageContext` (без него поведение byte-for-byte как сейчас):
 
-```text
-ai-generate-document-package
-  → service_role internal invoke canonical-document-generate-strict
-```
-
-В body:
-
-```json
-{
-  "mode": "generate",
-  "template_id": "...",
-  "idempotency_key": "package_session:<id>:item:<id>:template_version:<id>",
-  "packageContext": {
-    "package_session_id": "...",
-    "package_template_id": "...",
-    "package_template_item_id": "...",
-    "profile_id": "...",
-    "preresolved_fields": {},
-    "preresolved_ln_tokens": {},
-    "preresolved_warnings": []
-  }
+```ts
+packageContext?: {
+  package_session_id: string;
+  package_template_id: string;
+  package_template_item_id: string;
+  generation_batch_id: string;
+  profile_id: string;
+  // Pre-resolved orchestrator-ом:
+  preresolved_fields:        Record<`FLD-${string}`, { value: string; source: string }>; // системные/document
+  preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }>; // ключ = токен `package.ul|ip|fl.FLD-XXXXXX`
+  preresolved_ln_tokens:     Record<`ln-${string}`, { value: string; role_catalog_id: string; person_id: string }>;
 }
 ```
 
-Не использовать пользовательский JWT напрямую для internal strict-вызова, если strict в package-mode требует service-role контекст.
+### 1.2 Guard (закрытость от UI)
 
----
+В самом начале handler:
 
+- Если `body.packageContext` присутствует И вызов не service-role (нет `x-internal-call: package-orchestrator` + verified service-role JWT) → `403 package_context_forbidden`.
+- Service-role gate: проверка `req.headers.get('apikey')`/Authorization service-role-key matches `SUPABASE_SERVICE_ROLE_KEY`, плюс header-marker.
 
+### 1.3 Единый `generationContext`
 
+Ввести локальный объект, через него идёт вся логика записи/snapshot/idempotency:
 
-
-### **7. Уточнить обработку**
-
-`{{ln-XXXXXX}}` **в strict**
-
-План B1 правильный, но нужно добавить:
-
-```md
-Strict должен принимать `{{ln-XXXXXX}}` только при наличии `packageContext`.
-
-Если `{{ln-XXXXXX}}` встречается в обычном billing/order-шаблоне без packageContext:
-- error `ln_token_outside_package_context`.
-```
-
----
-
-
-
-### **8. Уточнить обработку**
-
-`{{package.ul/ip/fl.FLD-XXXXXX}}`
-
-Аналогично:
-
-```md
-`{{package.ul.FLD-...}}`, `{{package.ip.FLD-...}}`, `{{package.fl.FLD-...}}`
-допустимы только при packageContext.
-
-В обычном billing/order-шаблоне:
-- error `package_token_outside_package_context`.
-```
-
----
-
-### **9. Добавить batch UI результата**
-
-После нажатия «Сформировать пакет» UI должен показать результат по каждому документу:
-
-```text
-Документ | Статус | Предупреждения | Скачать DOCX | Скачать PDF | Открыть карточку
-```
-
-Статусы:
-
-```text
-Сформирован
-Пропущен
-Ошибка
-Требует заполнения анкеты
-```
-
-Если пакет состоит из нескольких документов — пользователь должен видеть, какие документы готовы, а какие нет.
-
----
-
-### **10. История генерации пакета**
-
-В UI пакета добавить блок:
-
-```text
-История сформированных пакетов
-```
-
-Минимально:
-
-- дата;
-- кто сформировал;
-- режим: пользователь / тест админа;
-- количество документов;
-- статус: success / partial / error;
-- ссылки на документы.
-
-Если это уже можно взять из `ai_document_generation_batches` — переиспользовать его, новую таблицу не создавать.
-
----
-
-
-
-### **11.**
-
-`ai_document_generation_batches`
-
-В плане есть упоминание batch aggregation, но нужно уточнить:
-
-- orchestrator создаёт batch до запуска items;
-- каждый generated document получает связь с batch;
-- если текущая схема `ai_generated_documents` не имеет `batch_id`, использовать существующие поля/meta;
-- если нужен новый столбец — только после discovery и отдельного proof.
-
-Не добавлять миграцию без проверки текущей схемы.
-
----
-
-### **12. Проверить текущие ошибки загруженного DOCX до генерации**
-
-Перед Sprint 3I execution добавить обязательный preflight:
-
-```text
-Пакет Идеология
-→ приказ DOCX
-→ validation report
-→ список error/warning
-```
-
-Если шаблон ещё содержит invalid legacy role placeholder или неправильные package tokens — генерацию не запускать.
-
----
-
-### **13. Отдельно проверить кнопку в админке и у пользователя**
-
-DoD добавить:
-
-```text
-Пользователь видит кнопку «Сформировать пакет документов».
-Админ видит кнопку «Тестово сформировать пакет».
-Обе кнопки используют один orchestrator.
-Обе кнопки показывают per-item результат.
-Обе кнопки не создают новый renderer.
-```
-
----
-
-### **14. Proof по UI**
-
-В proof добавить скриншоты/описания:
-
-1. Пользовательская кнопка генерации.
-2. Админская кнопка тестовой генерации.
-3. Disabled/blocker state при незаполненной анкете.
-4. Confirm при warning.
-5. Per-item результат.
-6. История пакета.
-7. Ссылки на скачивание DOCX/PDF, если strict их возвращает.
-
----
-
-### **15. Не делать сейчас email/telegram/auto-send**
-
-После генерации ничего автоматически не отправлять.
-
-Только:
-
-- сформировать документы;
-- показать ссылки;
-- сохранить историю.
-
-Автоматическая отправка клиенту — отдельный sprint.
-
----
-
-## **Исправленный фрагмент цели Sprint 3I**
-
-Цель должна звучать так:
-
-```text
-Sprint 3I подключает реальную генерацию пакета через существующий pipeline.
-
-Появляются две UI-точки запуска:
-1. пользовательская кнопка «Сформировать пакет документов»;
-2. admin-only кнопка «Тестово сформировать пакет».
-
-Обе кнопки вызывают `ai-generate-document-package`, который является только orchestrator и делегирует каждый документ в `canonical-document-generate-strict`.
-
-Новый renderer, новый Gotenberg-клиент и новая ручная запись в ai_generated_documents запрещены.
-```
-
----
-
-## **Итог**
-
-План можно утверждать только после добавления этих правок.
-
-Главное, чего не хватает сейчас:
-
-1. UI-кнопки генерации для пользователя;
-2. UI-кнопки тестовой генерации для админа;
-3. preflight перед генерацией;
-4. per-item результат;
-5. история сформированных пакетов;
-6. запрет использовать `packageContext` извне orchestrator.
-
-```
-Коротко: план по backend-архитектуре хороший, но без UI-кнопок и результата пользователь не сможет этим пользоваться. Нужно добавить **две точки запуска**: пользовательскую и админскую тестовую.
-
-План: Sprint 3I — Package generation orchestrator (без нового генератора)
-```
-
-Цель: `ai-generate-document-package` становится тонким orchestrator, который для каждого item пакета вызывает существующий `canonical-document-generate-strict`. Никакого Docxtemplater/PizZip, никакого нового рендера, никакого нового пути записи в `ai_generated_documents`, никакого второго Gotenberg-вызова.
-
----
-
-## Discovery (что уже есть, проверено в коде)
-
-### 1. Как сейчас вызывается одиночная генерация
-
-- UI/хук `useAiDocuments.generate(...)` → `ai-generate-document` (legacy, отдельный pipeline, **не трогаем**).
-- Canonical путь: фронт зовёт `supabase.functions.invoke('canonical-document-generate-strict', { body: { order_id, mode, template_id?, idempotency_key?, admin_force? } })`. JWT — обязателен (`getUser`).
-
-### 2. Контракт `canonical-document-generate-strict` (Sprint 11, файл `index.ts`)
-
-Вход (`body`):
-
-- `order_id: uuid` — **обязателен** (`order_id_required`).
-- `mode: 'preview' | 'generate'` (default `preview`).
-- `template_id?: uuid` — иначе берётся из offer + scenario.
-- `idempotency_key?: string` — иначе генерируется детерминированно.
-- `admin_force?: boolean` + guards.
-
-Что делает:
-
-- Берёт `orders_v2` + `meta.document_data.fields[FLD-XXXXXX]` как SOT значений.
-- Принимает в DOCX **только** `{{field:FLD-XXXXXX}}` (Sprint 11 canon).
-- Пишет в `ai_generated_documents` (`context_type='order'`, `context_id=order.id`, `idempotency_key`, `profile_id=order.profile_id`).
-- PDF — через `convertDocxToPdf` (Gotenberg, единственный путь).
-
-### 3. Куда пишет `ai_generated_documents`
-
-Строго один INSERT в strict-функции (≈строка 1100), с полным snapshot (`fields`, `token_manifest_snapshot`, `template_tokens_snapshot`, `source_trace`, `warnings_snapshot`, `resolver_version`, `context_type='order'`, `context_id`, `idempotency_key`, `template_version_id`). Других canonical write-path нет.
-
-### 4. Текущее состояние `ai-generate-document-package`
-
-**Сейчас это самостоятельный legacy-renderer**: PizZip + Docxtemplater, свой `buildTokenData`, свой upload в `documents`, свой INSERT в `ai_generated_documents` без `template_version_id`/`context_type`/`idempotency_key`. Это и есть «второй pipeline», который Sprint 3I должен ликвидировать.
-
-### 5. Жёсткое расхождение, требующее решения до кода
-
-Strict-генератор завязан на `orders_v2.meta.document_data.fields[FLD-...]` и `context_type='order'`. Пакет работает в контексте `document_package_sessions` + `document_package_template_items` + `document_package_item_role_assignments` + `package_session.client_legal_details_id/person_id`, **без order_id**. Поэтому нужно:
-
-1. Не ломая single-document путь, разрешить strict-функции работать в режиме `context_type='package_session'` с тонким адаптером значений.
-2. Все package-only токены (`{{ln-XXXXXX}}`, `{{package.ul|ip|fl.FLD-XXXXXX}}`) пре-резолвить orchestrator-ом через `_shared/resolve-package-tokens.ts` и подмешать в общий values-pool, который strict использует вместо `meta.document_data.fields`.
-
----
-
-## Дизайн (без изменения single-document поведения)
-
-### A. Strict-функция: точечно расширить SOT, не трогая существующие ветки
-
-Добавить optional `packageContext` в body:
-
-```
-{
-  mode: 'preview' | 'generate',
-  // existing
-  order_id?: uuid,
-  template_id?: uuid,
-  idempotency_key?: string,
-  // NEW (Sprint 3I)
-  packageContext?: {
-    package_session_id: uuid,
-    package_template_id: uuid,
-    package_template_item_id: uuid,
-    profile_id: uuid,           // владелец session
-    legal_details_id?: uuid,
-    person_id?: uuid,
-    preresolved_fields: { [FLD-XXXXXX]: { value, source, ... } },
-    preresolved_warnings: string[],
-  }
+```ts
+generationContext = {
+  kind: 'order' | 'package_session',
+  profile_id,
+  context_type,                // 'order' | 'package_session'
+  context_id,                  // order_id | package_session_id
+  package_template_id?, package_item_id?, generation_batch_id?,
+  idempotency_key,             // order: текущая логика; package: `pkg:${batch_id}:${item_id}`
 }
 ```
 
-Поведение:
+### 1.4 Branching (один явный if)
 
-- Если `packageContext` присутствует — `order_id` НЕ требуется. Контракт записи:
-  - `context_type = 'package_session'`, `context_id = package_session_id`.
-  - `profile_id` берётся из `packageContext.profile_id`.
-  - `idempotency_key` (если не передан): `package_session:{session}:item:{item}:tplv:{version_id}`.
-  - В `meta` добавляются `package_template_id`, `package_item_id` (как сейчас в legacy записи), `package_template_session_id`, `package_token_resolver_warnings`.
-  - Snapshot значений = `packageContext.preresolved_fields` вместо `order.meta.document_data.fields`. Все прочие проверки (manifest, required_empty, `{{field:FLD-...}}` strict-validation, Gotenberg-convert) **не меняются**.
-- Если `packageContext` отсутствует — поведение бит-в-бит, как сегодня (см. proof: single-document regression).
+```ts
+const isPackageMode = Boolean(body.packageContext);
 
-Никаких новых таблиц, никаких миграций для строгой схемы — `ai_generated_documents` уже имеет колонки `package_template_id`, `package_item_id`, `context_type`, `context_id`.
+if (!isPackageMode) {
+  // СУЩЕСТВУЮЩИЙ order-path — не трогаем
+}
+if (isPackageMode) {
+  // package-path: order_id не требуется,
+  // skip: payment guards, snapshotOrderDocumentData, B-97 fallback, derivePaymentChannel,
+  //       offer/order resolution.
+  // docFields = packageContext.preresolved_fields (FLD-only)
+  // packageValues = packageContext.preresolved_package_fields
+  // lnValues = packageContext.preresolved_ln_tokens
+}
+```
 
-### B. Orchestrator `ai-generate-document-package`
+Запрет: размазывать `if (isPackageMode)` по всему файлу — только через `generationContext`.
 
-Полная замена тела (legacy renderer удаляется):
+### 1.5 Token validation matrix
 
-1. Auth → `profile_id`.
-2. Загружает `document_package_sessions` (по `package_session_id` из body) + `document_package_template_items` + `document_templates`.
-3. Для каждого item:
-  - Извлекает токены DOCX (через уже существующий `_shared/extract-docx-placeholders.ts` или эквивалент в strict).
-  - Резолвит `{{ln-XXXXXX}}` через `_shared/resolve-package-tokens.ts` (с `HARDCODED_ENABLED=false` — оставляем как есть; orchestrator-фаза НЕ включает hardcoded, лишь читает branch).
-  - Резолвит `{{package.ul|ip|fl.FLD-XXXXXX}}` (Sprint 3B namespace).
-  - Резолвит `{{field:FLD-XXXXXX}}` document-level/system → строит `preresolved_fields` (исключительно `FLD-XXXXXX`-ключи, т.к. strict работает только с этим форматом). Package-specific токены конвертируются в внутренние `FLD-*`-эквиваленты только если уже маппятся через `package.ul/ip/fl` namespace; `{{ln-XXXXXX}}` для strict невидимы — orchestrator подменяет их прямо в шаблоне на временные `{{field:FLD-...}}` **только в варианте B-alt** (см. ниже).
-4. Вызывает `canonical-document-generate-strict` с `mode='generate'`, `packageContext`, batch-уровень idempotency.
-5. Собирает результаты в `ai_document_generation_batches` (статусы `generated/partial/error`).
 
-### Вариант разрешения `{{ln-XXXXXX}}` без нового renderer
+| Token                                | Order mode                                | Package mode |
+| ------------------------------------ | ----------------------------------------- | ------------ |
+| `{{field:FLD-XXXXXX}}` + format/case | ✅                                         | ✅            |
+| `{{package.ul.FLD-XXXXXX}}`          | ❌ `package_token_outside_package_context` | ✅            |
+| `{{package.ip.FLD-XXXXXX}}`          | ❌ same                                    | ✅            |
+| `{{package.fl.FLD-XXXXXX}}`          | ❌ same                                    | ✅            |
+| `{{ln-XXXXXX}}`                      | ❌ `ln_token_outside_package_context`      | ✅            |
 
-Strict валидирует токены regex `^\{\{field:FLD-[0-9]+\}\}$`. У нас два пути:
 
-- **B1 (предпочитаемый):** в strict добавить разрешение для `^\{\{ln-[0-9]{6}\}\}$` **только когда** `packageContext` задан. Значение приходит в `preresolved_fields` по специальному синтетическому ключу `LN-XXXXXX`. Все остальные guards/manifest/PDF/Gotenberg/INSERT — без изменений.
-- **B2 (fallback, если B1 будет признан расширением canon):** orchestrator делает pre-pass DOCX-templater-substitution только для `ln-XXXXXX` → `{{field:FLD-XXXXXX}}` синтетических FLD из dedicated registry namespace. Требует одной миграции на reserved range FLD-9xxxxx для ln-токенов. Менее предпочтительно — фактически расширяет registry.
+Любой token, отсутствующий в `preresolved_*` (хотя `packageContext` есть) → strict error `package_token_not_preresolved` (no silent empty string).
 
-В плане выбираем **B1**, как минимально-инвазивный.
+### 1.6 DOCX/PDF/storage/audit
 
-### C. Где НЕ трогаем
-
-- `ai-generate-document` (legacy) — без изменений.
-- `_shared/document-render.ts` / `gotenberg.ts` / `convertDocxToPdf` — без изменений.
-- `ai_generated_documents` schema — без миграций.
-- billing-резолверы (`document-scenario-resolver`, `derivePaymentChannel`, `b97`) — без изменений; в package-режиме они просто не используются.
+Без изменений: тот же DOCX render, тот же Gotenberg path, тот же `ai_generated_documents.insert`. Меняется только `context_type`, `context_id`, и опциональные `package_template_id`, `package_template_item_id`, `generation_batch_id` (см. п.6).
 
 ---
 
-## Технические детали и риски
+## 2. `ai-generate-document-package` — полная замена на thin orchestrator
 
-- Strict ranges (≈600 строк ветка `mode==='generate'`) предполагают `order` объект во многих местах (profile_id, order_number, snapshot order data, audit `order_id`). Нужно ввести локальный `ctx = order ? {kind:'order', ...} : {kind:'package_session', ...}` и заменить прямые `order.profile_id`/`order.id` на `ctx.profile_id`/`ctx.entity_id`. Снизим diff, не меняя ни одной строки в `order`-ветке кода после ветвления.
-- Audit: `document.generated` уже пишется; добавить альтернативную meta-секцию `package_session_id/package_item_id` рядом с `order_id`.
-- Required-fields check в strict работает по `manifest.required` — для package items, у которых обязателен `ln-XXXXXX`, требуется поддержка required-флага для ln-токена (или просто mapping warning→`required_empty` в orchestrator). MVP — orchestrator проверяет `role_assignment_missing` **до** вызова strict и режет с понятным кодом, не входя в strict.
+### 2.1 Запрещено в файле (grep-guard в proof)
+
+`Docxtemplater`, `PizZip`, прямой `gotenberg`/`convertDocxToPdf`, прямой `supabase.from('ai_generated_documents').insert`, прямой storage upload сгенерированных файлов.
+
+### 2.2 Разрешено
+
+Load session + items + templates → preflight → build `packageContext` per item → invoke strict (service-role + `x-internal-call`) → aggregate → update `ai_document_generation_batches` → `audit_logs`.
+
+### 2.3 Body
+
+```ts
+{ package_session_id: string, run_mode?: 'user_generate' | 'admin_test' }
+```
+
+Auth: user JWT обязателен; orchestrator делает ownership-check (`session.profile_id === auth.uid()` или super_admin для `admin_test`).
+
+### 2.4 Preflight (item-level, blocker)
+
+Для каждого `document_package_template_items[i]`:
+
+1. Извлечь токены из шаблона (использовать существующий `extractDocxPlaceholders` + парсер strict).
+2. Для каждого `{{ln-XXXXXX}}`:
+  - роль есть в `document_package_role_catalog` (`public_id=ln-XXXXXX`, `package_template_id` совпадает с шаблоном пакета) — иначе `ln_token_unknown` или `ln_token_outside_bound_package`;
+  - assignment есть в `document_package_item_role_assignments` для `(package_session_id, package_template_item_id, role_catalog_id, is_active=true)` — иначе `role_assignment_missing` (blocker для generation; в Phase 3H уже warning в validator).
+3. Для каждого `{{package.(ul|ip|fl).FLD-XXXXXX}}`:
+  - найти в `packagePlaceholderCatalog` (shared с фронтом) → если нет → `package_token_unknown`;
+  - `status !== 'copy_ready'` → `package_field_not_ready`;
+  - для UL/IP: `session.selected_legal_entity_id` обязателен — иначе `package_legal_entity_not_selected`;
+  - для FL: ambiguity guard — если в item больше одной FL-роли с разными `person_id`, требуется явный role-context (из catalog item `package_resolver_hint` либо явная привязка токена к роли). Если контекст не определяется → `package_fl_role_context_missing`.
+4. Для `{{field:FLD-XXXXXX}}` системных/document/meeting/agenda — список allow-list (по `fields_registry.entity_type ∈ {system,document,meeting,agenda,decision,package}`). Биллинговые `entity_type` (см. `src/utils/billingFldGroups.ts`) в package-mode → `billing_field_in_package_template` (blocker).
+
+Если по item есть blocker → orchestrator **не вызывает** strict для этого item, item помечается `status='blocked'` с массивом errors.
+
+### 2.5 Per-item build `packageContext`
+
+- `preresolved_fields`: системные/document FLD из source-таблиц (session, item, package_template, текущая дата/номер) по уже зарегистрированному в каталоге mapping (FLD-000069, FLD-000070 и т.д.). Никаких новых FLD без manifest.
+- `preresolved_package_fields`: пройти по copy_ready `package.ul|ip|fl.FLD-*`, прочитать из `client_legal_details` (для UL/IP, через `session.selected_legal_entity_id`) и `legal_details_persons` (для FL, через `document_package_item_role_assignments.person_id`) согласно `source_path` каталога.
+- `preresolved_ln_tokens`: текстовый рендер по `document_package_role_catalog.output_template` (если есть) либо default (ФИО) на основании `legal_details_persons` назначенного человека.
+
+### 2.6 Idempotency / batch
+
+- Создать ОДНУ запись `ai_document_generation_batches(status='pending', package_session_id, run_mode, total_items, generated=0, errors=0)`.
+- Для каждого item: `idempotency_key = pkg:${batch_id}:${item_id}` передаётся в strict.
+- После всех items → пересчитать `status ∈ {generated, partial, failed, blocked}`.
+
+### 2.7 Response
+
+```ts
+{ batch_id, status, total, generated, errors, results: [{ item_id, status, document_id?, docx_url?, pdf_url?, errors? }] }
+```
 
 ---
 
-## Сценарии и DoD-proof'ы (обязательны до закрытия Sprint 3I)
+## 3. `_shared/resolve-package-tokens.ts`
 
-`.lovable/proofs/package_documents_sprint3i_orchestrator_2026_05.md` должен содержать grep/diff/runtime артефакты для следующих утверждений:
-
-1. **Single-document regression**:
-  - `canonical-document-generate-strict` вызванный без `packageContext` возвращает идентичный `resolver_version`, manifest и записывает `ai_generated_documents` с теми же ключами (`context_type='order'`, `idempotency_key` сформирован прежним образом). Снапшот сравнения preview-ответа до/после.
-2. **No new renderer**: grep
-  - `rg -n "Docxtemplater|PizZip" supabase/functions/ai-generate-document-package/index.ts` → 0 совпадений.
-  - `rg -n "document-render|_shared/gotenberg" supabase/functions/ai-generate-document-package/index.ts` → 0 (он зовёт strict, не Gotenberg напрямую).
-3. **Gotenberg only via existing pipeline**: единственный `convertDocxToPdf` остаётся в `canonical-document-generate-strict` и `_shared/gotenberg.ts`; grep по всему репо подтверждает, что новых импортов нет.
-4. **ai_generated_documents only via existing pipeline**:
-  - `rg -n "from\\(['\"]ai_generated_documents['\"]\\)\\.insert" supabase/functions/ai-generate-document-package/index.ts` → 0.
-  - Запись только из `canonical-document-generate-strict` (1 INSERT) — подтверждаем строкой.
-5. **Package preview/generate matrix** (4 кейса): minimal package (1 item, 1 ln-токен, 1 FLD-токен) — preview ok, generate ok; missing role assignment — orchestrator возвращает `role_assignment_missing` без вызова strict; required FLD пустой — strict возвращает `required_fields_empty`, orchestrator маркирует item error; `ln_token_outside_bound_package` — orchestrator режет item.
-6. **Batch aggregation**: `ai_document_generation_batches.status ∈ {generated, partial, error}` корректен; ссылки `package_template_id` + `package_item_id` в каждой записи `ai_generated_documents` присутствуют.
-7. **No legacy alias**: grep подтверждает, что в orchestrator нет `{{package.role.PKR-...}}` или `{{package.roles.*}}` обработки.
+- Публичная обёртка `resolvePackageToken` остаётся с `HARDCODED_ENABLED=false` (не трогаем).
+- Orchestrator/strict импортируют `resolvePackageTokenCore` напрямую только во внутреннем package generation path. В proof — grep:
+  - `rg "resolvePackageTokenCore" src/` → 0 (кроме тестов);
+  - import есть только в `supabase/functions/ai-generate-document-package/` и `supabase/functions/canonical-document-generate-strict/` (если strict сам вызовет на validation) и в `*.test.ts`.
 
 ---
 
-## Затрагиваемые файлы
+## 4. Shared `packagePlaceholderCatalog`
 
-- `supabase/functions/canonical-document-generate-strict/index.ts` — добавить ветку `packageContext` (без изменения order-ветки). +~80 строк, 0 удалений.
-- `supabase/functions/ai-generate-document-package/index.ts` — **полная замена** legacy-renderer на orchestrator. −380 строк / +~180 строк.
-- `supabase/functions/_shared/resolve-package-tokens.ts` — без структурных изменений, использование existing branch (`HARDCODED_ENABLED` остаётся `false` — флаг будет включён в отдельной финальной Phase 3I-flip, не в этом плане).
-- `src/hooks/useAiDocumentPackageGeneration.ts` — параметры остаются (`package_template_id`, `legal_details_id?`, `person_id?`, `signer_link_id?`) + новый обязательный `package_session_id` (пакетная сессия — SOT назначений). Минимальный diff в форме старта пакета.
-- Документация: `.lovable/plan.md`, новый proof, обновление `mem://architecture/documents/package-document-level-questionnaires-v1.md` и `mem://index.md`.
+Sprint 3D-каталог уже есть в `src/utils/packagePlaceholderCatalog.ts`. Орchестратор внутри edge-функции должен использовать ТУ ЖЕ таблицу. Делаем зеркало в `supabase/functions/_shared/packagePlaceholderCatalog.ts` (точная копия данных + helper `findByPackageToken`). Тест: проверка, что список `tech_key`+`reused_fld`+`source_path` идентичен фронтовому SOT.
 
-## Вне scope (явно)
+Никаких новых FLD и новых source mapping в этой фазе.
 
-- Включение `HARDCODED_ENABLED=true` для package-resolver (отдельная Phase 3I-flip).
-- Любые изменения billing/customer/executor resolver'ов.
-- Email/Telegram автоотправка пакетных документов.
-- Расширение `document_token_registry` под ln-токены (B2 fallback).
-- Изменения `canonical-template-audit`, `gotenberg-*`, `_shared/document-render.ts`.
+---
+
+## 5. UI / hooks — минимальные изменения
+
+В этой фазе UI кнопку не подключаем. `useAiDocumentPackageGeneration` обновить только до нового контракта (`package_session_id`, опц. `run_mode`), но не вызывать из новых мест. Существующие места вызова (если есть) — пометить TODO Phase 3I-B и не ломать TypeScript.
+
+---
+
+## 6. Discovery перед миграциями (без миграций в этой фазе, если не нужно)
+
+Проверить SQL:
+
+- `ai_document_generation_batches` — есть ли колонки `package_session_id`, `run_mode`, `total_items`, `generated`, `errors`, `status`;
+- `ai_generated_documents` — есть ли `generation_batch_id`, `package_template_id`, `package_template_item_id`, поддерживается ли `context_type='package_session'`.
+
+Если **всё есть** → миграций не делаем.
+Если чего-то не хватает → **сначала** мини-discovery proof, **потом** одна точечная миграция в этой же фазе (CREATE/ALTER + GRANT). Никаких новых сущностей сверх перечисленных.
+
+---
+
+## 7. Proof (обязателен для закрытия фазы)
+
+Файл `.lovable/proofs/sprint_3i_a_package_backend_<date>.md`:
+
+1. **Baseline strict (order)** — снапшот из п.0.
+2. **Regression strict (order)** — повтор того же вызова после правок: `resolver_version`, `token_manifest_snapshot`, warnings, `context_type`, `idempotency_key`, наличие DOCX/PDF — идентичны baseline. Diff = 0 значимых полей.
+3. **Greps (приложить вывод)**:
+  - `rg -n "Docxtemplater|PizZip" supabase/functions/ai-generate-document-package/` → 0
+  - `rg -n "gotenberg|convertDocxToPdf" supabase/functions/ai-generate-document-package/` → 0
+  - `rg -n "ai_generated_documents'\)\.insert\|from\(.ai_generated_documents.\)" supabase/functions/ai-generate-document-package/` → 0
+  - `rg -n "resolvePackageTokenCore" src/` → 0
+4. **Runtime package generation** на реальном тестовом пакете:
+  - ≥1 item;
+  - ≥1 `{{ln-XXXXXX}}` с заполненным assignment;
+  - ≥1 `{{package.ul.FLD-XXXXXX}}` ИЛИ `{{package.ip.FLD-XXXXXX}}`;
+  - ≥1 системный `{{field:FLD-000069}}` / `{{field:FLD-000070}}`;
+  - выход: DOCX url, PDF url, запись `ai_generated_documents` с `context_type='package_session'`, `generation_batch_id`, `package_template_id`, `package_template_item_id`.
+5. **Missing assignment scenario**: убрать assignment одной роли → orchestrator не зовёт strict для этого item, возвращает `role_assignment_missing`, batch status `partial`/`blocked`.
+6. **Outside-context scenario**: вызвать strict в order-mode с шаблоном, содержащим `{{ln-...}}` → strict вернёт `ln_token_outside_package_context`.
+7. **Service-role guard**: попытка дернуть strict с `packageContext` обычной user-JWT → 403 `package_context_forbidden`.
+8. **Billing-token-in-package guard**: package-template с `{{field:FLD-<customer_*>}}` → preflight `billing_field_in_package_template`.
+
+---
+
+## 8. Что НЕ делаем в Phase 3I-A
+
+- UI «Сформировать пакет» (user) и «Тестово сформировать» (admin).
+- Per-item UI с результатами/скачиванием.
+- Package generation history page.
+- `HARDCODED_ENABLED=true` flip публичной обёртки.
+- Email/Telegram авто-отправка.
+- Любые новые FLD, новые `source_path`, расширение `document_token_registry` за пределы того, что уже есть в `packagePlaceholderCatalog`.
+
+---
+
+## Технический раздел: файлы, которые будут затронуты
+
+- `supabase/functions/canonical-document-generate-strict/index.ts` — `packageContext` branch, service-role guard, token validation matrix, единый `generationContext`. Order-path не модифицируется логически.
+- `supabase/functions/ai-generate-document-package/index.ts` — полная замена на thin orchestrator. Legacy renderer-импорты удаляются.
+- `supabase/functions/_shared/packagePlaceholderCatalog.ts` — зеркало SOT с фронта (read-only data + `findByPackageToken`).
+- `supabase/functions/_shared/resolve-package-tokens.ts` — без структурных изменений; экспорт `resolvePackageTokenCore` уже есть.
+- `src/hooks/useAiDocumentPackageGeneration.ts` — контракт сужается до `{ package_session_id, run_mode? }`. Существующие call sites адаптируются под новый ввод, но кнопок/новых UI не добавляем.
+- (опционально) одна точечная миграция: ALTER `ai_generated_documents` / `ai_document_generation_batches` — только если discovery в п.6 покажет нехватку. Иначе — без миграций.
+- `.lovable/proofs/sprint_3i_a_strict_baseline_*.md`, `.lovable/proofs/sprint_3i_a_package_backend_*.md`.
+- `.lovable/plan.md` — фиксация фазы.
+- Memory: дополнить `mem://architecture/documents/package-document-level-questionnaires-v1.md` секцией про strict packageContext + thin orchestrator; обновить `mem://index.md` одной строкой.
 
 ## Definition of Done
 
-- Single-document path не сломан (regression proof #1).
-- Пакет с ≥2 items + ≥1 `{{ln-XXXXXX}}` + ≥1 `{{field:FLD-XXXXXX}}` генерируется полностью через strict (proof #5).
-- Все 7 proof-пунктов выполнены и закоммичены.
-- Legacy renderer удалён из `ai-generate-document-package/index.ts`.
-- Memory + index.md синхронизированы.
+1. Baseline + regression strict order-generation — идентичны (proof п.1, п.2).
+2. Orchestrator — thin, без legacy renderer/Gotenberg/insert (greps п.3).
+3. Реальный пакет генерируется через strict; DOCX + PDF + `ai_generated_documents(context_type='package_session')` (п.4).
+4. Все preflight/guard сценарии работают (п.5–п.8).
+5. Никаких новых FLD/source mapping; package-резолв только по `copy_ready` каталогу.
+6. UI остался без новых кнопок; Phase 3I-B можно начинать на готовой backend-поверхности.
