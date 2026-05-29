@@ -1300,25 +1300,29 @@ Deno.serve(async (req) => {
       };
       await supabase.from('audit_logs').insert({
         actor_user_id: userId,
-        actor_type: 'user',
+        actor_type: auditActorType,
         action: 'document.pdf_converted',
-        meta: { template_id: tpl.id, order_id: order.id, ...gotenbergMeta },
+        meta: { template_id: tpl.id, ...auditContext, ...gotenbergMeta },
       });
     } catch (e: any) {
       const code = e instanceof GotenbergError ? e.code : 'GOTENBERG_UNREACHABLE';
       const msg = e?.message || 'gotenberg_failed';
       await supabase.from('audit_logs').insert({
         actor_user_id: userId,
-        actor_type: 'user',
+        actor_type: auditActorType,
         action: 'document.pdf_failed',
-        meta: { template_id: tpl.id, order_id: order.id, code, error: msg, idempotency_key: idempotencyKey },
+        meta: { template_id: tpl.id, ...auditContext, code, error: msg, idempotency_key: idempotencyKey },
       });
       return json({ error: 'pdf_conversion_failed', code, message: msg }, 502);
     }
 
     const ts = Date.now();
-    const docxPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.docx`;
-    const pdfPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
+    const pathPrefix = generationContext === 'package_session'
+      ? `generated/package/${packageContext!.package_session_id}`
+      : `generated/${order.id}`;
+    const docxPath = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.docx`;
+    const pdfPath = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
+
 
     const upPdf = await supabase.storage.from('documents').upload(pdfPath, pdfBuffer, {
       contentType: 'application/pdf',
