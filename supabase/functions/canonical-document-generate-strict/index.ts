@@ -1080,6 +1080,37 @@ Deno.serve(async (req) => {
       caseReasonByPlaceholder[t.raw_inside] = caseReason;
     }
 
+    // ── Sprint 3I-A-1.B: resolve package/ln tokens from preresolved bags ──
+    // Reuses the SAME `resolved` map → same Docxtemplater render below.
+    if (generationContext === 'package_session') {
+      for (const pt of parsedPackageTokens) {
+        const bag = pt.kind === 'ln'
+          ? packageContext!.preresolved_ln_tokens
+          : packageContext!.preresolved_package_fields;
+        const entry: any = (bag as any)[pt.bag_key];
+        let outVal = fmtVal(entry?.value);
+        let caseApplied = false;
+        let caseReason: string | null = null;
+        if (pt.case_modifier) {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+          else { caseReason = inf.reason || 'inflection_unsafe'; }
+        }
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : 'package_requisite'),
+          kind: pt.kind,
+          bag_key: pt.bag_key,
+          value: outVal,
+          case_applied: caseApplied,
+          case_reason: caseReason,
+        };
+      }
+    }
+
+
+
     for (const fid of allIds) {
       const entry = baseEntryByFld[fid];
       const reg: any = regMap.get(fid);
