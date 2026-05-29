@@ -60,8 +60,11 @@ interface TemplateChoice {
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-const RX_PACKAGE_ROLE = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-const RX_PACKAGE_ROLES_LEGACY = /^package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?$/;
+// Sprint 3H canon — Word-friendly role token.
+const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
+// Sprint 3H legacy → error (не warning): реальных шаблонов нет (Sprint 3G §7).
+const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
+const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
 
 function classify(
@@ -74,16 +77,15 @@ function classify(
     return { token, severity: "valid", code: "package_requisite_ok",
       hint: "Package-aware реквизит, читается из document_package_sessions." };
   }
-  if (RX_PACKAGE_ROLE.test(inside)) {
+  if (RX_PACKAGE_ROLE_LN.test(inside)) {
     return { token, severity: "valid", code: "package_role_ok",
-      hint: "Канонический формат роли пакета (один токен → output_template)." };
+      hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
-  if (RX_PACKAGE_ROLES_LEGACY.test(inside)) {
-    return { token, severity: "warning", code: "deprecated_package_roles_syntax",
-      hint: "Устаревший синтаксис {{package.roles.<role>.<attr>}}. Заменить на {{package.role.PKR-XXXXXX}}." };
+  if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
+    return { token, severity: "error", code: "invalid_legacy_role_placeholder",
+      hint: "Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли»." };
   }
   if (RX_SYSTEM_FLD.test(inside)) {
-    // Извлекаем FLD-ID из токена и проверяем entity_type.
     const m = inside.match(/FLD-\d{6}/);
     const fldId = m ? m[0] : null;
     const entityType = fldId ? fldEntityTypes.get(fldId) : null;

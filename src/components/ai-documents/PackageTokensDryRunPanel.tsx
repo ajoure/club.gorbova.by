@@ -19,6 +19,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useSuperAdmin } from "@/hooks/useSuperAdmin";
 import { Badge } from "@/components/ui/badge";
 
+// Sprint 3H: устаревшие alias-токены {{package.roles.<role>.*}} архивированы
+// в БД (document_package_token_aliases.archived_at NOT NULL). Этот dev-блок
+// сохранён для проверки legacy-резолвера: ожидаемый результат для всех 4 строк —
+// resolved=false / code=alias_missing. Канонический токен роли пакета —
+// {{ln-XXXXXX}}, его dry-run будет подключён вместе с edge-резолвером ln-ветки.
 const KNOWN_ALIASES = [
   "package.roles.company_head.full_name",
   "package.roles.company_head.position",
