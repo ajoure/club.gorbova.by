@@ -391,6 +391,17 @@ Deno.serve(async (req) => {
       if (!orderId) return json({ error: 'order_id_required' }, 400);
     }
 
+    // ── Order-mode preflight + snapshot + B97 fallback ───────────────────
+    // Package-mode skips this block entirely: orchestrator already
+    // pre-resolved every value into packageContext.
+    let order: any;
+    let docFields: Record<string, any>;
+    let b97FallbackApplied = 0;
+    let b97FallbackNonEmpty = 0;
+    let b97LiveCustomer: any = null;
+    let b97LiveExecutor: any = null;
+
+    if (generationContext === 'order') {
     // ── PATCH-A: load order для общих проверок (hard-stop guards) ─────────
     const { data: ordRow } = await supabase
       .from('orders_v2')
