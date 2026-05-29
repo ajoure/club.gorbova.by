@@ -440,6 +440,15 @@ export function TemplateMarkupDialog({
   const [showReplacements, setShowReplacements] = useState(false);
   const [showAutoSuggest, setShowAutoSuggest] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  /**
+   * Scope шаблона. Используется только для классификации plain-токенов в DOCX.
+   * Источник истины (по приоритету):
+   *   1. `document_templates.template_scope` — если 'package' или 'billing';
+   *   2. наличие строки в `document_package_template_items` → 'package';
+   *   3. иначе 'unknown' — package/ln считаются valid (не подсвечиваются).
+   * Никаких слепых default='package'/'billing' — это требование Phase 3I-A.
+   */
+  const [templateScope, setTemplateScope] = useState<TemplateMarkupScope>("unknown");
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   // Picker state — single FieldPickerPopover used for: header button, legacy click, chip click
