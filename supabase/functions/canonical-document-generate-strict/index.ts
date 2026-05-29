@@ -537,6 +537,22 @@ Deno.serve(async (req) => {
     }
     } // end of generationContext === 'order' (guards block)
 
+    // ── Sprint 3I-A-1 hotfix gate ────────────────────────────────────────
+    // Parallel package renderer (_shared/package-strict-handler.ts) was
+    // deleted. Full package-mode wiring into the single render/PDF/persist
+    // pipeline below is deferred to Phase 3I-A-2. Until then, package-mode
+    // calls short-circuit with a clear, non-fatal error so the orchestrator
+    // records per-item `package_mode_not_wired_in_strict` instead of
+    // silently dispatching to a non-existent module.
+    if (generationContext === 'package_session') {
+      return json({
+        error: 'package_mode_not_wired_in_strict',
+        message:
+          'Sprint 3I-A-1 hotfix: parallel renderer removed; canonical strict '
+          + 'pipeline integration pending Phase 3I-A-2.',
+      }, 501);
+    }
+
     // Load template + active version — common to order and package modes.
     const { data: tpl } = await supabase
       .from('document_templates')
