@@ -25,7 +25,7 @@
  * Все мутирующие действия — отдельной кнопкой в админ-панели шаблонов,
  * через канонические пути (uploaded DOCX → version → markup → activate).
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, ShieldCheck, Loader2, Upload } from "lucide-react";
 import mammoth from "mammoth";
+import { isBillingEntityType } from "@/utils/billingFldGroups";
 
 interface Props {
   packageTemplateId: string | null;
@@ -63,7 +64,11 @@ const RX_PACKAGE_ROLE = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_ROLES_LEGACY = /^package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?$/;
 const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
 
-function classify(inside: string, isPackageScope: boolean): Finding {
+function classify(
+  inside: string,
+  isPackageScope: boolean,
+  fldEntityTypes: Map<string, string>,
+): Finding {
   const token = `{{${inside}}}`;
   if (RX_PACKAGE_REQ.test(inside)) {
     return { token, severity: "valid", code: "package_requisite_ok",
@@ -78,12 +83,16 @@ function classify(inside: string, isPackageScope: boolean): Finding {
       hint: "Устаревший синтаксис {{package.roles.<role>.<attr>}}. Заменить на {{package.role.PKR-XXXXXX}}." };
   }
   if (RX_SYSTEM_FLD.test(inside)) {
-    if (isPackageScope) {
+    // Извлекаем FLD-ID из токена и проверяем entity_type.
+    const m = inside.match(/FLD-\d{6}/);
+    const fldId = m ? m[0] : null;
+    const entityType = fldId ? fldEntityTypes.get(fldId) : null;
+    if (isPackageScope && entityType && isBillingEntityType(entityType)) {
       return { token, severity: "warning", code: "billing_fld_in_package_scope",
-        hint: "Системный {{field:FLD-...}} в package-шаблоне. Если это биллинговое поле — замените на {{package.ul|ip|fl.FLD-XXXXXX}}." };
+        hint: "Этот плейсхолдер относится к биллинговым реквизитам. Для реквизитов пакета используйте {{package.ul|ip|fl.FLD-XXXXXX}}." };
     }
     return { token, severity: "valid", code: "system_field_ok",
-      hint: "Системное поле каталога — допустимо." };
+      hint: "Системное/документное поле каталога — допустимо в пакетном шаблоне." };
   }
   if (RX_LEGACY_PREFIX.test(inside)) {
     return { token, severity: "error", code: "legacy_placeholder_format_detected",
@@ -118,6 +127,25 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     enabled: !!packageTemplateId,
   });
 
+  // Sprint 3G: загружаем mapping FLD-XXXXXX → entity_type для классификации
+  // биллинговых полей. Без этого все системные FLD выглядели как warning.
+  const fldEntityTypesQuery = useQuery({
+    queryKey: ["fields-registry-entity-types"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("fields_registry")
+        .select("public_id, entity_type")
+        .is("archived_at", null);
+      if (error) throw error;
+      const map = new Map<string, string>();
+      for (const r of (data ?? []) as any[]) {
+        if (r.public_id && r.entity_type) map.set(r.public_id, r.entity_type);
+      }
+      return map;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const isPackageScope = true; // validation runs in package context by definition
 
   const runOnArrayBuffer = useCallback(async (ab: ArrayBuffer, label: string) => {
@@ -127,11 +155,12 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       const text = result.value ?? "";
       const seen = new Set<string>();
       const out: Finding[] = [];
+      const fldMap = fldEntityTypesQuery.data ?? new Map<string, string>();
       for (const m of text.matchAll(ANY_PLACEHOLDER_RE)) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        out.push(classify(inside, isPackageScope));
+        out.push(classify(inside, isPackageScope, fldMap));
       }
       setFindings(out);
       setSourceLabel(label);
@@ -144,7 +173,7 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     } finally {
       setScanning(false);
     }
-  }, [isPackageScope]);
+  }, [isPackageScope, fldEntityTypesQuery.data]);
 
   const handleFile = async (file: File | null) => {
     if (!file) return;

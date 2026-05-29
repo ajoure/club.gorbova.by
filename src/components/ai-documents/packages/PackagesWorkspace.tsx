@@ -26,6 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Boxes } from "lucide-react";
 import { useRbac } from "@/hooks/useRbac";
 import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
+import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
@@ -134,7 +135,7 @@ export function PackagesWorkspace() {
               </TabsTrigger>
             )}
             <TabsTrigger value="anketa">
-              <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкета пакета
+              <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкеты документов
             </TabsTrigger>
             {isAdmin && (
               <TabsTrigger value="roles">
@@ -162,15 +163,12 @@ export function PackagesWorkspace() {
           )}
 
           <TabsContent value="anketa">
-            {/* Существующий UI анкеты «Идеология». Для остальных пакетов —
-                заглушка, пока их анкета не описана. */}
-            {selectedPackage.code === "ideology" ? (
-              <DocumentPackageIdeologyView />
-            ) : (
-              <GlassCard className="p-6 text-center text-sm text-muted-foreground">
-                Анкета для пакета «{selectedPackage.name}» появится позже.
-              </GlassCard>
-            )}
+            {/* Sprint 3G: document-level questionnaires — каждый шаблон
+                имеет собственный набор ролей и физлиц. */}
+            <DocumentPackageQuestionnairesView
+              packageTemplateId={selectedPackage.id}
+              packageName={selectedPackage.name}
+            />
           </TabsContent>
 
           {isAdmin && (
