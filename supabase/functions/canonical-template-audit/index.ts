@@ -31,6 +31,7 @@ const corsHeaders = {
 
 const ALLOWED_EVENTS = new Set([
   'document_template.uploaded',
+  'document_template.version_uploaded',
   'document_template.preview_opened',
   'document_template.validation_failed',
   'document_template.validation_passed',
