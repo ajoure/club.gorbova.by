@@ -1,3 +1,15 @@
+# Phase 3I-A-2 Hotfix — статус 2026-05-29
+
+**OPEN: Phase 3I-A runtime proof partial.**
+
+- ✅ F1 (system FLD-000209/211 в orchestrator) — PASS. Item «Положение» сгенерирован end-to-end (DOCX+PDF в storage, `ai_generated_documents.context_type='package_session'`, batch/template/item ids в meta, idempotency_key канонический). См. `.lovable/proofs/sprint_3i_a_2_hotfix_f1_f2_runtime_2026_05.md`.
+- ❌ F2 (legacy `package.role.PKR-000012` в DOCX «Приказа») — НЕ закрыт: фактический файл в storage всё ещё содержит старый токен. Пользователю нужно повторно загрузить DOCX как новую version шаблона через UI; замена в Word не была сохранена в storage.
+- Memory как completed не обновляется. Phase 3I-B UI не начинаем.
+
+Следующий шаг: после re-upload `Шаблон - Приказ об организации идеологической работы` повторить `POST /ai-generate-document-package {package_session_id:'b0b229b7-…', run_mode:'admin_test'}` — оба item должны вернуть `generated`. Только тогда — closeout Phase 3I-A и переход к Phase 3I-B.
+
+---
+
 # Да, согласен, с учетом правок:
 
 План правильный: он закрывает именно текущие два блокера F1/F2 и не трогает strict/generation pipeline. Но нужно поправить несколько моментов перед выполнением.
