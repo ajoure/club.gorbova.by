@@ -23,10 +23,10 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
-import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
 import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
 import { InlineCreateRoleDialog } from "./packages/InlineCreateRoleDialog";
 import { useRbac } from "@/hooks/useRbac";
+import { useSuperAdmin } from "@/hooks/useSuperAdmin";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
@@ -92,7 +92,12 @@ export function DocumentPackageIdeologyView() {
   const aiPersons = useAiPersons();
   const pkg = useDocumentPackageSession("ideology");
   const rbac = useRbac();
+  const { data: isSuperAdmin } = useSuperAdmin();
   const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
+  const showDevDryRun =
+    !!isSuperAdmin &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("debug") === "1";
 
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
@@ -192,19 +197,8 @@ export function DocumentPackageIdeologyView() {
 
   return (
     <div className="space-y-4">
-      {/* Блок A. Состав пакета (read-only) */}
-      <GlassCard className="p-4">
-        <StrictDocumentTemplatesManager
-          embedded
-          readOnly
-          categoryFilter="ideology"
-          title="Состав пакета «Идеология»"
-          subtitle={<>Шаблоны документов, входящие в пакет. Список наполняется администратором.</>}
-          emptyText="В пакете «Идеология» пока нет готовых шаблонов. Администратор добавит их позже."
-        />
-      </GlassCard>
-
-      {/* Блок B. Анкета */}
+      {/* Анкета пакета (Sprint 3F Phase 2d: блок «Состав пакета» убран —
+          состав показывается в отдельной подвкладке «Состав»). */}
       <GlassCard className="p-4">
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <FileText className="h-5 w-5 text-indigo-500" />
@@ -398,8 +392,11 @@ export function DocumentPackageIdeologyView() {
           </Button>
         </div>
 
-        {/* Sprint 3C: dev-only dry-run панель, видна только super_admin. */}
-        <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
+        {/* Sprint 3F Phase 2d: dev-only dry-run скрыт из обычного UI;
+            виден только при двойном guard: super_admin + ?debug=1. */}
+        {showDevDryRun && (
+          <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
+        )}
       </GlassCard>
 
       {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}
