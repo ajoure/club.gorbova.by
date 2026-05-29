@@ -140,11 +140,15 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
   const [hydratedLegal, setHydratedLegal] = useState(false);
   useEffect(() => {
-    if (sessionQuery.isLoading) return;
+    // Bugfix 2026-05: в react-query v5 `isLoading=false` для disabled-запросов,
+    // поэтому старая проверка `sessionQuery.isLoading` срабатывала ДО того,
+    // как сам запрос успевал стартовать (когда profileId ещё не resolved),
+    // и фиксировала legalEntityId=null навсегда. Дожидаемся `isFetched`.
+    if (!sessionQuery.isFetched) return;
     if (hydratedLegal) return;
     setLegalEntityId(sessionQuery.data?.selected_legal_entity_id ?? null);
     setHydratedLegal(true);
-  }, [sessionQuery.isLoading, sessionQuery.data, hydratedLegal]);
+  }, [sessionQuery.isFetched, sessionQuery.data, hydratedLegal]);
 
   const legalEntities = useMemo(
     () => aiEntities.allEntities.filter(

@@ -23,7 +23,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Boxes } from "lucide-react";
+import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Boxes, Sparkles } from "lucide-react";
 import { useRbac } from "@/hooks/useRbac";
 import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
@@ -31,6 +31,7 @@ import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageContentsList } from "./PackageContentsList";
+import { PackageGenerationPanel } from "./PackageGenerationPanel";
 
 interface PackageOption {
   id: string;
@@ -147,6 +148,9 @@ export function PackagesWorkspace() {
                 <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Проверка шаблонов
               </TabsTrigger>
             )}
+            <TabsTrigger value="generation">
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Генерация
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="contents">
@@ -182,6 +186,13 @@ export function PackagesWorkspace() {
               <PackageTemplateValidationPanel packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
+
+          <TabsContent value="generation">
+            <PackageGenerationPanel
+              packageCode={selectedPackage.code}
+              packageName={selectedPackage.name}
+            />
+          </TabsContent>
         </Tabs>
       ) : (
         <GlassCard className="p-6 text-center text-sm text-muted-foreground">
