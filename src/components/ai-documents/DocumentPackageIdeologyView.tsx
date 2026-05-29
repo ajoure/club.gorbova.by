@@ -392,8 +392,11 @@ export function DocumentPackageIdeologyView() {
           </Button>
         </div>
 
-        {/* Sprint 3C: dev-only dry-run панель, видна только super_admin. */}
-        <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
+        {/* Sprint 3F Phase 2d: dev-only dry-run скрыт из обычного UI;
+            виден только при двойном guard: super_admin + ?debug=1. */}
+        {showDevDryRun && (
+          <PackageTokensDryRunPanel packageSessionId={pkg.session?.id ?? null} />
+        )}
       </GlassCard>
 
       {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}
