@@ -242,6 +242,11 @@ const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // но STRICT_FIELD_RE — нет, классифицируем как `unknown_modifier`, а не как legacy.
 const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
+// ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
+const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
+const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
 interface ParsedToken {
   raw_inside: string;            // 'field:FLD-1|format=words|case=genitive'
