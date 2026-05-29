@@ -242,6 +242,11 @@ const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // но STRICT_FIELD_RE — нет, классифицируем как `unknown_modifier`, а не как legacy.
 const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
+// ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
+const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
+const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
 interface ParsedToken {
   raw_inside: string;            // 'field:FLD-1|format=words|case=genitive'
@@ -537,21 +542,9 @@ Deno.serve(async (req) => {
     }
     } // end of generationContext === 'order' (guards block)
 
-    // ── Sprint 3I-A-1 hotfix gate ────────────────────────────────────────
-    // Parallel package renderer (_shared/package-strict-handler.ts) was
-    // deleted. Full package-mode wiring into the single render/PDF/persist
-    // pipeline below is deferred to Phase 3I-A-2. Until then, package-mode
-    // calls short-circuit with a clear, non-fatal error so the orchestrator
-    // records per-item `package_mode_not_wired_in_strict` instead of
-    // silently dispatching to a non-existent module.
-    if (generationContext === 'package_session') {
-      return json({
-        error: 'package_mode_not_wired_in_strict',
-        message:
-          'Sprint 3I-A-1 hotfix: parallel renderer removed; canonical strict '
-          + 'pipeline integration pending Phase 3I-A-2.',
-      }, 501);
-    }
+    // ── Sprint 3I-A-1.B: package-mode now flows through the unified
+    // render/PDF/persist pipeline below. NO short-circuit, NO second renderer.
+
 
     // Load template + active version — common to order and package modes.
     const { data: tpl } = await supabase
@@ -675,7 +668,19 @@ Deno.serve(async (req) => {
         currency: null,
         status: 'paid',
       };
+      // Pre-fill docFields from packageContext.preresolved_fields so the
+      // existing field:FLD-* resolver picks values up without modification.
+      // Keys in preresolved_fields are bare 'FLD-XXXXXX' (matches docFields).
       docFields = {};
+      const _nowPkg = new Date().toISOString();
+      for (const [fid, entry] of Object.entries(packageContext!.preresolved_fields || {})) {
+        if (!entry) continue;
+        docFields[fid] = {
+          value: (entry as any).value,
+          source: (entry as any).source || 'package_preresolved',
+          updated_at: _nowPkg,
+        };
+      }
     }
 
     // C5-G: канонические FLD для номера и даты документа
@@ -688,11 +693,9 @@ Deno.serve(async (req) => {
     const buf = await dl.data.arrayBuffer();
 
     // Parse tokens — допустимы:
-    //   field:FLD-XXXXXX
-    //   field:FLD-XXXXXX|format=words
-    //   field:FLD-XXXXXX|format=text
-    //   field:FLD-XXXXXX|case=<allowed>
-    //   field:FLD-XXXXXX|format=words|case=<allowed>
+    //   field:FLD-XXXXXX[|format=...][|case=...]                — order + package
+    //   package.(ul|ip|fl).FLD-XXXXXX[|case=...]                 — package only
+    //   ln-XXXXXX[|case=...]                                     — package only
     const zip = new PizZip(buf);
     const rawXml = extractDocumentXmlText(zip);
     const flat = stripXml(rawXml);
@@ -700,12 +703,82 @@ Deno.serve(async (req) => {
     const legacyTokens: string[] = [];
     const unknownModifierTokens: string[] = [];
     const parsedTokens: ParsedToken[] = [];
+    // Sprint 3I-A-1.B: package/ln tokens collected here (package_session only).
+    interface ParsedPkgToken {
+      raw_inside: string;
+      kind: 'package' | 'ln';
+      bag_key: string;
+      case_modifier: string | null;
+    }
+    const parsedPackageTokens: ParsedPkgToken[] = [];
+    const packageTokensOutsideContext: string[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
+
+      // 1) Legacy package-role syntaxes ({{package.role.PKR-…}}, {{package.roles.<key>.*}})
+      //    are forbidden everywhere — canonical роль теперь {{ln-XXXXXX}}.
+      if (LEGACY_PKG_ROLE_RE.test(inside)) {
+        legacyTokens.push(`{{${inside}}}`);
+        continue;
+      }
+
+      // 2) Package requisite token {{package.(ul|ip|fl).FLD-XXX[|case=…]}}
+      const pkgMatch = inside.match(PKG_REQ_RE);
+      if (pkgMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (pkgMatch[3] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'package',
+          bag_key: `package.${pkgMatch[1]}.${pkgMatch[2]}`,
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+      // 3) Role token {{ln-XXXXXX[|case=…]}}
+      const lnMatch = inside.match(LN_TOKEN_RE);
+      if (lnMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (lnMatch[2] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'ln',
+          bag_key: lnMatch[1],
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+      // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
         continue;
       }
+
+      // 5) Strict field:FLD-XXX parser (with format/case).
       const p = parseStrictTokenInside(inside);
       if ('error' in p) {
         if (p.error === 'unknown_modifier') unknownModifierTokens.push(`{{${inside}}}`);
@@ -730,6 +803,51 @@ Deno.serve(async (req) => {
         unknown_modifier_tokens: Array.from(new Set(unknownModifierTokens)),
       }, 400);
     }
+    if (packageTokensOutsideContext.length > 0) {
+      // package.* or ln-* used in an order-mode template — never silent.
+      return json({
+        error: 'package_token_outside_package_context',
+        tokens: Array.from(new Set(packageTokensOutsideContext)),
+      }, 400);
+    }
+
+    // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
+    // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
+    // preresolved and is not a system-allocated FLD (000069/000070).
+    if (generationContext === 'package_session') {
+      const missingPkg: string[] = [];
+      for (const pt of parsedPackageTokens) {
+        const bag = pt.kind === 'ln'
+          ? packageContext!.preresolved_ln_tokens
+          : packageContext!.preresolved_package_fields;
+        if (!bag || !Object.prototype.hasOwnProperty.call(bag, pt.bag_key)) {
+          missingPkg.push(`{{${pt.raw_inside}}}`);
+        }
+      }
+      if (missingPkg.length > 0) {
+        return json({
+          error: 'package_token_not_preresolved',
+          tokens: Array.from(new Set(missingPkg)),
+        }, 400);
+      }
+      const _systemFlds = new Set<string>(['FLD-000069', 'FLD-000070']);
+      const preresolvedKeys = new Set<string>(
+        Object.keys(packageContext!.preresolved_fields || {}),
+      );
+      const missingFld: string[] = [];
+      for (const fid of foundIds) {
+        if (_systemFlds.has(fid)) continue;
+        if (!preresolvedKeys.has(fid)) missingFld.push(fid);
+      }
+      if (missingFld.length > 0) {
+        return json({
+          error: 'package_field_not_preresolved',
+          fields: missingFld,
+        }, 400);
+      }
+    }
+
+
 
     // Required map from token_manifest (если задано)
     const manifest = (Array.isArray(ver.token_manifest) ? ver.token_manifest : []) as any[];
@@ -769,9 +887,39 @@ Deno.serve(async (req) => {
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
 
-    const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
-      ? String(body.idempotency_key).trim()
-      : `strict:${tpl.id}:${ver.id}:${order.id}`;
+    const idempotencyKey: string = generationContext === 'package_session'
+      ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`
+      : ((typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
+          ? String(body.idempotency_key).trim()
+          : `strict:${tpl.id}:${ver.id}:${order.id}`);
+    // Sprint 3I-A-1.B: shared context fields used by pre-create, persist, audit.
+    const ctxType: 'order' | 'package_session' =
+      generationContext === 'package_session' ? 'package_session' : 'order';
+    const ctxId: string = generationContext === 'package_session'
+      ? packageContext!.package_session_id
+      : order.id;
+    const docTitle: string = generationContext === 'package_session'
+      ? (packageContext!.title_override || tpl.name)
+      : `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`;
+    const packageMetaExtras: Record<string, unknown> = generationContext === 'package_session'
+      ? {
+          package_template_id: packageContext!.package_template_id,
+          package_item_id: packageContext!.package_template_item_id,
+          generation_batch_id: packageContext!.generation_batch_id,
+          actor_type: 'system',
+          source: 'package_orchestrator',
+        }
+      : {};
+    const auditContext: Record<string, unknown> = generationContext === 'package_session'
+      ? {
+          package_session_id: packageContext!.package_session_id,
+          package_template_id: packageContext!.package_template_id,
+          package_item_id: packageContext!.package_template_item_id,
+          generation_batch_id: packageContext!.generation_batch_id,
+        }
+      : { order_id: order.id };
+    const auditActorType: string = generationContext === 'package_session' ? 'system' : 'user';
+
     let preCreatedDocId: string | null = null;
     let allocatedNumber: string | null = null;
     let allocatedDate: string | null = null;
@@ -800,14 +948,14 @@ Deno.serve(async (req) => {
             template_source_path: ver.storage_path,
             template_version_id: ver.id,
             template_version: ver.version_number,
-            title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+            title: docTitle,
             status: 'pending',
             storage_bucket: 'documents',
             snapshot: {},
             missing_tokens: [],
-            meta: { strict: true, c5g_pre_created: true },
-            context_type: 'order',
-            context_id: order.id,
+            meta: { strict: true, c5g_pre_created: true, ...packageMetaExtras },
+            context_type: ctxType,
+            context_id: ctxId,
             idempotency_key: idempotencyKey,
             created_by: userId,
           })
@@ -931,6 +1079,37 @@ Deno.serve(async (req) => {
       appliedCaseByPlaceholder[t.raw_inside] = caseApplied;
       caseReasonByPlaceholder[t.raw_inside] = caseReason;
     }
+
+    // ── Sprint 3I-A-1.B: resolve package/ln tokens from preresolved bags ──
+    // Reuses the SAME `resolved` map → same Docxtemplater render below.
+    if (generationContext === 'package_session') {
+      for (const pt of parsedPackageTokens) {
+        const bag = pt.kind === 'ln'
+          ? packageContext!.preresolved_ln_tokens
+          : packageContext!.preresolved_package_fields;
+        const entry: any = (bag as any)[pt.bag_key];
+        let outVal = fmtVal(entry?.value);
+        let caseApplied = false;
+        let caseReason: string | null = null;
+        if (pt.case_modifier) {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+          else { caseReason = inf.reason || 'inflection_unsafe'; }
+        }
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : 'package_requisite'),
+          kind: pt.kind,
+          bag_key: pt.bag_key,
+          value: outVal,
+          case_applied: caseApplied,
+          case_reason: caseReason,
+        };
+      }
+    }
+
+
 
     for (const fid of allIds) {
       const entry = baseEntryByFld[fid];
@@ -1121,25 +1300,29 @@ Deno.serve(async (req) => {
       };
       await supabase.from('audit_logs').insert({
         actor_user_id: userId,
-        actor_type: 'user',
+        actor_type: auditActorType,
         action: 'document.pdf_converted',
-        meta: { template_id: tpl.id, order_id: order.id, ...gotenbergMeta },
+        meta: { template_id: tpl.id, ...auditContext, ...gotenbergMeta },
       });
     } catch (e: any) {
       const code = e instanceof GotenbergError ? e.code : 'GOTENBERG_UNREACHABLE';
       const msg = e?.message || 'gotenberg_failed';
       await supabase.from('audit_logs').insert({
         actor_user_id: userId,
-        actor_type: 'user',
+        actor_type: auditActorType,
         action: 'document.pdf_failed',
-        meta: { template_id: tpl.id, order_id: order.id, code, error: msg, idempotency_key: idempotencyKey },
+        meta: { template_id: tpl.id, ...auditContext, code, error: msg, idempotency_key: idempotencyKey },
       });
       return json({ error: 'pdf_conversion_failed', code, message: msg }, 502);
     }
 
     const ts = Date.now();
-    const docxPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.docx`;
-    const pdfPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
+    const pathPrefix = generationContext === 'package_session'
+      ? `generated/package/${packageContext!.package_session_id}`
+      : `generated/${order.id}`;
+    const docxPath = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.docx`;
+    const pdfPath = `${pathPrefix}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
+
 
     const upPdf = await supabase.storage.from('documents').upload(pdfPath, pdfBuffer, {
       contentType: 'application/pdf',
@@ -1211,7 +1394,7 @@ Deno.serve(async (req) => {
       template_source_path: ver.storage_path,
       template_version_id: ver.id,
       template_version: ver.version_number,
-      title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+      title: docTitle,
       status: 'generated',
       // PRIMARY = PDF (клиент видит только его)
       file_path: pdfPath,
@@ -1232,8 +1415,8 @@ Deno.serve(async (req) => {
       })(),
       source_trace: sourceTrace,
       resolver_version: RESOLVER_VERSION,
-      context_type: 'order',
-      context_id: order.id,
+      context_type: ctxType,
+      context_id: ctxId,
       idempotency_key: idempotencyKey,
       created_by: userId,
       meta: {
@@ -1247,6 +1430,7 @@ Deno.serve(async (req) => {
         file_name_template_source: fileNameTemplateSource,
         file_name_warnings: fileNameWarnings,
         ...gotenbergMeta,
+        ...packageMetaExtras,
       },
     } as any;
 
@@ -1276,11 +1460,11 @@ Deno.serve(async (req) => {
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
-      actor_type: 'user',
+      actor_type: auditActorType,
       action: 'document.generated',
       meta: {
         document_id: documentId,
-        order_id: order.id,
+        ...auditContext,
         template_id: tpl.id,
         template_version_id: ver.id,
         version_number: ver.version_number,
