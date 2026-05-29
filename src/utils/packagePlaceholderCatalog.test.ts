@@ -178,3 +178,5 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     expect(stringified).not.toContain("package.roles.");
     expect(stringified).not.toContain("package.role.PKR-");
   });
+});
+
