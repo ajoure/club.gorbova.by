@@ -62,6 +62,7 @@ export function useAiDocumentPackageGeneration() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["ai-generated-documents"] });
       queryClient.invalidateQueries({ queryKey: ["ai-document-generation-batches"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-document-generation-batch-documents"] });
       if (data.status === "generated") {
         toast.success(`Пакет сформирован: ${data.generated} документ(ов)`);
       } else if (data.status === "partial") {
