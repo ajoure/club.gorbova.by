@@ -1460,11 +1460,11 @@ Deno.serve(async (req) => {
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
-      actor_type: 'user',
+      actor_type: auditActorType,
       action: 'document.generated',
       meta: {
         document_id: documentId,
-        order_id: order.id,
+        ...auditContext,
         template_id: tpl.id,
         template_version_id: ver.id,
         version_number: ver.version_number,
