@@ -101,7 +101,12 @@ interface ValidationError {
     | "unknown_modifier"
     | "unknown_field_public_id"
     | "no_placeholders_in_template"
-    | "docx_unreadable";
+    | "docx_unreadable"
+    // Sprint 3H-fix: package role token canon + document-level assignment codes
+    | "invalid_legacy_role_placeholder"
+    | "ln_token_not_found"
+    | "ln_token_outside_bound_package"
+    | "role_assignment_missing";
   placeholder?: string;
   message: string;
 }
