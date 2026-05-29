@@ -13,13 +13,15 @@
  * нескольким физлицам в анкете пакета. Формат вывода в DOCX определяется
  * дефолтом резолвера («должность + ФИО») и подключается в Sprint 3G.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -29,7 +31,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield } from "lucide-react";
+import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   usePackageRoleCatalog,
