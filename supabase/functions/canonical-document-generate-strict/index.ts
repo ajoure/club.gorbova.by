@@ -562,89 +562,104 @@ Deno.serve(async (req) => {
       return json({ error: 'active_version_invalid', validation_status: ver.validation_status }, 400);
     }
 
-    // Load order + snapshot
-    let { data: order } = await supabase
-      .from('orders_v2')
-      .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (!order) return json({ error: 'order_not_found' }, 404);
-
-    // ── PATCH-DOC-PLACEHOLDERS-2026-05 F5 ──────────────────────────────────
-    // Backend-guaranteed rebuild of document_data snapshot before resolving
-    // FLDs. Frontend may also call rebuild as optimization, but the SOT is
-    // here: any change to payer_type, payment, customer card, template/executor
-    // override, scenario must reflect in the generated document.
-    // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
-    if (order.status === 'paid') {
-      const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
-      if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
-        const { data: reloaded } = await supabase
-          .from('orders_v2')
-          .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
-          .eq('id', orderId)
-          .maybeSingle();
-        if (reloaded) order = reloaded;
-      }
-    }
-
-    const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
-
-    // B-97 live overlay: snapshot may pre-date the typed-FLD writer. Strict
-    // generator должен подставлять typed customer/executor значения для FLD из
-    // B97 mapping, если snapshot их не содержит (или пуст). Идемпотентно:
-    // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
-    // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
-    const docDataMeta: any = (order.meta as any)?.document_data || {};
-    const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
-    const executorIdSnap = docDataMeta?.executor_id || null;
-    let b97LiveCustomer: any = null;
-    let b97LiveExecutor: any = null;
-    if (customerLdId) {
-      const { data: ld } = await supabase
-        .from('client_legal_details')
-        .select('*')
-        .eq('id', customerLdId)
+    // Load order + snapshot — order-mode only; package-mode uses stub `order`.
+    if (generationContext === 'order') {
+      const { data: ordLoaded } = await supabase
+        .from('orders_v2')
+        .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
+        .eq('id', orderId)
         .maybeSingle();
-      b97LiveCustomer = ld || null;
-    }
-    if (!b97LiveCustomer && order.profile_id) {
-      const payerType = (order as any).payer_type;
-      const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
-        : payerType === 'entrepreneur' ? 'entrepreneur'
-        : 'individual';
-      const { data: lds } = await supabase
-        .from('client_legal_details')
-        .select('*')
-        .eq('profile_id', order.profile_id)
-        .eq('client_type', wantedClientType)
-        .order('is_default', { ascending: false })
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      b97LiveCustomer = (lds && lds[0]) || null;
-    }
-    if (executorIdSnap) {
-      const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
-      b97LiveExecutor = ex || null;
-    }
-    const b97Values = buildTypedB97FieldValues(b97LiveCustomer, b97LiveExecutor);
-    let b97FallbackApplied = 0;
-    let b97FallbackNonEmpty = 0;
-    const nowIsoB97 = new Date().toISOString();
-    for (const [fid] of Object.entries(B97_FLD_TO_TOKEN_KEY)) {
-      const existing = docFields[fid];
-      if (existing && existing.manual_override === true) continue;
-      const existingValue = existing?.value;
-      if (existingValue && String(existingValue).length > 0) continue;
-      const liveVal = b97Values[fid] ?? '';
-      docFields[fid] = {
-        value: liveVal,
-        source: 'b97_live_fallback',
-        manual_override: false,
-        updated_at: nowIsoB97,
+      if (!ordLoaded) return json({ error: 'order_not_found' }, 404);
+      order = ordLoaded;
+
+      // ── PATCH-DOC-PLACEHOLDERS-2026-05 F5 ──────────────────────────────────
+      // Backend-guaranteed rebuild of document_data snapshot before resolving
+      // FLDs. Frontend may also call rebuild as optimization, but the SOT is
+      // here: any change to payer_type, payment, customer card, template/executor
+      // override, scenario must reflect in the generated document.
+      // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
+      if (order.status === 'paid') {
+        const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
+        if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
+          const { data: reloaded } = await supabase
+            .from('orders_v2')
+            .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
+            .eq('id', orderId)
+            .maybeSingle();
+          if (reloaded) order = reloaded;
+        }
+      }
+
+      docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
+
+      // B-97 live overlay: snapshot may pre-date the typed-FLD writer. Strict
+      // generator должен подставлять typed customer/executor значения для FLD из
+      // B97 mapping, если snapshot их не содержит (или пуст). Идемпотентно:
+      // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
+      // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
+      const docDataMeta: any = (order.meta as any)?.document_data || {};
+      const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
+      const executorIdSnap = docDataMeta?.executor_id || null;
+      if (customerLdId) {
+        const { data: ld } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('id', customerLdId)
+          .maybeSingle();
+        b97LiveCustomer = ld || null;
+      }
+      if (!b97LiveCustomer && order.profile_id) {
+        const payerType = (order as any).payer_type;
+        const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
+          : payerType === 'entrepreneur' ? 'entrepreneur'
+          : 'individual';
+        const { data: lds } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('profile_id', order.profile_id)
+          .eq('client_type', wantedClientType)
+          .order('is_default', { ascending: false })
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        b97LiveCustomer = (lds && lds[0]) || null;
+      }
+      if (executorIdSnap) {
+        const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
+        b97LiveExecutor = ex || null;
+      }
+      const b97Values = buildTypedB97FieldValues(b97LiveCustomer, b97LiveExecutor);
+      const nowIsoB97 = new Date().toISOString();
+      for (const [fid] of Object.entries(B97_FLD_TO_TOKEN_KEY)) {
+        const existing = docFields[fid];
+        if (existing && existing.manual_override === true) continue;
+        const existingValue = existing?.value;
+        if (existingValue && String(existingValue).length > 0) continue;
+        const liveVal = b97Values[fid] ?? '';
+        docFields[fid] = {
+          value: liveVal,
+          source: 'b97_live_fallback',
+          manual_override: false,
+          updated_at: nowIsoB97,
+        };
+        b97FallbackApplied += 1;
+        if (liveVal.length > 0) b97FallbackNonEmpty += 1;
+      }
+    } else {
+      // Package-mode stub: `order` is purely a carrier for shared downstream
+      // code (profile_id, id, currency). docFields is built from packageContext
+      // preresolved bags during value resolution below.
+      order = {
+        id: packageContext!.package_session_id,
+        order_number: null,
+        profile_id: packageContext!.profile_id,
+        user_id: null,
+        payer_type: null,
+        meta: {},
+        final_price: null,
+        currency: null,
+        status: 'paid',
       };
-      b97FallbackApplied += 1;
-      if (liveVal.length > 0) b97FallbackNonEmpty += 1;
+      docFields = {};
     }
 
     // C5-G: канонические FLD для номера и даты документа
