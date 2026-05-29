@@ -217,8 +217,53 @@ function sanitizeMammothHtml(html: string): string {
   return html.replace(/<script[\s\S]*?<\/script>/gi, "");
 }
 
-/** Все известные шаблоны legacy-плейсхолдеров, которые нужно подсветить как кликабельные. */
-const LEGACY_PLACEHOLDER_RE = /\{\{(?!field:)[^{}]+\}\}/g;
+/**
+ * Sprint 3I-A UI-fix: scope-aware классификация плейсхолдеров.
+ *
+ * Раньше «legacy» считалось всё, что не начинается с `field:`, и из-за этого
+ * валидные package/ln-токены (`{{package.ul.FLD-…}}`, `{{ln-XXXXXX}}`)
+ * подсвечивались жёлтым и считались «непринятыми заменами». Бэкенд при этом
+ * (strict-валидатор, package-резолвер) уже считает их valid.
+ *
+ * Теперь:
+ *   - сканируем ВСЕ `{{...}}` плейсхолдеры (`ANY_PLACEHOLDER_RE`);
+ *   - классифицируем каждый через `classifyToken(token, scope)`;
+ *   - «жёлтым» подсвечиваем только реально устаревшие или scope-нарушающие.
+ */
+export type TemplateMarkupScope = "billing" | "package" | "unknown";
+export type TokenKind = "valid" | "package_in_billing" | "legacy";
+
+const ANY_PLACEHOLDER_RE = /\{\{[^{}]+\}\}/g;
+
+/** {{field:FLD-XXXXXX}} с опциональными модификаторами |case=… / |format=…  */
+const RE_FIELD_FLD = /^\{\{field:FLD-\d{6}(?:\|(?:case|format)=[a-z_]+)*\}\}$/;
+/** {{package.ul|ip|fl.FLD-XXXXXX}} */
+const RE_PACKAGE_ENTITY_FLD = /^\{\{package\.(?:ul|ip|fl)\.FLD-\d{6}\}\}$/;
+/** {{ln-XXXXXX}} — канон роли (Sprint 3H-fix) */
+const RE_LN_ROLE = /^\{\{ln-\d{6}\}\}$/;
+/** Реально legacy: {{package.role.PKR-…}} / {{package.roles.<key>.*}} */
+const RE_LEGACY_PKR = /^\{\{package\.role\.PKR-\d{6}\}\}$/;
+const RE_LEGACY_PACKAGE_ROLES = /^\{\{package\.roles\.[^{}]+\}\}$/;
+
+/**
+ * Классифицирует один `{{...}}` токен по scope текущего шаблона.
+ *
+ *  - `valid`               — корректный токен для этого scope.
+ *  - `package_in_billing`  — package/ln-токен в billing-шаблоне (scope-нарушение).
+ *  - `legacy`              — реально устаревший или неизвестный токен.
+ *
+ * В scope `unknown` package/ln трактуются как valid (не подсвечиваем без причины);
+ * рискованных подсветок «по умолчанию» не делаем — это требование Phase 3I-A.
+ */
+export function classifyTemplateToken(token: string, scope: TemplateMarkupScope): TokenKind {
+  if (RE_FIELD_FLD.test(token)) return "valid";
+  if (RE_PACKAGE_ENTITY_FLD.test(token) || RE_LN_ROLE.test(token)) {
+    if (scope === "billing") return "package_in_billing";
+    return "valid";
+  }
+  if (RE_LEGACY_PKR.test(token) || RE_LEGACY_PACKAGE_ROLES.test(token)) return "legacy";
+  return "legacy";
+}
 
 /** Короткое русское название формата/падежа для подписи под chip. */
 function formatSuffix(format: FieldFormat | null, caseModifier: FieldCase | null): string {
