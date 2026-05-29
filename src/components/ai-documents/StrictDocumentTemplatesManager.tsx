@@ -153,10 +153,14 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
   const recognized: RecognizedToken[] = [];
   const raw_tokens: string[] = [];
 
-  // Sprint 3F §B.2: package-aware syntax whitelist (client mirror).
+  // Sprint 3H §B: package-aware syntax whitelist (client mirror).
+  // Канон роли — {{ln-XXXXXX}} (Word-friendly). Старые форматы
+  // {{package.role.PKR-XXXXXX}} и {{package.roles.<role_key>.*}} больше не
+  // считаются валидным синтаксисом — реальных шаблонов с ними нет (Sprint 3G §7).
   const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-  const RX_PACKAGE_ROLE = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-  const RX_PACKAGE_ROLES_LEGACY = /^package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?$/;
+  const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
+  const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
+  const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 
   const seen = new Set<string>();
   for (const m of rawText.matchAll(ANY_PLACEHOLDER_RE)) {
@@ -165,13 +169,21 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     seen.add(inside);
     raw_tokens.push(inside);
 
-    // Sprint 3F: package-aware токены — валидный синтаксис, не падают как legacy.
-    // Scope/PKR-existence проверяются на сервере / в controlled validation panel.
-    if (
-      RX_PACKAGE_REQ.test(inside) ||
-      RX_PACKAGE_ROLE.test(inside) ||
-      RX_PACKAGE_ROLES_LEGACY.test(inside)
-    ) {
+    // Sprint 3H: package-aware токены (канон) — валидный синтаксис.
+    // Существование роли/FLD проверяется в controlled validation panel.
+    if (RX_PACKAGE_REQ.test(inside) || RX_PACKAGE_ROLE_LN.test(inside)) {
+      continue;
+    }
+
+    // Sprint 3H: устаревшие role-placeholder форматы — error (не warning).
+    if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
+      errors.push({
+        code: "invalid_legacy_role_placeholder",
+        placeholder: `{{${inside}}}`,
+        message:
+          `Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида ` +
+          `{{ln-XXXXXX}} из группы «Пакет: Роли».`,
+      });
       continue;
     }
 
@@ -204,7 +216,7 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
           message:
             `Невалидный плейсхолдер «{{${inside}}}». Допустим {{field:FLD-XXXXXX}} ` +
             `с опциональными |format=...|case=..., либо package-aware ` +
-            `({{package.ul|ip|fl.FLD-XXXXXX}}, {{package.role.PKR-XXXXXX}}).`,
+            `({{package.ul|ip|fl.FLD-XXXXXX}}, {{ln-XXXXXX}}).`,
         });
       }
       continue;

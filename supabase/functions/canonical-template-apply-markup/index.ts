@@ -556,39 +556,37 @@ Deno.serve(async (req) => {
     }> = [];
     const allFldInDoc: string[] = [];
 
-    // Sprint 3F §B.2: package-aware syntax (whitelist on upload).
+    // Sprint 3H §B: package-aware syntax (whitelist on upload).
     // {{package.ul|ip|fl.FLD-XXXXXX}} — package requisites (Пакет: ЮЛ/ИП/ФЛ)
-    // {{package.role.PKR-XXXXXX}}     — package roles (Пакет: Роли)
-    // Эти токены — валидный синтаксис платформы; scope (package vs billing template)
-    // и существование PKR/FLD проверяются позже резолвером / controlled validation.
-    // Здесь они НЕ должны падать как legacy_placeholder_format_detected.
+    // {{ln-XXXXXX}}                   — package roles (Пакет: Роли) — канон Sprint 3H
+    // Существование роли/FLD проверяется позже резолвером / controlled validation.
+    // Legacy форматы {{package.role.PKR-XXXXXX}} и {{package.roles.<role>.*}}
+    // больше не считаются valid — это error invalid_legacy_role_placeholder
+    // (реальных шаблонов с ними нет, Sprint 3G §7).
     const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-    const RX_PACKAGE_ROLE = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-    const RX_PACKAGE_ROLES_LEGACY = /^package\.roles\.[a-z_][a-z0-9_]*\.(full_name|short_name|position)(\|[^}]+)?$/;
+    const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
+    const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
+    const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 
-    const packageTokens: Array<{ placeholder: string; kind: 'requisite' | 'role' | 'role_legacy' }>
+    const packageTokens: Array<{ placeholder: string; kind: 'requisite' | 'role' }>
       = [];
 
     for (const tk of parsed.tokens) {
       const inside = tk.trim();
 
-      // 3F: package-aware — recognized syntax, не падает как legacy
       if (RX_PACKAGE_REQ.test(inside)) {
         packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'requisite' });
         continue;
       }
-      if (RX_PACKAGE_ROLE.test(inside)) {
+      if (RX_PACKAGE_ROLE_LN.test(inside)) {
         packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role' });
         continue;
       }
-      if (RX_PACKAGE_ROLES_LEGACY.test(inside)) {
-        // Sprint 3B alias-формат — принимаем как valid, но помечаем warning
-        // (рекомендуем мигрировать на {{package.role.PKR-XXXXXX}}).
-        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role_legacy' });
-        validationWarningsEarly.push({
-          code: 'deprecated_package_roles_syntax',
+      if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
+        validationErrors.push({
+          code: 'invalid_legacy_role_placeholder',
           placeholder: `{{${inside}}}`,
-          message: 'Устаревший формат {{package.roles.<role_key>.*}}. Используйте {{package.role.PKR-XXXXXX}} — стабильный публичный ID роли пакета.',
+          message: 'Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли».',
         });
         continue;
       }
@@ -607,7 +605,7 @@ Deno.serve(async (req) => {
         validationErrors.push({
           code: 'legacy_placeholder_format_detected',
           placeholder: `{{${inside}}}`,
-          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} или package-aware ({{package.ul|ip|fl.FLD-XXXXXX}}, {{package.role.PKR-XXXXXX}}).`,
+          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} или package-aware ({{package.ul|ip|fl.FLD-XXXXXX}}, {{ln-XXXXXX}}).`,
         });
         continue;
       }

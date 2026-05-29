@@ -374,9 +374,9 @@ export const PACKAGE_GROUP_META: Array<{
   {
     id: "package_roles",
     label_ru: "Пакет: Роли",
-    hint: "Роли пакета с физлицом, выбранным в анкете. Один токен на роль: {{package.role.PKR-XXXXXX}}. Содержимое подставляется по output_template роли (по умолчанию «должность, ФИО»).",
+    hint: "Роли пакета с физлицом, выбранным в анкете документа. Один токен на роль: {{ln-XXXXXX}}. Содержимое подставляется по output_template роли (по умолчанию «должность, ФИО»).",
     source_summary:
-      "document_package_role_catalog.public_id → document_package_session_participants.role_key → legal_details_persons + metadata.position",
+      "document_package_role_catalog.public_id → document_package_item_role_assignments → legal_details_persons + metadata.position",
   },
 ];
 
@@ -387,16 +387,17 @@ export function getPackagePlaceholdersByGroup(
 }
 
 /**
- * Sprint 3F §D/E: Построить items группы «Пакет: Роли» из БД-каталога ролей.
+ * Sprint 3H: Построить items группы «Пакет: Роли» из БД-каталога ролей.
  * Сами роли (включая custom) хранятся в `document_package_role_catalog`;
  * этот хелпер — read-only адаптер для UI каталога плейсхолдеров.
  *
- * Канонический Word-токен: `{{package.role.PKR-XXXXXX}}`.
- * Старый формат `{{package.roles.<role_key>.<attr>}}` остаётся как deprecated alias,
- * см. document_package_token_aliases.
+ * Канонический Word-токен: `{{ln-XXXXXX}}` (Word-friendly, без `package.role.`-префикса).
+ * Старые форматы `{{package.role.PKR-XXXXXX}}` и `{{package.roles.<role_key>.<attr>}}`
+ * больше не поддерживаются: реальных шаблонов с ними нет (proof Sprint 3G §7),
+ * валидатор маркирует их как `invalid_legacy_role_placeholder` (error).
  */
 export interface PackageRoleCatalogRow {
-  public_id: string;          // PKR-XXXXXX
+  public_id: string;          // ln-XXXXXX (канон Sprint 3H). Legacy PKR-NNNNNN мигрированы.
   role_key: string;
   label: string;              // ru
   description: string | null;
@@ -419,15 +420,15 @@ export function buildPackageRoleItems(
       source_table: "legal_details_persons",
       source_path:
         `document_package_role_catalog.public_id='${r.public_id}' → ` +
-        `document_package_session_participants WHERE role_key='${r.role_key}'`,
+        `document_package_item_role_assignments (по package_template_item_id)`,
       billing_fld_analog: null,
       reused_fld: null,
-      package_token: `{{package.role.${r.public_id}}}`,
+      package_token: `{{${r.public_id}}}`,
       package_resolver_hint:
         r.output_template
           ? `output_template: ${r.output_template}`
           : 'output_template (NULL) → дефолт «{{position}}, {{full_name}}»',
       status: "copy_ready",
-      tech_key: `package.role.${r.public_id}`,
+      tech_key: `ln.${r.public_id}`,
     }));
 }
