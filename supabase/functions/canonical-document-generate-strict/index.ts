@@ -887,9 +887,39 @@ Deno.serve(async (req) => {
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
 
-    const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
-      ? String(body.idempotency_key).trim()
-      : `strict:${tpl.id}:${ver.id}:${order.id}`;
+    const idempotencyKey: string = generationContext === 'package_session'
+      ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`
+      : ((typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
+          ? String(body.idempotency_key).trim()
+          : `strict:${tpl.id}:${ver.id}:${order.id}`);
+    // Sprint 3I-A-1.B: shared context fields used by pre-create, persist, audit.
+    const ctxType: 'order' | 'package_session' =
+      generationContext === 'package_session' ? 'package_session' : 'order';
+    const ctxId: string = generationContext === 'package_session'
+      ? packageContext!.package_session_id
+      : order.id;
+    const docTitle: string = generationContext === 'package_session'
+      ? (packageContext!.title_override || tpl.name)
+      : `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`;
+    const packageMetaExtras: Record<string, unknown> = generationContext === 'package_session'
+      ? {
+          package_template_id: packageContext!.package_template_id,
+          package_item_id: packageContext!.package_template_item_id,
+          generation_batch_id: packageContext!.generation_batch_id,
+          actor_type: 'system',
+          source: 'package_orchestrator',
+        }
+      : {};
+    const auditContext: Record<string, unknown> = generationContext === 'package_session'
+      ? {
+          package_session_id: packageContext!.package_session_id,
+          package_template_id: packageContext!.package_template_id,
+          package_item_id: packageContext!.package_template_item_id,
+          generation_batch_id: packageContext!.generation_batch_id,
+        }
+      : { order_id: order.id };
+    const auditActorType: string = generationContext === 'package_session' ? 'system' : 'user';
+
     let preCreatedDocId: string | null = null;
     let allocatedNumber: string | null = null;
     let allocatedDate: string | null = null;
@@ -918,14 +948,14 @@ Deno.serve(async (req) => {
             template_source_path: ver.storage_path,
             template_version_id: ver.id,
             template_version: ver.version_number,
-            title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+            title: docTitle,
             status: 'pending',
             storage_bucket: 'documents',
             snapshot: {},
             missing_tokens: [],
-            meta: { strict: true, c5g_pre_created: true },
-            context_type: 'order',
-            context_id: order.id,
+            meta: { strict: true, c5g_pre_created: true, ...packageMetaExtras },
+            context_type: ctxType,
+            context_id: ctxId,
             idempotency_key: idempotencyKey,
             created_by: userId,
           })
