@@ -1,388 +1,463 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Docxtemplater from "npm:docxtemplater@3.47.1";
-import PizZip from "npm:pizzip@3.1.6";
+// ============================================================================
+// ai-generate-document-package — Sprint 3I-A thin orchestrator.
+//
+// NEVER renders DOCX, NEVER calls Gotenberg, NEVER writes ai_generated_documents
+// directly. All generation goes through canonical-document-generate-strict via
+// internal service-role HTTP call with `x-internal-call: package-orchestrator`.
+//
+// Body: { package_session_id, run_mode? = 'user_generate' | 'admin_test' }
+//
+// Preflight (per item, blocker → strict NOT invoked for that item):
+//   • role_assignment_missing      — {{ln-XXXXXX}} present, no active assignment
+//   • ln_token_unknown             — ln catalog row not found
+//   • ln_token_outside_bound_package — role belongs to a different package_template
+//   • package_field_not_ready      — package.* not copy_ready in catalog
+//   • package_legal_entity_not_selected — UL/IP token but no selected_legal_entity_id
+//   • package_token_unknown        — package.* not in catalog
+//   • billing_field_in_package_template — billing-only FLD detected in package
+//   • package_fl_role_context_missing  — multiple FL roles, ambiguous person
+// ============================================================================
+
+// deno-lint-ignore-file no-explicit-any
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import PizZip from 'npm:pizzip@3.1.6';
+import {
+  PACKAGE_PLACEHOLDER_CATALOG,
+  findByPackageToken,
+  readSourcePath,
+} from '../_shared/packagePlaceholderCatalog.ts';
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-/* ── helpers (shared from _shared/docx-helpers.ts, Sprint 3) ── */
-import {
-  dateToRussianFormat,
-  fullNameToInitials,
-  generateDocumentNumber,
-  buildAddress,
-  entityName,
-  sanitizeFileName,
-} from '../_shared/docx-helpers.ts';
+// Billing entity types (mirror src/utils/billingFldGroups.ts).
+const BILLING_ENTITY_TYPES = new Set([
+  'customer', 'customer_ent', 'customer_ind', 'customer_leg', 'customer_signer',
+  'executor', 'executor_leg',
+]);
 
-/* ── main ── */
+// System / allowed-in-package fields.
+const ALLOWED_FIELD_ENTITY_TYPES = new Set([
+  'system', 'document', 'meeting', 'agenda', 'decision', 'package',
+]);
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+const FIELD_RE = /^field:(FLD-\d{6})$/;
+const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})$/;
+const LN_RE = /^ln-\d{6}$/;
+const TOKEN_RE = /\{\{([^}]+)\}\}/g;
+
+function j(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function extractDocumentXmlText(zip: PizZip): string {
+  const f = zip.file('word/document.xml');
+  return f ? f.asText() : '';
+}
+
+function stripXml(xml: string): string {
+  return xml.replace(/<[^>]+>/g, '');
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey);
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+    const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Auth
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const { data: authData, error: authErr } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (authErr || !authData?.user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const userId = authData.user.id;
+    // ── auth ─────────────────────────────────────────────────────────────
+    const auth = req.headers.get('Authorization');
+    if (!auth?.startsWith('Bearer ')) return j({ error: 'unauthorized' }, 401);
+    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+    if (!ud?.user) return j({ error: 'unauthorized' }, 401);
+    const userId = ud.user.id;
 
-    // Resolve profile_id
-    const { data: profileRow } = await supabase
-      .from("profiles").select("id").eq("user_id", userId).single();
-    if (!profileRow) {
-      return new Response(JSON.stringify({ error: "Profile not found" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const profileId = profileRow.id;
+    const { data: prof } = await supabase
+      .from('profiles').select('id').eq('user_id', userId).maybeSingle();
+    if (!prof) return j({ error: 'profile_not_found' }, 400);
 
-    // Parse body
-    const body = await req.json();
-    const { package_template_id, legal_details_id, person_id, signer_link_id } = body as {
-      package_template_id: string;
-      legal_details_id?: string;
-      person_id?: string;
-      signer_link_id?: string;
-    };
+    const body = await req.json().catch(() => ({}));
+    const packageSessionId: string | undefined = body?.package_session_id;
+    const runMode: 'user_generate' | 'admin_test' =
+      body?.run_mode === 'admin_test' ? 'admin_test' : 'user_generate';
+    if (!packageSessionId) return j({ error: 'package_session_id_required' }, 400);
 
-    if (!package_template_id) {
-      return new Response(JSON.stringify({ error: "package_template_id is required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // ── load session + ownership ─────────────────────────────────────────
+    const { data: session } = await supabase
+      .from('document_package_sessions')
+      .select('id, profile_id, package_template_id, selected_legal_entity_id, status')
+      .eq('id', packageSessionId)
+      .maybeSingle();
+    if (!session) return j({ error: 'package_session_not_found' }, 404);
+
+    if (runMode === 'admin_test') {
+      const { data: roleRows } = await supabase
+        .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
+      const codes = (roleRows || []).map((r: any) => r.roles?.code);
+      const isSuperAdmin = codes.includes('super_admin') || codes.includes('owner') || codes.includes('admin');
+      if (!isSuperAdmin) return j({ error: 'forbidden_admin_test' }, 403);
+    } else if (session.profile_id !== prof.id) {
+      return j({ error: 'forbidden' }, 403);
     }
 
-    // 1. Fetch package + items
-    const { data: pkg, error: pkgErr } = await supabase
-      .from("document_package_templates")
-      .select("*")
-      .eq("id", package_template_id)
-      .single();
-    if (pkgErr || !pkg) {
-      return new Response(JSON.stringify({ error: "Package template not found" }), {
-        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // ── load items + templates ───────────────────────────────────────────
+    const { data: items } = await supabase
+      .from('document_package_template_items')
+      .select('id, package_template_id, template_id, title_override, sort_order')
+      .eq('package_template_id', session.package_template_id)
+      .order('sort_order', { ascending: true });
+    if (!items || items.length === 0) return j({ error: 'package_has_no_items' }, 400);
+
+    const templateIds = Array.from(new Set(items.map((i: any) => i.template_id).filter(Boolean)));
+    const { data: tpls } = await supabase
+      .from('document_templates')
+      .select('id, name, current_version_id')
+      .in('id', templateIds.length ? templateIds : ['__none__']);
+    const tplMap = new Map<string, any>((tpls || []).map((t: any) => [t.id, t]));
+
+    const verIds = (tpls || []).map((t: any) => t.current_version_id).filter(Boolean);
+    const { data: vers } = await supabase
+      .from('document_template_versions')
+      .select('id, storage_bucket, storage_path')
+      .in('id', verIds.length ? verIds : ['__none__']);
+    const verMap = new Map<string, any>((vers || []).map((v: any) => [v.id, v]));
+
+    // ── load UL/IP source row (single per session) ──────────────────────
+    let legalEntityRow: any = null;
+    if (session.selected_legal_entity_id) {
+      const { data: ld } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('id', session.selected_legal_entity_id)
+        .maybeSingle();
+      legalEntityRow = ld || null;
     }
 
-    const { data: items, error: itemsErr } = await supabase
-      .from("document_package_template_items")
-      .select("*")
-      .eq("package_template_id", package_template_id)
-      .order("sort_order", { ascending: true });
-    if (itemsErr || !items || items.length === 0) {
-      return new Response(JSON.stringify({ error: "Package has no items" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // ── load role catalog for this package (for ln preflight) ───────────
+    const { data: roleRows } = await supabase
+      .from('document_package_role_catalog')
+      .select('id, public_id, role_key, output_template, is_active, package_template_id')
+      .eq('package_template_id', session.package_template_id);
+    const roleByPublicId = new Map<string, any>((roleRows || []).map((r: any) => [r.public_id, r]));
+
+    // ── load all item-level role assignments at once ────────────────────
+    const itemIds = items.map((i: any) => i.id);
+    const { data: assignments } = await supabase
+      .from('document_package_item_role_assignments')
+      .select('id, package_template_item_id, role_catalog_id, person_id, metadata, sort_order, is_active')
+      .eq('package_session_id', packageSessionId)
+      .in('package_template_item_id', itemIds)
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    const assignByItemRole = new Map<string, any[]>();
+    for (const a of (assignments || []) as any[]) {
+      const k = `${a.package_template_item_id}::${a.role_catalog_id}`;
+      const arr = assignByItemRole.get(k) || [];
+      arr.push(a);
+      assignByItemRole.set(k, arr);
     }
 
-    // 2. Fetch data sources
-    let entity: Record<string, unknown> | null = null;
-    if (legal_details_id) {
-      const { data } = await supabase.from("client_legal_details").select("*").eq("id", legal_details_id).single();
-      entity = data;
-    }
+    // ── load persons referenced ─────────────────────────────────────────
+    const personIds = Array.from(new Set((assignments || []).map((a: any) => a.person_id).filter(Boolean)));
+    const { data: persons } = await supabase
+      .from('legal_details_persons').select('*').in('id', personIds.length ? personIds : ['__none__']);
+    const personMap = new Map<string, any>((persons || []).map((p: any) => [p.id, p]));
 
-    let person: Record<string, unknown> | null = null;
-    if (person_id) {
-      const { data } = await supabase.from("legal_details_persons").select("*").eq("id", person_id).single();
-      person = data;
-    }
-
-    let link: Record<string, unknown> | null = null;
-    let signerPerson: Record<string, unknown> | null = null;
-    if (signer_link_id) {
-      const { data: linkData } = await supabase
-        .from("legal_details_entity_person_links")
-        .select(`*, person:legal_details_persons(*), role:legal_details_roles_catalog(label, role_type), position:legal_details_positions_catalog(label)`)
-        .eq("id", signer_link_id)
-        .single();
-      if (linkData) {
-        link = linkData;
-        signerPerson = (linkData as any).person || null;
-      }
-    }
-
-    // 3. Build snapshot
-    const now = new Date();
-    const snapshot: Record<string, unknown> = {
-      entity: entity || null,
-      person: person || null,
-      signer: signerPerson || null,
-      link: link ? {
-        id: link.id,
-        role_type: link.role_type,
-        role_label: (link as any).role?.label || null,
-        position_label: (link as any).position?.label || link.custom_position_text || null,
-        custom_position_text: link.custom_position_text,
-        acts_on_basis: link.acts_on_basis,
-        share_percent: link.share_percent,
-        is_primary: link.is_primary,
-        notes: link.notes,
-      } : null,
-      generated_at: now.toISOString(),
-      package: { id: pkg.id, name: pkg.name },
-    };
-
-    // 4. Create batch
-    const batchNumber = generateDocumentNumber("PKG");
+    // ── create batch (pending) ──────────────────────────────────────────
     const { data: batch, error: batchErr } = await supabase
-      .from("ai_document_generation_batches")
+      .from('ai_document_generation_batches')
       .insert({
-        profile_id: profileId,
-        package_template_id: package_template_id,
-        title: `${pkg.name} — ${batchNumber}`,
-        status: "pending",
+        profile_id: session.profile_id,
+        package_template_id: session.package_template_id,
+        title: `Package ${packageSessionId.slice(0, 8)}`,
+        status: 'pending',
         meta: {
-          selected_entity_id: legal_details_id || null,
-          selected_person_id: person_id || null,
-          selected_signer_link_id: signer_link_id || null,
-          package_template_name: pkg.name,
+          package_session_id: packageSessionId,
+          run_mode: runMode,
+          total_items: items.length,
+          generated: 0,
+          errors: 0,
+          actor_user_id: userId,
         },
         created_by: userId,
       })
-      .select()
+      .select('id')
       .single();
+    if (batchErr || !batch) return j({ error: `batch_create_failed:${batchErr?.message}` }, 500);
 
-    if (batchErr || !batch) {
-      console.error("Create batch error:", batchErr);
-      return new Response(JSON.stringify({ error: "Failed to create batch" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // 5. Fetch all templates for items
-    const templateIds = items.map((i: any) => i.template_id);
-    const { data: templates } = await supabase
-      .from("document_templates")
-      .select("*")
-      .in("id", templateIds);
-    const tplMap = new Map((templates || []).map((t: any) => [t.id, t]));
-
-    // 6. Process each item
+    // ── per-item preflight + invoke strict ──────────────────────────────
     const results: any[] = [];
-    let successCount = 0;
-    let errorCount = 0;
+    let generated = 0;
+    let errors = 0;
+    let blocked = 0;
 
-    for (let idx = 0; idx < items.length; idx++) {
-      const item = items[idx];
-      const template = tplMap.get(item.template_id);
-      if (!template) {
-        errorCount++;
-        results.push({ item_id: item.id, error: "Template not found", status: "error" });
+    for (const item of items as any[]) {
+      const tpl = tplMap.get(item.template_id);
+      const ver = tpl ? verMap.get(tpl.current_version_id) : null;
+      if (!tpl || !ver) {
+        errors++;
+        results.push({ item_id: item.id, status: 'error', errors: ['template_or_version_missing'] });
         continue;
       }
 
-      const docNumber = generateDocumentNumber("AI");
-      const itemName = (item as any).title_override || template.name;
-      const safeItemName = sanitizeFileName(itemName);
-      const tokenData = buildTokenData(entity, person, signerPerson, snapshot, docNumber, now);
-
-      // Detect missing tokens
-      const placeholders: string[] = Array.isArray(template.placeholders) ? template.placeholders : [];
-      const missingTokens = placeholders
-        .map((p: string) => p.replace(/^\{\{/, "").replace(/\}\}$/, ""))
-        .filter((key: string) => !tokenData[key] || tokenData[key] === "");
-
-      // Download template file
-      const { data: tplFile, error: dlErr } = await supabase.storage
-        .from("documents-templates")
-        .download(template.template_path);
-      if (dlErr || !tplFile) {
-        errorCount++;
-        // Save error record
-        await supabase.from("ai_generated_documents").insert({
-          profile_id: profileId,
-          template_id: template.id,
-          template_name: itemName,
-          template_source_path: template.template_path,
-          title: `${itemName} — ${docNumber}`,
-          status: "error",
-          legal_details_id: legal_details_id || null,
-          person_id: person_id || null,
-          signer_person_id: signerPerson ? (signerPerson.id as string) : null,
-          signer_link_id: signer_link_id || null,
-          snapshot,
-          missing_tokens: missingTokens,
-          generation_error: "Failed to download template file",
-          generation_batch_id: batch.id,
-          package_template_id: package_template_id,
-          package_item_id: item.id,
-          created_by: userId,
-        });
-        results.push({ item_id: item.id, error: "Failed to download template", status: "error" });
+      // download DOCX to scan tokens
+      const dl = await supabase.storage.from(ver.storage_bucket).download(ver.storage_path);
+      if (dl.error) {
+        errors++;
+        results.push({ item_id: item.id, status: 'error', errors: [`download_failed:${dl.error.message}`] });
         continue;
       }
+      const buf = await dl.data.arrayBuffer();
+      const zip = new PizZip(buf);
+      const flat = stripXml(extractDocumentXmlText(zip));
 
-      // Render docx
-      let generatedDoc: Uint8Array;
-      try {
-        const buf = new Uint8Array(await tplFile.arrayBuffer());
-        const zip = new PizZip(buf);
-        const doc = new Docxtemplater(zip, {
-          delimiters: { start: "{{", end: "}}" },
-          paragraphLoop: true,
-          linebreaks: true,
-        });
-        doc.render(tokenData);
-        generatedDoc = doc.getZip().generate({ type: "uint8array" });
-      } catch (docErr: unknown) {
-        const errMsg = docErr instanceof Error ? docErr.message : "Unknown render error";
-        errorCount++;
-        await supabase.from("ai_generated_documents").insert({
-          profile_id: profileId,
-          template_id: template.id,
-          template_name: itemName,
-          template_source_path: template.template_path,
-          title: `${itemName} — ${docNumber}`,
-          status: "error",
-          legal_details_id: legal_details_id || null,
-          person_id: person_id || null,
-          signer_person_id: signerPerson ? (signerPerson.id as string) : null,
-          signer_link_id: signer_link_id || null,
-          snapshot,
-          missing_tokens: missingTokens,
-          generation_error: errMsg,
-          generation_batch_id: batch.id,
-          package_template_id: package_template_id,
-          package_item_id: item.id,
-          created_by: userId,
-        });
-        results.push({ item_id: item.id, error: errMsg, status: "error" });
-        continue;
+      const preresolved_fields: Record<string, { value: string; source: string }> = {};
+      const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
+      const preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }> = {};
+      const itemErrors: string[] = [];
+      const seen = new Set<string>();
+
+      // collect all FLD-XXX in template for fields_registry lookup
+      const fldIds = new Set<string>();
+      for (const m of flat.matchAll(TOKEN_RE)) {
+        const inside = m[1].trim();
+        const ff = inside.match(FIELD_RE);
+        if (ff) fldIds.add(ff[1]);
+      }
+      let fieldsRegMap = new Map<string, any>();
+      if (fldIds.size > 0) {
+        const { data: regs } = await supabase
+          .from('fields_registry')
+          .select('public_id, entity_type, data_type')
+          .in('public_id', Array.from(fldIds));
+        fieldsRegMap = new Map((regs || []).map((r: any) => [r.public_id, r]));
       }
 
-      // Upload
-      const fileName = `${batchNumber}_${idx + 1}_${safeItemName}_${docNumber}.docx`;
-      const filePath = `ai-generated/${profileId}/${fileName}`;
-      const { error: upErr } = await supabase.storage
-        .from("documents")
-        .upload(filePath, generatedDoc, {
-          contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          upsert: true,
-        });
-      if (upErr) {
-        console.error("Upload error:", upErr);
-        errorCount++;
-        results.push({ item_id: item.id, error: "Upload failed", status: "error" });
-        continue;
-      }
+      for (const m of flat.matchAll(TOKEN_RE)) {
+        const inside = m[1].trim();
+        if (seen.has(inside)) continue;
+        seen.add(inside);
 
-      // Signed URL
-      const { data: signedUrlData } = await supabase.storage
-        .from("documents")
-        .createSignedUrl(filePath, 86400);
-
-      // Build snapshot enrichment data
-      const tokenManifest = {
-        requested: placeholders.map((p: string) => p.replace(/^\{\{/, "").replace(/\}\}$/, "")),
-        found: placeholders
-          .map((p: string) => p.replace(/^\{\{/, "").replace(/\}\}$/, ""))
-          .filter((key: string) => tokenData[key] && tokenData[key] !== ""),
-        missing: missingTokens,
-        unresolved: [],
-        legacy_used: [],
-      };
-
-      const sourceTrace: Record<string, { source: string; table: string; column: string }> = {};
-      for (const key of Object.keys(tokenData)) {
-        if (key.startsWith("entity_")) {
-          sourceTrace[key] = { source: "db", table: "client_legal_details", column: key };
-        } else if (key.startsWith("person_") || key.startsWith("signer_")) {
-          sourceTrace[key] = { source: "db", table: "legal_details_persons", column: key.replace(/^(person_|signer_)/, "") };
-        } else if (key.startsWith("document_")) {
-          sourceTrace[key] = { source: "computed", table: "", column: "" };
+        let mm: RegExpMatchArray | null;
+        if ((mm = inside.match(FIELD_RE))) {
+          const fld = mm[1];
+          // System numbering injection is done inside strict (FLD-000069/070).
+          if (fld === 'FLD-000069' || fld === 'FLD-000070') {
+            preresolved_fields[fld] = { value: '', source: 'system_generated_placeholder' };
+            continue;
+          }
+          const reg = fieldsRegMap.get(fld);
+          const et = (reg?.entity_type || '').toLowerCase();
+          if (BILLING_ENTITY_TYPES.has(et)) {
+            itemErrors.push(`billing_field_in_package_template:${fld}`);
+            continue;
+          }
+          if (et && !ALLOWED_FIELD_ENTITY_TYPES.has(et)) {
+            itemErrors.push(`field_entity_type_not_allowed_in_package:${fld}:${et}`);
+            continue;
+          }
+          // We don't have a generic system FLD value resolver in 3I-A scope —
+          // any non-{069,070} system FLD that lacks a resolver becomes an item
+          // error so we never silently emit empty strings.
+          itemErrors.push(`system_field_resolver_not_implemented:${fld}`);
+          continue;
         }
+
+        if ((mm = inside.match(PACKAGE_FLD_RE))) {
+          const item3 = findByPackageToken(inside);
+          if (!item3) { itemErrors.push(`package_token_unknown:${inside}`); continue; }
+          if (item3.status !== 'copy_ready') { itemErrors.push(`package_field_not_ready:${inside}:${item3.status}`); continue; }
+          const isFl = item3.groupId === 'package_fl';
+          if (!isFl) {
+            if (!legalEntityRow) { itemErrors.push(`package_legal_entity_not_selected`); continue; }
+            const val = readSourcePath(legalEntityRow, item3.source_path!);
+            preresolved_package_fields[inside] = {
+              value: val,
+              source: item3.source_path!,
+              catalog_tech_key: item3.tech_key,
+            };
+          } else {
+            // FL ambiguity: collect all active assignments for this item that
+            // point at FL persons. If exactly one person → use it. Else error.
+            const flAssignments = (assignments || []).filter(
+              (a: any) => a.package_template_item_id === item.id && a.person_id,
+            );
+            const distinctPersons = Array.from(new Set(flAssignments.map((a: any) => a.person_id)));
+            if (distinctPersons.length === 0) {
+              itemErrors.push(`package_fl_role_context_missing:no_person_assigned`);
+              continue;
+            }
+            if (distinctPersons.length > 1) {
+              itemErrors.push(`package_fl_role_context_missing:multiple_persons:${distinctPersons.length}`);
+              continue;
+            }
+            const person = personMap.get(distinctPersons[0]);
+            if (!person) { itemErrors.push(`package_fl_person_not_found`); continue; }
+            const val = readSourcePath(person, item3.source_path!);
+            preresolved_package_fields[inside] = {
+              value: val,
+              source: item3.source_path!,
+              catalog_tech_key: item3.tech_key,
+            };
+          }
+          continue;
+        }
+
+        if (LN_RE.test(inside)) {
+          const role = roleByPublicId.get(inside);
+          if (!role) { itemErrors.push(`ln_token_unknown:${inside}`); continue; }
+          if (role.package_template_id !== session.package_template_id) {
+            itemErrors.push(`ln_token_outside_bound_package:${inside}`);
+            continue;
+          }
+          const k = `${item.id}::${role.id}`;
+          const asgs = assignByItemRole.get(k) || [];
+          if (asgs.length === 0) {
+            itemErrors.push(`role_assignment_missing:${inside}`);
+            continue;
+          }
+          const first = asgs[0];
+          if (!first.person_id) { itemErrors.push(`role_person_null:${inside}`); continue; }
+          const person = personMap.get(first.person_id);
+          if (!person) { itemErrors.push(`role_person_not_found:${inside}`); continue; }
+          const fullName = String(person.full_name || '').trim();
+          const positionRaw = first.metadata && typeof first.metadata === 'object'
+            ? (first.metadata as any).position : '';
+          const position = positionRaw == null ? '' : String(positionRaw).trim();
+          const tplStr = role.output_template ?? '{{position}}, {{full_name}}';
+          let value = tplStr
+            .replace(/\{\{\s*full_name\s*\}\}/g, fullName)
+            .replace(/\{\{\s*position\s*\}\}/g, position);
+          if (!position) value = value.replace(/^\s*,\s*/, '').replace(/,\s*,/g, ',').trim();
+          preresolved_ln_tokens[inside] = {
+            value,
+            role_catalog_id: role.id,
+            person_id: first.person_id,
+          };
+          continue;
+        }
+
+        itemErrors.push(`invalid_token_in_package_template:${inside}`);
       }
 
-      // Save record
-      const { data: savedDoc } = await supabase
-        .from("ai_generated_documents")
-        .insert({
-          profile_id: profileId,
-          template_id: template.id,
-          template_name: itemName,
-          template_source_path: template.template_path,
-          template_code: template.code || null,
-          template_version: template.version || null,
-          title: `${itemName} — ${docNumber}`,
-          status: "generated",
-          legal_details_id: legal_details_id || null,
-          person_id: person_id || null,
-          signer_person_id: signerPerson ? (signerPerson.id as string) : null,
-          signer_link_id: signer_link_id || null,
-          file_path: filePath,
-          file_name: fileName,
-          snapshot,
-          missing_tokens: missingTokens,
-          token_manifest_snapshot: tokenManifest,
-          template_tokens_snapshot: placeholders,
-          source_trace: sourceTrace,
-          warnings_snapshot: missingTokens.length > 0 ? { missing_count: missingTokens.length, missing_keys: missingTokens } : null,
-          generation_batch_id: batch.id,
-          package_template_id: package_template_id,
-          package_item_id: item.id,
-          created_by: userId,
-        })
-        .select()
-        .single();
+      if (itemErrors.length > 0) {
+        blocked++;
+        results.push({
+          item_id: item.id,
+          template_id: tpl.id,
+          status: 'blocked',
+          errors: itemErrors,
+        });
+        continue;
+      }
 
-      successCount++;
+      // ── invoke strict in package mode (service-role + internal marker) ─
+      const strictRes = await fetch(`${SUPABASE_URL}/functions/v1/canonical-document-generate-strict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SERVICE_KEY,
+          'Authorization': `Bearer ${SERVICE_KEY}`,
+          'x-internal-call': 'package-orchestrator',
+        },
+        body: JSON.stringify({
+          mode: 'generate',
+          packageContext: {
+            package_session_id: packageSessionId,
+            package_template_id: session.package_template_id,
+            package_template_item_id: item.id,
+            generation_batch_id: batch.id,
+            profile_id: session.profile_id,
+            template_id: tpl.id,
+            title_override: item.title_override,
+            preresolved_fields,
+            preresolved_package_fields,
+            preresolved_ln_tokens,
+          },
+        }),
+      });
+      const strictBody: any = await strictRes.json().catch(() => ({}));
+      if (!strictRes.ok || !strictBody?.success) {
+        errors++;
+        results.push({
+          item_id: item.id,
+          template_id: tpl.id,
+          status: 'error',
+          errors: [strictBody?.error || `http_${strictRes.status}`],
+          details: strictBody,
+        });
+        continue;
+      }
+      generated++;
       results.push({
         item_id: item.id,
-        document_id: savedDoc?.id,
-        document_number: docNumber,
-        download_url: signedUrlData?.signedUrl,
-        status: "generated",
+        template_id: tpl.id,
+        status: 'generated',
+        document_id: strictBody.document_id,
+        document_number: strictBody.document_number,
+        document_date: strictBody.document_date,
+        download_url: strictBody.download_url,
       });
     }
 
-    // 7. Update batch status
-    let batchStatus = "generated";
-    if (errorCount > 0 && successCount > 0) batchStatus = "partial";
-    else if (errorCount > 0 && successCount === 0) batchStatus = "error";
+    let finalStatus: 'generated' | 'partial' | 'failed' | 'blocked' = 'generated';
+    if (generated === 0 && (errors > 0 || blocked > 0)) finalStatus = blocked > errors ? 'blocked' : 'failed';
+    else if (errors > 0 || blocked > 0) finalStatus = 'partial';
 
     await supabase
-      .from("ai_document_generation_batches")
-      .update({ status: batchStatus })
-      .eq("id", batch.id);
+      .from('ai_document_generation_batches')
+      .update({
+        status: finalStatus,
+        meta: {
+          package_session_id: packageSessionId,
+          run_mode: runMode,
+          total_items: items.length,
+          generated,
+          errors,
+          blocked,
+          actor_user_id: userId,
+          results,
+        },
+      })
+      .eq('id', batch.id);
 
-    return new Response(
-      JSON.stringify({
-        success: batchStatus !== "error",
-        batch_id: batch.id,
-        batch_number: batchNumber,
-        status: batchStatus,
+    await supabase.from('audit_logs').insert({
+      actor_user_id: userId,
+      actor_type: runMode === 'admin_test' ? 'admin' : 'user',
+      action: 'document.package_generation_completed',
+      meta: {
+        package_session_id: packageSessionId,
+        generation_batch_id: batch.id,
+        run_mode: runMode,
+        status: finalStatus,
         total: items.length,
-        generated: successCount,
-        errors: errorCount,
-        results,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error: unknown) {
-    console.error("ai-generate-document-package error:", error);
-    const msg = error instanceof Error ? error.message : "Internal server error";
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        generated,
+        errors,
+        blocked,
+      },
     });
+
+    return j({
+      success: finalStatus === 'generated' || finalStatus === 'partial',
+      batch_id: batch.id,
+      status: finalStatus,
+      total: items.length,
+      generated,
+      errors,
+      blocked,
+      results,
+    });
+  } catch (e: any) {
+    console.error('ai-generate-document-package error:', e);
+    return j({ error: e?.message || 'internal_error' }, 500);
   }
 });
