@@ -37,9 +37,16 @@ export const HARDCODED_ENABLED = false;
 export interface PackageTokenResolveInput {
   rawToken: string;
   packageSessionId: string;
+  /**
+   * Sprint 3G: per-document scope. Когда указан — резолвер читает
+   * `document_package_item_role_assignments` (document-level SOT),
+   * а не legacy `document_package_session_participants`.
+   */
+  packageTemplateItemId?: string | null;
   supabase: SupabaseClient;
   caseContext?: Omit<CaseContext, 'tokenKey'>;
 }
+
 
 export type PackageTokenResolveCode =
   | 'feature_off'
