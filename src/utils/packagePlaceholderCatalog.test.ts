@@ -118,11 +118,11 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     }
   });
 
-  // Sprint 3F §D/E: buildPackageRoleItems — PKR-XXXXXX токены
-  it("buildPackageRoleItems генерирует ровно один {{package.role.PKR-XXXXXX}} токен на роль", () => {
+  // Sprint 3H-fix: канон роли — {{ln-XXXXXX}}, legacy package.role.PKR/package.roles.* запрещены в каталоге
+  it("buildPackageRoleItems генерирует ровно один {{ln-XXXXXX}} токен на роль (канон Sprint 3H)", () => {
     const rows: PackageRoleCatalogRow[] = [
       {
-        public_id: "PKR-000003",
+        public_id: "ln-000003",
         role_key: "ideology_responsible",
         label: "Ответственный за идеологическую работу",
         description: null,
@@ -134,7 +134,7 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
         sort_order: 3,
       },
       {
-        public_id: "PKR-000099",
+        public_id: "ln-000099",
         role_key: "custom_role_x",
         label: "Кастомная роль X",
         description: null,
@@ -148,20 +148,23 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     ];
     const items = buildPackageRoleItems(rows);
     expect(items.length).toBe(2);
-    expect(items[0].package_token).toBe("{{package.role.PKR-000003}}");
-    expect(items[1].package_token).toBe("{{package.role.PKR-000099}}");
+    expect(items[0].package_token).toBe("{{ln-000003}}");
+    expect(items[1].package_token).toBe("{{ln-000099}}");
     expect(items[0].groupId).toBe("package_roles");
     expect(items[0].status).toBe("copy_ready");
-    // Никакого full_name/short_name/position в токене
     for (const i of items) {
+      expect(i.package_token).not.toMatch(/package\.role\.PKR-/);
+      expect(i.package_token).not.toMatch(/package\.roles\./);
       expect(i.package_token).not.toMatch(/\.(full_name|short_name|position)/);
+      // ровно один copy-token
+      expect((i.package_token!.match(/\{\{/g) || []).length).toBe(1);
     }
   });
 
   it("buildPackageRoleItems отфильтровывает is_active=false", () => {
     const rows: PackageRoleCatalogRow[] = [
       {
-        public_id: "PKR-000001", role_key: "x", label: "X",
+        public_id: "ln-000001", role_key: "x", label: "X",
         description: null, is_system: true, is_active: false,
         package_template_id: "p", package_template_name: "P",
         output_template: null, sort_order: 1,
@@ -169,4 +172,9 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     ];
     expect(buildPackageRoleItems(rows)).toEqual([]);
   });
-});
+
+  it("в каталоге групп нет legacy package.roles.<key>.* и package.role.PKR- токенов", () => {
+    const stringified = JSON.stringify(PACKAGE_PLACEHOLDER_CATALOG);
+    expect(stringified).not.toContain("package.roles.");
+    expect(stringified).not.toContain("package.role.PKR-");
+  });
