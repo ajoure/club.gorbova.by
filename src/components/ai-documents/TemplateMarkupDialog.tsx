@@ -546,11 +546,26 @@ export function TemplateMarkupDialog({
     return m;
   }, [refs]);
 
-  // ── render interactive HTML with chips + legacy marks ──
+  // ── render interactive HTML with chips + scope-aware highlight ──
   const interactiveHtml = useMemo(
-    () => renderInteractiveHtml(previewHtml, replacements),
-    [previewHtml, replacements],
+    () => renderInteractiveHtml(previewHtml, replacements, templateScope),
+    [previewHtml, replacements, templateScope],
   );
+
+  // ── token stats: считаем сырые токены в DOCX по scope ──
+  const tokenStats = useMemo(() => {
+    const stats = { valid: 0, packageInBilling: 0, legacy: 0 };
+    if (!plainText) return stats;
+    ANY_PLACEHOLDER_RE.lastIndex = 0;
+    const matches = plainText.match(ANY_PLACEHOLDER_RE) ?? [];
+    for (const tok of matches) {
+      const kind = classifyTemplateToken(tok, templateScope);
+      if (kind === "valid") stats.valid++;
+      else if (kind === "package_in_billing") stats.packageInBilling++;
+      else stats.legacy++;
+    }
+    return stats;
+  }, [plainText, templateScope]);
 
   // ── autosave draft (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
