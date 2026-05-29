@@ -7,7 +7,7 @@
  *
  * Контракт:
  *  • Создание идёт через `usePackageRoleCatalog.create` → INSERT в
- *    `document_package_role_catalog`. `public_id` (PKR-XXXXXX) и
+ *    `document_package_role_catalog`. `public_id` (ln-XXXXXX, Sprint 3H canon) и
  *    уникальный `role_key` назначаются автоматически (BEFORE INSERT trigger
  *    + slugify в хуке).
  *  • Никаких «технических» полей в форме: только Название и Описание.
@@ -89,7 +89,7 @@ export function InlineCreateRoleDialog({ packageTemplateId, onCreated }: Props) 
           <DialogHeader>
             <DialogTitle>Новая роль пакета</DialogTitle>
             <DialogDescription className="text-xs">
-              Технический ключ и PKR-идентификатор будут присвоены автоматически.
+              Технический ключ и идентификатор ln-XXXXXX будут присвоены автоматически.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

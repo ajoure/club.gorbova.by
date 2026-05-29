@@ -66,7 +66,7 @@ export function PackageAdminPanel() {
             </Badge>
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Per-package роли (PKR), привязка шаблонов через RPC и read-only валидация.
+            Per-package роли (ln-XXXXXX), привязка шаблонов через RPC и read-only валидация.
             Никаких изменений в billing-резолвере, Gotenberg или
             <code className="mx-1">canonical-document-generate-strict</code>.
           </p>

@@ -75,7 +75,8 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
   }
 
   function copyToken(publicId: string) {
-    const token = `{{package.role.${publicId}}}`;
+    // Sprint 3H canon: Word-friendly token {{ln-XXXXXX}}.
+    const token = `{{${publicId}}}`;
     navigator.clipboard.writeText(token);
     toast.success(`Скопировано: ${token}`);
   }
@@ -140,8 +141,8 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
         <div>
           <h3 className="font-semibold text-sm">Роли пакета</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Один плейсхолдер на роль: <code className="text-[11px]">{`{{package.role.PKR-XXXXXX}}`}</code>.
-            Одну роль можно назначить нескольким физлицам в анкете пакета.
+            Один плейсхолдер на роль: <code className="text-[11px]">{`{{ln-XXXXXX}}`}</code>.
+            Одну роль можно назначить нескольким физлицам в анкете документа.
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} disabled={creating}>
@@ -176,8 +177,8 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
             <div className="text-sm text-muted-foreground py-8 text-center space-y-2">
               <p>Ролей пока нет.</p>
               <p className="text-xs">
-                Добавьте первую роль вручную. После создания роль получит свой
-                PKR-плейсхолдер для вставки в Word.
+                Добавьте первую роль вручную. После создания роль получит
+                плейсхолдер вида <code>{`{{ln-XXXXXX}}`}</code> для вставки в Word.
               </p>
             </div>
           ) : (
@@ -269,7 +270,7 @@ function ArchiveButton({ role, onArchive }: { role: PackageRoleRow; onArchive: (
             Роль будет помечена неактивной. Существующие назначения сохранятся,
             но новых физлиц с этой ролью назначить нельзя. Удалить роль навсегда
             нельзя по архитектурному правилу — плейсхолдер
-            {` {{package.role.${role.public_id}}}`} в старых DOCX продолжит работать.
+            {` {{${role.public_id}}}`} в старых DOCX продолжит работать.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -316,9 +317,9 @@ export function CreateRoleDialog({
         <DialogHeader>
           <DialogTitle>{title ?? "Новая роль пакета"}</DialogTitle>
           <DialogDescription>
-            Система автоматически присвоит роли код PKR-XXXXXX. Он не меняется
-            при переименовании роли, поэтому шаблоны с этим плейсхолдером
-            продолжат работать.
+            Система автоматически присвоит роли код вида ln-XXXXXX. Он не меняется
+            при переименовании роли, поэтому шаблоны с плейсхолдером{" "}
+            <code>{`{{ln-XXXXXX}}`}</code> продолжат работать.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -388,8 +389,8 @@ function EditRoleDialog({
             Редактирование роли · <span className="font-mono text-sm">{row.public_id}</span>
           </DialogTitle>
           <DialogDescription>
-            Плейсхолдер роли: <code>{`{{package.role.${row.public_id}}}`}</code>.
-            Код PKR не меняется и не зависит от названия.
+            Плейсхолдер роли: <code>{`{{${row.public_id}}}`}</code>.
+            Код роли не меняется и не зависит от названия.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
