@@ -186,6 +186,13 @@ export function PackagesWorkspace() {
               <PackageTemplateValidationPanel packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
+
+          <TabsContent value="generation">
+            <PackageGenerationPanel
+              packageCode={selectedPackage.code}
+              packageName={selectedPackage.name}
+            />
+          </TabsContent>
         </Tabs>
       ) : (
         <GlassCard className="p-6 text-center text-sm text-muted-foreground">
