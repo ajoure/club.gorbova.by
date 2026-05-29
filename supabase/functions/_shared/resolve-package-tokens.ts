@@ -108,6 +108,175 @@ function readJsonPath(root: unknown, path: string): unknown {
 }
 
 /**
+ * Sprint 3H-fix: резолв канонического {{ln-XXXXXX}} (document-level role token).
+ *
+ * Контракт:
+ *   • Требуется packageTemplateItemId — без него нельзя выбрать assignment.
+ *   • Роль ищем в `document_package_role_catalog.public_id` (ln-XXXXXX).
+ *   • Принадлежность пакету: role.package_template_id === item.package_template_id.
+ *   • Active assignments: `document_package_item_role_assignments`
+ *     (package_session_id, package_template_item_id, role_catalog_id, is_active=true).
+ *   • 0 → `role_assignment_missing` (warning по контракту валидатора/UI).
+ *   • >1 → `multiple_role_assignments` (Sprint 3H semantics: пока берём первого).
+ *   • 1 → output_template: "{{position}}, {{full_name}}" по умолчанию.
+ */
+async function resolveLnRoleToken(
+  input: PackageTokenResolveInput,
+  lnPublicId: string,
+  _caseMod: string | undefined,
+): Promise<PackageTokenResolveResult> {
+  if (!input.packageTemplateItemId) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: 'ln_token_requires_package_template_item_id',
+    };
+  }
+
+  // 1. ln-XXXXXX → role catalog row
+  const { data: roleRow, error: roleErr } = await input.supabase
+    .from('document_package_role_catalog')
+    .select('id, package_template_id, role_key, output_template, is_active')
+    .eq('public_id', lnPublicId)
+    .maybeSingle();
+  if (roleErr || !roleRow) {
+    return {
+      resolved: false,
+      code: 'ln_token_not_found',
+      warning: `ln_token_not_found:${lnPublicId}`,
+    };
+  }
+  const role = roleRow as {
+    id: string;
+    package_template_id: string;
+    role_key: string;
+    output_template: string | null;
+    is_active: boolean;
+  };
+
+  // 2. item → package_template_id (проверка принадлежности)
+  const { data: itemRow, error: itemErr } = await input.supabase
+    .from('document_package_template_items')
+    .select('package_template_id')
+    .eq('id', input.packageTemplateItemId)
+    .maybeSingle();
+  if (itemErr || !itemRow) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `package_template_item_not_found:${input.packageTemplateItemId}`,
+      roleKey: role.role_key,
+    };
+  }
+  if ((itemRow as { package_template_id: string }).package_template_id !== role.package_template_id) {
+    return {
+      resolved: false,
+      code: 'ln_token_outside_bound_package',
+      warning: `ln_token_outside_bound_package:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // 3. Active assignments
+  const { data: rows, error: asgErr } = await input.supabase
+    .from('document_package_item_role_assignments')
+    .select('person_id, metadata, sort_order, created_at')
+    .eq('package_session_id', input.packageSessionId)
+    .eq('package_template_item_id', input.packageTemplateItemId)
+    .eq('role_catalog_id', role.id)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (asgErr) {
+    return {
+      resolved: false,
+      code: 'role_assignment_missing',
+      warning: `role_assignment_query_error:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+  const assignments = (rows ?? []) as Array<{ person_id: string | null; metadata: unknown }>;
+  if (assignments.length === 0) {
+    return {
+      resolved: false,
+      code: 'role_assignment_missing',
+      warning: `role_assignment_missing:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // Multi-assignment: берём первого по sort_order/created_at + warning.
+  let multiWarning: PackageTokenResolveResult | null = null;
+  if (assignments.length > 1) {
+    multiWarning = {
+      resolved: false,
+      code: 'multiple_role_assignments',
+      warning: `multiple_role_assignments:${lnPublicId}:n=${assignments.length}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  const first = assignments[0];
+  if (!first.person_id) {
+    return {
+      resolved: false,
+      code: 'no_person',
+      warning: `person_id_null:${role.role_key}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  const { data: person, error: personErr } = await input.supabase
+    .from('legal_details_persons')
+    .select('full_name')
+    .eq('id', first.person_id)
+    .maybeSingle();
+  if (personErr || !person) {
+    return {
+      resolved: false,
+      code: 'person_missing',
+      warning: 'person_not_found',
+      roleKey: role.role_key,
+    };
+  }
+  const fullName = ((person as { full_name?: string | null }).full_name ?? '').trim();
+  const positionRaw = readJsonPath({ metadata: first.metadata }, 'metadata.position');
+  const position = positionRaw == null ? '' : String(positionRaw).trim();
+
+  // output_template (Sprint 3H): default "{{position}}, {{full_name}}";
+  // если position пуст — только ФИО (без ведущей запятой).
+  const tpl = role.output_template ?? '{{position}}, {{full_name}}';
+  let value = tpl
+    .replace(/\{\{\s*full_name\s*\}\}/g, fullName)
+    .replace(/\{\{\s*position\s*\}\}/g, position);
+  if (!position) {
+    // Снять "висячие" ведущие/двойные запятые при пустой должности.
+    value = value.replace(/^\s*,\s*/, '').replace(/,\s*,/g, ',').trim();
+  }
+
+  if (!value) {
+    return {
+      resolved: false,
+      code: 'empty_value',
+      warning: `value_empty:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  if (multiWarning) return multiWarning;
+
+  return {
+    resolved: true,
+    value,
+    aliasId: role.id, // переиспользуем поле под role_catalog_id
+    canonicalFieldPublicId: lnPublicId,
+    roleKey: role.role_key,
+    contextKind: 'package_role_ln',
+  };
+}
+
+/**
  * Pure resolver core. Use ONLY in dry-run edge function or in tests.
  * Не оборачивает feature-flag. Не пишет в БД. Не зовёт generation/snapshot.
  */
