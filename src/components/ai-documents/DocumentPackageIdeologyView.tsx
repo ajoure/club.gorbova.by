@@ -22,9 +22,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
+import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2, FlaskConical, Loader2, FileDown } from "lucide-react";
 import { PackageTokensDryRunPanel } from "./PackageTokensDryRunPanel";
 import { InlineCreateRoleDialog } from "./packages/InlineCreateRoleDialog";
+import { PackageGenerationHistory } from "./packages/PackageGenerationHistory";
+import { useAiDocumentPackageGeneration, type PackageGenerationResult } from "@/hooks/useAiDocumentPackageGeneration";
+import { useDocumentPackageItems } from "@/hooks/useDocumentPackages";
+import { getDocumentDownloadUrl } from "@/utils/buildDocumentDownloadUrl";
 import { useRbac } from "@/hooks/useRbac";
 import { useSuperAdmin } from "@/hooks/useSuperAdmin";
 import { useAiEntities } from "@/hooks/useAiEntities";
@@ -98,6 +102,30 @@ export function DocumentPackageIdeologyView() {
     !!isSuperAdmin &&
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("debug") === "1";
+
+  const { generatePackage, isGenerating } = useAiDocumentPackageGeneration();
+  const { items: packageItems } = useDocumentPackageItems(pkg.templateId);
+  const [lastResult, setLastResult] = useState<PackageGenerationResult | null>(null);
+  const [lastRunMode, setLastRunMode] = useState<"user_generate" | "admin_test" | null>(null);
+
+  const itemLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of packageItems ?? []) {
+      map.set((it as any).id, (it as any).title_override || (it as any).template_name || "Документ");
+    }
+    return map;
+  }, [packageItems]);
+
+  const handleGenerate = async (runMode: "user_generate" | "admin_test") => {
+    if (!pkg.session?.id) return;
+    setLastRunMode(runMode);
+    try {
+      const data = await generatePackage({ package_session_id: pkg.session.id, run_mode: runMode });
+      setLastResult(data);
+    } catch {
+      /* toast handled in hook */
+    }
+  };
 
   // Local UI state (mirrors backend on hydration)
   const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
@@ -399,35 +427,162 @@ export function DocumentPackageIdeologyView() {
         )}
       </GlassCard>
 
-      {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}
+      {/* Блок C. Сформировать пакет — Sprint 3I-B */}
       <GlassCard className="p-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-orange-500" />
               Сформировать пакет
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {allRequiredSatisfied
-                ? "Анкета заполнена. Генерация пакета будет подключена в Sprint 2."
-                : "Сначала заполните обязательные роли. Генерация подключается в Sprint 2."}
+              {pkg.template?.name ? `Шаблон: ${pkg.template.name}` : "Шаблон пакета"}
+              {packageItems?.length ? ` · ${packageItems.length} документ(ов)` : ""}
             </p>
           </div>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span tabIndex={0}>
-                  <Button size="sm" disabled>
-                    <Sparkles className="h-4 w-4 mr-1" /> Сформировать пакет
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                Генерация пакета подключается в Sprint 2.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={0}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!pkg.session?.id || !allRequiredSatisfied || isGenerating}
+                        onClick={() => handleGenerate("admin_test")}
+                      >
+                        {isGenerating && lastRunMode === "admin_test"
+                          ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          : <FlaskConical className="h-4 w-4 mr-1" />}
+                        Тестово сформировать
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Запуск с run_mode=admin_test (без рассылки клиенту).
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>
+                    <Button
+                      size="sm"
+                      disabled={!pkg.session?.id || !allRequiredSatisfied || isGenerating}
+                      onClick={() => handleGenerate("user_generate")}
+                    >
+                      {isGenerating && lastRunMode !== "admin_test"
+                        ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        : <Sparkles className="h-4 w-4 mr-1" />}
+                      Сформировать пакет документов
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {(!pkg.session?.id || !allRequiredSatisfied) && (
+                  <TooltipContent>
+                    {!pkg.session?.id
+                      ? "Сначала сохраните анкету."
+                      : "Заполните обязательные роли."}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+          </div>
         </div>
+
+        {/* Последний запуск */}
+        {lastResult && (
+          <div className="border rounded-lg p-3 bg-muted/20">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className="text-xs font-medium">Результат последнего запуска:</span>
+              <Badge
+                variant="outline"
+                className={`text-[10px] ${
+                  lastResult.status === "generated"
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                    : lastResult.status === "partial"
+                    ? "bg-amber-50 text-amber-700 border-amber-300"
+                    : "bg-rose-50 text-rose-700 border-rose-300"
+                }`}
+              >
+                {lastResult.status === "generated" && "успешно"}
+                {lastResult.status === "partial" && "частично"}
+                {lastResult.status === "failed" && "ошибка"}
+                {lastResult.status === "blocked" && "заблокировано"}
+                {lastResult.status === "pending" && "в работе"}
+              </Badge>
+              <span className="text-[11px] text-muted-foreground">
+                {lastResult.generated} из {lastResult.total} сформировано
+                {lastResult.errors ? ` · ошибок: ${lastResult.errors}` : ""}
+                {lastResult.blocked ? ` · блокировок: ${lastResult.blocked}` : ""}
+              </span>
+              {lastRunMode === "admin_test" && (
+                <Badge variant="outline" className="text-[9px] gap-1 bg-amber-50 text-amber-700 border-amber-300">
+                  <FlaskConical className="h-2.5 w-2.5" /> тестовая
+                </Badge>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              {lastResult.results.map((r) => {
+                const label = itemLabelById.get(r.item_id) || "Документ";
+                const statusCls =
+                  r.status === "generated"
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                    : r.status === "blocked"
+                    ? "bg-rose-50 text-rose-700 border-rose-300"
+                    : r.status === "error"
+                    ? "bg-rose-50 text-rose-700 border-rose-300"
+                    : "bg-muted text-muted-foreground border-muted";
+                return (
+                  <div key={r.item_id} className="flex items-center gap-2 text-[11px] px-2 py-1.5 rounded border bg-background">
+                    <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{label}</div>
+                      {(r.document_number || r.errors?.length) && (
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {r.document_number ? `№ ${r.document_number}` : ""}
+                          {r.document_date ? ` · ${new Date(r.document_date).toLocaleDateString("ru-RU")}` : ""}
+                          {r.errors?.length ? ` · ${r.errors.join("; ")}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    <Badge variant="outline" className={`text-[10px] ${statusCls}`}>
+                      {r.status === "generated" && "успешно"}
+                      {r.status === "blocked" && "блок"}
+                      {r.status === "error" && "ошибка"}
+                      {r.status === "skipped" && "пропуск"}
+                    </Badge>
+                    {r.document_id && (
+                      <>
+                        <a
+                          href={getDocumentDownloadUrl(r.document_id, "pdf")}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
+                        >
+                          <FileDown className="h-3 w-3" /> PDF
+                        </a>
+                        <a
+                          href={getDocumentDownloadUrl(r.document_id, "docx")}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
+                        >
+                          <FileDown className="h-3 w-3" /> DOCX
+                        </a>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <PackageGenerationHistory packageSessionId={pkg.session?.id ?? null} isAdmin={isAdmin} />
       </GlassCard>
     </div>
   );
