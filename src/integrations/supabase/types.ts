@@ -3272,6 +3272,80 @@ export type Database = {
         }
         Relationships: []
       }
+      document_package_item_role_assignments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          metadata: Json
+          package_session_id: string
+          package_template_item_id: string
+          person_id: string | null
+          role_catalog_id: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          package_session_id: string
+          package_template_item_id: string
+          person_id?: string | null
+          role_catalog_id: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          package_session_id?: string
+          package_template_item_id?: string
+          person_id?: string | null
+          role_catalog_id?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_item_role_assign_package_template_item_id_fkey"
+            columns: ["package_template_item_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_template_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_item_role_assignments_package_session_id_fkey"
+            columns: ["package_session_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_item_role_assignments_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "legal_details_persons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_item_role_assignments_role_catalog_id_fkey"
+            columns: ["role_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_role_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_package_role_catalog: {
         Row: {
           allowed_entity_types: string[]
