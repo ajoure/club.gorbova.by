@@ -474,24 +474,37 @@ export function TemplateMarkupDialog({
       setDraftLoaded(false);
       setShowReplacements(false);
       setShowAutoSuggest(false);
+      setTemplateScope("unknown");
       try {
         const { data: blob, error } = await supabase.storage
           .from(templateVersion.storage_bucket)
           .download(templateVersion.storage_path);
         if (error) throw error;
         const ab = await blob.arrayBuffer();
-        const [rawTxt, htmlRes, registry, draftRow] = await Promise.all([
+        const [rawTxt, htmlRes, registry, draftRow, scopeRow, pkgItemRow] = await Promise.all([
           mammoth.extractRawText({ arrayBuffer: ab }),
           mammoth.convertToHtml({ arrayBuffer: ab }),
           loadRegistryRefs(),
           supabase.from("document_template_versions")
             .select("markup_draft").eq("id", templateVersion.id).maybeSingle(),
+          supabase.from("document_templates")
+            .select("template_scope").eq("id", templateVersion.template_id).maybeSingle(),
+          supabase.from("document_package_template_items")
+            .select("id").eq("template_id", templateVersion.template_id).limit(1).maybeSingle(),
         ]);
         if (cancelled) return;
         const txt = rawTxt.value;
         setPlainText(txt);
         setPreviewHtml(sanitizeMammothHtml(htmlRes.value));
         setRefs(registry);
+
+        // scope resolution: ts → package binding → unknown
+        const rawScope = (scopeRow.data?.template_scope ?? null) as string | null;
+        let resolvedScope: TemplateMarkupScope = "unknown";
+        if (rawScope === "package") resolvedScope = "package";
+        else if (rawScope && rawScope !== "package") resolvedScope = "billing";
+        else if (pkgItemRow.data?.id) resolvedScope = "package";
+        setTemplateScope(resolvedScope);
 
         const draft = (draftRow.data?.markup_draft ?? null) as unknown as MarkupDraft | null;
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
