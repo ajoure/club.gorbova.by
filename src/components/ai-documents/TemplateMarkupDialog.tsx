@@ -1183,7 +1183,18 @@ export function TemplateMarkupDialog({
         <DialogFooter className="flex-shrink-0 px-5 py-3 border-t bg-background sm:justify-between">
           <div className="text-[11px] text-muted-foreground space-y-0.5 max-w-[60%]">
             <div>
-              Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+              Используются FLD/package/ln плейсхолдеры
+              <span className="ml-1 text-[10px] opacity-70">· scope: {templateScope}</span>
+            </div>
+            <div>
+              Валидных плейсхолдеров: <b>{tokenStats.valid}</b>
+              {" · "}Ручных замен: <b>{acceptedCount}</b>
+              {" · "}Устаревших/неподдерживаемых: <b className={tokenStats.legacy > 0 ? "text-amber-700" : ""}>{tokenStats.legacy}</b>
+              {tokenStats.packageInBilling > 0 && (
+                <>
+                  {" · "}<span className="text-orange-600">package/ln в billing: <b>{tokenStats.packageInBilling}</b></span>
+                </>
+              )}
             </div>
             {templateVersion?.validation_status === "valid" && replacements.length === 0 && (
               <div className="text-emerald-700 inline-flex items-center gap-1">
