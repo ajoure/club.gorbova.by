@@ -290,6 +290,7 @@ function formatSuffix(format: FieldFormat | null, caseModifier: FieldCase | null
 function renderInteractiveHtml(
   baseHtml: string,
   replacements: Replacement[],
+  scope: TemplateMarkupScope,
 ): string {
   if (!baseHtml) return "";
   const parser = new DOMParser();
