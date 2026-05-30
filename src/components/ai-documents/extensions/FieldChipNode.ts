@@ -19,7 +19,13 @@ export type FieldCase =
   | "instrumental"
   | "prepositional";
 
-export type FieldFormat = "words" | "text" | "long";
+/**
+ * Sprint 3J-Roles: расширили union значениями `short` и `signature_short` для
+ * ФИО-полей (package roles {{ln-XXXXXX}} и FIO package fields). Backend whitelist
+ * этих модификаторов реализован в `canonical-document-generate-strict`
+ * (PERSON_NAME_PACKAGE_BAG_KEYS + ln-токены).
+ */
+export type FieldFormat = "words" | "text" | "long" | "short" | "signature_short";
 
 export const FIELD_CASE_SHORT: Record<FieldCase, string> = {
   nominative: "И",
@@ -43,6 +49,8 @@ export const FIELD_FORMAT_LABEL: Record<FieldFormat, string> = {
   words: "прописью",
   text: "текстом",
   long: "прописью",
+  short: "ФИО кратко",
+  signature_short: "ФИО для подписи",
 };
 
 export interface FieldChipAttrs {

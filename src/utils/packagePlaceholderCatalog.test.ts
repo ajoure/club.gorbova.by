@@ -217,13 +217,22 @@ describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
       .toBe("{{package.ul.FLD-000010|format=long|case=genitive}}");
   });
 
-  it("classifyPackageItem: text для имён, date для дат рождения/паспорта", () => {
+  it("classifyPackageItem: person_name для ФИО-полей, date для дат, text для прочих", () => {
     expect(classifyPackageItem(ulShort)).toBe("text");
     expect(classifyPackageItem(ulOrgForm)).toBe("text");
     expect(classifyPackageItem(flBirth)).toBe("date");
+
+    const ulDirector = PACKAGE_PLACEHOLDER_CATALOG.find(
+      (i) => i.tech_key === "package.ul.director_full_name",
+    )!;
+    const flFullName = PACKAGE_PLACEHOLDER_CATALOG.find(
+      (i) => i.tech_key === "package.fl.full_name",
+    )!;
+    expect(classifyPackageItem(ulDirector)).toBe("person_name");
+    expect(classifyPackageItem(flFullName)).toBe("person_name");
   });
 
-  it("classifyPackageItem: other для package_roles", () => {
+  it("classifyPackageItem: person_name для package_roles", () => {
     const rolesItem: PackagePlaceholderItem = {
       groupId: "package_roles",
       label_ru: "X",
@@ -236,10 +245,7 @@ describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
       status: "copy_ready",
       tech_key: "ln.ln-000001",
     };
-    expect(classifyPackageItem(rolesItem)).toBe("other");
-    // Для ролей модификаторы НЕ добавляются — токен возвращается как есть.
-    expect(buildPackagePlaceholderToken(rolesItem, "long", "genitive"))
-      .toBe("{{ln-000001}}");
+    expect(classifyPackageItem(rolesItem)).toBe("person_name");
   });
 
   it("not-ready item не имеет copy-токена", () => {
@@ -247,6 +253,91 @@ describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
       (i) => i.status !== "copy_ready",
     )!;
     expect(buildPackagePlaceholderToken(deferredItem, null, null)).toBeNull();
+  });
+});
+
+describe("packagePlaceholderCatalog — Sprint 3J-Roles role modifiers", () => {
+  const rolesItem: PackagePlaceholderItem = {
+    groupId: "package_roles",
+    label_ru: "Демо роль",
+    source_table: "legal_details_persons",
+    source_path: null,
+    billing_fld_analog: null,
+    reused_fld: null,
+    package_token: "{{ln-000012}}",
+    package_resolver_hint: "",
+    status: "copy_ready",
+    tech_key: "ln.ln-000012",
+  };
+  const ulDirector = PACKAGE_PLACEHOLDER_CATALOG.find(
+    (i) => i.tech_key === "package.ul.director_full_name",
+  )!;
+  const flFullName = PACKAGE_PLACEHOLDER_CATALOG.find(
+    (i) => i.tech_key === "package.fl.full_name",
+  )!;
+
+  it("ln default (без модификаторов) = {{ln-000012}}", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, null)).toBe("{{ln-000012}}");
+  });
+
+  it("ln + format=short → {{ln-000012|format=short}}", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, "short", null))
+      .toBe("{{ln-000012|format=short}}");
+  });
+
+  it("ln + format=signature_short → {{ln-000012|format=signature_short}}", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, "signature_short", null))
+      .toBe("{{ln-000012|format=signature_short}}");
+  });
+
+  it("ln + format=short + case=genitive → канонический порядок format→case", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, "short", "genitive"))
+      .toBe("{{ln-000012|format=short|case=genitive}}");
+    expect(buildPackagePlaceholderToken(rolesItem, "signature_short", "genitive"))
+      .toBe("{{ln-000012|format=signature_short|case=genitive}}");
+  });
+
+  it("ln + case без format → только |case=", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, "genitive"))
+      .toBe("{{ln-000012|case=genitive}}");
+  });
+
+  it("ln игнорирует format=long/words/text (backend их не понимает у ln)", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, "long" as never, null))
+      .toBe("{{ln-000012}}");
+    expect(buildPackagePlaceholderToken(rolesItem, "words" as never, null))
+      .toBe("{{ln-000012}}");
+  });
+
+  it("FIO package field (директор ЮЛ) поддерживает format=short", () => {
+    expect(buildPackagePlaceholderToken(ulDirector, "short", null))
+      .toBe("{{package.ul.FLD-000014|format=short}}");
+    expect(buildPackagePlaceholderToken(ulDirector, "signature_short", "genitive"))
+      .toBe("{{package.ul.FLD-000014|format=signature_short|case=genitive}}");
+  });
+
+  it("FIO package field (ФЛ ФИО) поддерживает format=short", () => {
+    expect(buildPackagePlaceholderToken(flFullName, "short", "genitive"))
+      .toBe("{{package.fl.FLD-000372|format=short|case=genitive}}");
+  });
+
+  it("обычное текстовое package-поле игнорирует format=short/signature_short", () => {
+    const ulShort = PACKAGE_PLACEHOLDER_CATALOG.find(
+      (i) => i.tech_key === "package.ul.short_name",
+    )!;
+    expect(buildPackagePlaceholderToken(ulShort, "short" as never, null))
+      .toBe("{{package.ul.FLD-000011}}");
+  });
+
+  it("в каталоге групп нет PKR/package.role.PKR/package.roles.* / .full_name / .short_name / .position у ln-токенов", () => {
+    // sanity: ни один tech_key и ни один package_token не содержит legacy форматов.
+    for (const i of PACKAGE_PLACEHOLDER_CATALOG) {
+      if (i.package_token) {
+        expect(i.package_token).not.toMatch(/PKR-/);
+        expect(i.package_token).not.toMatch(/package\.role\./);
+        expect(i.package_token).not.toMatch(/package\.roles\./);
+      }
+    }
   });
 });
 

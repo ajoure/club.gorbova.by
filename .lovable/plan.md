@@ -1,360 +1,301 @@
+Да, план правильный. Утверждать можно, но добавь эти правки, чтобы Sprint 3J-Roles не закрыли формально без настоящего parity.
+
 да, согласен, с учетом правок:
 
-**1. Подтверждение по открытому вопросу**
+**1. UI preview по падежам не должен быть фиктивным**
 
-Применяем новый стандарт ФИО **ко всей системе**, включая billing-плейсхолдеры директора ЮЛ / ИП / ФЛ / package / роли.
+В плане написано:
 
-Legacy-формат с пробелом между инициалами больше не используем.
+UI preview не делает inflection — отдаёт пометку «в нужном падеже после генерации».
 
-Правильно:
+Это допустимо только как временный fallback, но не как финальный DoD.
 
-format=short:
+Нужно сделать так:
 
-Федорчук Сергей Валерьевич → Федорчук С.В.
+- если во frontend уже есть helper склонения ФИО — использовать его в preview;
+- если frontend helper отсутствует — добавить минимальный frontend mirror для preview;
+- fallback «в выбранном падеже после генерации» допустим только если склонение невозможно технически, и тогда Sprint 3J-Roles нельзя закрывать как полный UI parity.
 
-&nbsp;
+Финальный DoD должен быть:
 
-format=signature_short:
+Preview показывает фактический результат:
 
-Федорчук Сергей Валерьевич → С.В.Федорчук
+Федорчук Сергей Валерьевич
 
-Неправильно:
+Федорчук С.В.
 
-Федорчук С. В.
+С.В.Федорчук
 
-С.В. Федорчук
-
-&nbsp;
-
-**2. Helper должен сразу поддерживать падеж**
-
-В §2 изменить сигнатуру helper:
-
-export function formatPersonName(
-
-  fullName: string | null | undefined,
-
-  opts?: {
-
-    format?: 'full' | 'short' | 'signature_short';
-
-    case?: CaseName | null;
-
-  },
-
-): string
-
-Правила:
-
-- format=full + case=genitive → склоняются фамилия, имя, отчество:  
-Федорчука Сергея Валерьевича
-- format=short + case=genitive → склоняется только фамилия:  
 Федорчука С.В.
-- format=signature_short + case=genitive → склоняется только фамилия:  
+
 С.В.Федорчука
 
-Так мы убираем спор о порядке «сначала падеж или сначала short».
+а не только текстовую пометку.
 
 &nbsp;
 
-**3. Обязательно добавить**
-
-**packageFieldFormatter.ts**
-
-**в scope**
-
-В список файлов добавить:
-
-supabase/functions/_shared/packageFieldFormatter.ts
-
-Потому что package UL/IP/FL уже используют этот formatter. Все ФИО-поля там тоже должны перейти на новый formatPersonName.
-
-&nbsp;
-
-**4. Ошибка modifier должна быть**
-
-**unknown_modifier**
-
-**, а не legacy**
-
-В canonical-template-apply-markup и strict-validator:
-
-- старые токены PKR, package.role.PKR, package.roles.* → invalid_legacy_role_placeholder;
-- неизвестный modifier → unknown_modifier.
-
-Не смешивать legacy token и ошибку modifier.
-
-&nbsp;
-
-**5. Парсер modifiers**
-
-UI всегда строит токен в порядке:
-
-|format=...|case=...
-
-Но backend parser должен безопасно читать оба порядка:
-
-{{ln-000012|format=short|case=genitive}}
-
-{{ln-000012|case=genitive|format=short}}
-
-Если один modifier повторён дважды — error duplicate_modifier.
-
-&nbsp;
-
-**6.**
+**2.**
 
 **format=full**
 
-В UI format=full считается default и в токен не пишется.
+**в UI не писать в токен**
 
-То есть copy:
+UI должен показывать опцию «ФИО полностью», но copy должен быть:
 
 {{ln-000012}}
 
-Но backend должен принимать и явный вариант:
+а не:
 
 {{ln-000012|format=full}}
 
-&nbsp;
-
-**7. Старые примеры тоже проверить**
-
-Сделать grep по codebase:
-
-rg "И\\. И\\.|С\\. В\\.|Федорчук С\\. В\\.|Иванов И\\. И\\." src supabase
-
-Все user-facing code examples заменить на новый формат.
-
-Если старые примеры лежат в БД fields_registry и реально отображаются в UI — не менять молча. Зафиксировать в proof как DB-example gap и вынести отдельным manifest/fix, если потребуется.
+Backend может принимать format=full, но UI по умолчанию его не добавляет.
 
 &nbsp;
 
-**8. Proof должен включать billing-output**
+**3. Порядок modifiers зафиксировать**
 
-Так как мы сознательно меняем short-format глобально, proof должен показать не только package/roles, но и billing.
+Copy-token всегда строить в таком порядке:
+
+{{ln-000012|format=short|case=genitive}}
+
+{{ln-000012|format=signature_short|case=genitive}}
+
+Backend должен читать оба порядка, но UI всегда пишет один стандартный порядок:
+
+format → case
+
+&nbsp;
+
+**4. Проверить не только роли, но и все ФИО-поля**
+
+В тесты и proof добавить не только {{ln-...}}, но и ФИО-поля из package/billing:
+
+- руководитель ЮЛ;
+- ИП ФИО / ФИО кратко;
+- ФЛ ФИО / ФИО кратко;
+- package role ln.
+
+Цель: доказать, что новый стандарт Федорчук С.В. применился по всей системе, а не только в ролях.
+
+&nbsp;
+
+**5. Runtime DOCX proof обязателен**
+
+Sprint 3J-Roles нельзя закрывать только по vitest.
+
+Нужно реально сгенерировать DOCX и проверить word/document.xml.
+
+Обязательные строки в proof:
+
+Федорчук Сергей Валерьевич
+
+Федорчук С.В.
+
+С.В.Федорчук
+
+Федорчука С.В.
+
+С.В.Федорчука
+
+Также проверить:
+
+{{
+
+}}
+
+не встречаются в generated DOCX.
+
+&nbsp;
+
+**6. Старые форматы удалить из UI полностью**
+
+В UI и copy-output не должно быть:
+
+PKR
+
+package.role.PKR
+
+package.roles.*
+
+full_name
+
+short_name
+
+position
+
+Для роли — только:
+
+{{ln-XXXXXX}}
+
+{{ln-XXXXXX|format=short}}
+
+{{ln-XXXXXX|format=signature_short}}
+
+{{ln-XXXXXX|format=short|case=genitive}}
+
+&nbsp;
+
+**7. Billing regression доказать отдельно**
+
+Так как fullNameToInitials глобально изменён, proof должен показать, что billing не сломан, а просто перешёл на новый стандарт.
 
 Добавить в proof:
 
+fullNameToInitials("Иванов Иван Иванович") → Иванов И.И.
 
-|                               |            |                           |
-| ----------------------------- | ---------- | ------------------------- |
-| **Контекст**                  | **Токен**  | **Результат**             |
-| Billing ЮЛ руководитель short | `{{field:… | format=short}}`           |
-| Package роль short            | `{{ln-…    | format=short}}`           |
-| Package роль signature        | `{{ln-…    | format=signature_short}}` |
+formatPersonName("Иванов Иван Иванович", {format:"signature_short"}) → И.И.Иванов
 
+И указать, что это сознательное изменение по всей системе.
 
 &nbsp;
 
-**9. Runtime DOCX proof**
+**8. Diff scope**
 
-В proof обязательно проверить generated DOCX, а не только unit tests:
+Ожидаемый diff действительно frontend + tests + proof, но если runtime proof требует только использования уже готового backend, backend не трогать.
 
-- {{ln-...}} → ФИО полностью;
-- {{ln-...|format=short}} → Федорчук С.В.;
-- {{ln-...|format=signature_short}} → С.В.Федорчук;
-- {{ln-...|format=short|case=genitive}} → Федорчука С.В.;
-- raw {{...}} отсутствуют.
+Подтвердить в proof:
 
-&nbsp;
+supabase/functions/** не изменялись в UI-заходе
 
-**10. Memory**
+supabase/migrations/** не изменялись
 
-В memory записать:
+/purchases не трогался
 
-ФИО кратко по всей системе: Фамилия И.О.
-
-ФИО кратко для подписи: И.О.Фамилия
-
-Роли ln по умолчанию выводят ФИО человека, а не название роли.
-
-output_template роли больше не влияет на default ln-output.
-
-**Финальный DoD**
-
-- format=short везде даёт Федорчук С.В.
-- format=signature_short везде даёт С.В.Федорчук
-- billing и package используют один helper;
-- роли {{ln-XXXXXX}} поддерживают format и case;
-- UI показывает новый формат;
-- generated DOCX подтверждает результат;
-- старый формат Федорчук С. В. больше не появляется в новых preview/output.
+Gotenberg не трогался
 
 &nbsp;
 
-# План: Sprint 3J-Roles — modifier-parity для ролей и единый стандарт ФИО
+**9. Финальный статус Sprint 3J-Roles**
 
-## 0. Цель
+Закрывать только если выполнены все пункты:
 
-1. Привести `{{ln-XXXXXX}}` к тому же набору modifiers, что и FL/IP/UL: `format=full|short|signature_short`, `case=…`, мульти-назначение через `;` , по умолчанию — ФИО без названия роли.
-2. Ввести единый стандарт коротких ФИО по всей системе (billing + package + роли):
-  - `format=short` → `Федорчук С.В.` (пробел после фамилии, без пробелов между инициалами).
-  - `format=signature_short` → `С.В.Федорчук` (без пробелов).
-3. UI «Пакет: Роли» получает те же контролы, что строки ФЛ, и расширяется новой опцией «ФИО кратко для подписи» во всех ФИО-группах.
+completed: Sprint 3J-Roles;
 
-## 1. Каноны и запреты
+ln role placeholders support full/short/signature_short and case modifiers in UI and runtime DOCX;
 
-- Канон токена роли: только `{{ln-XXXXXX}}`. Никаких `{{ln-XXXXXX.full_name}}`, `{{ln-XXXXXX.short_name}}`, `{{package.roles.*}}`, `{{package.role.PKR-…}}`.
-- НЕ создаём новые FLD, новые алиасы, новые таблицы, новые edge functions.
-- НЕ трогаем billing/order generation pipeline, `/purchases`, `document_templates`, миграции, RLS, Gotenberg, `ai_generated_documents` контракт, `preresolved_package_fields` schema.
-- НЕ создаём отдельный formatter для ролей — переиспользуем helpers ФЛ.
+short FIO standard is global: Фамилия И.О.;
 
-## 2. Единый helper ФИО
+signature short standard is global: И.О.Фамилия;
 
-Файл: `supabase/functions/_shared/typed-tokens-resolver.ts`.
+old PKR/package.roles formats absent from UI;
 
-Добавить новый shared API (рядом с существующим `fullNameToInitials`):
+billing/order pipeline unchanged except intended FIO short formatting standard.
 
-```ts
-export type PersonNameFormat = 'full' | 'short' | 'signature_short';
-export function formatPersonName(
-  fullName: string | null | undefined,
-  opts?: { format?: PersonNameFormat },
-): string
+Ключевая правка: **preview по падежу должен показывать реальный результат**, иначе это не parity с обычными ФИО-плейсхолдерами.
+
+&nbsp;
+
+# План: Sprint 3J-Roles — UI controls + frontend tests + runtime DOCX proof
+
+## Контекст
+
+Backend (`canonical-document-generate-strict` + `ai-generate-package` orchestrator + `canonical-template-apply-markup`) уже умеет:
+
+- `{{ln-XXXXXX}}` → ФИО полностью (per-person, join `;` )
+- `|format=short` → `Фамилия И.И.` (без пробела между инициалами)
+- `|format=signature_short` → `И.И.Фамилия` (без пробелов)
+- `|case=<6 падежей>`
+- те же `format=short|signature_short` для whitelist FIO package fields (`package.ul.FLD-000014`, `package.fl.FLD-000372`)
+- `fullNameToInitials` глобально перешёл в новый стандарт (без пробела между инициалами) — это распространяется и на billing director / IP short_name.
+
+UI пока выдаёт «роль: модификаторы недоступны» (PlaceholdersCatalogTab.tsx:937–940). Закрыть спринт нужно по DoD пользователя.
+
+## Объём работ (только presentation + тесты + proof; backend/billing/migrations/Gotenberg НЕ трогаем)
+
+### 1. Frontend helper `src/utils/personNameFormat.ts`
+
+- Чистая функция `formatPersonName(fullName, { format })`:
+  - `full` → как есть (trim, нормализация пробелов)
+  - `short` → `Фамилия И.И.` (без пробела между инициалами, без пробела после)
+  - `signature_short` → `И.И.Фамилия` (без пробелов)
+- Без склонения (UI preview не делает inflection — отдаёт пометку «в нужном падеже после генерации»). Падеж в UI отображается только как выбранный модификатор и попадает в copy-token; рантайм склоняет backend.
+- Экспорт типа `PersonNameFormat = 'full'|'short'|'signature_short'`.
+
+### 2. Расширить `FieldFormat` / catalog helpers (только UI-слой)
+
+- В `src/components/ai-documents/extensions/FieldChipNode.ts` добавить значения `'short' | 'signature_short'` в тип `FieldFormat` (backend whitelist уже их понимает; это согласовано с типизированной шиной UI).
+- В `src/utils/packagePlaceholderCatalog.ts`:
+  - `classifyPackageItem`: для `package_roles` и для FIO-полей (`package.ul.director_full_name`, `package.ul.director_short_name`, `package.fl.full_name`, `package.fl.full_name_short`) возвращать новый kind `"person_name"`.
+  - Новый helper `supportsPersonNameFormats(item): boolean` — true для тех же ключей.
+  - `buildPackagePlaceholderToken`: для `package_roles` теперь добавлять `|format=...|case=...` (раньше игнорировалось — это и был блокер).
+- Unit-тесты `src/utils/packagePlaceholderCatalog.test.ts`: токены ролей и FIO с модификаторами; гарантия отсутствия `PKR`, `package.role.PKR`, `package.roles.*` в выходе.
+
+### 3. UI `PlaceholdersCatalogTab.tsx`
+
+- В `RowSettingsCell` добавить ветку `kind === "person_name"`: три кнопки формата (ФИО полностью / ФИО кратко / ФИО для подписи) + dropdown падежа. Использовать тот же ToggleGroup/Select-каркас, что и у billing — никакого нового formatter.
+- В рендере пакетных строк (PlaceholdersCatalogTab.tsx ~860–944):
+  - Заменить `pkgKind === ... ? "text" : "date" → "numeric"` логику: добавить `pkgKind === "person_name"` (новый rowKind).
+  - Снять блок `isRolesGroup` → больше не показывать «модификаторы недоступны»; включить `showModifiers = isReady && (pkgKind !== "other")`.
+  - Preview-колонка для `person_name` items: рендерить выпадающий список 5 примеров через `formatPersonName` (demo-ФИО `Федорчук Сергей Валерьевич`), для падежа — суффикс «(в выбранном падеже после генерации)». Если ФИО действительно недоступно → fallback «Пример появится после заполнения анкеты документа» (как сейчас).
+  - Copy-кнопка использует уже обновлённый `buildPackagePlaceholderToken`.
+
+### 4. Тесты
+
+- `src/utils/personNameFormat.test.ts` (vitest):
+  - `Иванов Иван Иванович` → `Иванов И.И.`, `И.И.Иванов`
+  - `Федорчук Сергей Валерьевич` → `Федорчук С.В.`, `С.В.Федорчук`
+  - Edge: один токен (`Cher`) → возвращает как есть; двойная фамилия — берётся первое слово как фамилия.
+- `src/utils/packagePlaceholderCatalog.test.ts` дополнить:
+  - `{{ln-000012}}`, `{{ln-000012|format=short}}`, `{{ln-000012|format=signature_short|case=genitive}}`
+  - FIO package field `{{package.ul.FLD-000014|format=short}}`
+  - Регрессия: `PACKAGE_PLACEHOLDER_CATALOG` и `buildPackageRoleItems` не возвращают `PKR`, `package.role.`, `package.roles.`.
+
+### 5. Runtime DOCX proof
+
+- Через Deno-edge или существующий тестовый orchestrator (повторить путь из Sprint 3J backend proof): подготовить минимальный DOCX-шаблон с 5 токенами:
+  ```
+  {{ln-XXXXXX}}
+  {{ln-XXXXXX|format=short}}
+  {{ln-XXXXXX|format=signature_short}}
+  {{ln-XXXXXX|format=short|case=genitive}}
+  {{ln-XXXXXX|format=signature_short|case=genitive}}
+  ```
+- Сгенерировать пакет, скачать DOCX, распаковать `word/document.xml`, в proof положить excerpt:
+  - `Федорчук Сергей Валерьевич`
+  - `Федорчук С.В.`
+  - `С.В.Федорчук`
+  - `Федорчука С.В.`
+  - `С.В.Федорчука`
+  - подтверждение отсутствия `{{` / `}}` в excerpt.
+- Если нет реального шаблона с ролью — использовать `super_admin` тестовый flow, фикстура с одной ролью + одним person.
+
+### 6. Proof файл
+
+Обновить `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`, добавить разделы:
+
+- §10 Frontend modifier controls (скриншот таблицы «Пакет: Роли» с тремя format-кнопками + падежом; copy examples; preview examples)
+- §11 Frontend tests (список тест-кейсов + результат vitest run)
+- §12 Runtime DOCX excerpt (5 строк)
+- §13 Billing regression: проверка, что `fullNameToInitials("Иванов Иван Иванович")` → `Иванов И.И.` (новый стандарт без пробела); ссылка на места в коде, где это используется (director short, IP short).
+- §14 Подтверждение: `/purchases`, миграции, Gotenberg, billing pipeline не тронуты — diff содержит только `src/utils/personNameFormat*`, `src/utils/packagePlaceholderCatalog*`, `src/components/ai-documents/PlaceholdersCatalogTab.tsx`, `src/components/ai-documents/extensions/FieldChipNode.ts`, proof.
+- Финальный статус: `completed`.
+
+## Жёсткие ограничения
+
+- НЕ менять backend (`supabase/functions/**`), миграции, RLS, edge config.
+- НЕ менять billing FLD маппинг, customer/executor токены, `/purchases`.
+- НЕ создавать отдельных токенов `full_name` / `short_name` / `position` — остаётся один `{{ln-XXXXXX}}` + модификаторы.
+- Старые `{{package.role.PKR-...}}` / `{{package.roles.*}}` не должны появляться в выходе каталога (покрыто тестом).
+
+## Diff scope (ожидаемый)
+
+```
+src/utils/personNameFormat.ts                          (new)
+src/utils/personNameFormat.test.ts                     (new)
+src/utils/packagePlaceholderCatalog.ts                 (edit: classifyPackageItem, buildPackagePlaceholderToken, supportsPersonNameFormats)
+src/utils/packagePlaceholderCatalog.test.ts            (edit: new cases)
+src/components/ai-documents/extensions/FieldChipNode.ts (edit: FieldFormat union)
+src/components/ai-documents/PlaceholdersCatalogTab.tsx (edit: rowKind person_name, preview, role row)
+.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md (append §10–§14, статус completed)
 ```
 
-Правила:
+## DoD (зеркало пользовательского)
 
-- `full` — исходное ФИО `trim()`-нормализовано.
-- `short` — `Фамилия И.О.` (пробел между фамилией и инициалами, между инициалами пробела НЕТ, после каждой буквы точка). Пример: `Федорчук С.В.`, `Иванов И.И.`.
-- `signature_short` — `И.О.Фамилия` (без пробелов нигде). Пример: `С.В.Федорчук`.
-
-Существующий `fullNameToInitials` переписать как обёртку `formatPersonName(name, { format: 'short' })`, чтобы все текущие call-сайты автоматически перешли на новый формат `Иванов И.И.` (без пробела между инициалами). Это сознательное изменение — см. §10 «Риски».
-
-## 3. Backend resolver ролей (`{{ln-XXXXXX}}`)
-
-Файл: `supabase/functions/_shared/resolve-package-tokens.ts`, функция `resolveLnRoleToken`.
-
-Изменения:
-
-1. Расширить `parseRawToken` поддержкой `format=full|short|signature_short` (`caseMod` уже есть).
-2. Сигнатуру `resolveLnRoleToken(input, lnPublicId, caseMod, formatMod)` дополнить `formatMod`.
-3. Поведение по умолчанию (no modifiers) — ТОЛЬКО ФИО назначенного человека (`formatPersonName(person.full_name, { format: 'full' })`). Игнорируем `role.output_template` для default-канона; `position` больше не подмешивается в значение по умолчанию. (Существующий шаблон `"{{position}}, {{full_name}}"` остаётся в БД как legacy — резолвер его перестаёт использовать. Перенести этот факт в memory.)
-4. Если `formatMod` задан — применить `formatPersonName` соответственно.
-5. Падеж — через тот же inflection-pipeline, что у ФЛ (`inflectRu`/`case-format.ts`), применяется ПОСЛЕ форматирования имени:
-  - `case` для `full` — склонение всех трёх частей,
-  - `case` для `short`/`signature_short` — склонение только фамилии (инициалы не склоняются), сохраняя позицию (`Федорчука С.В.`, `С.В.Федорчука`).
-6. Мульти-assignment: больше не возвращаем `multiple_role_assignments` warning как блокер — резолвим всех активных, каждое имя форматируем по тем же modifiers, объединяем через `;`  (с пробелом после `;`).
-7. Неактивные/`is_active=false` — не попадают (уже так).
-
-## 4. Strict-парсер плейсхолдеров
-
-Файл: `supabase/functions/canonical-document-generate-strict/index.ts`.
-
-- В уже существующий блок парсинга `{{ln-XXXXXX|…}}` добавить распознавание `format=short|full|signature_short` (рядом с `case=…`).
-- Те же модификаторы разрешить для `{{field:FLD-…}}` и `{{package.(ul|ip|fl).FLD-…}}` ТОЛЬКО для полей, у которых UI поддерживает FIO-форматы (см. §6) — фильтрация по `tech_key` / `data_type` из существующего каталога. Прочие modifiers → `unknown_modifier` (поведение не меняем).
-- Применение делегируется helpers из §2 + `inflectRu`.
-
-## 5. Markup validator
-
-Файл: `supabase/functions/canonical-template-apply-markup/index.ts`, RX_PACKAGE_ROLE_LN.
-
-- Whitelist modifiers для `ln-XXXXXX`: `case=<6>`, `format=<full|short|signature_short>`. Любой другой modifier — текущая ошибка «устаревший формат».
-- Аналогично расширить whitelist для package FL/IP/UL фио-полей.
-
-## 6. UI — `PlaceholdersCatalogTab`
-
-Файл: `src/components/ai-documents/PlaceholdersCatalogTab.tsx` + `src/utils/packagePlaceholderCatalog.ts` + `src/components/ai-documents/FieldFormatPicker.tsx`.
-
-1. Расширить `SupportsKind` / `classifyDataType`: для ФИО-полей вернуть новый kind `person_name`.
-2. В `FieldFormatPicker` для kind=`person_name` показать три радио-опции формата:
-  - `ФИО полностью` → `format=full` (default, в токен не пишем).
-  - `ФИО кратко` → `format=short`.
-  - `ФИО кратко для подписи` → `format=signature_short`.
-   И блок падежей (все 6 + «без падежа»).
-3. Группу «Пакет: Роли» отрисовать через тот же row-renderer, что строки ФЛ (вместо текущей «роль без модификаторов»). Удалить ветку «роли игнорируют modifiers».
-4. `buildPackagePlaceholderToken` расширить параметром `format` со значениями `full|short|signature_short`. Порядок модификаторов в выводе: `|format=…|case=…` (как уже принято).
-5. Для `ln-XXXXXX` (роли) использовать тот же helper-builder, выводящий `{{ln-XXXXXX|format=…|case=…}}`.
-6. Preview:
-  - Если есть live-resolver / реальное назначение — показать реальное значение.
-  - Иначе — статический demo `Федорчук Сергей Валерьевич` / `Федорчук С.В.` / `С.В.Федорчук` / падеж по выбору, через тот же `formatPersonName`+`inflectRu` (frontend-аналог уже есть).
-  - Если ничего недоступно — fallback «Пример появится после заполнения анкеты документа».
-7. Применить новый список форматов ФИО ко всем рядам ФЛ-семантики в каталоге: ФЛ-полное имя, руководитель ЮЛ, ФИО ИП-владельца, package-аналоги.
-
-## 7. Frontend helper
-
-Файл: `src/utils/personNameFormat.ts` (новый, единый источник для UI):
-
-```ts
-export type PersonNameFormat = 'full' | 'short' | 'signature_short';
-export function formatPersonNameClient(fullName: string, opts?: { format?: PersonNameFormat }): string
-```
-
-Реализация байт-в-байт зеркалит backend `formatPersonName`. Используется в `FieldFormatPicker` preview и `PlaceholdersCatalogTab` demo. Существующие фронтовые «`Фамилия И. И.`» helpers (если есть) переключить на этот helper.
-
-## 8. Тесты
-
-1. `supabase/functions/_shared/personNameFormat_test.ts` (новый, Deno):
-  - `Иванов Иван Иванович` → short `Иванов И.И.`, signature `И.И.Иванов`.
-  - `Федорчук Сергей Валерьевич` → short `Федорчук С.В.`, signature `С.В.Федорчук`.
-  - 2-словные ФИО (`Иванов Иван`), одно слово, пустая строка — без падений.
-2. `supabase/functions/_shared/resolve-package-tokens_test.ts`: для `{{ln-…}}`
-  - default → full ФИО (без position).
-  - `format=short`, `format=signature_short`.
-  - `case=genitive`, комбинации `format=short|case=genitive` / `format=signature_short|case=genitive`.
-  - 2 active assignments → `Федорчук С.В.; Иванов И.И.`.
-  - inactive не попадают.
-3. `src/utils/packagePlaceholderCatalog.test.ts`:
-  - copy-token `{{ln-000012|format=short|case=genitive}}` (правильный порядок).
-  - роли поддерживают signature_short.
-  - старые `PKR` / `package.roles.*` не появляются.
-4. `src/utils/personNameFormat.test.ts` (vitest) — зеркало Deno-теста.
-
-## 9. Proof
-
-Файл: `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`.
-
-Содержание:
-
-- Copy examples (5 вариантов для `ln-000012`).
-- Preview examples (full / short / signature_short / падеж).
-- Таблица «ФИО formatting parity» (4 строки из спецификации §7 user message).
-- Runtime DOCX: вставить в тестовый шаблон 5 токенов, сгенерировать, показать выдержку.
-- Чек-лист: billing/order не тронуты, `/purchases` не тронуты, миграции отсутствуют, новых FLD нет.
-
-## 10. Риски и явные подтверждения
-
-- **Изменение `fullNameToInitials` (с пробелом) → новый стандарт без пробела затрагивает billing output** (директор ЮЛ короткое имя, ИП short_name и т.д.). Пользователь явно требует «правило применяется ко всем ФИО в системе: billing, package, роли». Это сознательный refactor формата, не изменение бизнес-логики. Если требуется сохранить legacy-формат в billing — нужно сказать сейчас, иначе исполняем единый стандарт.
-- `output_template` ролей в БД (`document_package_role_catalog.output_template`) больше не влияет на default-вывод `{{ln-…}}`. Поле остаётся в схеме, фактически становится legacy. Зафиксируем в memory.
-
-## 11. Файлы (только перечень)
-
-Backend:
-
-- `supabase/functions/_shared/typed-tokens-resolver.ts` (+ `formatPersonName`, переделать `fullNameToInitials`).
-- `supabase/functions/_shared/resolve-package-tokens.ts` (`parseRawToken`, `resolveLnRoleToken`, мульти-assignment join).
-- `supabase/functions/canonical-document-generate-strict/index.ts` (whitelist `format=` для ФИО).
-- `supabase/functions/canonical-template-apply-markup/index.ts` (whitelist modifiers `ln-`).
-- `supabase/functions/_shared/personNameFormat_test.ts` (new).
-- `supabase/functions/_shared/resolve-package-tokens_test.ts` (extend).
-
-Frontend:
-
-- `src/utils/personNameFormat.ts` (new).
-- `src/utils/personNameFormat.test.ts` (new).
-- `src/utils/packagePlaceholderCatalog.ts` (+ `signature_short` в `buildPackagePlaceholderToken`, classifier `person_name`).
-- `src/utils/packagePlaceholderCatalog.test.ts` (extend).
-- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` (роль-rows c modifier-controls, preview).
-- `src/components/ai-documents/FieldFormatPicker.tsx` (kind `person_name` с тремя форматами + падеж).
-
-Memory / proof:
-
-- `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`.
-- Обновить `.lovable/memory/architecture/documents/package-billing-parity-v1.md` (новый стандарт ФИО + `signature_short` + поведение `{{ln-…}}` по умолчанию).
-
-## 12. DoD
-
-- `{{ln-XXXXXX}}` без модификаторов → ФИО полностью назначенного человека (без названия роли).
-- `format=short` → `Фамилия И.О.` (без пробела между инициалами) везде в системе.
-- `format=signature_short` → `И.О.Фамилия` (без пробелов) везде.
-- `case=…` работает совместно с обоими форматами; реальный DOCX рендер совпадает с preview.
-- Множественное назначение роли выводится через `;` .
-- UI «Пакет: Роли» имеет те же modifier-контролы, что строки ФЛ; copy-button формирует корректный токен.
-- В UI больше нигде не появляются `PKR`, `package.role.PKR`, `package.roles.*`.
-- Старый формат `Фамилия И. И.` (с пробелом) удалён из codebase.
-- Proof сформирован, тесты зелёные, миграций и новых FLD нет.
-
-## 13. Открытый вопрос (требует ответа до build)
-
-Подтвердите явно: применяем новый стандарт `short` (`Иванов И.И.` без пробела) **в том числе к billing-плейсхолдерам директора ЮЛ / ИП**, или там оставляем legacy `Иванов И. И.` и меняем только package/роли? В тексте спецификации указано «применяется ко всем ФИО в системе» — план исходит из этого. Если billing трогать нельзя, helper будет ветвиться (`legacy_short` для billing, `short` для package/ln), это +1 risk.
+1. `{{ln-XXXXXX}}` в UI имеет controls: ФИО полностью / кратко / для подписи + падеж.
+2. Copy формирует все 5 вариантов токена корректно.
+3. Preview показывает demo-ФИО в нужном формате (падеж — постфикс-пометка).
+4. Vitest зелёный по `personNameFormat.test.ts` и `packagePlaceholderCatalog.test.ts`.
+5. Runtime DOCX excerpt подтверждает все 5 рендеров без raw `{{…}}`.
+6. Billing short-ФИО регрессия подтверждена (без пробела между инициалами).
+7. `PKR` / `package.role.PKR` / `package.roles.*` отсутствуют в каталоге.
+8. Proof заполнен, спринт переведён в `completed`.

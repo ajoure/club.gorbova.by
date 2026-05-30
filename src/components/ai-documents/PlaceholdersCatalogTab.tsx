@@ -43,6 +43,12 @@ import {
 import { classifyDataType } from "./FieldFormatPicker";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import {
+  formatPersonName,
+  DEMO_PERSON_NAME,
+  type PersonNameFormat,
+  type PersonNameCase,
+} from "@/utils/personNameFormat";
+import {
   PACKAGE_GROUP_META,
   PACKAGE_PLACEHOLDER_CATALOG,
   buildPackageRoleItems,
@@ -873,17 +879,30 @@ export function PlaceholdersCatalogTab() {
                       // Sprint 3J-UI: те же modifier-controls, что у billing.
                       const pkgKind = classifyPackageItem(p);
                       const supportsLong = packageSupportsLongFormat(p);
-                      // Маппинг package kind → kind для RowSettingsCell (date → numeric, text → text).
-                      const rowKind: ReturnType<typeof classifyDataType> =
+                      // Маппинг package kind → kind для RowSettingsCell.
+                      //   text → text, date → numeric, person_name → person_name, прочее → other.
+                      const rowKind: "text" | "numeric" | "boolean" | "other" | "person_name" =
                         pkgKind === "text" ? "text"
                           : pkgKind === "date" ? "numeric"
-                            : "other";
+                            : pkgKind === "person_name" ? "person_name"
+                              : "other";
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
                         ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
                         : p.package_token;
-                      const showModifiers = isReady && !isRolesGroup;
+                      const showModifiers = isReady && rowKind !== "other";
+                      // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
+                      const personNamePreview = (() => {
+                        if (rowKind !== "person_name") return null;
+                        const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
+                        const allowedFmts: PersonNameFormat[] = ["full", "short", "signature_short"];
+                        const safeFmt = allowedFmts.includes(fmt) ? fmt : "full";
+                        return formatPersonName(DEMO_PERSON_NAME, {
+                          format: safeFmt,
+                          case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
+                        });
+                      })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
                           <TableCell />
@@ -905,6 +924,10 @@ export function PlaceholdersCatalogTab() {
                             {p.reused_fld ? (
                               <Badge variant="secondary" className="font-mono text-[10px]">
                                 {p.reused_fld}
+                              </Badge>
+                            ) : isRolesGroup ? (
+                              <Badge variant="outline" className="font-mono text-[10px]">
+                                ln
                               </Badge>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
@@ -934,16 +957,16 @@ export function PlaceholdersCatalogTab() {
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
                               />
-                            ) : isReady && isRolesGroup ? (
-                              <span className="text-[10px] text-muted-foreground italic">
-                                роль: модификаторы недоступны
-                              </span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
                             )}
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
-                            {isReady ? (
+                            {personNamePreview ? (
+                              <span className="italic" title={`Demo: ${DEMO_PERSON_NAME}`}>
+                                {personNamePreview}
+                              </span>
+                            ) : isReady ? (
                               <span className="text-muted-foreground/70 italic">
                                 Пример появится после заполнения анкеты документа
                               </span>
@@ -1017,7 +1040,8 @@ function RowSettingsCell({
   onChange,
   supportsLongFormat = false,
 }: {
-  kind: ReturnType<typeof classifyDataType>;
+  // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
+  kind: ReturnType<typeof classifyDataType> | "person_name";
   settings: RowSettings;
   onChange: (patch: Partial<RowSettings>) => void;
   /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
@@ -1028,15 +1052,20 @@ function RowSettingsCell({
     return <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>;
   }
 
+  // Sprint 3J-Roles: person_name controls — ФИО полностью / кратко / для подписи + падеж.
+  const isPersonName = kind === "person_name";
   const showLongToggle = kind === "text" && supportsLongFormat;
-  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle;
-  // Падеж: text — всегда; numeric — только при words; boolean — никогда.
+  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle || isPersonName;
+  // Падеж: text — всегда; numeric — только при words; boolean — никогда; person_name — всегда.
   const caseEnabled =
-    kind === "text" || (kind === "numeric" && settings.format === "words");
+    kind === "text" || isPersonName || (kind === "numeric" && settings.format === "words");
 
   // Значение для format toggle
-  const formatValue =
-    kind === "numeric"
+  const formatValue = isPersonName
+    ? (settings.format === "short" ? "short"
+        : settings.format === "signature_short" ? "signature_short"
+        : "full")
+    : kind === "numeric"
       ? settings.format === "words" ? "words" : "asis"
       : kind === "boolean"
         ? settings.format === "text" ? "text" : "asis"
@@ -1046,9 +1075,13 @@ function RowSettingsCell({
 
   const handleFormatChange = (val: string) => {
     if (!val) return; // ToggleGroup может вернуть "" при дабл-клике
-    if (kind === "numeric") {
+    if (isPersonName) {
+      // canon: full → null (default); short/signature_short → сами.
+      const fmt: FieldFormat | null =
+        val === "short" ? "short" : val === "signature_short" ? "signature_short" : null;
+      onChange({ format: fmt });
+    } else if (kind === "numeric") {
       const fmt: FieldFormat | null = val === "words" ? "words" : null;
-      // Если уходим с words — сбрасываем падеж
       onChange({
         format: fmt,
         ...(fmt === null ? { caseModifier: null } : {}),
@@ -1077,9 +1110,19 @@ function RowSettingsCell({
           onValueChange={handleFormatChange}
           className="h-7"
         >
-          <ToggleGroupItem value="asis" className="h-7 px-2 text-[10px]">
-            {showLongToggle ? "Кратко" : "Обычный"}
+          <ToggleGroupItem value={isPersonName ? "full" : "asis"} className="h-7 px-2 text-[10px]">
+            {isPersonName ? "ФИО полностью" : showLongToggle ? "Кратко" : "Обычный"}
           </ToggleGroupItem>
+          {isPersonName && (
+            <ToggleGroupItem value="short" className="h-7 px-2 text-[10px]">
+              ФИО кратко
+            </ToggleGroupItem>
+          )}
+          {isPersonName && (
+            <ToggleGroupItem value="signature_short" className="h-7 px-2 text-[10px]">
+              ФИО для подписи
+            </ToggleGroupItem>
+          )}
           {kind === "numeric" && (
             <ToggleGroupItem value="words" className="h-7 px-2 text-[10px]">
               Прописью
@@ -1098,7 +1141,7 @@ function RowSettingsCell({
         </ToggleGroup>
       )}
 
-      {(kind === "text" || kind === "numeric") && (
+      {(kind === "text" || kind === "numeric" || isPersonName) && (
         caseEnabled ? (
           <Select
             value={settings.caseModifier ?? "none"}
