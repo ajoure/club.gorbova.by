@@ -38,7 +38,29 @@ export interface PackageGenerationResult {
 
 export interface GeneratePackageParams {
   package_session_id: string;
+  /**
+   * Sprint 3I-C: user_generate — дефолтный режим backend'а, поэтому в network
+   * body НЕ передаётся (отправляем только `{ package_session_id }`).
+   * admin_test — явно в body.
+   */
   run_mode?: "user_generate" | "admin_test";
+}
+
+/** Sprint 3I-C: маппинг технических кодов ошибок в человекочитаемые фразы. */
+function humanizePackageGenerationError(raw: string): string {
+  const code = (raw || "").trim();
+  const map: Record<string, string> = {
+    package_session_id_required: "Сначала сохраните анкету пакета.",
+    role_assignment_missing: "Не для всех документов выбраны исполнители ролей.",
+    ln_token_not_found: "В шаблоне есть роль, которой нет в пакете.",
+    ln_token_outside_bound_package: "В шаблоне есть роль из другого пакета.",
+    blocked: "Запуск заблокирован настройками пакета.",
+    invalid_legacy_role_placeholder: "В шаблоне используется устаревший формат роли.",
+  };
+  if (map[code]) return map[code];
+  // Если backend вернул уже русскую фразу — отдаём как есть.
+  if (/[А-Яа-яЁё]/.test(code)) return code;
+  return "Не удалось сформировать пакет документов. Попробуйте ещё раз.";
 }
 
 export function useAiDocumentPackageGeneration() {
@@ -51,9 +73,16 @@ export function useAiDocumentPackageGeneration() {
       if (!params?.package_session_id) {
         throw new Error("package_session_id_required");
       }
+      // Sprint 3I-C: для user_generate не передаём run_mode — оставляем дефолт.
+      const body: Record<string, unknown> = {
+        package_session_id: params.package_session_id,
+      };
+      if (params.run_mode && params.run_mode !== "user_generate") {
+        body.run_mode = params.run_mode;
+      }
       const { data, error } = await supabase.functions.invoke(
         "ai-generate-document-package",
-        { body: params }
+        { body }
       );
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -67,13 +96,15 @@ export function useAiDocumentPackageGeneration() {
         toast.success(`Пакет сформирован: ${data.generated} документ(ов)`);
       } else if (data.status === "partial") {
         toast.warning(`Пакет частично сформирован: ${data.generated} из ${data.total}`);
+      } else if (data.status === "blocked") {
+        toast.error("Запуск заблокирован: проверьте состав, роли и анкеты пакета.");
       } else {
-        toast.error("Ошибка генерации пакета");
+        toast.error("Не удалось сформировать пакет документов.");
       }
     },
     onError: (error: Error) => {
       console.error("Package generation error:", error);
-      toast.error(`Ошибка генерации пакета: ${error.message}`);
+      toast.error(humanizePackageGenerationError(error?.message));
     },
   });
 
