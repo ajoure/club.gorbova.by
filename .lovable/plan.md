@@ -1,109 +1,209 @@
-# да, согласен, с учетом правок:
+План правильный. Я бы утвердил **с небольшими правками**, чтобы не было ложных FAIL на скачивании и run_mode.
 
-1. В proof не фиксировать пароль `123456`; писать только «Авторизация выполнена через Login as Developer».
+да, согласен, с учетом правок:
 
-2. Если реально кликаем только «Тестово сформировать», то network log подтверждает только `{ package_session_id, run_mode: "admin_test" }`. Пользовательский запуск `{ package_session_id }` / `user_generate` подтверждать code-review, либо отдельно кликнуть user-кнопку и зафиксировать второй network request. Не писать, что network log подтвердил оба режима, если был один клик.
+**1.**
 
-3. В proof указывать фактический путь UI, как он сейчас называется в интерфейсе: `/admin/documents → Пакеты документов → Идеология` или текущий путь через `PackagesWorkspace`.
+**user_generate**
 
-4. DOCX/PDF download проверять по фактическим ссылкам из UI. `/document-download/<id>?kind=docx|pdf` использовать только если именно такие ссылки реально рендерятся. Главное: HTTP 200 и файл size > 0.
+**не требовать как обязательный network body**
 
-5. В истории генераций подтвердить, что список отфильтрован по текущей `package_session_id`, а не только по `package_template_id`.
+Если backend-контракт для пользовательского запуска — дефолтный режим, то user-кнопка должна отправлять:
 
-6. В proof добавить строку: `Phase 3I-B is frontend-only`: `git diff --name-only` не содержит `supabase/functions/**`, `supabase/migrations/**`, `/purchases`, `purchaseDocumentRules`.
+{ "package_session_id": "..." }
 
-7. Если при реальном клике всплывёт runtime-баг — не чинить молча. Зафиксировать FAIL/BLOCKER и остановиться, кроме незначительных frontend-ошибок без изменения логики.
+А не обязательно:
 
-DoD:
+{ "package_session_id": "...", "run_mode": "user_generate" }
 
-- proof-файл содержит 8 секций;
+В proof писать фактический body из network request.  
+Admin-кнопка — обязательно:
 
-- 3 скрина приложены;
+{ "package_session_id": "...", "run_mode": "admin_test" }
 
-- admin_test network request подтверждён;
+&nbsp;
 
-- user button подтверждён code-review или отдельным кликом;
+**2. Проверку скачивания делать на trusted**
 
-- DOCX/PDF скачиваются HTTP 200;
+***.[gorbova.by](http://gorbova.by)**
 
-- история показывает текущую package session;
+**, не на preview**
 
-- backend и billing untouched.
+После фикса origin скачивание корректно работает на:
 
-План: Phase 3I-B closeout proof
+[club.gorbova.by](http://club.gorbova.by)
 
-Backend не меняется. Только сбор доказательств работоспособности UI, который уже реализован.
+[gorbova.by](http://gorbova.by)
+
+*.[gorbova.by](http://gorbova.by)
+
+На preview/lovable-доменах может быть fallback на canonical [gorbova.by](http://gorbova.by), и session может не совпасть. Поэтому в proof для скачивания использовать именно [club.gorbova.by](http://club.gorbova.by) или другой trusted *.[gorbova.by](http://gorbova.by).
+
+&nbsp;
+
+**3. Не требовать именно HEAD**
+
+DocumentDownloadPage может нормально работать через GET, но не поддерживать HEAD.
+
+DoD заменить на:
+
+DOCX/PDF download: GET или browser-click возвращает HTTP 200, файл size > 0.
+
+HEAD использовать только если реально поддерживается.
+
+&nbsp;
+
+**4. Legacy**
+
+**DocumentPackageIdeologyView**
+
+Если rg "DocumentPackageIdeologyView" src/** показывает 0 реальных usage — удалить файл и import.
+
+Если есть остаточная ссылка — не удалять, а добавить в файл явный комментарий:
+
+// @deprecated Phase 3I-C: legacy package UI, do not add new logic here.
+
+Новая логика туда больше не добавляется.
+
+&nbsp;
+
+**5. История генераций**
+
+В PackageGenerationHistory обязательно скрыть технический JSON по умолчанию.
+
+Показывать пользователю только:
+
+- дата;
+- режим: «Обычная генерация» / «Тестовая генерация»;
+- статус по-русски;
+- количество документов;
+- DOCX/PDF;
+- ошибки по-русски.
+
+Технические данные — только admin/debug, если уже есть такой режим.
+
+&nbsp;
+
+**6. Русификация**
+
+Проверить не только видимые тексты, но и:
+
+- toast success/error;
+- Alert;
+- empty-state;
+- подписи статусов generated / partial / failed / blocked;
+- ошибки из edge-кодов.
+
+Сырые коды типа package_session_id_required, role_assignment_missing, blocked не показывать пользователю без русской расшифровки.
+
+&nbsp;
+
+**7. Proof**
+
+В proof добавить отдельную строку:
+
+/admin/documents открыт без runtime console errors.
+
+И отдельно:
+
+Phase 3I-C is frontend-only: git diff не содержит supabase/functions/**, supabase/migrations/**, /purchases, purchaseDocumentRules.
+
+&nbsp;
+
+**8. Финальный статус**
+
+При PASS зафиксировать:
+
+completed: Phase 3I-C cleanup and UX polish completed;
+
+legacy package UI removed or deprecated;
+
+generation history polished;
+
+user-flow smoke passed;
+
+DOCX/PDF download works on trusted *.[gorbova.by](http://gorbova.by) origin;
+
+backend pipeline, migrations, Gotenberg, billing documents untouched.
+
+**DoD остается:**
+
+- legacy view удалён или явно deprecated с grep-proof;
+- все новые user-facing тексты на русском;
+- история показывает дату/режим/статус/документы/DOCX/PDF;
+- user-flow smoke пройден: анкета → генерация → скачивание;
+- proof-файл создан;
+- git diff — только frontend.
+
+Главная правка: скачивание проверять не через HEAD и не на preview-домене, а через реальный GET/browser-click на [club.gorbova.by](http://club.gorbova.by) или другом trusted *.[gorbova.by](http://gorbova.by).
+
+&nbsp;
+
+# План: Phase 3I-C — Cleanup + UX polish (frontend-only)
+
+Backend, миграции, edge functions, Gotenberg, billing-документы и `/purchases` НЕ трогаем. Только UI-чистка, тексты, отображение истории и финальный proof.
 
 ## Шаги
 
-### 1. Git diff verification (без изменения файлов)
+### 1. Законсервировать legacy `DocumentPackageIdeologyView`
 
-- `git diff --name-only` за последний коммит/сессию Phase 3I-B.
-- Подтвердить, что меняется только frontend:
-  - `src/components/ai-documents/DocumentPackageIdeologyView.tsx`
-  - `src/components/ai-documents/packages/PackageGenerationHistory.tsx` (new)
-  - `src/hooks/useAiDocumentPackageGeneration.ts`
-- Подтвердить отсутствие `supabase/functions/**`, `supabase/migrations/**`, `purchaseDocumentRules*`, `/purchases*`.
+- `rg "DocumentPackageIdeologyView"` по `src/**` — собрать все usages.
+- Ожидаемо: только `PackagesWorkspace.tsx` (import) уже не использует его в активных табах. Подтвердить grep-proof.
+- Если usages нет — удалить файл `src/components/ai-documents/DocumentPackageIdeologyView.tsx` и его import.
+- Если есть остаточные ссылки в dead-роутах — пометить заголовком `@deprecated Phase 3I-C` и не добавлять новой логики.
 
-### 2. UI proof через browser tools
+### 2. Русификация ошибок и warnings
 
-- `navigate_to_sandbox` → `/admin/documents`.
-- При необходимости — авторизация через «Login as Developer» (пароль `123456` из user memory).
-- Открыть вкладку «Пакеты документов → Идеология».
-- Проверить отсутствие runtime errors (`read_console_logs`).
+Пройти по новым компонентам Phase 3I:
 
-### 3. Screenshot A — блок «Сформировать пакет»
+- `PackageGenerationPanel.tsx`
+- `PackageGenerationHistory.tsx`
+- `useAiDocumentPackageGeneration.ts`
+- `DocumentPackageQuestionnairesView.tsx` (preflight messages)
 
-- Скрин Block C: preflight (шаблон, роли, blockers), две кнопки (user + admin_test).
+Проверить toast/Alert/empty-state тексты: только русский, без сырых кодов вида `package_session_id_required`. Маппинг технических кодов в человеческие фразы через локальный helper (без правки backend контракта).
 
-### 4. Real click: admin_test
+### 3. Улучшить отображение истории генераций
 
-- `act` → клик «Тестово сформировать».
-- Дождаться завершения (toast + per-item результат).
-- `list_network_requests` для подтверждения POST на
-`…/functions/v1/ai-generate-document-package` с body
-`{ package_session_id, run_mode: "admin_test" }`.
-- Сравнить с user-button (читаем код — `run_mode: "user_generate"`), отдельный клик не нужен, тот же контракт.
+В `PackageGenerationHistory.tsx`:
 
-### 5. Screenshot B — результат запуска
+- Колонки/строки batch: дата (локаль ru, `dd.MM.yyyy HH:mm`), режим (бейдж `admin_test` / `user_generate`), статус (`generated`/`partial`/`failed`/`blocked` с цветовым бейджем), счётчик `generated/total`.
+- Раскрытие batch: список документов с номером, датой, статусом и кнопками DOCX / PDF (через `getDocumentDownloadUrl`, уже фикснутый origin).
+- Фильтр по `meta->>package_session_id` сохранить.
+- Пустое состояние: «Пока нет ни одной генерации для этого пакета».
 
-- Скрин «Last Run Result»: generated / total, список документов, DOCX + PDF ссылки.
+### 4. User-flow smoke (preview)
 
-### 6. Скачивание DOCX/PDF
+- `navigate_to_sandbox` → `/admin/documents → Пакеты документов → Идеология`.
+- Анкеты: убедиться, что выбранное ЮЛ гидратируется на reload.
+- Вкладка «Генерация»: preflight зелёный → клик «Сформировать пакет документов» (user_generate).
+- Дождаться завершения, проверить «Last Run Result» и историю.
+- Скачать DOCX и PDF с текущего origin (`club.gorbova.by` / preview) — HTTP 200, файл > 0.
 
-- Достаём один `document_id` из результата.
-- HEAD/GET на `https://gorbova.by/document-download/<id>?kind=docx|pdf` (через curl) → 200, content-type корректный.
+### 5. Финальный proof
 
-### 7. Screenshot C — история генераций
+Новый файл `.lovable/proofs/sprint_3i_c_closeout_2026_05.md`, 6 секций:
 
-- Раскрыть `PackageGenerationHistory`, развернуть последний batch.
-- Скрин: дата, статус, бейдж run_mode=admin_test, список документов с DOCX/PDF.
+1. Grep-proof legacy `DocumentPackageIdeologyView` (удалён или законсервирован).
+2. Скрин «Генерация»: preflight + кнопки.
+3. Network request user_generate (POST `ai-generate-document-package`, body `{ package_session_id }`).
+4. Скрин «Last Run Result» + истории с режимом/статусом/датой.
+5. HTTP 200 для DOCX и PDF (curl HEAD), origin = текущий `*.gorbova.by`.
+6. `git diff --name-only` — только frontend; нет `supabase/functions/**`, `supabase/migrations/**`, `purchaseDocumentRules*`, `/purchases*`, Gotenberg.
 
-### 8. Сборка proof-файла
-
-- Новый файл `.lovable/proofs/sprint_3i_b_ui_closeout_2026_05.md` с разделами:
-  1. Git diff scope (только frontend);
-  2. /admin/documents без runtime errors (console snapshot);
-  3. Screenshot A — кнопки;
-  4. Edge invocation (network request payload для user + admin);
-  5. Screenshot B — результат;
-  6. DOCX/PDF download HTTP statuses;
-  7. Screenshot C — история;
-  8. Подтверждение: `purchaseDocumentRules*`, `/purchases`, биллинговые edge функции не тронуты.
-- Обновить `.lovable/plan.md`: Phase 3I-B → DONE с ссылкой на proof.
-- Memory не обновляется (architecture не меняется).
-
-## DoD
-
-- Proof-файл содержит все 8 секций;
-- три скрина приложены;
-- network log подтверждает оба run_mode;
-- DOCX и PDF скачиваются (HTTP 200);
-- git diff scope чистый.
+Обновить `.lovable/plan.md`: Phase 3I-B → CLOSED (со ссылкой на 3I-B proof), Phase 3I-C → DONE (со ссылкой на новый proof). Memory не обновляется (архитектура не меняется).
 
 ## Что НЕ делаем
 
-- Не правим backend, миграции, RPC, storage, Gotenberg;
-- Не правим `/purchases` и `purchaseDocumentRules`;
-- Не меняем UI логику (если не всплывёт критический баг во время клика — тогда отдельный вопрос пользователю);
-- Phase 3I-C (полировка UX) — отдельным заходом после approve этого proof.
+- Не меняем backend, RPC, edge functions, миграции, storage, Gotenberg.
+- Не трогаем `/purchases`, `purchaseDocumentRules`, биллинговые шаблоны и группы плейсхолдеров.
+- Не меняем контракт `ai-generate-document-package` (`{ package_session_id, run_mode? }`).
+- Не добавляем новую логику в legacy `DocumentPackageIdeologyView`.
+
+## DoD
+
+- Legacy view удалён или явно `@deprecated` с grep-proof.
+- Все user-facing тексты в новых компонентах на русском.
+- История показывает дату/режим/статус/документы с рабочими DOCX/PDF ссылками.
+- User-flow smoke пройден: анкета → генерация → скачивание.
+- Proof-файл из 6 секций приложен, `git diff` — только frontend.
