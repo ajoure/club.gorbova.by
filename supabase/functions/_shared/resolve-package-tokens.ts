@@ -30,9 +30,13 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { isCaseModifier, type CaseContext } from './case-format.ts';
+import { formatPersonName, type PersonNameFormat } from './typed-tokens-resolver.ts';
+import type { RuCase } from './ru-inflection.ts';
 
 /** Жёсткий выключатель: production-вызов всегда возвращает FEATURE_DISABLED. */
 export const HARDCODED_ENABLED = false;
+
+const PERSON_NAME_FORMATS: ReadonlySet<PersonNameFormat> = new Set(['full', 'short', 'signature_short']);
 
 export interface PackageTokenResolveInput {
   rawToken: string;
