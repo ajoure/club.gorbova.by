@@ -303,7 +303,7 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
                         type="button"
                         onClick={async () => {
                           const res = await downloadDocumentBlob(r.document_id!, "pdf");
-                          if (res.ok === false) toast.error(res.message);
+                          if (!res.ok) toast.error(res.message);
                         }}
                         className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
                       >
@@ -313,7 +313,7 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
                         type="button"
                         onClick={async () => {
                           const res = await downloadDocumentBlob(r.document_id!, "docx");
-                          if (res.ok === false) toast.error(res.message);
+                          if (!res.ok) toast.error(res.message);
                         }}
                         className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
                       >
