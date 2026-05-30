@@ -184,30 +184,48 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         }
 
         // 4) For each candidate lesson, find a matching rule -> build RPC payload.
+        // OR-aggregation across ALL matching rules. If ANY matching tariff
+        // grants the month purchase, the lesson is unlocked.
+        // Synthetic RPC key = `${lesson_id}::${tariff_id}` to disambiguate
+        // multiple (lesson, tariff) tuples within one RPC batch.
         const payload: Array<{
-          lesson_id: string;
+          lesson_id: string; // synthetic key
           tariff_id: string;
           content_month: string;
         }> = [];
-        const lessonMonthMap = new Map<string, string>();
-        const lessonTariffMap = new Map<string, string>();
+        // Map<lesson_id, Array<{ syntheticKey, tariff_id, content_month }>>
+        const lessonTuples = new Map<
+          string,
+          Array<{ syntheticKey: string; tariff_id: string; content_month: string }>
+        >();
 
         for (const c of candidates) {
           const rootMod = lessonRootModule.get(c.lesson_id);
-          if (!rootMod) continue;
+          if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRootModule.get(rootMod) || [];
-          // Pick the first rule whose scope includes this lesson.
-          const match = candidateRules.find((r) =>
+          const matches = candidateRules.filter((r) =>
             lessonInRuleScope(c.lesson_id, c.module_id, r.conditions)
           );
-          if (!match || !match.tariff_id || !c.content_month) continue;
-          payload.push({
-            lesson_id: c.lesson_id,
-            tariff_id: match.tariff_id,
-            content_month: c.content_month,
-          });
-          lessonMonthMap.set(c.lesson_id, c.content_month);
-          lessonTariffMap.set(c.lesson_id, match.tariff_id);
+          if (matches.length === 0) continue;
+
+          // Deduplicate by tariff_id (multiple rules may carry same tariff).
+          const seenTariffs = new Set<string>();
+          for (const m of matches) {
+            if (!m.tariff_id || seenTariffs.has(m.tariff_id)) continue;
+            seenTariffs.add(m.tariff_id);
+            const syntheticKey = `${c.lesson_id}::${m.tariff_id}`;
+            payload.push({
+              lesson_id: syntheticKey,
+              tariff_id: m.tariff_id,
+              content_month: c.content_month,
+            });
+            if (!lessonTuples.has(c.lesson_id)) lessonTuples.set(c.lesson_id, []);
+            lessonTuples.get(c.lesson_id)!.push({
+              syntheticKey,
+              tariff_id: m.tariff_id,
+              content_month: c.content_month,
+            });
+          }
         }
 
         if (payload.length === 0) {
@@ -215,25 +233,26 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           return;
         }
 
-        // 5) Single RPC call.
         const { data: rpcData, error: rpcErr } = await supabase.rpc(
           "has_month_purchase_bulk" as any,
           { _user_id: user.id, _items: payload as any }
         );
         if (rpcErr) throw rpcErr;
 
-        const okSet = new Set<string>();
+        const okSyntheticKeys = new Set<string>();
         for (const row of (rpcData as any[]) || []) {
           if (row?.has_purchase === true && row?.lesson_id) {
-            okSet.add(row.lesson_id);
+            okSyntheticKeys.add(row.lesson_id);
           }
         }
 
-        for (const item of payload) {
-          if (!okSet.has(item.lesson_id)) {
-            result.set(item.lesson_id, {
+        // OR-aggregate per lesson: locked only if NO tuple passed.
+        for (const [lessonId, tuples] of lessonTuples.entries()) {
+          const anyOk = tuples.some((t) => okSyntheticKeys.has(t.syntheticKey));
+          if (!anyOk) {
+            result.set(lessonId, {
               lock_reason: "month_mismatch",
-              locked_month: item.content_month,
+              locked_month: tuples[0].content_month,
             });
           }
         }

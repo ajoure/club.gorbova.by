@@ -162,29 +162,44 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
           rulesByRoot.get(r.target_ref)!.push(r);
         }
 
+        // OR-aggregation across ALL matching rules per module.
+        // Synthetic RPC key = `${module_id}::${tariff_id}`.
         const payload: Array<{
-          lesson_id: string; // opaque key = module_id
+          lesson_id: string; // synthetic key
           tariff_id: string;
           content_month: string;
         }> = [];
-        const moduleTariff = new Map<string, string>();
-        const moduleMonth = new Map<string, string>();
+        const moduleTuples = new Map<
+          string,
+          Array<{ syntheticKey: string; tariff_id: string; content_month: string }>
+        >();
 
         for (const c of candidates) {
           const rootMod = moduleRoot.get(c.module_id);
-          if (!rootMod) continue;
+          if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRoot.get(rootMod) || [];
-          const match = candidateRules.find((r) =>
+          const matches = candidateRules.filter((r) =>
             moduleInRuleScope(c.module_id, r.conditions),
           );
-          if (!match || !match.tariff_id || !c.content_month) continue;
-          payload.push({
-            lesson_id: c.module_id,
-            tariff_id: match.tariff_id,
-            content_month: c.content_month,
-          });
-          moduleTariff.set(c.module_id, match.tariff_id);
-          moduleMonth.set(c.module_id, c.content_month);
+          if (matches.length === 0) continue;
+
+          const seenTariffs = new Set<string>();
+          for (const m of matches) {
+            if (!m.tariff_id || seenTariffs.has(m.tariff_id)) continue;
+            seenTariffs.add(m.tariff_id);
+            const syntheticKey = `${c.module_id}::${m.tariff_id}`;
+            payload.push({
+              lesson_id: syntheticKey,
+              tariff_id: m.tariff_id,
+              content_month: c.content_month,
+            });
+            if (!moduleTuples.has(c.module_id)) moduleTuples.set(c.module_id, []);
+            moduleTuples.get(c.module_id)!.push({
+              syntheticKey,
+              tariff_id: m.tariff_id,
+              content_month: c.content_month,
+            });
+          }
         }
 
         if (payload.length === 0) {
@@ -198,22 +213,26 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
         );
         if (rpcErr) throw rpcErr;
 
-        const okSet = new Set<string>();
+        const okSyntheticKeys = new Set<string>();
         for (const row of (rpcData as any[]) || []) {
           if (row?.has_purchase === true && row?.lesson_id) {
-            okSet.add(row.lesson_id);
+            okSyntheticKeys.add(row.lesson_id);
           }
         }
 
-        for (const item of payload) {
-          if (!okSet.has(item.lesson_id)) {
-            const monthKey = item.content_month.length >= 7
-              ? item.content_month.substring(0, 7)
-              : item.content_month;
-            result.set(item.lesson_id, {
+        // OR-aggregate per module: locked only if NO tuple passed.
+        // required_tariff_id для UI = первый matching tariff (fallback CTA).
+        for (const [moduleId, tuples] of moduleTuples.entries()) {
+          const anyOk = tuples.some((t) => okSyntheticKeys.has(t.syntheticKey));
+          if (!anyOk) {
+            const first = tuples[0];
+            const monthKey = first.content_month.length >= 7
+              ? first.content_month.substring(0, 7)
+              : first.content_month;
+            result.set(moduleId, {
               lock_reason: "month_mismatch",
               locked_month: monthKey,
-              required_tariff_id: item.tariff_id,
+              required_tariff_id: first.tariff_id,
             });
           }
         }
