@@ -36,7 +36,8 @@ import {
   useAiDocumentPackageGeneration,
   type PackageGenerationResult,
 } from "@/hooks/useAiDocumentPackageGeneration";
-import { getDocumentDownloadUrl } from "@/utils/buildDocumentDownloadUrl";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
+import { toast } from "sonner";
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
 
 interface Props {
@@ -298,22 +299,26 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
                   </Badge>
                   {r.document_id && (
                     <>
-                      <a
-                        href={getDocumentDownloadUrl(r.document_id, "pdf")}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await downloadDocumentBlob(r.document_id!, "pdf");
+                          if (res.ok === false) toast.error(res.message);
+                        }}
                         className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
                       >
                         <FileDown className="h-3 w-3" /> PDF
-                      </a>
-                      <a
-                        href={getDocumentDownloadUrl(r.document_id, "docx")}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await downloadDocumentBlob(r.document_id!, "docx");
+                          if (res.ok === false) toast.error(res.message);
+                        }}
                         className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
                       >
                         <FileDown className="h-3 w-3" /> DOCX
-                      </a>
+                      </button>
                     </>
                   )}
                 </div>

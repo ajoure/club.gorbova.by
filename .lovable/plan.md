@@ -1,112 +1,42 @@
-# План: закрытие Sprint 3J-Roles
+План: унификация скачивания пакетных DOCX/PDF с биллинговыми
 
-Цель — закрыть только оставшиеся пункты DoD спринта (UI уже почти готов, backend закрыт). Новую логику не расширять, backend/migrations/purchases/Gotenberg/billing pipeline не трогать.
+## Diagnose
 
-## Шаг 1. Прогнать frontend-тесты
+Биллинговые документы (`SubscriptionDocumentActions`, `OrderListItem`, `OrderDocuments`, админ-логи) скачиваются через canonical helper `downloadDocumentBlob(documentId, kind)` — он зовёт edge function `document-download`, получает blob, и через скрытый `<a download>` сразу сохраняет файл в «Загрузки». Никакого нового окна не открывается. Если пользователь потом сам кликает на скачанный файл, браузер открывает его в соседней вкладке — это поведение системы, нам трогать нечего.
 
-Запуск (vitest, project-команда):
+Пакетные документы используют другой путь:
+- `src/components/ai-documents/packages/PackageGenerationPanel.tsx` (строки 299–318)
+- `src/components/ai-documents/packages/PackageGenerationHistory.tsx` (строки 107–122)
 
-```
-bunx vitest run src/utils/personNameFormat.test.ts src/utils/packagePlaceholderCatalog.test.ts
-```
+Там вместо `downloadDocumentBlob` стоит `<a href={getDocumentDownloadUrl(id, kind)} target="_blank" rel="noopener noreferrer">`. Это открывает страницу `/document-download/:id` (`DocumentDownloadPage`) в новой вкладке, и уже она внутри качает blob — отсюда лишнее окно и непривычное поведение по сравнению с биллингом.
 
-Ожидание: оба файла зелёные.
+## Решение
 
-Если падает:
-- чинить только в рамках UI Sprint 3J-Roles (`src/utils/personNameFormat.ts`, `src/utils/packagePlaceholderCatalog.ts`, `PlaceholdersCatalogTab.tsx`, `FieldChipNode.ts`);
-- backend (`supabase/functions/**`), migrations, `/purchases`, Gotenberg — НЕ трогать.
+Заменить в этих двух местах ссылки на кнопки, которые вызывают тот же канонический `downloadDocumentBlob(id, "pdf"|"docx")`, что и биллинговые компоненты. Поведение станет идентичным: один клик → файл сразу в «Загрузки», без новой вкладки.
 
-Зафиксировать stdout (PASS-строки) для §11 proof.
+## Изменения (только UI, frontend-only)
 
-## Шаг 2. Runtime DOCX proof
+1. `src/components/ai-documents/packages/PackageGenerationPanel.tsx`
+   - Убрать `import { getDocumentDownloadUrl } from "@/utils/buildDocumentDownloadUrl"`.
+   - Добавить `import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob"` и `toast` (если ещё не импортирован — он там уже есть).
+   - Заменить блок `<a ... PDF /></a> <a ... DOCX /></a>` на два `<button type="button" onClick={async () => { const r = await downloadDocumentBlob(r.document_id, "pdf"|"docx"); if (!r.ok) toast.error(r.message); }}>` с теми же иконками `FileDown` и текстом. Стили (`inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline`) сохранить.
 
-Сгенерировать пакетный DOCX через admin/test flow (без правки prod billing-шаблонов):
+2. `src/components/ai-documents/packages/PackageGenerationHistory.tsx`
+   - То же самое: убрать `getDocumentDownloadUrl`, импортировать `downloadDocumentBlob`, заменить два `<a>` на `<button>` с onClick → `downloadDocumentBlob(d.id, "pdf"|"docx")` + `toast.error` на ошибку. Стили сохранить.
 
-1. В админке `/admin/documents` (или эквивалент) создать **тестовый** document_template c content, содержащим 5 токенов:
-   ```
-   {{ln-000012}}
-   {{ln-000012|format=short}}
-   {{ln-000012|format=signature_short}}
-   {{ln-000012|format=short|case=genitive}}
-   {{ln-000012|format=signature_short|case=genitive}}
-   ```
-   (привязка к тестовому package + роль `ln-000012` = Федорчук Сергей Валерьевич).
-2. Запустить `ai-generate-document-package` в режиме `admin_test`.
-3. Скачать готовый DOCX из `ai_generated_documents` (через `DocumentDownloadPage` / storage URL).
-4. Распаковать:
-   ```
-   unzip -o generated.docx -d /tmp/docx_proof
-   ```
-5. Из `word/document.xml` извлечь текстовые runs, подтвердить 5 строк:
-   ```
-   Федорчук Сергей Валерьевич
-   Федорчук С.В.
-   С.В.Федорчук
-   Федорчука С.В.
-   С.В.Федорчука
-   ```
-6. Подтвердить `grep -c '{{' word/document.xml == 0` (raw токенов нет).
+`getDocumentDownloadUrl` и страница `/document-download/:id` остаются как есть — они нужны для email-ссылок в шаблонах и публичных кейсов; в UI пакетов их не используем.
 
-После доказательства — тестовый шаблон удалить (или пометить `archived=true`), чтобы prod не задело.
+## Что не трогаем
 
-## Шаг 3. UI скриншот
-
-Через browser tools:
-- `/admin/ai` → вкладка «Плейсхолдеры» → группа «Пакет: Роли»;
-- развернуть строку `ln-000012`, снять скриншот modifier-controls (три кнопки формата + dropdown падежа + preview);
-- сохранить под `/mnt/documents/sprint_3j_roles_ui.png`.
-
-## Шаг 4. Дополнить proof
-
-Файл: `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`
-
-Добавить секции:
-
-- **§10 Frontend modifier controls** — описание `RowSettingsCell` для `person_name`, ссылка на скриншот.
-- **§11 Frontend tests** — команда + PASS-вывод vitest для обоих файлов.
-- **§12 Runtime DOCX excerpt** — 5 строк результата + подтверждение отсутствия `{{...}}`.
-- **§13 Billing regression** — подтверждение, что `fullNameToInitials` теперь возвращает без пробела между инициалами, и что это распространяется на billing director / IP short_name (ссылка на `_shared/typed-tokens-resolver.ts` и unit-результат).
-- **§14 Untouched scope / final status** — grep-доказательства:
-  ```
-  git diff --name-only origin/main...HEAD | grep -E '^(supabase/functions|supabase/migrations|src/pages/.*[Pp]urchases)' || echo "untouched"
-  ```
-  + явное перечисление: `/purchases`, migrations, Gotenberg, billing pipeline — не тронуты в UI-заходе.
-  + copy examples (5) + preview examples (5) + подтверждение absent `PKR` / `package.role.PKR` / `package.roles.*` в catalog output (`grep` по vitest snapshot или по `packagePlaceholderCatalog.ts`).
-
-## Шаг 5. Финальный статус
-
-В §9 / §14 зафиксировать:
-
-```
-completed: Sprint 3J-Roles
-- ln role placeholders support full/short/signature_short and case modifiers in UI and runtime DOCX
-- short FIO standard is global: Фамилия И.О.
-- signature short standard is global: И.О.Фамилия
-- old PKR/package.roles formats absent from UI
-- billing/order pipeline unchanged except intended FIO short formatting standard
-```
-
-## Технические детали
-
-**Изменяемые файлы (ожидаемо):**
-- `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md` (дополнение секций §10–§14)
-- `/mnt/documents/sprint_3j_roles_ui.png` (скриншот UI)
-- `/mnt/documents/sprint_3j_roles_docx_excerpt.txt` (excerpt DOCX)
-
-**НЕ изменяется:**
-- `supabase/functions/**`
-- `supabase/migrations/**`
-- `/purchases` страницы и хуки
-- Gotenberg конфиг
-- billing tokens / customer.* / executor.* mapping
-- Production document_templates (используется только временный admin/test шаблон, удаляется после proof)
-
-**Стоп-условие:** Sprint 3J-Roles НЕ закрывается, пока §12 (Runtime DOCX excerpt) не подтверждён реальным generated документом — не только vitest и не только UI preview.
+- Backend, edge functions, миграции, billing pipeline, Gotenberg.
+- `src/pages/DocumentDownloadPage.tsx` — публичная страница для ссылок из email/уведомлений.
+- `src/utils/buildDocumentDownloadUrl.ts` — используется в шаблонах писем.
+- Sprint 3J-Roles артефакты не задеваются.
 
 ## DoD
 
-- [x] vitest зелёный для обоих файлов (Шаг 1).
-- [x] Runtime DOCX содержит ровно 5 ожидаемых строк, без raw `{{...}}` (Шаг 2).
-- [x] Скриншот UI с тремя форматами + падежом (Шаг 3).
-- [x] Proof §10–§14 заполнены (Шаг 4).
-- [x] Финальный статус completed зафиксирован (Шаг 5).
+- В `Пакеты документов → Запуск пакета` и в `История запусков` клик по «PDF»/«DOCX» сразу скачивает файл в «Загрузки», без новой вкладки.
+- Поведение визуально и функционально идентично биллинговым актам (`/purchases`).
+- Открытие уже скачанного файла из «Загрузок» по клику пользователя открывается в соседней вкладке браузера — это нативное поведение, отдельной работы не требует.
+- Никаких изменений в backend, edge functions, миграциях, billing pipeline.
+- При ошибке скачивания (`unauthorized` / `document_not_ready` / `download_failed`) показывается toast, как у биллинговых документов.
