@@ -862,6 +862,7 @@ export function PlaceholdersCatalogTab() {
                     </TableRow>,
                     ...section.items.map((p) => {
                       const isReady = p.status === "copy_ready";
+                      const isRolesGroup = p.groupId === "package_roles";
                       const statusLabel: Record<PackagePlaceholderStatus, string> = {
                         copy_ready: "готов",
                         source_available: "ждёт синтаксиса",
@@ -869,6 +870,20 @@ export function PlaceholdersCatalogTab() {
                         missing_source_column: "нет колонки",
                         deferred: "Sprint 3E",
                       };
+                      // Sprint 3J-UI: те же modifier-controls, что у billing.
+                      const pkgKind = classifyPackageItem(p);
+                      const supportsLong = packageSupportsLongFormat(p);
+                      // Маппинг package kind → kind для RowSettingsCell (date → numeric, text → text).
+                      const rowKind: ReturnType<typeof classifyDataType> =
+                        pkgKind === "text" ? "text"
+                          : pkgKind === "date" ? "numeric"
+                            : "other";
+                      const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
+                      const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
+                      const finalToken = isReady
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
+                        : p.package_token;
+                      const showModifiers = isReady && !isRolesGroup;
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
                           <TableCell />
@@ -911,12 +926,27 @@ export function PlaceholdersCatalogTab() {
                               {statusLabel[p.status]}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-2 text-[10px] text-muted-foreground italic">
-                            {isReady ? "без модификаторов (Sprint 3E)" : "—"}
+                          <TableCell className="py-2">
+                            {showModifiers ? (
+                              <RowSettingsCell
+                                kind={rowKind}
+                                settings={pkgSettings}
+                                onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
+                                supportsLongFormat={supportsLong}
+                              />
+                            ) : isReady && isRolesGroup ? (
+                              <span className="text-[10px] text-muted-foreground italic">
+                                роль: модификаторы недоступны
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
                             {isReady ? (
-                              <span className="text-muted-foreground/60 italic">— примера нет —</span>
+                              <span className="text-muted-foreground/70 italic">
+                                Пример появится после заполнения анкеты документа
+                              </span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
                                 {p.package_resolver_hint.length > 60
@@ -926,30 +956,45 @@ export function PlaceholdersCatalogTab() {
                             )}
                           </TableCell>
                           <TableCell className="py-2">
-                            {p.package_token ? (
+                            {finalToken ? (
                               <code className="text-[11px] text-foreground/90 break-all font-mono">
-                                {p.package_token}
+                                {finalToken}
                               </code>
                             ) : (
                               <span className="text-[11px] text-muted-foreground/60 italic">— не готов к копированию —</span>
                             )}
                           </TableCell>
                           <TableCell className="text-right py-2">
-                            {p.package_token && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-7 w-7"
-                                    onClick={() => copyPlaceholder(p.package_token!)}
-                                  >
-                                    <Copy className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
-                              </Tooltip>
-                            )}
+                            <div className="flex justify-end gap-0.5">
+                              {showModifiers && pkgDirty && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon" variant="ghost" className="h-7 w-7"
+                                      onClick={() => resetPkgRow(p.tech_key)}
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Сбросить настройки</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {finalToken && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => copyPlaceholder(finalToken)}
+                                    >
+                                      <Copy className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
