@@ -564,7 +564,8 @@ Deno.serve(async (req) => {
     // больше не считаются valid — это error invalid_legacy_role_placeholder
     // (реальных шаблонов с ними нет, Sprint 3G §7).
     const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-    const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
+    // Sprint 3J-Roles: strict whitelist для ln modifiers (format/case любой ord).
+    const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(?:\|(?:format=(?:full|short|signature_short)|case=(?:nominative|genitive|dative|accusative|instrumental|prepositional))){0,2}$/;
     const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
     const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 
