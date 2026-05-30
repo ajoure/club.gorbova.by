@@ -364,12 +364,29 @@ export const PACKAGE_PLACEHOLDER_CATALOG: PackagePlaceholderItem[] = [
 
 import type { FieldCase, FieldFormat } from "@/components/ai-documents/extensions/FieldChipNode";
 
-/** Псевдо-тип данных для выбора UI-контролов RowSettingsCell. */
-export type PackageItemDataKind = "text" | "date" | "boolean" | "other";
+/** Псевдо-тип данных для выбора UI-контролов RowSettingsCell.
+ *  Sprint 3J-Roles: добавлен `person_name` для ФИО-полей (директор ЮЛ, ФИО ФЛ)
+ *  и для package_roles ({{ln-XXXXXX}}). У этого kind свои controls:
+ *  ФИО полностью / кратко / для подписи + падеж.
+ */
+export type PackageItemDataKind = "text" | "date" | "boolean" | "person_name" | "other";
+
+/**
+ * Tech-keys ФИО-полей, для которых backend whitelisted
+ * `format=short|signature_short` (см. PERSON_NAME_PACKAGE_BAG_KEYS в
+ * canonical-document-generate-strict + FIO_PACKAGE_TECH_KEYS в orchestrator).
+ */
+const PERSON_NAME_PACKAGE_TECH_KEYS: ReadonlySet<string> = new Set([
+  "package.ul.director_full_name",
+  "package.ul.director_short_name",
+  "package.fl.full_name",
+  "package.fl.full_name_short",
+]);
 
 export function classifyPackageItem(item: PackagePlaceholderItem): PackageItemDataKind {
   if (item.status !== "copy_ready") return "other";
-  if (item.groupId === "package_roles") return "other";
+  if (item.groupId === "package_roles") return "person_name";
+  if (PERSON_NAME_PACKAGE_TECH_KEYS.has(item.tech_key)) return "person_name";
   const k = item.tech_key;
   if (/(birth_date|issued_date|valid_until)/.test(k)) return "date";
   return "text";
@@ -380,10 +397,20 @@ export function supportsLongFormat(item: PackagePlaceholderItem): boolean {
   return /\.org_form$/.test(item.tech_key);
 }
 
+/** Sprint 3J-Roles: поддержка `format=short|signature_short` для ФИО-полей и ролей. */
+export function supportsPersonNameFormats(item: PackagePlaceholderItem): boolean {
+  return classifyPackageItem(item) === "person_name";
+}
+
 /**
  * Построить итоговый copy-токен пакетного плейсхолдера с модификаторами.
- * Берёт базовый `package_token` (`{{package.ul.FLD-000011}}`) и добавляет
- * `|format=...` и `|case=...` в том же порядке, что и billing buildFieldPlaceholder.
+ * Берёт базовый `package_token` (`{{package.ul.FLD-000011}}` или `{{ln-000012}}`)
+ * и добавляет `|format=...|case=...` (всегда в порядке format → case — backend
+ * читает оба порядка, но UI пишет один канонический).
+ *
+ * Sprint 3J-Roles canon: `format=full` НЕ добавляется в токен — это default
+ * (`{{ln-000012}}` уже значит full). В токен попадают только short/signature_short
+ * и совместимые с item модификаторы.
  */
 export function buildPackagePlaceholderToken(
   item: PackagePlaceholderItem,
@@ -391,10 +418,27 @@ export function buildPackagePlaceholderToken(
   caseModifier: FieldCase | null,
 ): string | null {
   if (!item.package_token) return null;
-  if (item.groupId === "package_roles") return item.package_token;
   const inner = item.package_token.replace(/^\{\{/, "").replace(/\}\}$/, "");
   const parts: string[] = [inner];
-  if (format) parts.push(`format=${format}`);
+  // Sprint 3J-Roles: для package_roles разрешён только person_name format whitelist;
+  // прочие форматы (long/words/text) игнорируются — их backend не понимает у ln-токенов.
+  const isRole = item.groupId === "package_roles";
+  const personName = supportsPersonNameFormats(item);
+
+  let effectiveFormat: FieldFormat | null = format;
+  if (isRole && effectiveFormat && effectiveFormat !== "short" && effectiveFormat !== "signature_short") {
+    effectiveFormat = null;
+  }
+  if (effectiveFormat && !personName && (effectiveFormat === "short" || effectiveFormat === "signature_short")) {
+    // ФИО-форматы доступны только для person_name kind.
+    effectiveFormat = null;
+  }
+  // `full` — default, в токен не добавляется.
+  if (effectiveFormat === ("full" as unknown as FieldFormat)) {
+    effectiveFormat = null;
+  }
+
+  if (effectiveFormat) parts.push(`format=${effectiveFormat}`);
   if (caseModifier) parts.push(`case=${caseModifier}`);
   return `{{${parts.join("|")}}}`;
 }
