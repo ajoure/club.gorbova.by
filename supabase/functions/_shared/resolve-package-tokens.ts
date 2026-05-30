@@ -139,13 +139,30 @@ function readJsonPath(root: unknown, path: string): unknown {
 async function resolveLnRoleToken(
   input: PackageTokenResolveInput,
   lnPublicId: string,
-  _caseMod: string | undefined,
+  caseMod: string | undefined,
+  formatMod: string | undefined,
 ): Promise<PackageTokenResolveResult> {
   if (!input.packageTemplateItemId) {
     return {
       resolved: false,
       code: 'config_error',
       warning: 'ln_token_requires_package_template_item_id',
+    };
+  }
+
+  // Validate modifiers (defence-in-depth; strict-parser также проверяет).
+  if (formatMod && !PERSON_NAME_FORMATS.has(formatMod as PersonNameFormat)) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `ln_unknown_format_modifier:${formatMod}`,
+    };
+  }
+  if (caseMod && !isCaseModifier(caseMod)) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `ln_unknown_case_modifier:${caseMod}`,
     };
   }
 
@@ -212,7 +229,7 @@ async function resolveLnRoleToken(
       roleKey: role.role_key,
     };
   }
-  const assignments = (rows ?? []) as Array<{ person_id: string | null; metadata: unknown }>;
+  const assignments = (rows ?? []) as Array<{ person_id: string | null }>;
   if (assignments.length === 0) {
     return {
       resolved: false,
@@ -222,19 +239,9 @@ async function resolveLnRoleToken(
     };
   }
 
-  // Multi-assignment: берём первого по sort_order/created_at + warning.
-  let multiWarning: PackageTokenResolveResult | null = null;
-  if (assignments.length > 1) {
-    multiWarning = {
-      resolved: false,
-      code: 'multiple_role_assignments',
-      warning: `multiple_role_assignments:${lnPublicId}:n=${assignments.length}`,
-      roleKey: role.role_key,
-    };
-  }
-
-  const first = assignments[0];
-  if (!first.person_id) {
+  // Sprint 3J-Roles: multi-assignment → формируем всех активных, join `; `.
+  const personIds = assignments.map((a) => a.person_id).filter((x): x is string => !!x);
+  if (personIds.length === 0) {
     return {
       resolved: false,
       code: 'no_person',
@@ -242,13 +249,11 @@ async function resolveLnRoleToken(
       roleKey: role.role_key,
     };
   }
-
-  const { data: person, error: personErr } = await input.supabase
+  const { data: persons, error: personErr } = await input.supabase
     .from('legal_details_persons')
-    .select('full_name')
-    .eq('id', first.person_id)
-    .maybeSingle();
-  if (personErr || !person) {
+    .select('id, full_name')
+    .in('id', personIds);
+  if (personErr || !persons || persons.length === 0) {
     return {
       resolved: false,
       code: 'person_missing',
@@ -256,21 +261,18 @@ async function resolveLnRoleToken(
       roleKey: role.role_key,
     };
   }
-  const fullName = ((person as { full_name?: string | null }).full_name ?? '').trim();
-  const positionRaw = readJsonPath({ metadata: first.metadata }, 'metadata.position');
-  const position = positionRaw == null ? '' : String(positionRaw).trim();
+  const personById = new Map<string, string>(
+    (persons as Array<{ id: string; full_name: string | null }>).map((p) => [p.id, (p.full_name ?? '').trim()]),
+  );
 
-  // output_template (Sprint 3H): default "{{position}}, {{full_name}}";
-  // если position пуст — только ФИО (без ведущей запятой).
-  const tpl = role.output_template ?? '{{position}}, {{full_name}}';
-  let value = tpl
-    .replace(/\{\{\s*full_name\s*\}\}/g, fullName)
-    .replace(/\{\{\s*position\s*\}\}/g, position);
-  if (!position) {
-    // Снять "висячие" ведущие/двойные запятые при пустой должности.
-    value = value.replace(/^\s*,\s*/, '').replace(/,\s*,/g, ',').trim();
-  }
+  const fmt = (formatMod ?? 'full') as PersonNameFormat;
+  const cs = (caseMod ?? null) as RuCase | null;
+  const renderedParts = personIds
+    .map((pid) => personById.get(pid) ?? '')
+    .filter((n) => n.length > 0)
+    .map((name) => formatPersonName(name, { format: fmt, case: cs }));
 
+  const value = renderedParts.join('; ');
   if (!value) {
     return {
       resolved: false,
@@ -280,12 +282,10 @@ async function resolveLnRoleToken(
     };
   }
 
-  if (multiWarning) return multiWarning;
-
   return {
     resolved: true,
     value,
-    aliasId: role.id, // переиспользуем поле под role_catalog_id
+    aliasId: role.id,
     canonicalFieldPublicId: lnPublicId,
     roleKey: role.role_key,
     contextKind: 'package_role_ln',
