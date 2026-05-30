@@ -4,7 +4,11 @@ import {
   PACKAGE_GROUP_META,
   getPackagePlaceholdersByGroup,
   buildPackageRoleItems,
+  buildPackagePlaceholderToken,
+  classifyPackageItem,
+  supportsLongFormat,
   type PackageRoleCatalogRow,
+  type PackagePlaceholderItem,
 } from "./packagePlaceholderCatalog";
 
 describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
