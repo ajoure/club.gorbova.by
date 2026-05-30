@@ -742,6 +742,8 @@ Deno.serve(async (req) => {
           continue;
         }
         const tail = (pkgMatch[3] || '').split('|').filter(Boolean);
+        const candidateBagKey = `package.${pkgMatch[1]}.${pkgMatch[2]}`;
+        const isFioBag = PERSON_NAME_PACKAGE_BAG_KEYS.has(candidateBagKey);
         let cs: string | null = null;
         let fmt: string | null = null;
         let badMod = false;
@@ -749,6 +751,8 @@ Deno.serve(async (req) => {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
           else if (k === 'format' && (v === 'long' || v === 'words')) fmt = v;
+          // Sprint 3J-Roles: ФИО-форматы только для whitelisted bag_keys.
+          else if (k === 'format' && PERSON_NAME_FORMATS.has(v) && isFioBag) fmt = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
