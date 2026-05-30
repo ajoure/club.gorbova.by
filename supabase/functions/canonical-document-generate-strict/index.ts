@@ -762,7 +762,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // 3) Role token {{ln-XXXXXX[|case=…]}}
+      // 3) Role token {{ln-XXXXXX[|format=full|short|signature_short][|case=…]}}
       const lnMatch = inside.match(LN_TOKEN_RE);
       if (lnMatch) {
         if (generationContext !== 'package_session') {
@@ -771,10 +771,12 @@ Deno.serve(async (req) => {
         }
         const tail = (lnMatch[2] || '').split('|').filter(Boolean);
         let cs: string | null = null;
+        let fmt: string | null = null;
         let badMod = false;
         for (const part of tail) {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else if (k === 'format' && PERSON_NAME_FORMATS.has(v)) fmt = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -783,7 +785,7 @@ Deno.serve(async (req) => {
           kind: 'ln',
           bag_key: lnMatch[1],
           case_modifier: cs,
-          format: null,
+          format: fmt,
         });
         continue;
       }
