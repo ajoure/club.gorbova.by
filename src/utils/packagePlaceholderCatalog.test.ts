@@ -4,7 +4,11 @@ import {
   PACKAGE_GROUP_META,
   getPackagePlaceholdersByGroup,
   buildPackageRoleItems,
+  buildPackagePlaceholderToken,
+  classifyPackageItem,
+  supportsLongFormat,
   type PackageRoleCatalogRow,
+  type PackagePlaceholderItem,
 } from "./packagePlaceholderCatalog";
 
 describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
@@ -179,4 +183,71 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     expect(stringified).not.toContain("package.role.PKR-");
   });
 });
+
+describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
+  const ulShort = PACKAGE_PLACEHOLDER_CATALOG.find(
+    (i) => i.tech_key === "package.ul.short_name",
+  )!;
+  const ulOrgForm = PACKAGE_PLACEHOLDER_CATALOG.find(
+    (i) => i.tech_key === "package.ul.org_form",
+  )!;
+  const flBirth = PACKAGE_PLACEHOLDER_CATALOG.find(
+    (i) => i.tech_key === "package.fl.birth_date",
+  )!;
+
+  it("copy-токен без модификаторов = базовый package_token", () => {
+    expect(buildPackagePlaceholderToken(ulShort, null, null))
+      .toBe("{{package.ul.FLD-000011}}");
+  });
+
+  it("copy-токен с case=genitive добавляет |case=genitive", () => {
+    expect(buildPackagePlaceholderToken(ulShort, null, "genitive"))
+      .toBe("{{package.ul.FLD-000011|case=genitive}}");
+  });
+
+  it("copy-токен с format=long доступен только для org_form", () => {
+    expect(buildPackagePlaceholderToken(ulOrgForm, "long", null))
+      .toBe("{{package.ul.FLD-000010|format=long}}");
+    expect(supportsLongFormat(ulOrgForm)).toBe(true);
+    expect(supportsLongFormat(ulShort)).toBe(false);
+  });
+
+  it("copy-токен с format + case даёт |format=X|case=Y в правильном порядке", () => {
+    expect(buildPackagePlaceholderToken(ulOrgForm, "long", "genitive"))
+      .toBe("{{package.ul.FLD-000010|format=long|case=genitive}}");
+  });
+
+  it("classifyPackageItem: text для имён, date для дат рождения/паспорта", () => {
+    expect(classifyPackageItem(ulShort)).toBe("text");
+    expect(classifyPackageItem(ulOrgForm)).toBe("text");
+    expect(classifyPackageItem(flBirth)).toBe("date");
+  });
+
+  it("classifyPackageItem: other для package_roles", () => {
+    const rolesItem: PackagePlaceholderItem = {
+      groupId: "package_roles",
+      label_ru: "X",
+      source_table: "legal_details_persons",
+      source_path: null,
+      billing_fld_analog: null,
+      reused_fld: null,
+      package_token: "{{ln-000001}}",
+      package_resolver_hint: "",
+      status: "copy_ready",
+      tech_key: "ln.ln-000001",
+    };
+    expect(classifyPackageItem(rolesItem)).toBe("other");
+    // Для ролей модификаторы НЕ добавляются — токен возвращается как есть.
+    expect(buildPackagePlaceholderToken(rolesItem, "long", "genitive"))
+      .toBe("{{ln-000001}}");
+  });
+
+  it("not-ready item не имеет copy-токена", () => {
+    const deferredItem = PACKAGE_PLACEHOLDER_CATALOG.find(
+      (i) => i.status !== "copy_ready",
+    )!;
+    expect(buildPackagePlaceholderToken(deferredItem, null, null)).toBeNull();
+  });
+});
+
 

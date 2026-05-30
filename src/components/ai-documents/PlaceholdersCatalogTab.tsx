@@ -46,6 +46,9 @@ import {
   PACKAGE_GROUP_META,
   PACKAGE_PLACEHOLDER_CATALOG,
   buildPackageRoleItems,
+  buildPackagePlaceholderToken,
+  classifyPackageItem,
+  supportsLongFormat as packageSupportsLongFormat,
   type PackageGroupId,
   type PackagePlaceholderItem,
   type PackagePlaceholderStatus,
@@ -279,6 +282,8 @@ export function PlaceholdersCatalogTab() {
   const [onlyRequired, setOnlyRequired] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
+  // Sprint 3J-UI: те же modifier-controls, что у billing-плейсхолдеров. Ключ — tech_key item'а.
+  const [pkgRowSettings, setPkgRowSettings] = useState<Map<string, RowSettings>>(new Map());
   const [packageRoleRows, setPackageRoleRows] = useState<PackageRoleCatalogRow[]>([]);
 
   // Sprint 3F §D: загрузка ролей пакетов (с учётом custom) из document_package_role_catalog
@@ -477,6 +482,25 @@ export function PlaceholdersCatalogTab() {
       if (!prev.has(id)) return prev;
       const next = new Map(prev);
       next.delete(id);
+      return next;
+    });
+  };
+
+  const updatePkgSettings = (techKey: string, patch: Partial<RowSettings>) => {
+    setPkgRowSettings(prev => {
+      const next = new Map(prev);
+      const current = next.get(techKey) ?? { format: null, caseModifier: null };
+      const merged: RowSettings = { ...current, ...patch };
+      if (merged.format === null && merged.caseModifier === null) next.delete(techKey);
+      else next.set(techKey, merged);
+      return next;
+    });
+  };
+  const resetPkgRow = (techKey: string) => {
+    setPkgRowSettings(prev => {
+      if (!prev.has(techKey)) return prev;
+      const next = new Map(prev);
+      next.delete(techKey);
       return next;
     });
   };
@@ -838,6 +862,7 @@ export function PlaceholdersCatalogTab() {
                     </TableRow>,
                     ...section.items.map((p) => {
                       const isReady = p.status === "copy_ready";
+                      const isRolesGroup = p.groupId === "package_roles";
                       const statusLabel: Record<PackagePlaceholderStatus, string> = {
                         copy_ready: "готов",
                         source_available: "ждёт синтаксиса",
@@ -845,6 +870,20 @@ export function PlaceholdersCatalogTab() {
                         missing_source_column: "нет колонки",
                         deferred: "Sprint 3E",
                       };
+                      // Sprint 3J-UI: те же modifier-controls, что у billing.
+                      const pkgKind = classifyPackageItem(p);
+                      const supportsLong = packageSupportsLongFormat(p);
+                      // Маппинг package kind → kind для RowSettingsCell (date → numeric, text → text).
+                      const rowKind: ReturnType<typeof classifyDataType> =
+                        pkgKind === "text" ? "text"
+                          : pkgKind === "date" ? "numeric"
+                            : "other";
+                      const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
+                      const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
+                      const finalToken = isReady
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
+                        : p.package_token;
+                      const showModifiers = isReady && !isRolesGroup;
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
                           <TableCell />
@@ -887,12 +926,27 @@ export function PlaceholdersCatalogTab() {
                               {statusLabel[p.status]}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-2 text-[10px] text-muted-foreground italic">
-                            {isReady ? "без модификаторов (Sprint 3E)" : "—"}
+                          <TableCell className="py-2">
+                            {showModifiers ? (
+                              <RowSettingsCell
+                                kind={rowKind}
+                                settings={pkgSettings}
+                                onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
+                                supportsLongFormat={supportsLong}
+                              />
+                            ) : isReady && isRolesGroup ? (
+                              <span className="text-[10px] text-muted-foreground italic">
+                                роль: модификаторы недоступны
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
                             {isReady ? (
-                              <span className="text-muted-foreground/60 italic">— примера нет —</span>
+                              <span className="text-muted-foreground/70 italic">
+                                Пример появится после заполнения анкеты документа
+                              </span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
                                 {p.package_resolver_hint.length > 60
@@ -902,30 +956,45 @@ export function PlaceholdersCatalogTab() {
                             )}
                           </TableCell>
                           <TableCell className="py-2">
-                            {p.package_token ? (
+                            {finalToken ? (
                               <code className="text-[11px] text-foreground/90 break-all font-mono">
-                                {p.package_token}
+                                {finalToken}
                               </code>
                             ) : (
                               <span className="text-[11px] text-muted-foreground/60 italic">— не готов к копированию —</span>
                             )}
                           </TableCell>
                           <TableCell className="text-right py-2">
-                            {p.package_token && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-7 w-7"
-                                    onClick={() => copyPlaceholder(p.package_token!)}
-                                  >
-                                    <Copy className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
-                              </Tooltip>
-                            )}
+                            <div className="flex justify-end gap-0.5">
+                              {showModifiers && pkgDirty && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon" variant="ghost" className="h-7 w-7"
+                                      onClick={() => resetPkgRow(p.tech_key)}
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Сбросить настройки</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {finalToken && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => copyPlaceholder(finalToken)}
+                                    >
+                                      <Copy className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Копировать пакетный плейсхолдер</TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -946,17 +1015,21 @@ function RowSettingsCell({
   kind,
   settings,
   onChange,
+  supportsLongFormat = false,
 }: {
   kind: ReturnType<typeof classifyDataType>;
   settings: RowSettings;
   onChange: (patch: Partial<RowSettings>) => void;
+  /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
+  supportsLongFormat?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
     return <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>;
   }
 
-  const showFormatToggle = kind === "numeric" || kind === "boolean";
+  const showLongToggle = kind === "text" && supportsLongFormat;
+  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle;
   // Падеж: text — всегда; numeric — только при words; boolean — никогда.
   const caseEnabled =
     kind === "text" || (kind === "numeric" && settings.format === "words");
@@ -967,7 +1040,9 @@ function RowSettingsCell({
       ? settings.format === "words" ? "words" : "asis"
       : kind === "boolean"
         ? settings.format === "text" ? "text" : "asis"
-        : "asis";
+        : showLongToggle
+          ? settings.format === "long" ? "long" : "asis"
+          : "asis";
 
   const handleFormatChange = (val: string) => {
     if (!val) return; // ToggleGroup может вернуть "" при дабл-клике
@@ -980,6 +1055,9 @@ function RowSettingsCell({
       });
     } else if (kind === "boolean") {
       const fmt: FieldFormat | null = val === "text" ? "text" : null;
+      onChange({ format: fmt });
+    } else if (showLongToggle) {
+      const fmt: FieldFormat | null = val === "long" ? "long" : null;
       onChange({ format: fmt });
     }
   };
@@ -1000,7 +1078,7 @@ function RowSettingsCell({
           className="h-7"
         >
           <ToggleGroupItem value="asis" className="h-7 px-2 text-[10px]">
-            Обычный
+            {showLongToggle ? "Кратко" : "Обычный"}
           </ToggleGroupItem>
           {kind === "numeric" && (
             <ToggleGroupItem value="words" className="h-7 px-2 text-[10px]">
@@ -1010,6 +1088,11 @@ function RowSettingsCell({
           {kind === "boolean" && (
             <ToggleGroupItem value="text" className="h-7 px-2 text-[10px]">
               Текстом
+            </ToggleGroupItem>
+          )}
+          {showLongToggle && (
+            <ToggleGroupItem value="long" className="h-7 px-2 text-[10px]">
+              Развёрнуто
             </ToggleGroupItem>
           )}
         </ToggleGroup>
