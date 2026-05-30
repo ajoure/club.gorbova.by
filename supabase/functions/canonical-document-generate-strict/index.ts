@@ -25,6 +25,17 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
 import { inflectRu, normalizeMasculinePosition, expandOrgFormToLong, type RuCase } from '../_shared/ru-inflection.ts';
+import { formatPersonName, type PersonNameFormat } from '../_shared/typed-tokens-resolver.ts';
+
+// Sprint 3J-Roles: ФИО-форматы доступны для ln и для FIO-полей пакета.
+const PERSON_NAME_FORMATS: ReadonlySet<string> = new Set(['full', 'short', 'signature_short']);
+// FIO-поля пакета (whitelist по bag_key). Для них strict re-форматирует через
+// formatPersonName(entry.raw_full_name, ...). Для остальных полей пакета
+// format=short/signature_short → unknown_modifier.
+const PERSON_NAME_PACKAGE_BAG_KEYS: ReadonlySet<string> = new Set([
+  'package.ul.FLD-000014', // director (full/short)
+  'package.fl.FLD-000372', // person full_name
+]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
