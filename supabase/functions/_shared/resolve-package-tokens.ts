@@ -299,14 +299,19 @@ async function resolveLnRoleToken(
 export async function resolvePackageTokenCore(
   input: PackageTokenResolveInput,
 ): Promise<PackageTokenResolveResult> {
-  const { aliasToken, caseMod } = parseRawToken(input.rawToken);
+  const { aliasToken, caseMod, formatMod, duplicateModifier } = parseRawToken(input.rawToken);
+  if (duplicateModifier) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `duplicate_modifier:${duplicateModifier}`,
+    };
+  }
 
   // Sprint 3H-fix: канонический Word-токен роли — {{ln-XXXXXX}}.
-  // Резолвим напрямую через document_package_role_catalog.public_id +
-  // document_package_item_role_assignments (document-level SOT).
   const LN_RE = /^ln-\d{6}$/;
   if (LN_RE.test(aliasToken)) {
-    return resolveLnRoleToken(input, aliasToken, caseMod);
+    return resolveLnRoleToken(input, aliasToken, caseMod, formatMod);
   }
 
   // 1. Найти активный alias
