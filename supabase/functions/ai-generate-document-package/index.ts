@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
 
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
-      const preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }> = {};
+      const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; role_catalog_id: string; person_id: string }> = {};
       const itemErrors: string[] = [];
       const seen = new Set<string>();
 
