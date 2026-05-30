@@ -1,393 +1,360 @@
-Да, план в целом правильный. Нужно только уточнить несколько архитектурных моментов, чтобы Lovable не сделал второй formatter и не сломал уже рабочий billing.
-
 да, согласен, с учетом правок:
 
-**1. Главный принцип зафиксировать жёстче**
+**1. Подтверждение по открытому вопросу**
 
-Package-плейсхолдеры должны отличаться от billing только **источником данных**, но не formatter-логикой.
+Применяем новый стандарт ФИО **ко всей системе**, включая billing-плейсхолдеры директора ЮЛ / ИП / ФЛ / package / роли.
 
-billing source:
+Legacy-формат с пробелом между инициалами больше не используем.
 
-orders_v2 / customer / executor
+Правильно:
 
-&nbsp;
+format=short:
 
-package source:
-
-document_package_sessions / client_legal_details / legal_details_persons / item_role_assignments
+Федорчук Сергей Валерьевич → Федорчук С.В.
 
 &nbsp;
 
-formatter:
+format=signature_short:
 
-один и тот же
+Федорчук Сергей Валерьевич → С.В.Федорчук
 
-Пример:
+Неправильно:
 
-billing ЮЛ short_name → ЗАО «Ажур-инкам»
+Федорчук С. В.
 
-package ЮЛ short_name → ЗАО «Ажур-инкам»
-
-Не допускается:
-
-package ЮЛ short_name → «Ажур-инкам»
+С.В. Федорчук
 
 &nbsp;
 
-**2.**
+**2. Helper должен сразу поддерживать падеж**
 
-**billing analog FLD**
+В §2 изменить сигнатуру helper:
 
-**использовать только как эталон, не как source**
+export function formatPersonName(
 
-В parity manifest колонка billing FLD analog нужна только для сравнения ожидаемого результата.
+  fullName: string | null | undefined,
 
-Запрещено резолвить package-токен через billing context.
+  opts?: {
 
-То есть:
+    format?: 'full' | 'short' | 'signature_short';
 
-{{package.ul.FLD-000011}}
+    case?: CaseName | null;
 
-не должен читать billing customer/order data.  
-Он должен читать client_legal_details из package session, но форматировать значение так же, как billing-аналог.
+  },
 
-&nbsp;
+): string
 
-**3. Не рефакторить billing resolver без необходимости**
+Правила:
 
-typed-tokens-resolver.ts можно использовать как источник существующих helper-функций, но нельзя переписывать billing flow.
+- format=full + case=genitive → склоняются фамилия, имя, отчество:  
+Федорчука Сергея Валерьевича
+- format=short + case=genitive → склоняется только фамилия:  
+Федорчука С.В.
+- format=signature_short + case=genitive → склоняется только фамилия:  
+С.В.Федорчука
 
-Если helper уже экспортируется — импортировать.
-
-Если helper не экспортируется — лучше вынести маленький общий formatter в _shared/legal-entity-formatters.ts и подключить его и package-резолверу, и billing-резолверу только если это безопасно и покрыто тестом.
-
-Нельзя менять поведение billing output.
-
-&nbsp;
-
-**4. Modifiers применять в одном месте**
-
-Не применять case/format одновременно в orchestrator и strict.
-
-Правильная модель:
-
-orchestrator:
-
-  резолвит базовое значение package-токена
+Так мы убираем спор о порядке «сначала падеж или сначала short».
 
 &nbsp;
 
-canonical-document-generate-strict:
+**3. Обязательно добавить**
 
-  парсит modifier
+**packageFieldFormatter.ts**
 
-  применяет case/format теми же функциями, что для {{field:FLD-...}}
+**в scope**
 
-То есть preresolved_package_fields должен хранить базовое значение:
+В список файлов добавить:
 
-package.ul.FLD-000011 → ЗАО «Ажур-инкам»
+supabase/functions/_shared/packageFieldFormatter.ts
 
-А токен:
-
-{{package.ul.FLD-000011|case=genitive}}
-
-должен парситься как:
-
-base token = package.ul.FLD-000011
-
-modifier = case=genitive
-
-И уже strict применяет падеж.
+Потому что package UL/IP/FL уже используют этот formatter. Все ФИО-поля там тоже должны перейти на новый formatPersonName.
 
 &nbsp;
 
-**5. В proof обязательно добавить тест против double-format**
+**4. Ошибка modifier должна быть**
 
-Проверить, что не появляется двойная форма собственности или двойные кавычки.
+**unknown_modifier**
 
-Примеры тестов:
+**, а не legacy**
 
-ЗАО «Ажур-инкам»     OK
+В canonical-template-apply-markup и strict-validator:
 
-ЗАО ЗАО «Ажур-инкам» FAIL
+- старые токены PKR, package.role.PKR, package.roles.* → invalid_legacy_role_placeholder;
+- неизвестный modifier → unknown_modifier.
 
-«ЗАО «Ажур-инкам»»   FAIL
-
-«Ажур-инкам»         FAIL для short_name ЮЛ
-
-&nbsp;
-
-**6. Адреса не читать сырой строкой, если billing использует formatter**
-
-Для адресов package UL/IP/FL использовать тот же address formatter, что billing.
-
-Проверить отдельно:
-
-- полный адрес;
-- улица;
-- дом;
-- корпус;
-- помещение/квартира;
-- населённый пункт;
-- район;
-- район города;
-- область;
-- индекс;
-- страна.
-
-Если billing full address собирается из structured address, package должен собираться так же.
+Не смешивать legacy token и ошибку modifier.
 
 &nbsp;
 
-**7. Роли**
+**5. Парсер modifiers**
 
-**{{ln-XXXXXX}}**
+UI всегда строит токен в порядке:
 
-**— отдельный минимальный контракт**
+|format=...|case=...
 
-Для Sprint 3J зафиксировать простой output:
+Но backend parser должен безопасно читать оба порядка:
 
-<название роли>, <ФИО>
+{{ln-000012|format=short|case=genitive}}
 
-Если несколько физлиц на одну роль:
+{{ln-000012|case=genitive|format=short}}
 
-<название роли>, <ФИО 1>; <название роли>, <ФИО 2>
-
-или другой separator — но он должен быть явно зафиксирован в proof.
-
-Не вводить сложные шаблоны вывода роли в этом спринте, если они не нужны для текущих документов.
+Если один modifier повторён дважды — error duplicate_modifier.
 
 &nbsp;
 
-**8. Preview UI должен использовать те же modifier controls**
+**6.**
 
-В PlaceholdersCatalogTab для package-групп не создавать отдельный UI.
+**format=full**
 
-Нужно переиспользовать существующие контролы billing:
+В UI format=full считается default и в токен не пишется.
 
-- падеж;
-- дата короткая/длинная/прописью;
-- число цифрами/прописью;
-- boolean как есть/текстом;
-- copy итогового placeholder.
+То есть copy:
 
-Если billing-плейсхолдер поддерживает modifier, package-аналог должен показывать тот же modifier.
+{{ln-000012}}
 
-&nbsp;
+Но backend должен принимать и явный вариант:
 
-**9. Не обещать 100% parity там, где source отсутствует**
-
-Если у package FL/IP/UL нет source для какого-то поля, оно не может быть OK.
-
-В manifest по таким строкам писать:
-
-source_missing
-
-или
-
-deferred_with_reason
-
-Не подставлять пустую строку и не считать parity passed.
+{{ln-000012|format=full}}
 
 &nbsp;
 
-**10. Runtime proof должен проверять именно содержимое DOCX**
+**7. Старые примеры тоже проверить**
 
-Недостаточно доказать, что PDF создан.
+Сделать grep по codebase:
 
-Нужно:
+rg "И\\. И\\.|С\\. В\\.|Федорчук С\\. В\\.|Иванов И\\. И\\." src supabase
 
-1. Скачать generated DOCX.
-2. Распаковать word/document.xml.
-3. Проверить:
-  - нет {{...}};
-  - есть ожидаемые строки:
-    - ЗАО «Ажур-инкам»;
-    - правильное полное название;
-    - правильное ФИО/ФИО кратко;
-    - правильная дата/год;
-    - правильные значения ролей ln.
+Все user-facing code examples заменить на новый формат.
 
-PDF — достаточно проверить, что создан и size > 0.
+Если старые примеры лежат в БД fields_registry и реально отображаются в UI — не менять молча. Зафиксировать в proof как DB-example gap и вынести отдельным manifest/fix, если потребуется.
 
 &nbsp;
 
-**11. Billing regression smoke не должен переписывать billing**
+**8. Proof должен включать billing-output**
 
-Проверка billing должна быть безопасной:
+Так как мы сознательно меняем short-format глобально, proof должен показать не только package/roles, но и billing.
 
-- открыть существующий billing-шаблон;
-- проверить, что группы «Заказчик ЮЛ/ИП/ФЛ» и «Исполнитель ЮЛ» не изменились;
-- проверить один order preview/generate только если уже есть безопасная фикстура;
-- /purchases не изменялся.
+Добавить в proof:
 
-&nbsp;
 
-**12. Исправить формулировку по touched files**
+|                               |            |                           |
+| ----------------------------- | ---------- | ------------------------- |
+| **Контекст**                  | **Токен**  | **Результат**             |
+| Billing ЮЛ руководитель short | `{{field:… | format=short}}`           |
+| Package роль short            | `{{ln-…    | format=short}}`           |
+| Package роль signature        | `{{ln-…    | format=signature_short}}` |
 
-В §7 написано:
-
-git diff --name-only ограничен package-областью
-
-Но план допускает изменения в canonical-document-generate-strict и canonical-template-apply-markup для whitelist modifiers. Поэтому лучше писать:
-
-git diff не затрагивает billing/order resolver behavior, /purchases, migrations, billing FLD mappings.
-
-А не «только package-область».
 
 &nbsp;
 
-**13. Добавить обязательный closeout-gate**
+**9. Runtime DOCX proof**
 
-Sprint 3J считается закрытым только если:
+В proof обязательно проверить generated DOCX, а не только unit tests:
 
-package.ul.short_name === billing legal entity short_name formatter output
-
-На реальном примере:
-
-ЗАО «Ажур-инкам»
-
-Если именно этот кейс не исправлен — Sprint 3J OPEN.
+- {{ln-...}} → ФИО полностью;
+- {{ln-...|format=short}} → Федорчук С.В.;
+- {{ln-...|format=signature_short}} → С.В.Федорчук;
+- {{ln-...|format=short|case=genitive}} → Федорчука С.В.;
+- raw {{...}} отсутствуют.
 
 &nbsp;
 
-**Итог**
+**10. Memory**
 
-План можно выполнять после этих правок.
+В memory записать:
 
-Главная правка: не делать отдельную package-систему форматирования. Package должен брать другие данные, но проходить через тот же formatter/modifier pipeline, что и billing.
+ФИО кратко по всей системе: Фамилия И.О.
+
+ФИО кратко для подписи: И.О.Фамилия
+
+Роли ln по умолчанию выводят ФИО человека, а не название роли.
+
+output_template роли больше не влияет на default ln-output.
+
+**Финальный DoD**
+
+- format=short везде даёт Федорчук С.В.
+- format=signature_short везде даёт С.В.Федорчук
+- billing и package используют один helper;
+- роли {{ln-XXXXXX}} поддерживают format и case;
+- UI показывает новый формат;
+- generated DOCX подтверждает результат;
+- старый формат Федорчук С. В. больше не появляется в новых preview/output.
 
 &nbsp;
 
-# План: Sprint 3J — Parity пакетных плейсхолдеров с биллинговыми
+# План: Sprint 3J-Roles — modifier-parity для ролей и единый стандарт ФИО
 
 ## 0. Цель
 
-Привести `{{package.ul.FLD-XXXXXX}}` / `{{package.ip.FLD-XXXXXX}}` / `{{package.fl.FLD-XXXXXX}}` / `{{ln-XXXXXX}}` к **полному паритету** с биллинговыми `{{field:FLD-XXXXXX}}` по значению, форматированию, modifiers и preview. Источник данных — package context, но **formatter тот же**, что у billing.
+1. Привести `{{ln-XXXXXX}}` к тому же набору modifiers, что и FL/IP/UL: `format=full|short|signature_short`, `case=…`, мульти-назначение через `;` , по умолчанию — ФИО без названия роли.
+2. Ввести единый стандарт коротких ФИО по всей системе (billing + package + роли):
+  - `format=short` → `Федорчук С.В.` (пробел после фамилии, без пробелов между инициалами).
+  - `format=signature_short` → `С.В.Федорчук` (без пробелов).
+3. UI «Пакет: Роли» получает те же контролы, что строки ФЛ, и расширяется новой опцией «ФИО кратко для подписи» во всех ФИО-группах.
 
-Эталон: `Пакет: ЮЛ → краткое название` должно возвращать `ЗАО «Ажур-инкам»`, а не `Ажур-инкам`.
+## 1. Каноны и запреты
 
-## 1. Жёсткие правила (то, что НЕ делаем)
+- Канон токена роли: только `{{ln-XXXXXX}}`. Никаких `{{ln-XXXXXX.full_name}}`, `{{ln-XXXXXX.short_name}}`, `{{package.roles.*}}`, `{{package.role.PKR-…}}`.
+- НЕ создаём новые FLD, новые алиасы, новые таблицы, новые edge functions.
+- НЕ трогаем billing/order generation pipeline, `/purchases`, `document_templates`, миграции, RLS, Gotenberg, `ai_generated_documents` контракт, `preresolved_package_fields` schema.
+- НЕ создаём отдельный formatter для ролей — переиспользуем helpers ФЛ.
 
-- Не трогаем billing/order generation и `/purchases`.
-- Не меняем существующие биллинговые FLD и их маппинг.
-- Не создаём новые FLD, таблицы реквизитов, новую систему склонений/форматов для пакетов.
-- Не дублируем formatter logic — переиспользуем существующие billing helpers.
-- Не расширяем contract `ai-generate-document-package` и `canonical-document-generate-strict`.
+## 2. Единый helper ФИО
 
-## 2. Discovery (read-only) — parity manifest
+Файл: `supabase/functions/_shared/typed-tokens-resolver.ts`.
 
-Собрать read-only таблицу по группам Пакет: ЮЛ / ИП / ФЛ / Роли. Для каждого token:
+Добавить новый shared API (рядом с существующим `fullNameToInitials`):
 
-```text
-| package_token | label | billing FLD analog | billing output | current package output | expected | formatter | status (OK/FAIL) |
+```ts
+export type PersonNameFormat = 'full' | 'short' | 'signature_short';
+export function formatPersonName(
+  fullName: string | null | undefined,
+  opts?: { format?: PersonNameFormat },
+): string
 ```
 
-Артефакт: `.lovable/proofs/sprint_3j_parity_manifest.md` (только дискавери, без правок кода).
+Правила:
 
-Источники для сравнения:
+- `full` — исходное ФИО `trim()`-нормализовано.
+- `short` — `Фамилия И.О.` (пробел между фамилией и инициалами, между инициалами пробела НЕТ, после каждой буквы точка). Пример: `Федорчук С.В.`, `Иванов И.И.`.
+- `signature_short` — `И.О.Фамилия` (без пробелов нигде). Пример: `С.В.Федорчук`.
 
-- billing canon: `supabase/functions/_shared/typed-tokens-resolver.ts` (`canonicalizeLegalEntity`, `customer.leg.*`, `customer.ent.*`, `fullNameToInitials`) + `typed-fld-mapping.ts`.
-- package: `supabase/functions/_shared/resolve-package-tokens.ts`, `_shared/packagePlaceholderCatalog.ts`, `src/utils/packagePlaceholderCatalog.ts`.
+Существующий `fullNameToInitials` переписать как обёртку `formatPersonName(name, { format: 'short' })`, чтобы все текущие call-сайты автоматически перешли на новый формат `Иванов И.И.` (без пробела между инициалами). Это сознательное изменение — см. §10 «Риски».
 
-Известный FAIL уже на старте: `package_ul` FLD-000011 (short_name) и FLD-000010 (org_form) читают сырое `leg_name`/`leg_org_form` без `canonicalizeLegalEntity`.
+## 3. Backend resolver ролей (`{{ln-XXXXXX}}`)
 
-## 3. Рефакторинг резолвера: единый formatter
+Файл: `supabase/functions/_shared/resolve-package-tokens.ts`, функция `resolveLnRoleToken`.
 
-В `supabase/functions/_shared/resolve-package-tokens.ts` и зеркальном frontend-каталоге заменить раскладку «package_token → raw column» на проход через билинговые helpers:
+Изменения:
 
-- **ЮЛ (UL)**: построить `canon = canonicalizeLegalEntity(leg_org_form, leg_name, leg_short_name || leg_full_name)` один раз на сессию и маппить:
-  - `package.ul.full_name → canon.full_name`
-  - `package.ul.short_name → canon.short_name` (e.g. `ЗАО «Ажур-инкам»`)
-  - `package.ul.org_form → canon.org_form`
-  - `package.ul.director_short_name → fullNameToInitials(leg_director_name)` (если override пуст)
-  - УНП/адрес/банк/БИК/IBAN/руководитель/основание — через те же нормализаторы, что `customer.leg.*` в `typed-tokens-resolver.ts`.
-- **ИП (IP)**: построить через те же helpers, что `customer.ent.*` (`formatEntrepreneurDisplayName`, `ent_director_short_name` override → `fullNameToInitials`).
-- **ФЛ (FL)**: ФИО / ФИО кратко / паспорт / адрес / банк / даты — через `recipient-name.ts`, `address-format.ts`, `dateFormatModifiers.ts`, `fullNameToInitials`.
-- **Роли (`{{ln-XXXXXX}}`)**: новый shared helper `formatPackageRoleValue(role, participants)` с дефолтным форматом `<название роли>, <ФИО>`, multi-assignee через единый separator. Helper вызывается и из generation, и из preview.
+1. Расширить `parseRawToken` поддержкой `format=full|short|signature_short` (`caseMod` уже есть).
+2. Сигнатуру `resolveLnRoleToken(input, lnPublicId, caseMod, formatMod)` дополнить `formatMod`.
+3. Поведение по умолчанию (no modifiers) — ТОЛЬКО ФИО назначенного человека (`formatPersonName(person.full_name, { format: 'full' })`). Игнорируем `role.output_template` для default-канона; `position` больше не подмешивается в значение по умолчанию. (Существующий шаблон `"{{position}}, {{full_name}}"` остаётся в БД как legacy — резолвер его перестаёт использовать. Перенести этот факт в memory.)
+4. Если `formatMod` задан — применить `formatPersonName` соответственно.
+5. Падеж — через тот же inflection-pipeline, что у ФЛ (`inflectRu`/`case-format.ts`), применяется ПОСЛЕ форматирования имени:
+  - `case` для `full` — склонение всех трёх частей,
+  - `case` для `short`/`signature_short` — склонение только фамилии (инициалы не склоняются), сохраняя позицию (`Федорчука С.В.`, `С.В.Федорчука`).
+6. Мульти-assignment: больше не возвращаем `multiple_role_assignments` warning как блокер — резолвим всех активных, каждое имя форматируем по тем же modifiers, объединяем через `;`  (с пробелом после `;`).
+7. Неактивные/`is_active=false` — не попадают (уже так).
 
-Контракт `preresolved_package_fields`, отправляемый в `canonical-document-generate-strict`, не меняется — меняются только значения (теперь нормализованные).
+## 4. Strict-парсер плейсхолдеров
 
-## 4. Modifiers и падежи
+Файл: `supabase/functions/canonical-document-generate-strict/index.ts`.
 
-Подключить к package-токенам те же modifiers, что `{{field:FLD-...}}`:
+- В уже существующий блок парсинга `{{ln-XXXXXX|…}}` добавить распознавание `format=short|full|signature_short` (рядом с `case=…`).
+- Те же модификаторы разрешить для `{{field:FLD-…}}` и `{{package.(ul|ip|fl).FLD-…}}` ТОЛЬКО для полей, у которых UI поддерживает FIO-форматы (см. §6) — фильтрация по `tech_key` / `data_type` из существующего каталога. Прочие modifiers → `unknown_modifier` (поведение не меняем).
+- Применение делегируется helpers из §2 + `inflectRu`.
 
-- `|case=nominative|genitive|dative|accusative|instrumental|prepositional`
-- `|format=words|text|long`
+## 5. Markup validator
 
-План:
+Файл: `supabase/functions/canonical-template-apply-markup/index.ts`, RX_PACKAGE_ROLE_LN.
 
-1. В `_shared/resolve-package-tokens.ts` после получения значения прогонять его через существующие `case-format.ts` / `ru-inflection.ts` / `amount-with-words.ts` / `dateFormatModifiers.ts` — теми же функциями, которые использует strict-резолвер для billing.
-2. Whitelist regex для package-токенов расширить до того же списка modifiers, что у billing (`canonical-template-validate` и `canonical-document-generate-strict` — без правки billing-веток, только дополнить package-ветку до паритета).
-3. Frontend каталог `src/utils/packagePlaceholderCatalog.ts` помечает поддержку modifiers по тому же правилу `classifyDataType`, что billing.
+- Whitelist modifiers для `ln-XXXXXX`: `case=<6>`, `format=<full|short|signature_short>`. Любой другой modifier — текущая ошибка «устаревший формат».
+- Аналогично расширить whitelist для package FL/IP/UL фио-полей.
 
-## 5. Preview в UI (`PlaceholdersCatalogTab`)
+## 6. UI — `PlaceholdersCatalogTab`
 
-В `src/components/ai-documents/PlaceholdersCatalogTab.tsx` для package-групп подключить те же контролы, что для billing-групп:
+Файл: `src/components/ai-documents/PlaceholdersCatalogTab.tsx` + `src/utils/packagePlaceholderCatalog.ts` + `src/components/ai-documents/FieldFormatPicker.tsx`.
 
-- `Select` падежа (string/number/money/date).
-- `ToggleGroup` Цифрами/Прописью для number/money.
-- `ToggleGroup` Как есть/Текстом для boolean.
-- Колонка «Плейсхолдер» строит итог через `buildFieldPlaceholder`-аналог для package (`buildPackagePlaceholder`), используя те же ключи `format`/`case`.
-- Реальный example value — через shared preview resolver (тот же, что отображает billing-example), но с фиксированным demo package context.
+1. Расширить `SupportsKind` / `classifyDataType`: для ФИО-полей вернуть новый kind `person_name`.
+2. В `FieldFormatPicker` для kind=`person_name` показать три радио-опции формата:
+  - `ФИО полностью` → `format=full` (default, в токен не пишем).
+  - `ФИО кратко` → `format=short`.
+  - `ФИО кратко для подписи` → `format=signature_short`.
+   И блок падежей (все 6 + «без падежа»).
+3. Группу «Пакет: Роли» отрисовать через тот же row-renderer, что строки ФЛ (вместо текущей «роль без модификаторов»). Удалить ветку «роли игнорируют modifiers».
+4. `buildPackagePlaceholderToken` расширить параметром `format` со значениями `full|short|signature_short`. Порядок модификаторов в выводе: `|format=…|case=…` (как уже принято).
+5. Для `ln-XXXXXX` (роли) использовать тот же helper-builder, выводящий `{{ln-XXXXXX|format=…|case=…}}`.
+6. Preview:
+  - Если есть live-resolver / реальное назначение — показать реальное значение.
+  - Иначе — статический demo `Федорчук Сергей Валерьевич` / `Федорчук С.В.` / `С.В.Федорчук` / падеж по выбору, через тот же `formatPersonName`+`inflectRu` (frontend-аналог уже есть).
+  - Если ничего недоступно — fallback «Пример появится после заполнения анкеты документа».
+7. Применить новый список форматов ФИО ко всем рядам ФЛ-семантики в каталоге: ФЛ-полное имя, руководитель ЮЛ, ФИО ИП-владельца, package-аналоги.
 
-Никакого отдельного UI для package — переиспользуем существующие компоненты с параметром namespace.
+## 7. Frontend helper
 
-## 6. Тесты
+Файл: `src/utils/personNameFormat.ts` (новый, единый источник для UI):
 
-- Расширить `supabase/functions/_shared/resolve-package-tokens_test.ts`:
-  - ЮЛ: full/short/org_form/УНП/адрес/руководитель ФИО/ФИО кратко/должность/основание → ожидаемый billing-equivalent output.
-  - ИП: аналогично `customer.ent.*`.
-  - ФЛ: ФИО / ФИО кратко / паспорт / дата рождения / адрес / банк.
-  - Modifiers: `case=genitive|dative|instrumental`, `format=words`, `format=long` — `expect(packageOutput).toBe(billingOutput)` на одинаковых fixtures.
-- Обновить `src/utils/packagePlaceholderCatalog.test.ts`: проверка, что short_name UL содержит org_form-префикс, и что catalog не помечает modifier-aware поля как «без модификаторов».
-- Новый unit для `formatPackageRoleValue` (single / multi assignee, неактивные участники).
+```ts
+export type PersonNameFormat = 'full' | 'short' | 'signature_short';
+export function formatPersonNameClient(fullName: string, opts?: { format?: PersonNameFormat }): string
+```
 
-## 7. Runtime proof
+Реализация байт-в-байт зеркалит backend `formatPersonName`. Используется в `FieldFormatPicker` preview и `PlaceholdersCatalogTab` demo. Существующие фронтовые «`Фамилия И. И.`» helpers (если есть) переключить на этот helper.
 
-`.lovable/proofs/sprint_3j_package_placeholder_parity_2026_05.md`:
+## 8. Тесты
 
-1. Parity manifest (раздел 2) с финальным статусом OK по всем строкам.
-2. До/после по проблемным полям (минимум: ЮЛ short_name/org_form/director_short_name, ИП ФИО/основание, ФЛ ФИО/паспорт).
-3. Сводка modifiers: для одного UL/IP/FL поля — таблица `genitive/dative/instrumental/words/long` package vs billing.
-4. Скриншот вкладки «Плейсхолдеры» с активными модификаторами для package-групп.
-5. Реальная генерация пакета на тестовой сессии:
-  - DOCX содержит ожидаемые значения, нет `{{…}}`-остатков;
-  - PDF создан Gotenberg-ом.
-6. Подтверждение нетронутости: `git diff --name-only` ограничен package-областью; список тронутых файлов — только из §8.
-7. Smoke `/purchases` → один заказ, документ скачивается, billing FLD не изменились.
+1. `supabase/functions/_shared/personNameFormat_test.ts` (новый, Deno):
+  - `Иванов Иван Иванович` → short `Иванов И.И.`, signature `И.И.Иванов`.
+  - `Федорчук Сергей Валерьевич` → short `Федорчук С.В.`, signature `С.В.Федорчук`.
+  - 2-словные ФИО (`Иванов Иван`), одно слово, пустая строка — без падений.
+2. `supabase/functions/_shared/resolve-package-tokens_test.ts`: для `{{ln-…}}`
+  - default → full ФИО (без position).
+  - `format=short`, `format=signature_short`.
+  - `case=genitive`, комбинации `format=short|case=genitive` / `format=signature_short|case=genitive`.
+  - 2 active assignments → `Федорчук С.В.; Иванов И.И.`.
+  - inactive не попадают.
+3. `src/utils/packagePlaceholderCatalog.test.ts`:
+  - copy-token `{{ln-000012|format=short|case=genitive}}` (правильный порядок).
+  - роли поддерживают signature_short.
+  - старые `PKR` / `package.roles.*` не появляются.
+4. `src/utils/personNameFormat.test.ts` (vitest) — зеркало Deno-теста.
 
-## 8. Технические детали
+## 9. Proof
 
-**Файлы (ожидаемая зона правок):**
+Файл: `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`.
 
-- `supabase/functions/_shared/resolve-package-tokens.ts` — основной рефакторинг резолвера на billing helpers.
-- `supabase/functions/_shared/packagePlaceholderCatalog.ts` — каталог переводит «source column» → «logical formatter key» (например `canon.short_name`), без дублирования formatter-кода.
-- `supabase/functions/ai-generate-document-package/index.ts` — собирает `preresolved_package_fields` уже из нормализованных значений + применяет modifiers per-token.
-- `supabase/functions/canonical-template-apply-markup/index.ts` и `canonical-document-generate-strict/index.ts` — whitelist package-токенов с modifiers (без правки billing-веток).
-- `supabase/functions/package-tokens-dry-run/index.ts` — отражает новый формат значений (super_admin dev-only).
-- `src/utils/packagePlaceholderCatalog.ts` + новый `src/utils/buildPackagePlaceholder.ts` (тонкий wrapper над существующим `buildFieldPlaceholder`).
-- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` — подключить modifier-контролы для package-групп.
+Содержание:
 
-**Переиспользуемые billing helpers (НЕ дублировать):**
+- Copy examples (5 вариантов для `ln-000012`).
+- Preview examples (full / short / signature_short / падеж).
+- Таблица «ФИО formatting parity» (4 строки из спецификации §7 user message).
+- Runtime DOCX: вставить в тестовый шаблон 5 токенов, сгенерировать, показать выдержку.
+- Чек-лист: billing/order не тронуты, `/purchases` не тронуты, миграции отсутствуют, новых FLD нет.
 
-- `canonicalizeLegalEntity`, `formatEntrepreneurDisplayName`, `fullNameToInitials` — `_shared/typed-tokens-resolver.ts`.
-- `_shared/case-format.ts`, `_shared/ru-inflection.ts`, `_shared/amount-with-words.ts`, `_shared/dateFormatModifiers.ts`, `_shared/address-format.ts`, `_shared/recipient-name.ts`.
-- `extensions/FieldChipNode.ts` (`buildFieldPlaceholder`, whitelist падежей/форматов) — на фронте.
+## 10. Риски и явные подтверждения
 
-**Контракты, которые НЕ меняем:** schema `preresolved_package_fields`, JSON body `ai-generate-document-package`, edge-конфиг `verify_jwt`, RLS, миграции.
+- **Изменение `fullNameToInitials` (с пробелом) → новый стандарт без пробела затрагивает billing output** (директор ЮЛ короткое имя, ИП short_name и т.д.). Пользователь явно требует «правило применяется ко всем ФИО в системе: billing, package, роли». Это сознательный refactor формата, не изменение бизнес-логики. Если требуется сохранить legacy-формат в billing — нужно сказать сейчас, иначе исполняем единый стандарт.
+- `output_template` ролей в БД (`document_package_role_catalog.output_template`) больше не влияет на default-вывод `{{ln-…}}`. Поле остаётся в схеме, фактически становится legacy. Зафиксируем в memory.
 
-## 9. DoD
+## 11. Файлы (только перечень)
 
-- Пакетные UL/IP/FL outputs побайтово совпадают с billing-аналогами на общем fixture (тесты зелёные).
-- `package.ul.short_name` отдаёт `ЗАО «Ажур-инкам»` (а не `«Ажур-инкам»`).
-- Package-токены поддерживают `case=*` и `format=words|text|long` через те же helpers, что billing.
-- Preview в `PlaceholdersCatalogTab` для package-групп идентичен billing-группам по контролам и copy-результату.
-- Сгенерированный пакетный DOCX/PDF содержит ожидаемые значения; raw `{{…}}` отсутствует.
-- `git diff` не затрагивает billing-резолвер, billing-FLD, `/purchases`, миграции.
-- Proof-файл `.lovable/proofs/sprint_3j_package_placeholder_parity_2026_05.md` заполнен по §7.
+Backend:
 
-## 10. Memory updates после execute
+- `supabase/functions/_shared/typed-tokens-resolver.ts` (+ `formatPersonName`, переделать `fullNameToInitials`).
+- `supabase/functions/_shared/resolve-package-tokens.ts` (`parseRawToken`, `resolveLnRoleToken`, мульти-assignment join).
+- `supabase/functions/canonical-document-generate-strict/index.ts` (whitelist `format=` для ФИО).
+- `supabase/functions/canonical-template-apply-markup/index.ts` (whitelist modifiers `ln-`).
+- `supabase/functions/_shared/personNameFormat_test.ts` (new).
+- `supabase/functions/_shared/resolve-package-tokens_test.ts` (extend).
 
-- Обновить `mem://architecture/documents/package-token-aliases-v1`: package-токены резолвятся через те же billing helpers (`canonicalizeLegalEntity` и др.); modifiers (`|case=`, `|format=`) поддерживаются на паритете с billing; whitelist single source — extended из billing-веток.
-- Новая запись `mem://architecture/documents/package-billing-parity-v1` со ссылкой на proof и списком тронутых файлов.
+Frontend:
+
+- `src/utils/personNameFormat.ts` (new).
+- `src/utils/personNameFormat.test.ts` (new).
+- `src/utils/packagePlaceholderCatalog.ts` (+ `signature_short` в `buildPackagePlaceholderToken`, classifier `person_name`).
+- `src/utils/packagePlaceholderCatalog.test.ts` (extend).
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` (роль-rows c modifier-controls, preview).
+- `src/components/ai-documents/FieldFormatPicker.tsx` (kind `person_name` с тремя форматами + падеж).
+
+Memory / proof:
+
+- `.lovable/proofs/sprint_3j_roles_modifier_parity_2026_05.md`.
+- Обновить `.lovable/memory/architecture/documents/package-billing-parity-v1.md` (новый стандарт ФИО + `signature_short` + поведение `{{ln-…}}` по умолчанию).
+
+## 12. DoD
+
+- `{{ln-XXXXXX}}` без модификаторов → ФИО полностью назначенного человека (без названия роли).
+- `format=short` → `Фамилия И.О.` (без пробела между инициалами) везде в системе.
+- `format=signature_short` → `И.О.Фамилия` (без пробелов) везде.
+- `case=…` работает совместно с обоими форматами; реальный DOCX рендер совпадает с preview.
+- Множественное назначение роли выводится через `;` .
+- UI «Пакет: Роли» имеет те же modifier-контролы, что строки ФЛ; copy-button формирует корректный токен.
+- В UI больше нигде не появляются `PKR`, `package.role.PKR`, `package.roles.*`.
+- Старый формат `Фамилия И. И.` (с пробелом) удалён из codebase.
+- Proof сформирован, тесты зелёные, миграций и новых FLD нет.
+
+## 13. Открытый вопрос (требует ответа до build)
+
+Подтвердите явно: применяем новый стандарт `short` (`Иванов И.И.` без пробела) **в том числе к billing-плейсхолдерам директора ЮЛ / ИП**, или там оставляем legacy `Иванов И. И.` и меняем только package/роли? В тексте спецификации указано «применяется ко всем ФИО в системе» — план исходит из этого. Если billing трогать нельзя, helper будет ветвиться (`legacy_short` для billing, `short` для package/ln), это +1 risk.
