@@ -109,7 +109,7 @@ function BatchDocuments({ batchId }: { batchId: string }) {
             type="button"
             onClick={async () => {
               const res = await downloadDocumentBlob(d.id, "pdf");
-              if (!res.ok) toast.error(res.message);
+              if (res.ok === false) toast.error(res.message);
             }}
             className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
           >
@@ -119,7 +119,7 @@ function BatchDocuments({ batchId }: { batchId: string }) {
             type="button"
             onClick={async () => {
               const res = await downloadDocumentBlob(d.id, "docx");
-              if (!res.ok) toast.error(res.message);
+              if (res.ok === false) toast.error(res.message);
             }}
             className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
           >
