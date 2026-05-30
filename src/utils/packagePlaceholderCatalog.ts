@@ -347,6 +347,58 @@ export const PACKAGE_PLACEHOLDER_CATALOG: PackagePlaceholderItem[] = [
   ...PACKAGE_FL,
 ];
 
+/* =========================================================================
+ * Sprint 3J-UI — modifier-controls parity с billing UI.
+ *
+ * Backend SOT для модификаторов:
+ *   - _shared/packageFieldFormatter.ts (Sprint 3J backend parity)
+ *   - canonical-document-generate-strict (parser + resolver)
+ *
+ * UI здесь НЕ форматирует значения — только helper для построения итогового
+ * copy-токена с modifiers. Whitelist совпадает с billing (FieldChipNode.ts):
+ *   |format=words   — для numeric/date (прописью)
+ *   |format=long    — для package.*.org_form (расширенная форма)
+ *   |case=<...>     — для text + numeric|format=words
+ * Для `package_roles` (`{{ln-XXXXXX}}`) модификаторы не добавляются (§5).
+ * ========================================================================= */
+
+import type { FieldCase, FieldFormat } from "@/components/ai-documents/extensions/FieldChipNode";
+
+/** Псевдо-тип данных для выбора UI-контролов RowSettingsCell. */
+export type PackageItemDataKind = "text" | "date" | "boolean" | "other";
+
+export function classifyPackageItem(item: PackagePlaceholderItem): PackageItemDataKind {
+  if (item.status !== "copy_ready") return "other";
+  if (item.groupId === "package_roles") return "other";
+  const k = item.tech_key;
+  if (/(birth_date|issued_date|valid_until)/.test(k)) return "date";
+  return "text";
+}
+
+/** `|format=long` поддерживается backend'ом только для `package.*.org_form`. */
+export function supportsLongFormat(item: PackagePlaceholderItem): boolean {
+  return /\.org_form$/.test(item.tech_key);
+}
+
+/**
+ * Построить итоговый copy-токен пакетного плейсхолдера с модификаторами.
+ * Берёт базовый `package_token` (`{{package.ul.FLD-000011}}`) и добавляет
+ * `|format=...` и `|case=...` в том же порядке, что и billing buildFieldPlaceholder.
+ */
+export function buildPackagePlaceholderToken(
+  item: PackagePlaceholderItem,
+  format: FieldFormat | null,
+  caseModifier: FieldCase | null,
+): string | null {
+  if (!item.package_token) return null;
+  if (item.groupId === "package_roles") return item.package_token;
+  const inner = item.package_token.replace(/^\{\{/, "").replace(/\}\}$/, "");
+  const parts: string[] = [inner];
+  if (format) parts.push(`format=${format}`);
+  if (caseModifier) parts.push(`case=${caseModifier}`);
+  return `{{${parts.join("|")}}}`;
+}
+
 export const PACKAGE_GROUP_META: Array<{
   id: PackageGroupId;
   label_ru: string;
