@@ -49,6 +49,8 @@ export const FIELD_FORMAT_LABEL: Record<FieldFormat, string> = {
   words: "прописью",
   text: "текстом",
   long: "прописью",
+  short: "ФИО кратко",
+  signature_short: "ФИО для подписи",
 };
 
 export interface FieldChipAttrs {
