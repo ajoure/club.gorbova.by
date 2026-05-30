@@ -43,6 +43,12 @@ import {
 import { classifyDataType } from "./FieldFormatPicker";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import {
+  formatPersonName,
+  DEMO_PERSON_NAME,
+  type PersonNameFormat,
+  type PersonNameCase,
+} from "@/utils/personNameFormat";
+import {
   PACKAGE_GROUP_META,
   PACKAGE_PLACEHOLDER_CATALOG,
   buildPackageRoleItems,
