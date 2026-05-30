@@ -1015,17 +1015,21 @@ function RowSettingsCell({
   kind,
   settings,
   onChange,
+  supportsLongFormat = false,
 }: {
   kind: ReturnType<typeof classifyDataType>;
   settings: RowSettings;
   onChange: (patch: Partial<RowSettings>) => void;
+  /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
+  supportsLongFormat?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
     return <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>;
   }
 
-  const showFormatToggle = kind === "numeric" || kind === "boolean";
+  const showLongToggle = kind === "text" && supportsLongFormat;
+  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle;
   // Падеж: text — всегда; numeric — только при words; boolean — никогда.
   const caseEnabled =
     kind === "text" || (kind === "numeric" && settings.format === "words");
@@ -1036,7 +1040,9 @@ function RowSettingsCell({
       ? settings.format === "words" ? "words" : "asis"
       : kind === "boolean"
         ? settings.format === "text" ? "text" : "asis"
-        : "asis";
+        : showLongToggle
+          ? settings.format === "long" ? "long" : "asis"
+          : "asis";
 
   const handleFormatChange = (val: string) => {
     if (!val) return; // ToggleGroup может вернуть "" при дабл-клике
@@ -1049,6 +1055,9 @@ function RowSettingsCell({
       });
     } else if (kind === "boolean") {
       const fmt: FieldFormat | null = val === "text" ? "text" : null;
+      onChange({ format: fmt });
+    } else if (showLongToggle) {
+      const fmt: FieldFormat | null = val === "long" ? "long" : null;
       onChange({ format: fmt });
     }
   };
@@ -1069,7 +1078,7 @@ function RowSettingsCell({
           className="h-7"
         >
           <ToggleGroupItem value="asis" className="h-7 px-2 text-[10px]">
-            Обычный
+            {showLongToggle ? "Кратко" : "Обычный"}
           </ToggleGroupItem>
           {kind === "numeric" && (
             <ToggleGroupItem value="words" className="h-7 px-2 text-[10px]">
@@ -1079,6 +1088,11 @@ function RowSettingsCell({
           {kind === "boolean" && (
             <ToggleGroupItem value="text" className="h-7 px-2 text-[10px]">
               Текстом
+            </ToggleGroupItem>
+          )}
+          {showLongToggle && (
+            <ToggleGroupItem value="long" className="h-7 px-2 text-[10px]">
+              Развёрнуто
             </ToggleGroupItem>
           )}
         </ToggleGroup>
