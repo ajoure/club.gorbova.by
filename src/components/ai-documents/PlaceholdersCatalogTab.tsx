@@ -873,17 +873,30 @@ export function PlaceholdersCatalogTab() {
                       // Sprint 3J-UI: те же modifier-controls, что у billing.
                       const pkgKind = classifyPackageItem(p);
                       const supportsLong = packageSupportsLongFormat(p);
-                      // Маппинг package kind → kind для RowSettingsCell (date → numeric, text → text).
-                      const rowKind: ReturnType<typeof classifyDataType> =
+                      // Маппинг package kind → kind для RowSettingsCell.
+                      //   text → text, date → numeric, person_name → person_name, прочее → other.
+                      const rowKind: "text" | "numeric" | "boolean" | "other" | "person_name" =
                         pkgKind === "text" ? "text"
                           : pkgKind === "date" ? "numeric"
-                            : "other";
+                            : pkgKind === "person_name" ? "person_name"
+                              : "other";
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
                         ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
                         : p.package_token;
-                      const showModifiers = isReady && !isRolesGroup;
+                      const showModifiers = isReady && rowKind !== "other";
+                      // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
+                      const personNamePreview = (() => {
+                        if (rowKind !== "person_name") return null;
+                        const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
+                        const allowedFmts: PersonNameFormat[] = ["full", "short", "signature_short"];
+                        const safeFmt = allowedFmts.includes(fmt) ? fmt : "full";
+                        return formatPersonName(DEMO_PERSON_NAME, {
+                          format: safeFmt,
+                          case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
+                        });
+                      })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
                           <TableCell />
@@ -905,6 +918,10 @@ export function PlaceholdersCatalogTab() {
                             {p.reused_fld ? (
                               <Badge variant="secondary" className="font-mono text-[10px]">
                                 {p.reused_fld}
+                              </Badge>
+                            ) : isRolesGroup ? (
+                              <Badge variant="outline" className="font-mono text-[10px]">
+                                ln
                               </Badge>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
@@ -934,16 +951,16 @@ export function PlaceholdersCatalogTab() {
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
                               />
-                            ) : isReady && isRolesGroup ? (
-                              <span className="text-[10px] text-muted-foreground italic">
-                                роль: модификаторы недоступны
-                              </span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
                             )}
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
-                            {isReady ? (
+                            {personNamePreview ? (
+                              <span className="italic" title={`Demo: ${DEMO_PERSON_NAME}`}>
+                                {personNamePreview}
+                              </span>
+                            ) : isReady ? (
                               <span className="text-muted-foreground/70 italic">
                                 Пример появится после заполнения анкеты документа
                               </span>
