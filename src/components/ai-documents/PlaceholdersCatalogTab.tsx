@@ -1040,7 +1040,8 @@ function RowSettingsCell({
   onChange,
   supportsLongFormat = false,
 }: {
-  kind: ReturnType<typeof classifyDataType>;
+  // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
+  kind: ReturnType<typeof classifyDataType> | "person_name";
   settings: RowSettings;
   onChange: (patch: Partial<RowSettings>) => void;
   /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
@@ -1051,15 +1052,20 @@ function RowSettingsCell({
     return <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>;
   }
 
+  // Sprint 3J-Roles: person_name controls — ФИО полностью / кратко / для подписи + падеж.
+  const isPersonName = kind === "person_name";
   const showLongToggle = kind === "text" && supportsLongFormat;
-  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle;
-  // Падеж: text — всегда; numeric — только при words; boolean — никогда.
+  const showFormatToggle = kind === "numeric" || kind === "boolean" || showLongToggle || isPersonName;
+  // Падеж: text — всегда; numeric — только при words; boolean — никогда; person_name — всегда.
   const caseEnabled =
-    kind === "text" || (kind === "numeric" && settings.format === "words");
+    kind === "text" || isPersonName || (kind === "numeric" && settings.format === "words");
 
   // Значение для format toggle
-  const formatValue =
-    kind === "numeric"
+  const formatValue = isPersonName
+    ? (settings.format === "short" ? "short"
+        : settings.format === "signature_short" ? "signature_short"
+        : "full")
+    : kind === "numeric"
       ? settings.format === "words" ? "words" : "asis"
       : kind === "boolean"
         ? settings.format === "text" ? "text" : "asis"
@@ -1069,9 +1075,13 @@ function RowSettingsCell({
 
   const handleFormatChange = (val: string) => {
     if (!val) return; // ToggleGroup может вернуть "" при дабл-клике
-    if (kind === "numeric") {
+    if (isPersonName) {
+      // canon: full → null (default); short/signature_short → сами.
+      const fmt: FieldFormat | null =
+        val === "short" ? "short" : val === "signature_short" ? "signature_short" : null;
+      onChange({ format: fmt });
+    } else if (kind === "numeric") {
       const fmt: FieldFormat | null = val === "words" ? "words" : null;
-      // Если уходим с words — сбрасываем падеж
       onChange({
         format: fmt,
         ...(fmt === null ? { caseModifier: null } : {}),
