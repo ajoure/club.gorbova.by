@@ -49,10 +49,19 @@ const ALLOWED_FIELD_ENTITY_TYPES = new Set([
   'system', 'document', 'meeting', 'agenda', 'decision', 'package',
 ]);
 
-const FIELD_RE = /^field:(FLD-\d{6})$/;
-const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})$/;
-const LN_RE = /^ln-\d{6}$/;
+const FIELD_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const LN_RE = /^(ln-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const TOKEN_RE = /\{\{([^}]+)\}\}/g;
+
+// Sprint 3J-Roles: FIO-полей пакета, для которых orchestrator сохраняет raw_full_name
+// (зеркалит whitelist в canonical-document-generate-strict).
+const FIO_PACKAGE_TECH_KEYS: ReadonlySet<string> = new Set([
+  'package.ul.director_full_name',
+  'package.ul.director_short_name',
+  'package.fl.full_name',
+  'package.fl.full_name_short',
+]);
 
 function j(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
