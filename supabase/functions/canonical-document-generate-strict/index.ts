@@ -1114,17 +1114,72 @@ Deno.serve(async (req) => {
         let formatApplied = false;
         let caseApplied = false;
         let caseReason: string | null = null;
+
+        // Sprint 3J-Roles: ФИО-формат для ln (per-person + join `; `).
+        if (
+          pt.kind === 'ln'
+          && pt.format
+          && PERSON_NAME_FORMATS.has(pt.format)
+        ) {
+          const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
+          if (persons.length === 0 && entry?.value) {
+            // fallback на split joined value (defence-in-depth для старого бага).
+            persons.push(...String(entry.value).split(/\s*;\s*/).filter(Boolean));
+          }
+          const parts = persons
+            .map((fn) => formatPersonName(fn, {
+              format: pt.format as PersonNameFormat,
+              case: (pt.case_modifier as RuCase | null) ?? null,
+            }))
+            .filter((s) => s && s.length > 0);
+          outVal = parts.join('; ');
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        }
+        // Sprint 3J-Roles: ФИО-формат для FIO-полей пакета (raw_full_name).
+        else if (
+          pt.kind === 'package'
+          && pt.format
+          && PERSON_NAME_FORMATS.has(pt.format)
+          && PERSON_NAME_PACKAGE_BAG_KEYS.has(pt.bag_key)
+        ) {
+          const raw = String(entry?.raw_full_name ?? entry?.value ?? '');
+          outVal = formatPersonName(raw, {
+            format: pt.format as PersonNameFormat,
+            case: (pt.case_modifier as RuCase | null) ?? null,
+          });
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        }
         // Sprint 3J: format=long допустим только для package.*.org_form
-        // (паритет с billing executor.leg.org_form / customer.leg.org_form).
-        if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
+        else if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
           outVal = expandOrgFormToLong(outVal);
           formatApplied = true;
+          if (pt.case_modifier) {
+            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+            if (inf.applied) { outVal = inf.value; caseApplied = true; }
+            else { caseReason = inf.reason || 'inflection_unsafe'; }
+          }
         }
-        if (pt.case_modifier) {
-          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
-          if (inf.applied) { outVal = inf.value; caseApplied = true; }
-          else { caseReason = inf.reason || 'inflection_unsafe'; }
+        // case_modifier без формата (text/raw): inflect joined string.
+        else if (pt.case_modifier) {
+          // ln без формата → склонять каждого; package без формата → склонять value.
+          if (pt.kind === 'ln' && Array.isArray(entry?.persons) && entry.persons.length > 0) {
+            const parts = (entry.persons as string[])
+              .map((fn) => formatPersonName(fn, {
+                format: 'full',
+                case: pt.case_modifier as RuCase,
+              }))
+              .filter((s) => s && s.length > 0);
+            outVal = parts.join('; ');
+            caseApplied = true;
+          } else {
+            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+            if (inf.applied) { outVal = inf.value; caseApplied = true; }
+            else { caseReason = inf.reason || 'inflection_unsafe'; }
+          }
         }
+
         resolved[pt.raw_inside] = outVal;
         sourceTrace[pt.raw_inside] = {
           status: outVal === '' ? 'empty' : 'resolved',
