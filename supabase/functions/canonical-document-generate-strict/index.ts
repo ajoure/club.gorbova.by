@@ -25,6 +25,17 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
 import { inflectRu, normalizeMasculinePosition, expandOrgFormToLong, type RuCase } from '../_shared/ru-inflection.ts';
+import { formatPersonName, type PersonNameFormat } from '../_shared/typed-tokens-resolver.ts';
+
+// Sprint 3J-Roles: ФИО-форматы доступны для ln и для FIO-полей пакета.
+const PERSON_NAME_FORMATS: ReadonlySet<string> = new Set(['full', 'short', 'signature_short']);
+// FIO-поля пакета (whitelist по bag_key). Для них strict re-форматирует через
+// formatPersonName(entry.raw_full_name, ...). Для остальных полей пакета
+// format=short/signature_short → unknown_modifier.
+const PERSON_NAME_PACKAGE_BAG_KEYS: ReadonlySet<string> = new Set([
+  'package.ul.FLD-000014', // director (full/short)
+  'package.fl.FLD-000372', // person full_name
+]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
@@ -731,6 +742,8 @@ Deno.serve(async (req) => {
           continue;
         }
         const tail = (pkgMatch[3] || '').split('|').filter(Boolean);
+        const candidateBagKey = `package.${pkgMatch[1]}.${pkgMatch[2]}`;
+        const isFioBag = PERSON_NAME_PACKAGE_BAG_KEYS.has(candidateBagKey);
         let cs: string | null = null;
         let fmt: string | null = null;
         let badMod = false;
@@ -738,6 +751,8 @@ Deno.serve(async (req) => {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
           else if (k === 'format' && (v === 'long' || v === 'words')) fmt = v;
+          // Sprint 3J-Roles: ФИО-форматы только для whitelisted bag_keys.
+          else if (k === 'format' && PERSON_NAME_FORMATS.has(v) && isFioBag) fmt = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -751,7 +766,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // 3) Role token {{ln-XXXXXX[|case=…]}}
+      // 3) Role token {{ln-XXXXXX[|format=full|short|signature_short][|case=…]}}
       const lnMatch = inside.match(LN_TOKEN_RE);
       if (lnMatch) {
         if (generationContext !== 'package_session') {
@@ -760,10 +775,12 @@ Deno.serve(async (req) => {
         }
         const tail = (lnMatch[2] || '').split('|').filter(Boolean);
         let cs: string | null = null;
+        let fmt: string | null = null;
         let badMod = false;
         for (const part of tail) {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else if (k === 'format' && PERSON_NAME_FORMATS.has(v)) fmt = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -772,7 +789,7 @@ Deno.serve(async (req) => {
           kind: 'ln',
           bag_key: lnMatch[1],
           case_modifier: cs,
-          format: null,
+          format: fmt,
         });
         continue;
       }
@@ -1097,17 +1114,72 @@ Deno.serve(async (req) => {
         let formatApplied = false;
         let caseApplied = false;
         let caseReason: string | null = null;
+
+        // Sprint 3J-Roles: ФИО-формат для ln (per-person + join `; `).
+        if (
+          pt.kind === 'ln'
+          && pt.format
+          && PERSON_NAME_FORMATS.has(pt.format)
+        ) {
+          const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
+          if (persons.length === 0 && entry?.value) {
+            // fallback на split joined value (defence-in-depth для старого бага).
+            persons.push(...String(entry.value).split(/\s*;\s*/).filter(Boolean));
+          }
+          const parts = persons
+            .map((fn) => formatPersonName(fn, {
+              format: pt.format as PersonNameFormat,
+              case: (pt.case_modifier as RuCase | null) ?? null,
+            }))
+            .filter((s) => s && s.length > 0);
+          outVal = parts.join('; ');
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        }
+        // Sprint 3J-Roles: ФИО-формат для FIO-полей пакета (raw_full_name).
+        else if (
+          pt.kind === 'package'
+          && pt.format
+          && PERSON_NAME_FORMATS.has(pt.format)
+          && PERSON_NAME_PACKAGE_BAG_KEYS.has(pt.bag_key)
+        ) {
+          const raw = String(entry?.raw_full_name ?? entry?.value ?? '');
+          outVal = formatPersonName(raw, {
+            format: pt.format as PersonNameFormat,
+            case: (pt.case_modifier as RuCase | null) ?? null,
+          });
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        }
         // Sprint 3J: format=long допустим только для package.*.org_form
-        // (паритет с billing executor.leg.org_form / customer.leg.org_form).
-        if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
+        else if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
           outVal = expandOrgFormToLong(outVal);
           formatApplied = true;
+          if (pt.case_modifier) {
+            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+            if (inf.applied) { outVal = inf.value; caseApplied = true; }
+            else { caseReason = inf.reason || 'inflection_unsafe'; }
+          }
         }
-        if (pt.case_modifier) {
-          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
-          if (inf.applied) { outVal = inf.value; caseApplied = true; }
-          else { caseReason = inf.reason || 'inflection_unsafe'; }
+        // case_modifier без формата (text/raw): inflect joined string.
+        else if (pt.case_modifier) {
+          // ln без формата → склонять каждого; package без формата → склонять value.
+          if (pt.kind === 'ln' && Array.isArray(entry?.persons) && entry.persons.length > 0) {
+            const parts = (entry.persons as string[])
+              .map((fn) => formatPersonName(fn, {
+                format: 'full',
+                case: pt.case_modifier as RuCase,
+              }))
+              .filter((s) => s && s.length > 0);
+            outVal = parts.join('; ');
+            caseApplied = true;
+          } else {
+            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+            if (inf.applied) { outVal = inf.value; caseApplied = true; }
+            else { caseReason = inf.reason || 'inflection_unsafe'; }
+          }
         }
+
         resolved[pt.raw_inside] = outVal;
         sourceTrace[pt.raw_inside] = {
           status: outVal === '' ? 'empty' : 'resolved',
