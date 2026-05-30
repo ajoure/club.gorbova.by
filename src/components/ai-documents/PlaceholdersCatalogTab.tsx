@@ -486,6 +486,25 @@ export function PlaceholdersCatalogTab() {
     });
   };
 
+  const updatePkgSettings = (techKey: string, patch: Partial<RowSettings>) => {
+    setPkgRowSettings(prev => {
+      const next = new Map(prev);
+      const current = next.get(techKey) ?? { format: null, caseModifier: null };
+      const merged: RowSettings = { ...current, ...patch };
+      if (merged.format === null && merged.caseModifier === null) next.delete(techKey);
+      else next.set(techKey, merged);
+      return next;
+    });
+  };
+  const resetPkgRow = (techKey: string) => {
+    setPkgRowSettings(prev => {
+      if (!prev.has(techKey)) return prev;
+      const next = new Map(prev);
+      next.delete(techKey);
+      return next;
+    });
+  };
+
   const copyPlaceholder = async (text: string) => {
     await copyToClipboard(text, "Плейсхолдер скопирован");
   };
