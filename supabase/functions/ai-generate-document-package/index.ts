@@ -24,8 +24,8 @@ import PizZip from 'npm:pizzip@3.1.6';
 import {
   PACKAGE_PLACEHOLDER_CATALOG,
   findByPackageToken,
-  readSourcePath,
 } from '../_shared/packagePlaceholderCatalog.ts';
+import { formatPackageFieldValue } from '../_shared/packageFieldFormatter.ts';
 import {
   buildSystemFieldValues,
   SYSTEM_FIELD_VALUE_IDS,
@@ -294,7 +294,15 @@ Deno.serve(async (req) => {
           const isFl = item3.groupId === 'package_fl';
           if (!isFl) {
             if (!legalEntityRow) { itemErrors.push(`package_legal_entity_not_selected`); continue; }
-            const val = readSourcePath(legalEntityRow, item3.source_path!);
+            // Sprint 3J: значение проходит через те же billing helpers
+            // (canonicalizeLegalEntity / formatEntrepreneurDisplayName /
+            // formatStructuredAddress / fullNameToInitials), чтобы output
+            // совпадал побайтово с биллинговым аналогом.
+            const val = formatPackageFieldValue(
+              item3.tech_key,
+              item3.groupId as 'package_ul' | 'package_ip',
+              legalEntityRow,
+            );
             preresolved_package_fields[inside] = {
               value: val,
               source: item3.source_path!,
@@ -317,7 +325,7 @@ Deno.serve(async (req) => {
             }
             const person = personMap.get(distinctPersons[0]);
             if (!person) { itemErrors.push(`package_fl_person_not_found`); continue; }
-            const val = readSourcePath(person, item3.source_path!);
+            const val = formatPackageFieldValue(item3.tech_key, 'package_fl', person);
             preresolved_package_fields[inside] = {
               value: val,
               source: item3.source_path!,

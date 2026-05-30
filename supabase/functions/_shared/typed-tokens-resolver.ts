@@ -137,7 +137,7 @@ export function canonicalizeLegalEntity(
 }
 
 
-function fullNameToInitials(fullName?: string | null): string {
+export function fullNameToInitials(fullName?: string | null): string {
   if (!fullName) return "";
   const parts = String(fullName).trim().split(/\s+/);
   if (parts.length === 1) return parts[0];
