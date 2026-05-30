@@ -24,7 +24,6 @@ import PizZip from 'npm:pizzip@3.1.6';
 import {
   PACKAGE_PLACEHOLDER_CATALOG,
   findByPackageToken,
-  readSourcePath,
 } from '../_shared/packagePlaceholderCatalog.ts';
 import { formatPackageFieldValue } from '../_shared/packageFieldFormatter.ts';
 import {
