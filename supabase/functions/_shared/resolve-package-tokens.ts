@@ -89,15 +89,27 @@ const FEATURE_DISABLED = (): PackageTokenResolveResult => ({
   warning: 'package_resolver_disabled',
 });
 
-function parseRawToken(raw: string): { aliasToken: string; caseMod?: string } {
+function parseRawToken(raw: string): {
+  aliasToken: string;
+  caseMod?: string;
+  formatMod?: string;
+  duplicateModifier?: string;
+} {
   const parts = raw.split('|').map((s) => s.trim());
   const aliasToken = parts[0];
   let caseMod: string | undefined;
+  let formatMod: string | undefined;
+  const seen = new Set<string>();
   for (const seg of parts.slice(1)) {
+    if (!seg) continue;
     const [k, v] = seg.split('=').map((s) => s?.trim());
-    if (k === 'case' && v) caseMod = v;
+    if (!k || !v) continue;
+    if (seen.has(k)) return { aliasToken, duplicateModifier: k };
+    seen.add(k);
+    if (k === 'case') caseMod = v;
+    else if (k === 'format') formatMod = v;
   }
-  return { aliasToken, caseMod };
+  return { aliasToken, caseMod, formatMod };
 }
 
 function readJsonPath(root: unknown, path: string): unknown {
