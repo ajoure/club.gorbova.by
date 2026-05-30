@@ -26,7 +26,8 @@ import {
   AlertCircle,
   FlaskConical,
 } from "lucide-react";
-import { getDocumentDownloadUrl } from "@/utils/buildDocumentDownloadUrl";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
+import { toast } from "sonner";
 
 interface Props {
   packageSessionId: string | null;
@@ -104,22 +105,26 @@ function BatchDocuments({ batchId }: { batchId: string }) {
             </div>
           </div>
           {statusBadge(d.status)}
-          <a
-            href={getDocumentDownloadUrl(d.id, "pdf")}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await downloadDocumentBlob(d.id, "pdf");
+              if (!res.ok) toast.error(res.message);
+            }}
             className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
           >
             <FileDown className="h-3 w-3" /> PDF
-          </a>
-          <a
-            href={getDocumentDownloadUrl(d.id, "docx")}
-            target="_blank"
-            rel="noopener noreferrer"
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await downloadDocumentBlob(d.id, "docx");
+              if (!res.ok) toast.error(res.message);
+            }}
             className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline"
           >
             <FileDown className="h-3 w-3" /> DOCX
-          </a>
+          </button>
         </div>
       ))}
     </div>
