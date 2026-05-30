@@ -1094,8 +1094,15 @@ Deno.serve(async (req) => {
           : packageContext!.preresolved_package_fields;
         const entry: any = (bag as any)[pt.bag_key];
         let outVal = fmtVal(entry?.value);
+        let formatApplied = false;
         let caseApplied = false;
         let caseReason: string | null = null;
+        // Sprint 3J: format=long допустим только для package.*.org_form
+        // (паритет с billing executor.leg.org_form / customer.leg.org_form).
+        if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
+          outVal = expandOrgFormToLong(outVal);
+          formatApplied = true;
+        }
         if (pt.case_modifier) {
           const inf = inflectRu(outVal, pt.case_modifier as RuCase);
           if (inf.applied) { outVal = inf.value; caseApplied = true; }
@@ -1108,6 +1115,7 @@ Deno.serve(async (req) => {
           kind: pt.kind,
           bag_key: pt.bag_key,
           value: outVal,
+          format_applied: formatApplied,
           case_applied: caseApplied,
           case_reason: caseReason,
         };
