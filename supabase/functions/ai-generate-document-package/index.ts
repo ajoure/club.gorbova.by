@@ -261,10 +261,17 @@ Deno.serve(async (req) => {
 
       for (const m of flat.matchAll(TOKEN_RE)) {
         const inside = m[1].trim();
-        if (seen.has(inside)) continue;
-        seen.add(inside);
-
+        // Sprint 3J-Roles: дедупликация по base public_id (без модификаторов),
+        // т.к. strict читает bag по public_id и применяет модификаторы сам.
         let mm: RegExpMatchArray | null;
+        let baseKey: string | null = null;
+        if ((mm = inside.match(FIELD_RE))) baseKey = `field:${mm[1]}`;
+        else if ((mm = inside.match(PACKAGE_FLD_RE))) baseKey = `package.${mm[1]}.${mm[2]}`;
+        else if ((mm = inside.match(LN_RE))) baseKey = mm[1];
+        else baseKey = inside;
+        if (seen.has(baseKey)) continue;
+        seen.add(baseKey);
+
         if ((mm = inside.match(FIELD_RE))) {
           const fld = mm[1];
           // System numbering injection is done inside strict (FLD-000069/070).
@@ -282,8 +289,6 @@ Deno.serve(async (req) => {
             itemErrors.push(`field_entity_type_not_allowed_in_package:${fld}:${et}`);
             continue;
           }
-          // Sprint 3I-A-2 F1: резолв «чистых» system FLD через shared helper.
-          // Формат 1-в-1 с order-mode (общий _shared/ru-date.ts).
           if (SYSTEM_FIELD_VALUE_IDS.has(fld)) {
             preresolved_fields[fld] = {
               value: sysVals[fld],
@@ -291,35 +296,39 @@ Deno.serve(async (req) => {
             };
             continue;
           }
-          // Любой system FLD вне whitelist → error (никаких silent empty).
           itemErrors.push(`system_field_resolver_not_implemented:${fld}`);
           continue;
         }
 
         if ((mm = inside.match(PACKAGE_FLD_RE))) {
-          const item3 = findByPackageToken(inside);
-          if (!item3) { itemErrors.push(`package_token_unknown:${inside}`); continue; }
-          if (item3.status !== 'copy_ready') { itemErrors.push(`package_field_not_ready:${inside}:${item3.status}`); continue; }
+          const groupShort = mm[1] as 'ul' | 'ip' | 'fl';
+          const fld = mm[2];
+          const bagKey = `package.${groupShort}.${fld}`;
+          // Поиск catalog item по базовому токену без модификаторов.
+          const baseToken = bagKey;
+          const item3 = findByPackageToken(baseToken);
+          if (!item3) { itemErrors.push(`package_token_unknown:${baseToken}`); continue; }
+          if (item3.status !== 'copy_ready') { itemErrors.push(`package_field_not_ready:${baseToken}:${item3.status}`); continue; }
           const isFl = item3.groupId === 'package_fl';
+          const isFio = FIO_PACKAGE_TECH_KEYS.has(item3.tech_key);
           if (!isFl) {
             if (!legalEntityRow) { itemErrors.push(`package_legal_entity_not_selected`); continue; }
-            // Sprint 3J: значение проходит через те же billing helpers
-            // (canonicalizeLegalEntity / formatEntrepreneurDisplayName /
-            // formatStructuredAddress / fullNameToInitials), чтобы output
-            // совпадал побайтово с биллинговым аналогом.
             const val = formatPackageFieldValue(
               item3.tech_key,
               item3.groupId as 'package_ul' | 'package_ip',
               legalEntityRow,
             );
-            preresolved_package_fields[inside] = {
+            const entry: any = {
               value: val,
               source: item3.source_path!,
               catalog_tech_key: item3.tech_key,
             };
+            if (isFio) {
+              // raw_full_name для strict re-формата (format=full|short|signature_short).
+              entry.raw_full_name = String((legalEntityRow as any).leg_director_name || '').trim();
+            }
+            preresolved_package_fields[bagKey] = entry;
           } else {
-            // FL ambiguity: collect all active assignments for this item that
-            // point at FL persons. If exactly one person → use it. Else error.
             const flAssignments = (assignments || []).filter(
               (a: any) => a.package_template_item_id === item.id && a.person_id,
             );
@@ -335,31 +344,33 @@ Deno.serve(async (req) => {
             const person = personMap.get(distinctPersons[0]);
             if (!person) { itemErrors.push(`package_fl_person_not_found`); continue; }
             const val = formatPackageFieldValue(item3.tech_key, 'package_fl', person);
-            preresolved_package_fields[inside] = {
+            const entry: any = {
               value: val,
               source: item3.source_path!,
               catalog_tech_key: item3.tech_key,
             };
+            if (isFio) {
+              entry.raw_full_name = String((person as any).full_name || '').trim();
+            }
+            preresolved_package_fields[bagKey] = entry;
           }
           continue;
         }
 
-        if (LN_RE.test(inside)) {
-          const role = roleByPublicId.get(inside);
-          if (!role) { itemErrors.push(`ln_token_unknown:${inside}`); continue; }
+        if ((mm = inside.match(LN_RE))) {
+          const lnPublicId = mm[1];
+          const role = roleByPublicId.get(lnPublicId);
+          if (!role) { itemErrors.push(`ln_token_unknown:${lnPublicId}`); continue; }
           if (role.package_template_id !== session.package_template_id) {
-            itemErrors.push(`ln_token_outside_bound_package:${inside}`);
+            itemErrors.push(`ln_token_outside_bound_package:${lnPublicId}`);
             continue;
           }
           const k = `${item.id}::${role.id}`;
           const asgs = assignByItemRole.get(k) || [];
           if (asgs.length === 0) {
-            itemErrors.push(`role_assignment_missing:${inside}`);
+            itemErrors.push(`role_assignment_missing:${lnPublicId}`);
             continue;
           }
-          // Sprint 3J-Roles: SOT для значения роли = ФИО назначенного человека
-          // (без position). Multi-assignment → join `; `. Modifiers (format/case)
-          // применяются в canonical-document-generate-strict через formatPersonName.
           const fullNames: string[] = [];
           let firstPersonId: string | null = null;
           for (const a of asgs) {
@@ -372,12 +383,12 @@ Deno.serve(async (req) => {
             fullNames.push(fn);
           }
           if (fullNames.length === 0 || !firstPersonId) {
-            itemErrors.push(`role_person_not_found:${inside}`);
+            itemErrors.push(`role_person_not_found:${lnPublicId}`);
             continue;
           }
-          // Default render = full ФИО, join `; `. Strict re-formats per modifiers
-          // (см. preresolved_ln_tokens[inside].persons[]).
-          (preresolved_ln_tokens as any)[inside] = {
+          // Sprint 3J-Roles: bag key = base public_id (без модификаторов).
+          // strict читает entry.persons[] и применяет format/case per-person.
+          (preresolved_ln_tokens as any)[lnPublicId] = {
             value: fullNames.join('; '),
             persons: fullNames,
             role_catalog_id: role.id,
