@@ -348,23 +348,31 @@ Deno.serve(async (req) => {
             itemErrors.push(`role_assignment_missing:${inside}`);
             continue;
           }
-          const first = asgs[0];
-          if (!first.person_id) { itemErrors.push(`role_person_null:${inside}`); continue; }
-          const person = personMap.get(first.person_id);
-          if (!person) { itemErrors.push(`role_person_not_found:${inside}`); continue; }
-          const fullName = String(person.full_name || '').trim();
-          const positionRaw = first.metadata && typeof first.metadata === 'object'
-            ? (first.metadata as any).position : '';
-          const position = positionRaw == null ? '' : String(positionRaw).trim();
-          const tplStr = role.output_template ?? '{{position}}, {{full_name}}';
-          let value = tplStr
-            .replace(/\{\{\s*full_name\s*\}\}/g, fullName)
-            .replace(/\{\{\s*position\s*\}\}/g, position);
-          if (!position) value = value.replace(/^\s*,\s*/, '').replace(/,\s*,/g, ',').trim();
-          preresolved_ln_tokens[inside] = {
-            value,
+          // Sprint 3J-Roles: SOT для значения роли = ФИО назначенного человека
+          // (без position). Multi-assignment → join `; `. Modifiers (format/case)
+          // применяются в canonical-document-generate-strict через formatPersonName.
+          const fullNames: string[] = [];
+          let firstPersonId: string | null = null;
+          for (const a of asgs) {
+            if (!a.person_id) continue;
+            const p = personMap.get(a.person_id);
+            if (!p) continue;
+            const fn = String((p as any).full_name || '').trim();
+            if (!fn) continue;
+            if (!firstPersonId) firstPersonId = a.person_id;
+            fullNames.push(fn);
+          }
+          if (fullNames.length === 0 || !firstPersonId) {
+            itemErrors.push(`role_person_not_found:${inside}`);
+            continue;
+          }
+          // Default render = full ФИО, join `; `. Strict re-formats per modifiers
+          // (см. preresolved_ln_tokens[inside].persons[]).
+          (preresolved_ln_tokens as any)[inside] = {
+            value: fullNames.join('; '),
+            persons: fullNames,
             role_catalog_id: role.id,
-            person_id: first.person_id,
+            person_id: firstPersonId,
           };
           continue;
         }

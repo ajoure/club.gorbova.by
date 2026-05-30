@@ -137,12 +137,73 @@ export function canonicalizeLegalEntity(
 }
 
 
+// ─── Sprint 3J-Roles: единый стандарт ФИО ───────────────────────────────
+// Используется backend resolver'ами (billing + package + ln-XXXXXX) и зеркалится
+// frontend helper'ом `src/utils/personNameFormat.ts`.
+//
+// Канон форматов:
+//   • full             → «Федорчук Сергей Валерьевич»
+//   • short            → «Федорчук С.В.» (фамилия, пробел, инициалы без пробела)
+//   • signature_short  → «С.В.Федорчук» (инициалы без пробелов, фамилия)
+//
+// `case` для format=full склоняет все три части через `inflectRu`. Для
+// format=short / signature_short склоняется только фамилия — инициалы не
+// склоняются и сохраняют позицию. Если `inflectRu` не смог склонить (unknown_token)
+// — возвращается значение без склонения (best-effort, log via inf.reason).
+//
+// `fullNameToInitials` оставлен как thin-wrapper над `formatPersonName(..., short)`
+// для совместимости с существующими call-сайтами (директор ЮЛ, ИП short_name и т.п.).
+export type PersonNameFormat = 'full' | 'short' | 'signature_short';
+
+import { inflectRu, type RuCase } from './ru-inflection.ts';
+
+export function formatPersonName(
+  fullName: string | null | undefined,
+  opts?: { format?: PersonNameFormat; case?: RuCase | null },
+): string {
+  if (!fullName) return '';
+  const format: PersonNameFormat = opts?.format ?? 'full';
+  const cs = opts?.case ?? null;
+  const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+
+  let surname = parts[0];
+  const name = parts[1] ?? '';
+  const patronymic = parts[2] ?? '';
+
+  // case modifier
+  if (cs && cs !== 'nominative') {
+    if (format === 'full') {
+      const inf = inflectRu(parts.join(' '), cs);
+      if (inf.applied) return inf.value;
+      // best-effort fallback: return nominative full
+      return parts.join(' ');
+    }
+    // short / signature_short — inflect surname only.
+    const inf = inflectRu(surname, cs);
+    if (inf.applied) surname = inf.value;
+  }
+
+  if (format === 'full') {
+    return [surname, name, patronymic].filter(Boolean).join(' ');
+  }
+
+  // Инициалы без пробела между ними.
+  const initials = [name, patronymic]
+    .filter(Boolean)
+    .map((p) => `${p[0].toUpperCase()}.`)
+    .join('');
+
+  if (format === 'short') {
+    return initials ? `${surname} ${initials}` : surname;
+  }
+  // signature_short: «И.О.Фамилия» (без пробела между инициалами и фамилией).
+  return initials ? `${initials}${surname}` : surname;
+}
+
+/** Legacy wrapper. New canon: `Фамилия И.О.` (без пробела между инициалами). */
 export function fullNameToInitials(fullName?: string | null): string {
-  if (!fullName) return "";
-  const parts = String(fullName).trim().split(/\s+/);
-  if (parts.length === 1) return parts[0];
-  if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`;
-  return `${parts[0]} ${parts[1][0]}. ${parts[2][0]}.`;
+  return formatPersonName(fullName, { format: 'short' });
 }
 
 /**
