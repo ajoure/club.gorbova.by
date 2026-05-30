@@ -25,7 +25,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Boxes, Sparkles } from "lucide-react";
 import { useRbac } from "@/hooks/useRbac";
-import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
+// Sprint 3I-C: legacy DocumentPackageIdeologyView удалён. Вся ideology-логика
+// живёт во вкладках PackagesWorkspace (Состав / Шаблоны / Анкеты / Роли /
+// Проверка / Генерация). Сюда новую логику добавлять не нужно.
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";

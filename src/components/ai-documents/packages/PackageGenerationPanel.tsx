@@ -64,7 +64,7 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
     return map;
   }, [packageItems]);
 
-  // Preflight — те же правила, что в DocumentPackageIdeologyView, но read-only.
+  // Preflight — read-only сводка по сессии пакета (анкета, состав, роли).
   const requiredRolesStatus = useMemo(() => {
     return (pkg.roleCatalog ?? [])
       .filter((r) => r.required)

@@ -905,7 +905,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       )}
 
       {/* Sprint 3F Phase 2c: pkg-admin удалён. Если по старой ссылке прилетели
-          ?tab=pkg-admin — guard сбросит на pkg-ideology (DocumentPackageIdeologyView). */}
+          ?tab=pkg-admin — guard сбросит на pkg-ideology (PackagesWorkspace). */}
 
 
       {/* Entities */}
