@@ -1110,9 +1110,19 @@ function RowSettingsCell({
           onValueChange={handleFormatChange}
           className="h-7"
         >
-          <ToggleGroupItem value="asis" className="h-7 px-2 text-[10px]">
-            {showLongToggle ? "Кратко" : "Обычный"}
+          <ToggleGroupItem value={isPersonName ? "full" : "asis"} className="h-7 px-2 text-[10px]">
+            {isPersonName ? "ФИО полностью" : showLongToggle ? "Кратко" : "Обычный"}
           </ToggleGroupItem>
+          {isPersonName && (
+            <ToggleGroupItem value="short" className="h-7 px-2 text-[10px]">
+              ФИО кратко
+            </ToggleGroupItem>
+          )}
+          {isPersonName && (
+            <ToggleGroupItem value="signature_short" className="h-7 px-2 text-[10px]">
+              ФИО для подписи
+            </ToggleGroupItem>
+          )}
           {kind === "numeric" && (
             <ToggleGroupItem value="words" className="h-7 px-2 text-[10px]">
               Прописью
@@ -1131,7 +1141,7 @@ function RowSettingsCell({
         </ToggleGroup>
       )}
 
-      {(kind === "text" || kind === "numeric") && (
+      {(kind === "text" || kind === "numeric" || isPersonName) && (
         caseEnabled ? (
           <Select
             value={settings.caseModifier ?? "none"}
