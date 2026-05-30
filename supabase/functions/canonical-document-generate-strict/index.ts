@@ -709,6 +709,7 @@ Deno.serve(async (req) => {
       kind: 'package' | 'ln';
       bag_key: string;
       case_modifier: string | null;
+      format: string | null;
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
@@ -722,7 +723,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // 2) Package requisite token {{package.(ul|ip|fl).FLD-XXX[|case=…]}}
+      // 2) Package requisite token {{package.(ul|ip|fl).FLD-XXX[|case=…][|format=long]}}
       const pkgMatch = inside.match(PKG_REQ_RE);
       if (pkgMatch) {
         if (generationContext !== 'package_session') {
@@ -731,10 +732,12 @@ Deno.serve(async (req) => {
         }
         const tail = (pkgMatch[3] || '').split('|').filter(Boolean);
         let cs: string | null = null;
+        let fmt: string | null = null;
         let badMod = false;
         for (const part of tail) {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else if (k === 'format' && (v === 'long' || v === 'words')) fmt = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -743,6 +746,7 @@ Deno.serve(async (req) => {
           kind: 'package',
           bag_key: `package.${pkgMatch[1]}.${pkgMatch[2]}`,
           case_modifier: cs,
+          format: fmt,
         });
         continue;
       }
@@ -768,6 +772,7 @@ Deno.serve(async (req) => {
           kind: 'ln',
           bag_key: lnMatch[1],
           case_modifier: cs,
+          format: null,
         });
         continue;
       }
