@@ -282,6 +282,8 @@ export function PlaceholdersCatalogTab() {
   const [onlyRequired, setOnlyRequired] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
+  // Sprint 3J-UI: те же modifier-controls, что у billing-плейсхолдеров. Ключ — tech_key item'а.
+  const [pkgRowSettings, setPkgRowSettings] = useState<Map<string, RowSettings>>(new Map());
   const [packageRoleRows, setPackageRoleRows] = useState<PackageRoleCatalogRow[]>([]);
 
   // Sprint 3F §D: загрузка ролей пакетов (с учётом custom) из document_package_role_catalog
