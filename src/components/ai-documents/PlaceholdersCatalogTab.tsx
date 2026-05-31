@@ -965,6 +965,7 @@ function RowSettingsCell({
   onChange,
   supportsLongFormat = false,
   supportsPosition = false,
+  supportsJoin = false,
 }: {
   // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
   kind: ReturnType<typeof classifyDataType> | "person_name";
@@ -974,6 +975,8 @@ function RowSettingsCell({
   supportsLongFormat?: boolean;
   /** Для ln-ролей: добавить должность перед ФИО. */
   supportsPosition?: boolean;
+  /** Sprint 3N: для ln-ролей — выбор разделителя при нескольких участниках. */
+  supportsJoin?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
@@ -1114,6 +1117,29 @@ function RowSettingsCell({
         >
           С должностью
         </Button>
+      )}
+
+      {isPersonName && supportsJoin && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Select
+              value={settings.joinMode ?? "semicolon"}
+              onValueChange={(val) => onChange({ joinMode: (val as 'semicolon' | 'comma' | 'newline') })}
+            >
+              <SelectTrigger className="h-7 w-[180px] text-[10px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semicolon" className="text-xs">; через точку с запятой</SelectItem>
+                <SelectItem value="comma" className="text-xs">, через запятую</SelectItem>
+                <SelectItem value="newline" className="text-xs">↵ с новой строки</SelectItem>
+              </SelectContent>
+            </Select>
+          </TooltipTrigger>
+          <TooltipContent>
+            Применяется, если на одну роль назначено несколько человек.
+          </TooltipContent>
+        </Tooltip>
       )}
     </div>
   );
