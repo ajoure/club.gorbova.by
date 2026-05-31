@@ -349,7 +349,7 @@ Deno.serve(async (req) => {
       title_override?: string | null;
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
-      preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }>;
+      preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
     };
     let packageContext: PackageCtx | null = null;
 
