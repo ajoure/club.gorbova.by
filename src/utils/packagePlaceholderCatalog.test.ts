@@ -244,6 +244,7 @@ describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
       package_resolver_hint: "",
       status: "copy_ready",
       tech_key: "ln.ln-000001",
+      example_value: null,
     };
     expect(classifyPackageItem(rolesItem)).toBe("person_name");
   });
