@@ -1484,12 +1484,26 @@ Deno.serve(async (req) => {
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
       filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
     }
+    // Sprint 3L: enrich package/ln keys for package scope.
+    if (_fnScope === 'package') {
+      const _PKG_KEY_RE2 = /^package\.(?:ul|ip|fl)\.FLD-\d{6}(\|.*)?$/;
+      const _LN_KEY_RE2 = /^ln-\d{6}(\|.*)?$/;
+      for (const k of Object.keys(resolved)) {
+        if (_PKG_KEY_RE2.test(k) || _LN_KEY_RE2.test(k)) {
+          filenameTokenMap[k] = resolved[k] ?? '';
+          const base = k.split('|')[0];
+          if (base !== k && !(base in filenameTokenMap)) {
+            filenameTokenMap[base] = resolved[base] ?? resolved[k] ?? '';
+          }
+        }
+      }
+    }
 
     let fileNameWarnings: string[] = [];
     let fileNameTemplateSource: 'template' | 'system_default' = 'system_default';
     let renderedFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap, scope: _fnScope });
       fileNameWarnings = r.warnings;
       if (r.name) {
         renderedFileName = r.name;
