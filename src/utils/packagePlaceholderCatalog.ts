@@ -183,12 +183,13 @@ const EX_ADDR_FULL_LE = "220000, г. Минск, ул. Тестовая, д. 1, 
  * Источник: client_legal_details (leg_*, общие banking, phone, email).
  * ========================================================================= */
 const PACKAGE_UL: PackagePlaceholderItem[] = [
-  ready("package_ul", "Название", "FLD-000342", "FLD-000011",
-    "client_legal_details", "leg_name", "package.ul.name",
-    "Тестовая Компания"),
+  // Sprint 3L: short_name первым → FLD lookup даёт «ЗАО «Ажур инкам»».
   ready("package_ul", "Краткое название", "FLD-000345", "FLD-000011",
     "client_legal_details", "leg_name", "package.ul.short_name",
     "ООО «Тестовая Компания»"),
+  ready("package_ul", "Название", "FLD-000342", "FLD-000011",
+    "client_legal_details", "leg_name", "package.ul.name",
+    "Тестовая Компания"),
   ready("package_ul", "Форма собственности", "FLD-000343", "FLD-000010",
     "client_legal_details", "leg_org_form", "package.ul.org_form",
     "ООО"),

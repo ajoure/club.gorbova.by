@@ -349,7 +349,7 @@ Deno.serve(async (req) => {
       title_override?: string | null;
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
-      preresolved_ln_tokens: Record<string, { value: string; role_catalog_id: string; person_id: string }>;
+      preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
     };
     let packageContext: PackageCtx | null = null;
 
@@ -721,6 +721,9 @@ Deno.serve(async (req) => {
       bag_key: string;
       case_modifier: string | null;
       format: string | null;
+      // Sprint 3L: ln-only modifiers
+      include_position?: boolean;
+      join?: 'semicolon' | 'comma' | 'newline';
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
@@ -776,11 +779,18 @@ Deno.serve(async (req) => {
         const tail = (lnMatch[2] || '').split('|').filter(Boolean);
         let cs: string | null = null;
         let fmt: string | null = null;
+        let includePosition = false;
+        let joinMod: 'semicolon' | 'comma' | 'newline' | undefined;
         let badMod = false;
         for (const part of tail) {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
           else if (k === 'format' && PERSON_NAME_FORMATS.has(v)) fmt = v;
+          // Sprint 3L: include_position=true|false (только для ln). По умолчанию = false,
+          // чтобы сохранить Sprint 3J-Roles regression: {{ln-XXXXXX}} = только ФИО.
+          else if (k === 'include_position' && (v === 'true' || v === 'false')) includePosition = v === 'true';
+          // Sprint 3L: join=semicolon|comma|newline (только для ln). Default = semicolon.
+          else if (k === 'join' && (v === 'semicolon' || v === 'comma' || v === 'newline')) joinMod = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -790,6 +800,8 @@ Deno.serve(async (req) => {
           bag_key: lnMatch[1],
           case_modifier: cs,
           format: fmt,
+          include_position: includePosition,
+          join: joinMod,
         });
         continue;
       }
@@ -1115,26 +1127,49 @@ Deno.serve(async (req) => {
         let caseApplied = false;
         let caseReason: string | null = null;
 
-        // Sprint 3J-Roles: ФИО-формат для ln (per-person + join `; `).
-        if (
-          pt.kind === 'ln'
-          && pt.format
-          && PERSON_NAME_FORMATS.has(pt.format)
-        ) {
+        // Sprint 3L: единая ln-ветка. Per-person ФИО + опц. должность + join.
+        if (pt.kind === 'ln') {
           const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
           if (persons.length === 0 && entry?.value) {
-            // fallback на split joined value (defence-in-depth для старого бага).
+            // defence-in-depth: split joined value.
             persons.push(...String(entry.value).split(/\s*;\s*/).filter(Boolean));
           }
-          const parts = persons
-            .map((fn) => formatPersonName(fn, {
-              format: pt.format as PersonNameFormat,
-              case: (pt.case_modifier as RuCase | null) ?? null,
-            }))
-            .filter((s) => s && s.length > 0);
-          outVal = parts.join('; ');
-          formatApplied = true;
-          if (pt.case_modifier) caseApplied = true;
+          const positions: string[] = Array.isArray(entry?.positions) ? entry.positions : [];
+          const posGenders: Array<'m'|'f'|null> = Array.isArray(entry?.position_genders)
+            ? entry.position_genders
+            : [];
+          const fmt = (pt.format ?? 'full') as PersonNameFormat;
+          const cs = (pt.case_modifier as RuCase | null) ?? null;
+          const include = pt.include_position === true;
+          const sep = pt.join === 'newline' ? '\n'
+            : pt.join === 'comma' ? ', '
+            : '; '; // default = semicolon (backward-compat).
+
+          const parts: string[] = [];
+          for (let i = 0; i < persons.length; i++) {
+            const fn = persons[i];
+            const namePart = formatPersonName(fn, { format: fmt, case: cs });
+            if (!namePart) continue;
+            if (include) {
+              const rawPos = (positions[i] || '').trim();
+              if (rawPos) {
+                const posNorm = normalizeMasculinePosition(rawPos);
+                let posOut = posNorm;
+                if (cs) {
+                  // Per-assignment gender override; default 'm'.
+                  const g = posGenders[i] === 'f' ? 'f' : 'm';
+                  const inf = inflectRu(posNorm, cs, { forceGender: g });
+                  if (inf.applied) posOut = inf.value;
+                }
+                parts.push(`${posOut} ${namePart}`);
+                continue;
+              }
+            }
+            parts.push(namePart);
+          }
+          outVal = parts.join(sep);
+          if (pt.format) formatApplied = true;
+          if (cs) caseApplied = true;
         }
         // Sprint 3J-Roles: ФИО-формат для FIO-полей пакета (raw_full_name).
         else if (
@@ -1161,23 +1196,11 @@ Deno.serve(async (req) => {
             else { caseReason = inf.reason || 'inflection_unsafe'; }
           }
         }
-        // case_modifier без формата (text/raw): inflect joined string.
-        else if (pt.case_modifier) {
-          // ln без формата → склонять каждого; package без формата → склонять value.
-          if (pt.kind === 'ln' && Array.isArray(entry?.persons) && entry.persons.length > 0) {
-            const parts = (entry.persons as string[])
-              .map((fn) => formatPersonName(fn, {
-                format: 'full',
-                case: pt.case_modifier as RuCase,
-              }))
-              .filter((s) => s && s.length > 0);
-            outVal = parts.join('; ');
-            caseApplied = true;
-          } else {
-            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
-            if (inf.applied) { outVal = inf.value; caseApplied = true; }
-            else { caseReason = inf.reason || 'inflection_unsafe'; }
-          }
+        // case_modifier без формата (text/raw) для package: inflect value.
+        else if (pt.case_modifier && pt.kind === 'package') {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+          else { caseReason = inf.reason || 'inflection_unsafe'; }
         }
 
         resolved[pt.raw_inside] = outVal;
@@ -1323,6 +1346,9 @@ Deno.serve(async (req) => {
     // унаследованное от шаблона имя ("Клиенты - январь - 01-2019" и т.п.).
     // Считаем итоговое имя файла ДО сериализации, чтобы и DOCX, и PDF
     // (генерируемый из этого DOCX через Gotenberg) имели одинаковый title.
+    // Sprint 3L: scope-aware filename map. Для package-генерации добавляем
+    // package/ln-токены (с модификаторами и без) — иначе renderFileName видит
+    // только FLD и режет {{package.ul.FLD-…}} в пустую строку.
     const _filenameTokenMapEarly: Record<string, string> = {};
     for (const fld of filenameFlds) {
       const directKey = `field:${fld}`;
@@ -1337,9 +1363,26 @@ Deno.serve(async (req) => {
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
       _filenameTokenMapEarly[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
     }
+    // Sprint 3L: package/ln из resolved (ключ = raw_inside, без `{{}}`).
+    const _fnScope: 'billing' | 'package' = generationContext === 'package_session' ? 'package' : 'billing';
+    if (_fnScope === 'package') {
+      const _PKG_KEY_RE = /^package\.(?:ul|ip|fl)\.FLD-\d{6}(\|.*)?$/;
+      const _LN_KEY_RE = /^ln-\d{6}(\|.*)?$/;
+      for (const k of Object.keys(resolved)) {
+        if (_PKG_KEY_RE.test(k) || _LN_KEY_RE.test(k)) {
+          _filenameTokenMapEarly[k] = resolved[k] ?? '';
+          // base без модификаторов тоже доступен (на случай если file_name_template
+          // использует базовую форму, а DOCX — с модификаторами).
+          const base = k.split('|')[0];
+          if (base !== k && !(base in _filenameTokenMapEarly)) {
+            _filenameTokenMapEarly[base] = resolved[base] ?? resolved[k] ?? '';
+          }
+        }
+      }
+    }
     let _earlyFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: _filenameTokenMapEarly });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: _filenameTokenMapEarly, scope: _fnScope });
       _earlyFileName = r.name || buildDefaultFileName({
         templateName: tpl.name,
         documentNumber: allocatedNumber,
@@ -1441,12 +1484,26 @@ Deno.serve(async (req) => {
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
       filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
     }
+    // Sprint 3L: enrich package/ln keys for package scope.
+    if (_fnScope === 'package') {
+      const _PKG_KEY_RE2 = /^package\.(?:ul|ip|fl)\.FLD-\d{6}(\|.*)?$/;
+      const _LN_KEY_RE2 = /^ln-\d{6}(\|.*)?$/;
+      for (const k of Object.keys(resolved)) {
+        if (_PKG_KEY_RE2.test(k) || _LN_KEY_RE2.test(k)) {
+          filenameTokenMap[k] = resolved[k] ?? '';
+          const base = k.split('|')[0];
+          if (base !== k && !(base in filenameTokenMap)) {
+            filenameTokenMap[base] = resolved[base] ?? resolved[k] ?? '';
+          }
+        }
+      }
+    }
 
     let fileNameWarnings: string[] = [];
     let fileNameTemplateSource: 'template' | 'system_default' = 'system_default';
     let renderedFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap, scope: _fnScope });
       fileNameWarnings = r.warnings;
       if (r.name) {
         renderedFileName = r.name;

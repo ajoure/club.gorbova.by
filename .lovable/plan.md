@@ -1,555 +1,469 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-## **Дополнения к Sprint 3K**
+## **Правки к Sprint 3L**
 
-План в целом правильный. Добавить следующие обязательные уточнения перед выполнением.
-
-
-
-
-
-
-
-### **1. Не использовать**
-
-`template_kind`**, если в проекте SOT —** `template_scope`
-
-В пункте про имя файла указано:
-
-```text
-document_templates.template_kind
-```
-
-Сначала сделать discovery.
-
-Если в проекте реально используется `document_templates.template_scope`, то использовать только его:
-
-```text
-template_scope = 'billing' | 'package'
-```
-
-Не добавлять новое поле `template_kind`.
-
-DoD:
-
-- нет новой колонки `template_kind`;
-- scope определяется через существующее поле или через связь `document_package_template_items`.
+План в целом правильный. Перед выполнением добавить и учесть следующие уточнения.
 
 ---
 
-### **2. File name preview должен работать одинаково на frontend и backend**
 
-Для `file_name_template` нужно синхронно обновить оба файла:
+
+
+
+## **1.**
+
+`FLD-000011` **— не просто поменять порядок, а убрать неоднозначность FLD lookup**
+
+Проблема с `{{package.ul.FLD-000011}}` из-за двух записей на один FLD:
+
+- `package.ul.name`
+- `package.ul.short_name`
+
+Просто поменять порядок — рабочий быстрый фикс, но нужно дополнительно зафиксировать invariant:
 
 ```text
-src/lib/documents/documentFilename.ts
-supabase/functions/_shared/document-filename.ts
+Для одного package_token / reused_fld в одной группе не должно быть двух copy_ready строк, если lookup идёт через FLD.
 ```
 
-Иначе в UI preview будет работать, а при реальной генерации имя файла может развалиться.
+Нужно сделать так:
 
-Для package-template валидны:
+- `{{package.ul.FLD-000011}}` всегда резолвится как `package.ul.short_name`;
+- `package.ul.name` не должен перехватывать FLD lookup;
+- если `package.ul.name` нужен как отдельное значение, у него должен быть отдельный FLD / отдельный token, но не сейчас.
+
+DoD:
+
+- тест на `findByPackageToken("package.ul.FLD-000011")` возвращает именно `package.ul.short_name`;
+- runtime DOCX содержит `ЗАО «Ажур инкам»`, а не `Ажур инкам`.
+
+---
+
+## **2. Проверить frontend-зеркало и edge-зеркало каталога на одинаковость**
+
+Правка должна быть в двух местах:
 
 ```text
-{{field:FLD-XXXXXX}}
-{{field:FLD-XXXXXX|format=...}}
-{{field:FLD-XXXXXX|case=...}}
+src/utils/packagePlaceholderCatalog.ts
+supabase/functions/_shared/packagePlaceholderCatalog.ts
+```
 
-{{package.ul.FLD-XXXXXX}}
-{{package.ul.FLD-XXXXXX|format=...}}
-{{package.ul.FLD-XXXXXX|case=...}}
+Добавить тест/grep-proof, что `FLD-000011` в обоих каталогах первым резолвится как `package.ul.short_name`.
 
-{{package.ip.FLD-XXXXXX}}
-{{package.fl.FLD-XXXXXX}}
+---
 
+## **3. Должность роли: не всегда мужской род без исключений**
+
+В плане указано всегда делать:
+
+```text
+normalizeMasculinePosition(position)
+forceGender: 'm'
+```
+
+Это подходит для большинства должностей в документах, но может ломать случаи, где должность реально женская или нейтральная.
+
+Для Sprint 3L можно оставить мужской род как default, но добавить safety:
+
+- если `metadata.position_gender` есть — использовать его;
+- если нет — default `m`;
+- если такого поля в UI пока нет — не добавлять UI, просто предусмотреть чтение из metadata.
+
+Пример:
+
+```ts
+const gender = metadata.position_gender === 'f' ? 'f' : 'm';
+```
+
+DoD:
+
+- текущий кейс `юрисконсульт + genitive` → `юрисконсульта`;
+- пустая должность → только ФИО, как раньше;
+- если в будущем появится `position_gender='f'`, resolver не придётся переписывать.
+
+Если не готовы добавлять gender сейчас — явно записать в proof: `position gender support deferred`.
+
+---
+
+
+
+
+
+## **4. Для**
+
+`ln` **нужен формат без должности**
+
+Сейчас пользовательский кейс требует должность перед ФИО:
+
+```text
+юрисконсульта Федорчука Сергея Валерьевича
+```
+
+Но в других местах нужен только человек:
+
+```text
+Федорчук Сергей Валерьевич
+Федорчук С.В.
+С.В.Федорчук
+```
+
+Поэтому нельзя сделать должность всегда обязательной частью `{{ln-...}}`.
+
+Добавить modifier:
+
+```text
+role=person          default, только ФИО
+role=with_position   должность + ФИО
+```
+
+Или более понятно:
+
+```text
+include_position=true
+```
+
+Рекомендованный вариант:
+
+```text
+{{ln-000012}}                                      → Федорчук Сергей Валерьевич
+{{ln-000012|format=short}}                         → Федорчук С.В.
+{{ln-000012|format=signature_short}}               → С.В.Федорчук
+{{ln-000012|include_position=true}}                → юрисконсульт Федорчук Сергей Валерьевич
+{{ln-000012|include_position=true|case=genitive}}  → юрисконсульта Федорчука Сергея Валерьевича
+```
+
+Иначе мы сломаем уже закрытый Sprint 3J-Roles, где было зафиксировано:
+
+```text
+{{ln-XXXXXX}} без модификаторов → ФИО полностью без названия роли и без должности.
+```
+
+Это критичная правка.
+
+---
+
+
+
+
+
+## **5.**
+
+`join=newline` **должен работать только для role-token**
+
+`join=newline|comma|semicolon` разрешить только для:
+
+```text
 {{ln-XXXXXX}}
-{{ln-XXXXXX|format=short}}
-{{ln-XXXXXX|format=signature_short}}
-{{ln-XXXXXX|case=genitive}}
 ```
 
-Для billing-template package/ln остаются недопустимыми.
+Не разрешать для:
+
+```text
+{{package.ul.FLD-...}}
+{{package.ip.FLD-...}}
+{{package.fl.FLD-...}}
+{{field:FLD-...}}
+```
+
+Для остальных токенов `join` должен давать `unknown_modifier`.
 
 ---
 
+## **6. Порядок modifiers зафиксировать**
 
-
-
-
-### **3. Не делать**
-
-`FLD-000069` **blocker нигде**
-
-Проверить все места через grep:
-
-```bash
-rg "FLD-000069|Номер документа|обязателен для уникальности|required.*number|document number" src supabase
-```
-
-Убрать blocker во всех местах, где он блокирует:
-
-- сохранение имени файла;
-- активацию шаблона;
-- validation_status;
-- markup dialog;
-- strict UI validation.
-
-Допустимо только warning:
+UI и copy examples должны всегда писать modifiers в одном порядке:
 
 ```text
-Номер документа не найден. Если шаблону нужен регистрационный номер, добавьте {{field:FLD-000069}}.
+format → case → include_position → join
 ```
-
-DoD:
-
-- шаблон без `{{field:FLD-000069}}` может быть `valid`;
-- кнопка «Сохранить» доступна;
-- кнопка «Активировать» доступна, если других ошибок нет.
-
----
-
-### **4. Исправить именно legacy-подсветку, а не backend validation**
-
-На скриншоте проблема UI-классификации:
-
-```text
-{{package.ul.FLD-000014|format=signature_short}}
-{{ln-000012|format=signature_short}}
-```
-
-они валидные и не должны быть жёлтыми.
-
-Обязательный whitelist modifiers:
-
-```text
-format=short
-format=signature_short
-format=long
-format=words
-case=nominative
-case=genitive
-case=dative
-case=accusative
-case=instrumental
-case=prepositional
-```
-
-Если modifier неизвестный:
-
-```text
-unknown_modifier
-```
-
-Если старый role-token:
-
-```text
-{{package.role.PKR-XXXXXX}}
-{{package.roles.*}}
-```
-
-то это error:
-
-```text
-invalid_legacy_role_placeholder
-```
-
----
-
-### **5. Удаление дубликатов ФИО — только из UI-каталога**
-
-Удалить визуальные строки:
-
-```text
-package.ul.director_short_name
-package.ip.short_name
-package.fl.full_name_short
-```
-
-Но не ломать backend-резолв и существующие токены.
-
-Правильный путь теперь:
-
-```text
-{{package.ul.FLD-000014|format=short}}
-{{package.ip.FLD-000017|format=short}}
-{{package.fl.FLD-000372|format=short}}
-```
-
-DoD:
-
-- в UI нет отдельных строк «ФИО кратко»;
-- modifier `format=short` доступен в строке полного ФИО;
-- старые документы с `format=short` продолжают генерироваться.
-
----
-
-### **6. Примеры должны учитывать modifiers**
-
-В каталоге package-плейсхолдеров пример должен меняться при выборе modifiers.
 
 Пример:
 
 ```text
-ФИО полностью → Федорчук Сергей Валерьевич
-ФИО кратко → Федорчук С.В.
-ФИО для подписи → С.В.Федорчук
-Родительный падеж → Федорчука Сергея Валерьевича
-ФИО кратко + родительный → Федорчука С.В.
-Подпись + родительный → С.В.Федорчука
+{{ln-000012|format=short|case=genitive|include_position=true|join=newline}}
 ```
 
-Если значение не person_name, показывать `example_value`.
-
-Если pending/deferred — показывать reason/hint, а не заглушку.
+Backend может принимать любой порядок, но UI должен генерировать один канон.
 
 ---
 
-### **7. Проверить активный приказ после правок**
+## **7. Filename render: проверить оба места и оба ключа**
 
-Обязательно прогнать активный шаблон «Приказ об организации идеологической работы» v4.
+В `canonical-document-generate-strict` действительно нужно исправить оба места:
 
-Ожидаемый результат:
+- early core props;
+- final `ai_generated_documents.file_name`.
+
+Но важно: в `filenameTokenMap` добавить ключи:
 
 ```text
-validation_status = valid
-unsupported = 0
-invalid legacy = 0
-blockers = 0
+package.ul.FLD-000011
+package.ul.FLD-000011|format=short
+ln-000012
+ln-000012|format=signature_short
+FLD-000133
+field:FLD-000133
 ```
 
-Проверяемые токены:
+То есть сохранить совместимость с тем, как `renderFileName` нормализует ключи.
+
+DoD:
+
+- `{{package.ul.FLD-000011}}` резолвится;
+- `{{package.ul.FLD-000011|format=short}}` резолвится;
+- `{{ln-000012|format=signature_short}}` резолвится;
+- `{{field:FLD-000133}}` продолжает резолвиться.
+
+---
+
+## **8. Для имени файла нужен тест с package + ln одновременно**
+
+Добавить тест:
 
 ```text
-{{package.ul.FLD-000039}}
-{{field:FLD-000209}}
-{{package.ul.FLD-000011}}
-{{field:FLD-000211}}
-{{package.ul.FLD-000013}}
-{{package.ul.FLD-000014|format=signature_short}}
-{{ln-000012|format=signature_short}}
+Приказ в {{package.ul.FLD-000011}} от {{field:FLD-000133}} — {{ln-000012|format=signature_short}}
 ```
 
----
-
-### **8. Proof обязательно со скринами**
-
-В proof добавить скрины:
-
-1. «Пакет: ЮЛ» — колонка «Пример» заполнена.
-2. «Пакет: ИП» — колонка «Пример» заполнена.
-3. «Пакет: ФЛ» — колонка «Пример» заполнена.
-4. «Пакет: Роли» — пример и modifiers.
-5. Окно проверки шаблона — package/ln-токены с modifiers не жёлтые.
-6. Имя файла с `{{package.ul.FLD-000011}}` сохраняется без ошибки.
-7. Активный приказ — valid.
-
----
-
-### **9. Тесты добавить обязательно**
-
-Минимум:
+Ожидаемо:
 
 ```text
-packagePlaceholderCatalog.test.ts
-documentFilename.test.ts
-personNameFormat.test.ts
+Приказ в ЗАО «Ажур инкам» от 31.05.2026 — С.В.Федорчук
 ```
 
-Кейсы:
+Если символы `«»` проходят sanitizer — оставить.  
+Если sanitizer их меняет — зафиксировать ожидаемое поведение в тесте.
+
+---
+
+## **9. UI каталога ролей: не просто пример строки, а copy-control**
+
+В плане написано добавить «второй пример строки с `|join=newline`». Лучше сделать не отдельную строку, а modifier-control в группе «Пакет: Роли»:
+
+- Разделитель:
+  - через `;`
+  - через `,`
+  - с новой строки
+
+Copy должен давать:
 
 ```text
-copy_ready package items have example_value
-ФИО-дубликаты отсутствуют
-{{ln-000012|format=signature_short}}
-{{package.ul.FLD-000014|format=signature_short}}
-filename accepts {{package.ul.FLD-000011}}
-filename accepts {{ln-000012|format=signature_short}}
-filename does not require FLD-000069
-billing filename rejects package/ln tokens
-PKR/package.roles not present in UI output
+{{ln-000012|join=newline}}
 ```
 
----
-
-### **10. Diff scope**
-
-Разрешённый diff:
+Если не успеваем — можно временно показать подсказку/пример, но тогда в proof указать:
 
 ```text
-src/utils/packagePlaceholderCatalog.ts
-src/utils/packagePlaceholderCatalog.test.ts
-src/components/ai-documents/PlaceholdersCatalogTab.tsx
-src/components/ai-documents/TemplateMarkupDialog.tsx
-src/components/ai-documents/StrictDocumentTemplatesManager.tsx
-src/components/ai-documents/FileNameTemplateEditor.tsx
-src/lib/documents/documentFilename.ts
-src/lib/documents/documentFilename.test.ts
-supabase/functions/_shared/document-filename.ts
-.lovable/proofs/sprint_3k_package_placeholder_ui_validation_cleanup_2026_05.md
-.lovable/plan.md
-memory file-name-template note
+join=newline backend ready; full UI control deferred
 ```
 
-Запрещено трогать:
+---
+
+## **10. Runtime proof обязателен именно на реальном приказе**
+
+Проверить не только unit tests, а реальную генерацию активного приказа.
+
+Обязательные excerpts из generated DOCX:
 
 ```text
-canonical-document-generate-strict
-ai-generate-document-package
-Gotenberg
-migrations
-billing resolver
-/purchases
-billing FLD mapping
+ЗАО «Ажур инкам»
+юрисконсульта Федорчука Сергея Валерьевича
 ```
 
----
-
-### **11. Финальный статус**
-
-Закрывать Sprint 3K только если:
+И для filename:
 
 ```text
-completed: Sprint 3K;
-package placeholder examples are shown;
-FIO duplicate rows removed from UI;
-package/ln tokens with modifiers are valid in package templates;
-file_name_template accepts package/ln tokens in package scope;
-FLD-000069 is warning-only, not required;
-active ideology order template validates without blockers;
-backend generation pipeline untouched.
-
-Sprint 3K — Каталог пакетных плейсхолдеров: примеры, дедуп ФИО + чистка валидации шаблонов
+Приказ об организации идеологической работы в ЗАО «Ажур инкам» от 31.05.2026
 ```
 
-### 0. Цель
+Проверить:
 
-Довести работу с пакетными шаблонами до рабочего состояния:
-
-- В каталоге **Пакет: ЮЛ / ИП / ФЛ / Роли** показывать реальные примеры значений (как в биллинговых группах).
-- Убрать визуальные дубликаты «ФИО / ФИО кратко» — краткая форма теперь выбирается через modifier.
-- В окне «Проверка и исправление плейсхолдеров» не подсвечивать валидные `{{package.*.FLD-…|format=…}}` и `{{ln-…|format=…}}` как «устаревшие».
-- Разрешить пакетные шаблоны без `{{field:FLD-000069}}` (номер документа не обязателен).
-- Разрешить package/ln-токены в шаблоне имени файла, чтобы preview и сохранение не падали.
-
-Что НЕ трогаем: `canonical-document-generate-strict`, `ai-generate-document-package`, Gotenberg, миграции, биллинговый резолвер, `/purchases`. Допустимое исключение по scope — **frontend+backend mirror шаблона имени файла** (`src/lib/documents/documentFilename.ts` + `supabase/functions/_shared/document-filename.ts`), потому что без backend-зеркала имя файла превратится в пустую подстановку.
+```text
+raw {{...}} отсутствуют
+PDF создан
+ai_generated_documents.file_name заполнен корректно
+```
 
 ---
 
-### 1. Примеры значений в каталоге пакетных плейсхолдеров
+## **11. Не закрывать Sprint 3L без проверки, что Sprint 3J не сломан**
 
-**Файл:** `src/utils/packagePlaceholderCatalog.ts`
+Регрессия Sprint 3J-Roles:
 
-- В `PackagePlaceholderItem` добавить `example_value: string | null`.
-- Расширить хелперы `ready(...)`, `readyJson(...)`, `deferred(...)` параметром `example` (для `deferred` — `null`).
-- Каждому `copy_ready` item проставить осмысленный пример, согласованный с `src/constants/demoLegalDetails.ts` и `DEMO_PERSON_NAME` ("Федорчук Сергей Валерьевич").
-
-Минимальный набор примеров:
-
-```
-Пакет: ЮЛ
-  Форма собственности     → ООО
-  Название                → Тестовая Компания
-  Краткое название        → ООО «Тестовая Компания»
-  УНП                     → 987654321
-  Юридический адрес       → 220000, г. Минск, ул. Тестовая, д. 1, оф. 1
-  Руководитель ФИО        → Федорчук Сергей Валерьевич
-  Руководитель должность  → директор
-  Действует на основании  → Устава
-  Банк                    → ОАО «Беларусбанк»
-  БИК / код банка         → AKBBBY2X
-  Расчётный счёт / IBAN   → BY00ABCD0000000000000000
-  Телефон / Email         → +375 29 7000000 / demo.company@example.com
-  Адрес: улица/дом/город… → Тестовая / 1 / Минск / Минская область / 220000 / Беларусь
-
-Пакет: ИП
-  ФИО                     → Федорчук Сергей Валерьевич
-  УНП                     → 123456789
-  Адрес полный            → 220000, г. Минск, ул. Тестовая, д. 1, оф. 1
-  Действует на основании  → свидетельства о государственной регистрации
-  Банк/БИК/IBAN/телефон   → как у ЮЛ
-
-Пакет: ФЛ
-  ФИО                     → Федорчук Сергей Валерьевич
-  Дата рождения           → 15.01.1990
-  Личный номер            → 1234567A009PB1
-  Паспорт серия / номер   → MP / 7654321
-  Паспорт серия и номер   → MP 7654321
-  Паспорт кем выдан       → Тестовым РУВД г. Минска
-  Паспорт дата выдачи     → 05.06.2018
-  Паспорт действителен до → 05.06.2028
-  Адрес: улица/дом/город… → Тестовая / 1 / Минск / Минская область / 220000
-  Телефон / Email         → +375 29 7000000 / demo.user@example.com
+```text
+{{ln-000012}} → Федорчук Сергей Валерьевич
+{{ln-000012|format=short}} → Федорчук С.В.
+{{ln-000012|format=signature_short}} → С.В.Федорчук
 ```
 
-Для `pending_field` / `deferred` / `missing_source_column` — `example_value = null`.
+Если после добавления должности эти токены начали выводить должность — это FAIL.
 
 ---
 
-### 2. Отображение примеров в UI
+## **12. Обновить DoD**
 
-**Файл:** `src/components/ai-documents/PlaceholdersCatalogTab.tsx` (блок «Пример», ~ строки 964–979)
+Добавить в DoD:
 
-Приоритет рендера:
-
-1. `personNamePreview` — если row kind = person_name и выбран format/case;
-2. `item.example_value` (italic, как у биллинговых строк);
-3. Подсказка резолвера (`package_resolver_hint`) для `pending/deferred`;
-4. Пусто.
-
-Удалить статичную фразу **«Пример появится после заполнения анкеты документа»** — она ничего не объясняла и создавала ощущение, что плейсхолдер не работает.
-
----
-
-### 3. Удалить визуальные дубликаты «ФИО кратко»
-
-**Файл:** `src/utils/packagePlaceholderCatalog.ts`
-
-Удалить из UI-каталога три строки, дублирующие FLD/колонку родителя:
-
-- `package.ul.director_short_name` (FLD-000014 == director_full_name)
-- `package.ip.short_name` (FLD-000017 == name)
-- `package.fl.full_name_short` (FLD-000372 == full_name)
-
-Краткая/подписная форма выбирается через контрол «ФИО кратко / для подписи» в строке родителя (`supportsPersonNameFormats`). Word-токены `{{package.ul.FLD-000014|format=short}}` и т.п. продолжают работать — на backend они резолвятся через тот же FLD-источник.
-
----
-
-### 4. Чистка валидации в «Проверка и исправление плейсхолдеров»
-
-**Проблема:** на скриншоте `{{package.ul.FLD-000014|format=signature_short}}` и `{{ln-000012|format=signature_short}}` подсвечиваются жёлтым как «устаревшие». Причина в `TemplateMarkupDialog.tsx`:
-
-```
-const RE_PACKAGE_ENTITY_FLD = /^\{\{package\.(?:ul|ip|fl)\.FLD-\d{6}\}\}$/;
-const RE_LN_ROLE            = /^\{\{ln-\d{6}\}\}$/;
+```text
+{{ln-XXXXXX}} по умолчанию остаётся только ФИО, без должности.
+Должность добавляется только через include_position=true.
+include_position=true + case=genitive даёт: юрисконсульта Федорчука Сергея Валерьевича.
+join=newline работает только для ln-токенов.
+file_name_template резолвит package/ln tokens в package context.
+Sprint 3J-Roles regression пройден.
 ```
 
-Регексы не учитывают `|format=…|case=…` → токен с модификатором не матчится «valid» бранчем и падает в `legacy`.
+---
 
-**Файлы:**
+## **13. Финальный статус**
 
-- `src/components/ai-documents/TemplateMarkupDialog.tsx`
-- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx` (уже корректно для package, проверить парсинг highlighted).
+Закрывать только при таком результате:
 
-**Сделать:** расширить регексы опциональным modifier-хвостом `(?:\|[a-z_]+=[a-z_]+)*`:
+```text
+completed: Sprint 3L;
+package.ul.FLD-000011 resolves to legal short_name with org form and quotes;
+ln roles keep default person-only output;
+ln roles support include_position=true with case-aware position inflection;
+ln roles support join=semicolon|comma|newline;
+package file_name_template renders package/ln tokens in package context;
+real ideology order DOCX/PDF and filename verified;
+Sprint 3J role modifiers regression passed;
+backend billing/order generation untouched.
 
-```ts
-const RE_PACKAGE_ENTITY_FLD = /^\{\{package\.(?:ul|ip|fl)\.FLD-\d{6}(?:\|[a-z_]+=[a-z_]+)*\}\}$/;
-const RE_LN_ROLE            = /^\{\{ln-\d{6}(?:\|[a-z_]+=[a-z_]+)*\}\}$/;
+План: Sprint 3L — Package short_name + role position(case) + filename render fix + ln multiline
 ```
 
-Whitelist модификаторов (валидируем имя — иначе `unknown_modifier`):
+## 0. Контекст (diagnose)
 
-- `format ∈ {short, signature_short, long, words}`
-- `case ∈ {nominative, genitive, dative, accusative, instrumental, prepositional}`
+Четыре связанных проблемы в реальной генерации Word‑документов пакета (orchestrator `ai-generate-document-package` + `canonical-document-generate-strict`):
 
-Решения по статусам остаются прежними:
+### Проблема 1. `{{package.ul.FLD-000011}}` рендерится без формы собственности и без кавычек.
 
-- valid package/ln-токен в package-template → НЕ подсвечивается (обычный текст);
-- package/ln-токен в billing-template → `package_in_billing` (scope);
-- `package.role.PKR-…`, `package.roles.*` → `invalid_legacy_role_placeholder` (error);
-- легаси-namespaces (`customer.*`, `executor.*`, `document.*`, `deal.*`, `cf.*`) → `legacy` (warning).
+- В UI каталога «Плейсхолдеры» строка «Краткое название» показывает пример `ООО «Тестовая Компания»` (короткая форма + кавычки).
+- В реальном документе подставляется `Ажур инкам` — без `ЗАО` и без `«…»`.
+- Причина: в `supabase/functions/_shared/packagePlaceholderCatalog.ts` для `FLD-000011` зарегистрированы ДВА tech_key подряд (первый — `package.ul.name`, второй — `package.ul.short_name`). `findByPackageToken` берёт первый → `package.ul.name` → «голое» имя.
+- `package.ul.short_name` через `canonicalizeLegalEntity` уже отдаёт корректное `ЗАО «Ажур инкам»` (покрыто Sprint 3J). ИП (FLD-000017) и ФЛ (FLD-000372) — поведение уже желаемое, не трогаем.
 
----
+### Проблема 2. Должность роли не подставляется перед ФИО и не склоняется.
 
-### 5. Снять обязательность `FLD-000069`
+- В «Анкеты документов» к каждой роли можно ввести должность (`юрисконсульт`), она пишется в `document_package_item_role_assignments.metadata.position` (см. `resolve-package-tokens.ts:24`).
+- `resolveLnRoleToken` сейчас читает только ФИО и склоняет его через `formatPersonName` (`format=full|short|signature_short` + `case=…`). Поле `metadata.position` НЕ используется.
+- В живом приказе: `Назначить ответственным ... Федорчука Сергея Валерьевича` — должно быть `... юрисконсульта Федорчука Сергея Валерьевича` (Р.п., согласовано с ФИО).
 
-**Файл:** `src/components/ai-documents/FileNameTemplateEditor.tsx` (строки ~39, 124, 263).
+### Проблема 3. Имя файла шаблона (file_name_template) не рендерится для package‑шаблонов.
 
-Текущее поведение блокирует сохранение шаблона без номера документа:
+- На скрине пользователя сохранённый файл называется `Приказ об организации идеологической работы в от` — обрыв на «в от» и пустой хвост.
+- Причина: Sprint 3K разрешил `{{package.…}}` и `{{ln-…}}` в `validateFilenameTemplateSyntax` для `scope='package'`, НО в `canonical-document-generate-strict/index.ts` (1424–1468) `filenameTokenMap` строится ТОЛЬКО по `filenameFlds` (билинговые FLD). Package/ln токены не попадают в `resolvedTokens`, а `renderFileName` зовётся БЕЗ `scope` → дефолт `'billing'` → package/ln вообще запрещены → каждый такой токен `→ ''` + warning `file_name_placeholder_unresolved`.
+- Тот же баг в раннем рендере для core props (1326–1354) — `_filenameTokenMapEarly`.
 
-```
-Добавьте {{field:FLD-000069}} (Номер документа) — обязателен для уникальности
-```
+### Проблема 4. `{{ln-XXXXXX}}` с несколькими назначениями склеивается через `;`  — нет переноса строки.
 
-**Сделать:**
+- Сейчас в `resolveLnRoleToken` (`resolve-package-tokens.ts:275`): `value = renderedParts.join('; ')`. При перечислении 10 участников всё в одной строке.
+- Пользователь хочет модификатор, чтобы каждый участник шёл с новой строки (новый абзац Word). Базовый docxtemplater уже настроен с `linebreaks: true` (`canonical-document-generate-strict/index.ts:1304`), поэтому `\n` в значении превращается в Word‑перенос строки.
 
-- Понизить требование до **информационного warning'а** (не блокирует сохранение/активацию).
-- Текст: «Номер документа не найден. Если шаблону нужен регистрационный номер, добавьте `{{field:FLD-000069}}`.»
-- В `StrictDocumentTemplatesManager` убрать `FLD-000069` из жёстких blocker'ов (если есть отдельная проверка) — оставить только в списке warning'ов.
-- `validation_status='valid'` и активация разрешены без FLD-000069.
+## 1. Что меняем
 
-Memory `Document File Name Template` (mem://architecture/documents/file-name-template-fld-first) сегодня описывает FLD-000069 как «обязателен». Обновить запись: «обязателен — для шаблонов с регистрационным номером; для прочих — рекомендация».
+### 1.1 `supabase/functions/_shared/packagePlaceholderCatalog.ts`
 
----
+Поменять порядок двух строк для UL `FLD-000011`: сначала `package.ul.short_name`, потом `package.ul.name`. Зеркалим в `src/utils/packagePlaceholderCatalog.ts` для парности (визуально UI не меняется — дубликат уже скрыт после Sprint 3K).
 
-### 6. Разрешить package/ln-токены в имени файла
+Результат: `{{package.ul.FLD-000011}}` → `ЗАО «Ажур инкам»`. ИП и ФЛ не трогаем.
 
-**Проблема:** на скриншоте имя файла
+### 1.2 `supabase/functions/_shared/resolve-package-tokens.ts` (`resolveLnRoleToken`)
 
-```
-Приказ об организации идеологической работы в {{package.ul.FLD-000011}} от {{field:FLD-000133}}
-```
+- В select assignments оставить `metadata` (уже выбирается).
+- Из `metadata.position` строкой ≥1 символа собрать `position` для каждого `person_id`.
+- Новая чистая функция `renderRoleEntry(name, position, format, case)`:
+  - `namePart = formatPersonName(name, { format, case })`.
+  - Если `position` пуст → вернуть `namePart`.
+  - Иначе:
+    - `posNorm = normalizeMasculinePosition(position)` (м.р., как у `customer.leg.director_position`).
+    - Если `case` задан → `posInflected = inflectRu(posNorm, case, { forceGender: 'm' }).value || posNorm`; иначе `posInflected = posNorm`.
+    - Вернуть `${posInflected} ${namePart}`.
+- Multi‑assignment: каждый участник рендерится независимо (свои name+position), затем склеиваются согласно `join` (см. 1.4).
 
-даёт ошибку `file_name_placeholder_invalid_syntax: package.ul.FLD-000011`. Причина — `documentFilename.ts` понимает только `FLD_PLACEHOLDER_RE = /^field:(FLD-\d+)$/`.
+### 1.3 `supabase/functions/canonical-document-generate-strict/index.ts` (filename render fix)
 
-**Файлы (frontend + backend mirror):**
+В двух местах (раннем для core props и финальном для `ai_generated_documents.file_name`) — заменить логику построения `filenameTokenMap` так, чтобы:
 
-- `src/lib/documents/documentFilename.ts`
-- `supabase/functions/_shared/document-filename.ts`
-- `src/components/ai-documents/FileNameTemplateEditor.tsx` (валидатор)
+1. Сохранить текущее заполнение по `filenameFlds` → ключи `FLD-XXXXXX` (билинговые).
+2. Дополнительно: для каждого `raw_inside ∈ resolved`, который матчит `^package\.(ul|ip|fl)\.FLD-\d{6}(\|.*)?$` или `^ln-\d{6}(\|.*)?$` — записать в карту по обоим ключам (полный `raw_inside` и базовый без модификаторов), значение = `resolved[raw_inside]`.
+3. Передать `scope: 'package'` в `renderFileName(...)` если `generationContext === 'package_session'` (есть `packageContext`); иначе оставить дефолт `'billing'`.
+4. То же зеркалить в `_filenameTokenMapEarly` для core props.
 
-**Сделать:**
+После фикса:
+`Приказ об организации идеологической работы в {{package.ul.FLD-000011}} от {{field:FLD-000133}}` →
+`Приказ об организации идеологической работы в ЗАО «Ажур инкам» от 31.05.2026` (с санитизацией: `«»` остаются, `:` и др. forbidden → `-`).
 
-1. Расширить grammar имени файла дополнительными regex'ами (только для package-шаблонов):
-  ```
-   field:FLD-XXXXXX[|format=…][|case=…]
-   package.(ul|ip|fl).FLD-XXXXXX[|format=…][|case=…]
-   ln-XXXXXX[|format=…][|case=…]
-  ```
-2. `renderFileName(...)` — резолвить новые токены через тот же `resolvedTokens` (передаётся с backend orchestrator при формировании имени; orchestrator уже резолвит package/ln-токены через `_shared/resolve-package-tokens.ts` для тела документа — переиспользуем). Если значение пустое → текущая warning-логика `file_name_placeholder_unresolved`.
-3. `validateFilenameTemplateSyntax(...)` — пропускает три новых формы как валидные.
-4. Для billing-template grammar НЕ расширяется: package/ln-токены остаются `invalid_syntax`. Скоуп определяется по `document_templates.template_kind` (или эквиваленту в вызывающем коде).
+### 1.4 Новый модификатор `|join=newline` для `{{ln-XXXXXX}}`
 
-**Важно про backend:** меняется ТОЛЬКО `_shared/document-filename.ts` (тонкий helper). Generation orchestrator, Gotenberg, миграции, RLS не трогаем. Это явное и узкое исключение из «не трогать backend» — без него имя файла будет ломаться в production.
+- В `LN_TOKEN_RE` (`canonical-document-generate-strict/index.ts:258`) синтаксис уже допускает `|key=val` — менять не нужно.
+- В `resolve-package-tokens.ts` `resolveLnRoleToken` принимает дополнительный модификатор `joinMod ∈ { 'comma' (default), 'semicolon', 'newline' }`.
+  - default behaviour: текущее `'; '` (backward‑compat для уже выпущенных шаблонов) → переименовать в `semicolon`; делаем default `semicolon` чтобы не сломать существующее поведение.
+  - `join=newline` → `'\n'` между участниками; docxtemplater с `linebreaks: true` рендерит каждый с новой строки.
+  - `join=comma` → `', '`.
+  - Прочее → warning `ln_unknown_join_modifier:<val>` и fallback к default.
+- Парсер в `canonical-document-generate-strict/index.ts` уже расщепляет модификаторы по `|` и пробрасывает в resolver — добавить пробрасывание `join` так же, как `case` и `format`.
+- В UI каталога ролей (`PlaceholdersCatalogTab.tsx` секция «Роли пакета») добавить второй пример строки с модификатором `|join=newline` рядом с базовой ролью — чисто визуально (как «Кратко/Развёрнуто» для ФИО), без новых FLD. Минимальное изменение, чтобы пользователь видел опцию.
 
----
+### 1.5 Системный «\n» placeholder — НЕ вводим
 
-### 7. Smoke на активном шаблоне «Приказ об организации идеологической работы»
+Пользователь предложил два варианта: (а) системный `{{newline}}`, (б) формат `join=newline` на ролевом токене. Идём по (б) — он точнее, явно ограничен ролевым токеном и не плодит alias‑плейсхолдеры (нарушение FLD‑first канона). Если позже понадобится «голый» line‑break — добавим отдельным sprint.
 
-После правок открыть v4 шаблон и проверить:
+## 2. Что НЕ трогаем (явный non‑goal)
 
-- В окне валидации: 0 unsupported, 0 invalid legacy, 0 blockers, `validation_status='valid'`.
-- `{{package.ul.FLD-000014|format=signature_short}}` и `{{ln-000012|format=signature_short}}` НЕ подсвечены как legacy.
-- В «Имя файла при скачивании»:
-  ```
-  Приказ об организации идеологической работы в {{package.ul.FLD-000011}} от {{field:FLD-000133}}
-  ```
-  сохраняется, preview рендерится без ошибки.
-- Каталог Плейсхолдеры → Пакет: ЮЛ / ИП / ФЛ — все строки с примерами, дубликатов «ФИО кратко» нет.
+- Frontend UI каталога (`PlaceholdersCatalogTab.tsx`) — только +1 пример строки для `|join=newline`, никаких структурных изменений.
+- `package.ul.name` как tech_key — остаётся доступен для прямого вызова, в FLD‑lookup не выбирается по умолчанию.
+- `package.ip.*`, `package.fl.*` маппинги — без изменений.
+- Биллинговый резолвер `typed-tokens-resolver.ts` и `customer.leg.*` — без изменений.
+- Миграции, RLS, edge runtime, Gotenberg, `/purchases`, billing, `subscriptions_v2` — без изменений.
+- `document_templates.file_name_template` строки в БД (production) — НЕ переписываем.
+- Контракт `ai_generated_documents.file_name` (без расширения для PDF, `.pdf`/`.docx` добавляются на скачивании) — без изменений.
 
----
+## 3. Тесты
 
-### 8. Тесты
+### Backend (Deno)
 
-- `src/utils/packagePlaceholderCatalog.test.ts` — для всех `copy_ready` есть `example_value !== null`; нет строк с tech_key `*.short_name`/`*.full_name_short`/`*.director_short_name`; `buildPackagePlaceholderToken` для ln + signature_short → `{{ln-000012|format=signature_short}}`, для UL director_full_name + signature_short → `{{package.ul.FLD-000014|format=signature_short}}`.
-- `src/lib/documents/documentFilename.test.ts` (новый или расширение): grammar принимает package/ln + modifiers; `FLD-000069` больше не обязателен.
-- При наличии тестов на `TemplateMarkupDialog` / `StrictDocumentTemplatesManager` — добавить кейсы: package/ln + modifier ≠ legacy.
+- `supabase/functions/_shared/packageFieldFormatter_test.ts` — основной кейс `package.ul.short_name` уже покрыт Sprint 3J; дополнить только если упадёт regression.
+- `supabase/functions/_shared/resolve-package-tokens_test.ts` (новый или дополнить):
+  - assignment без `metadata.position` → результат = только ФИО (backward‑compat).
+  - assignment c `metadata.position = "юрисконсульт"` + `case=genitive` + `format=full` → `юрисконсульта Федорчука Сергея Валерьевича`.
+  - assignment с position в женском роде → `normalizeMasculinePosition` + inflect.
+  - 2 assignments, один с position, другой без → `юрисконсульта Иванова Ивана Ивановича; Петрова Петра Петровича`.
+  - 3 assignments + `|join=newline` → склейка через `\n`, без position.
+  - `|join=comma` → `,` ; `|join=unknown` → fallback + warning.
 
----
+### Frontend
 
-### 9. Proof
+- `src/lib/documents/documentFilename.test.ts` — добавить кейс `renderFileName` с `scope='package'` и `resolvedTokens = { 'package.ul.FLD-000011': 'ЗАО «Ажур инкам»', 'FLD-000133': '31.05.2026' }` для шаблона `Приказ ... в {{package.ul.FLD-000011}} от {{field:FLD-000133}}` → ожидаемое имя `Приказ ... в ЗАО «Ажур инкам» от 31.05.2026`.
+- `src/utils/packagePlaceholderCatalog.test.ts` — обновить ожидание порядка FLD-000011 если тест проверяет порядок.
 
-`.lovable/proofs/sprint_3k_package_placeholder_ui_validation_cleanup_2026_05.md`:
+## 4. Verify
 
-1. Package examples — скриншоты «Пакет: ЮЛ / ИП / ФЛ / Роли» с колонкой «Пример».
-2. Duplicate removal — список удалённых UI-строк ФИО-кратко.
-3. TemplateMarkupDialog — скриншот, package/ln-токены с модификаторами не подсвечены как legacy.
-4. File name validation — пример имени файла с `{{package.ul.FLD-000011}}` сохраняется без ошибки.
-5. FLD-000069 — шаблон без номера может быть `valid` + активирован.
-6. Активный «Приказ» — `valid`, blockers=0.
-7. Vitest output (passing).
-8. Untouched scope: `canonical-document-generate-strict`, `ai-generate-document-package`, Gotenberg, миграции, billing, /purchases.
+1. `bunx tsc --noEmit` — 0 errors.
+2. `bunx vitest run` — все pass.
+3. Deno tests `resolve-package-tokens_test.ts` — pass.
+4. Manual: перегенерировать «Приказ об организации идеологической работы» с пакетом «Идеология» + назначение `Федорчук С. В.`, должность `юрисконсульт`. Ожидаемые подстроки в PDF/DOCX:
+  - Заголовок: `об организации идеологической работы в ЗАО «Ажур инкам»` (вместо `АЖУР инкам`).
+  - 2.1: `Назначить ответственным за координацию идеологической работы: юрисконсульта Федорчука Сергея Валерьевича.`
+  - Имя файла (вкладка браузера + storage `ai_generated_documents.file_name`): `Приказ об организации идеологической работы в ЗАО «Ажур инкам» от 31.05.2026.pdf`.
+  - Если в шаблоне `{{ln-XXXXXX|join=newline}}` с 3 назначениями — три ФИО, каждая с новой строки.
 
----
+## 5. Proof
 
-### 10. DoD
+`.lovable/proofs/sprint_3l_short_name_role_position_filename_render_newline_2026_05.md` — diff‑резюме, тестовые фикстуры, before/after по 4 пунктам, явный список НЕ‑тронутого scope.
 
-- Каталог пакетных плейсхолдеров: у всех `copy_ready` строк колонка «Пример» содержит осмысленное значение; нет фразы-заглушки.
-- Дубликаты «ФИО кратко» удалены из UI всех трёх групп (UL/IP/FL).
-- В «Проверке и исправлении плейсхолдеров» валидные `package.*.FLD-…|format=…|case=…` и `ln-…|format=…|case=…` не подсвечиваются как legacy.
-- Имя файла шаблона принимает package/ln-токены с модификаторами в package-шаблонах; в billing — старое поведение.
-- `FLD-000069` больше не блокирует сохранение и активацию; только информационный warning.
-- Активный «Приказ» проходит валидацию без blockers.
-- Backend generation pipeline (orchestrator/Gotenberg/migrations/billing/purchases) не затронут; единственное исключение — узкий filename-mirror в `_shared/document-filename.ts`.
-- Memory `Document File Name Template` обновлена: FLD-000069 рекомендуемый, не обязательный; добавлена нота про package/ln токены в file_name_template.
-- Тесты зелёные.
+## 6. Memory
+
+- `mem://architecture/documents/package-billing-parity-v1` — добавить: `{{package.ul.FLD-000011}}` по умолчанию = `short_name` (с формой + «…»); `package.ul.name` достаётся только прямым tech_key, не через FLD‑lookup.
+- Новая `mem://architecture/documents/ln-role-modifiers-v1`: канон ролевого токена `{{ln-XXXXXX[|format=…][|case=…][|join=semicolon|comma|newline]}}`. Position из `metadata.position` подставляется ПЕРЕД ФИО, склоняется тем же `case`, нормализуется к м.р. через `normalizeMasculinePosition`. Default `join=semicolon` (backward‑compat).
+- `mem://architecture/documents/file-name-template-fld-first` — добавить заметку: для `scope='package'` orchestrator передаёт в `renderFileName` карту с `package.<g>.FLD-…` и `ln-…` ключами из `resolved`; ранее (до Sprint 3L) эти токены резолвились в пустую строку — баг устранён.
+
+## 7. DoD
+
+- FLD-000011 (UL) → `short_name` первым в backend+frontend каталогах.
+- `resolveLnRoleToken` подставляет должность перед ФИО, склоняет по `case`, нормализует к м.р. Пустая должность → backward‑compat.
+- Multi‑assignment работает с `|join=newline|comma|semicolon`, default = `semicolon`.
+- `canonical-document-generate-strict` строит `filenameTokenMap` с package/ln ключами и зовёт `renderFileName(..., { scope: 'package' })` для package‑контекста (оба места: early core‑props + final).
+- UI каталога «Роли пакета» показывает пример `|join=newline` (визуально), без новых FLD.
+- `bunx tsc --noEmit` зелёный, `bunx vitest run` зелёный, Deno tests pass.
+- Proof создан, memory обновлена.
+- Backend generation pipeline за пределами указанных правок, миграции, billing resolver, `/purchases`, Gotenberg, contracts `ai_generated_documents.file_name` — НЕ тронуты.
