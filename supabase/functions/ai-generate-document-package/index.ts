@@ -235,7 +235,12 @@ Deno.serve(async (req) => {
       }
       const buf = await dl.data.arrayBuffer();
       const zip = new PizZip(buf);
-      const flat = stripXml(extractDocumentXmlText(zip));
+      const docxFlat = stripXml(extractDocumentXmlText(zip));
+      // Sprint 3M: file_name_template токены тоже учитываем при сборе FLD/package/ln,
+      // чтобы system-FLD (FLD-000133 и т.п.), используемые только в имени файла,
+      // попадали в preresolved_fields / preresolved_package_fields / preresolved_ln_tokens.
+      const fnTemplate: string = (tpl as any).file_name_template || '';
+      const flat = `${docxFlat}\n${fnTemplate}`;
 
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
