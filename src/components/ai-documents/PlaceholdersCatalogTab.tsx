@@ -60,7 +60,6 @@ import {
   type PackagePlaceholderStatus,
   type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
-import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
   id: string;
@@ -287,10 +286,7 @@ function formatDemoRolePosition(caseModifier: FieldCase | null): string {
 }
 
 export function PlaceholdersCatalogTab() {
-  const { isSuperAdmin } = useRbac();
   const [rows, setRows] = useState<CatalogRow[]>([]);
-  const [runtimeCount, setRuntimeCount] = useState(0);
-  const [postponedCount, setPostponedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState<string>("all");
@@ -359,14 +355,8 @@ export function PlaceholdersCatalogTab() {
       }
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
-      let runtime = 0;
-      let postponed = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        if (!publicId) {
-          if (isPostponedNoSot(r.category, r.token_key)) postponed += 1;
-          else runtime += 1; // настоящие runtime/technical (executor.signer.*, *.address.full и т.п.)
-        }
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -375,8 +365,6 @@ export function PlaceholdersCatalogTab() {
         });
       }
       setRows(mapped);
-      setRuntimeCount(runtime);
-      setPostponedCount(postponed);
       setLoading(false);
     })();
     return () => { mounted = false; };
