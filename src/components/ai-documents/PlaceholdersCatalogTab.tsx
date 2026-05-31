@@ -232,11 +232,11 @@ const SECTION_COPY: Record<
     hint: "Платёж по сделке: канал, сумма, статус, дата зачисления.",
   },
   system: {
-    hint: "Технические значения времени и контекста (текущая дата, идентификаторы и т. п.).",
+    hint: "Дата, время и другие значения, которые заполняются автоматически.",
   },
   technical: {
-    hint: "Ручные override и legacy-поля без UI-источника. Используйте только если точно понимаете последствия.",
-    helpTitle: "Технические поля и override",
+    hint: "Дополнительные поля для редких шаблонов. В типовых документах используйте основные группы выше.",
+    helpTitle: "Дополнительные поля",
     helpBullets: [
       "Эти поля не имеют стандартного места для заполнения в интерфейсе и проставляются вручную в карточке сделки или приходят из legacy-источников.",
       "Никогда не используйте их в типовых шаблонах вместо типизированных или универсальных секций — это приведёт к пустым значениям в документе.",
@@ -702,12 +702,11 @@ export function PlaceholdersCatalogTab() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="font-mono text-[10px] cursor-help">
-                                      runtime
+                                      авто
                                     </Badge>
                                   </TooltipTrigger>
                                   <TooltipContent className="max-w-xs">
-                                    Runtime-токен: значение подставляется резолвером по token_key
-                                    <code className="block mt-1">{t.token_key}</code>
+                                    Значение подставляется автоматически при формировании документа.
                                   </TooltipContent>
                                 </Tooltip>
                               ) : (
@@ -726,7 +725,7 @@ export function PlaceholdersCatalogTab() {
                               {isPostponed ? (
                                 <span className="text-[10px] text-muted-foreground italic">недоступно — нет SOT</span>
                               ) : isRuntime ? (
-                                <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
+                                <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>
                               ) : (
                                 <RowSettingsCell
                                   kind={kind}
