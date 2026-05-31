@@ -1127,26 +1127,49 @@ Deno.serve(async (req) => {
         let caseApplied = false;
         let caseReason: string | null = null;
 
-        // Sprint 3J-Roles: ФИО-формат для ln (per-person + join `; `).
-        if (
-          pt.kind === 'ln'
-          && pt.format
-          && PERSON_NAME_FORMATS.has(pt.format)
-        ) {
+        // Sprint 3L: единая ln-ветка. Per-person ФИО + опц. должность + join.
+        if (pt.kind === 'ln') {
           const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
           if (persons.length === 0 && entry?.value) {
-            // fallback на split joined value (defence-in-depth для старого бага).
+            // defence-in-depth: split joined value.
             persons.push(...String(entry.value).split(/\s*;\s*/).filter(Boolean));
           }
-          const parts = persons
-            .map((fn) => formatPersonName(fn, {
-              format: pt.format as PersonNameFormat,
-              case: (pt.case_modifier as RuCase | null) ?? null,
-            }))
-            .filter((s) => s && s.length > 0);
-          outVal = parts.join('; ');
-          formatApplied = true;
-          if (pt.case_modifier) caseApplied = true;
+          const positions: string[] = Array.isArray(entry?.positions) ? entry.positions : [];
+          const posGenders: Array<'m'|'f'|null> = Array.isArray(entry?.position_genders)
+            ? entry.position_genders
+            : [];
+          const fmt = (pt.format ?? 'full') as PersonNameFormat;
+          const cs = (pt.case_modifier as RuCase | null) ?? null;
+          const include = pt.include_position === true;
+          const sep = pt.join === 'newline' ? '\n'
+            : pt.join === 'comma' ? ', '
+            : '; '; // default = semicolon (backward-compat).
+
+          const parts: string[] = [];
+          for (let i = 0; i < persons.length; i++) {
+            const fn = persons[i];
+            const namePart = formatPersonName(fn, { format: fmt, case: cs });
+            if (!namePart) continue;
+            if (include) {
+              const rawPos = (positions[i] || '').trim();
+              if (rawPos) {
+                const posNorm = normalizeMasculinePosition(rawPos);
+                let posOut = posNorm;
+                if (cs) {
+                  // Per-assignment gender override; default 'm'.
+                  const g = posGenders[i] === 'f' ? 'f' : 'm';
+                  const inf = inflectRu(posNorm, cs, { forceGender: g });
+                  if (inf.applied) posOut = inf.value;
+                }
+                parts.push(`${posOut} ${namePart}`);
+                continue;
+              }
+            }
+            parts.push(namePart);
+          }
+          outVal = parts.join(sep);
+          if (pt.format) formatApplied = true;
+          if (cs) caseApplied = true;
         }
         // Sprint 3J-Roles: ФИО-формат для FIO-полей пакета (raw_full_name).
         else if (
@@ -1173,23 +1196,11 @@ Deno.serve(async (req) => {
             else { caseReason = inf.reason || 'inflection_unsafe'; }
           }
         }
-        // case_modifier без формата (text/raw): inflect joined string.
-        else if (pt.case_modifier) {
-          // ln без формата → склонять каждого; package без формата → склонять value.
-          if (pt.kind === 'ln' && Array.isArray(entry?.persons) && entry.persons.length > 0) {
-            const parts = (entry.persons as string[])
-              .map((fn) => formatPersonName(fn, {
-                format: 'full',
-                case: pt.case_modifier as RuCase,
-              }))
-              .filter((s) => s && s.length > 0);
-            outVal = parts.join('; ');
-            caseApplied = true;
-          } else {
-            const inf = inflectRu(outVal, pt.case_modifier as RuCase);
-            if (inf.applied) { outVal = inf.value; caseApplied = true; }
-            else { caseReason = inf.reason || 'inflection_unsafe'; }
-          }
+        // case_modifier без формата (text/raw) для package: inflect value.
+        else if (pt.case_modifier && pt.kind === 'package') {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+          else { caseReason = inf.reason || 'inflection_unsafe'; }
         }
 
         resolved[pt.raw_inside] = outVal;
