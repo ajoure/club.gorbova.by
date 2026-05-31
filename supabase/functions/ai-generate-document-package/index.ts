@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
 
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
-      const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; role_catalog_id: string; person_id: string }> = {};
+      const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; positions: string[]; position_genders: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }> = {};
       const itemErrors: string[] = [];
       const seen = new Set<string>();
 
@@ -372,6 +372,8 @@ Deno.serve(async (req) => {
             continue;
           }
           const fullNames: string[] = [];
+          const positions: string[] = [];
+          const positionGenders: Array<'m'|'f'|null> = [];
           let firstPersonId: string | null = null;
           for (const a of asgs) {
             if (!a.person_id) continue;
@@ -381,6 +383,13 @@ Deno.serve(async (req) => {
             if (!fn) continue;
             if (!firstPersonId) firstPersonId = a.person_id;
             fullNames.push(fn);
+            // Sprint 3L: per-assignment должность из metadata.position +
+            // опциональный metadata.position_gender ('m'|'f').
+            const md = (a.metadata ?? {}) as Record<string, unknown>;
+            const pos = typeof md.position === 'string' ? md.position.trim() : '';
+            positions.push(pos);
+            const pg = md.position_gender === 'f' ? 'f' : md.position_gender === 'm' ? 'm' : null;
+            positionGenders.push(pg);
           }
           if (fullNames.length === 0 || !firstPersonId) {
             itemErrors.push(`role_person_not_found:${lnPublicId}`);
@@ -388,9 +397,12 @@ Deno.serve(async (req) => {
           }
           // Sprint 3J-Roles: bag key = base public_id (без модификаторов).
           // strict читает entry.persons[] и применяет format/case per-person.
+          // Sprint 3L: + entry.positions[] / entry.position_genders[] для include_position.
           (preresolved_ln_tokens as any)[lnPublicId] = {
             value: fullNames.join('; '),
             persons: fullNames,
+            positions,
+            position_genders: positionGenders,
             role_catalog_id: role.id,
             person_id: firstPersonId,
           };
