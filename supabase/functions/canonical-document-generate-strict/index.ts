@@ -1491,7 +1491,12 @@ Deno.serve(async (req) => {
       // Для date/datetime принудительно DD.MM.YYYY (как в DOCX-резолвере по умолчанию).
       const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
-      filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+      let _fnVal = fmt.value ?? baseValueByFld[fld] ?? '';
+      // Sprint 3M: backstop для system-FLD (см. _fnSysVals выше).
+      if ((!_fnVal || _fnVal === '') && SYSTEM_FIELD_VALUE_IDS.has(fld) && _fnSysVals[fld]) {
+        _fnVal = _fnSysVals[fld];
+      }
+      filenameTokenMap[fld] = _fnVal;
     }
     // Sprint 3L: enrich package/ln keys for package scope.
     if (_fnScope === 'package') {
