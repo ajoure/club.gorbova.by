@@ -1,48 +1,40 @@
 # да, согласен, с учетом правок:
 
-## **Правки к Sprint 3M**
+## **Правки к Sprint 3N**
 
-План правильный, но перед выполнением нужно уточнить несколько моментов, чтобы не сломать уже закрытый Sprint 3J-Roles.
+План правильный. Нужно добавить несколько уточнений, чтобы не сломать уже закрытые modifiers для `ln`.
 
 ---
 
+## **1. Порядок modifiers должен соответствовать уже принятому канону**
 
-
-## **1. Должность не должна всегда префиксоваться для всех**
-
-`ln`
-
-В Sprint 3J было зафиксировано:
+В плане указан порядок:
 
 ```text
-{{ln-XXXXXX}} → ФИО человека без названия роли
+format → include_position → join → case
 ```
 
-Поэтому нельзя глобально сделать так, чтобы любой `{{ln-XXXXXX}}` всегда добавлял должность.
-
-Правильнее:
-
-### **Для текущего приказа**
-
-Если в шаблоне нужно:
+Ранее был зафиксирован порядок:
 
 ```text
-юрисконсульта Федорчука Сергея Валерьевича
+format → case → include_position → join
 ```
 
-то токен должен быть явно:
+Нужно выбрать один канон и не менять его между спринтами.
+
+Рекомендованный порядок:
 
 ```text
-{{ln-000012|include_position=true|case=genitive}}
+format → case → include_position → join
 ```
 
-или, если решаем сделать автопрефикс по умолчанию, это нужно ограничить только теми `ln`, у которых в `document_package_item_role_assignments.metadata.position` заполнена должность **и** шаблон/роль ожидает должностное лицо.
-
-Но безопаснее для текущей архитектуры:
+Пример:
 
 ```text
-include_position=true остаётся явным modifier.
+{{ln-000012|format=short|case=genitive|include_position=true|join=newline}}
 ```
+
+Backend может читать любой порядок, но UI должен всегда генерировать один стабильный порядок.
 
 ---
 
@@ -50,283 +42,278 @@ include_position=true остаётся явным modifier.
 
 
 
-## **2. Не превращать**
+## **2.**
 
-`include_position=true` **в no-op**
+`join=semicolon` **не писать в токен**
 
-В плане написано:
+Подтверждаю:
 
 ```text
-include_position=true|false оставить как принятый no-op
+{{ln-000012}}
 ```
 
-Так делать нельзя.
-
-Нужно:
+эквивалентно:
 
 ```text
-include_position=true  → должность + ФИО
-include_position=false → только ФИО
-нет modifier          → только ФИО
+{{ln-000012|join=semicolon}}
 ```
 
-Иначе мы потеряем контроль над тем, где нужна должность, а где нужен только человек.
+Поэтому UI при выборе «через точку с запятой» не должен добавлять modifier.
 
----
-
-## **3. Текущий баг лучше исправить через шаблон, а не через изменение default**
-
-Причина бага: в шаблоне стоит:
+Правильно:
 
 ```text
-{{ln-000012|case=genitive}}
-```
-
-а нужно:
-
-```text
-{{ln-000012|include_position=true|case=genitive}}
-```
-
-Поэтому в Sprint 3M добавить отдельный шаг:
-
-```text
-Проверить активный DOCX-шаблон приказа и заменить токен:
-{{ln-000012|case=genitive}}
-→
-{{ln-000012|include_position=true|case=genitive}}
-```
-
-Это не ломает другие места, где роль должна выводиться только как ФИО.
-
----
-
-## **4. Если всё же делать автопрефикс — только отдельным modifier/default-policy**
-
-Если пользователь позже захочет, чтобы некоторые роли всегда выводились с должностью, это лучше делать через настройку роли:
-
-```text
-document_package_role_catalog.metadata.default_include_position = true
-```
-
-Но это не в Sprint 3M.
-
-В Sprint 3M не добавлять новую модель поведения роли.
-
----
-
-
-
-
-
-## **5.**
-
-`position_gender` **можно учесть без UI**
-
-В resolver добавить чтение:
-
-```text
-metadata.position_gender
-```
-
-Если есть:
-
-```text
-f → женский род
-m → мужской род
-```
-
-Если нет:
-
-```text
-default = m
-```
-
-UI сейчас не трогать.
-
----
-
-## **6. Filename fix — правильно, обязательно оставить**
-
-Фикс по имени файла нужен и правильный.
-
-Нужно сделать оба слоя:
-
-### **A. Orchestrator**
-
-`ai-generate-document-package` должен парсить не только DOCX body, но и:
-
-```text
-document_templates.file_name_template
-```
-
-и добавлять system-FLD в `preresolved_fields`, если они используются только в имени файла.
-
-Особенно:
-
-```text
-FLD-000133
-FLD-000134
-FLD-000209
-FLD-000210
-FLD-000211
-FLD-000212
-```
-
-### **B. Strict backstop**
-
-В `canonical-document-generate-strict` при сборке `filenameTokenMap`:
-
-если `FLD` не найден в `docFields`, но это system-FLD, брать значение из:
-
-```text
-buildSystemFieldValues(new Date())
-```
-
-Это правильная страховка.
-
----
-
-## **7. Filename map должен учитывать modifiers**
-
-В `filenameTokenMap` сохранить ключи:
-
-```text
-package.ul.FLD-000011
-package.ul.FLD-000011|format=short
-ln-000012
-ln-000012|format=signature_short
-field:FLD-000133
-FLD-000133
-```
-
-Иначе часть токенов в имени файла будет снова резолвиться в пустую строку.
-
----
-
-
-
-
-
-
-
-## **8.**
-
-`join=newline` **— оставить, но только для** `ln`
-
-Согласен добавить:
-
-```text
-{{ln-000012|join=newline}}
-```
-
-Но:
-
-- только для `ln`;
-- для `field/package.ul/package.ip/package.fl` modifier `join` должен быть `unknown_modifier`;
-- default оставить `semicolon`.
-
----
-
-## **9. Runtime proof должен проверить оба варианта роли**
-
-В proof обязательно проверить:
-
-### **Без должности**
-
-```text
-{{ln-000012|case=genitive}}
-→
-Федорчука Сергея Валерьевича
-```
-
-### **С должностью**
-
-```text
-{{ln-000012|include_position=true|case=genitive}}
-→
-юрисконсульта Федорчука Сергея Валерьевича
-```
-
-Это защитит от регрессии Sprint 3J.
-
----
-
-## **10. Обновить DoD**
-
-Заменить текущий DoD по должности на такой:
-
-```text
-{{ln-XXXXXX}} по умолчанию выводит только ФИО.
-{{ln-XXXXXX|case=genitive}} выводит только ФИО в падеже.
-{{ln-XXXXXX|include_position=true|case=genitive}} выводит должность + ФИО в падеже.
-Пустая metadata.position → только ФИО, даже если include_position=true.
+default → {{ln-000012}}
+comma → {{ln-000012|join=comma}}
+newline → {{ln-000012|join=newline}}
 ```
 
 ---
 
-## **11. Итоговый финальный статус**
+## **3. Контрол должен быть только у ролей**
 
-Закрывать Sprint 3M только при таком результате:
+Добавить строгий guard:
 
 ```text
-completed: Sprint 3M;
-package.ul.FLD-000011 resolves to legal short_name with org form and quotes;
-ln default remains person-only;
-ln include_position=true adds position before person and inflects both;
-ln join=semicolon|comma|newline works only for role tokens;
-package file_name_template renders package/ln/system field tokens in package context;
-ideology order DOCX/PDF and filename verified;
-Sprint 3J role modifiers regression passed;
-backend billing/order generation untouched.
+groupId === 'package_roles'
+token starts with ln-
 ```
 
-Главная правка: **не делать должность частью** `{{ln-...}}` **по умолчанию**. Для должности нужен явный modifier `include_position=true`, иначе сломаются все места, где роль должна выводить только ФИО.
+Не показывать и не применять `join` для:
+
+```text
+{{field:FLD-...}}
+{{package.ul.FLD-...}}
+{{package.ip.FLD-...}}
+{{package.fl.FLD-...}}
+```
+
+Если в коде `joinMode` случайно передан не-role строке — `buildPackagePlaceholderToken` должен его игнорировать.
+
+---
+
+## **4. UI-подписи только на русском**
+
+Названия опций:
+
+```text
+Через точку с запятой
+Через запятую
+С новой строки
+```
+
+Подсказка:
+
+```text
+Применяется, если на одну роль назначено несколько человек.
+```
+
+Не использовать `semicolon / comma / newline` в user-facing UI, только в самом токене.
+
+---
+
+## **5. Preview должен учитывать выбранный join**
+
+Если в preview для роли есть демо-мультизначение, показывать:
+
+### **Через точку с запятой**
+
+```text
+Федорчук С.В.; Иванов И.И.
+```
+
+### **Через запятую**
+
+```text
+Федорчук С.В., Иванов И.И.
+```
+
+### **С новой строки**
+
+```text
+Федорчук С.В.
+Иванов И.И.
+```
+
+Если сейчас preview показывает только одно ФИО, хотя бы добавить текстовую подсказку:
+
+```text
+При нескольких участниках каждый будет выведен с новой строки.
+```
+
+Но лучше сразу сделать demo-preview на 2 ФИО.
+
+---
+
+## **6. Тесты поправить под канонический порядок**
+
+Если принимаем порядок:
+
+```text
+format → case → include_position → join
+```
+
+то тест должен ожидать:
+
+```text
+{{ln-000012|format=short|case=genitive|include_position=true|join=newline}}
+```
+
+а не:
+
+```text
+{{ln-000012|include_position=true|join=newline|case=genitive}}
+```
+
+Добавить тесты:
+
+```text
+join=newline only → {{ln-000012|join=newline}}
+format + join → {{ln-000012|format=short|join=newline}}
+case + join → {{ln-000012|case=genitive|join=newline}}
+format + case + include_position + join → {{ln-000012|format=short|case=genitive|include_position=true|join=newline}}
+```
+
+---
+
+## **7. Runtime proof обязателен**
+
+В proof недостаточно показать, что токен копируется.
+
+Нужно реально проверить generated DOCX:
+
+1. Создать/использовать роль с минимум 2 назначенными физлицами.
+2. Вставить в шаблон:
+
+```text
+{{ln-000012|format=short|join=newline}}
+```
+
+3. Сгенерировать пакет.
+4. Распаковать DOCX и проверить, что в тексте есть перенос строки между ФИО.
+
+Ожидаемо:
+
+```text
+Федорчук С.В.
+Иванов И.И.
+```
+
+Если DOCX XML содержит перенос как `<w:br/>` или отдельные текстовые run — зафиксировать это в proof.
+
+---
+
+## **8. Proof**
+
+Создать:
+
+```text
+.lovable/proofs/sprint_3n_join_newline_ui_2026_05.md
+```
+
+Секции:
+
+1. UI screenshot — контрол разделителя в строке роли.
+2. Copy examples:
+  - `{{ln-000012}}`
+  - `{{ln-000012|join=comma}}`
+  - `{{ln-000012|join=newline}}`
+  - `{{ln-000012|format=short|case=genitive|include_position=true|join=newline}}`
+3. Tests — vitest output.
+4. Runtime DOCX proof — две ФИО с новой строки.
+5. Untouched scope:
+  - backend edge functions не тронуты;
+  - migrations не тронуты;
+  - billing не тронут;
+  - `/purchases` не тронут;
+  - Gotenberg не тронут.
+
+---
+
+## **9. Финальный статус**
+
+Закрывать Sprint 3N только если:
+
+```text
+completed: Sprint 3N;
+role placeholder UI supports join=semicolon|comma|newline;
+default semicolon is not written to token;
+join controls appear only for ln role tokens;
+copy-token uses canonical modifier order;
+generated DOCX verifies newline output for multiple role assignees;
+backend generation pipeline untouched.
+```
+
+Ключевая правка: **зафиксировать один порядок modifiers**. Лучше использовать уже принятый порядок `format → case → include_position → join`, чтобы токены не прыгали между спринтами.
 
 &nbsp;
 
-План: Sprint 3M — авто-префикс должности + рендер даты в имени файла
+План: Sprint 3N — UI-переключатель разделителя для ролевых плейсхолдеров
 
-## Контекст и диагностика
+## Контекст и текущее состояние
 
-Два бага после Sprint 3L (видно на скринах):
+**Backend уже умеет** разделять перечисление участников роли разными сепараторами (реализовано в Sprint 3L):
 
-1. В документе должность «юрисконсульт» не появилась: вместо «юрисконсульта Федорчука Сергея Валерьевича» рендерится только «Федорчука Сергея Валерьевича». Причина: в Sprint 3L `include_position` сделан opt-in через модификатор `|include_position=true`, а в шаблоне используется `{{ln-000012|case=genitive}}` без него — должность игнорируется.
-2. Имя файла обрывается на «… от» — дата `{{field:FLD-000133}}` не подставлена. Причина: `ai-generate-document-package` парсит только тело DOCX и заполняет `preresolved_fields` (включая system-FLD через `SYSTEM_FIELD_VALUE_IDS`). `file_name_template` он НЕ парсит, поэтому если system-FLD используется только в имени файла, он не попадает в `preresolved_fields`. В strict `docFields['FLD-000133']` = undefined → `applyFormat(undefined, …)` → пустая строка → имя файла без даты.
+- `supabase/functions/canonical-document-generate-strict/index.ts:727,784,793,1145`
+- Модификатор: `|join=semicolon` (default) / `|join=comma` / `|join=newline`
+- Работает только для ln-токенов (роли пакета), напр. `{{ln-000012|join=newline}}`
+- При `join=newline` участники с одной ролью склеиваются через `\n` — в DOCX это перевод абзаца.
 
-## Что меняем
+**Чего не хватает (баг):** в UI каталога плейсхолдеров (`/admin/documents` → вкладка «Каталог плейсхолдеров») нет ни одного контрола, который бы добавлял `|join=newline` в копируемый токен. Поэтому пользователь физически не может включить «каждое ФИО с новой строки» — приходится править токен руками после вставки в Word.
 
-### 1. Должность всегда префиксует ФИО, если задана
+В Sprint 3M / 3L уже добавлена кнопка «С должностью» (`includePosition`) рядом с падежом — новый контрол ставим в тот же ряд, по тем же правилам.
 
-`supabase/functions/canonical-document-generate-strict/index.ts`, ветка `pt.kind === 'ln'` (≈1131–1173):
+## Что делаем
 
-- Убрать условие `if (include) { … }` как gate. Новое поведение:
-  - per-person: если `positions[i]` непуст → префиксовать `normalizeMasculinePosition(positions[i])` + (если задан `case`) `inflectRu(case, { forceGender: posGenders[i] === 'f' ? 'f' : 'm' })`, затем пробел + ФИО.
-  - если `positions[i]` пуст → выводить только ФИО (как раньше, без regression).
-- Модификатор `include_position=true|false` оставить как принятый no-op в парсере (без warning), чтобы старые шаблоны не сломались. Никакой обязательной ручной разметки в Word больше не нужно.
+Добавляем третий модификатор роли в UI (только для group `package_roles`, ln-токенов): выбор разделителя при перечислении.
 
-UI каталога `package`-плейсхолдеров (`src/utils/packagePlaceholderCatalog.ts`, при необходимости подсказки): убрать из живых примеров `|include_position=true`; оставить только `|case=…|format=…|join=…`. Backend остаётся обратно-совместим.
+### 1. `src/utils/packagePlaceholderCatalog.ts`
 
-### 2. system-FLD в имени файла резолвятся всегда
+- Расширяем сигнатуру `buildPackagePlaceholderToken`: новый необязательный параметр `joinMode?: 'semicolon' | 'comma' | 'newline'` (default — не пишем в токен, т.е. backend сам применит semicolon).
+- Если `isRole && joinMode && joinMode !== 'semicolon'` → добавляем `join=${joinMode}` в `parts` (рядом с `include_position`, перед `case`).
+- `semicolon` намеренно НЕ пишем — это default, токен остаётся чистым.
 
-Двухслойная защита.
+### 2. `src/components/ai-documents/PlaceholdersCatalogTab.tsx`
 
-A. `supabase/functions/ai-generate-document-package/index.ts` (≈240–300): перед циклом по `flat.matchAll(TOKEN_RE)` добавить ещё один проход по токенам из `file_name_template` соответствующего `document_templates`-item. Прогонять их через тот же `FIELD_RE`-блок, чтобы system-FLD (FLD-000133 и т.п.), используемые только в имени файла, попадали в `preresolved_fields` и `fldIds`. Package/ln в `file_name_template` сейчас идут через тот же кадр и так попадают в preresolved (см. Sprint 3L), их не трогаем.
+- В `RowSettings` добавляем `joinMode?: 'semicolon' | 'comma' | 'newline' | null`.
+- `isDefaultSettings` (строка ~275): учитываем `joinMode` (null или `'semicolon'` = default).
+- Прокидываем `pkgSettings.joinMode ?? null` в `buildPackagePlaceholderToken` (строки ~823, ~836).
+- В `RowSettingsCell` (после блока «С должностью», строки ~1102–1112) добавляем компактный контрол **только** когда строка является ролевой (`isRolesGroup` / ln-token / `groupId === 'package_roles'`).
+  - Вариант UI: маленький `Select` (или 3 segmented-кнопки) с подписями: «; через точку с запятой» / «, через запятую» / «↵ с новой строки». По умолчанию `;`.
+  - Выбор `newline` показывает иконку/тултип «Каждое ФИО с новой строки в документе».
+- Текстовая подсказка под контролом (одна строка, `text-[10px] text-muted-foreground`): «Применяется, когда у роли несколько участников».
 
-B. `supabase/functions/canonical-document-generate-strict/index.ts`, билдеры `_filenameTokenMapEarly` (≈1352–1365) и `filenameTokenMap` (≈1470–1490): backstop — если `baseEntryByFld[fld]` пуст и `SYSTEM_FIELD_VALUE_IDS.has(fld)`, взять значение из `buildSystemFieldValues(new Date())`. Импорт из `_shared/system-field-values.ts`. Это страхует случай, когда A по какой-то причине не сработал (старые батчи, чужие пайплайны).
+### 3. Тесты
 
-## DoD
+`src/utils/packagePlaceholderCatalog.test.ts`:
 
-- Шаблон «Приказ об организации идеологической работы», роль `In-000012` с должностью «юрисконсульт», падеж genitive → в документе: `Назначить ответственным за координацию идеологической работы: юрисконсульта Федорчука Сергея Валерьевича.`
-- Имя сохранённого файла: `Приказ об организации идеологической работы в ЗАО «АЖУР инкам» от 31.05.2026.pdf`. Дата рендерится и в DOCX, и в PDF.
-- Шаблон без должности у назначения → только ФИО, без regression. `{{ln-XXXXXX|join=newline|comma|semicolon}}` работает как раньше.
-- `bunx tsc --noEmit` зелёный, `bunx vitest run` зелёный.
-- Proof: `.lovable/proofs/sprint_3m_position_autoprepend_and_filename_sys_fld_2026_05.md`.
+- ln-токен + `joinMode='newline'` → `{{ln-000012|join=newline}}`
+- ln-токен + `includePosition=true` + `caseModifier='genitive'` + `joinMode='newline'` → `{{ln-000012|include_position=true|join=newline|case=genitive}}` (порядок: `format → include_position → join → case`)
+- ln-токен + `joinMode='semicolon'` → токен без `join=...` (default не записываем)
+- НЕ-role токен (FLD/package field) + `joinMode='newline'` → игнорируется, токен без модификатора
 
-## Не в скоупе
+## Как пользователь будет включать
 
-- UI-контролы модификаторов (отдельный sprint).
-- Backend generation pipeline для billing, Gotenberg, миграции, RLS, edge runtime.
-- Расширение модели данных (новых FLD, persons, roles, scenarios).
-- Контракт `ai_generated_documents.file_name`.
-- Очистка `include_position=true` из уже сохранённых production-шаблонов (по запросу отдельной задачей).
+1. `/admin/documents` → вкладка «Каталог плейсхолдеров».
+2. Найти роль (группа «Роли пакета», напр. «In-000012 — Юрисконсульт»).
+3. В строке справа от «Падеж» и «С должностью» появится контрол разделителя — выбрать «↵ с новой строки».
+4. Скопировать обновлённый токен (`{{ln-000012|join=newline|case=genitive}}`) и вставить в DOCX-шаблон.
+5. При генерации документа все ФИО с этой ролью будут перечислены каждое с новой строки.
+
+## Definition of Done
+
+- В каталоге плейсхолдеров на ролевых строках виден контрол выбора разделителя (3 опции).
+- При выборе «↵ с новой строки» скопированный токен содержит `|join=newline`.
+- Контрол не появляется на не-ролевых строках (FLD, package fields).
+- Сгенерированный документ по шаблону с `{{ln-000012|join=newline}}` показывает каждое ФИО с новой строки (когда у роли ≥2 участников).
+- `vitest` зелёный, новые кейсы покрыты.
+
+## Технические детали
+
+- Backend парсер уже принимает `join` — никаких миграций, edge-функции, RLS, контрактов БД не трогаем.
+- Только presentation-layer: 2 файла кода + 1 файл тестов.
+- Скриншоты прилагаем в proof: `.lovable/proofs/sprint_3n_join_newline_ui_2026_05.md`.
+
+## Что НЕ трогаем
+
+billing, Gotenberg, `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, миграции, RLS, edge-runtime, /purchases, контракты `ai_generated_documents`.

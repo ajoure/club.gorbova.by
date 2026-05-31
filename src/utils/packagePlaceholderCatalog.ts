@@ -511,6 +511,7 @@ export function buildPackagePlaceholderToken(
   format: FieldFormat | null,
   caseModifier: FieldCase | null,
   includePosition = false,
+  joinMode: 'semicolon' | 'comma' | 'newline' | null = null,
 ): string | null {
   if (!item.package_token) return null;
   const inner = item.package_token.replace(/^\{\{/, "").replace(/\}\}$/, "");
@@ -533,9 +534,13 @@ export function buildPackagePlaceholderToken(
     effectiveFormat = null;
   }
 
+  // Sprint 3N canonical order: format → case → include_position → join.
+  // include_position и join действуют только для ln-ролей; для остальных — игнорируются.
+  // join=semicolon — default backend'а, в токен не пишется.
   if (effectiveFormat) parts.push(`format=${effectiveFormat}`);
-  if (isRole && includePosition) parts.push("include_position=true");
   if (caseModifier) parts.push(`case=${caseModifier}`);
+  if (isRole && includePosition) parts.push("include_position=true");
+  if (isRole && joinMode && joinMode !== "semicolon") parts.push(`join=${joinMode}`);
   return `{{${parts.join("|")}}}`;
 }
 

@@ -83,6 +83,8 @@ interface RowSettings {
   format: FieldFormat | null;
   caseModifier: FieldCase | null;
   includePosition?: boolean;
+  /** Sprint 3N: разделитель между ФИО при множестве участников у роли (только ln-токены). */
+  joinMode?: 'semicolon' | 'comma' | 'newline' | null;
 }
 
 /**
@@ -272,7 +274,9 @@ const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
 ];
 
 function isDefault(s: RowSettings | undefined): boolean {
-  return !s || (s.format === null && s.caseModifier === null && !s.includePosition);
+  if (!s) return true;
+  const joinDefault = !s.joinMode || s.joinMode === "semicolon";
+  return s.format === null && s.caseModifier === null && !s.includePosition && joinDefault;
 }
 
 const DEMO_ROLE_POSITION = "юрисконсульт";
@@ -820,10 +824,12 @@ export function PlaceholdersCatalogTab() {
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
-                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true)
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true, pkgSettings.joinMode ?? null)
                         : p.package_token;
                       const showModifiers = isReady && rowKind !== "other";
                       // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
+                      // Sprint 3N: при выборе разделителя показываем демо-перечень из двух участников,
+                      // чтобы было видно, как разделитель выглядит в документе.
                       const personNamePreview = (() => {
                         if (rowKind !== "person_name") return null;
                         const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
@@ -833,10 +839,18 @@ export function PlaceholdersCatalogTab() {
                           format: safeFmt,
                           case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
                         });
-                        if (isRolesGroup && pkgSettings.includePosition) {
-                          return `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`;
+                        const single = isRolesGroup && pkgSettings.includePosition
+                          ? `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`
+                          : namePreview;
+                        if (isRolesGroup && pkgSettings.joinMode && pkgSettings.joinMode !== "semicolon") {
+                          // Второй демо-участник, чтобы был виден реальный эффект разделителя.
+                          const second = isRolesGroup && pkgSettings.includePosition
+                            ? `${formatDemoRolePosition(pkgSettings.caseModifier)} Иванов И. И.`
+                            : "Иванов Иван Иванович";
+                          const sep = pkgSettings.joinMode === "newline" ? "\n" : ", ";
+                          return `${single}${sep}${second}`;
                         }
-                        return namePreview;
+                        return single;
                       })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
@@ -880,6 +894,7 @@ export function PlaceholdersCatalogTab() {
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
                                 supportsPosition={isRolesGroup}
+                                supportsJoin={isRolesGroup}
                               />
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
@@ -887,7 +902,7 @@ export function PlaceholdersCatalogTab() {
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
                             {personNamePreview ? (
-                              <span className="italic" title={`Demo: ${DEMO_PERSON_NAME}`}>
+                              <span className="italic whitespace-pre-line" title={`Demo: ${DEMO_PERSON_NAME}`}>
                                 {personNamePreview}
                               </span>
                             ) : p.example_value ? (
@@ -960,6 +975,7 @@ function RowSettingsCell({
   onChange,
   supportsLongFormat = false,
   supportsPosition = false,
+  supportsJoin = false,
 }: {
   // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
   kind: ReturnType<typeof classifyDataType> | "person_name";
@@ -969,6 +985,8 @@ function RowSettingsCell({
   supportsLongFormat?: boolean;
   /** Для ln-ролей: добавить должность перед ФИО. */
   supportsPosition?: boolean;
+  /** Sprint 3N: для ln-ролей — выбор разделителя при нескольких участниках. */
+  supportsJoin?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
@@ -1109,6 +1127,29 @@ function RowSettingsCell({
         >
           С должностью
         </Button>
+      )}
+
+      {isPersonName && supportsJoin && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Select
+              value={settings.joinMode ?? "semicolon"}
+              onValueChange={(val) => onChange({ joinMode: (val as 'semicolon' | 'comma' | 'newline') })}
+            >
+              <SelectTrigger className="h-7 w-[180px] text-[10px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semicolon" className="text-xs">; через точку с запятой</SelectItem>
+                <SelectItem value="comma" className="text-xs">, через запятую</SelectItem>
+                <SelectItem value="newline" className="text-xs">↵ с новой строки</SelectItem>
+              </SelectContent>
+            </Select>
+          </TooltipTrigger>
+          <TooltipContent>
+            Применяется, если на одну роль назначено несколько человек.
+          </TooltipContent>
+        </Tooltip>
       )}
     </div>
   );
