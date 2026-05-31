@@ -12,7 +12,7 @@
  *   {{field:FLD-XXXXXX|case=<падеж>}}
  *   {{field:FLD-XXXXXX|format=words|case=<падеж>}}
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw, HelpCircle } from "lucide-react";
+import { Loader2, Copy, Search, Info, RotateCcw, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -60,7 +60,6 @@ import {
   type PackagePlaceholderStatus,
   type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
-import { useRbac } from "@/hooks/useRbac";
 
 interface CatalogRow {
   id: string;
@@ -83,6 +82,7 @@ interface CatalogRow {
 interface RowSettings {
   format: FieldFormat | null;
   caseModifier: FieldCase | null;
+  includePosition?: boolean;
 }
 
 /**
@@ -232,11 +232,11 @@ const SECTION_COPY: Record<
     hint: "Платёж по сделке: канал, сумма, статус, дата зачисления.",
   },
   system: {
-    hint: "Технические значения времени и контекста (текущая дата, идентификаторы и т. п.).",
+    hint: "Дата, время и другие значения, которые заполняются автоматически.",
   },
   technical: {
-    hint: "Ручные override и legacy-поля без UI-источника. Используйте только если точно понимаете последствия.",
-    helpTitle: "Технические поля и override",
+    hint: "Дополнительные поля для редких шаблонов. В типовых документах используйте основные группы выше.",
+    helpTitle: "Дополнительные поля",
     helpBullets: [
       "Эти поля не имеют стандартного места для заполнения в интерфейсе и проставляются вручную в карточке сделки или приходят из legacy-источников.",
       "Никогда не используйте их в типовых шаблонах вместо типизированных или универсальных секций — это приведёт к пустым значениям в документе.",
@@ -272,21 +272,26 @@ const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
 ];
 
 function isDefault(s: RowSettings | undefined): boolean {
-  return !s || (s.format === null && s.caseModifier === null);
+  return !s || (s.format === null && s.caseModifier === null && !s.includePosition);
+}
+
+const DEMO_ROLE_POSITION = "юрисконсульт";
+
+function formatDemoRolePosition(caseModifier: FieldCase | null): string {
+  if (caseModifier === "genitive" || caseModifier === "accusative") return "юрисконсульта";
+  if (caseModifier === "dative") return "юрисконсульту";
+  if (caseModifier === "instrumental") return "юрисконсультом";
+  if (caseModifier === "prepositional") return "юрисконсульте";
+  return DEMO_ROLE_POSITION;
 }
 
 export function PlaceholdersCatalogTab() {
-  const { isSuperAdmin } = useRbac();
   const [rows, setRows] = useState<CatalogRow[]>([]);
-  const [runtimeCount, setRuntimeCount] = useState(0);
-  const [postponedCount, setPostponedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [showTechnical, setShowTechnical] = useState(false);
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [onlyRequired, setOnlyRequired] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
   // Sprint 3J-UI: те же modifier-controls, что у billing-плейсхолдеров. Ключ — tech_key item'а.
   const [pkgRowSettings, setPkgRowSettings] = useState<Map<string, RowSettings>>(new Map());
@@ -350,14 +355,8 @@ export function PlaceholdersCatalogTab() {
       }
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
-      let runtime = 0;
-      let postponed = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        if (!publicId) {
-          if (isPostponedNoSot(r.category, r.token_key)) postponed += 1;
-          else runtime += 1; // настоящие runtime/technical (executor.signer.*, *.address.full и т.п.)
-        }
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -366,8 +365,6 @@ export function PlaceholdersCatalogTab() {
         });
       }
       setRows(mapped);
-      setRuntimeCount(runtime);
-      setPostponedCount(postponed);
       setLoading(false);
     })();
     return () => { mounted = false; };
@@ -474,7 +471,7 @@ export function PlaceholdersCatalogTab() {
       const next = new Map(prev);
       const current = next.get(id) ?? { format: null, caseModifier: null };
       const merged: RowSettings = { ...current, ...patch };
-      if (merged.format === null && merged.caseModifier === null) {
+      if (isDefault(merged)) {
         next.delete(id);
       } else {
         next.set(id, merged);
@@ -497,7 +494,7 @@ export function PlaceholdersCatalogTab() {
       const next = new Map(prev);
       const current = next.get(techKey) ?? { format: null, caseModifier: null };
       const merged: RowSettings = { ...current, ...patch };
-      if (merged.format === null && merged.caseModifier === null) next.delete(techKey);
+      if (isDefault(merged)) next.delete(techKey);
       else next.set(techKey, merged);
       return next;
     });
@@ -513,14 +510,6 @@ export function PlaceholdersCatalogTab() {
 
   const copyPlaceholder = async (text: string) => {
     await copyToClipboard(text, "Плейсхолдер скопирован");
-  };
-
-  const toggleRow = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
   };
 
   return (
@@ -544,16 +533,6 @@ export function PlaceholdersCatalogTab() {
               <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
               Всего: <span className="font-medium text-foreground">{rows.length}</span>,
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
-              {runtimeCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> runtime/technical (без FLD-ID): {runtimeCount}
-                </span>
-              )}
-              {postponedCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> postponed (нет источника): {postponedCount}
-                </span>
-              )}
               {packageItemsCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
                   <Info className="h-3.5 w-3.5" /> пакетные (UL/IP/FL): {packageItemsCount}
@@ -561,12 +540,7 @@ export function PlaceholdersCatalogTab() {
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="tech-toggle" className="text-xs text-muted-foreground">
-              Технические данные
-            </Label>
-            <Switch id="tech-toggle" checked={showTechnical} onCheckedChange={setShowTechnical} />
-          </div>
+          <div />
         </div>
 
         <div className="grid gap-2 sm:grid-cols-12 min-w-0 max-w-full">
@@ -575,7 +549,7 @@ export function PlaceholdersCatalogTab() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по названию, FLD-ID, категории, token_key…"
+              placeholder="Поиск по названию, FLD-ID, категории…"
               className="pl-9"
             />
           </div>
@@ -617,7 +591,6 @@ export function PlaceholdersCatalogTab() {
               <Table className="min-w-[1100px]">
                 <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                   <TableRow>
-                    <TableHead className="w-8"></TableHead>
                     <TableHead className="w-[120px]">Группа</TableHead>
                     <TableHead className="min-w-[180px]">Название</TableHead>
                     <TableHead className="w-[110px]">FLD-ID</TableHead>
@@ -631,7 +604,7 @@ export function PlaceholdersCatalogTab() {
                 <TableBody>
                   {filtered.length === 0 && packageItemsCount === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
+                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
                         Ничего не найдено
                       </TableCell>
                     </TableRow>
@@ -641,7 +614,7 @@ export function PlaceholdersCatalogTab() {
                         const copy = SECTION_COPY[section.id];
                         return (
                           <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
-                            <TableCell colSpan={9} className="py-2">
+                            <TableCell colSpan={8} className="py-2">
                               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 <span>{section.label}</span>
                                 <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
@@ -684,7 +657,6 @@ export function PlaceholdersCatalogTab() {
                         );
                       })(),
                       ...section.rows.map(t => {
-                      const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
                       const isPostponed = isPostponedNoSot(t.category, t.token_key);
@@ -701,16 +673,7 @@ export function PlaceholdersCatalogTab() {
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
-                        <Fragment key={t.id}>
-                          <TableRow className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
-                            <TableCell className="p-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-6 w-6"
-                                onClick={() => toggleRow(t.id)}
-                              >
-                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                              </Button>
-                            </TableCell>
+                          <TableRow key={t.id} className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
                             <TableCell className="py-2">
                               <Badge variant="outline" className="text-[10px] font-normal">
                                 {GROUP_LABELS[t.category?.toLowerCase()] ?? GROUP_LABELS[t.category] ?? t.category}
@@ -739,12 +702,11 @@ export function PlaceholdersCatalogTab() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="font-mono text-[10px] cursor-help">
-                                      runtime
+                                      авто
                                     </Badge>
                                   </TooltipTrigger>
                                   <TooltipContent className="max-w-xs">
-                                    Runtime-токен: значение подставляется резолвером по token_key
-                                    <code className="block mt-1">{t.token_key}</code>
+                                    Значение подставляется автоматически при формировании документа.
                                   </TooltipContent>
                                 </Tooltip>
                               ) : (
@@ -763,7 +725,7 @@ export function PlaceholdersCatalogTab() {
                               {isPostponed ? (
                                 <span className="text-[10px] text-muted-foreground italic">недоступно — нет SOT</span>
                               ) : isRuntime ? (
-                                <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
+                                <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>
                               ) : (
                                 <RowSettingsCell
                                   kind={kind}
@@ -817,53 +779,22 @@ export function PlaceholdersCatalogTab() {
                               </div>
                             </TableCell>
                           </TableRow>
-                          {(isOpen || showTechnical) && (
-                            <TableRow key={`${t.id}-detail`} className={cn("bg-muted/20", !isOpen && !showTechnical && "hidden")}>
-                              <TableCell></TableCell>
-                              <TableCell colSpan={7} className="py-2">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
-                                  {t.description && (
-                                    <div className="md:col-span-2 font-sans text-xs text-foreground/80 mb-1">
-                                      {t.description}
-                                    </div>
-                                  )}
-                                  <div>field_public_id: <span className="text-foreground/80">{t.field_public_id ?? "—"}</span></div>
-                                  <div>field_id: <span className="text-foreground/80">{t.field_id ?? "—"}</span></div>
-                                  <div>category: <span className="text-foreground/80">{t.category ?? "—"}</span></div>
-                                  <div>source_type: <span className="text-foreground/80">{t.source_type ?? "—"}</span></div>
-                                  <div className="md:col-span-2 text-muted-foreground/70">
-                                    token_key (legacy, только для поиска):{" "}
-                                    <span className="text-foreground/60">{t.token_key}</span>
-                                  </div>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </Fragment>
                       );
                       }),
                     ])
                   )}
                   {packageSections.flatMap((section) => [
                     <TableRow key={`pkg-sec-${section.id}`} className="bg-muted/60 hover:bg-muted/60">
-                      <TableCell colSpan={9} className="py-2">
+                      <TableCell colSpan={8} className="py-2">
                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           <span>{section.label}</span>
                           <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
                             ({section.items.length})
                           </span>
-                          <Badge variant="outline" className="text-[10px] font-normal normal-case">
-                            package context
-                          </Badge>
                         </div>
                         <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
                           {section.hint}
                         </div>
-                        {isSuperAdmin && (
-                          <div className="mt-1 text-[10px] font-mono text-muted-foreground/60">
-                            source: {section.source_summary}
-                          </div>
-                        )}
                       </TableCell>
                     </TableRow>,
                     ...section.items.map((p) => {
@@ -889,7 +820,7 @@ export function PlaceholdersCatalogTab() {
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
-                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true)
                         : p.package_token;
                       const showModifiers = isReady && rowKind !== "other";
                       // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
@@ -898,14 +829,17 @@ export function PlaceholdersCatalogTab() {
                         const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
                         const allowedFmts: PersonNameFormat[] = ["full", "short", "signature_short"];
                         const safeFmt = allowedFmts.includes(fmt) ? fmt : "full";
-                        return formatPersonName(DEMO_PERSON_NAME, {
+                        const namePreview = formatPersonName(DEMO_PERSON_NAME, {
                           format: safeFmt,
                           case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
                         });
+                        if (isRolesGroup && pkgSettings.includePosition) {
+                          return `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`;
+                        }
+                        return namePreview;
                       })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
-                          <TableCell />
                           <TableCell className="py-2">
                             <Badge variant="outline" className="text-[10px] font-normal">
                               {section.label}
@@ -913,12 +847,6 @@ export function PlaceholdersCatalogTab() {
                           </TableCell>
                           <TableCell className="font-medium text-sm py-2">
                             {p.label_ru}
-                            {isSuperAdmin && (
-                              <span className="block text-[10px] font-mono text-muted-foreground">
-                                {p.tech_key}
-                                {p.source_path ? ` · ${p.source_path}` : ""}
-                              </span>
-                            )}
                           </TableCell>
                           <TableCell className="py-2">
                             {p.reused_fld ? (
@@ -931,11 +859,6 @@ export function PlaceholdersCatalogTab() {
                               </Badge>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
-                            )}
-                            {isSuperAdmin && p.billing_fld_analog && (
-                              <div className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">
-                                ↔ billing {p.billing_fld_analog}
-                              </div>
                             )}
                           </TableCell>
                           <TableCell className="py-2">
@@ -956,6 +879,7 @@ export function PlaceholdersCatalogTab() {
                                 settings={pkgSettings}
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
+                                supportsPosition={isRolesGroup}
                               />
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
@@ -971,11 +895,7 @@ export function PlaceholdersCatalogTab() {
                                 {p.example_value}
                               </span>
                             ) : (
-                              <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
-                                {p.package_resolver_hint.length > 60
-                                  ? p.package_resolver_hint.slice(0, 60) + "…"
-                                  : p.package_resolver_hint}
-                              </span>
+                              <span className="text-muted-foreground/60 italic">— нет примера —</span>
                             )}
                           </TableCell>
                           <TableCell className="py-2">
@@ -1039,6 +959,7 @@ function RowSettingsCell({
   settings,
   onChange,
   supportsLongFormat = false,
+  supportsPosition = false,
 }: {
   // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
   kind: ReturnType<typeof classifyDataType> | "person_name";
@@ -1046,6 +967,8 @@ function RowSettingsCell({
   onChange: (patch: Partial<RowSettings>) => void;
   /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
   supportsLongFormat?: boolean;
+  /** Для ln-ролей: добавить должность перед ФИО. */
+  supportsPosition?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
@@ -1174,6 +1097,18 @@ function RowSettingsCell({
 
       {kind === "boolean" && (
         <span className="text-[10px] text-muted-foreground italic">Падеж недоступен</span>
+      )}
+
+      {isPersonName && supportsPosition && (
+        <Button
+          type="button"
+          variant={settings.includePosition ? "default" : "outline"}
+          size="sm"
+          className="h-7 px-2 text-[10px]"
+          onClick={() => onChange({ includePosition: !settings.includePosition })}
+        >
+          С должностью
+        </Button>
       )}
     </div>
   );

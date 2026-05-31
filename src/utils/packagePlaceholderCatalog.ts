@@ -510,6 +510,7 @@ export function buildPackagePlaceholderToken(
   item: PackagePlaceholderItem,
   format: FieldFormat | null,
   caseModifier: FieldCase | null,
+  includePosition = false,
 ): string | null {
   if (!item.package_token) return null;
   const inner = item.package_token.replace(/^\{\{/, "").replace(/\}\}$/, "");
@@ -533,6 +534,7 @@ export function buildPackagePlaceholderToken(
   }
 
   if (effectiveFormat) parts.push(`format=${effectiveFormat}`);
+  if (isRole && includePosition) parts.push("include_position=true");
   if (caseModifier) parts.push(`case=${caseModifier}`);
   return `{{${parts.join("|")}}}`;
 }

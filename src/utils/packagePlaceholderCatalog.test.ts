@@ -304,6 +304,13 @@ describe("packagePlaceholderCatalog — Sprint 3J-Roles role modifiers", () => {
       .toBe("{{ln-000012|case=genitive}}");
   });
 
+  it("ln + include_position=true добавляет должность в токен роли", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, "genitive", true))
+      .toBe("{{ln-000012|include_position=true|case=genitive}}");
+    expect(buildPackagePlaceholderToken(rolesItem, "short", null, true))
+      .toBe("{{ln-000012|format=short|include_position=true}}");
+  });
+
   it("ln игнорирует format=long/words/text (backend их не понимает у ln)", () => {
     expect(buildPackagePlaceholderToken(rolesItem, "long" as never, null))
       .toBe("{{ln-000012}}");
