@@ -545,16 +545,6 @@ export function PlaceholdersCatalogTab() {
               <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
               Всего: <span className="font-medium text-foreground">{rows.length}</span>,
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
-              {runtimeCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> runtime/technical (без FLD-ID): {runtimeCount}
-                </span>
-              )}
-              {postponedCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> postponed (нет источника): {postponedCount}
-                </span>
-              )}
               {packageItemsCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
                   <Info className="h-3.5 w-3.5" /> пакетные (UL/IP/FL): {packageItemsCount}
@@ -571,7 +561,7 @@ export function PlaceholdersCatalogTab() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по названию, FLD-ID, категории, token_key…"
+              placeholder="Поиск по названию, FLD-ID, категории…"
               className="pl-9"
             />
           </div>
@@ -802,31 +792,22 @@ export function PlaceholdersCatalogTab() {
                               </div>
                             </TableCell>
                           </TableRow>
-                          </TableRow>
                       );
                       }),
                     ])
                   )}
                   {packageSections.flatMap((section) => [
                     <TableRow key={`pkg-sec-${section.id}`} className="bg-muted/60 hover:bg-muted/60">
-                      <TableCell colSpan={9} className="py-2">
+                      <TableCell colSpan={8} className="py-2">
                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           <span>{section.label}</span>
                           <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
                             ({section.items.length})
                           </span>
-                          <Badge variant="outline" className="text-[10px] font-normal normal-case">
-                            package context
-                          </Badge>
                         </div>
                         <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
                           {section.hint}
                         </div>
-                        {isSuperAdmin && (
-                          <div className="mt-1 text-[10px] font-mono text-muted-foreground/60">
-                            source: {section.source_summary}
-                          </div>
-                        )}
                       </TableCell>
                     </TableRow>,
                     ...section.items.map((p) => {
