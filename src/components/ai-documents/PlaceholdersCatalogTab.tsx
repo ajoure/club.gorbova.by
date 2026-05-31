@@ -12,7 +12,7 @@
  *   {{field:FLD-XXXXXX|case=<падеж>}}
  *   {{field:FLD-XXXXXX|format=words|case=<падеж>}}
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw, HelpCircle } from "lucide-react";
+import { Loader2, Copy, Search, Info, RotateCcw, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -83,6 +83,7 @@ interface CatalogRow {
 interface RowSettings {
   format: FieldFormat | null;
   caseModifier: FieldCase | null;
+  includePosition?: boolean;
 }
 
 /**
@@ -272,7 +273,17 @@ const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
 ];
 
 function isDefault(s: RowSettings | undefined): boolean {
-  return !s || (s.format === null && s.caseModifier === null);
+  return !s || (s.format === null && s.caseModifier === null && !s.includePosition);
+}
+
+const DEMO_ROLE_POSITION = "юрисконсульт";
+
+function formatDemoRolePosition(caseModifier: FieldCase | null): string {
+  if (caseModifier === "genitive" || caseModifier === "accusative") return "юрисконсульта";
+  if (caseModifier === "dative") return "юрисконсульту";
+  if (caseModifier === "instrumental") return "юрисконсультом";
+  if (caseModifier === "prepositional") return "юрисконсульте";
+  return DEMO_ROLE_POSITION;
 }
 
 export function PlaceholdersCatalogTab() {
