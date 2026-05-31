@@ -966,9 +966,9 @@ export function PlaceholdersCatalogTab() {
                               <span className="italic" title={`Demo: ${DEMO_PERSON_NAME}`}>
                                 {personNamePreview}
                               </span>
-                            ) : isReady ? (
-                              <span className="text-muted-foreground/70 italic">
-                                Пример появится после заполнения анкеты документа
+                            ) : p.example_value ? (
+                              <span className="italic" title="Демонстрационный пример">
+                                {p.example_value}
                               </span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>

@@ -1,9 +1,12 @@
 /**
  * FileNameTemplateEditor — UI редактор file_name_template для шаблона документа.
  *
- * PATCH-B (FLD-first canon):
- *  - допустим только синтаксис {{field:FLD-XXXXXX}};
- *  - шаблон обязан содержать FLD-000069 (Номер документа);
+ * PATCH-B (FLD-first canon) + Sprint 3K (scope-aware + soft FLD-000069):
+ *  - синтаксис для billing-шаблонов: {{field:FLD-XXXXXX[|format=…|case=…]}};
+ *  - для package-шаблонов дополнительно: {{package.(ul|ip|fl).FLD-XXXXXX[|…]}},
+ *    {{ln-XXXXXX[|…]}};
+ *  - FLD-000069 (Номер документа) больше НЕ обязателен — только информационная
+ *    подсказка. Шаблон без него может быть сохранён/активирован;
  *  - расширение (.pdf/.docx) добавляется системой автоматически;
  *  - production-шаблоны хранят NULL по умолчанию (системный дефолт).
  *
@@ -27,6 +30,9 @@ import {
   templateHasDocNumberFld,
   validateFilenameTemplateSyntax,
   FLD_PLACEHOLDER_RE,
+  PACKAGE_PLACEHOLDER_RE,
+  LN_PLACEHOLDER_RE,
+  type FilenameScope,
 } from "@/lib/documents/documentFilename";
 import { FieldPickerPopover } from "./FieldPickerPopover";
 import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
@@ -34,14 +40,21 @@ import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSug
 interface Props {
   templateId: string;
   templateName: string;
+  /**
+   * Sprint 3K: scope текущего шаблона. Для 'package' разрешены package/ln-токены
+   * в имени файла. Default 'billing' — обратная совместимость.
+   */
+  templateScope?: FilenameScope | null;
 }
 
 const DOC_NUMBER_FLD = "FLD-000069";
 
-export function FileNameTemplateEditor({ templateId, templateName }: Props) {
+export function FileNameTemplateEditor({ templateId, templateName, templateScope }: Props) {
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pickerBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const scope: FilenameScope = templateScope === "package" ? "package" : "billing";
 
   const [template, setTemplate] = useState<string>("");
   const [original, setOriginal] = useState<string>("");
@@ -83,52 +96,103 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
     return m;
   }, [refs]);
 
-  const syntax = useMemo(() => validateFilenameTemplateSyntax(template), [template]);
+  const syntax = useMemo(() => validateFilenameTemplateSyntax(template, scope), [template, scope]);
   const hasDocNumber = useMemo(() => templateHasDocNumberFld(template), [template]);
   const hasExtensionInTemplate = /\.(pdf|docx)\s*$/i.test(template.trim());
 
-  // Preview tokens: human-readable labels for all known FLDs, fixed sample for doc number.
+  // Preview tokens: human-readable labels for all known FLDs, demo for package/ln.
   const previewTokens = useMemo(() => {
     const t: Record<string, string> = { [DOC_NUMBER_FLD]: "PREVIEW-0001" };
     for (const r of refs) {
       if (r.field_public_id === DOC_NUMBER_FLD) continue;
       t[r.field_public_id] = `«${r.ui_label}»`;
     }
+    // Sprint 3K: подставляем демо-значения для package/ln токенов в preview
+    // (значения только для UI live-preview; реальный backend резолвит по контексту).
+    if (scope === "package") {
+      // Извлекаем актуальные package/ln-токены из шаблона и проставляем демо.
+      for (const raw of extractFilenamePlaceholders(template)) {
+        const pm = raw.match(PACKAGE_PLACEHOLDER_RE);
+        if (pm) {
+          const base = `package.${pm[1]}.${pm[2]}`;
+          if (!t[base]) t[base] = `«${pm[1].toUpperCase()} ${pm[2]}»`;
+          continue;
+        }
+        const lm = raw.match(LN_PLACEHOLDER_RE);
+        if (lm && !t[lm[1]]) t[lm[1]] = `«роль ${lm[1]}»`;
+      }
+    }
     return t;
-  }, [refs]);
+  }, [refs, scope, template]);
 
   const previewResult = useMemo(
-    () => renderFileName(template, previewTokens),
-    [template, previewTokens],
+    () => renderFileName(template, previewTokens, scope),
+    [template, previewTokens, scope],
   );
 
-  // FLDs реально использованные в шаблоне → для легенды
-  const usedFlds = useMemo(() => {
-    const set = new Set<string>();
+  // FLDs / package / ln токены, реально использованные в шаблоне → для легенды.
+  const usedTokens = useMemo(() => {
+    const arr: Array<{ key: string; label: string; isRequired?: boolean }> = [];
+    const seen = new Set<string>();
     for (const raw of extractFilenamePlaceholders(template)) {
-      const m = raw.match(FLD_PLACEHOLDER_RE);
-      if (m) set.add(m[1]);
+      let m = raw.match(FLD_PLACEHOLDER_RE);
+      if (m) {
+        const fld = m[1];
+        if (seen.has(`fld:${fld}`)) continue;
+        seen.add(`fld:${fld}`);
+        const label = fld === DOC_NUMBER_FLD
+          ? "Номер документа (рекомендуется)"
+          : refsByFld.get(fld)?.ui_label ?? "неизвестный плейсхолдер";
+        arr.push({ key: fld, label });
+        continue;
+      }
+      if (scope === "package") {
+        m = raw.match(PACKAGE_PLACEHOLDER_RE);
+        if (m) {
+          const base = `package.${m[1]}.${m[2]}`;
+          if (seen.has(base)) continue;
+          seen.add(base);
+          arr.push({ key: base, label: `Пакет: ${m[1].toUpperCase()} · ${m[2]}` });
+          continue;
+        }
+        const lm = raw.match(LN_PLACEHOLDER_RE);
+        if (lm) {
+          if (seen.has(lm[1])) continue;
+          seen.add(lm[1]);
+          arr.push({ key: lm[1], label: `Пакет: роль ${lm[1]}` });
+        }
+      }
     }
-    return Array.from(set);
-  }, [template]);
+    return arr;
+  }, [template, refsByFld, scope]);
 
-  const reasons = useMemo(() => {
+  // Sprint 3K: warnings (информационные) и errors (блокирующие) разделены.
+  const errors = useMemo(() => {
     const list: string[] = [];
     if (!template.trim()) list.push("Шаблон пустой");
     if (template.trim() && !syntax.ok) {
+      const allowed = scope === "package"
+        ? "{{field:FLD-XXXXXX}}, {{package.(ul|ip|fl).FLD-XXXXXX}}, {{ln-XXXXXX}} (опционально |format=…|case=…)"
+        : "{{field:FLD-XXXXXX}} (опционально |format=…|case=…)";
       list.push(
-        `Недопустимые плейсхолдеры: ${syntax.invalid.map((s) => `{{${s}}}`).join(", ")} — разрешён только {{field:FLD-XXXXXX}}`,
+        `Недопустимые плейсхолдеры: ${syntax.invalid.map((s) => `{{${s}}}`).join(", ")} — разрешены только ${allowed}`,
       );
-    }
-    if (template.trim() && !hasDocNumber) {
-      list.push(`Добавьте {{field:${DOC_NUMBER_FLD}}} (Номер документа) — обязателен для уникальности`);
     }
     if (hasExtensionInTemplate) list.push("Не указывайте .pdf/.docx — расширение добавится автоматически");
     return list;
-  }, [template, syntax, hasDocNumber, hasExtensionInTemplate]);
+  }, [template, syntax, hasExtensionInTemplate, scope]);
 
-  const isValid =
-    template.trim().length > 0 && syntax.ok && hasDocNumber && !hasExtensionInTemplate;
+  const warnings = useMemo(() => {
+    const list: string[] = [];
+    if (template.trim() && !hasDocNumber) {
+      list.push(
+        `Номер документа не найден. Если шаблону нужен регистрационный номер, добавьте {{field:${DOC_NUMBER_FLD}}}.`,
+      );
+    }
+    return list;
+  }, [template, hasDocNumber]);
+
+  const isValid = template.trim().length > 0 && syntax.ok && !hasExtensionInTemplate;
   const dirty = template !== original;
   const canSave = isValid && dirty && !saving;
 
@@ -223,7 +287,17 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
       <div>
         <Label className="text-xs">Имя файла при скачивании ({templateName})</Label>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Поддерживается только синтаксис <code>{`{{field:FLD-XXXXXX}}`}</code>.
+          {scope === "package" ? (
+            <>
+              Поддерживаются <code>{`{{field:FLD-XXXXXX}}`}</code>,{" "}
+              <code>{`{{package.(ul|ip|fl).FLD-XXXXXX}}`}</code>,{" "}
+              <code>{`{{ln-XXXXXX}}`}</code> (опционально <code>|format=…|case=…</code>).
+            </>
+          ) : (
+            <>
+              Поддерживается только синтаксис <code>{`{{field:FLD-XXXXXX}}`}</code>.
+            </>
+          )}{" "}
           Расширение <code>.pdf</code> / <code>.docx</code> добавляется автоматически.
         </p>
       </div>
@@ -254,24 +328,16 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
         </span>
       </div>
 
-      {/* Легенда: только FLD, реально использованные в шаблоне */}
-      {usedFlds.length > 0 && (
+      {/* Легенда: использованные в шаблоне токены (FLD + package + ln) */}
+      {usedTokens.length > 0 && (
         <ul className="text-[11px] space-y-0.5 rounded border bg-muted/20 px-2 py-1.5">
-          {usedFlds.map((fld) => {
-            const ref = refsByFld.get(fld);
-            const label = fld === DOC_NUMBER_FLD
-              ? "Номер документа (обязателен)"
-              : ref?.ui_label;
-            return (
-              <li key={fld} className="font-mono">
-                <span className="text-muted-foreground">{fld}</span>
-                {" — "}
-                <span className={label ? "text-foreground" : "text-destructive"}>
-                  {label ?? "неизвестный плейсхолдер"}
-                </span>
-              </li>
-            );
-          })}
+          {usedTokens.map((t) => (
+            <li key={t.key} className="font-mono">
+              <span className="text-muted-foreground">{t.key}</span>
+              {" — "}
+              <span className="text-foreground">{t.label}</span>
+            </li>
+          ))}
         </ul>
       )}
 
@@ -292,12 +358,21 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
         )}
       </div>
 
-      {/* Reasons / validity */}
-      {reasons.length > 0 ? (
+      {/* Errors (блокируют сохранение) */}
+      {errors.length > 0 && (
         <ul className="text-[11px] text-destructive space-y-0.5">
-          {reasons.map((r, i) => <li key={i}>✗ {r}</li>)}
+          {errors.map((r, i) => <li key={i}>✗ {r}</li>)}
         </ul>
-      ) : (
+      )}
+
+      {/* Warnings (информационные, не блокируют) */}
+      {warnings.length > 0 && (
+        <ul className="text-[11px] text-amber-600 space-y-0.5">
+          {warnings.map((w, i) => <li key={i}>ⓘ {w}</li>)}
+        </ul>
+      )}
+
+      {errors.length === 0 && (
         <p className="text-[11px] text-emerald-600">✓ Шаблон валиден</p>
       )}
 

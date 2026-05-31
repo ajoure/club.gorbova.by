@@ -2,12 +2,30 @@
 // document-filename.ts — pure helpers для рендера human-readable имени файла
 // сгенерированного документа.
 //
-// Канон (PATCH-B): поддерживаются ТОЛЬКО плейсхолдеры формата
-//   {{field:FLD-XXXXXX}}
+// Канон (PATCH-B + Sprint 3K):
+//   Поддерживаемые плейсхолдеры:
+//
+//     billing scope (default):
+//       {{field:FLD-XXXXXX}}                               — биллинговый FLD
+//       {{field:FLD-XXXXXX|format=…|case=…}}               — с модификаторами
+//
+//     package scope (только для шаблонов document_templates.template_scope='package'):
+//       все формы из billing
+//       {{package.(ul|ip|fl).FLD-XXXXXX}}                   — реквизиты UL/IP/ФЛ
+//       {{package.(ul|ip|fl).FLD-XXXXXX|format=…|case=…}}
+//       {{ln-XXXXXX}}                                       — role placeholder
+//       {{ln-XXXXXX|format=…|case=…}}
+//
 // Любой другой синтаксис {{...}} → warning `file_name_placeholder_invalid_syntax:<raw>`,
 // в результирующем имени плейсхолдер заменяется на пустую строку.
-// Unresolved FLD (нет в resolvedTokens) → warning `file_name_placeholder_unresolved:FLD-…`,
+// Unresolved токен (нет в resolvedTokens) → warning `file_name_placeholder_unresolved:<key>`,
 // тоже пустая строка.
+//
+// Ключи в `resolvedTokens` хранятся БЕЗ внешних `{{ }}` и БЕЗ модификаторов:
+//   'FLD-000069', 'package.ul.FLD-000011', 'ln-000012'
+// Это позволяет оркестратору переиспользовать ту же мапу, что и для тела
+// документа (см. canonical-document-generate-strict + _shared/resolve-package-tokens.ts),
+// добавляя ключи модификаторов опционально (см. ниже fallback).
 //
 // FLD-первый канон не вводит alias-плейсхолдеры (никаких {{document_number}},
 // {{payer_short_name}} и т.п.).
@@ -20,18 +38,38 @@
 //   - пустой результат → null (вызывающий применит системный дефолт)
 // ============================================================================
 
+export type FilenameScope = 'billing' | 'package';
+
 export const FILENAME_PLACEHOLDER_RE = /\{\{\s*([^}]+?)\s*\}\}/g;
-export const FLD_PLACEHOLDER_RE = /^field:(FLD-\d+)$/;
+
+// Внутренний слой плейсхолдера (без `{{ }}`) — три формы:
+//   field:FLD-XXXXXX[|key=val]*
+//   package.(ul|ip|fl).FLD-XXXXXX[|key=val]*
+//   ln-XXXXXX[|key=val]*
+const FLD_PLACEHOLDER_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+const PACKAGE_PLACEHOLDER_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+const LN_PLACEHOLDER_RE = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+export { FLD_PLACEHOLDER_RE };
 export const FLD_ID_RE = /^FLD-\d+$/;
 
 export const FILENAME_MAX_LEN = 180;
-// Минимальный whitelist FLD номера документа (для validation).
+// Whitelist FLD номера документа (для информационного warning'а в UI).
 // Канонический FLD номера: FLD-000069 (document.number).
+// Sprint 3K: FLD-000069 больше НЕ обязателен для активации/сохранения шаблона —
+// только информационная подсказка.
 export const FILENAME_DOC_NUMBER_FLDS = new Set(['FLD-000069']);
 
 export interface RenderFileNameOptions {
-  /** map { 'FLD-000069': 'rendered string', ... } — те же значения, что DOCX. */
+  /**
+   * map { 'FLD-000069': 'rendered string', 'package.ul.FLD-000011': '...',
+   *       'ln-000012': '...', ... }  — те же значения, что DOCX.
+   * Для токенов с модификаторами оркестратор может опционально записать
+   * вариант с полным ключом (`'package.ul.FLD-000014|format=short'`) —
+   * рендерер сначала ищет полный ключ, потом базовый.
+   */
   resolvedTokens: Record<string, string>;
+  /** Default 'billing' — обратная совместимость. */
+  scope?: FilenameScope;
 }
 
 export interface RenderFileNameResult {
@@ -59,14 +97,20 @@ export function templateHasDocNumberFld(template: string): boolean {
   return false;
 }
 
-/** True, если все плейсхолдеры — валидные `field:FLD-XXXXXX`. */
-export function validateFilenameTemplateSyntax(template: string): {
-  ok: boolean;
-  invalid: string[];
-} {
+/**
+ * True, если все плейсхолдеры соответствуют допустимой grammar для данного scope.
+ * Sprint 3K: для `package`-scope валидны package/ln-токены с модификаторами;
+ * для `billing` остаётся только `field:FLD-XXXXXX[|...]`.
+ */
+export function validateFilenameTemplateSyntax(
+  template: string,
+  scope: FilenameScope = 'billing',
+): { ok: boolean; invalid: string[] } {
   const invalid: string[] = [];
   for (const raw of extractFilenamePlaceholders(template || '')) {
-    if (!FLD_PLACEHOLDER_RE.test(raw)) invalid.push(raw);
+    if (FLD_PLACEHOLDER_RE.test(raw)) continue;
+    if (scope === 'package' && (PACKAGE_PLACEHOLDER_RE.test(raw) || LN_PLACEHOLDER_RE.test(raw))) continue;
+    invalid.push(raw);
   }
   return { ok: invalid.length === 0, invalid };
 }
@@ -92,6 +136,52 @@ export function sanitizeFilename(raw: string): string {
 }
 
 /**
+ * Резолв одного raw-плейсхолдера. Возвращает либо строку для подстановки,
+ * либо warning-код.
+ */
+function resolveToken(
+  raw: string,
+  scope: FilenameScope,
+  resolved: Record<string, string>,
+): { ok: true; value: string } | { ok: false; warning: string } {
+  // 1) {{field:FLD-XXXXXX[|...]}}
+  let m = raw.match(FLD_PLACEHOLDER_RE);
+  if (m) {
+    const fld = m[1];
+    // Сначала ищем точный ключ (с модификаторами), потом базовый FLD.
+    const exact = resolved[raw] ?? resolved[fld];
+    if (exact === undefined || exact === null || String(exact).trim() === '') {
+      return { ok: false, warning: `file_name_placeholder_unresolved:${fld}` };
+    }
+    return { ok: true, value: String(exact) };
+  }
+
+  // 2) package/ln — только в package scope
+  if (scope === 'package') {
+    m = raw.match(PACKAGE_PLACEHOLDER_RE);
+    if (m) {
+      const base = `package.${m[1]}.${m[2]}`;
+      const val = resolved[raw] ?? resolved[base];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        return { ok: false, warning: `file_name_placeholder_unresolved:${base}` };
+      }
+      return { ok: true, value: String(val) };
+    }
+    m = raw.match(LN_PLACEHOLDER_RE);
+    if (m) {
+      const base = m[1];
+      const val = resolved[raw] ?? resolved[base];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        return { ok: false, warning: `file_name_placeholder_unresolved:${base}` };
+      }
+      return { ok: true, value: String(val) };
+    }
+  }
+
+  return { ok: false, warning: `file_name_placeholder_invalid_syntax:${raw}` };
+}
+
+/**
  * Рендер шаблона имени файла. Возвращает null если итог пустой —
  * вызывающий должен подставить системный дефолт.
  */
@@ -104,20 +194,15 @@ export function renderFileName(
     return { name: null, warnings };
   }
   const resolved = opts.resolvedTokens || {};
+  const scope: FilenameScope = opts.scope ?? 'billing';
   const out = template.replace(FILENAME_PLACEHOLDER_RE, (_, raw: string) => {
     const r = raw.trim();
-    const m = r.match(FLD_PLACEHOLDER_RE);
-    if (!m) {
-      warnings.push(`file_name_placeholder_invalid_syntax:${r}`);
+    const res = resolveToken(r, scope, resolved);
+    if (!res.ok) {
+      warnings.push(res.warning);
       return '';
     }
-    const fld = m[1];
-    const val = resolved[fld];
-    if (val === undefined || val === null || String(val).trim() === '') {
-      warnings.push(`file_name_placeholder_unresolved:${fld}`);
-      return '';
-    }
-    return String(val);
+    return res.value;
   });
   const sanitized = sanitizeFilename(out);
   if (!sanitized) {
