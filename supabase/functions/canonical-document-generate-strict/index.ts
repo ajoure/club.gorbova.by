@@ -38,6 +38,7 @@ const PERSON_NAME_PACKAGE_BAG_KEYS: ReadonlySet<string> = new Set([
 ]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
+import { buildSystemFieldValues, SYSTEM_FIELD_VALUE_IDS } from '../_shared/system-field-values.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 import { resolveDocumentScenario, type PayerType } from '../_shared/document-scenario-resolver.ts';
 import { derivePaymentChannel } from '../_shared/document-resolver-v2/payment-channel.ts';
@@ -1350,6 +1351,10 @@ Deno.serve(async (req) => {
     // package/ln-токены (с модификаторами и без) — иначе renderFileName видит
     // только FLD и режет {{package.ul.FLD-…}} в пустую строку.
     const _filenameTokenMapEarly: Record<string, string> = {};
+    // Sprint 3M: backstop — system-FLD значения (FLD-000133 и т.п.) на случай,
+    // когда они используются ТОЛЬКО в file_name_template и не попали в docFields
+    // через preresolved_fields (например, у старых батчей пакета).
+    const _fnSysVals = buildSystemFieldValues(new Date());
     for (const fld of filenameFlds) {
       const directKey = `field:${fld}`;
       if (Object.prototype.hasOwnProperty.call(resolved, directKey)) {
@@ -1361,7 +1366,11 @@ Deno.serve(async (req) => {
       const entry = baseEntryByFld[fld];
       const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
-      _filenameTokenMapEarly[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+      let _early = fmt.value ?? baseValueByFld[fld] ?? '';
+      if ((!_early || _early === '') && SYSTEM_FIELD_VALUE_IDS.has(fld) && _fnSysVals[fld]) {
+        _early = _fnSysVals[fld];
+      }
+      _filenameTokenMapEarly[fld] = _early;
     }
     // Sprint 3L: package/ln из resolved (ключ = raw_inside, без `{{}}`).
     const _fnScope: 'billing' | 'package' = generationContext === 'package_session' ? 'package' : 'billing';
@@ -1482,7 +1491,12 @@ Deno.serve(async (req) => {
       // Для date/datetime принудительно DD.MM.YYYY (как в DOCX-резолвере по умолчанию).
       const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
-      filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+      let _fnVal = fmt.value ?? baseValueByFld[fld] ?? '';
+      // Sprint 3M: backstop для system-FLD (см. _fnSysVals выше).
+      if ((!_fnVal || _fnVal === '') && SYSTEM_FIELD_VALUE_IDS.has(fld) && _fnSysVals[fld]) {
+        _fnVal = _fnSysVals[fld];
+      }
+      filenameTokenMap[fld] = _fnVal;
     }
     // Sprint 3L: enrich package/ln keys for package scope.
     if (_fnScope === 'package') {
