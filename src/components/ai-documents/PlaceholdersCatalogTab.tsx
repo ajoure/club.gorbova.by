@@ -837,7 +837,6 @@ export function PlaceholdersCatalogTab() {
                       })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
-                          <TableCell />
                           <TableCell className="py-2">
                             <Badge variant="outline" className="text-[10px] font-normal">
                               {section.label}
@@ -845,12 +844,6 @@ export function PlaceholdersCatalogTab() {
                           </TableCell>
                           <TableCell className="font-medium text-sm py-2">
                             {p.label_ru}
-                            {isSuperAdmin && (
-                              <span className="block text-[10px] font-mono text-muted-foreground">
-                                {p.tech_key}
-                                {p.source_path ? ` · ${p.source_path}` : ""}
-                              </span>
-                            )}
                           </TableCell>
                           <TableCell className="py-2">
                             {p.reused_fld ? (
@@ -863,11 +856,6 @@ export function PlaceholdersCatalogTab() {
                               </Badge>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
-                            )}
-                            {isSuperAdmin && p.billing_fld_analog && (
-                              <div className="text-[9px] font-mono text-muted-foreground/60 mt-0.5">
-                                ↔ billing {p.billing_fld_analog}
-                              </div>
                             )}
                           </TableCell>
                           <TableCell className="py-2">
