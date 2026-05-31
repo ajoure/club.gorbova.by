@@ -1,10 +1,17 @@
 /**
  * documentFilename — frontend mirror supabase/functions/_shared/document-filename.ts.
  * Используется в UI редактора шаблона имени файла (live-preview, validation).
+ *
+ * Sprint 3K: добавлена scope-aware grammar (billing vs package). Для package
+ * шаблонов разрешены package/ln-токены с modifiers (зеркало backend).
  */
 
+export type FilenameScope = "billing" | "package";
+
 export const FILENAME_PLACEHOLDER_RE = /\{\{\s*([^}]+?)\s*\}\}/g;
-export const FLD_PLACEHOLDER_RE = /^field:(FLD-\d+)$/;
+export const FLD_PLACEHOLDER_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+export const PACKAGE_PLACEHOLDER_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+export const LN_PLACEHOLDER_RE = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 export const FILENAME_MAX_LEN = 180;
 export const FILENAME_DOC_NUMBER_FLDS = new Set(["FLD-000069"]);
 
@@ -25,13 +32,15 @@ export function templateHasDocNumberFld(template: string): boolean {
   return false;
 }
 
-export function validateFilenameTemplateSyntax(template: string): {
-  ok: boolean;
-  invalid: string[];
-} {
+export function validateFilenameTemplateSyntax(
+  template: string,
+  scope: FilenameScope = "billing",
+): { ok: boolean; invalid: string[] } {
   const invalid: string[] = [];
   for (const raw of extractFilenamePlaceholders(template || "")) {
-    if (!FLD_PLACEHOLDER_RE.test(raw)) invalid.push(raw);
+    if (FLD_PLACEHOLDER_RE.test(raw)) continue;
+    if (scope === "package" && (PACKAGE_PLACEHOLDER_RE.test(raw) || LN_PLACEHOLDER_RE.test(raw))) continue;
+    invalid.push(raw);
   }
   return { ok: invalid.length === 0, invalid };
 }
@@ -57,26 +66,56 @@ export interface RenderFileNameResult {
   warnings: string[];
 }
 
+function resolveToken(
+  raw: string,
+  scope: FilenameScope,
+  resolved: Record<string, string>,
+): { ok: true; value: string } | { ok: false; warning: string } {
+  let m = raw.match(FLD_PLACEHOLDER_RE);
+  if (m) {
+    const fld = m[1];
+    const val = resolved[raw] ?? resolved[fld];
+    if (val === undefined || val === null || String(val).trim() === "") {
+      return { ok: false, warning: `file_name_placeholder_unresolved:${fld}` };
+    }
+    return { ok: true, value: String(val) };
+  }
+  if (scope === "package") {
+    m = raw.match(PACKAGE_PLACEHOLDER_RE);
+    if (m) {
+      const base = `package.${m[1]}.${m[2]}`;
+      const val = resolved[raw] ?? resolved[base];
+      if (val === undefined || val === null || String(val).trim() === "") {
+        return { ok: false, warning: `file_name_placeholder_unresolved:${base}` };
+      }
+      return { ok: true, value: String(val) };
+    }
+    m = raw.match(LN_PLACEHOLDER_RE);
+    if (m) {
+      const base = m[1];
+      const val = resolved[raw] ?? resolved[base];
+      if (val === undefined || val === null || String(val).trim() === "") {
+        return { ok: false, warning: `file_name_placeholder_unresolved:${base}` };
+      }
+      return { ok: true, value: String(val) };
+    }
+  }
+  return { ok: false, warning: `file_name_placeholder_invalid_syntax:${raw}` };
+}
+
 export function renderFileName(
   template: string | null | undefined,
   resolvedTokens: Record<string, string>,
+  scope: FilenameScope = "billing",
 ): RenderFileNameResult {
   const warnings: string[] = [];
   if (!template || !template.trim()) return { name: null, warnings };
   const out = template.replace(FILENAME_PLACEHOLDER_RE, (_, raw: string) => {
     const r = raw.trim();
-    const m = r.match(FLD_PLACEHOLDER_RE);
-    if (!m) {
-      warnings.push(`file_name_placeholder_invalid_syntax:${r}`);
-      return "";
-    }
-    const fld = m[1];
-    const val = resolvedTokens[fld];
-    if (val === undefined || val === null || String(val).trim() === "") {
-      warnings.push(`file_name_placeholder_unresolved:${fld}`);
-      return "";
-    }
-    return String(val);
+    const res = resolveToken(r, scope, resolvedTokens);
+    if (res.ok === true) return res.value;
+    warnings.push(res.warning);
+    return "";
   });
   const sanitized = sanitizeFilename(out);
   if (!sanitized) {

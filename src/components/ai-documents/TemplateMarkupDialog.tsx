@@ -235,14 +235,23 @@ export type TokenKind = "valid" | "package_in_billing" | "legacy";
 
 const ANY_PLACEHOLDER_RE = /\{\{[^{}]+\}\}/g;
 
+/**
+ * Sprint 3K: regexes допускают опциональный modifier-хвост
+ * `(?:\|[a-z_]+=[a-z_]+)*` (zero или больше `|key=value` блоков).
+ * Это зеркало backend strict-валидатора (RX_PACKAGE_REQ / RX_PACKAGE_ROLE_LN
+ * в StrictDocumentTemplatesManager) и `_shared/canonical-document-generate-strict`.
+ * Без этого валидные {{package.ul.FLD-000014|format=signature_short}} и
+ * {{ln-000012|format=signature_short}} попадали в `legacy` и подсвечивались жёлтым.
+ */
+const MOD_TAIL = /(?:\|[a-z_]+=[a-z_]+)*/.source;
 /** {{field:FLD-XXXXXX}} с опциональными модификаторами |case=… / |format=…  */
-const RE_FIELD_FLD = /^\{\{field:FLD-\d{6}(?:\|(?:case|format)=[a-z_]+)*\}\}$/;
-/** {{package.ul|ip|fl.FLD-XXXXXX}} */
-const RE_PACKAGE_ENTITY_FLD = /^\{\{package\.(?:ul|ip|fl)\.FLD-\d{6}\}\}$/;
-/** {{ln-XXXXXX}} — канон роли (Sprint 3H-fix) */
-const RE_LN_ROLE = /^\{\{ln-\d{6}\}\}$/;
+const RE_FIELD_FLD = new RegExp(`^\\{\\{field:FLD-\\d{6}${MOD_TAIL}\\}\\}$`);
+/** {{package.ul|ip|fl.FLD-XXXXXX[|...]}} */
+const RE_PACKAGE_ENTITY_FLD = new RegExp(`^\\{\\{package\\.(?:ul|ip|fl)\\.FLD-\\d{6}${MOD_TAIL}\\}\\}$`);
+/** {{ln-XXXXXX[|...]}} — канон роли (Sprint 3H-fix) */
+const RE_LN_ROLE = new RegExp(`^\\{\\{ln-\\d{6}${MOD_TAIL}\\}\\}$`);
 /** Реально legacy: {{package.role.PKR-…}} / {{package.roles.<key>.*}} */
-const RE_LEGACY_PKR = /^\{\{package\.role\.PKR-\d{6}\}\}$/;
+const RE_LEGACY_PKR = /^\{\{package\.role\.PKR-\d{6}(?:\|[^}]+)?\}\}$/;
 const RE_LEGACY_PACKAGE_ROLES = /^\{\{package\.roles\.[^{}]+\}\}$/;
 
 /**

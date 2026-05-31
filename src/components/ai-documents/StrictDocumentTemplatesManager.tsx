@@ -269,6 +269,8 @@ interface TemplateRow {
   current_version_id: string | null;
   created_at: string;
   category: string | null;
+  /** Sprint 3K: нужен для scope-aware валидации file_name_template. */
+  template_scope: string | null;
 }
 
 
@@ -369,7 +371,7 @@ export function StrictDocumentTemplatesManager({
     setLoading(true);
     let tplQuery = supabase
       .from("document_templates")
-      .select("id, name, description, template_status, current_version_id, created_at, category")
+      .select("id, name, description, template_status, current_version_id, created_at, category, template_scope")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
     if (categoryFilter) {
@@ -615,6 +617,7 @@ export function StrictDocumentTemplatesManager({
             current_version_id: templateCurrentVersionId,
             created_at: templateCreatedAt,
             category: categoryFilter ?? (existing as any)?.category ?? null,
+            template_scope: (existing as any)?.template_scope ?? null,
           };
 
           await openPreview(tplRow, verRow);
@@ -1083,6 +1086,7 @@ export function StrictDocumentTemplatesManager({
                 <FileNameTemplateEditor
                   templateId={activeTemplate.id}
                   templateName={activeTemplate.name}
+                  templateScope={(activeTemplate.template_scope === "package" ? "package" : "billing")}
                 />
               )}
             </div>
