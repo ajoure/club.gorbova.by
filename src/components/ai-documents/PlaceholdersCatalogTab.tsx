@@ -562,12 +562,7 @@ export function PlaceholdersCatalogTab() {
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="tech-toggle" className="text-xs text-muted-foreground">
-              Технические данные
-            </Label>
-            <Switch id="tech-toggle" checked={showTechnical} onCheckedChange={setShowTechnical} />
-          </div>
+          <div />
         </div>
 
         <div className="grid gap-2 sm:grid-cols-12 min-w-0 max-w-full">
@@ -618,7 +613,6 @@ export function PlaceholdersCatalogTab() {
               <Table className="min-w-[1100px]">
                 <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                   <TableRow>
-                    <TableHead className="w-8"></TableHead>
                     <TableHead className="w-[120px]">Группа</TableHead>
                     <TableHead className="min-w-[180px]">Название</TableHead>
                     <TableHead className="w-[110px]">FLD-ID</TableHead>
@@ -632,7 +626,7 @@ export function PlaceholdersCatalogTab() {
                 <TableBody>
                   {filtered.length === 0 && packageItemsCount === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
+                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
                         Ничего не найдено
                       </TableCell>
                     </TableRow>
@@ -642,7 +636,7 @@ export function PlaceholdersCatalogTab() {
                         const copy = SECTION_COPY[section.id];
                         return (
                           <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
-                            <TableCell colSpan={9} className="py-2">
+                            <TableCell colSpan={8} className="py-2">
                               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 <span>{section.label}</span>
                                 <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
@@ -685,7 +679,6 @@ export function PlaceholdersCatalogTab() {
                         );
                       })(),
                       ...section.rows.map(t => {
-                      const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
                       const isPostponed = isPostponedNoSot(t.category, t.token_key);
@@ -702,16 +695,7 @@ export function PlaceholdersCatalogTab() {
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
-                        <Fragment key={t.id}>
-                          <TableRow className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
-                            <TableCell className="p-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-6 w-6"
-                                onClick={() => toggleRow(t.id)}
-                              >
-                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                              </Button>
-                            </TableCell>
+                          <TableRow key={t.id} className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
                             <TableCell className="py-2">
                               <Badge variant="outline" className="text-[10px] font-normal">
                                 {GROUP_LABELS[t.category?.toLowerCase()] ?? GROUP_LABELS[t.category] ?? t.category}
@@ -818,29 +802,7 @@ export function PlaceholdersCatalogTab() {
                               </div>
                             </TableCell>
                           </TableRow>
-                          {(isOpen || showTechnical) && (
-                            <TableRow key={`${t.id}-detail`} className={cn("bg-muted/20", !isOpen && !showTechnical && "hidden")}>
-                              <TableCell></TableCell>
-                              <TableCell colSpan={7} className="py-2">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
-                                  {t.description && (
-                                    <div className="md:col-span-2 font-sans text-xs text-foreground/80 mb-1">
-                                      {t.description}
-                                    </div>
-                                  )}
-                                  <div>field_public_id: <span className="text-foreground/80">{t.field_public_id ?? "—"}</span></div>
-                                  <div>field_id: <span className="text-foreground/80">{t.field_id ?? "—"}</span></div>
-                                  <div>category: <span className="text-foreground/80">{t.category ?? "—"}</span></div>
-                                  <div>source_type: <span className="text-foreground/80">{t.source_type ?? "—"}</span></div>
-                                  <div className="md:col-span-2 text-muted-foreground/70">
-                                    token_key (legacy, только для поиска):{" "}
-                                    <span className="text-foreground/60">{t.token_key}</span>
-                                  </div>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </Fragment>
+                          </TableRow>
                       );
                       }),
                     ])
