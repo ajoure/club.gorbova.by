@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
     const templateIds = Array.from(new Set(items.map((i: any) => i.template_id).filter(Boolean)));
     const { data: tpls } = await supabase
       .from('document_templates')
-      .select('id, name, current_version_id')
+      .select('id, name, current_version_id, file_name_template')
       .in('id', templateIds.length ? templateIds : ['__none__']);
     const tplMap = new Map<string, any>((tpls || []).map((t: any) => [t.id, t]));
 
