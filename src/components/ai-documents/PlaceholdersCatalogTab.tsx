@@ -828,6 +828,8 @@ export function PlaceholdersCatalogTab() {
                         : p.package_token;
                       const showModifiers = isReady && rowKind !== "other";
                       // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
+                      // Sprint 3N: при выборе разделителя показываем демо-перечень из двух участников,
+                      // чтобы было видно, как разделитель выглядит в документе.
                       const personNamePreview = (() => {
                         if (rowKind !== "person_name") return null;
                         const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
@@ -837,10 +839,18 @@ export function PlaceholdersCatalogTab() {
                           format: safeFmt,
                           case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
                         });
-                        if (isRolesGroup && pkgSettings.includePosition) {
-                          return `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`;
+                        const single = isRolesGroup && pkgSettings.includePosition
+                          ? `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`
+                          : namePreview;
+                        if (isRolesGroup && pkgSettings.joinMode && pkgSettings.joinMode !== "semicolon") {
+                          // Второй демо-участник, чтобы был виден реальный эффект разделителя.
+                          const second = isRolesGroup && pkgSettings.includePosition
+                            ? `${formatDemoRolePosition(pkgSettings.caseModifier)} Иванов И. И.`
+                            : "Иванов Иван Иванович";
+                          const sep = pkgSettings.joinMode === "newline" ? "\n" : ", ";
+                          return `${single}${sep}${second}`;
                         }
-                        return namePreview;
+                        return single;
                       })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
@@ -892,7 +902,7 @@ export function PlaceholdersCatalogTab() {
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
                             {personNamePreview ? (
-                              <span className="italic" title={`Demo: ${DEMO_PERSON_NAME}`}>
+                              <span className="italic whitespace-pre-line" title={`Demo: ${DEMO_PERSON_NAME}`}>
                                 {personNamePreview}
                               </span>
                             ) : p.example_value ? (
