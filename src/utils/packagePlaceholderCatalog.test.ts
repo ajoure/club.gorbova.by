@@ -304,11 +304,40 @@ describe("packagePlaceholderCatalog — Sprint 3J-Roles role modifiers", () => {
       .toBe("{{ln-000012|case=genitive}}");
   });
 
-  it("ln + include_position=true добавляет должность в токен роли", () => {
+  it("ln + include_position=true добавляет должность; канон format→case→include_position", () => {
     expect(buildPackagePlaceholderToken(rolesItem, null, "genitive", true))
-      .toBe("{{ln-000012|include_position=true|case=genitive}}");
+      .toBe("{{ln-000012|case=genitive|include_position=true}}");
     expect(buildPackagePlaceholderToken(rolesItem, "short", null, true))
       .toBe("{{ln-000012|format=short|include_position=true}}");
+  });
+
+  // Sprint 3N: разделитель множества участников (только для ln-ролей).
+  it("ln + joinMode=newline → {{ln-000012|join=newline}}", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, null, false, "newline"))
+      .toBe("{{ln-000012|join=newline}}");
+  });
+
+  it("ln + joinMode=comma → {{ln-000012|join=comma}}", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, null, false, "comma"))
+      .toBe("{{ln-000012|join=comma}}");
+  });
+
+  it("ln + joinMode=semicolon (default) не пишется в токен", () => {
+    expect(buildPackagePlaceholderToken(rolesItem, null, null, false, "semicolon"))
+      .toBe("{{ln-000012}}");
+  });
+
+  it("ln + format+case+include_position+join → канонический порядок", () => {
+    expect(
+      buildPackagePlaceholderToken(rolesItem, "short", "genitive", true, "newline"),
+    ).toBe("{{ln-000012|format=short|case=genitive|include_position=true|join=newline}}");
+  });
+
+  it("joinMode игнорируется для не-ролевых package-полей", () => {
+    expect(buildPackagePlaceholderToken(ulDirector, "short", null, false, "newline"))
+      .toBe("{{package.ul.FLD-000014|format=short}}");
+    expect(buildPackagePlaceholderToken(flFullName, null, null, false, "newline"))
+      .toBe("{{package.fl.FLD-000372}}");
   });
 
   it("ln игнорирует format=long/words/text (backend их не понимает у ln)", () => {
