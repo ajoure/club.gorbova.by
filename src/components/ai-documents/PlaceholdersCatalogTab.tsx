@@ -293,11 +293,9 @@ export function PlaceholdersCatalogTab() {
   const [postponedCount, setPostponedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [showTechnical, setShowTechnical] = useState(false);
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [onlyRequired, setOnlyRequired] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
   // Sprint 3J-UI: те же modifier-controls, что у billing-плейсхолдеров. Ключ — tech_key item'а.
   const [pkgRowSettings, setPkgRowSettings] = useState<Map<string, RowSettings>>(new Map());
@@ -485,7 +483,7 @@ export function PlaceholdersCatalogTab() {
       const next = new Map(prev);
       const current = next.get(id) ?? { format: null, caseModifier: null };
       const merged: RowSettings = { ...current, ...patch };
-      if (merged.format === null && merged.caseModifier === null) {
+      if (isDefault(merged)) {
         next.delete(id);
       } else {
         next.set(id, merged);
@@ -508,7 +506,7 @@ export function PlaceholdersCatalogTab() {
       const next = new Map(prev);
       const current = next.get(techKey) ?? { format: null, caseModifier: null };
       const merged: RowSettings = { ...current, ...patch };
-      if (merged.format === null && merged.caseModifier === null) next.delete(techKey);
+      if (isDefault(merged)) next.delete(techKey);
       else next.set(techKey, merged);
       return next;
     });
@@ -524,14 +522,6 @@ export function PlaceholdersCatalogTab() {
 
   const copyPlaceholder = async (text: string) => {
     await copyToClipboard(text, "Плейсхолдер скопирован");
-  };
-
-  const toggleRow = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
   };
 
   return (
