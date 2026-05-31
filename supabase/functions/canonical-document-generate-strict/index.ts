@@ -1351,6 +1351,10 @@ Deno.serve(async (req) => {
     // package/ln-токены (с модификаторами и без) — иначе renderFileName видит
     // только FLD и режет {{package.ul.FLD-…}} в пустую строку.
     const _filenameTokenMapEarly: Record<string, string> = {};
+    // Sprint 3M: backstop — system-FLD значения (FLD-000133 и т.п.) на случай,
+    // когда они используются ТОЛЬКО в file_name_template и не попали в docFields
+    // через preresolved_fields (например, у старых батчей пакета).
+    const _fnSysVals = buildSystemFieldValues(new Date());
     for (const fld of filenameFlds) {
       const directKey = `field:${fld}`;
       if (Object.prototype.hasOwnProperty.call(resolved, directKey)) {
@@ -1362,7 +1366,11 @@ Deno.serve(async (req) => {
       const entry = baseEntryByFld[fld];
       const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
-      _filenameTokenMapEarly[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+      let _early = fmt.value ?? baseValueByFld[fld] ?? '';
+      if ((!_early || _early === '') && SYSTEM_FIELD_VALUE_IDS.has(fld) && _fnSysVals[fld]) {
+        _early = _fnSysVals[fld];
+      }
+      _filenameTokenMapEarly[fld] = _early;
     }
     // Sprint 3L: package/ln из resolved (ключ = raw_inside, без `{{}}`).
     const _fnScope: 'billing' | 'package' = generationContext === 'package_session' ? 'package' : 'billing';
