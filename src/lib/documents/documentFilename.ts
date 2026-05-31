@@ -113,11 +113,9 @@ export function renderFileName(
   const out = template.replace(FILENAME_PLACEHOLDER_RE, (_, raw: string) => {
     const r = raw.trim();
     const res = resolveToken(r, scope, resolvedTokens);
-    if (!res.ok) {
-      warnings.push(res.warning);
-      return "";
-    }
-    return res.value;
+    if (res.ok === true) return res.value;
+    warnings.push(res.warning);
+    return "";
   });
   const sanitized = sanitizeFilename(out);
   if (!sanitized) {

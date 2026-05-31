@@ -617,6 +617,7 @@ export function StrictDocumentTemplatesManager({
             current_version_id: templateCurrentVersionId,
             created_at: templateCreatedAt,
             category: categoryFilter ?? (existing as any)?.category ?? null,
+            template_scope: (existing as any)?.template_scope ?? null,
           };
 
           await openPreview(tplRow, verRow);
