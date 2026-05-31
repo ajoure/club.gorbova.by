@@ -721,6 +721,9 @@ Deno.serve(async (req) => {
       bag_key: string;
       case_modifier: string | null;
       format: string | null;
+      // Sprint 3L: ln-only modifiers
+      include_position?: boolean;
+      join?: 'semicolon' | 'comma' | 'newline';
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
@@ -776,11 +779,18 @@ Deno.serve(async (req) => {
         const tail = (lnMatch[2] || '').split('|').filter(Boolean);
         let cs: string | null = null;
         let fmt: string | null = null;
+        let includePosition = false;
+        let joinMod: 'semicolon' | 'comma' | 'newline' | undefined;
         let badMod = false;
         for (const part of tail) {
           const [k, v] = part.split('=');
           if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
           else if (k === 'format' && PERSON_NAME_FORMATS.has(v)) fmt = v;
+          // Sprint 3L: include_position=true|false (только для ln). По умолчанию = false,
+          // чтобы сохранить Sprint 3J-Roles regression: {{ln-XXXXXX}} = только ФИО.
+          else if (k === 'include_position' && (v === 'true' || v === 'false')) includePosition = v === 'true';
+          // Sprint 3L: join=semicolon|comma|newline (только для ln). Default = semicolon.
+          else if (k === 'join' && (v === 'semicolon' || v === 'comma' || v === 'newline')) joinMod = v;
           else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
         }
         if (badMod) continue;
@@ -790,6 +800,8 @@ Deno.serve(async (req) => {
           bag_key: lnMatch[1],
           case_modifier: cs,
           format: fmt,
+          include_position: includePosition,
+          join: joinMod,
         });
         continue;
       }
