@@ -1346,6 +1346,9 @@ Deno.serve(async (req) => {
     // унаследованное от шаблона имя ("Клиенты - январь - 01-2019" и т.п.).
     // Считаем итоговое имя файла ДО сериализации, чтобы и DOCX, и PDF
     // (генерируемый из этого DOCX через Gotenberg) имели одинаковый title.
+    // Sprint 3L: scope-aware filename map. Для package-генерации добавляем
+    // package/ln-токены (с модификаторами и без) — иначе renderFileName видит
+    // только FLD и режет {{package.ul.FLD-…}} в пустую строку.
     const _filenameTokenMapEarly: Record<string, string> = {};
     for (const fld of filenameFlds) {
       const directKey = `field:${fld}`;
@@ -1360,9 +1363,26 @@ Deno.serve(async (req) => {
       const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
       _filenameTokenMapEarly[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
     }
+    // Sprint 3L: package/ln из resolved (ключ = raw_inside, без `{{}}`).
+    const _fnScope: 'billing' | 'package' = generationContext === 'package_session' ? 'package' : 'billing';
+    if (_fnScope === 'package') {
+      const _PKG_KEY_RE = /^package\.(?:ul|ip|fl)\.FLD-\d{6}(\|.*)?$/;
+      const _LN_KEY_RE = /^ln-\d{6}(\|.*)?$/;
+      for (const k of Object.keys(resolved)) {
+        if (_PKG_KEY_RE.test(k) || _LN_KEY_RE.test(k)) {
+          _filenameTokenMapEarly[k] = resolved[k] ?? '';
+          // base без модификаторов тоже доступен (на случай если file_name_template
+          // использует базовую форму, а DOCX — с модификаторами).
+          const base = k.split('|')[0];
+          if (base !== k && !(base in _filenameTokenMapEarly)) {
+            _filenameTokenMapEarly[base] = resolved[base] ?? resolved[k] ?? '';
+          }
+        }
+      }
+    }
     let _earlyFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: _filenameTokenMapEarly });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: _filenameTokenMapEarly, scope: _fnScope });
       _earlyFileName = r.name || buildDefaultFileName({
         templateName: tpl.name,
         documentNumber: allocatedNumber,
