@@ -269,6 +269,7 @@ describe("packagePlaceholderCatalog — Sprint 3J-Roles role modifiers", () => {
     package_resolver_hint: "",
     status: "copy_ready",
     tech_key: "ln.ln-000012",
+    example_value: null,
   };
   const ulDirector = PACKAGE_PLACEHOLDER_CATALOG.find(
     (i) => i.tech_key === "package.ul.director_full_name",
