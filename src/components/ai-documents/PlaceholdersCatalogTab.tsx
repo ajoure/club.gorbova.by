@@ -960,6 +960,7 @@ function RowSettingsCell({
   settings,
   onChange,
   supportsLongFormat = false,
+  supportsPosition = false,
 }: {
   // Sprint 3J-Roles: расширили kind на "person_name" (ФИО-поля + роли ln-XXXXXX).
   kind: ReturnType<typeof classifyDataType> | "person_name";
@@ -967,6 +968,8 @@ function RowSettingsCell({
   onChange: (patch: Partial<RowSettings>) => void;
   /** Sprint 3J-UI: для `package.*.org_form` доступен `|format=long`. */
   supportsLongFormat?: boolean;
+  /** Для ln-ролей: добавить должность перед ФИО. */
+  supportsPosition?: boolean;
 }) {
   // Для прочих типов модификаторы недоступны.
   if (kind === "other") {
@@ -1095,6 +1098,18 @@ function RowSettingsCell({
 
       {kind === "boolean" && (
         <span className="text-[10px] text-muted-foreground italic">Падеж недоступен</span>
+      )}
+
+      {isPersonName && supportsPosition && (
+        <Button
+          type="button"
+          variant={settings.includePosition ? "default" : "outline"}
+          size="sm"
+          className="h-7 px-2 text-[10px]"
+          onClick={() => onChange({ includePosition: !settings.includePosition })}
+        >
+          С должностью
+        </Button>
       )}
     </div>
   );
