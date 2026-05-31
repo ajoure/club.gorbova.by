@@ -821,7 +821,7 @@ export function PlaceholdersCatalogTab() {
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
-                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier)
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true)
                         : p.package_token;
                       const showModifiers = isReady && rowKind !== "other";
                       // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
@@ -830,10 +830,14 @@ export function PlaceholdersCatalogTab() {
                         const fmt = (pkgSettings.format as PersonNameFormat | null) ?? "full";
                         const allowedFmts: PersonNameFormat[] = ["full", "short", "signature_short"];
                         const safeFmt = allowedFmts.includes(fmt) ? fmt : "full";
-                        return formatPersonName(DEMO_PERSON_NAME, {
+                        const namePreview = formatPersonName(DEMO_PERSON_NAME, {
                           format: safeFmt,
                           case: pkgSettings.caseModifier as PersonNameFormat extends never ? never : Parameters<typeof formatPersonName>[1]["case"],
                         });
+                        if (isRolesGroup && pkgSettings.includePosition) {
+                          return `${formatDemoRolePosition(pkgSettings.caseModifier)} ${namePreview}`;
+                        }
+                        return namePreview;
                       })();
                       return (
                         <TableRow key={`pkg-${p.tech_key}`} className="hover:bg-muted/40 align-top">
@@ -876,6 +880,7 @@ export function PlaceholdersCatalogTab() {
                                 settings={pkgSettings}
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
+                                supportsPosition={isRolesGroup}
                               />
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
@@ -891,11 +896,7 @@ export function PlaceholdersCatalogTab() {
                                 {p.example_value}
                               </span>
                             ) : (
-                              <span className="text-[10px] text-muted-foreground/70 italic" title={p.package_resolver_hint}>
-                                {p.package_resolver_hint.length > 60
-                                  ? p.package_resolver_hint.slice(0, 60) + "…"
-                                  : p.package_resolver_hint}
-                              </span>
+                              <span className="text-muted-foreground/60 italic">— нет примера —</span>
                             )}
                           </TableCell>
                           <TableCell className="py-2">
