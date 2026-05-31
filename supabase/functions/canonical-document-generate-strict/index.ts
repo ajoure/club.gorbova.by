@@ -38,6 +38,7 @@ const PERSON_NAME_PACKAGE_BAG_KEYS: ReadonlySet<string> = new Set([
 ]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
+import { buildSystemFieldValues, SYSTEM_FIELD_VALUE_IDS } from '../_shared/system-field-values.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 import { resolveDocumentScenario, type PayerType } from '../_shared/document-scenario-resolver.ts';
 import { derivePaymentChannel } from '../_shared/document-resolver-v2/payment-channel.ts';
