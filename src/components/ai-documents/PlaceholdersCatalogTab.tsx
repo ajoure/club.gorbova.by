@@ -83,6 +83,8 @@ interface RowSettings {
   format: FieldFormat | null;
   caseModifier: FieldCase | null;
   includePosition?: boolean;
+  /** Sprint 3N: разделитель между ФИО при множестве участников у роли (только ln-токены). */
+  joinMode?: 'semicolon' | 'comma' | 'newline' | null;
 }
 
 /**
@@ -272,7 +274,9 @@ const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
 ];
 
 function isDefault(s: RowSettings | undefined): boolean {
-  return !s || (s.format === null && s.caseModifier === null && !s.includePosition);
+  if (!s) return true;
+  const joinDefault = !s.joinMode || s.joinMode === "semicolon";
+  return s.format === null && s.caseModifier === null && !s.includePosition && joinDefault;
 }
 
 const DEMO_ROLE_POSITION = "юрисконсульт";
@@ -820,7 +824,7 @@ export function PlaceholdersCatalogTab() {
                       const pkgSettings: RowSettings = pkgRowSettings.get(p.tech_key) ?? { format: null, caseModifier: null };
                       const pkgDirty = !isDefault(pkgRowSettings.get(p.tech_key));
                       const finalToken = isReady
-                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true)
+                        ? buildPackagePlaceholderToken(p, pkgSettings.format, pkgSettings.caseModifier, pkgSettings.includePosition === true, pkgSettings.joinMode ?? null)
                         : p.package_token;
                       const showModifiers = isReady && rowKind !== "other";
                       // Sprint 3J-Roles: реальный preview для ФИО-полей и ролей через formatPersonName.
@@ -880,6 +884,7 @@ export function PlaceholdersCatalogTab() {
                                 onChange={(patch) => updatePkgSettings(p.tech_key, patch)}
                                 supportsLongFormat={supportsLong}
                                 supportsPosition={isRolesGroup}
+                                supportsJoin={isRolesGroup}
                               />
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">—</span>
