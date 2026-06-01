@@ -320,6 +320,23 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     return list;
   }, [rootTrainings, externalTraining]);
 
+  // Sprint 3S v2 — список активных глобальных пакетов документов (UUID only)
+  const { data: documentPackagesList = [] } = useQuery({
+    queryKey: ["access-rule-document-packages"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_templates")
+        .select("id, name, is_active")
+        .is("profile_id", null)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; name: string; is_active: boolean }>;
+    },
+  });
+
+
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
