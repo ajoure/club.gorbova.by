@@ -355,18 +355,20 @@ export default function LibraryLesson() {
 
         {/* KVEST MODE */}
         {currentLesson.completion_mode === 'kvest' && blocks.length > 0 ? (
-          <KvestLessonView
-            lesson={currentLesson}
-            blocks={blocks}
-            moduleSlug={moduleSlug || ''}
-            onComplete={async () => {
-              await markCompleted(currentLesson.id);
-            }}
-            isAdminMode={isAdminMode}
-            allowBypassEmptyVideo={allowBypassEmptyVideo}
-          />
+          <LessonBlocksErrorBoundary>
+            <KvestLessonView
+              lesson={currentLesson}
+              blocks={blocks}
+              moduleSlug={moduleSlug || ''}
+              onComplete={async () => {
+                await markCompleted(currentLesson.id);
+              }}
+              isAdminMode={isAdminMode}
+              allowBypassEmptyVideo={allowBypassEmptyVideo}
+            />
+          </LessonBlocksErrorBoundary>
         ) : (
-          <>
+          <LessonBlocksErrorBoundary>
             {/* Block-based Content (if blocks exist) */}
             {blocks.length > 0 ? (
               <Card className="mb-6">
@@ -464,7 +466,7 @@ export default function LibraryLesson() {
                 )}
               </>
             )}
-          </>
+          </LessonBlocksErrorBoundary>
         )}
 
         {/* Attachments */}
