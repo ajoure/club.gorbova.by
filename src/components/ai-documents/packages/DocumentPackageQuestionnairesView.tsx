@@ -31,6 +31,7 @@ import {
 import {
   Building2, Users, Save, Plus, Trash2, AlertCircle, CheckCircle2, Info, Loader2, FileText,
 } from "lucide-react";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
@@ -238,10 +239,16 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
                 })}
               </SelectContent>
             </Select>
-            <Button size="sm" onClick={saveLegal} disabled={savingLegal || legalLocked}>
-              <Save className="h-3.5 w-3.5 mr-1" />
-              {savingLegal ? "Сохранение…" : "Сохранить"}
-            </Button>
+            <HelpTooltip
+              helpKey=""
+              customShort="Сохранить выбранное юрлицо/ИП для всех документов пакета."
+              alwaysShow
+            >
+              <Button size="sm" onClick={saveLegal} disabled={savingLegal || legalLocked}>
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {savingLegal ? "Сохранение…" : "Сохранить"}
+              </Button>
+            </HelpTooltip>
           </div>
         )}
       </GlassCard>
@@ -458,13 +465,25 @@ function ItemQuestionnaire({
               ))}
             </div>
             <div className="flex items-center justify-between gap-2 pt-1">
-              <Button size="sm" variant="outline" onClick={() => addRow()}>
-                <Plus className="h-3.5 w-3.5 mr-1" /> Добавить роль
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={isSaving}>
-                <Save className="h-3.5 w-3.5 mr-1" />
-                {isSaving ? "Сохранение…" : "Сохранить анкету документа"}
-              </Button>
+              <HelpTooltip
+                helpKey=""
+                customShort="Добавить ещё одно назначение: роль + человек. Одну роль можно назначить нескольким людям."
+                alwaysShow
+              >
+                <Button size="sm" variant="outline" onClick={() => addRow()}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Добавить роль
+                </Button>
+              </HelpTooltip>
+              <HelpTooltip
+                helpKey=""
+                customShort="Сохранить заполненные назначения по этому документу."
+                alwaysShow
+              >
+                <Button size="sm" onClick={handleSave} disabled={isSaving}>
+                  <Save className="h-3.5 w-3.5 mr-1" />
+                  {isSaving ? "Сохранение…" : "Сохранить анкету документа"}
+                </Button>
+              </HelpTooltip>
             </div>
             <p className="text-[10px] text-muted-foreground flex items-start gap-1">
               <Info className="h-2.5 w-2.5 mt-0.5 shrink-0" />
