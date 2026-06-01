@@ -754,6 +754,19 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
     }
+    // document_generation: sentinel target_ref + автоматический label
+    if (form.grant_target_type === "document_generation") {
+      targetRef = "document_generation";
+      if (form.dg_access_mode === "full") {
+        targetLabel = "Все пакеты документов";
+      } else {
+        const names = form.dg_allowed_package_ids
+          .map(id => documentPackagesList.find(p => p.id === id)?.name || id);
+        targetLabel = names.length === 1
+          ? `Пакет: ${names[0]}`
+          : `Пакетов: ${names.length} (${names.slice(0,2).join(", ")}${names.length>2?` и ещё ${names.length-2}`:""})`;
+      }
+    }
 
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
