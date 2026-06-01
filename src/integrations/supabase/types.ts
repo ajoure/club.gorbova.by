@@ -16215,6 +16215,10 @@ export type Database = {
         Args: { _club_id: string; _tg_id: number }
         Returns: boolean
       }
+      log_document_package_event: {
+        Args: { _action: string; _meta?: Json; _package_id: string }
+        Returns: string
+      }
       log_training_event: {
         Args: { _action: string; _meta?: Json; _target_user_id: string }
         Returns: string
@@ -16367,6 +16371,10 @@ export type Database = {
           telegram_user_id: number
           user_id: string
         }[]
+      }
+      safe_delete_document_package: {
+        Args: { _package_id: string }
+        Returns: Json
       }
       search_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string; p_search: string }
