@@ -852,17 +852,18 @@ export function StrictDocumentTemplatesManager({
           <p className="text-xs text-muted-foreground mt-0.5">
             {subtitle ?? (
               <>
-                Strict ID-first.&nbsp;
-                Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.
-                Активация заблокирована, пока validation_status ≠ valid.
+                Загружайте файлы Word, размечайте поля для подстановки и активируйте шаблон.
+                Пока есть ошибки в разметке полей — активация недоступна.
               </>
             )}
           </p>
         </div>
         {!readOnly && (
-          <Button onClick={() => setUploadOpen(true)} size="sm">
-            <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
-          </Button>
+          <HelpTooltip helpKey="" customShort="Загрузить файл .docx и создать новый шаблон документа." alwaysShow>
+            <Button onClick={() => setUploadOpen(true)} size="sm">
+              <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
+            </Button>
+          </HelpTooltip>
         )}
       </div>
 
