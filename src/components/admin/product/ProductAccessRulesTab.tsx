@@ -647,10 +647,23 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
         return;
       }
+    } else if (form.grant_target_type === "document_generation") {
+      // Sprint 3S v2 — UUID-only. target_ref = sentinel домена.
+      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
+        toast.error("Для частичного доступа выберите хотя бы один пакет документов");
+        return;
+      }
+      // Валидация UUID-формата
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
+        toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
+        return;
+      }
     } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
     }
+
 
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
