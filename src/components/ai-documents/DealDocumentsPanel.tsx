@@ -568,14 +568,14 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
             </div>
             {fieldRows.length === 0 ? (
               <div className="p-4 text-sm text-muted-foreground">
-                В активной версии шаблона нет FLD-плейсхолдеров.
+                В этом шаблоне нет полей для подстановки.
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Поле</TableHead>
-                    <TableHead>FLD-ID</TableHead>
+                    <TableHead>Код поля</TableHead>
                     <TableHead>Значение</TableHead>
                     <TableHead>Источник</TableHead>
                     <TableHead>Статус</TableHead>
@@ -605,7 +605,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         </TableCell>
                         <TableCell className="text-xs">
                           {row.manual_override ? (
-                            <Badge variant="secondary" className="text-[10px]">manual</Badge>
+                            <Badge variant="secondary" className="text-[10px]">введено вручную</Badge>
                           ) : row.source ? (
                             <span className="text-muted-foreground">{row.source}</span>
                           ) : (
@@ -615,28 +615,30 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         <TableCell className="text-xs">
                           {isReqEmpty ? (
                             <span className="text-red-600 flex items-center gap-1">
-                              <AlertCircle className="h-3 w-3" /> required-empty
+                              <AlertCircle className="h-3 w-3" /> обязательное, не заполнено
                             </span>
                           ) : trace?.status === "resolved" ? (
-                            <span className="text-emerald-600">resolved</span>
+                            <span className="text-emerald-600">заполнено</span>
                           ) : trace?.status === "missing" ? (
-                            <span className="text-amber-600">missing</span>
+                            <span className="text-amber-600">нет данных</span>
                           ) : trace?.status === "empty" ? (
-                            <span className="text-amber-600">empty</span>
+                            <span className="text-amber-600">пусто</span>
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="sm" variant="ghost"
-                            disabled={editing === undefined || savingFlds.has(row.field_public_id)}
-                            onClick={() => saveField(row.field_public_id)}
-                          >
-                            {savingFlds.has(row.field_public_id)
-                              ? <Loader2 className="h-3 w-3 animate-spin" />
-                              : "Сохранить"}
-                          </Button>
+                          <HelpTooltip helpKey="" customShort="Сохранить введённое значение в эту сделку." alwaysShow>
+                            <Button
+                              size="sm" variant="ghost"
+                              disabled={editing === undefined || savingFlds.has(row.field_public_id)}
+                              onClick={() => saveField(row.field_public_id)}
+                            >
+                              {savingFlds.has(row.field_public_id)
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : "Сохранить"}
+                            </Button>
+                          </HelpTooltip>
                         </TableCell>
                       </TableRow>
                     );
@@ -647,7 +649,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
             {preview && !preview.can_generate && (
               <div className="px-3 py-2 border-t bg-red-50 dark:bg-red-950/20 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
                 <AlertCircle className="h-3.5 w-3.5" />
-                Генерация заблокирована: {preview.required_empty_field_ids.length} required-полей пусто.
+                Создание PDF недоступно: не заполнено обязательных полей — {preview.required_empty_field_ids.length}.
               </div>
             )}
           </div>
