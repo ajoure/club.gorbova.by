@@ -1497,52 +1497,53 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               {form.grant_target_type === "training_content" && (
                 <div className="space-y-3">
                   {/* Domain selector: knowledge_base | document_generation (Sprint 3S v2) */}
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Куда выдаём</Label>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setForm({
-                          ...form,
-                          tc_domain: "knowledge_base",
-                          dg_allowed_package_ids: [],
-                          dg_access_mode: "full",
-                        })}
-                        className={cn(
-                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
-                          form.tc_domain === "knowledge_base"
-                            ? "border-primary bg-primary/5 text-primary"
-                            : "border-border text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        <BookOpen className="h-3.5 w-3.5" />
-                        База знаний
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setForm({
-                          ...form,
-                          tc_domain: "document_generation",
-                          target_ref: "",
-                          target_label: "",
-                          tc_access_mode: "full",
-                          tc_allowed_module_ids: [],
-                          tc_allowed_lesson_ids: [],
-                          tc_auto_include_new_modules: false,
-                          match_purchase_month: false,
-                        })}
-                        className={cn(
-                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
-                          form.tc_domain === "document_generation"
-                            ? "border-primary bg-primary/5 text-primary"
-                            : "border-border text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        <FileStack className="h-3.5 w-3.5" />
-                        Генерация документов
-                      </button>
-                    </div>
+                    <Select
+                      value={form.tc_domain}
+                      onValueChange={(v) => {
+                        if (v === "knowledge_base") {
+                          setForm({
+                            ...form,
+                            tc_domain: "knowledge_base",
+                            dg_allowed_package_ids: [],
+                            dg_access_mode: "full",
+                          });
+                        } else {
+                          setForm({
+                            ...form,
+                            tc_domain: "document_generation",
+                            target_ref: "",
+                            target_label: "",
+                            tc_access_mode: "full",
+                            tc_allowed_module_ids: [],
+                            tc_allowed_lesson_ids: [],
+                            tc_auto_include_new_modules: false,
+                            match_purchase_month: false,
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Выберите домен" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="knowledge_base">
+                          <div className="flex items-center gap-2">
+                            <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                            <span>База знаний</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="document_generation">
+                          <div className="flex items-center gap-2">
+                            <FileStack className="h-3.5 w-3.5 text-primary shrink-0" />
+                            <span>Генерация документов</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+
 
                   {form.tc_domain === "knowledge_base" && (<>
                   {/* Root training selector */}
