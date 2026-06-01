@@ -363,24 +363,28 @@ export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = 
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Исполнители</h1>
               <p className="text-muted-foreground text-sm sm:text-base">
-                Юридические лица для договоров и актов
+                Карточки ваших организаций. Данные исполнителя подставляются в договоры, акты и счета.
               </p>
             </div>
             {canEdit && (
-              <Button onClick={() => handleOpenDialog()}>
-                <Plus className="h-4 w-4 mr-2" />
-                Добавить
-              </Button>
+              <HelpTooltip helpKey="" customShort="Создать новую карточку исполнителя — заполнить реквизиты ЮЛ один раз." alwaysShow>
+                <Button onClick={() => handleOpenDialog()}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Добавить
+                </Button>
+              </HelpTooltip>
             )}
           </div>
         )}
 
         {embedded && canEdit && (
           <div className="flex items-center justify-end">
-            <Button size="sm" onClick={() => handleOpenDialog()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Добавить
-            </Button>
+            <HelpTooltip helpKey="" customShort="Создать новую карточку исполнителя." alwaysShow>
+              <Button size="sm" onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Добавить
+              </Button>
+            </HelpTooltip>
           </div>
         )}
 
