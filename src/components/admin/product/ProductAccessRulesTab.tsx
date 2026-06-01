@@ -1496,6 +1496,55 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               {/* training_content: root training selector + access mode + tree picker */}
               {form.grant_target_type === "training_content" && (
                 <div className="space-y-3">
+                  {/* Domain selector: knowledge_base | document_generation (Sprint 3S v2) */}
+                  <div className="space-y-2">
+                    <Label className="text-xs">Куда выдаём</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setForm({
+                          ...form,
+                          tc_domain: "knowledge_base",
+                          dg_allowed_package_ids: [],
+                          dg_access_mode: "full",
+                        })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
+                          form.tc_domain === "knowledge_base"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <BookOpen className="h-3.5 w-3.5" />
+                        База знаний
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({
+                          ...form,
+                          tc_domain: "document_generation",
+                          target_ref: "",
+                          target_label: "",
+                          tc_access_mode: "full",
+                          tc_allowed_module_ids: [],
+                          tc_allowed_lesson_ids: [],
+                          tc_auto_include_new_modules: false,
+                          match_purchase_month: false,
+                        })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
+                          form.tc_domain === "document_generation"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <FileStack className="h-3.5 w-3.5" />
+                        Генерация документов
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.tc_domain === "knowledge_base" && (<>
                   {/* Root training selector */}
                   <div className="space-y-1.5">
                     <Label className="text-xs">Тренинг</Label>
