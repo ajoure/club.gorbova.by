@@ -1664,8 +1664,86 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 </div>
               )}
 
-              {/* Label override — hide for product_access/training_content (auto-generated) */}
-              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && (
+              {/* document_generation: режим + multi-select UUID пакетов (Sprint 3S v2) */}
+              {form.grant_target_type === "document_generation" && (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Режим доступа</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, dg_access_mode: "full", dg_allowed_package_ids: [] })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                          form.dg_access_mode === "full"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Полный доступ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, dg_access_mode: "partial" })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                          form.dg_access_mode === "partial"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Частичный доступ
+                      </button>
+                    </div>
+                    {form.dg_access_mode === "full" && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Полный доступ автоматически включает все текущие и будущие активные пакеты документов.
+                      </p>
+                    )}
+                  </div>
+
+                  {form.dg_access_mode === "partial" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Доступные пакеты документов</Label>
+                      {documentPackagesList.length === 0 ? (
+                        <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
+                          Нет активных глобальных пакетов. Создайте пакет в разделе «Пакеты документов».
+                        </div>
+                      ) : (
+                        <div className="space-y-1 border rounded-md p-2 max-h-64 overflow-y-auto">
+                          {documentPackagesList.map(pkg => {
+                            const checked = form.dg_allowed_package_ids.includes(pkg.id);
+                            return (
+                              <label
+                                key={pkg.id}
+                                className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer"
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    const next = v
+                                      ? Array.from(new Set([...form.dg_allowed_package_ids, pkg.id]))
+                                      : form.dg_allowed_package_ids.filter(id => id !== pkg.id);
+                                    setForm({ ...form, dg_allowed_package_ids: next });
+                                  }}
+                                />
+                                <FileStack className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span className="text-sm">{pkg.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Выбор сохраняется только по UUID пакета. Переименование пакета не влияет на доступ.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Label override — hide for product_access/training_content/document_generation (auto-generated) */}
+              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && form.grant_target_type !== "document_generation" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
                   <Input
