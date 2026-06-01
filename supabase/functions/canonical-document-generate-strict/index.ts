@@ -1576,6 +1576,9 @@ Deno.serve(async (req) => {
       resolver_version: RESOLVER_VERSION,
       context_type: ctxType,
       context_id: ctxId,
+      generation_batch_id: generationContext === 'package_session'
+        ? packageContext!.generation_batch_id
+        : null,
       idempotency_key: idempotencyKey,
       created_by: userId,
       meta: {
