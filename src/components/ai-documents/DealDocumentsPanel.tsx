@@ -432,7 +432,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
         }
       }
       setExecutorTestResult({ found, resolved, empty });
-      toast.success(`Executor FLDs: ${found.length} в шаблоне, ${resolved.length} заполнено, ${empty.length} пусто`);
+      toast.success(`Поля исполнителя в шаблоне: всего ${found.length}, заполнено ${resolved.length}, пусто ${empty.length}.`);
     } catch (e: any) {
       toast.error(`Тест исполнителя: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
