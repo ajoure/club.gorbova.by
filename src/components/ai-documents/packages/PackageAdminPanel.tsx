@@ -28,7 +28,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { FileStack, Shield, Plus, Pencil } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { FileStack, Shield, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
@@ -40,6 +44,18 @@ interface PackageRow {
   description: string | null;
   is_active: boolean;
   profile_id: string | null;
+}
+
+async function logPackageEvent(action: string, packageId: string, meta: Record<string, unknown> = {}) {
+  try {
+    await supabase.rpc("log_document_package_event", {
+      _action: action,
+      _package_id: packageId,
+      _meta: meta as never,
+    });
+  } catch (e) {
+    console.warn("[PackageAdminPanel] audit log failed:", action, e);
+  }
 }
 
 export function PackageAdminPanel() {
