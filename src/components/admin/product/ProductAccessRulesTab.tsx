@@ -1353,7 +1353,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 </SelectTrigger>
                 <SelectContent>
                   {(Object.entries(TARGET_TYPE_LABELS) as [GrantTargetType, string][])
-                    .filter(([k]) => k !== "entitlement" && k !== "email")
+                    .filter(([k]) => k !== "entitlement" && k !== "email" && k !== "document_generation")
                     .map(([k, v]) => (
                       <SelectItem key={k} value={k}>{v}</SelectItem>
                     ))}
