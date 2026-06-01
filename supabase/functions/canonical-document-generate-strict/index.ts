@@ -991,6 +991,9 @@ Deno.serve(async (req) => {
             meta: { strict: true, c5g_pre_created: true, ...packageMetaExtras },
             context_type: ctxType,
             context_id: ctxId,
+            generation_batch_id: generationContext === 'package_session'
+              ? packageContext!.generation_batch_id
+              : null,
             idempotency_key: idempotencyKey,
             created_by: userId,
           })
