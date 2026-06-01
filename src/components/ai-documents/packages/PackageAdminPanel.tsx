@@ -97,50 +97,27 @@ export function PackageAdminPanel() {
     setSaving(true);
     try {
       if (editing) {
-        const newName = form.name.trim();
-        const newDesc = form.description.trim() || null;
-        const { error } = await supabase
-          .from("document_package_templates")
-          .update({ name: newName, description: newDesc, is_active: form.is_active })
-          .eq("id", editing.id);
+        const { data, error } = await supabase.rpc("update_global_document_package", {
+          _package_id: editing.id,
+          _name: form.name.trim(),
+          _description: form.description.trim() || null,
+          _is_active: form.is_active,
+        });
         if (error) throw error;
-
-        // Audit: detect rename vs activation changes
-        if (newName !== editing.name) {
-          await logPackageEvent("document_package.renamed", editing.id, {
-            old_name: editing.name, new_name: newName,
-          });
-        }
-        if (form.is_active !== editing.is_active) {
-          await logPackageEvent(
-            form.is_active ? "document_package.activated" : "document_package.deactivated",
-            editing.id,
-            { name: newName }
-          );
-        }
-        if (newName === editing.name && form.is_active === editing.is_active) {
-          await logPackageEvent("document_package.updated", editing.id, { name: newName });
-        }
+        const res = data as { status: string };
+        if (res?.status !== "updated") throw new Error(`update failed: ${res?.status}`);
         toast.success("Пакет обновлён");
       } else {
-        const { data, error } = await supabase
-          .from("document_package_templates")
-          .insert({
-            name: form.name.trim(),
-            description: form.description.trim() || null,
-            is_active: form.is_active,
-            profile_id: null,
-          })
-          .select("id")
-          .single();
+        const { data, error } = await supabase.rpc("create_global_document_package", {
+          _name: form.name.trim(),
+          _description: form.description.trim() || null,
+          _is_active: form.is_active,
+        });
         if (error) throw error;
+        const res = data as { status: string; package_id?: string };
+        if (res?.status !== "created" || !res.package_id) throw new Error(`create failed: ${res?.status}`);
         toast.success("Пакет создан");
-        if (data?.id) {
-          await logPackageEvent("document_package.created", data.id, {
-            name: form.name.trim(), is_active: form.is_active,
-          });
-          setPackageId(data.id);
-        }
+        setPackageId(res.package_id);
       }
       await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
       await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
