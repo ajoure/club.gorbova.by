@@ -512,12 +512,12 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
             {executorInfo?.hasManualOverrideHistory && (
               <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
-                В этой сделке есть исторические manual_override на executor.* — пересборка их пропустит. Очистите вручную при необходимости.
+                В этой сделке для отдельных полей исполнителя сохранены ручные значения — пересборка их не перетрёт. При необходимости очистите их вручную.
               </div>
             )}
             {executorFldsInTemplate.length > 0 && (
               <div className="text-[11px] text-muted-foreground">
-                В шаблоне используется {executorFldsInTemplate.length} executor-полей: {executorFldsInTemplate.join(", ")}
+                В шаблоне используется полей исполнителя: {executorFldsInTemplate.length}.
               </div>
             )}
             {executorTestResult && (
