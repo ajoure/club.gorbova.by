@@ -320,3 +320,48 @@ export function VideoBlock({
     </div>
   );
 }
+
+/**
+ * KinescopeMountPoint — изолированный mount-point для Kinescope SDK.
+ *
+ * React контролирует только внешний wrapper-div. Внутренний div с нужным id
+ * создаётся вручную через DOM API в useLayoutEffect и удаляется тем же способом
+ * при размонтировании. Это разрывает контракт реконсиляции: Kinescope волен
+ * добавлять/удалять любых детей у внутреннего div, React туда не заглядывает.
+ *
+ * Без этой развязки сбой Kinescope (например, HTTP 402) приводил к крэшу
+ * `NotFoundError: Failed to execute 'removeChild' on 'Node'` в commit-фазе
+ * React и уносил всю страницу урока в белый экран.
+ */
+function KinescopeMountPoint({ containerId }: { containerId: string }) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const target = document.createElement('div');
+    target.id = containerId;
+    target.style.position = 'absolute';
+    target.style.inset = '0';
+    target.style.width = '100%';
+    target.style.height = '100%';
+    wrapper.appendChild(target);
+
+    return () => {
+      // Полностью очищаем поддерево вручную, ДО того как React размонтирует wrapper.
+      // Это гарантирует, что React не столкнётся с "чужими" детьми, которые
+      // Kinescope SDK мог добавить или подменить.
+      try {
+        while (wrapper.firstChild) {
+          wrapper.removeChild(wrapper.firstChild);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [containerId]);
+
+  return <div ref={wrapperRef} className="absolute inset-0" />;
+}
+
