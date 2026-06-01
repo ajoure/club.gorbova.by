@@ -710,6 +710,21 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       }
     }
 
+    // document_generation conditions — UUID-only, sentinel target_ref
+    if (form.grant_target_type === "document_generation") {
+      conditions.access_mode = form.dg_access_mode;
+      if (form.dg_access_mode === "partial") {
+        // dedupe + только валидные UUID + только существующие активные глобальные пакеты
+        const validIds = Array.from(new Set(
+          form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
+        ));
+        conditions.allowed_package_ids = validIds;
+      } else {
+        delete conditions.allowed_package_ids;
+      }
+    }
+
+
     // Month-gated access (applies to training_content and live_event-style rules)
     if (form.match_purchase_month) {
       conditions.match_purchase_month = true;
