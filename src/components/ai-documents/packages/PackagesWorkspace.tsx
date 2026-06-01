@@ -30,14 +30,25 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileStack, ClipboardList, FileText, Users, ShieldCheck, Sparkles,
-  Plus, Pencil, Trash2,
+  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRbac } from "@/hooks/useRbac";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
+import { PackageRolesManager } from "./PackageRolesManager";
+import { TemplateBindingControl } from "./TemplateBindingControl";
+import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
+import { PackageGenerationPanel } from "./PackageGenerationPanel";
+
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
