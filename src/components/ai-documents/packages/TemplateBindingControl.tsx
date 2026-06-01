@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Link2, Unlink, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 
 interface Props {
   packageTemplateId: string | null;
@@ -148,51 +149,53 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
             Шаблоны пакета
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Привязка идёт через admin-only RPC с автоматическим выставлением
-            <code className="mx-1">template_scope = "package"</code> и audit-логом.
+            Выберите шаблон из каталога и привяжите его к пакету. После привязки шаблон становится
+            доступен в анкетах, проверке и генерации. Все действия записываются в журнал.
           </p>
         </div>
       </div>
 
       {/* Bind new */}
       <div className="flex items-center gap-2">
-        <Select value={pendingTemplateId} onValueChange={setPendingTemplateId}>
-          <SelectTrigger className="flex-1">
-            <SelectValue placeholder="Выберите шаблон для привязки…" />
-          </SelectTrigger>
-          <SelectContent>
-            {available.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-muted-foreground">
-                Все шаблоны уже привязаны или каталог пуст.
-              </div>
+        <HelpTooltip helpKey="" customShort="Выберите шаблон из общего каталога, чтобы добавить его в этот пакет." alwaysShow>
+          <Select value={pendingTemplateId} onValueChange={setPendingTemplateId}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="Выберите шаблон для привязки…" />
+            </SelectTrigger>
+            <SelectContent>
+              {available.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  Все шаблоны уже привязаны или каталог пуст.
+                </div>
+              ) : (
+                available.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>{t.name}</span>
+                    </div>
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+        </HelpTooltip>
+        <HelpTooltip helpKey="" customShort="Включает шаблон в состав пакета. Действие фиксируется в журнале." alwaysShow>
+          <Button
+            size="sm"
+            disabled={!pendingTemplateId || bindMutation.isPending}
+            onClick={() => bindMutation.mutate(pendingTemplateId)}
+            aria-label="Привязать шаблон к пакету"
+          >
+            {bindMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              available.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span>{t.name}</span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                      scope: {t.template_scope ?? "—"}
-                    </Badge>
-                  </div>
-                </SelectItem>
-              ))
+              <>
+                <Link2 className="h-3.5 w-3.5 mr-1" /> Привязать
+              </>
             )}
-          </SelectContent>
-        </Select>
-        <Button
-          size="sm"
-          disabled={!pendingTemplateId || bindMutation.isPending}
-          onClick={() => bindMutation.mutate(pendingTemplateId)}
-        >
-          {bindMutation.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <>
-              <Link2 className="h-3.5 w-3.5 mr-1" /> Привязать
-            </>
-          )}
-        </Button>
+          </Button>
+        </HelpTooltip>
       </div>
 
       {/* Bound list */}

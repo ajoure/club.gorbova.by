@@ -900,7 +900,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       {/* Sprint 3F Phase 2c: Workspace пакетов (Состав / Шаблоны / Анкета / Роли / Проверка). */}
       {activeSubTab === "pkg-ideology" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <PackagesWorkspace />
+          <PackagesWorkspace mode={mode} />
         </div>
       )}
 
