@@ -98,7 +98,7 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
-                  Системные роли нельзя удалить и переименовать (защищено триггером БД).
+                  Системную роль нельзя удалить и переименовать — она нужна для работы пакета.
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -141,8 +141,9 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
         <div>
           <h3 className="font-semibold text-sm">Роли пакета</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Один плейсхолдер на роль: <code className="text-[11px]">{`{{ln-XXXXXX}}`}</code>.
-            Одну роль можно назначить нескольким физлицам в анкете документа.
+            Список ролей, которые встречаются в шаблонах пакета (например,
+            «Руководитель», «Ответственный»). В анкете документа на каждую роль
+            назначается конкретный человек.
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} disabled={creating}>
@@ -177,8 +178,8 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
             <div className="text-sm text-muted-foreground py-8 text-center space-y-2">
               <p>Ролей пока нет.</p>
               <p className="text-xs">
-                Добавьте первую роль вручную. После создания роль получит
-                плейсхолдер вида <code>{`{{ln-XXXXXX}}`}</code> для вставки в Word.
+                Добавьте первую роль — её можно будет указывать в шаблонах и
+                назначать на неё конкретного человека в анкете документа.
               </p>
             </div>
           ) : (
@@ -267,10 +268,9 @@ function ArchiveButton({ role, onArchive }: { role: PackageRoleRow; onArchive: (
         <AlertDialogHeader>
           <AlertDialogTitle>Архивировать роль «{role.label}»?</AlertDialogTitle>
           <AlertDialogDescription>
-            Роль будет помечена неактивной. Существующие назначения сохранятся,
-            но новых физлиц с этой ролью назначить нельзя. Удалить роль навсегда
-            нельзя по архитектурному правилу — плейсхолдер
-            {` {{${role.public_id}}}`} в старых DOCX продолжит работать.
+            Роль станет неактивной: уже сделанные назначения сохранятся, но
+            новых людей с этой ролью назначить будет нельзя. Полное удаление
+            не предусмотрено — ранее созданные документы должны продолжать работать.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -317,9 +317,9 @@ export function CreateRoleDialog({
         <DialogHeader>
           <DialogTitle>{title ?? "Новая роль пакета"}</DialogTitle>
           <DialogDescription>
-            Система автоматически присвоит роли код вида ln-XXXXXX. Он не меняется
-            при переименовании роли, поэтому шаблоны с плейсхолдером{" "}
-            <code>{`{{ln-XXXXXX}}`}</code> продолжат работать.
+            Укажите понятное название роли (например, «Ответственный за идеологическую работу»).
+            Внутренний код за ролью закрепится автоматически, чтобы уже настроенные
+            шаблоны продолжали работать.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -389,8 +389,8 @@ function EditRoleDialog({
             Редактирование роли · <span className="font-mono text-sm">{row.public_id}</span>
           </DialogTitle>
           <DialogDescription>
-            Плейсхолдер роли: <code>{`{{${row.public_id}}}`}</code>.
-            Код роли не меняется и не зависит от названия.
+            Меняйте название и описание свободно — внутренний код роли
+            остаётся прежним, поэтому уже настроенные шаблоны продолжат работать.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
