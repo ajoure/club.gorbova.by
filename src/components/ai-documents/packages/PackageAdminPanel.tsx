@@ -309,6 +309,29 @@ export function PackageAdminPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить пакет «{selectedPackage?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Удаление выполняется только если пакет нигде не используется
+              (шаблоны, сессии, правила доступа). Иначе удаление будет заблокировано —
+              в этом случае деактивируйте пакет.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => { e.preventDefault(); if (selectedPackage) handleDelete(selectedPackage); }}
+            >
+              {deleting ? "Удаление…" : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
