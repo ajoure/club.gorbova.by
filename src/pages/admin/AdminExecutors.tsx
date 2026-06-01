@@ -489,23 +489,27 @@ export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = 
                               <Copy className="h-4 w-4" />
                             </Button>
                             {canEdit && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleOpenDialog(executor)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
+                              <HelpTooltip helpKey="" customShort="Редактировать карточку исполнителя." alwaysShow>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleOpenDialog(executor)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </HelpTooltip>
                             )}
                             {canEdit && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setDeleteConfirmId(executor.id)}
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HelpTooltip helpKey="" customShort="Удалить карточку исполнителя." alwaysShow>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setDeleteConfirmId(executor.id)}
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HelpTooltip>
                             )}
                           </div>
                         </TableCell>
