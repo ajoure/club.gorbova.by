@@ -490,16 +490,20 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
-                <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
-                  {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
-                  Протестировать
-                </Button>
-                <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
-                  {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
-                  Пересобрать
-                </Button>
+                <HelpTooltip helpKey="" customShort="Проверить, какие поля исполнителя нужны этому шаблону и какие из них заполнены." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
+                    {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                    Протестировать
+                  </Button>
+                </HelpTooltip>
+                <HelpTooltip helpKey="" customShort="Подтянуть свежие данные исполнителя из карточки в эту сделку." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
+                    {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
+                    Пересобрать
+                  </Button>
+                </HelpTooltip>
                 <Button size="sm" variant="ghost" asChild>
-                  <Link to="/admin/ai" title="Открыть исполнителей">
+                  <Link to="/admin/ai" title="Открыть карточки исполнителей">
                     <ExternalLink className="h-3 w-3 mr-1" /> Исполнители
                   </Link>
                 </Button>
