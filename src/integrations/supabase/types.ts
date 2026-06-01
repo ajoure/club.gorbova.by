@@ -16481,6 +16481,10 @@ export type Database = {
         Args: { p_template_id: string }
         Returns: boolean
       }
+      user_has_access_to_rule: {
+        Args: { p_rule_id: string; p_user: string }
+        Returns: boolean
+      }
       user_has_live_event_access: {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
