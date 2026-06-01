@@ -46,17 +46,9 @@ interface PackageRow {
   profile_id: string | null;
 }
 
-async function logPackageEvent(action: string, packageId: string, meta: Record<string, unknown> = {}) {
-  try {
-    await supabase.rpc("log_document_package_event", {
-      _action: action,
-      _package_id: packageId,
-      _meta: meta as never,
-    });
-  } catch (e) {
-    console.warn("[PackageAdminPanel] audit log failed:", action, e);
-  }
-}
+// Audit is enforced server-side by the CRUD RPCs (create_global_document_package,
+// update_global_document_package, deactivate_global_document_package, safe_delete_document_package).
+// UI must NOT perform direct insert/update/delete on `document_package_templates` for global packages.
 
 export function PackageAdminPanel() {
   const queryClient = useQueryClient();
