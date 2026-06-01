@@ -1,11 +1,11 @@
-import { useState, useId, useCallback, useEffect } from "react";
+import { useState, useId, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { VideoContent } from "@/hooks/useLessonBlocks";
-import { Video, ExternalLink, Play } from "lucide-react";
+import { Video, ExternalLink, Play, AlertTriangle } from "lucide-react";
 import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
 
 interface VideoBlockProps {
