@@ -545,21 +545,25 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
           {/* Fields editor */}
           <div className="border rounded-lg">
             <div className="px-3 py-2 border-b flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Поля документа (FLD-ID)</h3>
+              <h3 className="text-sm font-semibold">Поля документа</h3>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={runPreview} disabled={previewLoading}>
-                  {previewLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
-                  Тест
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={runGenerate}
-                  disabled={generating || !preview?.can_generate}
-                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
-                >
-                  {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                  Создать PDF
-                </Button>
+                <HelpTooltip helpKey="" customShort="Проверить, какие данные подставятся в документ, без его создания." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={runPreview} disabled={previewLoading}>
+                    {previewLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                    Тест
+                  </Button>
+                </HelpTooltip>
+                <HelpTooltip helpKey="" customShort="Сформировать готовый PDF документа по этой сделке." alwaysShow>
+                  <Button
+                    size="sm"
+                    onClick={runGenerate}
+                    disabled={generating || !preview?.can_generate}
+                    title={!preview ? "Сначала нажмите «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
+                  >
+                    {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                    Создать PDF
+                  </Button>
+                </HelpTooltip>
               </div>
             </div>
             {fieldRows.length === 0 ? (
