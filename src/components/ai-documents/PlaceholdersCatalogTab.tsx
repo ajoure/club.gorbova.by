@@ -150,7 +150,7 @@ const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string
   },
   {
     id: POSTPONED_NO_SOT_SECTION_ID,
-    label: "11. Нет источника данных (postponed)",
+    label: "11. Нет источника данных (пока не используются)",
     // categories здесь не используются — постponed-набор определяется isPostponedNoSot().
     categories: ["__postponed__"],
   },
