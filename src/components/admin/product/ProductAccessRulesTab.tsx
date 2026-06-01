@@ -601,12 +601,14 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       setUseViaRuleTraining(null);
     }
 
+    const isDgRule = rule.grant_target_type === "document_generation";
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
-      grant_target_type: rule.grant_target_type,
-      target_ref: rule.target_ref,
-      target_label: rule.target_label || "",
+      // UI-coerce: document_generation отображается внутри «Доступ к контенту тренинга»
+      grant_target_type: isDgRule ? "training_content" : rule.grant_target_type,
+      target_ref: isDgRule ? "" : rule.target_ref,
+      target_label: isDgRule ? "" : (rule.target_label || ""),
       is_active: rule.is_active,
       priority: rule.priority ? String(rule.priority) : "",
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
@@ -617,16 +619,16 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       has_condition: hasCondition,
       condition_use_same_list: useSameList,
       condition_required_product_ids: useSameList ? [] : conditionIds,
-      tc_access_mode: tcAccessMode,
-      tc_allowed_module_ids: tcAllowedModuleIds,
-      tc_allowed_lesson_ids: tcAllowedLessonIds,
-      tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
-      match_purchase_month: conditions.match_purchase_month === true,
-      dg_access_mode: rule.grant_target_type === "document_generation"
+      tc_domain: isDgRule ? "document_generation" : "knowledge_base",
+      tc_access_mode: isDgRule ? "full" : tcAccessMode,
+      tc_allowed_module_ids: isDgRule ? [] : tcAllowedModuleIds,
+      tc_allowed_lesson_ids: isDgRule ? [] : tcAllowedLessonIds,
+      tc_auto_include_new_modules: isDgRule ? false : Boolean(conditions.auto_include_new_modules),
+      match_purchase_month: !isDgRule && conditions.match_purchase_month === true,
+      dg_access_mode: isDgRule
         ? ((conditions.access_mode as "full" | "partial") || "full")
         : "full",
-      dg_allowed_package_ids: rule.grant_target_type === "document_generation"
-        && Array.isArray(conditions.allowed_package_ids)
+      dg_allowed_package_ids: isDgRule && Array.isArray(conditions.allowed_package_ids)
         ? (conditions.allowed_package_ids as string[])
         : [],
     });
