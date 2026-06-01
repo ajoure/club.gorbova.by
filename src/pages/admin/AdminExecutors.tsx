@@ -27,6 +27,7 @@ import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAu
 import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
 import { formatFullAddress } from "@/lib/address/utils";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -362,24 +363,28 @@ export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = 
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Исполнители</h1>
               <p className="text-muted-foreground text-sm sm:text-base">
-                Юридические лица для договоров и актов
+                Карточки ваших организаций. Данные исполнителя подставляются в договоры, акты и счета.
               </p>
             </div>
             {canEdit && (
-              <Button onClick={() => handleOpenDialog()}>
-                <Plus className="h-4 w-4 mr-2" />
-                Добавить
-              </Button>
+              <HelpTooltip helpKey="" customShort="Создать новую карточку исполнителя — заполнить реквизиты ЮЛ один раз." alwaysShow>
+                <Button onClick={() => handleOpenDialog()}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Добавить
+                </Button>
+              </HelpTooltip>
             )}
           </div>
         )}
 
         {embedded && canEdit && (
           <div className="flex items-center justify-end">
-            <Button size="sm" onClick={() => handleOpenDialog()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Добавить
-            </Button>
+            <HelpTooltip helpKey="" customShort="Создать новую карточку исполнителя." alwaysShow>
+              <Button size="sm" onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Добавить
+              </Button>
+            </HelpTooltip>
           </div>
         )}
 
@@ -484,23 +489,27 @@ export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = 
                               <Copy className="h-4 w-4" />
                             </Button>
                             {canEdit && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleOpenDialog(executor)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
+                              <HelpTooltip helpKey="" customShort="Редактировать карточку исполнителя." alwaysShow>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleOpenDialog(executor)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </HelpTooltip>
                             )}
                             {canEdit && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setDeleteConfirmId(executor.id)}
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HelpTooltip helpKey="" customShort="Удалить карточку исполнителя." alwaysShow>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setDeleteConfirmId(executor.id)}
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HelpTooltip>
                             )}
                           </div>
                         </TableCell>
