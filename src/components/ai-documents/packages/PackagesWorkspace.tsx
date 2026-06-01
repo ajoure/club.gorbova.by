@@ -30,10 +30,15 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileStack, ClipboardList, FileText, Users, ShieldCheck, Sparkles,
-  Plus, Pencil, Trash2,
+  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRbac } from "@/hooks/useRbac";
@@ -43,6 +48,9 @@ import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
+
+
+
 
 interface PackageOption {
   id: string;
@@ -289,40 +297,72 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               );
             })
           )}
+
+          {isAdminUI && selectedPackage && (
+            <div className="ml-auto">
+              <DropdownMenu>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          aria-label="Действия с пакетом документов"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      Действия с выбранным пакетом документов
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuItem onSelect={() => openEdit(selectedPackage)}>
+                    <Pencil className="h-3.5 w-3.5 mr-2" /> Редактировать пакет
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      handleToggleActive(selectedPackage, !selectedPackage.is_active)
+                    }
+                  >
+                    {selectedPackage.is_active ? (
+                      <>
+                        <PowerOff className="h-3.5 w-3.5 mr-2" /> Деактивировать
+                      </>
+                    ) : (
+                      <>
+                        <Power className="h-3.5 w-3.5 mr-2" /> Активировать
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    disabled={deleting}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setDeleteOpen(true);
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-2" /> Удалить
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </div>
 
-        {isAdminUI && selectedPackage && (
-          <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/40">
-            <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
-              <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
-            </Button>
-            <div className="flex items-center gap-1.5 px-2">
-              <Switch
-                id={`pkg-active-${selectedPackage.id}`}
-                checked={selectedPackage.is_active}
-                onCheckedChange={(v) => handleToggleActive(selectedPackage, Boolean(v))}
-              />
-              <Label htmlFor={`pkg-active-${selectedPackage.id}`} className="text-xs cursor-pointer">
-                Активен
-              </Label>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setDeleteOpen(true)}
-              disabled={deleting}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить
-            </Button>
-            {selectedPackage.description && (
-              <span className="text-[11px] text-muted-foreground ml-2">
-                {selectedPackage.description}
-              </span>
-            )}
-          </div>
+        {selectedPackage?.description && (
+          <p className="text-[11px] text-muted-foreground pl-1">
+            {selectedPackage.description}
+          </p>
         )}
       </GlassCard>
+
 
       {/* Подвкладки пакета */}
       {selectedPackage ? (
