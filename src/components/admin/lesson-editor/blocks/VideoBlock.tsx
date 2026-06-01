@@ -182,11 +182,12 @@ export function VideoBlock({
           )}
           {/* Outer wrapper controls geometry (aspect-ratio) */}
           <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
-            {/* Mount point for Kinescope player - fills wrapper */}
-            <div 
-              id={containerId}
-              className="absolute inset-0"
-            />
+            {/* React owns ONLY this wrapper. The Kinescope mount-point div is appended
+                manually via useLayoutEffect below — so when Kinescope SDK mutates
+                its children (or fails to load), React never tries to reconcile them
+                and we avoid the "removeChild: node is not a child" crash that takes
+                down the whole lesson page. */}
+            <KinescopeMountPoint containerId={containerId} />
             {/* Autoplay blocked banner */}
             {autoplayBlocked && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg z-10">
@@ -208,6 +209,43 @@ export function VideoBlock({
         </div>
       );
     }
+
+    // Fallback: API-плеер не смог запуститься (например, 402 от Kinescope).
+    // Показываем обычный iframe — он отрендерит сообщение Kinescope, а не белый экран.
+    if (content.provider === 'kinescope' && apiError && embedUrl) {
+      return (
+        <div className="space-y-2">
+          {content.title && (
+            <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
+          )}
+          <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
+            <iframe
+              key={embedUrl}
+              src={embedUrl}
+              className="absolute inset-0 w-full h-full"
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
+              allowFullScreen
+            />
+          </div>
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              Видео временно недоступно. Попробуйте обновить страницу или{" "}
+              <a
+                href={embedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-medium"
+              >
+                открыть в новой вкладке
+              </a>
+              .
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     
     // Fallback to regular iframe
     return (
