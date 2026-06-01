@@ -627,7 +627,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
           {subTabs.map((tab) => {
             const isActive = activeSubTab === tab.id;
             const Icon = tab.icon;
-            return (
+            const hint = SUBTAB_HINTS[tab.id];
+            const button = (
               <button
                 type="button"
                 key={tab.id}
@@ -647,6 +648,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 <Icon className={`h-3.5 w-3.5 ${isActive ? tab.iconColor : ""}`} />
                 <span>{tab.label}</span>
               </button>
+            );
+            return hint ? (
+              <HelpTooltip key={tab.id} helpKey="" customShort={hint} alwaysShow>
+                {button}
+              </HelpTooltip>
+            ) : (
+              button
             );
           })}
         </div>
