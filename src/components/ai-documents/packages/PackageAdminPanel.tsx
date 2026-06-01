@@ -105,15 +105,30 @@ export function PackageAdminPanel() {
     setSaving(true);
     try {
       if (editing) {
+        const newName = form.name.trim();
+        const newDesc = form.description.trim() || null;
         const { error } = await supabase
           .from("document_package_templates")
-          .update({
-            name: form.name.trim(),
-            description: form.description.trim() || null,
-            is_active: form.is_active,
-          })
+          .update({ name: newName, description: newDesc, is_active: form.is_active })
           .eq("id", editing.id);
         if (error) throw error;
+
+        // Audit: detect rename vs activation changes
+        if (newName !== editing.name) {
+          await logPackageEvent("document_package.renamed", editing.id, {
+            old_name: editing.name, new_name: newName,
+          });
+        }
+        if (form.is_active !== editing.is_active) {
+          await logPackageEvent(
+            form.is_active ? "document_package.activated" : "document_package.deactivated",
+            editing.id,
+            { name: newName }
+          );
+        }
+        if (newName === editing.name && form.is_active === editing.is_active) {
+          await logPackageEvent("document_package.updated", editing.id, { name: newName });
+        }
         toast.success("Пакет обновлён");
       } else {
         const { data, error } = await supabase
@@ -122,13 +137,18 @@ export function PackageAdminPanel() {
             name: form.name.trim(),
             description: form.description.trim() || null,
             is_active: form.is_active,
-            profile_id: null, // глобальный пакет
+            profile_id: null,
           })
           .select("id")
           .single();
         if (error) throw error;
         toast.success("Пакет создан");
-        if (data?.id) setPackageId(data.id);
+        if (data?.id) {
+          await logPackageEvent("document_package.created", data.id, {
+            name: form.name.trim(), is_active: form.is_active,
+          });
+          setPackageId(data.id);
+        }
       }
       await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
       await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
@@ -141,7 +161,42 @@ export function PackageAdminPanel() {
     }
   };
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = async (pkg: PackageRow) => {
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase.rpc("safe_delete_document_package", {
+        _package_id: pkg.id,
+      });
+      if (error) throw error;
+      const res = data as { status: string; reason?: string; dependencies?: Record<string, number>; suggestion?: string };
+      if (res.status === "deleted") {
+        toast.success("Пакет удалён");
+        setPackageId(null);
+        await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
+        await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
+        await queryClient.invalidateQueries({ queryKey: ["access-rule-document-packages"] });
+      } else if (res.status === "blocked") {
+        const d = res.dependencies ?? {};
+        toast.error(
+          `Удалить нельзя: используется (шаблонов: ${d.items ?? 0}, сессий: ${d.sessions ?? 0}, правил доступа: ${d.access_rules ?? 0}). Деактивируйте пакет вместо удаления.`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(`Не удалось удалить: ${res.reason ?? res.status}`);
+      }
+    } catch (e: any) {
+      toast.error(`Ошибка удаления: ${e?.message ?? e}`);
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  };
+
   const selectedPackage = packagesQuery.data?.find(p => p.id === packageId) ?? null;
+
+
 
   return (
     <div className="space-y-4">
