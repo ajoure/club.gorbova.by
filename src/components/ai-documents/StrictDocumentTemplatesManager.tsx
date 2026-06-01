@@ -39,6 +39,7 @@ import { ru } from "date-fns/locale";
 import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
 import { FileNameTemplateEditor } from "./FileNameTemplateEditor";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 
 // C5-I: понятные сообщения для ошибок activation backend
 function mapActivationError(raw: string | undefined | null, data?: any): string {
