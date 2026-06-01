@@ -13,6 +13,7 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
 import { PackagesWorkspace } from "@/components/ai-documents/packages/PackagesWorkspace";
+import { DocumentHistoryView } from "@/components/ai-documents/DocumentHistoryView";
 // Sprint 3F Phase 2c: PackageAdminPanel больше не подключён здесь —
 // его подкомпоненты (PackageRolesManager, TemplateBindingControl,
 // PackageTemplateValidationPanel) встроены в PackagesWorkspace.
