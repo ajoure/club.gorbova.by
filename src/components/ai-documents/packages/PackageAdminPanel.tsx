@@ -1,7 +1,8 @@
 /**
- * PackageAdminPanel — Sprint 3F Phase 2b.
+ * PackageAdminPanel — Sprint 3F Phase 2b + Sprint 3S v2 (CRUD без slug/code).
  *
  * Admin-only композитная панель для пакетов документов:
+ *  0) CRUD глобальных пакетов (Sprint 3S v2): только Название/Описание/Активен; UUID = единственный ID.
  *  1) выбор пакета;
  *  2) per-package CRUD ролей (PackageRolesManager);
  *  3) привязка шаблонов через RPC (TemplateBindingControl);
@@ -9,17 +10,26 @@
  *
  * Никаких прямых INSERT/UPDATE/DELETE в `document_package_template_items`,
  * `document_templates.template_scope`, `document_package_role_catalog.public_id`.
- * Все мутации идут через canonical RPC или БД-триггеры (см. Phase 2 миграцию).
+ * Никаких slug/code/транслитерации названия пакета. Связи доступа работают только через UUID.
  */
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { FileStack, Shield } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import { FileStack, Shield, Plus, Pencil } from "lucide-react";
+import { toast } from "sonner";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
@@ -27,30 +37,95 @@ import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel
 interface PackageRow {
   id: string;
   name: string;
+  description: string | null;
   is_active: boolean;
+  profile_id: string | null;
 }
 
 export function PackageAdminPanel() {
+  const queryClient = useQueryClient();
   const [packageId, setPackageId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<PackageRow | null>(null);
+  const [form, setForm] = useState({ name: "", description: "", is_active: true });
+  const [saving, setSaving] = useState(false);
 
   const packagesQuery = useQuery({
     queryKey: ["pkg-admin-packages"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("document_package_templates")
-        .select("id, name, is_active")
+        .select("id, name, description, is_active, profile_id")
+        .is("profile_id", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as PackageRow[];
     },
   });
 
-  // Auto-select first package
   useEffect(() => {
     if (!packageId && packagesQuery.data && packagesQuery.data.length > 0) {
       setPackageId(packagesQuery.data[0].id);
     }
   }, [packageId, packagesQuery.data]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ name: "", description: "", is_active: true });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (pkg: PackageRow) => {
+    setEditing(pkg);
+    setForm({ name: pkg.name, description: pkg.description ?? "", is_active: pkg.is_active });
+    setDialogOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      toast.error("Укажите название пакета");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editing) {
+        const { error } = await supabase
+          .from("document_package_templates")
+          .update({
+            name: form.name.trim(),
+            description: form.description.trim() || null,
+            is_active: form.is_active,
+          })
+          .eq("id", editing.id);
+        if (error) throw error;
+        toast.success("Пакет обновлён");
+      } else {
+        const { data, error } = await supabase
+          .from("document_package_templates")
+          .insert({
+            name: form.name.trim(),
+            description: form.description.trim() || null,
+            is_active: form.is_active,
+            profile_id: null, // глобальный пакет
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        toast.success("Пакет создан");
+        if (data?.id) setPackageId(data.id);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
+      await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
+      await queryClient.invalidateQueries({ queryKey: ["access-rule-document-packages"] });
+      setDialogOpen(false);
+    } catch (e: any) {
+      toast.error(`Не удалось сохранить пакет: ${e?.message ?? e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedPackage = packagesQuery.data?.find(p => p.id === packageId) ?? null;
 
   return (
     <div className="space-y-4">
@@ -66,14 +141,16 @@ export function PackageAdminPanel() {
             </Badge>
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Per-package роли (ln-XXXXXX), привязка шаблонов через RPC и read-only валидация.
-            Никаких изменений в billing-резолвере, Gotenberg или
-            <code className="mx-1">canonical-document-generate-strict</code>.
+            CRUD глобальных пакетов, per-package роли, привязка шаблонов и read-only валидация.
+            Доступ к пакетам у клиентов настраивается в «Правилах доступа» продукта по UUID.
           </p>
         </div>
+        <Button size="sm" onClick={openCreate}>
+          <Plus className="h-4 w-4 mr-1.5" /> Новый пакет
+        </Button>
       </div>
 
-      <Card className="p-3">
+      <Card className="p-3 space-y-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground shrink-0">Пакет:</span>
           <Select value={packageId ?? ""} onValueChange={(v) => setPackageId(v || null)}>
@@ -85,18 +162,71 @@ export function PackageAdminPanel() {
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}
                   {!p.is_active && (
-                    <span className="ml-2 text-[10px] text-muted-foreground">(архив)</span>
+                    <span className="ml-2 text-[10px] text-muted-foreground">(неактивен)</span>
                   )}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {selectedPackage && (
+            <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
+              <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
+            </Button>
+          )}
         </div>
+        {selectedPackage?.description && (
+          <p className="text-[11px] text-muted-foreground pl-1">{selectedPackage.description}</p>
+        )}
       </Card>
 
       <PackageRolesManager packageTemplateId={packageId} />
       <TemplateBindingControl packageTemplateId={packageId} />
       <PackageTemplateValidationPanel packageTemplateId={packageId} />
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? "Редактировать пакет" : "Новый пакет документов"}</DialogTitle>
+            <DialogDescription>
+              Глобальный пакет, доступный для выдачи всем клиентам. Идентифицируется UUID — переименование не ломает доступ.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Название</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Напр.: Идеология"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Описание (необязательно)</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Краткое описание пакета"
+                rows={3}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="pkg-active"
+                checked={form.is_active}
+                onCheckedChange={(v) => setForm({ ...form, is_active: Boolean(v) })}
+              />
+              <Label htmlFor="pkg-active" className="text-xs cursor-pointer">Активен</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Отмена</Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Сохранение…" : (editing ? "Сохранить" : "Создать")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
