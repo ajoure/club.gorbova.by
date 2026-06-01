@@ -417,6 +417,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     condition_use_same_list: true,
     condition_required_product_ids: [] as string[],
     // training_content fields
+    tc_domain: "knowledge_base" as "knowledge_base" | "document_generation",
     tc_access_mode: "full" as "full" | "partial",
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
