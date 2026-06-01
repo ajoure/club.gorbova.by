@@ -240,9 +240,20 @@ export function PackageAdminPanel() {
             </SelectContent>
           </Select>
           {selectedPackage && (
-            <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
-              <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
-            </Button>
+            <>
+              <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
+                <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setDeleteOpen(true)}
+                disabled={deleting}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить
+              </Button>
+            </>
           )}
         </div>
         {selectedPackage?.description && (
