@@ -602,6 +602,13 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_lesson_ids: tcAllowedLessonIds,
       tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
       match_purchase_month: conditions.match_purchase_month === true,
+      dg_access_mode: rule.grant_target_type === "document_generation"
+        ? ((conditions.access_mode as "full" | "partial") || "full")
+        : "full",
+      dg_allowed_package_ids: rule.grant_target_type === "document_generation"
+        && Array.isArray(conditions.allowed_package_ids)
+        ? (conditions.allowed_package_ids as string[])
+        : [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
