@@ -227,6 +227,26 @@ export function useKinescopePlayer({
     let observer: MutationObserver | null = null;
     let rafId: number | null = null;
 
+    // Глушим unhandled rejection от Kinescope SDK (он реджектит внутренний awaiter
+    // при сбое iframe — например HTTP 402 — даже если внешний await пойман в try/catch).
+    // Без этого rejection всплывает как Uncaught и шумит в логах/error overlay.
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason as
+        | { target?: { iframe?: string }; data?: { message?: string } }
+        | undefined;
+      const msg = reason?.data?.message ?? "";
+      if (
+        reason?.target?.iframe === "IFRAME" ||
+        msg.includes("IFrame load failed")
+      ) {
+        event.preventDefault();
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("unhandledrejection", onUnhandledRejection);
+    }
+
+
     /**
      * Force all elements inside container to fill 100%
      * Called multiple times to counteract Kinescope's late style changes
@@ -463,6 +483,10 @@ export function useKinescopePlayer({
         }
       }
       playerRef.current = null;
+
+      if (typeof window !== "undefined") {
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      }
     };
   }, [videoId, containerId]); // Don't include autoplayTimecode - handled via seekAndPlay
 

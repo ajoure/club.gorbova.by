@@ -1,11 +1,11 @@
-import { useState, useId, useCallback, useEffect } from "react";
+import { useState, useId, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { VideoContent } from "@/hooks/useLessonBlocks";
-import { Video, ExternalLink, Play } from "lucide-react";
+import { Video, ExternalLink, Play, AlertTriangle } from "lucide-react";
 import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
 
 interface VideoBlockProps {
@@ -182,11 +182,12 @@ export function VideoBlock({
           )}
           {/* Outer wrapper controls geometry (aspect-ratio) */}
           <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
-            {/* Mount point for Kinescope player - fills wrapper */}
-            <div 
-              id={containerId}
-              className="absolute inset-0"
-            />
+            {/* React owns ONLY this wrapper. The Kinescope mount-point div is appended
+                manually via useLayoutEffect below — so when Kinescope SDK mutates
+                its children (or fails to load), React never tries to reconcile them
+                and we avoid the "removeChild: node is not a child" crash that takes
+                down the whole lesson page. */}
+            <KinescopeMountPoint containerId={containerId} />
             {/* Autoplay blocked banner */}
             {autoplayBlocked && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg z-10">
@@ -208,6 +209,43 @@ export function VideoBlock({
         </div>
       );
     }
+
+    // Fallback: API-плеер не смог запуститься (например, 402 от Kinescope).
+    // Показываем обычный iframe — он отрендерит сообщение Kinescope, а не белый экран.
+    if (content.provider === 'kinescope' && apiError && embedUrl) {
+      return (
+        <div className="space-y-2">
+          {content.title && (
+            <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
+          )}
+          <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
+            <iframe
+              key={embedUrl}
+              src={embedUrl}
+              className="absolute inset-0 w-full h-full"
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
+              allowFullScreen
+            />
+          </div>
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              Видео временно недоступно. Попробуйте обновить страницу или{" "}
+              <a
+                href={embedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-medium"
+              >
+                открыть в новой вкладке
+              </a>
+              .
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     
     // Fallback to regular iframe
     return (
@@ -282,3 +320,48 @@ export function VideoBlock({
     </div>
   );
 }
+
+/**
+ * KinescopeMountPoint — изолированный mount-point для Kinescope SDK.
+ *
+ * React контролирует только внешний wrapper-div. Внутренний div с нужным id
+ * создаётся вручную через DOM API в useLayoutEffect и удаляется тем же способом
+ * при размонтировании. Это разрывает контракт реконсиляции: Kinescope волен
+ * добавлять/удалять любых детей у внутреннего div, React туда не заглядывает.
+ *
+ * Без этой развязки сбой Kinescope (например, HTTP 402) приводил к крэшу
+ * `NotFoundError: Failed to execute 'removeChild' on 'Node'` в commit-фазе
+ * React и уносил всю страницу урока в белый экран.
+ */
+function KinescopeMountPoint({ containerId }: { containerId: string }) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const target = document.createElement('div');
+    target.id = containerId;
+    target.style.position = 'absolute';
+    target.style.inset = '0';
+    target.style.width = '100%';
+    target.style.height = '100%';
+    wrapper.appendChild(target);
+
+    return () => {
+      // Полностью очищаем поддерево вручную, ДО того как React размонтирует wrapper.
+      // Это гарантирует, что React не столкнётся с "чужими" детьми, которые
+      // Kinescope SDK мог добавить или подменить.
+      try {
+        while (wrapper.firstChild) {
+          wrapper.removeChild(wrapper.firstChild);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [containerId]);
+
+  return <div ref={wrapperRef} className="absolute inset-0" />;
+}
+

@@ -11,6 +11,7 @@ import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { LessonBlocksErrorBoundary } from "@/components/lesson/LessonBlocksErrorBoundary";
 import { LessonActionDock } from "@/components/lesson/LessonActionDock";
 import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { KvestLessonView } from "@/components/lesson/KvestLessonView";
@@ -354,18 +355,20 @@ export default function LibraryLesson() {
 
         {/* KVEST MODE */}
         {currentLesson.completion_mode === 'kvest' && blocks.length > 0 ? (
-          <KvestLessonView
-            lesson={currentLesson}
-            blocks={blocks}
-            moduleSlug={moduleSlug || ''}
-            onComplete={async () => {
-              await markCompleted(currentLesson.id);
-            }}
-            isAdminMode={isAdminMode}
-            allowBypassEmptyVideo={allowBypassEmptyVideo}
-          />
+          <LessonBlocksErrorBoundary>
+            <KvestLessonView
+              lesson={currentLesson}
+              blocks={blocks}
+              moduleSlug={moduleSlug || ''}
+              onComplete={async () => {
+                await markCompleted(currentLesson.id);
+              }}
+              isAdminMode={isAdminMode}
+              allowBypassEmptyVideo={allowBypassEmptyVideo}
+            />
+          </LessonBlocksErrorBoundary>
         ) : (
-          <>
+          <LessonBlocksErrorBoundary>
             {/* Block-based Content (if blocks exist) */}
             {blocks.length > 0 ? (
               <Card className="mb-6">
@@ -463,7 +466,7 @@ export default function LibraryLesson() {
                 )}
               </>
             )}
-          </>
+          </LessonBlocksErrorBoundary>
         )}
 
         {/* Attachments */}
