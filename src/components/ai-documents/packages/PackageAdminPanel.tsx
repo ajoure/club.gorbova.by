@@ -148,9 +148,22 @@ export function PackageAdminPanel() {
         await queryClient.invalidateQueries({ queryKey: ["access-rule-document-packages"] });
       } else if (res.status === "blocked") {
         const d = res.dependencies ?? {};
+        const parts = [
+          ["шаблонов", d.items],
+          ["сессий", d.sessions],
+          ["участников", d.session_participants],
+          ["ролей", d.role_catalog],
+          ["назначений ролей", d.item_role_assignments],
+          ["batch-генераций", d.generation_batches],
+          ["сгенерированных документов", d.generated_documents],
+          ["правил доступа", d.access_rules],
+        ]
+          .filter(([, n]) => typeof n === "number" && (n as number) > 0)
+          .map(([label, n]) => `${label}: ${n}`)
+          .join(", ");
         toast.error(
-          `Удалить нельзя: используется (шаблонов: ${d.items ?? 0}, сессий: ${d.sessions ?? 0}, правил доступа: ${d.access_rules ?? 0}). Деактивируйте пакет вместо удаления.`,
-          { duration: 8000 }
+          `Удалить нельзя: используется (${parts || "есть зависимости"}). Деактивируйте пакет вместо удаления.`,
+          { duration: 9000 }
         );
       } else {
         toast.error(`Не удалось удалить: ${res.reason ?? res.status}`);
