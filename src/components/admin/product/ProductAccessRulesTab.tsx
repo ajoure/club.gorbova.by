@@ -366,6 +366,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       has_condition: false,
       condition_use_same_list: true,
       condition_required_product_ids: [],
+      tc_domain: "knowledge_base",
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
