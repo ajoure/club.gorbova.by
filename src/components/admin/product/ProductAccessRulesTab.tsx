@@ -637,38 +637,43 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   };
 
   const handleSave = async () => {
-    // Validate: for product_access multi-select, need at least one product
+    // === Validation ===
     if (form.grant_target_type === "product_access") {
       if (form.target_product_ids.length === 0) {
         toast.error("Выберите хотя бы один продукт для выдачи");
         return;
       }
     } else if (form.grant_target_type === "training_content") {
-      if (!form.target_ref) {
-        toast.error("Выберите тренинг");
-        return;
-      }
-      if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
-        toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
-        return;
+      if (form.tc_domain === "document_generation") {
+        if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
+          toast.error("Для частичного доступа выберите хотя бы один пакет документов");
+          return;
+        }
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
+          toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
+          return;
+        }
+      } else {
+        if (!form.target_ref) {
+          toast.error("Выберите тренинг");
+          return;
+        }
+        if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
+          toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
+          return;
+        }
       }
     } else if (form.grant_target_type === "document_generation") {
-      // Sprint 3S v2 — UUID-only. target_ref = sentinel домена.
+      // Legacy direct path — kept for safety (UI more reaches via training_content+dg_domain)
       if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
         toast.error("Для частичного доступа выберите хотя бы один пакет документов");
-        return;
-      }
-      // Валидация UUID-формата
-      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
-        toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
         return;
       }
     } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
     }
-
 
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
@@ -691,59 +696,63 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
 
       if (effectiveConditionIds.length > 0) {
         conditions.required_product_ids = effectiveConditionIds;
-        // Backward-compatible: also write single field for legacy readers
         if (effectiveConditionIds.length === 1) {
           conditions.required_product_id = effectiveConditionIds[0];
         }
       }
     }
 
-    // training_content conditions — normalize payload
+    // training_content conditions — branch on domain
     if (form.grant_target_type === "training_content") {
-      conditions.access_mode = form.tc_access_mode;
-      if (form.tc_access_mode === "partial" && trainingTree) {
-        const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
-        conditions.allowed_module_ids = normalized.allowed_module_ids;
-        conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
-        // partial: явно фиксируем флаг авто-включения новых папок (по умолчанию выключен)
-        conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
+      if (form.tc_domain === "document_generation") {
+        // DG domain: only DG conditions. No KB leftovers.
+        conditions.access_mode = form.dg_access_mode;
+        if (form.dg_access_mode === "partial") {
+          const validIds = Array.from(new Set(
+            form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
+          ));
+          conditions.allowed_package_ids = validIds;
+        }
       } else {
-        conditions.allowed_module_ids = [];
-        conditions.allowed_lesson_ids = [];
-        // full: флаг авто-включения не нужен — full и так видит все будущие модули
-        delete conditions.auto_include_new_modules;
+        conditions.access_mode = form.tc_access_mode;
+        if (form.tc_access_mode === "partial" && trainingTree) {
+          const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
+          conditions.allowed_module_ids = normalized.allowed_module_ids;
+          conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+          conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
+        } else {
+          conditions.allowed_module_ids = [];
+          conditions.allowed_lesson_ids = [];
+        }
       }
     }
 
-    // document_generation conditions — UUID-only, sentinel target_ref
+    // document_generation (legacy direct path)
     if (form.grant_target_type === "document_generation") {
       conditions.access_mode = form.dg_access_mode;
       if (form.dg_access_mode === "partial") {
-        // dedupe + только валидные UUID + только существующие активные глобальные пакеты
         const validIds = Array.from(new Set(
           form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
         ));
         conditions.allowed_package_ids = validIds;
-      } else {
-        delete conditions.allowed_package_ids;
       }
     }
 
-
-    // Month-gated access (applies to training_content and live_event-style rules)
-    if (form.match_purchase_month) {
+    // Month-gated access — only meaningful for KB domain of training_content
+    if (form.match_purchase_month && !(form.grant_target_type === "training_content" && form.tc_domain === "document_generation")) {
       conditions.match_purchase_month = true;
     }
 
-    // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
     const parsedDuration = form.duration_mode === "manual"
       ? (form.duration_days.trim() === "" ? null : (parseInt(form.duration_days, 10) || null))
       : null;
 
-    // For multi-product: target_ref = first product (backward-compatible), target_label = summary
+    // === Resolve effective grant type + target_ref + target_label ===
+    let effectiveGrantType: GrantTargetType = form.grant_target_type;
     let targetRef = form.target_ref;
     let targetLabel = form.target_label;
+
     if (form.grant_target_type === "product_access" && form.target_product_ids.length > 0) {
       targetRef = form.target_product_ids[0];
       if (form.target_product_ids.length === 1) {
@@ -754,12 +763,27 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
     }
-    // training_content: target_label = training title (use merged trainingOptions)
-    if (form.grant_target_type === "training_content" && form.target_ref) {
+
+    if (form.grant_target_type === "training_content" && form.tc_domain === "knowledge_base" && form.target_ref) {
       const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
     }
-    // document_generation: sentinel target_ref + автоматический label
+
+    // KB→DG coercion: persist as grant_target_type='document_generation' with sentinel target_ref
+    if (form.grant_target_type === "training_content" && form.tc_domain === "document_generation") {
+      effectiveGrantType = "document_generation";
+      targetRef = "document_generation";
+      if (form.dg_access_mode === "full") {
+        targetLabel = "Все пакеты документов";
+      } else {
+        const names = form.dg_allowed_package_ids
+          .map(id => documentPackagesList.find(p => p.id === id)?.name || id);
+        targetLabel = names.length === 1
+          ? `Пакет: ${names[0]}`
+          : `Пакетов: ${names.length} (${names.slice(0,2).join(", ")}${names.length>2?` и ещё ${names.length-2}`:""})`;
+      }
+    }
+
     if (form.grant_target_type === "document_generation") {
       targetRef = "document_generation";
       if (form.dg_access_mode === "full") {
@@ -776,7 +800,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
       tariff_id: form.scope === "tariff" ? form.tariff_id : null,
-      grant_target_type: form.grant_target_type,
+      grant_target_type: effectiveGrantType,
       target_ref: targetRef,
       target_label: targetLabel || null,
       is_active: form.is_active,
