@@ -35,6 +35,22 @@ import { PromptRunFlow } from "@/components/ai-chat/PromptRunFlow";
 import { PromptCard } from "@/components/ai-chat/PromptCard";
 import { PromptFormDialog } from "@/components/ai-chat/PromptFormDialog";
 import { AnalysisHistoryView } from "@/components/ai-chat/AnalysisHistoryView";
+import { HelpTooltip } from "@/components/help/HelpComponents";
+
+/** Sprint 3R: краткие подсказки для подвкладок раздела «Документы»/«Генерация документов». */
+const SUBTAB_HINTS: Partial<Record<string, string>> = {
+  chat: "Свободный диалог с ассистентом по любым вопросам.",
+  "analysis-history": "Архив прошлых анализов файлов и переписки.",
+  tutorials: "Готовые сценарии работы с ассистентом для админа.",
+  prompts: "Каталог промптов для повторного запуска.",
+  placeholders: "Справочник полей, которые можно вставить в шаблон Word.",
+  templates: "Загрузка и настройка шаблонов отдельных документов (договор, акт, счёт).",
+  "pkg-ideology": "Пакеты документов: анкеты, шаблоны пакета и формирование.",
+  history: "История сформированных документов.",
+  executors: "Карточки ваших организаций — данные исполнителя для подстановки в документы.",
+  entities: "Реквизиты ваших юрлиц и ИП — заполняются один раз и подставляются в документы.",
+  persons: "Реквизиты физлиц (паспорт, адрес) — для договоров и актов.",
+};
 import { 
   Bot, 
   PlayCircle, 
