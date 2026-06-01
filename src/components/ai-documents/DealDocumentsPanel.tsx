@@ -352,7 +352,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if ((data as any)?.error) throw new Error((data as any).error);
       setPreview(data as PreviewResult);
     } catch (e: any) {
-      toast.error(`Preview: ${await normalizeEdgeFunctionErrorAsync(e)}`);
+      toast.error(`Тест: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setPreviewLoading(false);
     }
