@@ -35,6 +35,22 @@ import { PromptRunFlow } from "@/components/ai-chat/PromptRunFlow";
 import { PromptCard } from "@/components/ai-chat/PromptCard";
 import { PromptFormDialog } from "@/components/ai-chat/PromptFormDialog";
 import { AnalysisHistoryView } from "@/components/ai-chat/AnalysisHistoryView";
+import { HelpTooltip } from "@/components/help/HelpComponents";
+
+/** Sprint 3R: краткие подсказки для подвкладок раздела «Документы»/«Генерация документов». */
+const SUBTAB_HINTS: Partial<Record<string, string>> = {
+  chat: "Свободный диалог с ассистентом по любым вопросам.",
+  "analysis-history": "Архив прошлых анализов файлов и переписки.",
+  tutorials: "Готовые сценарии работы с ассистентом для админа.",
+  prompts: "Каталог промптов для повторного запуска.",
+  placeholders: "Справочник полей, которые можно вставить в шаблон Word.",
+  templates: "Загрузка и настройка шаблонов отдельных документов (договор, акт, счёт).",
+  "pkg-ideology": "Пакеты документов: анкеты, шаблоны пакета и формирование.",
+  history: "История сформированных документов.",
+  executors: "Карточки ваших организаций — данные исполнителя для подстановки в документы.",
+  entities: "Реквизиты ваших юрлиц и ИП — заполняются один раз и подставляются в документы.",
+  persons: "Реквизиты физлиц (паспорт, адрес) — для договоров и актов.",
+};
 import { 
   Bot, 
   PlayCircle, 
@@ -611,7 +627,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
           {subTabs.map((tab) => {
             const isActive = activeSubTab === tab.id;
             const Icon = tab.icon;
-            return (
+            const hint = SUBTAB_HINTS[tab.id];
+            const button = (
               <button
                 type="button"
                 key={tab.id}
@@ -631,6 +648,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 <Icon className={`h-3.5 w-3.5 ${isActive ? tab.iconColor : ""}`} />
                 <span>{tab.label}</span>
               </button>
+            );
+            return hint ? (
+              <HelpTooltip key={tab.id} helpKey="" customShort={hint} alwaysShow>
+                {button}
+              </HelpTooltip>
+            ) : (
+              button
             );
           })}
         </div>
@@ -885,7 +909,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       {activeSubTab === "history" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <div className="text-center py-12 text-sm text-muted-foreground">
-            История генераций (canonical) появится после реализации генерации из сделки в C3.
+            История сформированных документов появится здесь после первой генерации из карточки сделки.
           </div>
         </div>
       )}
