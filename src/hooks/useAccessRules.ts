@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type GrantTargetType = "entitlement" | "club" | "email" | "product_access" | "training_content" | "section_access";
+export type GrantTargetType = "entitlement" | "club" | "email" | "product_access" | "training_content" | "section_access" | "document_generation";
 
 export type RulePurpose = "primary" | "bonus" | "additional" | "service";
 

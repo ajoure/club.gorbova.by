@@ -31,7 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen, Layout
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen, Layout, FileStack
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -52,6 +52,7 @@ const TARGET_TYPE_LABELS: Record<GrantTargetType, string> = {
   email: "Доступ к домену / разделу",
   training_content: "Доступ к контенту тренинга",
   section_access: "Доступ к разделу платформы",
+  document_generation: "Доступ к генерации документов",
 };
 
 const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
@@ -61,6 +62,7 @@ const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
   email: Zap,
   training_content: BookOpen,
   section_access: Layout,
+  document_generation: FileStack,
 };
 
 const PURPOSE_LABELS: Record<RulePurpose, string> = {
@@ -318,6 +320,23 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     return list;
   }, [rootTrainings, externalTraining]);
 
+  // Sprint 3S v2 — список активных глобальных пакетов документов (UUID only)
+  const { data: documentPackagesList = [] } = useQuery({
+    queryKey: ["access-rule-document-packages"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_templates")
+        .select("id, name, is_active")
+        .is("profile_id", null)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; name: string; is_active: boolean }>;
+    },
+  });
+
+
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
@@ -352,6 +371,8 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_lesson_ids: [],
       tc_auto_include_new_modules: false,
       match_purchase_month: false,
+      dg_access_mode: "full",
+      dg_allowed_package_ids: [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -400,6 +421,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_allowed_lesson_ids: [] as string[],
     tc_auto_include_new_modules: false,
     match_purchase_month: false,
+    // document_generation fields (Sprint 3S v2 — UUID only)
+    dg_access_mode: "full" as "full" | "partial",
+    dg_allowed_package_ids: [] as string[],
   });
 
   // Confirm-dialog для перевода existing partial → full
@@ -536,6 +560,8 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_lesson_ids: [],
       tc_auto_include_new_modules: false,
       match_purchase_month: false,
+      dg_access_mode: "full",
+      dg_allowed_package_ids: [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -593,6 +619,13 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_lesson_ids: tcAllowedLessonIds,
       tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
       match_purchase_month: conditions.match_purchase_month === true,
+      dg_access_mode: rule.grant_target_type === "document_generation"
+        ? ((conditions.access_mode as "full" | "partial") || "full")
+        : "full",
+      dg_allowed_package_ids: rule.grant_target_type === "document_generation"
+        && Array.isArray(conditions.allowed_package_ids)
+        ? (conditions.allowed_package_ids as string[])
+        : [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -614,10 +647,23 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
         return;
       }
+    } else if (form.grant_target_type === "document_generation") {
+      // Sprint 3S v2 — UUID-only. target_ref = sentinel домена.
+      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
+        toast.error("Для частичного доступа выберите хотя бы один пакет документов");
+        return;
+      }
+      // Валидация UUID-формата
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
+        toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
+        return;
+      }
     } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
     }
+
 
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
@@ -664,6 +710,21 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       }
     }
 
+    // document_generation conditions — UUID-only, sentinel target_ref
+    if (form.grant_target_type === "document_generation") {
+      conditions.access_mode = form.dg_access_mode;
+      if (form.dg_access_mode === "partial") {
+        // dedupe + только валидные UUID + только существующие активные глобальные пакеты
+        const validIds = Array.from(new Set(
+          form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
+        ));
+        conditions.allowed_package_ids = validIds;
+      } else {
+        delete conditions.allowed_package_ids;
+      }
+    }
+
+
     // Month-gated access (applies to training_content and live_event-style rules)
     if (form.match_purchase_month) {
       conditions.match_purchase_month = true;
@@ -692,6 +753,19 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     if (form.grant_target_type === "training_content" && form.target_ref) {
       const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
+    }
+    // document_generation: sentinel target_ref + автоматический label
+    if (form.grant_target_type === "document_generation") {
+      targetRef = "document_generation";
+      if (form.dg_access_mode === "full") {
+        targetLabel = "Все пакеты документов";
+      } else {
+        const names = form.dg_allowed_package_ids
+          .map(id => documentPackagesList.find(p => p.id === id)?.name || id);
+        targetLabel = names.length === 1
+          ? `Пакет: ${names[0]}`
+          : `Пакетов: ${names.length} (${names.slice(0,2).join(", ")}${names.length>2?` и ещё ${names.length-2}`:""})`;
+      }
     }
 
     const payload: any = {
@@ -1590,8 +1664,86 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 </div>
               )}
 
-              {/* Label override — hide for product_access/training_content (auto-generated) */}
-              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && (
+              {/* document_generation: режим + multi-select UUID пакетов (Sprint 3S v2) */}
+              {form.grant_target_type === "document_generation" && (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Режим доступа</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, dg_access_mode: "full", dg_allowed_package_ids: [] })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                          form.dg_access_mode === "full"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Полный доступ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, dg_access_mode: "partial" })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                          form.dg_access_mode === "partial"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Частичный доступ
+                      </button>
+                    </div>
+                    {form.dg_access_mode === "full" && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Полный доступ автоматически включает все текущие и будущие активные пакеты документов.
+                      </p>
+                    )}
+                  </div>
+
+                  {form.dg_access_mode === "partial" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Доступные пакеты документов</Label>
+                      {documentPackagesList.length === 0 ? (
+                        <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
+                          Нет активных глобальных пакетов. Создайте пакет в разделе «Пакеты документов».
+                        </div>
+                      ) : (
+                        <div className="space-y-1 border rounded-md p-2 max-h-64 overflow-y-auto">
+                          {documentPackagesList.map(pkg => {
+                            const checked = form.dg_allowed_package_ids.includes(pkg.id);
+                            return (
+                              <label
+                                key={pkg.id}
+                                className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer"
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    const next = v
+                                      ? Array.from(new Set([...form.dg_allowed_package_ids, pkg.id]))
+                                      : form.dg_allowed_package_ids.filter(id => id !== pkg.id);
+                                    setForm({ ...form, dg_allowed_package_ids: next });
+                                  }}
+                                />
+                                <FileStack className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span className="text-sm">{pkg.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Выбор сохраняется только по UUID пакета. Переименование пакета не влияет на доступ.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Label override — hide for product_access/training_content/document_generation (auto-generated) */}
+              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && form.grant_target_type !== "document_generation" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
                   <Input

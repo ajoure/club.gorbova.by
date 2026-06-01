@@ -1,246 +1,423 @@
-## ## Diagnose
+да, согласен, с учетом правок:
 
-URL: `/library/buhgalteriya-kak-biznes/shag-3` (и любые уроки с Kinescope-видео).
+1. **Не писать “target_ref: NULL”, пока не подтверждено, что схема это допускает**
+  - Перед миграцией проверить constraint/тип поля `target_ref`.
+  - Если `target_ref NOT NULL`, не ломать схему ради этого спринта.
+  - Вариант безопаснее: использовать стабильный singleton UUID/ID домена только если он уже существует в текущей модели.
+  - Не использовать текст `document_generation` как технический ключ пакета.
+2. `document_generation` **как новый** `grant_target_type` **допустим только после проверки enum/CHECK**
+  - Если `grant_target_type` — enum, миграция должна безопасно добавить значение.
+  - Если CHECK — расширить CHECK без потери старых значений.
+  - В отчете показать фактический тип/constraint до и после.
+3. **Четко разделить legacy full-access и новый UUID partial-access**
+  - Legacy:
+    - `grant_target_type='section_access'`
+    - `target_ref='document_generation'`
+    - трактуется только как full access.
+  - Новый partial:
+    - `grant_target_type='document_generation'`
+    - `conditions.access_mode='partial'`
+    - `conditions.allowed_package_ids=[uuid]`.
+  - Не добавлять package-level partial в старый `section_access`.
+4. `allowed_package_ids` **валидировать на сохранении**
+  - Только UUID.
+  - Только существующие `document_package_templates.id`.
+  - Только глобальные пакеты: `profile_id IS NULL`.
+  - Только активные пакеты: `is_active=true`.
+  - Дубли удалять.
+  - `partial + []` не сохранять.
+5. `get_user_document_package_ids(p_user uuid)` **не должна доверять произвольному** `p_user`
+  - Если функция вызывается клиентом, она должна работать только для `auth.uid()`.
+  - Либо убрать параметр `p_user` и использовать `auth.uid()` внутри.
+  - Admin/super_admin может получать расширенную картину только через отдельный admin-safe путь, если нужен.
+6. **RLS-функции не должны рекурсивно читать таблицы с теми же RLS-политиками**
+  - `user_can_see_document_package()` должна быть `SECURITY DEFINER`.
+  - `SET search_path = public`.
+  - Без динамического SQL.
+  - Внутри не должно быть запроса, который вызывает эту же policy повторно.
+  - Если появляется recursion / stack depth / permission loop — STOP.
+7. **Удаление пакета оставить максимально безопасным**
+  - В плане сейчас указано “если нет items и sessions”.
+  - Нужно расширить: если dependency-discovery неполный — hard delete не делать.
+  - По умолчанию для непустого/использованного пакета — только `is_active=false`.
+  - Проверить также references в `access_rules.conditions.allowed_package_ids`.
+8. **Добавить audit_logs для CRUD пакетов**
+  - Создание, переименование, деактивация, удаление/попытка удаления должны писаться в `audit_logs`.
+  - Для admin-действий фиксировать actor admin.
+  - В DoD добавить SQL-proof записи в `audit_logs`.
+9. `useUserVisibleDocumentPackages()` **не должен быть RPC-only без RLS**
+  - Источник истины — RLS + `user_can_see_document_package`.
+  - RPC может быть UX-проекцией, но не единственной защитой.
+  - Клиентский фильтр не считается защитой.
+10. **Добавить proof, что изменение имени не влияет на доступ**
 
-Симптом: страница появляется на секунду, затем превращается в белый экран.
+- Уже есть в DoD, но нужно уточнить проверку:
+  - создать rule по UUID;
+  - переименовать пакет;
+  - проверить, что UUID в `allowed_package_ids` не изменился;
+  - клиентский доступ сохранился.
 
-### Что показали логи браузера на этой странице
+11. **В отчете обязательно показать отсутствие slug/code в новых артефактах**
 
-1. Kinescope SDK не смог загрузить iframe — `IFrame load failed: 402` для обоих видео-блоков `bAQd3NB5E2Ft192vH2zjiB`, `8apuCGUZDHYoU8vb5uFbHj`). HTTP 402 = у Kinescope-аккаунта истекла подписка / превышена квота.
+- Скрин диалога создания пакета без поля “Код”.
+- SQL-proof: access rule содержит только UUID.
+- Diff-summary: не добавлялись поля `slug/code`, не создавались индексы по ним.
 
-2. `useKinescopePlayer.ts` корректно ловит ошибку в `try/catch` и пишет `Player init error`, **но** SDK успевает мутировать DOM внутри React-управляемого `<div id={containerId}>` (вставить wrapper/iframe). При размонтировании плеера React пытается удалить детей, которых он сам не создавал, и падает с:
+12. **Не трогать генерацию документов**
 
-   
+- Подтвердить в плане/отчете:
+  - `canonical-document-generate-strict` не изменялся;
+  - edge-функции генерации не изменялись;
+  - sessions/participants не менялись;
+  - Gotenberg не затрагивался.
 
-   ```
+13. **Добавить DoD по inactive package**
 
-   NotFoundError: Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.
+- Если пакет `is_active=false`, клиент не видит его даже при наличии UUID в `allowed_package_ids`.
+- Admin в CRUD видит inactive пакет и может активировать обратно.
 
-   ```
+14. **Добавить DoD по backward compatibility**
 
-   
+- Старое правило `section_access → document_generation` открывает все активные глобальные пакеты.
+- Новое правило `document_generation/full` делает то же самое.
+- Новое правило `document_generation/partial` открывает только выбранные UUID.
 
-   Эта ошибка возникает **в commit-фазе React**, поэтому пробивает все error boundary внутри страницы и роняет всё поддерево `<LazyRoute>` → пустая страница.
+Копируемый блок для Lovable:
 
-3. Параллельно из SDK прилетает `Uncaught (in promise)` от внутреннего awaiter — он сам по себе страницу не валит, но шумит в логах.
+```text
+Дополни план следующими правками:
 
-### Почему «у клиентов и у меня одновременно»
+1. Не использовать `target_ref: NULL`, пока discovery не подтвердит, что поле `target_ref` допускает NULL.
 
-Триггер — Kinescope-аккаунт начал отдавать 402. Любой урок с Kinescope-видео сейчас крашится одинаково и у клиентов, и в админе. Если временно убрать видео — урок открывается, но это не решение.
+Перед миграцией проверить фактическую схему/constraint `access_rules.target_ref`.
 
-## Что чиню
+Если `target_ref NOT NULL`, не ломать схему ради этого спринта. Использовать совместимый вариант, но не использовать название пакета, slug или code как технический ключ.
 
-Только фронтенд. Доступ, RLS, edge-функции, БД не трогаю — пользователь явно просил «починить баг отображения для клиентов, у которых есть доступ».
+2. Новый `grant_target_type='document_generation'` добавлять только после проверки enum/CHECK.
 
-### 1. Развязать Kinescope-контейнер от React (главный фикс)
+В отчете показать:
+- какой тип/constraint был у `grant_target_type` до миграции;
+- как он расширен;
+- что старые значения не сломаны.
 
-Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` (это компонент, который рендерит видео в уроках через `useKinescopePlayer`).
+3. Разделить legacy и новую модель доступа.
 
-Сейчас:
+Legacy:
+- `grant_target_type='section_access'`
+- `target_ref='document_generation'`
+- всегда трактуется как full access ко всей генерации документов.
 
-```tsx
+Новая модель:
+- `grant_target_type='document_generation'`
+- `conditions.access_mode='full' | 'partial'`
+- `conditions.allowed_package_ids=[uuid]`.
 
-<div className="relative w-full aspect-video ...">
+Не добавлять package-level partial в старый `section_access`.
 
-  <div id={containerId} className="absolute inset-0" />   // ← React owns this, Kinescope mutates it
+4. Валидировать `allowed_package_ids` при сохранении правила.
 
-</div>
+Правила:
+- только UUID;
+- только существующие `document_package_templates.id`;
+- только глобальные пакеты `profile_id IS NULL`;
+- только активные пакеты `is_active=true`;
+- удалить дубли;
+- `access_mode='partial'` + пустой массив не сохранять.
 
+5. `get_user_document_package_ids` не должна доверять произвольному `p_user`.
+
+Если функция вызывается с клиента, она должна использовать `auth.uid()` внутри или проверять, что `p_user = auth.uid()`.
+
+Admin/super_admin-доступ к чужой картине доступа — только через отдельный admin-safe путь, если он нужен.
+
+6. RLS-функции сделать безопасными.
+
+Для `user_can_see_document_package` и связанных функций:
+- `SECURITY DEFINER`;
+- `SET search_path = public`;
+- без динамического SQL;
+- без рекурсии через политики `document_package_templates` / `document_package_template_items`;
+- отдельные тесты под admin, клиентом с full, клиентом с partial, клиентом без доступа.
+
+Если появляется recursion / permission loop / stack depth — STOP.
+
+7. Удаление пакетов сделать безопасным.
+
+Удаление разрешать только если dependency-check полный.
+
+Проверить зависимости минимум:
+- `document_package_template_items`;
+- `document_package_sessions`;
+- `access_rules.conditions.allowed_package_ids`;
+- любые найденные references по package_template_id.
+
+Если dependency-check неполный или пакет уже использовался — hard delete не делать, только `is_active=false`.
+
+8. Добавить audit_logs для CRUD глобальных пакетов.
+
+Фиксировать:
+- создание;
+- переименование;
+- активацию/деактивацию;
+- удаление или заблокированную попытку удаления.
+
+В DoD добавить SQL-proof записей в `audit_logs`.
+
+9. RLS остается source of truth.
+
+`useUserVisibleDocumentPackages()` может использовать RPC для UX, но защита должна быть на уровне RLS через `user_can_see_document_package`.
+
+Клиентский фильтр не считается защитой.
+
+10. Усилить DoD по переименованию.
+
+Проверка:
+- создать rule с `allowed_package_ids=[UUID]`;
+- переименовать пакет;
+- проверить, что UUID в rule не изменился;
+- клиент по-прежнему видит пакет.
+
+11. В отчете доказать отсутствие slug/code.
+
+Добавить:
+- скрин диалога создания пакета без поля «Код»/«Slug»;
+- SQL-proof, что access rule хранит только UUID;
+- diff-summary: не добавлялись поля `slug/code`, индексы по ним и транслитерация названия.
+
+12. Не трогать генерацию документов.
+
+В отчете явно подтвердить, что не изменялись:
+- `canonical-document-generate-strict`;
+- edge-функции генерации;
+- Gotenberg;
+- `document_package_sessions`;
+- `document_package_session_participants`.
+
+13. Добавить DoD по inactive package.
+
+Проверить:
+- если пакет `is_active=false`, клиент не видит его даже при наличии UUID в `allowed_package_ids`;
+- admin в CRUD видит inactive пакет и может активировать обратно.
+
+14. Добавить DoD по backward compatibility.
+
+Проверить:
+- старое правило `section_access → document_generation` открывает все активные глобальные пакеты;
+- новое правило `document_generation/full` открывает все активные глобальные пакеты;
+- новое правило `document_generation/partial` открывает только выбранные UUID.
+
+План: Спринт 3S v2 — Управляемые пакеты документов и UUID-only гранулярный доступ
 ```
 
-Станет: оборачиваем mount-point ещё одним React-нейтральным слоем. React владеет только внешним wrapper; внутренний `div` создаётся вручную через `appendChild` в `useLayoutEffect` и удаляется через `innerHTML = ''` при unmount. Kinescope мутирует только этот «отвязанный» поддерево — React туда не лезет и `removeChild`-крэша не будет.
+> Версия 2: учитывает обязательные правки пользователя — никаких slug/code/transliterate, переиспользуем паттерн `training_content` partial access, всё на UUID.
 
-```tsx
+---
 
-const wrapperRef = useRef<HTMLDivElement>(null);
+## STOP-guards (соблюдать на всём спринте)
 
-const containerIdRef = useRef`kinescope-player-${uniqueId.replace(/:/g, '-')}`);
+Немедленно остановиться и пересмотреть подход, если в любой момент появляется:
 
-useLayoutEffect(() => {
+- генерация `slug` / `code` / транслитерация русского названия пакета («Идеология» → `ideologiya`);
+- связывание доступа по названию, slug, code или любому текстовому ключу пакета;
+- сохранение выбранных пакетов в access rule **не** как массив UUID;
+- параллельная новая система partial access для документов вместо переиспользования механики `training_content`;
+- UI показывает корректное название, но resolver/RLS читает текстовый ключ.
 
-  const wrapper = wrapperRef.current;
+---
 
-  if (!wrapper) return;
+## Часть 0. Обязательное discovery (до миграций и UI)
 
-  const target = document.createElement('div');
+Уже выполнено для паттерна `training_content` (см. результат ниже), результат фиксируем в `.lovable/proofs/document_packages_access_discovery.md`.
 
-  [target.id](http://target.id) = containerIdRef.current;
+### Найденная модель partial access для тренингов
 
-  [target.style](http://target.style).cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+Реализована поверх `access_rules` + поле `conditions jsonb`:
 
-  wrapper.appendChild(target);
+- `grant_target_type = 'training_content'`, `target_ref = <root_training_uuid>`;
+- `conditions.access_mode: 'full' | 'partial'`;
+- `conditions.allowed_module_ids: uuid[]`;
+- `conditions.allowed_lesson_ids: uuid[]`;
+- `conditions.auto_include_new_modules: boolean`.
 
-  return () => {
+UI в `ProductAccessRulesTab.tsx`:
 
-    // Полностью обнуляем поддерево — React сюда не заглядывает
+- form-поля `tc_access_mode`, `tc_allowed_module_ids`, `tc_allowed_lesson_ids`, `tc_auto_include_new_modules`;
+- дерево выбора берётся из `trainingTree` по `target_ref`;
+- при сохранении кладётся в `conditions` (см. строки 558–594, 651+).
 
-    while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
+Resolver: `access-resolver.ts` + memory-канон `training-content-resolver-rules` — приоритеты P1–P5, default-deny, UUID-only.
 
-  };
+**Этот же паттерн полностью переносится на пакеты документов.**
 
-}, []);
+---
 
-// JSX:
+## Часть A. RLS-фикс глобального справочника пакетов (фикс «Нет доступных пакетов»)
 
-<div ref={wrapperRef} className="absolute inset-0" />
+### Диагноз
+
+`document_package_templates`: запись «Идеология» глобальная (`profile_id=NULL`). SELECT-политика требует owner или admin → клиент видит 0 строк → пустой стейт. То же на `document_package_template_items`.
+
+### Что меняем (одна миграция, только SELECT)
+
+1. `document_package_templates` — permissive SELECT для `authenticated`, разрешён, если security-definer `user_can_see_document_package(template_id uuid)` вернул `true`.
+2. `document_package_template_items` — permissive SELECT через ту же функцию (по `package_template_id`).
+3. Все write-политики и owner-политики не трогаем.
+
+`user_can_see_document_package(uuid)` реализует:
+
+- admin/super_admin → true;
+- owner пакета (profile_id IS NOT NULL и совпадает) → true;
+- глобальный (`profile_id IS NULL AND is_active`) + у пользователя есть active access rule с UUID-резолюцией (см. Часть C).
+
+---
+
+## Часть B. Админский CRUD глобальных пакетов (без slug/code)
+
+### Модель
+
+Таблица `document_package_templates` уже имеет: `id uuid`, `name`, `description`, `is_active`, `profile_id`, `created_by`, `created_at`, `updated_at`.
+
+**Никаких новых полей `slug` / `code` / `public_id` для логики доступа не вводим.** Существующий столбец `code`, если присутствует, считается legacy display-only и в новых артефактах не используется (см. memory `no-product-code-in-new-artifacts`). Никакого `unique_global_package_code` индекса — пункт удалён.
+
+### Миграция
+
+- Триггер `assert_global_package_admin_only` на INSERT/UPDATE: запись с `profile_id IS NULL` может появиться/измениться только если `has_role_v2(auth.uid(), 'admin'|'super_admin')`.
+- Никаких уникальных индексов по тексту. PK по `id` достаточно.
+
+### UI (`/admin/documents` → «Пакеты документов», админский режим)
+
+Диалог «+ Новый пакет»:
+
+- «Название» (обязательно);
+- «Описание» (опционально);
+- «Активен» (toggle).
+- **Поля «Код»/«Slug»/«Public ID» отсутствуют.**
+
+Действия со строкой пакета: Переименовать, Активировать/Деактивировать, Удалить (только если нет items и sessions; иначе показать причину).
+
+Все мутации идут по `id`. Имя — display-only.
+
+---
+
+## Часть C. Гранулярный доступ к пакетам — переиспользование `training_content`-паттерна
+
+### Архитектурное решение
+
+Не создаём «section_access» как основной сценарий. Расширяем существующий механизм «доступ к контенту внутри продукта» новым типом контента:
+
+`**grant_target_type = 'document_generation'**` (новый), либо переиспользование `training_content`-схемы 1-в-1 через обобщение. Решение фиксируется по результатам discovery: предпочтительно ввести `'document_generation'` как новый тип контента, потому что `target_ref` для документов — не root training UUID, а сам домен «генерация документов» (синглтон, без иерархии).
+
+Структура формы и `conditions` строго копирует `training_content`:
 
 ```
+grant_target_type: 'document_generation'
+target_ref: NULL        // домен синглтонный, иерархии нет
+conditions:
+  access_mode: 'full' | 'partial'
+  allowed_package_ids: uuid[]   // ТОЛЬКО UUID document_package_templates.id
+```
 
-`useKinescopePlayer` получает `containerIdRef.current` так же, как сейчас.
+Семантика:
 
-### 2. Корректный fallback при сбое плеера (402 и пр.)
+- `access_mode='full'` → доступ ко всем активным глобальным пакетам (обратная совместимость с уже выданным «доступом ко всему домену»).
+- `access_mode='partial'` + `allowed_package_ids=[uuid1, uuid2]` → доступ только к этим пакетам.
+- `partial` + пустой массив → форма не валидируется (как у тренингов).
+- admin/super_admin всегда видит всё.
 
-В том же `VideoBlock.tsx` добавляем локальный state `playerFailed`. `useKinescopePlayer({ onError })` уже есть — в обработчике ставим `setPlayerFailed(true)`. Когда `playerFailed === true`, вместо API-плеера показываем:
+**Никаких `package_slug`, `package_code`, `package_name_ref`. Только UUID.**
 
-- обычный `<iframe src={embedUrl}>` (тот же fallback, что уже есть для не-Kinescope URL — он молча отрендерит сообщение Kinescope о недоступности, страница не упадёт);
+### Backward compatibility со старым `section_access → document_generation`
 
-- плюс компактный alert «Видео временно недоступно. Попробуйте обновить страницу» со ссылкой «Открыть в новой вкладке».
+Существующие правила `grant_target_type='section_access' AND target_ref='document_generation'` продолжают работать как `access_mode='full'`. Resolver в Части D учитывает оба источника. Миграция данных не требуется; админ может позже пересоздать правила в новом типе.
 
-Так клиент видит причину, а не белый экран.
+### Изменения
 
-### 3. Глушим unhandled rejection от Kinescope SDK
+1. **Миграция:**
+  - Добавить `'document_generation'` в enum `grant_target_type` (если enum) или допустимое значение CHECK-констрейнта.
+  - Функция `get_user_document_package_ids(p_user uuid)` → `{ full_access: bool, package_ids: uuid[] }`:
+    - резолв активных правил пользователя через тот же путь, что `access-resolver` (subscriptions_v2 → entitlements → access_rules);
+    - `full_access=true`, если admin/super_admin **или** есть active rule (`section_access → document_generation`) **или** (`document_generation` с `access_mode='full'`);
+    - иначе `package_ids` = union `conditions.allowed_package_ids` по всем active `document_generation`-правилам пользователя.
+  - Функция `user_can_see_document_package(p_template_id uuid)` использует первую.
+2. **RLS** (Часть A замыкается на эту функцию).
+3. **UI правил доступа** (`ProductAccessRulesTab.tsx`):
+  - В Select «КУДА ВЫДАЁМ» добавить пункт «Доступ к генерации документов» (тип `document_generation`).
+  - Блок формы — копия `training_content`:
+    - Radio «Полный доступ» / «Частичный доступ».
+    - При «Частичный» — список активных глобальных пакетов (`document_package_templates WHERE profile_id IS NULL AND is_active`), multi-select с чекбоксами (тот же `ProductCheckboxList`-стиль или существующий tree-компонент в плоском режиме).
+  - При сохранении: `conditions.access_mode`, `conditions.allowed_package_ids` (UUID[]); `target_ref=null`.
+  - При редактировании: гидратация из `conditions`.
+  - В списке правил label считается по `name` пакета через JOIN по UUID; UI показывает «Пакеты: Идеология, Тест-X» — это только display.
+4. **Frontend клиента (`PackagesWorkspace.tsx`):**
+  - Список пакетов фильтруется по результату `get_user_document_package_ids` (на стороне сервера через RLS — клиентский фильтр не нужен, RLS уже скроет).
+  - Пустой стейт «Нет доступных пакетов» остаётся как safety-net.
 
-Файл: `src/hooks/useKinescopePlayer.ts`.
+---
 
-После `await loadKinescopeScript()` и до создания плеера навешиваем одноразовый `window.addEventListener('unhandledrejection', handler)` с фильтром по `reason?.target?.iframe === 'IFRAME'` и `reason?.data?.message?.includes('IFrame load failed')`. Вызываем `event.preventDefault()`, чтобы рантайм не считал её uncaught. В cleanup эффекта снимаем listener. Это убирает шум в логах и страхует на случай ещё одного источника rejection.
+## Часть D. Автопоявление нового пакета
 
-### 4. Подстраховка на уровне страницы урока
+- Источник списка пакетов в UI правил и в `/document-generation` — один и тот же запрос: `document_package_templates WHERE profile_id IS NULL AND is_active = true`. Никаких enum/хардкодов.
+- При создании пакета он:
+  - сразу появляется в multi-select правила (после react-query invalidate);
+  - сразу доступен клиентам с `access_mode='full'`;
+  - НЕ доступен клиентам с `access_mode='partial'`, у которых его UUID не в `allowed_package_ids` (default-deny).
+- E2E-чек в DoD: создать «Тест-X», убедиться, что он появился в Select и видим/невидим по гранту.
 
-Файл: `src/pages/LibraryLesson.tsx`. Оборачиваем рендер блоков `<LessonBlockRenderer ... />` и legacy-видео-секцию) в маленький локальный `ErrorBoundary` («Не удалось отобразить блок. Перезагрузите страницу»). Это не fix, а ремень безопасности на будущее: даже если завтра другой блок упадёт в commit-фазе, целая страница уроков не уйдёт в белый экран.
+---
 
-## Verify (в режиме симуляции)
+## Затронутые файлы
 
-1. Открываю `/library/buhgalteriya-kak-biznes/shag-3` через `browser--navigate_to_sandbox` (я уже логин админом через dev-пароль).
+### Миграция (одна)
 
-2. Жду 5 секунд → делаю `browser--screenshot`. Ожидаю: страница урока полностью отрисована (заголовок, breadcrumbs, аудио-блок, ExternalProductWorkshop-блок видны), вместо упавшего Kinescope-плеера — fallback iframe или «видео недоступно». Скрин прикладываю в ответ.
+`supabase/migrations/<ts>_sprint_3s_v2_document_packages_uuid_access.sql`:
 
-3. Дополнительно открываю `/library/buhgalteriya-kak-biznes/shag-1` и `/shag-2` (тоже статьи с возможными видео), проверяю что не падают.
+- расширение enum/CHECK `grant_target_type` (+ `'document_generation'`);
+- триггер `assert_global_package_admin_only`;
+- функции `user_can_see_document_package`, `get_user_document_package_ids`;
+- SELECT-политики на `document_package_templates` и `document_package_template_items`.
 
-4. `browser--read_console_logs error` — убеждаюсь, что `NotFoundError: removeChild` пропал; warn от Kinescope `IFrame load failed: 402`) остаётся, но как warn, без uncaught.
+### Frontend
 
-5. Скрин до/после прикладываю в ответе.
+- `src/components/admin/product/ProductAccessRulesTab.tsx` — новый тип `document_generation`, форма по паттерну `training_content` (`dg_access_mode`, `dg_allowed_package_ids`), маппинг load/save в `conditions`.
+- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx` или новый `AdminGlobalPackagesPanel.tsx` — CRUD глобальных пакетов без `code`/`slug`.
+- `src/hooks/useDocumentPackages.ts` — `useGlobalDocumentPackages()` (admin) + `useUserVisibleDocumentPackages()` (RPC).
+- `src/components/ai-documents/packages/PackagesWorkspace.tsx` — без логических изменений (RLS + cache key с user id).
 
-## Чего НЕ делаю
+### Артефакты
 
-- Не трогаю Kinescope-подписку, edge-функции, RLS, БД, `access_rules`, доступы к продуктам.
+- `.lovable/proofs/document_packages_access_discovery.md` — фиксированный результат discovery (training_content модель + решение переиспользовать).
 
-- Не меняю URL-схему уроков, навигацию, layout.
+### НЕ трогаем
 
-- Не правлю `ExternalProductWorkshop` и другие блоки — они здесь ни при чём.
+- `canonical-document-generate-strict`, edge-функции генерации, Gotenberg, sessions/participants.
+- `access-resolver.ts` SOT-логику (только подключаем новый content type).
+- Никакие `code`/`slug`/text-ключи не вводим.
 
-- Не подключаю новые библиотеки.
+---
 
 ## DoD
 
-- На `/library/buhgalteriya-kak-biznes/shag-3` страница не белеет: видны хлебные крошки, заголовок, аудио, воркшоп, dock внизу.
+1. Новый пакет создаётся через UI **без** поля «Код»/«Slug». В БД у пакета нет технического ключа на основе названия.
+2. Изменение `name` пакета **не ломает** доступ (доказательство: переименовать «Идеология» → «Идеология (v2)», правило продолжает действовать).
+3. Access rule типа `document_generation` хранит `conditions.allowed_package_ids` **только как массив UUID** (SELECT-доказательство).
+4. UI правил показывает названия пакетов **только как display label**, подтянутый по UUID.
+5. Партиал-доступ к генерации документов работает по той же UX-схеме, что partial access у `training_content` (Полный/Частичный + multi-select).
+6. Клиент с `allowed_package_ids=[UUID_X]` видит только пакет X.
+7. Клиент без UUID X в `allowed_package_ids` НЕ видит пакет X.
+8. Клиент с `access_mode='full'` (или legacy `section_access → document_generation`) видит все активные глобальные пакеты, включая только что созданный.
+9. Admin/super_admin на `/admin/documents` видит все пакеты независимо от грантов.
+10. `supabase--linter` — без новых критических ошибок.
+11. Скриншоты клиентского и админского экранов приложены к отчёту.
 
-- В консоли нет `NotFoundError: Failed to execute 'removeChild'` и нет `Uncaught (in promise)` от Kinescope.
+---
 
-- Уроки без Kinescope-видео работают как раньше (регрессий нет).
+## План проверки (порядок выполнения)
 
-- Скрины «после» приложены в ответе.
-
-&nbsp;
-
-&nbsp;
-
-Diagnose
-
-URL: `/library/buhgalteriya-kak-biznes/shag-3` (и любые уроки с Kinescope-видео).
-Симптом: страница появляется на секунду, затем превращается в белый экран.
-
-### Что показали логи браузера на этой странице
-
-1. Kinescope SDK не смог загрузить iframe — `IFrame load failed: 402` для обоих видео-блоков (`bAQd3NB5E2Ft192vH2zjiB`, `8apuCGUZDHYoU8vb5uFbHj`). HTTP 402 = у Kinescope-аккаунта истекла подписка / превышена квота.
-2. `useKinescopePlayer.ts` корректно ловит ошибку в `try/catch` и пишет `Player init error`, **но** SDK успевает мутировать DOM внутри React-управляемого `<div id={containerId}>` (вставить wrapper/iframe). При размонтировании плеера React пытается удалить детей, которых он сам не создавал, и падает с:
-  ```
-   NotFoundError: Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.
-  ```
-   Эта ошибка возникает **в commit-фазе React**, поэтому пробивает все error boundary внутри страницы и роняет всё поддерево `<LazyRoute>` → пустая страница.
-3. Параллельно из SDK прилетает `Uncaught (in promise)` от внутреннего awaiter — он сам по себе страницу не валит, но шумит в логах.
-
-### Почему «у клиентов и у меня одновременно»
-
-Триггер — Kinescope-аккаунт начал отдавать 402. Любой урок с Kinescope-видео сейчас крашится одинаково и у клиентов, и в админе. Если временно убрать видео — урок открывается, но это не решение.
-
-## Что чиню
-
-Только фронтенд. Доступ, RLS, edge-функции, БД не трогаю — пользователь явно просил «починить баг отображения для клиентов, у которых есть доступ».
-
-### 1. Развязать Kinescope-контейнер от React (главный фикс)
-
-Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` (это компонент, который рендерит видео в уроках через `useKinescopePlayer`).
-
-Сейчас:
-
-```tsx
-<div className="relative w-full aspect-video ...">
-  <div id={containerId} className="absolute inset-0" />   // ← React owns this, Kinescope mutates it
-</div>
-```
-
-Станет: оборачиваем mount-point ещё одним React-нейтральным слоем. React владеет только внешним wrapper; внутренний `div` создаётся вручную через `appendChild` в `useLayoutEffect` и удаляется через `innerHTML = ''` при unmount. Kinescope мутирует только этот «отвязанный» поддерево — React туда не лезет и `removeChild`-крэша не будет.
-
-```tsx
-const wrapperRef = useRef<HTMLDivElement>(null);
-const containerIdRef = useRef(`kinescope-player-${uniqueId.replace(/:/g, '-')}`);
-
-useLayoutEffect(() => {
-  const wrapper = wrapperRef.current;
-  if (!wrapper) return;
-  const target = document.createElement('div');
-  target.id = containerIdRef.current;
-  target.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
-  wrapper.appendChild(target);
-  return () => {
-    // Полностью обнуляем поддерево — React сюда не заглядывает
-    while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
-  };
-}, []);
-
-// JSX:
-<div ref={wrapperRef} className="absolute inset-0" />
-```
-
-`useKinescopePlayer` получает `containerIdRef.current` так же, как сейчас.
-
-### 2. Корректный fallback при сбое плеера (402 и пр.)
-
-В том же `VideoBlock.tsx` добавляем локальный state `playerFailed`. `useKinescopePlayer({ onError })` уже есть — в обработчике ставим `setPlayerFailed(true)`. Когда `playerFailed === true`, вместо API-плеера показываем:
-
-- обычный `<iframe src={embedUrl}>` (тот же fallback, что уже есть для не-Kinescope URL — он молча отрендерит сообщение Kinescope о недоступности, страница не упадёт);
-- плюс компактный alert «Видео временно недоступно. Попробуйте обновить страницу» со ссылкой «Открыть в новой вкладке».
-
-Так клиент видит причину, а не белый экран.
-
-### 3. Глушим unhandled rejection от Kinescope SDK
-
-Файл: `src/hooks/useKinescopePlayer.ts`.
-
-После `await loadKinescopeScript()` и до создания плеера навешиваем одноразовый `window.addEventListener('unhandledrejection', handler)` с фильтром по `reason?.target?.iframe === 'IFRAME'` и `reason?.data?.message?.includes('IFrame load failed')`. Вызываем `event.preventDefault()`, чтобы рантайм не считал её uncaught. В cleanup эффекта снимаем listener. Это убирает шум в логах и страхует на случай ещё одного источника rejection.
-
-### 4. Подстраховка на уровне страницы урока
-
-Файл: `src/pages/LibraryLesson.tsx`. Оборачиваем рендер блоков (`<LessonBlockRenderer ... />` и legacy-видео-секцию) в маленький локальный `ErrorBoundary` («Не удалось отобразить блок. Перезагрузите страницу»). Это не fix, а ремень безопасности на будущее: даже если завтра другой блок упадёт в commit-фазе, целая страница уроков не уйдёт в белый экран.
-
-## Verify (в режиме симуляции)
-
-1. Открываю `/library/buhgalteriya-kak-biznes/shag-3` через `browser--navigate_to_sandbox` (я уже логин админом через dev-пароль).
-2. Жду 5 секунд → делаю `browser--screenshot`. Ожидаю: страница урока полностью отрисована (заголовок, breadcrumbs, аудио-блок, ExternalProductWorkshop-блок видны), вместо упавшего Kinescope-плеера — fallback iframe или «видео недоступно». Скрин прикладываю в ответ.
-3. Дополнительно открываю `/library/buhgalteriya-kak-biznes/shag-1` и `/shag-2` (тоже статьи с возможными видео), проверяю что не падают.
-4. `browser--read_console_logs error` — убеждаюсь, что `NotFoundError: removeChild` пропал; warn от Kinescope (`IFrame load failed: 402`) остаётся, но как warn, без uncaught.
-5. Скрин до/после прикладываю в ответе.
-
-## Чего НЕ делаю
-
-- Не трогаю Kinescope-подписку, edge-функции, RLS, БД, `access_rules`, доступы к продуктам.
-- Не меняю URL-схему уроков, навигацию, layout.
-- Не правлю `ExternalProductWorkshop` и другие блоки — они здесь ни при чём.
-- Не подключаю новые библиотеки.
-
-## DoD
-
-- На `/library/buhgalteriya-kak-biznes/shag-3` страница не белеет: видны хлебные крошки, заголовок, аудио, воркшоп, dock внизу.
-- В консоли нет `NotFoundError: Failed to execute 'removeChild'` и нет `Uncaught (in promise)` от Kinescope.
-- Уроки без Kinescope-видео работают как раньше (регрессий нет).
-- Скрины «после» приложены в ответе.
+1. Зафиксировать discovery-документ.
+2. Применить миграцию → дождаться regen `types.ts`.
+3. Под admin создать пакет «Тест-X» (без поля «Код»).
+4. Создать правило `document_generation`, `access_mode='partial'`, `allowed_package_ids=[UUID(Идеология)]` на продукте.
+5. Войти под клиентом с этим продуктом (пароль `123456`) → `/document-generation` → виден только Идеология.
+6. Переключить правило в `access_mode='full'` → клиент видит и Идеологию, и Тест-X.
+7. Переименовать пакет → доступ сохраняется.
+8. Прогнать `pg_policy` — новые политики на месте; legacy `section_access → document_generation` правила продолжают давать full access.
