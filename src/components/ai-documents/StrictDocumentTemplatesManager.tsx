@@ -1026,7 +1026,7 @@ export function StrictDocumentTemplatesManager({
         <div className="border rounded-lg p-3 min-w-0 max-w-full overflow-hidden">
           {!activeVersion ? (
             <div className="text-sm text-muted-foreground text-center py-10">
-              Выберите версию шаблона для preview и валидации.
+              Выберите версию шаблона, чтобы посмотреть его содержимое и проверить разметку полей.
             </div>
           ) : previewLoading ? (
             <div className="flex justify-center py-10">
@@ -1043,16 +1043,22 @@ export function StrictDocumentTemplatesManager({
                   </div>
                 </div>
                 <div className="flex flex-col sm:items-end gap-0.5 sm:shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs w-full sm:w-auto whitespace-normal sm:whitespace-nowrap text-left sm:text-center"
-                    onClick={() => openMarkup(activeTemplate!, activeVersion)}
+                  <HelpTooltip
+                    helpKey=""
+                    customShort="Открыть редактор разметки: посмотреть текст шаблона и исправить ошибки в полях для подстановки."
+                    alwaysShow
                   >
-                    <Pencil className="h-3 w-3 mr-1 shrink-0" /> Проверка и исправление плейсхолдеров
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs w-full sm:w-auto whitespace-normal sm:whitespace-nowrap text-left sm:text-center"
+                      onClick={() => openMarkup(activeTemplate!, activeVersion)}
+                    >
+                      <Pencil className="h-3 w-3 mr-1 shrink-0" /> Проверка и исправление полей
+                    </Button>
+                  </HelpTooltip>
                   <span className="text-[10px] text-muted-foreground">
-                    Открывайте, только если в шаблоне есть ошибки
+                    Открывайте, только если в шаблоне есть ошибки.
                   </span>
                 </div>
               </div>

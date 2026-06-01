@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
@@ -351,7 +352,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if ((data as any)?.error) throw new Error((data as any).error);
       setPreview(data as PreviewResult);
     } catch (e: any) {
-      toast.error(`Preview: ${await normalizeEdgeFunctionErrorAsync(e)}`);
+      toast.error(`Тест: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setPreviewLoading(false);
     }
@@ -431,7 +432,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
         }
       }
       setExecutorTestResult({ found, resolved, empty });
-      toast.success(`Executor FLDs: ${found.length} в шаблоне, ${resolved.length} заполнено, ${empty.length} пусто`);
+      toast.success(`Поля исполнителя в шаблоне: всего ${found.length}, заполнено ${resolved.length}, пусто ${empty.length}.`);
     } catch (e: any) {
       toast.error(`Тест исполнителя: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
@@ -489,16 +490,20 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
-                <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
-                  {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
-                  Протестировать
-                </Button>
-                <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
-                  {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
-                  Пересобрать
-                </Button>
+                <HelpTooltip helpKey="" customShort="Проверить, какие поля исполнителя нужны этому шаблону и какие из них заполнены." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
+                    {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                    Протестировать
+                  </Button>
+                </HelpTooltip>
+                <HelpTooltip helpKey="" customShort="Подтянуть свежие данные исполнителя из карточки в эту сделку." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
+                    {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
+                    Пересобрать
+                  </Button>
+                </HelpTooltip>
                 <Button size="sm" variant="ghost" asChild>
-                  <Link to="/admin/ai" title="Открыть исполнителей">
+                  <Link to="/admin/ai" title="Открыть карточки исполнителей">
                     <ExternalLink className="h-3 w-3 mr-1" /> Исполнители
                   </Link>
                 </Button>
@@ -507,12 +512,12 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
             {executorInfo?.hasManualOverrideHistory && (
               <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
-                В этой сделке есть исторические manual_override на executor.* — пересборка их пропустит. Очистите вручную при необходимости.
+                В этой сделке для отдельных полей исполнителя сохранены ручные значения — пересборка их не перетрёт. При необходимости очистите их вручную.
               </div>
             )}
             {executorFldsInTemplate.length > 0 && (
               <div className="text-[11px] text-muted-foreground">
-                В шаблоне используется {executorFldsInTemplate.length} executor-полей: {executorFldsInTemplate.join(", ")}
+                В шаблоне используется полей исполнителя: {executorFldsInTemplate.length}.
               </div>
             )}
             {executorTestResult && (
@@ -540,33 +545,37 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
           {/* Fields editor */}
           <div className="border rounded-lg">
             <div className="px-3 py-2 border-b flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Поля документа (FLD-ID)</h3>
+              <h3 className="text-sm font-semibold">Поля документа</h3>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={runPreview} disabled={previewLoading}>
-                  {previewLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
-                  Тест
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={runGenerate}
-                  disabled={generating || !preview?.can_generate}
-                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
-                >
-                  {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                  Создать PDF
-                </Button>
+                <HelpTooltip helpKey="" customShort="Проверить, какие данные подставятся в документ, без его создания." alwaysShow>
+                  <Button size="sm" variant="outline" onClick={runPreview} disabled={previewLoading}>
+                    {previewLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                    Тест
+                  </Button>
+                </HelpTooltip>
+                <HelpTooltip helpKey="" customShort="Сформировать готовый PDF документа по этой сделке." alwaysShow>
+                  <Button
+                    size="sm"
+                    onClick={runGenerate}
+                    disabled={generating || !preview?.can_generate}
+                    title={!preview ? "Сначала нажмите «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
+                  >
+                    {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                    Создать PDF
+                  </Button>
+                </HelpTooltip>
               </div>
             </div>
             {fieldRows.length === 0 ? (
               <div className="p-4 text-sm text-muted-foreground">
-                В активной версии шаблона нет FLD-плейсхолдеров.
+                В этом шаблоне нет полей для подстановки.
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Поле</TableHead>
-                    <TableHead>FLD-ID</TableHead>
+                    <TableHead>Код поля</TableHead>
                     <TableHead>Значение</TableHead>
                     <TableHead>Источник</TableHead>
                     <TableHead>Статус</TableHead>
@@ -596,7 +605,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         </TableCell>
                         <TableCell className="text-xs">
                           {row.manual_override ? (
-                            <Badge variant="secondary" className="text-[10px]">manual</Badge>
+                            <Badge variant="secondary" className="text-[10px]">введено вручную</Badge>
                           ) : row.source ? (
                             <span className="text-muted-foreground">{row.source}</span>
                           ) : (
@@ -606,28 +615,30 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         <TableCell className="text-xs">
                           {isReqEmpty ? (
                             <span className="text-red-600 flex items-center gap-1">
-                              <AlertCircle className="h-3 w-3" /> required-empty
+                              <AlertCircle className="h-3 w-3" /> обязательное, не заполнено
                             </span>
                           ) : trace?.status === "resolved" ? (
-                            <span className="text-emerald-600">resolved</span>
+                            <span className="text-emerald-600">заполнено</span>
                           ) : trace?.status === "missing" ? (
-                            <span className="text-amber-600">missing</span>
+                            <span className="text-amber-600">нет данных</span>
                           ) : trace?.status === "empty" ? (
-                            <span className="text-amber-600">empty</span>
+                            <span className="text-amber-600">пусто</span>
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="sm" variant="ghost"
-                            disabled={editing === undefined || savingFlds.has(row.field_public_id)}
-                            onClick={() => saveField(row.field_public_id)}
-                          >
-                            {savingFlds.has(row.field_public_id)
-                              ? <Loader2 className="h-3 w-3 animate-spin" />
-                              : "Сохранить"}
-                          </Button>
+                          <HelpTooltip helpKey="" customShort="Сохранить введённое значение в эту сделку." alwaysShow>
+                            <Button
+                              size="sm" variant="ghost"
+                              disabled={editing === undefined || savingFlds.has(row.field_public_id)}
+                              onClick={() => saveField(row.field_public_id)}
+                            >
+                              {savingFlds.has(row.field_public_id)
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : "Сохранить"}
+                            </Button>
+                          </HelpTooltip>
                         </TableCell>
                       </TableRow>
                     );
@@ -638,7 +649,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
             {preview && !preview.can_generate && (
               <div className="px-3 py-2 border-t bg-red-50 dark:bg-red-950/20 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
                 <AlertCircle className="h-3.5 w-3.5" />
-                Генерация заблокирована: {preview.required_empty_field_ids.length} required-полей пусто.
+                Создание PDF недоступно: не заполнено обязательных полей — {preview.required_empty_field_ids.length}.
               </div>
             )}
           </div>
