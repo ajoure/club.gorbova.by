@@ -366,6 +366,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       has_condition: false,
       condition_use_same_list: true,
       condition_required_product_ids: [],
+      tc_domain: "knowledge_base",
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
@@ -416,6 +417,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     condition_use_same_list: true,
     condition_required_product_ids: [] as string[],
     // training_content fields
+    tc_domain: "knowledge_base" as "knowledge_base" | "document_generation",
     tc_access_mode: "full" as "full" | "partial",
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
@@ -555,6 +557,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       has_condition: false,
       condition_use_same_list: true,
       condition_required_product_ids: [],
+      tc_domain: "knowledge_base",
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
@@ -598,12 +601,14 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       setUseViaRuleTraining(null);
     }
 
+    const isDgRule = rule.grant_target_type === "document_generation";
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
-      grant_target_type: rule.grant_target_type,
-      target_ref: rule.target_ref,
-      target_label: rule.target_label || "",
+      // UI-coerce: document_generation отображается внутри «Доступ к контенту тренинга»
+      grant_target_type: isDgRule ? "training_content" : rule.grant_target_type,
+      target_ref: isDgRule ? "" : rule.target_ref,
+      target_label: isDgRule ? "" : (rule.target_label || ""),
       is_active: rule.is_active,
       priority: rule.priority ? String(rule.priority) : "",
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
@@ -614,16 +619,16 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       has_condition: hasCondition,
       condition_use_same_list: useSameList,
       condition_required_product_ids: useSameList ? [] : conditionIds,
-      tc_access_mode: tcAccessMode,
-      tc_allowed_module_ids: tcAllowedModuleIds,
-      tc_allowed_lesson_ids: tcAllowedLessonIds,
-      tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
-      match_purchase_month: conditions.match_purchase_month === true,
-      dg_access_mode: rule.grant_target_type === "document_generation"
+      tc_domain: isDgRule ? "document_generation" : "knowledge_base",
+      tc_access_mode: isDgRule ? "full" : tcAccessMode,
+      tc_allowed_module_ids: isDgRule ? [] : tcAllowedModuleIds,
+      tc_allowed_lesson_ids: isDgRule ? [] : tcAllowedLessonIds,
+      tc_auto_include_new_modules: isDgRule ? false : Boolean(conditions.auto_include_new_modules),
+      match_purchase_month: !isDgRule && conditions.match_purchase_month === true,
+      dg_access_mode: isDgRule
         ? ((conditions.access_mode as "full" | "partial") || "full")
         : "full",
-      dg_allowed_package_ids: rule.grant_target_type === "document_generation"
-        && Array.isArray(conditions.allowed_package_ids)
+      dg_allowed_package_ids: isDgRule && Array.isArray(conditions.allowed_package_ids)
         ? (conditions.allowed_package_ids as string[])
         : [],
     });
@@ -632,38 +637,43 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   };
 
   const handleSave = async () => {
-    // Validate: for product_access multi-select, need at least one product
+    // === Validation ===
     if (form.grant_target_type === "product_access") {
       if (form.target_product_ids.length === 0) {
         toast.error("Выберите хотя бы один продукт для выдачи");
         return;
       }
     } else if (form.grant_target_type === "training_content") {
-      if (!form.target_ref) {
-        toast.error("Выберите тренинг");
-        return;
-      }
-      if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
-        toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
-        return;
+      if (form.tc_domain === "document_generation") {
+        if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
+          toast.error("Для частичного доступа выберите хотя бы один пакет документов");
+          return;
+        }
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
+          toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
+          return;
+        }
+      } else {
+        if (!form.target_ref) {
+          toast.error("Выберите тренинг");
+          return;
+        }
+        if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
+          toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
+          return;
+        }
       }
     } else if (form.grant_target_type === "document_generation") {
-      // Sprint 3S v2 — UUID-only. target_ref = sentinel домена.
+      // Legacy direct path — kept for safety (UI more reaches via training_content+dg_domain)
       if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.length === 0) {
         toast.error("Для частичного доступа выберите хотя бы один пакет документов");
-        return;
-      }
-      // Валидация UUID-формата
-      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (form.dg_access_mode === "partial" && form.dg_allowed_package_ids.some(id => !uuidRe.test(id))) {
-        toast.error("Внутренняя ошибка: пакет должен идентифицироваться UUID");
         return;
       }
     } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
     }
-
 
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
@@ -686,59 +696,63 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
 
       if (effectiveConditionIds.length > 0) {
         conditions.required_product_ids = effectiveConditionIds;
-        // Backward-compatible: also write single field for legacy readers
         if (effectiveConditionIds.length === 1) {
           conditions.required_product_id = effectiveConditionIds[0];
         }
       }
     }
 
-    // training_content conditions — normalize payload
+    // training_content conditions — branch on domain
     if (form.grant_target_type === "training_content") {
-      conditions.access_mode = form.tc_access_mode;
-      if (form.tc_access_mode === "partial" && trainingTree) {
-        const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
-        conditions.allowed_module_ids = normalized.allowed_module_ids;
-        conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
-        // partial: явно фиксируем флаг авто-включения новых папок (по умолчанию выключен)
-        conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
+      if (form.tc_domain === "document_generation") {
+        // DG domain: only DG conditions. No KB leftovers.
+        conditions.access_mode = form.dg_access_mode;
+        if (form.dg_access_mode === "partial") {
+          const validIds = Array.from(new Set(
+            form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
+          ));
+          conditions.allowed_package_ids = validIds;
+        }
       } else {
-        conditions.allowed_module_ids = [];
-        conditions.allowed_lesson_ids = [];
-        // full: флаг авто-включения не нужен — full и так видит все будущие модули
-        delete conditions.auto_include_new_modules;
+        conditions.access_mode = form.tc_access_mode;
+        if (form.tc_access_mode === "partial" && trainingTree) {
+          const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
+          conditions.allowed_module_ids = normalized.allowed_module_ids;
+          conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+          conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
+        } else {
+          conditions.allowed_module_ids = [];
+          conditions.allowed_lesson_ids = [];
+        }
       }
     }
 
-    // document_generation conditions — UUID-only, sentinel target_ref
+    // document_generation (legacy direct path)
     if (form.grant_target_type === "document_generation") {
       conditions.access_mode = form.dg_access_mode;
       if (form.dg_access_mode === "partial") {
-        // dedupe + только валидные UUID + только существующие активные глобальные пакеты
         const validIds = Array.from(new Set(
           form.dg_allowed_package_ids.filter(id => documentPackagesList.some(p => p.id === id))
         ));
         conditions.allowed_package_ids = validIds;
-      } else {
-        delete conditions.allowed_package_ids;
       }
     }
 
-
-    // Month-gated access (applies to training_content and live_event-style rules)
-    if (form.match_purchase_month) {
+    // Month-gated access — only meaningful for KB domain of training_content
+    if (form.match_purchase_month && !(form.grant_target_type === "training_content" && form.tc_domain === "document_generation")) {
       conditions.match_purchase_month = true;
     }
 
-    // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
     const parsedDuration = form.duration_mode === "manual"
       ? (form.duration_days.trim() === "" ? null : (parseInt(form.duration_days, 10) || null))
       : null;
 
-    // For multi-product: target_ref = first product (backward-compatible), target_label = summary
+    // === Resolve effective grant type + target_ref + target_label ===
+    let effectiveGrantType: GrantTargetType = form.grant_target_type;
     let targetRef = form.target_ref;
     let targetLabel = form.target_label;
+
     if (form.grant_target_type === "product_access" && form.target_product_ids.length > 0) {
       targetRef = form.target_product_ids[0];
       if (form.target_product_ids.length === 1) {
@@ -749,12 +763,27 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
     }
-    // training_content: target_label = training title (use merged trainingOptions)
-    if (form.grant_target_type === "training_content" && form.target_ref) {
+
+    if (form.grant_target_type === "training_content" && form.tc_domain === "knowledge_base" && form.target_ref) {
       const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
     }
-    // document_generation: sentinel target_ref + автоматический label
+
+    // KB→DG coercion: persist as grant_target_type='document_generation' with sentinel target_ref
+    if (form.grant_target_type === "training_content" && form.tc_domain === "document_generation") {
+      effectiveGrantType = "document_generation";
+      targetRef = "document_generation";
+      if (form.dg_access_mode === "full") {
+        targetLabel = "Все пакеты документов";
+      } else {
+        const names = form.dg_allowed_package_ids
+          .map(id => documentPackagesList.find(p => p.id === id)?.name || id);
+        targetLabel = names.length === 1
+          ? `Пакет: ${names[0]}`
+          : `Пакетов: ${names.length} (${names.slice(0,2).join(", ")}${names.length>2?` и ещё ${names.length-2}`:""})`;
+      }
+    }
+
     if (form.grant_target_type === "document_generation") {
       targetRef = "document_generation";
       if (form.dg_access_mode === "full") {
@@ -771,7 +800,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
       tariff_id: form.scope === "tariff" ? form.tariff_id : null,
-      grant_target_type: form.grant_target_type,
+      grant_target_type: effectiveGrantType,
       target_ref: targetRef,
       target_label: targetLabel || null,
       is_active: form.is_active,
@@ -1324,7 +1353,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 </SelectTrigger>
                 <SelectContent>
                   {(Object.entries(TARGET_TYPE_LABELS) as [GrantTargetType, string][])
-                    .filter(([k]) => k !== "entitlement" && k !== "email")
+                    .filter(([k]) => k !== "entitlement" && k !== "email" && k !== "document_generation")
                     .map(([k, v]) => (
                       <SelectItem key={k} value={k}>{v}</SelectItem>
                     ))}
@@ -1467,6 +1496,55 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               {/* training_content: root training selector + access mode + tree picker */}
               {form.grant_target_type === "training_content" && (
                 <div className="space-y-3">
+                  {/* Domain selector: knowledge_base | document_generation (Sprint 3S v2) */}
+                  <div className="space-y-2">
+                    <Label className="text-xs">Куда выдаём</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setForm({
+                          ...form,
+                          tc_domain: "knowledge_base",
+                          dg_allowed_package_ids: [],
+                          dg_access_mode: "full",
+                        })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
+                          form.tc_domain === "knowledge_base"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <BookOpen className="h-3.5 w-3.5" />
+                        База знаний
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({
+                          ...form,
+                          tc_domain: "document_generation",
+                          target_ref: "",
+                          target_label: "",
+                          tc_access_mode: "full",
+                          tc_allowed_module_ids: [],
+                          tc_allowed_lesson_ids: [],
+                          tc_auto_include_new_modules: false,
+                          match_purchase_month: false,
+                        })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg border text-sm transition-all flex items-center justify-center gap-1.5",
+                          form.tc_domain === "document_generation"
+                            ? "border-primary bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <FileStack className="h-3.5 w-3.5" />
+                        Генерация документов
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.tc_domain === "knowledge_base" && (<>
                   {/* Root training selector */}
                   <div className="space-y-1.5">
                     <Label className="text-xs">Тренинг</Label>
@@ -1661,11 +1739,90 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                       </div>
                     </div>
                   )}
+                  </>)}
+
+                  {/* DG domain UI inside training_content (Sprint 3S v2) */}
+                  {form.tc_domain === "document_generation" && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-xs">Режим доступа</Label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, dg_access_mode: "full", dg_allowed_package_ids: [] })}
+                          className={cn(
+                            "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                            form.dg_access_mode === "full"
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          Полный доступ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, dg_access_mode: "partial" })}
+                          className={cn(
+                            "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                            form.dg_access_mode === "partial"
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          Частичный доступ
+                        </button>
+                      </div>
+                      {form.dg_access_mode === "full" && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Полный доступ автоматически включает все текущие и будущие активные пакеты документов.
+                        </p>
+                      )}
+                    </div>
+
+                    {form.dg_access_mode === "partial" && (
+                      <div className="space-y-2">
+                        <Label className="text-xs">Доступные пакеты документов</Label>
+                        {documentPackagesList.length === 0 ? (
+                          <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
+                            Нет активных глобальных пакетов. Создайте пакет в разделе «Пакеты документов».
+                          </div>
+                        ) : (
+                          <div className="space-y-1 border rounded-md p-2 max-h-64 overflow-y-auto">
+                            {documentPackagesList.map(pkg => {
+                              const checked = form.dg_allowed_package_ids.includes(pkg.id);
+                              return (
+                                <label
+                                  key={pkg.id}
+                                  className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(v) => {
+                                      const next = v
+                                        ? Array.from(new Set([...form.dg_allowed_package_ids, pkg.id]))
+                                        : form.dg_allowed_package_ids.filter(id => id !== pkg.id);
+                                      setForm({ ...form, dg_allowed_package_ids: next });
+                                    }}
+                                  />
+                                  <FileStack className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                  <span className="text-sm">{pkg.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <p className="text-[11px] text-muted-foreground">
+                          Выбор сохраняется только по UUID пакета. Переименование пакета не влияет на доступ.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  )}
                 </div>
               )}
 
-              {/* document_generation: режим + multi-select UUID пакетов (Sprint 3S v2) */}
-              {form.grant_target_type === "document_generation" && (
+              {/* Legacy direct document_generation block — kept hidden (unreachable from new UI) */}
+              {false && form.grant_target_type === "document_generation" && (
                 <div className="space-y-3">
                   <div className="space-y-2">
                     <Label className="text-xs">Режим доступа</Label>
