@@ -15593,12 +15593,20 @@ export type Database = {
         }
         Returns: Json
       }
+      create_global_document_package: {
+        Args: { _description?: string; _is_active?: boolean; _name: string }
+        Returns: Json
+      }
       create_position_catalog_entry: {
         Args: { p_label: string }
         Returns: string
       }
       create_support_ticket: {
         Args: { p_category?: string; p_description: string; p_subject: string }
+        Returns: Json
+      }
+      deactivate_global_document_package: {
+        Args: { _package_id: string }
         Returns: Json
       }
       diag_broadcast_cron_state: { Args: never; Returns: Json }
@@ -16484,6 +16492,15 @@ export type Database = {
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number
+      }
+      update_global_document_package: {
+        Args: {
+          _description?: string
+          _is_active?: boolean
+          _name: string
+          _package_id: string
+        }
+        Returns: Json
       }
       user_can_see_document_package: {
         Args: { p_template_id: string }
