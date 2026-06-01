@@ -1,423 +1,284 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Не писать “target_ref: NULL”, пока не подтверждено, что схема это допускает**
-  - Перед миграцией проверить constraint/тип поля `target_ref`.
-  - Если `target_ref NOT NULL`, не ломать схему ради этого спринта.
-  - Вариант безопаснее: использовать стабильный singleton UUID/ID домена только если он уже существует в текущей модели.
-  - Не использовать текст `document_generation` как технический ключ пакета.
-2. `document_generation` **как новый** `grant_target_type` **допустим только после проверки enum/CHECK**
-  - Если `grant_target_type` — enum, миграция должна безопасно добавить значение.
-  - Если CHECK — расширить CHECK без потери старых значений.
-  - В отчете показать фактический тип/constraint до и после.
-3. **Четко разделить legacy full-access и новый UUID partial-access**
-  - Legacy:
-    - `grant_target_type='section_access'`
-    - `target_ref='document_generation'`
-    - трактуется только как full access.
-  - Новый partial:
-    - `grant_target_type='document_generation'`
-    - `conditions.access_mode='partial'`
-    - `conditions.allowed_package_ids=[uuid]`.
-  - Не добавлять package-level partial в старый `section_access`.
-4. `allowed_package_ids` **валидировать на сохранении**
-  - Только UUID.
-  - Только существующие `document_package_templates.id`.
-  - Только глобальные пакеты: `profile_id IS NULL`.
-  - Только активные пакеты: `is_active=true`.
-  - Дубли удалять.
-  - `partial + []` не сохранять.
-5. `get_user_document_package_ids(p_user uuid)` **не должна доверять произвольному** `p_user`
-  - Если функция вызывается клиентом, она должна работать только для `auth.uid()`.
-  - Либо убрать параметр `p_user` и использовать `auth.uid()` внутри.
-  - Admin/super_admin может получать расширенную картину только через отдельный admin-safe путь, если нужен.
-6. **RLS-функции не должны рекурсивно читать таблицы с теми же RLS-политиками**
-  - `user_can_see_document_package()` должна быть `SECURITY DEFINER`.
-  - `SET search_path = public`.
-  - Без динамического SQL.
-  - Внутри не должно быть запроса, который вызывает эту же policy повторно.
-  - Если появляется recursion / stack depth / permission loop — STOP.
-7. **Удаление пакета оставить максимально безопасным**
-  - В плане сейчас указано “если нет items и sessions”.
-  - Нужно расширить: если dependency-discovery неполный — hard delete не делать.
-  - По умолчанию для непустого/использованного пакета — только `is_active=false`.
-  - Проверить также references в `access_rules.conditions.allowed_package_ids`.
-8. **Добавить audit_logs для CRUD пакетов**
-  - Создание, переименование, деактивация, удаление/попытка удаления должны писаться в `audit_logs`.
-  - Для admin-действий фиксировать actor admin.
-  - В DoD добавить SQL-proof записи в `audit_logs`.
-9. `useUserVisibleDocumentPackages()` **не должен быть RPC-only без RLS**
-  - Источник истины — RLS + `user_can_see_document_package`.
-  - RPC может быть UX-проекцией, но не единственной защитой.
-  - Клиентский фильтр не считается защитой.
-10. **Добавить proof, что изменение имени не влияет на доступ**
-
-- Уже есть в DoD, но нужно уточнить проверку:
-  - создать rule по UUID;
-  - переименовать пакет;
-  - проверить, что UUID в `allowed_package_ids` не изменился;
-  - клиентский доступ сохранился.
-
-11. **В отчете обязательно показать отсутствие slug/code в новых артефактах**
-
-- Скрин диалога создания пакета без поля “Код”.
-- SQL-proof: access rule содержит только UUID.
-- Diff-summary: не добавлялись поля `slug/code`, не создавались индексы по ним.
-
-12. **Не трогать генерацию документов**
-
-- Подтвердить в плане/отчете:
-  - `canonical-document-generate-strict` не изменялся;
-  - edge-функции генерации не изменялись;
-  - sessions/participants не менялись;
-  - Gotenberg не затрагивался.
-
-13. **Добавить DoD по inactive package**
-
-- Если пакет `is_active=false`, клиент не видит его даже при наличии UUID в `allowed_package_ids`.
-- Admin в CRUD видит inactive пакет и может активировать обратно.
-
-14. **Добавить DoD по backward compatibility**
-
-- Старое правило `section_access → document_generation` открывает все активные глобальные пакеты.
-- Новое правило `document_generation/full` делает то же самое.
-- Новое правило `document_generation/partial` открывает только выбранные UUID.
+1. **Уточнить термин в UI: это не “тренинг”, а “домен выдачи”**
+  - Если технически ветка называется `training_content`, визуально не писать пользователю/админу, что «Генерация документов» — это тренинг.
+  - В UI лучше:
+    - блок: **«Что выдаём» → Доступ к контенту**
+    - поле: **«Куда выдаём» → База знаний / Генерация документов**
+  - Если переименовать пункт «Доступ к контенту тренинга» сейчас сложно — оставить, но внутри не называть пакеты документов тренингами.
+2. **Не использовать “прямой SELECT под клиентом” как обязательную логику для админской формы**
+  - Для формы правил доступа админ должен видеть все активные глобальные пакеты независимо от клиентских грантов.
+  - Поэтому список пакетов в `ProductAccessRulesTab.tsx` должен грузиться в admin-контексте:
+    - активные глобальные пакеты;
+    - `profile_id IS NULL`;
+    - `is_active=true`.
+  - Не завязывать админский список на пользовательскую видимость через `user_can_see_document_package`.
+3. **Partial по “Генерации документов” должен сохранять только** `allowed_package_ids`
+  - В `conditions` для `document_generation` не добавлять:
+    - `allowed_template_ids`;
+    - `allowed_module_ids`;
+    - `allowed_lesson_ids`;
+    - `auto_include_new_modules`.
+  - Для `full` можно сохранять:
+  - Для `partial`:
+4. **При переключении домена очищать лишние поля формы**
+  - Если админ переключил:
+    - «База знаний» → «Генерация документов», очистить `tc_allowed_module_ids`, `tc_allowed_lesson_ids`, `tc_auto_include_new_modules`.
+    - «Генерация документов» → «База знаний», очистить `tc_allowed_package_ids`.
+  - Это нужно, чтобы в `conditions` не попадал мусор от другого домена.
+5. **Edit-mode должен корректно открывать существующие** `document_generation` **правила**
+  - При редактировании правила:
+    - `grant_target_type='document_generation'` визуально открывается как «Доступ к контенту» + «Генерация документов»;
+    - `access_mode` подтягивается из `conditions.access_mode`;
+    - `allowed_package_ids` подтягивается из `conditions.allowed_package_ids`;
+    - selected labels подтягиваются по UUID из пакетов.
+6. **Legacy** `section_access → document_generation` **лучше не редактировать в новой форме**
+  - Отображать как read-only или предложить создать новое правило.
+  - Не пытаться автоматически конвертировать legacy в `document_generation`, чтобы не менять старую рабочую модель без явного действия.
+7. **CRUD пакетов лучше оставить в** `/admin/documents`**, а не перегружать** `PackagesWorkspace` **без режима**
+  - Кнопки «Новый пакет / Редактировать / Удалить» показывать только:
+    - `mode="admin"`;
+    - `admin/super_admin`;
+    - вкладка/область «Пакеты документов».
+  - В `/document-generation` пользователь этих кнопок видеть не должен.
+8. **Добавить DoD по отсутствию лишних технических ключей**
+  - После сохранения partial-правила проверить SQL:
+    - `conditions.allowed_package_ids` — UUID[];
+    - нет `name`, `slug`, `code`;
+    - нет `allowed_template_ids`;
+    - нет training-полей в document-generation правиле.
+9. **Добавить DoD по переключению формы**
+  - Создать правило:
+    - сначала выбрать «База знаний» partial и модули;
+    - переключить на «Генерация документов» partial и выбрать пакеты;
+    - сохранить;
+    - проверить, что в `conditions` нет старых module/lesson ids.
+  - И обратный сценарий: документы → база знаний.
 
 Копируемый блок для Lovable:
 
 ```text
-Дополни план следующими правками:
+План согласован, но дополни следующими правками.
 
-1. Не использовать `target_ref: NULL`, пока discovery не подтвердит, что поле `target_ref` допускает NULL.
+1. Уточнить визуальную терминологию.
 
-Перед миграцией проверить фактическую схему/constraint `access_rules.target_ref`.
+Технически можно переиспользовать ветку `training_content`, но в UI нельзя создавать ощущение, что «Генерация документов» — это тренинг.
 
-Если `target_ref NOT NULL`, не ломать схему ради этого спринта. Использовать совместимый вариант, но не использовать название пакета, slug или code как технический ключ.
+Если возможно, визуально использовать:
+- «Что выдаём» → «Доступ к контенту»;
+- «Куда выдаём» → «База знаний» / «Генерация документов».
 
-2. Новый `grant_target_type='document_generation'` добавлять только после проверки enum/CHECK.
+Если переименование «Доступ к контенту тренинга» сейчас затрагивает слишком много UI — оставить текущий текст, но внутри формы не называть пакеты документов тренингами.
 
-В отчете показать:
-- какой тип/constraint был у `grant_target_type` до миграции;
-- как он расширен;
-- что старые значения не сломаны.
+2. Список пакетов в форме правил доступа грузить в admin-контексте.
 
-3. Разделить legacy и новую модель доступа.
+В `ProductAccessRulesTab.tsx` список для выбора partial-доступа к «Генерации документов» должен показывать все активные глобальные пакеты:
+- `profile_id IS NULL`;
+- `is_active=true`.
 
-Legacy:
-- `grant_target_type='section_access'`
+Не завязывать этот список на пользовательский `user_can_see_document_package`, потому что это админская форма настройки правил доступа.
+
+3. Для `document_generation` сохранять только document-specific conditions.
+
+Для `grant_target_type='document_generation'` сохранять только:
+
+Full:
+{
+  "access_mode": "full",
+  "allowed_package_ids": []
+}
+
+Partial:
+{
+  "access_mode": "partial",
+  "allowed_package_ids": ["<uuid>"]
+}
+
+Не сохранять:
+- `allowed_template_ids`;
+- `allowed_module_ids`;
+- `allowed_lesson_ids`;
+- `auto_include_new_modules`.
+
+4. При переключении домена очищать лишние поля формы.
+
+Если админ переключает:
+- «База знаний» → «Генерация документов»:
+  очистить `tc_allowed_module_ids`, `tc_allowed_lesson_ids`, `tc_auto_include_new_modules`.
+
+Если админ переключает:
+- «Генерация документов» → «База знаний»:
+  очистить `tc_allowed_package_ids`.
+
+Цель: в `conditions` не должен попадать мусор от другого домена.
+
+5. Edit-mode для существующих правил.
+
+При открытии существующего правила:
+- `grant_target_type='training_content'` → домен «База знаний»;
+- `grant_target_type='document_generation'` → визуально открыть тот же UI как «Доступ к контенту» + домен «Генерация документов»;
+- подтянуть `conditions.access_mode`;
+- подтянуть `conditions.allowed_package_ids`;
+- названия пакетов показывать только как display label по UUID.
+
+6. Legacy section_access не редактировать через новую форму.
+
+Правило:
+- `grant_target_type='section_access'`;
 - `target_ref='document_generation'`
-- всегда трактуется как full access ко всей генерации документов.
 
-Новая модель:
-- `grant_target_type='document_generation'`
-- `conditions.access_mode='full' | 'partial'`
-- `conditions.allowed_package_ids=[uuid]`.
+отображать как legacy/read-only:
+«Доступ к генерации документов (legacy, полный)».
 
-Не добавлять package-level partial в старый `section_access`.
+Не конвертировать автоматически в новый `document_generation`, чтобы не менять старую рабочую модель без явного действия.
 
-4. Валидировать `allowed_package_ids` при сохранении правила.
+7. CRUD пакетов показывать только в admin-режиме.
 
-Правила:
-- только UUID;
-- только существующие `document_package_templates.id`;
-- только глобальные пакеты `profile_id IS NULL`;
-- только активные пакеты `is_active=true`;
-- удалить дубли;
-- `access_mode='partial'` + пустой массив не сохранять.
+Кнопки:
+- «Новый пакет»;
+- «Редактировать»;
+- «Деактивировать»;
+- «Удалить»
 
-5. `get_user_document_package_ids` не должна доверять произвольному `p_user`.
+показывать только если:
+- `/admin/documents`;
+- `mode="admin"`;
+- пользователь `admin/super_admin`.
 
-Если функция вызывается с клиента, она должна использовать `auth.uid()` внутри или проверять, что `p_user = auth.uid()`.
+В `/document-generation` пользователь не должен видеть CRUD-кнопки пакетов.
 
-Admin/super_admin-доступ к чужой картине доступа — только через отдельный admin-safe путь, если он нужен.
+8. Усилить DoD SQL-проверкой conditions.
 
-6. RLS-функции сделать безопасными.
+После сохранения partial-правила для «Генерации документов» проверить:
 
-Для `user_can_see_document_package` и связанных функций:
-- `SECURITY DEFINER`;
-- `SET search_path = public`;
-- без динамического SQL;
-- без рекурсии через политики `document_package_templates` / `document_package_template_items`;
-- отдельные тесты под admin, клиентом с full, клиентом с partial, клиентом без доступа.
+- `conditions.allowed_package_ids` содержит только UUID;
+- в `conditions` нет `name`;
+- нет `slug`;
+- нет `code`;
+- нет `allowed_template_ids`;
+- нет `allowed_module_ids`;
+- нет `allowed_lesson_ids`;
+- нет `auto_include_new_modules`.
 
-Если появляется recursion / permission loop / stack depth — STOP.
+9. Добавить DoD по переключению формы.
 
-7. Удаление пакетов сделать безопасным.
+Проверить сценарий 1:
+- выбрать «База знаний»;
+- partial;
+- выбрать модули/уроки;
+- переключить на «Генерация документов»;
+- выбрать partial и пакеты;
+- сохранить;
+- убедиться, что в `conditions` нет module/lesson ids.
 
-Удаление разрешать только если dependency-check полный.
+Проверить сценарий 2:
+- выбрать «Генерация документов»;
+- partial;
+- выбрать пакеты;
+- переключить на «База знаний»;
+- выбрать modules/lessons;
+- сохранить;
+- убедиться, что в `conditions` нет allowed_package_ids.
 
-Проверить зависимости минимум:
-- `document_package_template_items`;
-- `document_package_sessions`;
-- `access_rules.conditions.allowed_package_ids`;
-- любые найденные references по package_template_id.
+10. Генерацию документов, sessions, Gotenberg, edge-функции, RLS/RPC/audit/safe-delete не трогать.
 
-Если dependency-check неполный или пакет уже использовался — hard delete не делать, только `is_active=false`.
-
-8. Добавить audit_logs для CRUD глобальных пакетов.
-
-Фиксировать:
-- создание;
-- переименование;
-- активацию/деактивацию;
-- удаление или заблокированную попытку удаления.
-
-В DoD добавить SQL-proof записей в `audit_logs`.
-
-9. RLS остается source of truth.
-
-`useUserVisibleDocumentPackages()` может использовать RPC для UX, но защита должна быть на уровне RLS через `user_can_see_document_package`.
-
-Клиентский фильтр не считается защитой.
-
-10. Усилить DoD по переименованию.
-
-Проверка:
-- создать rule с `allowed_package_ids=[UUID]`;
-- переименовать пакет;
-- проверить, что UUID в rule не изменился;
-- клиент по-прежнему видит пакет.
-
-11. В отчете доказать отсутствие slug/code.
-
-Добавить:
-- скрин диалога создания пакета без поля «Код»/«Slug»;
-- SQL-proof, что access rule хранит только UUID;
-- diff-summary: не добавлялись поля `slug/code`, индексы по ним и транслитерация названия.
-
-12. Не трогать генерацию документов.
-
-В отчете явно подтвердить, что не изменялись:
-- `canonical-document-generate-strict`;
-- edge-функции генерации;
-- Gotenberg;
-- `document_package_sessions`;
-- `document_package_session_participants`.
-
-13. Добавить DoD по inactive package.
-
-Проверить:
-- если пакет `is_active=false`, клиент не видит его даже при наличии UUID в `allowed_package_ids`;
-- admin в CRUD видит inactive пакет и может активировать обратно.
-
-14. Добавить DoD по backward compatibility.
-
-Проверить:
-- старое правило `section_access → document_generation` открывает все активные глобальные пакеты;
-- новое правило `document_generation/full` открывает все активные глобальные пакеты;
-- новое правило `document_generation/partial` открывает только выбранные UUID.
-
-План: Спринт 3S v2 — Управляемые пакеты документов и UUID-only гранулярный доступ
+План: Sprint 3S v2 — UI access model fix (домен «Генерация документов» внутри training_content)
 ```
 
-> Версия 2: учитывает обязательные правки пользователя — никаких slug/code/transliterate, переиспользуем паттерн `training_content` partial access, всё на UUID.
+### Цель
 
----
+Исправить UI-модель выдачи доступа к пакетам документов: «Генерация документов» — это не отдельный тип в «Что выдаём» и не отдельный «тренинг» в селекторе. Это домен внутри «Доступа к контенту тренинга», параллельный «Базе знаний». Пакеты выбираются только при partial-доступе и сохраняются как UUID. Backend-контракт Sprint 3S v2 не меняется.
 
-## STOP-guards (соблюдать на всём спринте)
+### Изменения только в UI (frontend)
 
-Немедленно остановиться и пересмотреть подход, если в любой момент появляется:
+**1. `src/components/admin/product/ProductAccessRulesTab.tsx**`
 
-- генерация `slug` / `code` / транслитерация русского названия пакета («Идеология» → `ideologiya`);
-- связывание доступа по названию, slug, code или любому текстовому ключу пакета;
-- сохранение выбранных пакетов в access rule **не** как массив UUID;
-- параллельная новая система partial access для документов вместо переиспользования механики `training_content`;
-- UI показывает корректное название, но resolver/RLS читает текстовый ключ.
+«Что выдаём» (grant_target_type) — оставить как есть; пункт `document_generation` НЕ показывать в дропдауне (legacy-правила продолжают читаться, но руками новые такие не создаются — создаются через домен ниже).
 
----
+Внутри ветки `training_content` добавить новое поле «Куда выдаём» — domain selector:
 
-## Часть 0. Обязательное discovery (до миграций и UI)
+- `knowledge_base` — База знаний (по умолчанию, текущее поведение);
+- `document_generation` — Генерация документов.
 
-Уже выполнено для паттерна `training_content` (см. результат ниже), результат фиксируем в `.lovable/proofs/document_packages_access_discovery.md`.
+Поведение по доменам:
 
-### Найденная модель partial access для тренингов
+- **База знаний** (без изменений):
+  - Полный / Частичный доступ;
+  - при partial — текущий выбор модулей/уроков (`tc_allowed_module_ids`, `tc_allowed_lesson_ids`, `tc_auto_include_new_modules`).
+- **Генерация документов**:
+  - Полный / Частичный доступ;
+  - при partial — список активных глобальных пакетов (`document_package_templates` где `profile_id IS NULL AND is_active=true`) c чекбоксами; показывается только `name`, выбор хранится как UUID.
 
-Реализована поверх `access_rules` + поле `conditions jsonb`:
+**2. Save-маппинг (внутри того же файла / `useAccessRules`)**
 
-- `grant_target_type = 'training_content'`, `target_ref = <root_training_uuid>`;
-- `conditions.access_mode: 'full' | 'partial'`;
-- `conditions.allowed_module_ids: uuid[]`;
-- `conditions.allowed_lesson_ids: uuid[]`;
-- `conditions.auto_include_new_modules: boolean`.
+При сохранении правила с `training_content` + `document_generation` домен записывать в БД как:
 
-UI в `ProductAccessRulesTab.tsx`:
+- `grant_target_type = 'document_generation'`
+- `target_ref` — текущий согласованный sentinel из Sprint 3S v2 (`'document_generation'`)
+- `conditions.access_mode = 'full' | 'partial'`
+- `conditions.allowed_package_ids = uuid[]` (только при partial)
 
-- form-поля `tc_access_mode`, `tc_allowed_module_ids`, `tc_allowed_lesson_ids`, `tc_auto_include_new_modules`;
-- дерево выбора берётся из `trainingTree` по `target_ref`;
-- при сохранении кладётся в `conditions` (см. строки 558–594, 651+).
+При загрузке правила в форму:
 
-Resolver: `access-resolver.ts` + memory-канон `training-content-resolver-rules` — приоритеты P1–P5, default-deny, UUID-only.
+- `grant_target_type='training_content'` → форма открывается с доменом «База знаний»;
+- `grant_target_type='document_generation'` → форма открывается с `training_content` + домен «Генерация документов», `access_mode` и `allowed_package_ids` подставляются из `conditions`;
+- legacy `section_access` + `target_ref='document_generation'` → отображается read-only бейджем «Доступ к генерации документов (legacy, полный)» и продолжает работать как full.
 
-**Этот же паттерн полностью переносится на пакеты документов.**
+**3. `src/components/ai-documents/packages/PackagesWorkspace.tsx**`
 
----
+Добавить admin-CRUD над глобальными пакетами (для admin/super_admin), используя уже существующие RPC из Sprint 3S v2:
 
-## Часть A. RLS-фикс глобального справочника пакетов (фикс «Нет доступных пакетов»)
+- кнопка «Новый пакет» → `create_global_document_package`;
+- «Переименовать» → `update_global_document_package`;
+- «Деактивировать» → `deactivate_global_document_package`;
+- «Удалить» → `safe_delete_document_package` (мягкий блок при зависимостях).
 
-### Диагноз
+Поля: только `name` и опц. `description`. Ни `code`, ни `slug`, ни `public_id`.
 
-`document_package_templates`: запись «Идеология» глобальная (`profile_id=NULL`). SELECT-политика требует owner или admin → клиент видит 0 строк → пустой стейт. То же на `document_package_template_items`.
+### Что НЕ делаем (явные out-of-scope)
 
-### Что меняем (одна миграция, только SELECT)
+- Не добавляем `conditions.allowed_template_ids` и выбор шаблонов внутри пакета.
+- Не вводим slug/code/text-key для пакетов в новой логике.
+- Не трогаем backend-контракт Sprint 3S v2: миграции, RPC, RLS, аудит, safe-delete, триггеры — без изменений.
+- Не трогаем `canonical-document-generate-strict`, edge-функции генерации, Gotenberg, `document_package_sessions`, `document_package_session_participants`, `ai_document_generation_batches`, `ai_generated_documents`.
+- Не трогаем resolver `access-resolver.ts` (он уже умеет `document_generation` + `allowed_package_ids` + legacy).
 
-1. `document_package_templates` — permissive SELECT для `authenticated`, разрешён, если security-definer `user_can_see_document_package(template_id uuid)` вернул `true`.
-2. `document_package_template_items` — permissive SELECT через ту же функцию (по `package_template_id`).
-3. Все write-политики и owner-политики не трогаем.
+### Технические детали
 
-`user_can_see_document_package(uuid)` реализует:
+```text
+ProductAccessRulesTab form state (training_content):
+  grant_target_type: 'training_content'    // в UI; на save может стать 'document_generation'
+  tc_domain: 'knowledge_base' | 'document_generation'   // NEW локальное поле
+  tc_access_mode: 'full' | 'partial'
+  // knowledge_base:
+  tc_allowed_module_ids, tc_allowed_lesson_ids, tc_auto_include_new_modules
+  // document_generation:
+  tc_allowed_package_ids: string[]
 
-- admin/super_admin → true;
-- owner пакета (profile_id IS NOT NULL и совпадает) → true;
-- глобальный (`profile_id IS NULL AND is_active`) + у пользователя есть active access rule с UUID-резолюцией (см. Часть C).
-
----
-
-## Часть B. Админский CRUD глобальных пакетов (без slug/code)
-
-### Модель
-
-Таблица `document_package_templates` уже имеет: `id uuid`, `name`, `description`, `is_active`, `profile_id`, `created_by`, `created_at`, `updated_at`.
-
-**Никаких новых полей `slug` / `code` / `public_id` для логики доступа не вводим.** Существующий столбец `code`, если присутствует, считается legacy display-only и в новых артефактах не используется (см. memory `no-product-code-in-new-artifacts`). Никакого `unique_global_package_code` индекса — пункт удалён.
-
-### Миграция
-
-- Триггер `assert_global_package_admin_only` на INSERT/UPDATE: запись с `profile_id IS NULL` может появиться/измениться только если `has_role_v2(auth.uid(), 'admin'|'super_admin')`.
-- Никаких уникальных индексов по тексту. PK по `id` достаточно.
-
-### UI (`/admin/documents` → «Пакеты документов», админский режим)
-
-Диалог «+ Новый пакет»:
-
-- «Название» (обязательно);
-- «Описание» (опционально);
-- «Активен» (toggle).
-- **Поля «Код»/«Slug»/«Public ID» отсутствуют.**
-
-Действия со строкой пакета: Переименовать, Активировать/Деактивировать, Удалить (только если нет items и sessions; иначе показать причину).
-
-Все мутации идут по `id`. Имя — display-only.
-
----
-
-## Часть C. Гранулярный доступ к пакетам — переиспользование `training_content`-паттерна
-
-### Архитектурное решение
-
-Не создаём «section_access» как основной сценарий. Расширяем существующий механизм «доступ к контенту внутри продукта» новым типом контента:
-
-`**grant_target_type = 'document_generation'**` (новый), либо переиспользование `training_content`-схемы 1-в-1 через обобщение. Решение фиксируется по результатам discovery: предпочтительно ввести `'document_generation'` как новый тип контента, потому что `target_ref` для документов — не root training UUID, а сам домен «генерация документов» (синглтон, без иерархии).
-
-Структура формы и `conditions` строго копирует `training_content`:
-
-```
-grant_target_type: 'document_generation'
-target_ref: NULL        // домен синглтонный, иерархии нет
-conditions:
-  access_mode: 'full' | 'partial'
-  allowed_package_ids: uuid[]   // ТОЛЬКО UUID document_package_templates.id
+Save mapping:
+  if tc_domain === 'knowledge_base':
+    insert { grant_target_type: 'training_content', target_ref: <product_id>,
+             conditions: { access_mode, allowed_module_ids, allowed_lesson_ids, auto_include_new_modules } }
+  if tc_domain === 'document_generation':
+    insert { grant_target_type: 'document_generation', target_ref: 'document_generation',
+             conditions: { access_mode, allowed_package_ids: access_mode==='partial' ? uuids : [] } }
 ```
 
-Семантика:
+Загрузка активных пакетов — прямым селектом из `document_package_templates` (RLS уже разрешает SELECT активных глобальных под клиентом).
 
-- `access_mode='full'` → доступ ко всем активным глобальным пакетам (обратная совместимость с уже выданным «доступом ко всему домену»).
-- `access_mode='partial'` + `allowed_package_ids=[uuid1, uuid2]` → доступ только к этим пакетам.
-- `partial` + пустой массив → форма не валидируется (как у тренингов).
-- admin/super_admin всегда видит всё.
+### Dry-run / stop-guards
 
-**Никаких `package_slug`, `package_code`, `package_name_ref`. Только UUID.**
+- Если save с `document_generation` падает на UNIQUE `(product_id, tariff_id, grant_target_type, target_ref)` — показать понятную ошибку «Правило для генерации документов уже существует, отредактируйте существующее» и не дублировать.
+- Если RLS блокирует SELECT активных глобальных пакетов в форме доступа — остановиться и согласовать политику отдельно (текущая RLS позволяет, проверка нужна).
+- Если в проде есть legacy-правило с `grant_target_type='document_generation'` и `target_ref != 'document_generation'` — не падать, отображать read-only.
 
-### Backward compatibility со старым `section_access → document_generation`
+### DoD
 
-Существующие правила `grant_target_type='section_access' AND target_ref='document_generation'` продолжают работать как `access_mode='full'`. Resolver в Части D учитывает оба источника. Миграция данных не требуется; админ может позже пересоздать правила в новом типе.
-
-### Изменения
-
-1. **Миграция:**
-  - Добавить `'document_generation'` в enum `grant_target_type` (если enum) или допустимое значение CHECK-констрейнта.
-  - Функция `get_user_document_package_ids(p_user uuid)` → `{ full_access: bool, package_ids: uuid[] }`:
-    - резолв активных правил пользователя через тот же путь, что `access-resolver` (subscriptions_v2 → entitlements → access_rules);
-    - `full_access=true`, если admin/super_admin **или** есть active rule (`section_access → document_generation`) **или** (`document_generation` с `access_mode='full'`);
-    - иначе `package_ids` = union `conditions.allowed_package_ids` по всем active `document_generation`-правилам пользователя.
-  - Функция `user_can_see_document_package(p_template_id uuid)` использует первую.
-2. **RLS** (Часть A замыкается на эту функцию).
-3. **UI правил доступа** (`ProductAccessRulesTab.tsx`):
-  - В Select «КУДА ВЫДАЁМ» добавить пункт «Доступ к генерации документов» (тип `document_generation`).
-  - Блок формы — копия `training_content`:
-    - Radio «Полный доступ» / «Частичный доступ».
-    - При «Частичный» — список активных глобальных пакетов (`document_package_templates WHERE profile_id IS NULL AND is_active`), multi-select с чекбоксами (тот же `ProductCheckboxList`-стиль или существующий tree-компонент в плоском режиме).
-  - При сохранении: `conditions.access_mode`, `conditions.allowed_package_ids` (UUID[]); `target_ref=null`.
-  - При редактировании: гидратация из `conditions`.
-  - В списке правил label считается по `name` пакета через JOIN по UUID; UI показывает «Пакеты: Идеология, Тест-X» — это только display.
-4. **Frontend клиента (`PackagesWorkspace.tsx`):**
-  - Список пакетов фильтруется по результату `get_user_document_package_ids` (на стороне сервера через RLS — клиентский фильтр не нужен, RLS уже скроет).
-  - Пустой стейт «Нет доступных пакетов» остаётся как safety-net.
-
----
-
-## Часть D. Автопоявление нового пакета
-
-- Источник списка пакетов в UI правил и в `/document-generation` — один и тот же запрос: `document_package_templates WHERE profile_id IS NULL AND is_active = true`. Никаких enum/хардкодов.
-- При создании пакета он:
-  - сразу появляется в multi-select правила (после react-query invalidate);
-  - сразу доступен клиентам с `access_mode='full'`;
-  - НЕ доступен клиентам с `access_mode='partial'`, у которых его UUID не в `allowed_package_ids` (default-deny).
-- E2E-чек в DoD: создать «Тест-X», убедиться, что он появился в Select и видим/невидим по гранту.
-
----
-
-## Затронутые файлы
-
-### Миграция (одна)
-
-`supabase/migrations/<ts>_sprint_3s_v2_document_packages_uuid_access.sql`:
-
-- расширение enum/CHECK `grant_target_type` (+ `'document_generation'`);
-- триггер `assert_global_package_admin_only`;
-- функции `user_can_see_document_package`, `get_user_document_package_ids`;
-- SELECT-политики на `document_package_templates` и `document_package_template_items`.
-
-### Frontend
-
-- `src/components/admin/product/ProductAccessRulesTab.tsx` — новый тип `document_generation`, форма по паттерну `training_content` (`dg_access_mode`, `dg_allowed_package_ids`), маппинг load/save в `conditions`.
-- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx` или новый `AdminGlobalPackagesPanel.tsx` — CRUD глобальных пакетов без `code`/`slug`.
-- `src/hooks/useDocumentPackages.ts` — `useGlobalDocumentPackages()` (admin) + `useUserVisibleDocumentPackages()` (RPC).
-- `src/components/ai-documents/packages/PackagesWorkspace.tsx` — без логических изменений (RLS + cache key с user id).
-
-### Артефакты
-
-- `.lovable/proofs/document_packages_access_discovery.md` — фиксированный результат discovery (training_content модель + решение переиспользовать).
-
-### НЕ трогаем
-
-- `canonical-document-generate-strict`, edge-функции генерации, Gotenberg, sessions/participants.
-- `access-resolver.ts` SOT-логику (только подключаем новый content type).
-- Никакие `code`/`slug`/text-ключи не вводим.
-
----
-
-## DoD
-
-1. Новый пакет создаётся через UI **без** поля «Код»/«Slug». В БД у пакета нет технического ключа на основе названия.
-2. Изменение `name` пакета **не ломает** доступ (доказательство: переименовать «Идеология» → «Идеология (v2)», правило продолжает действовать).
-3. Access rule типа `document_generation` хранит `conditions.allowed_package_ids` **только как массив UUID** (SELECT-доказательство).
-4. UI правил показывает названия пакетов **только как display label**, подтянутый по UUID.
-5. Партиал-доступ к генерации документов работает по той же UX-схеме, что partial access у `training_content` (Полный/Частичный + multi-select).
-6. Клиент с `allowed_package_ids=[UUID_X]` видит только пакет X.
-7. Клиент без UUID X в `allowed_package_ids` НЕ видит пакет X.
-8. Клиент с `access_mode='full'` (или legacy `section_access → document_generation`) видит все активные глобальные пакеты, включая только что созданный.
-9. Admin/super_admin на `/admin/documents` видит все пакеты независимо от грантов.
-10. `supabase--linter` — без новых критических ошибок.
-11. Скриншоты клиентского и админского экранов приложены к отчёту.
-
----
-
-## План проверки (порядок выполнения)
-
-1. Зафиксировать discovery-документ.
-2. Применить миграцию → дождаться regen `types.ts`.
-3. Под admin создать пакет «Тест-X» (без поля «Код»).
-4. Создать правило `document_generation`, `access_mode='partial'`, `allowed_package_ids=[UUID(Идеология)]` на продукте.
-5. Войти под клиентом с этим продуктом (пароль `123456`) → `/document-generation` → виден только Идеология.
-6. Переключить правило в `access_mode='full'` → клиент видит и Идеологию, и Тест-X.
-7. Переименовать пакет → доступ сохраняется.
-8. Прогнать `pg_policy` — новые политики на месте; legacy `section_access → document_generation` правила продолжают давать full access.
+- В «Что выдаём» нет пункта «Доступ к генерации документов».
+- В «Что выдаём» доступен «Доступ к контенту тренинга», внутри которого появляется выбор «Куда выдаём»: «База знаний» / «Генерация документов».
+- «База знаний» работает как раньше (full/partial по модулям/урокам).
+- «Генерация документов»: full = все активные пакеты, partial = список UUID выбранных пакетов в `conditions.allowed_package_ids`.
+- В сохранённом правиле для partial — только UUID, без name/code/slug. Переименование пакета не ломает доступ.
+- Legacy `section_access → document_generation` продолжает работать как full.
+- `/admin/documents` → «Пакеты документов» имеет CRUD над глобальными пакетами через существующие RPC (audit пишется автоматически RPC).
+- Генерация документов, sessions, Gotenberg и edge-функции — не изменены (диффом подтверждается).
