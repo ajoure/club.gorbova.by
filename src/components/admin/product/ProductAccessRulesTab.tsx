@@ -402,6 +402,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_allowed_lesson_ids: [] as string[],
     tc_auto_include_new_modules: false,
     match_purchase_month: false,
+    // document_generation fields (Sprint 3S v2 — UUID only)
+    dg_access_mode: "full" as "full" | "partial",
+    dg_allowed_package_ids: [] as string[],
   });
 
   // Confirm-dialog для перевода existing partial → full
