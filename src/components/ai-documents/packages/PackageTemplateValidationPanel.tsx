@@ -34,6 +34,7 @@ import {
 import { CheckCircle2, AlertTriangle, XCircle, ShieldCheck, Loader2, Upload } from "lucide-react";
 import mammoth from "mammoth";
 import { isBillingEntityType } from "@/utils/billingFldGroups";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 
 interface Props {
   packageTemplateId: string | null;
@@ -358,54 +359,61 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       <div>
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-indigo-500" />
-          Контролируемая валидация (read-only)
+          Проверка шаблонов
         </h3>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Не запускает генерацию. Не вызывает Gotenberg. Не пишет в
-          <code className="mx-1">ai_generated_documents</code>.
+          Безопасная проверка без генерации: показывает, какие плейсхолдеры найдены в шаблоне
+          и каких данных не хватает. Документы не создаются.
         </p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="flex-1 flex items-center gap-2">
-          <Select value={selectedItemId} onValueChange={setSelectedItemId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Активная версия привязанного шаблона…" />
-            </SelectTrigger>
-            <SelectContent>
-              {(boundItemsQuery.data ?? []).length === 0 ? (
-                <div className="px-3 py-2 text-xs text-muted-foreground">
-                  К пакету не привязано ни одного шаблона.
-                </div>
-              ) : (
-                (boundItemsQuery.data ?? []).map((t) => (
-                  <SelectItem key={t.item_id} value={t.item_id}>
-                    {t.name} <span className="text-muted-foreground">({t.template_scope ?? "—"})</span>
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={!selectedItemId || scanning}
-            onClick={handleScanBound}
-          >
-            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Проверить"}
-          </Button>
+          <HelpTooltip helpKey="" customShort="Какую версию шаблона проверять. По умолчанию — последняя активная." alwaysShow>
+            <Select value={selectedItemId} onValueChange={setSelectedItemId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Активная версия привязанного шаблона…" />
+              </SelectTrigger>
+              <SelectContent>
+                {(boundItemsQuery.data ?? []).length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    К пакету не привязано ни одного шаблона.
+                  </div>
+                ) : (
+                  (boundItemsQuery.data ?? []).map((t) => (
+                    <SelectItem key={t.item_id} value={t.item_id}>
+                      {t.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </HelpTooltip>
+          <HelpTooltip helpKey="" customShort="Проверить выбранную версию шаблона на плейсхолдеры и нехватку данных. Файлы не создаются." alwaysShow>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!selectedItemId || scanning}
+              onClick={handleScanBound}
+              aria-label="Проверить выбранный шаблон"
+            >
+              {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Проверить"}
+            </Button>
+          </HelpTooltip>
         </div>
         <div className="text-xs text-muted-foreground self-center">или</div>
-        <label className="inline-flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-1.5 hover:bg-accent/30">
-          <Upload className="h-3.5 w-3.5" />
-          Загрузить локальный .docx
-          <input
-            type="file"
-            accept=".docx"
-            className="hidden"
-            onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
-          />
-        </label>
+        <HelpTooltip helpKey="" customShort="Разовая проверка файла с компьютера без загрузки в каталог." alwaysShow>
+          <label className="inline-flex items-center gap-2 text-sm cursor-pointer border rounded px-3 py-1.5 hover:bg-accent/30">
+            <Upload className="h-3.5 w-3.5" />
+            Загрузить локальный .docx
+            <input
+              type="file"
+              accept=".docx"
+              className="hidden"
+              onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        </HelpTooltip>
       </div>
 
       <div className="flex items-center gap-2 text-xs">

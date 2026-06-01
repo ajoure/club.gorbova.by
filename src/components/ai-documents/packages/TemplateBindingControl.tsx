@@ -219,14 +219,17 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
               <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
                 {b.template_status}
               </Badge>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={unbindMutation.isPending}
-                onClick={() => unbindMutation.mutate(b.template_id)}
-              >
-                <Unlink className="h-3.5 w-3.5 mr-1" /> Отвязать
-              </Button>
+              <HelpTooltip helpKey="" customShort="Убрать шаблон из пакета. На сам шаблон в каталоге не влияет." alwaysShow>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={unbindMutation.isPending}
+                  onClick={() => unbindMutation.mutate(b.template_id)}
+                  aria-label="Отвязать шаблон от пакета"
+                >
+                  <Unlink className="h-3.5 w-3.5 mr-1" /> Отвязать
+                </Button>
+              </HelpTooltip>
             </li>
           ))}
         </ul>
