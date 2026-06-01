@@ -28,7 +28,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { FileStack, Shield, Plus, Pencil } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { FileStack, Shield, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
@@ -40,6 +44,18 @@ interface PackageRow {
   description: string | null;
   is_active: boolean;
   profile_id: string | null;
+}
+
+async function logPackageEvent(action: string, packageId: string, meta: Record<string, unknown> = {}) {
+  try {
+    await supabase.rpc("log_document_package_event", {
+      _action: action,
+      _package_id: packageId,
+      _meta: meta as never,
+    });
+  } catch (e) {
+    console.warn("[PackageAdminPanel] audit log failed:", action, e);
+  }
 }
 
 export function PackageAdminPanel() {
@@ -89,15 +105,30 @@ export function PackageAdminPanel() {
     setSaving(true);
     try {
       if (editing) {
+        const newName = form.name.trim();
+        const newDesc = form.description.trim() || null;
         const { error } = await supabase
           .from("document_package_templates")
-          .update({
-            name: form.name.trim(),
-            description: form.description.trim() || null,
-            is_active: form.is_active,
-          })
+          .update({ name: newName, description: newDesc, is_active: form.is_active })
           .eq("id", editing.id);
         if (error) throw error;
+
+        // Audit: detect rename vs activation changes
+        if (newName !== editing.name) {
+          await logPackageEvent("document_package.renamed", editing.id, {
+            old_name: editing.name, new_name: newName,
+          });
+        }
+        if (form.is_active !== editing.is_active) {
+          await logPackageEvent(
+            form.is_active ? "document_package.activated" : "document_package.deactivated",
+            editing.id,
+            { name: newName }
+          );
+        }
+        if (newName === editing.name && form.is_active === editing.is_active) {
+          await logPackageEvent("document_package.updated", editing.id, { name: newName });
+        }
         toast.success("Пакет обновлён");
       } else {
         const { data, error } = await supabase
@@ -106,13 +137,18 @@ export function PackageAdminPanel() {
             name: form.name.trim(),
             description: form.description.trim() || null,
             is_active: form.is_active,
-            profile_id: null, // глобальный пакет
+            profile_id: null,
           })
           .select("id")
           .single();
         if (error) throw error;
         toast.success("Пакет создан");
-        if (data?.id) setPackageId(data.id);
+        if (data?.id) {
+          await logPackageEvent("document_package.created", data.id, {
+            name: form.name.trim(), is_active: form.is_active,
+          });
+          setPackageId(data.id);
+        }
       }
       await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
       await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
@@ -125,7 +161,42 @@ export function PackageAdminPanel() {
     }
   };
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = async (pkg: PackageRow) => {
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase.rpc("safe_delete_document_package", {
+        _package_id: pkg.id,
+      });
+      if (error) throw error;
+      const res = data as { status: string; reason?: string; dependencies?: Record<string, number>; suggestion?: string };
+      if (res.status === "deleted") {
+        toast.success("Пакет удалён");
+        setPackageId(null);
+        await queryClient.invalidateQueries({ queryKey: ["pkg-admin-packages"] });
+        await queryClient.invalidateQueries({ queryKey: ["workspace-package-templates"] });
+        await queryClient.invalidateQueries({ queryKey: ["access-rule-document-packages"] });
+      } else if (res.status === "blocked") {
+        const d = res.dependencies ?? {};
+        toast.error(
+          `Удалить нельзя: используется (шаблонов: ${d.items ?? 0}, сессий: ${d.sessions ?? 0}, правил доступа: ${d.access_rules ?? 0}). Деактивируйте пакет вместо удаления.`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(`Не удалось удалить: ${res.reason ?? res.status}`);
+      }
+    } catch (e: any) {
+      toast.error(`Ошибка удаления: ${e?.message ?? e}`);
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  };
+
   const selectedPackage = packagesQuery.data?.find(p => p.id === packageId) ?? null;
+
+
 
   return (
     <div className="space-y-4">
@@ -169,9 +240,20 @@ export function PackageAdminPanel() {
             </SelectContent>
           </Select>
           {selectedPackage && (
-            <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
-              <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
-            </Button>
+            <>
+              <Button size="sm" variant="outline" onClick={() => openEdit(selectedPackage)}>
+                <Pencil className="h-3.5 w-3.5 mr-1" /> Редактировать
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setDeleteOpen(true)}
+                disabled={deleting}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить
+              </Button>
+            </>
           )}
         </div>
         {selectedPackage?.description && (
@@ -227,6 +309,29 @@ export function PackageAdminPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить пакет «{selectedPackage?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Удаление выполняется только если пакет нигде не используется
+              (шаблоны, сессии, правила доступа). Иначе удаление будет заблокировано —
+              в этом случае деактивируйте пакет.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => { e.preventDefault(); if (selectedPackage) handleDelete(selectedPackage); }}
+            >
+              {deleting ? "Удаление…" : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
