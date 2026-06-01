@@ -23,12 +23,10 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Sparkles, FlaskConical, Loader2, FileText, FileDown,
   CheckCircle2, AlertCircle, Info,
 } from "lucide-react";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 import { useRbac } from "@/hooks/useRbac";
 import { useDocumentPackageSession } from "@/hooks/useDocumentPackageSession";
 import { useDocumentPackageItems } from "@/hooks/useDocumentPackages";
@@ -114,58 +112,54 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
               Генерация пакета
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Финальное действие. Заполните «Состав», «Шаблоны пакета», «Анкеты документов»
-              и «Роли пакета» — затем сформируйте {packageName.toLowerCase()}.
+              Заполните анкеты документов и роли — затем сформируйте {packageName.toLowerCase()}.
+              Готовые документы появятся ниже и в истории запусков.
             </p>
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={0}>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!canGenerate}
-                        onClick={() => handleGenerate("admin_test")}
-                      >
-                        {isGenerating && lastRunMode === "admin_test"
-                          ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                          : <FlaskConical className="h-4 w-4 mr-1" />}
-                        Тестово сформировать
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Запуск с run_mode=admin_test (без рассылки клиенту).
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <HelpTooltip
+                helpKey=""
+                customShort="Пробный запуск для администратора: документы сформируются, но клиенту ничего не отправляется."
+                alwaysShow
+              >
+                <span tabIndex={0}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!canGenerate}
+                    onClick={() => handleGenerate("admin_test")}
+                  >
+                    {isGenerating && lastRunMode === "admin_test"
+                      ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      : <FlaskConical className="h-4 w-4 mr-1" />}
+                    Тестово сформировать
+                  </Button>
+                </span>
+              </HelpTooltip>
             )}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={0}>
-                    <Button
-                      size="sm"
-                      disabled={!canGenerate}
-                      onClick={() => handleGenerate("user_generate")}
-                    >
-                      {isGenerating && lastRunMode !== "admin_test"
-                        ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        : <Sparkles className="h-4 w-4 mr-1" />}
-                      Сформировать пакет документов
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                {!canGenerate && (
-                  <TooltipContent>
-                    {blockers[0] ?? "Подождите…"}
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </TooltipProvider>
+            <HelpTooltip
+              helpKey=""
+              customShort={
+                canGenerate
+                  ? "Сформировать документы пакета по заполненным данным."
+                  : blockers[0] ?? "Подождите…"
+              }
+              alwaysShow
+            >
+              <span tabIndex={0}>
+                <Button
+                  size="sm"
+                  disabled={!canGenerate}
+                  onClick={() => handleGenerate("user_generate")}
+                >
+                  {isGenerating && lastRunMode !== "admin_test"
+                    ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    : <Sparkles className="h-4 w-4 mr-1" />}
+                  Сформировать пакет документов
+                </Button>
+              </span>
+            </HelpTooltip>
           </div>
         </div>
 
