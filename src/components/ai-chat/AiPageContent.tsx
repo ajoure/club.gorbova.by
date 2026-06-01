@@ -908,9 +908,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
       )}
       {activeSubTab === "history" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <div className="text-center py-12 text-sm text-muted-foreground">
-            История сформированных документов появится здесь после первой генерации из карточки сделки.
-          </div>
+          <DocumentHistoryView mode={mode} />
         </div>
       )}
       {activeSubTab === "executors" && (
