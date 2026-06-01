@@ -49,11 +49,8 @@ import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
 
-import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
-import { PackageRolesManager } from "./PackageRolesManager";
-import { TemplateBindingControl } from "./TemplateBindingControl";
-import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
-import { PackageGenerationPanel } from "./PackageGenerationPanel";
+
+
 
 interface PackageOption {
   id: string;
