@@ -16079,6 +16079,13 @@ export type Database = {
         Args: { p_section_code: string }
         Returns: Json
       }
+      get_user_document_package_ids: {
+        Args: never
+        Returns: {
+          full_access: boolean
+          package_ids: string[]
+        }[]
+      }
       get_user_permissions: { Args: { _user_id: string }; Returns: string[] }
       get_user_role: {
         Args: { _user_id: string }
@@ -16469,6 +16476,10 @@ export type Database = {
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number
+      }
+      user_can_see_document_package: {
+        Args: { p_template_id: string }
+        Returns: boolean
       }
       user_has_live_event_access: {
         Args: { _live_event_id: string; _user_id: string }
