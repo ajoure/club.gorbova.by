@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
+import { HelpTooltip } from "@/components/help/HelpComponents";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
