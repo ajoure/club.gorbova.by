@@ -483,6 +483,10 @@ export function useKinescopePlayer({
         }
       }
       playerRef.current = null;
+
+      if (typeof window !== "undefined") {
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      }
     };
   }, [videoId, containerId]); // Don't include autoplayTimecode - handled via seekAndPlay
 
