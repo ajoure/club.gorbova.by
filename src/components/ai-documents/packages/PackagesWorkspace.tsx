@@ -1,20 +1,12 @@
 /**
- * PackagesWorkspace — Sprint 3F Phase 2c.
+ * PackagesWorkspace — Sprint 3R.
  *
  * Единая рабочая область вкладки «Пакеты документов».
- *  • Переключатель пакетов сверху (Идеология + grey placeholders на будущее).
- *  • Внутренние подвкладки конкретного пакета:
- *      Состав / Шаблоны пакета / Анкета пакета / Роли пакета / Проверка шаблонов.
- *  • Админские подвкладки (Шаблоны, Роли, Проверка) видны только super_admin/admin.
- *
- * Жёсткие ограничения (см. .lovable/plan.md Phase 2c):
- *  • НЕ трогаем canonical-document-generate-strict, Gotenberg, ai_generated_documents,
- *    billing resolver, биллинговые группы плейсхолдеров, реквизитные таблицы.
- *  • НЕ материализуем package-template-link «вручную» — только через RPC
- *    package_template_bind_template / package_template_unbind_template,
- *    которые уже выставляют template_scope='package' и пишут audit.
- *  • Загрузка DOCX живёт во вкладке «Шаблоны документов» — здесь только
- *    список привязанных шаблонов и точечные действия.
+ *  • Селектор пакетов сверху (Идеология + grey placeholders).
+ *  • Подвкладки зависят от режима:
+ *      mode="user"  → Анкеты документов + Генерация
+ *      mode="admin" → Шаблоны / Анкеты / Роли / Проверка / Генерация
+ *  • Вкладка «Состав» удалена — дублировала «Шаблоны пакета».
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,16 +15,13 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Boxes, Sparkles } from "lucide-react";
+import { FileStack, ClipboardList, FileText, Users, ShieldCheck, Sparkles } from "lucide-react";
 import { useRbac } from "@/hooks/useRbac";
-// Sprint 3I-C: legacy DocumentPackageIdeologyView удалён. Вся ideology-логика
-// живёт во вкладках PackagesWorkspace (Состав / Шаблоны / Анкеты / Роли /
-// Проверка / Генерация). Сюда новую логику добавлять не нужно.
+import { HelpTooltip } from "@/components/help/HelpComponents";
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
-import { PackageContentsList } from "./PackageContentsList";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
 
 interface PackageOption {
@@ -42,14 +31,14 @@ interface PackageOption {
   is_active: boolean;
 }
 
-/**
- * SOT пакетов — `document_package_templates`. Сейчас активен только «Идеология»;
- * остальные карточки в селекторе показываются как заглушки «появится позже»,
- * но не блокируют UI.
- */
-export function PackagesWorkspace() {
+interface PackagesWorkspaceProps {
+  /** "user" — урезанный набор вкладок; "admin" — полный (по умолчанию). */
+  mode?: "user" | "admin";
+}
+
+export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
   const rbac = useRbac();
-  const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
+  const isAdminUI = mode === "admin" && (rbac.isAdmin || rbac.isSuperAdmin);
 
   const packagesQuery = useQuery({
     queryKey: ["workspace-package-templates"],
@@ -77,6 +66,10 @@ export function PackagesWorkspace() {
   const selectedPackage = packages.find((p) => p.id === selectedId) ?? null;
   const [tab, setTab] = useState<string>("anketa");
 
+  const subtitle = isAdminUI
+    ? "Настройте шаблоны пакета, роли, анкеты документов и запустите генерацию."
+    : "Заполните анкеты документов и сформируйте готовый пакет.";
+
   return (
     <div className="space-y-3">
       {/* Заголовок */}
@@ -86,10 +79,7 @@ export function PackagesWorkspace() {
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-semibold">Пакеты документов</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Все настройки пакета — внутри самого пакета. Загрузка шаблонов
-            и привязка к пакету выполняются во вкладке «Шаблоны документов».
-          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
         </div>
       </div>
 
@@ -104,21 +94,27 @@ export function PackagesWorkspace() {
               const active = p.id === selectedId;
               const disabled = !p.is_active;
               return (
-                <Button
+                <HelpTooltip
                   key={p.id}
-                  size="sm"
-                  variant={active ? "default" : "outline"}
-                  disabled={disabled}
-                  onClick={() => setSelectedId(p.id)}
-                  className="h-8"
+                  helpKey=""
+                  customShort="Открыть пакет документов. Внутри — анкеты и кнопка формирования."
+                  alwaysShow
                 >
-                  {p.name}
-                  {disabled && (
-                    <Badge variant="secondary" className="ml-2 text-[10px] h-4 px-1.5">
-                      появится позже
-                    </Badge>
-                  )}
-                </Button>
+                  <Button
+                    size="sm"
+                    variant={active ? "default" : "outline"}
+                    disabled={disabled}
+                    onClick={() => setSelectedId(p.id)}
+                    className="h-8"
+                  >
+                    {p.name}
+                    {disabled && (
+                      <Badge variant="secondary" className="ml-2 text-[10px] h-4 px-1.5">
+                        появится позже
+                      </Badge>
+                    )}
+                  </Button>
+                </HelpTooltip>
               );
             })
           )}
@@ -129,61 +125,59 @@ export function PackagesWorkspace() {
       {selectedPackage ? (
         <Tabs value={tab} onValueChange={setTab} className="space-y-3">
           <TabsList className="flex-wrap h-auto">
-            <TabsTrigger value="contents">
-              <Boxes className="h-3.5 w-3.5 mr-1.5" /> Состав
-            </TabsTrigger>
-            {isAdmin && (
-              <TabsTrigger value="templates">
-                <FileText className="h-3.5 w-3.5 mr-1.5" /> Шаблоны пакета
-              </TabsTrigger>
+            {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Какие шаблоны входят в этот пакет. Здесь же привязка новых." alwaysShow>
+                <TabsTrigger value="templates">
+                  <FileText className="h-3.5 w-3.5 mr-1.5" /> Шаблоны пакета
+                </TabsTrigger>
+              </HelpTooltip>
             )}
-            <TabsTrigger value="anketa">
-              <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкеты документов
-            </TabsTrigger>
-            {isAdmin && (
-              <TabsTrigger value="roles">
-                <Users className="h-3.5 w-3.5 mr-1.5" /> Роли пакета
+            <HelpTooltip helpKey="" customShort="Какие данные нужно заполнить для каждого документа пакета." alwaysShow>
+              <TabsTrigger value="anketa">
+                <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Анкеты документов
               </TabsTrigger>
+            </HelpTooltip>
+            {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Список ролей, которые встречаются в шаблонах пакета." alwaysShow>
+                <TabsTrigger value="roles">
+                  <Users className="h-3.5 w-3.5 mr-1.5" /> Роли пакета
+                </TabsTrigger>
+              </HelpTooltip>
             )}
-            {isAdmin && (
-              <TabsTrigger value="validation">
-                <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Проверка шаблонов
+            {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Безопасная проверка: ищет плейсхолдеры и нехватку данных. Документы не создаёт." alwaysShow>
+                <TabsTrigger value="validation">
+                  <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Проверка шаблонов
+                </TabsTrigger>
+              </HelpTooltip>
+            )}
+            <HelpTooltip helpKey="" customShort="Запуск формирования документов пакета по выбранным данным." alwaysShow>
+              <TabsTrigger value="generation">
+                <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Генерация
               </TabsTrigger>
-            )}
-            <TabsTrigger value="generation">
-              <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Генерация
-            </TabsTrigger>
+            </HelpTooltip>
           </TabsList>
 
-          <TabsContent value="contents">
-            <PackageContentsList
-              packageTemplateId={selectedPackage.id}
-              packageName={selectedPackage.name}
-            />
-          </TabsContent>
-
-          {isAdmin && (
+          {isAdminUI && (
             <TabsContent value="templates">
               <TemplateBindingControl packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
 
           <TabsContent value="anketa">
-            {/* Sprint 3G: document-level questionnaires — каждый шаблон
-                имеет собственный набор ролей и физлиц. */}
             <DocumentPackageQuestionnairesView
               packageTemplateId={selectedPackage.id}
               packageName={selectedPackage.name}
             />
           </TabsContent>
 
-          {isAdmin && (
+          {isAdminUI && (
             <TabsContent value="roles">
               <PackageRolesManager packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
 
-          {isAdmin && (
+          {isAdminUI && (
             <TabsContent value="validation">
               <PackageTemplateValidationPanel packageTemplateId={selectedPackage.id} />
             </TabsContent>
