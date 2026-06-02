@@ -165,6 +165,16 @@ export function LinksTabContent() {
           </SelectContent>
         </Select>
 
+        {/* Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe) */}
+        <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as ProviderFilter)}>
+          <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все провайдеры</SelectItem>
+            <SelectItem value="bepaid">bePaid</SelectItem>
+            <SelectItem value="stripe">Stripe</SelectItem>
+          </SelectContent>
+        </Select>
+
         <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={`h-4 w-4 mr-1.5 ${isFetching ? "animate-spin" : ""}`} />
           Обновить
