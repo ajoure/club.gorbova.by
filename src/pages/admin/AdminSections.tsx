@@ -58,7 +58,7 @@ export default function AdminSections() {
         .order("sort_order");
       if (error) throw error;
 
-      // Count active section_access rules per section
+      // Count active section_access rules per section (target_ref = section UUID)
       const { data: rules, error: rulesErr } = await supabase
         .from("access_rules")
         .select("target_ref")
@@ -70,6 +70,23 @@ export default function AdminSections() {
       (rules || []).forEach((r: any) => {
         countMap.set(r.target_ref, (countMap.get(r.target_ref) || 0) + 1);
       });
+
+      // Bridge: domain rule grant_target_type='document_generation' (sentinel target_ref)
+      // counts toward app_sections.code='document_generation'.
+      const { data: docGenRules, error: docGenErr } = await supabase
+        .from("access_rules")
+        .select("id")
+        .eq("grant_target_type", "document_generation")
+        .eq("target_ref", "document_generation")
+        .eq("is_active", true);
+      if (docGenErr) throw docGenErr;
+      const docGenSection = (secs || []).find((s: any) => s.code === "document_generation");
+      if (docGenSection && (docGenRules?.length ?? 0) > 0) {
+        countMap.set(
+          docGenSection.id,
+          (countMap.get(docGenSection.id) || 0) + (docGenRules?.length ?? 0),
+        );
+      }
 
       return (secs || []).map((s: any) => ({
         ...s,
