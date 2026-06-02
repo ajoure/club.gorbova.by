@@ -14958,7 +14958,9 @@ export type Database = {
       }
       payment_links_enriched_v: {
         Row: {
+          account_code: string | null
           amount: number | null
+          business_stream: string | null
           created_at: string | null
           created_by: string | null
           creator_email: string | null
@@ -14979,6 +14981,9 @@ export type Database = {
           payment_type: string | null
           product_id: string | null
           product_name: string | null
+          profile_code: string | null
+          provider: string | null
+          provider_mode: string | null
           public_url: string | null
           recipient_email: string | null
           recipient_name: string | null
@@ -15743,7 +15748,9 @@ export type Database = {
       get_admin_payment_links_v1: {
         Args: { p_limit?: number; p_since?: string }
         Returns: {
+          account_code: string | null
           amount: number | null
+          business_stream: string | null
           created_at: string | null
           created_by: string | null
           creator_email: string | null
@@ -15764,6 +15771,9 @@ export type Database = {
           payment_type: string | null
           product_id: string | null
           product_name: string | null
+          profile_code: string | null
+          provider: string | null
+          provider_mode: string | null
           public_url: string | null
           recipient_email: string | null
           recipient_name: string | null
