@@ -8730,7 +8730,9 @@ export type Database = {
       }
       payment_links: {
         Row: {
+          account_code: string | null
           amount: number
+          business_stream: string | null
           created_at: string
           created_by: string | null
           currency: string
@@ -8743,6 +8745,9 @@ export type Database = {
           offer_id: string | null
           payment_type: string
           product_id: string
+          profile_code: string | null
+          provider: string
+          provider_mode: string
           public_url: string
           status: string
           tariff_id: string
@@ -8751,7 +8756,9 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          account_code?: string | null
           amount: number
+          business_stream?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -8764,6 +8771,9 @@ export type Database = {
           offer_id?: string | null
           payment_type?: string
           product_id: string
+          profile_code?: string | null
+          provider?: string
+          provider_mode?: string
           public_url: string
           status?: string
           tariff_id: string
@@ -8772,7 +8782,9 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          account_code?: string | null
           amount?: number
+          business_stream?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -8785,6 +8797,9 @@ export type Database = {
           offer_id?: string | null
           payment_type?: string
           product_id?: string
+          profile_code?: string | null
+          provider?: string
+          provider_mode?: string
           public_url?: string
           status?: string
           tariff_id?: string
