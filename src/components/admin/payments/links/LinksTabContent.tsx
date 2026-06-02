@@ -32,6 +32,8 @@ type StatusFilter = "all" | "active" | "invalidated" | "expired" | "exhausted";
 type TypeFilter = "all" | "one_time" | "subscription";
 type AssignFilter = "all" | "assigned" | "unassigned";
 type PaidFilter = "all" | "paid" | "unpaid";
+// Phase 1 Stripe Integration — provider filter
+type ProviderFilter = "all" | "bepaid" | "stripe";
 
 export function LinksTabContent() {
   const qc = useQueryClient();
@@ -42,6 +44,7 @@ export function LinksTabContent() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [assignFilter, setAssignFilter] = useState<AssignFilter>("all");
   const [paidFilter, setPaidFilter] = useState<PaidFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [detailsLink, setDetailsLink] = useState<PaymentLinkRow | null>(null);
@@ -64,6 +67,12 @@ export function LinksTabContent() {
       if (paidFilter === "paid" && (l.paid_orders_count ?? 0) === 0) return false;
       if (paidFilter === "unpaid" && (l.paid_orders_count ?? 0) > 0) return false;
 
+      // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
+      if (providerFilter !== "all") {
+        const prov = l.provider ?? "bepaid";
+        if (prov !== providerFilter) return false;
+      }
+
       if (q) {
         const hay = [
           l.url_token, l.product_name, l.tariff_name, l.offer_title,
@@ -74,7 +83,7 @@ export function LinksTabContent() {
       }
       return true;
     });
-  }, [links, search, statusFilter, typeFilter, assignFilter, paidFilter]);
+  }, [links, search, statusFilter, typeFilter, assignFilter, paidFilter, providerFilter]);
 
   const invalidateMutation = useMutation({
     mutationFn: async (link: PaymentLinkRow) => {
@@ -153,6 +162,16 @@ export function LinksTabContent() {
             <SelectItem value="all">Все по оплате</SelectItem>
             <SelectItem value="paid">Есть оплаты</SelectItem>
             <SelectItem value="unpaid">Без оплат</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe) */}
+        <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as ProviderFilter)}>
+          <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все провайдеры</SelectItem>
+            <SelectItem value="bepaid">bePaid</SelectItem>
+            <SelectItem value="stripe">Stripe</SelectItem>
           </SelectContent>
         </Select>
 

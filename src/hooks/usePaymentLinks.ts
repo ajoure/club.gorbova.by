@@ -34,6 +34,12 @@ export interface PaymentLinkRow {
   paid_orders_count: number;
   last_order_id: string | null;
   public_url: string | null;
+  // Phase 1 Stripe Integration — provider columns exposed via enriched view
+  provider: string | null;
+  provider_mode: string | null;
+  account_code: string | null;
+  profile_code: string | null;
+  business_stream: string | null;
 }
 
 const PAYMENT_LINKS_QUERY_KEY = ["payment-links-enriched"] as const;

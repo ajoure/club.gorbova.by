@@ -1,6 +1,18 @@
 # План Stripe Integration — статус
 
-## Текущий этап: Discovery v1.1 ЗАКРЫТ
+## Текущий этап: Фаза 1 ВЫПОЛНЕНА ✅
+
+Discovery v1.1 закрыт. Фаза 1 (provider abstraction, add-only) выполнена:
+
+- ✅ Миграции `payment_links` (+ provider/provider_mode/account_code/profile_code/business_stream, CHECK constraints, индекс).
+- ✅ Миграция `payment_links_enriched_v` + RPC `get_admin_payment_links_v1` (проброс новых полей).
+- ✅ Adapter layer `supabase/functions/_shared/acquiring/` (types/secrets/bepaid-adapter/stripe-placeholder/index/profile-resolver/business-stream-resolver).
+- ✅ Страница `/admin/integrations/acquiring` (future-ready карточки bePaid + Stripe).
+- ✅ Фильтр provider (All | bePaid | Stripe) в `/admin/payments` и `/admin/payments/links`.
+- ✅ Proof: `.lovable/proofs/stripe_phase_1_execute.md`.
+- ✅ Ноль изменений в `bepaid-*` и `create-payment-checkout`.
+
+## Discovery v1.1 артефакты
 
 Discovery v1 (5 артефактов) → расширен до v1.1 (+6 артефактов с правками пользователя):
 

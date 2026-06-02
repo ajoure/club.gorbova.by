@@ -15,6 +15,18 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4 p-4 bg-muted/30 rounded-lg">
       <div className="space-y-1">
+        <Label className="text-xs">Провайдер</Label>
+        <Select value={filters.provider ?? "all"} onValueChange={(v) => updateFilter("provider", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="bepaid">bePaid</SelectItem>
+            <SelectItem value="stripe">Stripe</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
         <Label className="text-xs">Статус</Label>
         <Select value={filters.status} onValueChange={(v) => updateFilter("status", v)}>
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>

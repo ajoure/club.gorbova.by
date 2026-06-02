@@ -69,6 +69,8 @@ export type PaymentFilters = {
   hasConflict: string;
   source: string;
   origin: string;
+  // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
+  provider: string;
 };
 
 const defaultFilters: PaymentFilters = {
@@ -85,6 +87,7 @@ const defaultFilters: PaymentFilters = {
   hasConflict: "all",
   source: "all",
   origin: "all",
+  provider: "all",
 };
 
 const COLUMNS_STORAGE_KEY = 'admin_payments_columns_v1';
@@ -292,6 +295,12 @@ export function PaymentsTabContent() {
         if (filters.origin === "statement_sync" && p.origin !== "statement_sync") return false;
         if (filters.origin === "bepaid" && p.origin !== "bepaid") return false;
         if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
+      }
+
+      // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
+      if (filters.provider !== "all") {
+        const prov = (p as { provider?: string | null }).provider ?? "bepaid";
+        if (filters.provider !== prov) return false;
       }
 
       return true;
