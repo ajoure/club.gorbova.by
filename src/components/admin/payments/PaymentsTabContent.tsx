@@ -297,6 +297,12 @@ export function PaymentsTabContent() {
         if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
       }
 
+      // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
+      if (filters.provider !== "all") {
+        const prov = (p as { provider?: string | null }).provider ?? "bepaid";
+        if (filters.provider !== prov) return false;
+      }
+
       return true;
     });
   }, [payments, debouncedSearch, statsFilter, filters]);
