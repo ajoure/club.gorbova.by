@@ -115,3 +115,53 @@ integration_instances: provider TEXT, config JSONB, config_secrets JSONB (гот
 - ✅ `stripe_vs_bepaid_gap_matrix.md` — см. соседний файл.
 - ✅ `open_questions_stripe_v1.md` — см. соседний файл.
 - 🚫 Никаких изменений в коде/БД.
+
+---
+
+## v1.1 patches applied (2026-06-02)
+
+Discovery дополнен следующими артефактами (см. одноимённые файлы в `.lovable/discovery/`):
+
+1. **acquiring_accounts_model_v1.md** — multi-account readiness без реализации multi-account. Helper `getAcquiringSecret(account_code, key_name)`, контракт `account_code` в `payment_links` / `payments_v2.meta` / `provider_subscriptions.meta` / `orders_v2.meta`.
+2. **business_stream_classification_v1.md** — классификация платежей по бизнес-направлению (`accounting_school`, `consulting`, `documents`, `club`, `marketplace`). Приоритет источников: tariff_offers.meta → products.meta → orders_v2.meta → дефолт-резолвер по product_id.
+3. **stripe_feature_inventory_full.md** — полный inventory возможностей Stripe (Платежи / Подписки / Каталог / Налоги / Документы / Маркетинг / Кабинет / Риски / Интеграции) с пометками `MVP | Phase2 | Backlog | NotUsed`.
+4. **stripe_admin_configuration_matrix.md** — карта настроек: что админ настраивает у нас vs в Stripe Dashboard. Зафиксирован раздел «Что НЕЛЬЗЯ настраивать из нашей админки» (payouts, KYC, ownership, tax registrations и т.д.).
+5. **payment_provider_profiles_model_v1.md** — профили настроек платёжной кнопки. На MVP — inline в `tariff_offers.meta.stripe_profile`, таблица в Фазе 3. Шаблоны: `stripe_standard_eur/pln/usd`, `stripe_subscription_eur` (без BYN/RUB до подтверждения).
+6. **stripe_currency_support_v1.md** — бизнес-whitelist EUR/PLN/USD/BYN/RUB; фактическая поддержка определяется через `/v1/country_specs/PL` в Фазе 1; для неподдерживаемых валют UI автоматически предлагает bePaid.
+7. **stripe_object_mapping_v1.md** — маппинг Products / Tariffs / Payment Links / Orders / Subscriptions / Payments / Refunds ↔ Stripe-сущности.
+8. **stripe_metadata_contract_v1.md** — обязательные/опциональные/immutable поля metadata для всех Stripe-объектов.
+9. **open_questions_stripe_v2.md** — заменяет v1; снят restricted-key-as-blocker; BYN/RUB переведены в discovery-dependent.
+
+### Правка к §6 «Поля-крючки» (add-only)
+
+К существующим мульти-providerным полям добавляются (в Фазе 1):
+
+```
+payment_links:          provider TEXT NOT NULL DEFAULT 'bepaid' (новая колонка)
+                        provider_mode TEXT NOT NULL DEFAULT 'fixed' (fixed/customer_choice)
+                        account_code TEXT NULL (single-account fallback)
+                        profile_code TEXT NULL (override профиля)
+                        business_stream TEXT NULL (override продукта)
+
+orders_v2.meta.account_code      — snapshot аккаунта на момент заказа
+orders_v2.meta.business_stream   — snapshot потока
+orders_v2.meta.profile_code      — snapshot профиля
+
+payments_v2.meta.account_code, .business_stream — наследуется из order
+
+provider_subscriptions.meta.account_code — для будущей multi-account routing
+tariff_offers.meta.stripe.price_id      — Stripe Price mapping (Phase 2)
+tariff_offers.meta.stripe_profile       — inline профиль на MVP
+tariff_offers.meta.business_stream      — explicit per-offer
+
+products.meta.business_stream            — fallback per-product
+products.meta.account_code_override      — опционально, override дефолта
+```
+
+Все поля **nullable / с дефолтом**, single-account режим работает без их заполнения. bePaid флоу не затрагивается.
+
+### Discovery v1.1 — статус закрытия
+
+После создания 9 артефактов выше discovery считается **закрытым**. По требованию патча «Не блокировать Фазу 1» — переходим к Фазе 1 (provider abstraction + payment_links расширение + adapter layer + раздел Integrations → Acquiring) без дополнительного согласования, при условии что критические ограничения Stripe не выявлены.
+
+Discovery валют (§2 в `stripe_currency_support_v1.md`) выполняется в начале Фазы 1 как первая operational задача.
