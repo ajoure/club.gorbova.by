@@ -91,6 +91,7 @@ const AdminEntitlements = lazy(() => import("./pages/admin/AdminEntitlements"));
 const AdminContent = lazy(() => import("./pages/admin/AdminContent"));
 const AdminDuplicates = lazy(() => import("./pages/admin/AdminDuplicates"));
 const AdminIntegrations = lazy(() => import("./pages/admin/AdminIntegrations"));
+const AdminAcquiring = lazy(() => import("./pages/admin/AdminAcquiring"));
 const TelegramClubMembers = lazy(() => import("./pages/admin/TelegramClubMembers"));
 const TelegramInvites = lazy(() => import("./pages/admin/TelegramInvites"));
 const ProductClubMappings = lazy(() => import("./pages/admin/ProductClubMappings"));
