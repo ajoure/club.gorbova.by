@@ -40,12 +40,47 @@ interface StripeEvent {
   account?: string;
 }
 
+const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
+function toMajorUnits(minor: number, currency: string): number {
+  const cur = currency.toUpperCase();
+  if (ZERO_DECIMAL.has(cur)) return minor;
+  return Math.round(minor) / 100;
+}
+
+async function transitionOrderPaid(
+  supabase: ReturnType<typeof svc>,
+  order_id: string,
+  amountMajor: number,
+  currency: string,
+  provider_payment_id: string,
+) {
+  // Idempotent transition; do not regress from paid → paid (skip if already paid).
+  const { data: ord } = await supabase
+    .from('orders_v2')
+    .select('id, status, paid_amount')
+    .eq('id', order_id)
+    .maybeSingle();
+  if (!ord) return;
+  if (ord.status === 'paid' && Number(ord.paid_amount ?? 0) > 0) return;
+  await supabase
+    .from('orders_v2')
+    .update({
+      status: 'paid',
+      paid_amount: amountMajor,
+      currency: currency.toUpperCase(),
+      provider_payment_id,
+      paid_at: new Date().toISOString(),
+    })
+    .eq('id', order_id);
+}
+
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
   const supabase = svc();
   const obj = event.data.object as Record<string, unknown>;
   const md = (obj.metadata ?? {}) as Record<string, string>;
   const meta_account_code = md.account_code;
   const order_id_meta = md.order_id ?? (obj.client_reference_id as string | undefined);
+
 
   // Cross-check resolved (from webhook secret) vs metadata account_code
   if (meta_account_code && meta_account_code !== account_code) {
