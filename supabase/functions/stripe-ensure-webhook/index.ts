@@ -31,11 +31,28 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
     await requireSuperAdmin(req);
-    const { account_code } = (await req.json().catch(() => ({}))) as { account_code?: string };
+    const { account_code, force_recreate } = (await req.json().catch(() => ({}))) as {
+      account_code?: string;
+      force_recreate?: boolean;
+    };
     const code = account_code ?? 'stripe_poland';
 
     const targetUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/stripe-webhook`;
     const sk = await readAcquiringSecret('stripe', code, 'secret_key');
+
+    // Resolve connection_id for vault RPC
+    const svc = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const { data: conn, error: connErr } = await svc
+      .from('acquiring_connections')
+      .select('id')
+      .eq('provider', 'stripe')
+      .eq('account_code', code)
+      .maybeSingle();
+    if (connErr || !conn) return jsonResponse({ ok: false, step: 'resolve_connection', error: connErr?.message ?? 'not_found' });
+    const connection_id = conn.id as string;
 
     // 1) List existing endpoints
     const list = await stripeFetch<{ data: WebhookEndpoint[] }>(
@@ -44,8 +61,18 @@ Deno.serve(async (req) => {
     );
     if (!list.ok) return jsonResponse({ ok: false, step: 'list', error: list.error });
 
-    const existing = list.data?.data?.find((e) => e.url === targetUrl);
-    let endpoint: WebhookEndpoint | null = existing ?? null;
+    let existing = list.data?.data?.find((e) => e.url === targetUrl) ?? null;
+
+    // Optional force recreate (needed when we need to capture a fresh secret)
+    if (existing && force_recreate) {
+      const del = await stripeFetch(`/webhook_endpoints/${encodeURIComponent(existing.id)}`, {
+        secret_key: sk,
+        method: 'DELETE',
+      });
+      if (!del.ok) return jsonResponse({ ok: false, step: 'delete', error: del.error });
+      existing = null;
+    }
+
     let created = false;
     let updated = false;
 
