@@ -134,11 +134,33 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3) Call grant-access-for-order (canonical write-path)
+    // 3) Call grant-access-for-order (canonical write-path).
+    //     For sandbox manual orders without product/tariff, grant-access will no-op or 500.
+    //     The order itself must still transition to paid because Stripe says paid.
     const { error: grantErr } = await supabase.functions.invoke('grant-access-for-order', {
       body: { order_id, source: 'stripe_reconcile', provider: 'stripe' },
     });
     const grant_ok = !grantErr;
+
+    // 3b) Ensure orders_v2 status = 'paid' (idempotent, sandbox-safe)
+    const { data: ordRow } = await supabase
+      .from('orders_v2')
+      .select('status, meta')
+      .eq('id', order_id)
+      .maybeSingle();
+    let order_status_updated = false;
+    if (ordRow && ordRow.status !== 'paid') {
+      const mergedMeta = {
+        ...(ordRow.meta ?? {}),
+        stripe_reconcile: { session_id, payment_intent: pi_id, at: new Date().toISOString() },
+      };
+      const { error: updErr } = await supabase
+        .from('orders_v2')
+        .update({ status: 'paid', paid_at: new Date().toISOString(), meta: mergedMeta })
+        .eq('id', order_id);
+      order_status_updated = !updErr;
+    }
+
 
     // 4) Mark event processed
     if (ev_id) {
