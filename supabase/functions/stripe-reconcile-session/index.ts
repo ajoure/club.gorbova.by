@@ -186,7 +186,9 @@ Deno.serve(async (req) => {
       payment_action,
       grant_ok,
       grant_error: grantErr?.message ?? null,
+      order_status_updated,
       provider_event_id: ev_id,
+
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
