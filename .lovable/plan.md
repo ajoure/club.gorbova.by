@@ -1,139 +1,114 @@
-да, согласен, с учетом правок:
+да, согласен
 
-1. В UI не писать «тестовые ключи». Формулировка:
-  - **ключи тестового режима Stripe**
-  - **ключи боевого режима Stripe**
-2. В конце заменить:
-  - «ввод тестовых ключей»
-  на:
-  - «ввод ключей тестового режима Stripe».
-3. В подсказках не писать, что аккаунт тестовый. Правильно:
-  - «Stripe-аккаунт реальный. В тестовом режиме Stripe платежи проверяются без реального списания денег».
-4. `PUBLIC_APP_HOST = https://gorbova.by` — ок, но добавить правило:
-  - если позже будет установлен production app domain в env/config, использовать его вместо хардкода.
-5. `CANONICAL_PUBLIC_HOST = https://club.gorbova.by` для `/pay/:token` не трогать.
+План теперь корректный:
 
-После этих правок план можно запускать.
+- режим Stripe определяется по ключам;
+- test checkout доступен только для `pk_test/sk_test`;
+- live-ключи можно сохранить и проверить, но live checkout в Фазе 2 не открывается;
+- mixed keys блокируются;
+- bePaid не трогается;
+- Stripe UI приводится к стилю bePaid;
+- без миграций и без изменения webhook/refund/runtime.
+
+Можно запускать PATCH.
 
 &nbsp;
 
-План: PATCH Stripe Phase 2 — Settings UX + domain-safe redirect URLs
+План:
 
-Скоуп: UI/config only. Файл `StripeConnectionDialog.tsx` + лёгкий guard в `acquiring-save-connection` (валидация режим↔префикс ключа и запрет lovable-доменов в success/cancel). bePaid pipeline, `create-payment-checkout.ts`, Stripe webhook/checkout edge-функции — НЕ трогаем (кроме чтения существующего `success_url`/`cancel_url`, контракт не меняется).
-
-## 1. Изменяемые файлы
-
-1. `src/components/admin/integrations/StripeConnectionDialog.tsx` — полная русификация, режим Stripe (test/live, live disabled), domain-safe дефолты URL.
-2. `supabase/functions/acquiring-save-connection/index.ts` — server-side guard:
-  - если `test_mode=true` и `secret_key` задан → должен начинаться с `sk_test_`; `publishable_key` → `pk_test_`;
-  - если `test_mode=false` (live) → `sk_live_`/`pk_live_`; в Фазе 2 live запрещён (возврат `code: live_mode_disabled`);
-  - `success_url`/`cancel_url` не должны содержать `lovable.app|lovable.dev|lovableproject.com|localhost|127.0.0.1` и не должны указывать на `*.supabase.co/functions/v1/*` (используем существующий helper `isForbiddenPublicHost` через копию constants на сервере — без импорта из `src/`).
-3. `.lovable/proofs/stripe_phase_2_settings_ux_domain_patch.md` — proof.
-
-## 2. UI: русские подписи и подсказки (StripeConnectionDialog)
-
-Заменить:
-
-- «Publishable key (pk_test_...)» → **«Публичный ключ Stripe»** + подсказка: «Используется для публичных клиентских сценариев Stripe. Не является секретом.»
-- «Secret key (sk_test_...)» → **«Секретный ключ Stripe»** + подсказка: «Используется сервером для создания платежей. В браузер не возвращается.»
-- «Webhook signing secret (whsec_...)» → **«Секрет подписи webhook»** + подсказка: «Нужен для проверки, что уведомления действительно пришли от Stripe.»
-- «Success URL» → **«URL после успешной оплаты»** + подсказка: «Куда клиент вернётся после оплаты. Не указывайте Supabase или preview-домен.»
-- «Cancel URL» → **«URL после отмены оплаты»** + подсказка: «Куда клиент вернётся, если отменит оплату.»
-- «Account code» → **«Внутренний код подключения»**.
-- «Locale» → **«Язык писем/чеков»**.
-- Title diaog: «Настройки Stripe» (как сейчас).
-
-Все toast/error: русские формулировки.
-
-Удалить «технические» placeholder `pk_test_...`, `sk_test_...`, `whsec_...` как самостоятельные подписи — оставить только в `placeholder` поля с поясняющей подписью рядом.
-
-## 3. Режим Stripe (test/live)
-
-Заменить нынешний alert «Фаза 2: только test mode…» на блок **«Режим Stripe»** с двумя радио-опциями (`RadioGroup`):
-
-- ● **Тестовый режим** — для проверки без реального списания денег. Ключи: `pk_test_…`, `sk_test_…`.
-- ○ **Боевой режим** *(disabled)* — для реальных платежей. Ключи: `pk_live_…`, `sk_live_…`. Подсказка: «Live-режим будет включён отдельным согласованием после sandbox-проверки.»
-
-Под группой текст: «Stripe-аккаунт реальный. В Stripe есть два режима ключей: sandbox (test) и live. Тестовый режим использует отдельные sandbox-ключи и позволяет проверить оплату без реального списания денег.»
-
-В Фазе 2 `testMode` остаётся `true` и не редактируется. Запретить отправку live в edge-функции (см. §6).
-
-## 4. Domain-safe success/cancel URL (UI default)
-
-Логика дефолта при создании подключения:
-
-```text
-1. canonicalHost = "https://gorbova.by"            (новая константа PUBLIC_APP_HOST)
-2. success default = `${canonicalHost}/admin/integrations/payments?stripe_result=success`
-3. cancel  default = `${canonicalHost}/admin/integrations/payments?stripe_result=cancel`
-```
-
-(admin redirect для sandbox-проверки оставляем на admin-странице, но base — production domain, НЕ `window.location.origin`, НЕ `*.lovableproject.com`.)
-
-Для будущих клиентских платежей в подсказке указать рекомендуемые значения:
-
-- `https://gorbova.by/dashboard?payment=success`
-- `https://gorbova.by/pricing?payment=cancel`
-
-Если текущий `window.location.hostname` подпадает под `isForbiddenPublicHost` (lovable preview) — показать жёлтое предупреждение:
-
-> «Сейчас открыт preview-домен. Для реальных платежей будут использоваться URL основного сайта (gorbova.by).»
-
-Существующий `CANONICAL_PUBLIC_HOST` (`https://club.gorbova.by`) — для `/pay/:token`. Для admin-возврата используем `https://gorbova.by`. Введём отдельную константу `PUBLIC_APP_HOST` в новый файл-helper `src/utils/publicAppHost.ts` (или дополним `buildPublicPaymentUrl.ts`), переиспользуя `isForbiddenPublicHost`.
-
-UI-валидация на blur: если введённый URL содержит lovable-домен / supabase function URL → красная подсказка «Этот домен нельзя использовать для возврата клиента».
-
-## 5. Webhook URL
-
-В диалоге добавить read-only блок **«URL для webhook в Stripe Dashboard»** с значением:
-
-```
-https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/stripe-webhook
-```
-
-- кнопка «Скопировать» + подсказка: «Это server-to-server endpoint, клиент его не видит. Вставьте его в Stripe Dashboard → Developers → Webhooks. Полученный `whsec_…` вставьте в поле "Секрет подписи webhook" выше.»
-
-Webhook URL остаётся Supabase Edge Function — это допустимо.
-
-## 6. Server-side guard (`acquiring-save-connection`)
-
-Минимальные дополнения, без изменения контракта:
-
-- `test_mode=true`:
-  - `publishable_key`, если задан, must match `^pk_test_`;
-  - `secret_key`, если задан, must match `^sk_test_`;
-  - mismatch → 200 `{ ok:false, code:"key_mode_mismatch", message:"Ключ не соответствует режиму Stripe" }`.
-- `test_mode=false` → 200 `{ ok:false, code:"live_mode_disabled", message:"Live-режим отключён в Фазе 2" }`.
-- `success_url`/`cancel_url`:
-  - regex `^https://`;
-  - не содержит `lovable.app|lovable.dev|lovableproject.com|localhost|127\.0\.0\.1`;
-  - не содержит `supabase.co/functions/v1/`;
-  - нарушение → 200 `{ ok:false, code:"forbidden_redirect_host", message:"URL возврата не должен указывать на preview/Supabase-домен" }`.
-
-UI отображает эти коды русскими сообщениями через `normalizeEdgeFunctionError`.
-
-## 7. Freeze-зоны (диффы пустые)
-
-- `supabase/functions/bepaid-*`
-- `supabase/functions/create-payment-checkout.ts`
-- `supabase/functions/stripe-create-checkout/index.ts` (контракт `success_url`/`cancel_url` уже читает из БД)
-- `supabase/functions/stripe-webhook/index.ts`
-- `supabase/functions/_shared/acquiring/vault.ts`, `stripe-adapter.ts`, `stripe-client.ts`
-- Миграции — не создаём.
-- `integration_instances` — не трогаем.
-
-## 8. DoD
-
-1. Все подписи/подсказки/тосты/ошибки `StripeConnectionDialog` — на русском.
-2. Нет голых placeholder вида `pk_test_...` без сопровождающего русского описания.
-3. Поле «Режим Stripe» с двумя опциями; «Боевой режим» disabled с подсказкой.
-4. Secret key и webhook secret не возвращаются в браузер (как сейчас).
-5. Дефолтные success/cancel URL построены от `https://gorbova.by`, не от `lovableproject.com`.
-6. Customer-facing URL не могут содержать `*.supabase.co/functions/v1/*` (UI + server guard).
-7. Webhook URL отображается в UI с возможностью скопировать; это Supabase Edge Function — допустимо.
-8. bePaid UI и pipeline визуально и функционально неизменны.
-9. `git diff` по `bepaid-*` и `create-payment-checkout.ts` пуст.
-10. Build green.
-11. Proof: `.lovable/proofs/stripe_phase_2_settings_ux_domain_patch.md` с чек-листом DoD и списком неизменённых файлов.
-
-После merge — продолжаем Фазу 2: ввод тестовых ключей через UI, test connection, sandbox checkout, webhook, idempotency, refund.
+1. **Проблема**
+  - Текущий код запрещает live-ключи в save/test (`live_mode_disabled` + `mode_mismatch`) — нельзя сохранить и проверить реальный аккаунт.
+  - При этом нельзя «развязать» режим платежей от типа ключей: тестовая оплата физически возможна только с `pk_test_/sk_test_`, а боевая — только с `pk_live_/sk_live_`. Stripe не позволяет иначе.
+  - UI не отличает «Тестовое подключение» от «Боевого подключения» и не объясняет, почему sandbox-checkout в Фазе 2 невозможен с live-ключами.
+  - Ключи в форме исчезают после неуспешной попытки «Сохранить и проверить», карточка показывает `secret_key_missing`.
+  - Stripe-карточка визуально не соответствует UX bePaid.
+2. **Диагностика**
+  - `acquiring-save-connection`:
+    - `test_mode=false` → `live_mode_disabled` (блокирует сохранение live).
+    - `test_mode=true` требует `pk_test_/sk_test_` → `mode_mismatch` для live-ключей.
+  - `acquiring-test-connection`:
+    - после успешного `/balance` сравнивает `isTestKey !== conn.test_mode` → `mode_mismatch`.
+  - `StripeConnectionDialog`:
+    - «Боевой режим» disabled;
+    - тексты говорят «режим — это отдельная настройка», что неверно: режим жёстко определяется типом ключа Stripe;
+    - secret/webhook state очищается на каждом open.
+  - `PaymentsIntegrationsPanel`: Stripe рендерится кастомной карточкой с `dl`-таблицей вместо строкового layout bePaid; webhook URL — отдельной плашкой снизу.
+3. **Предлагаемое решение (новая модель режима)**
+  - **Тип подключения определяется ТОЛЬКО префиксом ключа**, не отдельной настройкой:
+    - `pk_test_` + `sk_test_/rk_test_` → connection_mode = `test`;
+    - `pk_live_` + `sk_live_/rk_live_` → connection_mode = `live`;
+    - публичный и секретный ключ ДОЛЖНЫ принадлежать одной семье — иначе ошибка `key_family_mismatch`.
+  - **Sandbox checkout в Фазе 2 разрешён только при `connection_mode='test'**`. Боевое подключение в Фазе 2 можно сохранить и проверить (`/balance`, `/account`, webhook secret), но кнопка «Тестовая оплата» и сам `stripe-create-checkout` для live-подключения возвращают `sandbox_checkout_requires_test_keys` (HTTP 200 + fallback) с понятным русским сообщением.
+  - **UI убирает выбор «Тестовый/Боевой режим»** — режим выводится автоматически по введённым ключам и показывается badge’ем: «Тестовое подключение» или «Боевое подключение».
+  - **При вводе `pk_live_/sk_live_**` в форме показывается информационный блок:
+  «Подключены боевые ключи Stripe. Проверка аккаунта доступна, но тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки нужны ключи тестового режима Stripe.» + ссылка-подсказка где взять test-ключи (Stripe Dashboard → Developers → API keys → Test mode).
+  - **Сохранение ключей**: введённые значения secret/webhook не сбрасываются при ошибке save/test до закрытия диалога.
+  - **Stripe-карточка** в `PaymentsIntegrationsPanel` приводится к строковому UX bePaid (статус-точка, alias, badge подключения, «Проверено …», меню действий, раскрываемый webhook URL внутри строки).
+4. **Изменяемые компоненты**
+  - UI:
+    - `src/components/admin/integrations/StripeConnectionDialog.tsx`
+    - `src/components/admin/integrations/PaymentsIntegrationsPanel.tsx`
+  - Edge functions:
+    - `supabase/functions/acquiring-save-connection/index.ts`
+    - `supabase/functions/acquiring-test-connection/index.ts`
+    - `supabase/functions/stripe-create-checkout/index.ts` — добавить guard «sandbox checkout запрещён для live-подключения в Фазе 2»; других изменений не вносить.
+  - DB:
+    - **никаких миграций**. `acquiring_connections.test_mode` остаётся и будет автоматически выставляться на сервере по префиксу `secret_key` при сохранении (derived), а не задаваться пользователем.
+  - Proof:
+    - `.lovable/proofs/stripe_phase_2_mode_derived_from_keys_patch.md`
+5. **Что не будет изменено**
+  - Не трогать bePaid: `integration_instances`, `bepaid-*`, `create-payment-checkout.ts`.
+  - Не трогать `stripe-webhook`, `stripe-get-session`, `stripe-list-events`, refund/idempotency/Vault-слой.
+  - Не создавать новые таблицы/RPC/enum/маршруты.
+  - Не вставлять и не хранить реальные secret-ключи пользователя; secret/webhook остаются write-only и не возвращаются в браузер.
+6. **Dry-run**
+  - Поискать использования `live_mode_disabled`, `mode_mismatch` и `test_mode` в edge functions и UI, убедиться, что нет других мест с дублирующими guard’ами.
+  - Проверить, что `stripe-create-checkout` сейчас не имеет собственного mode-guard.
+  - Проверить, что `acquiring_connections.test_mode` нигде не используется как самостоятельный бизнес-флаг (он будет derived и пишется только сервером).
+7. **Execute**
+  - `acquiring-save-connection`:
+    - удалить `live_mode_disabled` и `mode_mismatch`;
+    - оставить prefix-валидаторы Stripe: `pk_(test|live)_`, `sk|rk_(test|live)_`, `whsec_`;
+    - добавить `key_family_mismatch`, если public и secret относятся к разным семьям (test vs live);
+    - сервер сам выставляет `test_mode = secret_key.startsWith('sk_test_') || rk_test_`; присланное клиентом `test_mode` игнорируется;
+    - сохранять `forbidden_redirect_host` guard как есть.
+  - `acquiring-test-connection`:
+    - убрать сравнение `isTestKey !== conn.test_mode → mode_mismatch`;
+    - после `/balance` и `/account` нормализовать `test_mode` в `acquiring_connections` по фактическому secret_key (на случай ручной правки);
+    - в `capabilities_snapshot.account` добавить `key_mode: 'test' | 'live'`.
+  - `stripe-create-checkout`:
+    - перед созданием Checkout Session, если `connection.test_mode === false`, возвращать HTTP 200 `{ ok: false, fallback: true, code: 'sandbox_checkout_requires_test_keys', message: 'Подключены боевые ключи Stripe. Тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки переключите подключение на тестовые ключи Stripe (pk_test_/sk_test_).' }`.
+  - `StripeConnectionDialog`:
+    - удалить radio «Тестовый/Боевой режим»;
+    - добавить вычисляемый «Тип подключения» бейдж: `pk_test_/sk_test_` → «Тестовое подключение», `pk_live_/sk_live_` → «Боевое подключение», иначе «Тип будет определён автоматически после ввода ключей»;
+    - при `pk_live_/sk_live_` показать предупреждение: «Подключены боевые ключи Stripe. Проверка аккаунта доступна, но тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки нужны ключи тестового режима Stripe.»;
+    - при разных семьях public/secret показать ошибку `key_family_mismatch`: «Публичный и секретный ключи относятся к разным режимам Stripe. Используйте оба ключа одного режима — оба test или оба live.»;
+    - убрать формулировки «режим платежей — отдельная настройка»;
+    - не очищать введённые secret/webhook при failed save/test до явного закрытия диалога;
+    - `translateServerError` обновить под новые коды (`sandbox_checkout_requires_test_keys`, `key_family_mismatch`, удалить `live_mode_disabled`).
+  - `PaymentsIntegrationsPanel`:
+    - заменить Stripe-карточку на строковый layout в стиле bePaid: цветной индикатор статуса, alias, badge «Тестовое подключение»/«Боевое подключение», «Проверено …», dropdown «Проверить / Настройки / Отключить»;
+    - per-row раскрытие webhook URL;
+    - для боевого подключения рядом со статусом показывать subtle пояснение: «Sandbox-checkout в Фазе 2 недоступен».
+  - Создать proof-файл с Problem / Diagnose / Dry-run / Execute / STOP-guard / DoD / SYSTEM ACTOR proof.
+8. **STOP-guards**
+  - Остановиться, если найдётся другой checkout/runtime, который читает `test_mode` как guard от реального списания — нужно отдельно согласовать миграцию.
+  - Не отключать guard в `stripe-webhook` (webhook может приходить и для live-аккаунта; только sandbox-checkout запрещён).
+  - Не записывать secret/webhook значения в audit/console/UI/proof.
+  - Не трогать bePaid prefix-логику в той же функции.
+9. **DoD**
+  - Сохранение и проверка подключения с `pk_live_/sk_live_/whsec_` проходят успешно: статус «Активен», бейдж «Боевое подключение», `secret_key_missing` не показывается.
+  - Сохранение и проверка с `pk_test_/sk_test_/whsec_` проходят успешно: бейдж «Тестовое подключение».
+  - При `pk_live_` + `sk_test_` (или наоборот) — ошибка `key_family_mismatch` с понятным русским сообщением.
+  - Попытка sandbox-checkout по live-подключению возвращает понятное сообщение «нужны test-ключи» и не вызывает Stripe.
+  - В диалоге Stripe больше нет переключателя «Тестовый/Боевой режим»; режим выводится по ключам.
+  - При неуспешной проверке введённые ключи остаются в форме до явного закрытия диалога.
+  - Stripe в `/admin/integrations/payments` визуально оформлен как обычное подключение в стиле bePaid.
+  - bePaid визуально и функционально не изменён.
+  - Proof создан: `.lovable/proofs/stripe_phase_2_mode_derived_from_keys_patch.md`.
+10. **Риски и зависимости**
+  - `acquiring_connections.test_mode` становится derived-полем — оно ещё может использоваться в админ-вьюхах. Будет принудительно нормализоваться сервером, поэтому ручная правка перекрывается следующей `save/test`.
+  - Текст «Боевое подключение» рядом с активным Stripe-аккаунтом — визуальный сигнал админу; в Фазе 2 реальные платежи через Stripe всё равно не запускаются (только sandbox-проверка `/balance`, `/account`, webhook).
+  - Live-checkout (реальное списание) будет включён отдельным согласованием в следующей фазе — этот PATCH не открывает live-checkout.
+11. **Требуется дополнительная информация**
+  - Не требуется.
