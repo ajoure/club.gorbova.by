@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
             provider_payment_id: pi_id,
             amount: amount_total,
             currency,
-            status: 'paid',
+            status: 'succeeded',
             paid_at: new Date().toISOString(),
             meta: {
               stripe: { checkout_session_id: session_id, account_code: code, source: 'reconcile' },

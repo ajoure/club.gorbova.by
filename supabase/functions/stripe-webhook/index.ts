@@ -80,7 +80,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             provider_payment_id: pi_id,
             amount: amount_total,
             currency,
-            status: 'paid',
+            status: 'succeeded',
             paid_at: new Date().toISOString(),
             meta: { stripe: { checkout_session_id: session_id, account_code } },
           })
@@ -111,7 +111,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         provider_payment_id: pi_id,
         amount: Number(obj.amount_received ?? obj.amount ?? 0),
         currency: String(obj.currency ?? 'usd').toUpperCase(),
-        status: 'paid',
+        status: 'succeeded',
         paid_at: new Date().toISOString(),
         meta: { stripe: { charge_id, account_code, source: 'payment_intent.succeeded' } },
       })
