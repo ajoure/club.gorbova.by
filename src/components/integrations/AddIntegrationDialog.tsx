@@ -33,7 +33,14 @@ interface AddIntegrationDialogProps {
   onOpenChange: (open: boolean) => void;
   category?: IntegrationCategory;
   preselectedProvider?: string;
+  /**
+   * UI-only PATCH: Stripe doesn't use the generic integration_instances flow.
+   * When provider 'stripe' is selected, this dialog closes and delegates to
+   * StripeConnectionDialog owned by the parent page.
+   */
+  onSelectStripe?: () => void;
 }
+
 
 export function AddIntegrationDialog({
   open,
