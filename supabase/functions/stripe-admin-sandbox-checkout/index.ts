@@ -130,9 +130,11 @@ Deno.serve(async (req) => {
         user_id: userId, profile_id: profileId,
         meta: { ...orderMeta, sandbox_simulated_paid: true, sandbox_simulated_paid_at: new Date().toISOString() },
       }).eq('id', order.id);
+      // MP-A2-1: resolve account_code via SOT (no hardcoded 'stripe_poland').
+      const simAcct = await resolveDefaultStripeAccount(supabase, body.account_code);
       const { data: insertedEvent, error: eventErr } = await supabase
         .from('provider_events').insert({
-          provider: 'stripe', account_code: body.account_code ?? 'stripe_poland',
+          provider: 'stripe', account_code: simAcct.account_code,
           event_id: eventId, event_type: 'checkout.session.completed',
           idempotency_key: `stripe:simulation:${eventId}`,
           payload: { id: eventId, type: 'checkout.session.completed', simulated: true,
@@ -159,7 +161,9 @@ Deno.serve(async (req) => {
       ?? (body.product_id ? 'catalog' : 'manual');
 
     // ---------- Common validation ----------
-    const account_code = body.account_code ?? 'stripe_poland';
+    // MP-A2-1: resolve account via SOT — no hardcoded 'stripe_poland' fallback.
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const account_code = acct.account_code;
     const currency = (body.currency ?? 'USD').toUpperCase();
     if (!ALLOWED_CURRENCIES.has(currency)) {
       return jsonResponse({ ok: false, code: 'currency_not_allowed', message: `Валюта ${currency} не во whitelist (USD/EUR/PLN/BYN/RUB).` });
@@ -173,13 +177,9 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, code: 'minor_units_conversion_failed' });
     }
 
-    // ---------- Stripe connection ----------
-    const { data: conn, error: connErr } = await supabase
-      .from('acquiring_connections')
-      .select('*').eq('provider', 'stripe').eq('account_code', account_code).maybeSingle();
-    if (connErr || !conn) return errorResponse('connection_not_found', 404);
-    if (conn.status !== 'active') return errorResponse(`connection_not_active:${conn.status}`, 400);
-    if (!conn.test_mode) {
+    // ---------- Stripe connection guards (test_mode required for sandbox) ----------
+    if (acct.status !== 'active') return errorResponse(`connection_not_active:${acct.status}`, 400);
+    if (!acct.test_mode) {
       return jsonResponse({ ok: false, fallback: true, code: 'sandbox_checkout_requires_test_keys',
         message: 'Для тестовой оплаты нужны тестовые ключи Stripe (pk_test_/sk_test_).' });
     }
