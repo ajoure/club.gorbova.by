@@ -16463,6 +16463,21 @@ export type Database = {
         }
         Returns: Json
       }
+      record_refund_atomic_multi: {
+        Args: {
+          p_actor_user_id?: string
+          p_meta_extra?: Json
+          p_order_id: string
+          p_parent_payment_id: string
+          p_provider: string
+          p_provider_response?: Json
+          p_refund_amount: number
+          p_refund_reason?: string
+          p_refund_uid: string
+          p_target_user_id?: string
+        }
+        Returns: Json
+      }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       resolve_broadcast_audience: { Args: { _filters: Json }; Returns: Json }
       resolve_broadcast_audience_contacts: {
