@@ -336,6 +336,27 @@ export function PaymentsIntegrationsPanel({
                         </div>
 
                         <div className="flex items-center gap-2">
+                          {acc.status === "active" && acc.test_mode && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1.5"
+                              onClick={() => setSandboxTarget(acc)}
+                              disabled={!canEdit}
+                              title="Создать sandbox-заказ и открыть Stripe Checkout"
+                            >
+                              <FlaskConical className="h-3.5 w-3.5" />
+                              Тестовая оплата Stripe
+                            </Button>
+                          )}
+                          {acc.status === "active" && !acc.test_mode && (
+                            <span
+                              className="text-xs text-muted-foreground hidden md:inline"
+                              title="Для тестовой оплаты нужны ключи тестового режима Stripe"
+                            >
+                              Sandbox-оплата недоступна (live keys)
+                            </span>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
