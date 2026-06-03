@@ -454,6 +454,12 @@ export function PaymentsIntegrationsPanel({
         onSaved={loadStripe}
       />
 
+      <StripeSandboxCheckoutDialog
+        open={!!sandboxTarget}
+        onOpenChange={(open) => !open && setSandboxTarget(null)}
+        connection={sandboxTarget}
+      />
+
       <AlertDialog open={!!disableTarget} onOpenChange={(open) => !open && setDisableTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
