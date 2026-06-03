@@ -93,7 +93,8 @@ export function StripeSandboxCheckoutDialog({ open, onOpenChange, connection }: 
     }
   }, [open]);
 
-  // Load products that actually have active pay_now offers
+  // Load Products V2 that actually have active pay_now offers.
+  // NOTE: tariffs.product_id points to products_v2.id, not legacy products.id.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -127,7 +128,7 @@ export function StripeSandboxCheckoutDialog({ open, onOpenChange, connection }: 
           return;
         }
         const { data: pRows, error: pErr } = await supabase
-          .from("products")
+          .from("products_v2")
           .select("id, name")
           .in("id", productIds)
           .eq("is_active", true)

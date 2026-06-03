@@ -83,9 +83,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 2) Resolve product (required)
+    // 2) Resolve Products V2 product (required).
+    // tariffs.product_id points to products_v2.id; legacy products is not the SOT here.
     const { data: product } = await supabase
-      .from('products')
+      .from('products_v2')
       .select('id, name')
       .eq('id', body.product_id)
       .maybeSingle();
