@@ -60,6 +60,10 @@ export default function AdminIntegrations() {
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [massBroadcastOpen, setMassBroadcastOpen] = useState(false);
   const [getcourseImportOpen, setGetcourseImportOpen] = useState(false);
+  // UI-only PATCH: Stripe dialog state owned here; AddIntegrationDialog
+  // delegates "Stripe" selection via onSelectStripe.
+  const [stripeDialogOpen, setStripeDialogOpen] = useState(false);
+
 
   // Determine active tab from URL
   const getActiveTab = (): IntegrationCategory => {
