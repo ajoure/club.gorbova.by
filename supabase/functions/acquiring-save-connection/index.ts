@@ -85,6 +85,11 @@ Deno.serve(async (req) => {
     const { supabase } = await requireSuperAdmin(req);
     const body = (await req.json()) as SaveBody;
 
+    // Normalize: trim whitespace from pasted secrets/keys to avoid false mode_mismatch.
+    if (typeof body.publishable_key === 'string') body.publishable_key = body.publishable_key.trim();
+    if (typeof body.secret_key === 'string') body.secret_key = body.secret_key.trim();
+    if (typeof body.webhook_signing_secret === 'string') body.webhook_signing_secret = body.webhook_signing_secret.trim();
+
     if (!body.provider || !body.account_code || !body.account_name) {
       return errorResponse('missing_required_fields:provider/account_code/account_name', 400);
     }
@@ -92,7 +97,19 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_provider', 400);
     }
     const prefixErr = validatePrefixes(body);
-    if (prefixErr) return errorResponse(prefixErr, 400);
+    if (prefixErr) {
+      // Diagnostic detail: which field failed & observed prefix (NEVER the full value).
+      const detail: Record<string, string> = { code: prefixErr };
+      if (body.publishable_key) detail.publishable_prefix = body.publishable_key.slice(0, 8);
+      if (body.secret_key) detail.secret_prefix = body.secret_key.slice(0, 8);
+      if (body.webhook_signing_secret) detail.webhook_prefix = body.webhook_signing_secret.slice(0, 6);
+      detail.test_mode = String(body.test_mode ?? true);
+      console.error('[acquiring-save-connection] validation failed', detail);
+      return new Response(JSON.stringify({ error: prefixErr, detail }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // UPSERT non-sensitive metadata (never includes secret_key / webhook_signing_secret).
     const upsertRow = {
