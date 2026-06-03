@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_payment_intent', 400);
     }
     const account_code = body.account_code ?? 'stripe_poland';
-    const sk = getAcquiringSecret(account_code, 'STRIPE_SECRET_KEY');
+    const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
 
     const form = new URLSearchParams();
     form.set('payment_intent', body.payment_intent);
