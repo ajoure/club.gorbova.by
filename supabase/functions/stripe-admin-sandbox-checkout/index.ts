@@ -26,6 +26,7 @@ interface Body {
   customer_email?: string;
   account_code?: string;
   sandbox_fallback?: boolean;
+  simulate_order_id?: string;
 }
 
 const ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN']);
@@ -55,6 +56,142 @@ Deno.serve(async (req) => {
   try {
     const { user, supabase } = await requireSuperAdmin(req);
     const body = (await req.json()) as Body;
+
+    if (body.simulate_order_id) {
+      const { data: order, error: orderErr } = await supabase
+        .from('orders_v2')
+        .select('id, order_number, provider, status, currency, final_price, customer_email, meta, user_id, profile_id, product_id, tariff_id, offer_id')
+        .eq('id', body.simulate_order_id)
+        .maybeSingle();
+      if (orderErr || !order) return errorResponse('simulation_order_not_found', 404);
+      const orderMeta = (order.meta ?? {}) as Record<string, unknown>;
+      if (order.provider !== 'stripe' || orderMeta.sandbox !== true) {
+        return errorResponse('simulation_requires_stripe_sandbox_order', 400);
+      }
+
+      let profileId = order.profile_id ?? null;
+      let userId = order.user_id ?? null;
+      const buyerEmail = order.customer_email ?? user.email ?? null;
+      if ((!profileId || !userId) && buyerEmail) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, user_id')
+          .ilike('email', buyerEmail)
+          .maybeSingle();
+        profileId = profile?.id ?? profileId;
+        userId = profile?.user_id ?? userId;
+      }
+      if (!userId) return errorResponse('simulation_buyer_profile_not_found', 400);
+
+      const providerPaymentId = `pi_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`;
+      const eventId = `evt_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`;
+      const idempotencyKey = `stripe:simulation:${eventId}`;
+      const amountMajor = Number(order.final_price ?? 0);
+      if (!Number.isFinite(amountMajor) || amountMajor <= 0) return errorResponse('simulation_invalid_order_amount', 400);
+
+      const { data: existingPayment } = await supabase
+        .from('payments_v2')
+        .select('id')
+        .eq('provider', 'stripe')
+        .eq('provider_payment_id', providerPaymentId)
+        .maybeSingle();
+
+      let paymentId = existingPayment?.id ?? null;
+      if (!paymentId) {
+        const { data: payment, error: payErr } = await supabase
+          .from('payments_v2')
+          .insert({
+            order_id: order.id,
+            user_id: userId,
+            profile_id: profileId,
+            provider: 'stripe',
+            provider_payment_id: providerPaymentId,
+            amount: amountMajor,
+            currency: order.currency,
+            status: 'succeeded',
+            paid_at: new Date().toISOString(),
+            meta: {
+              stripe: {
+                simulation: true,
+                checkout_session_id: `cs_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`,
+                source: 'admin_stripe_sandbox_simulation',
+              },
+            },
+          })
+          .select('id')
+          .single();
+        if (payErr || !payment) return errorResponse(`simulation_payment_create_failed:${payErr?.message ?? 'unknown'}`, 500);
+        paymentId = payment.id;
+      }
+
+      const { error: updErr } = await supabase
+        .from('orders_v2')
+        .update({
+          status: 'paid',
+          paid_amount: amountMajor,
+          provider_payment_id: providerPaymentId,
+          user_id: userId,
+          profile_id: profileId,
+          meta: {
+            ...orderMeta,
+            sandbox_simulated_paid: true,
+            sandbox_simulated_paid_at: new Date().toISOString(),
+            sandbox_simulation_source: 'admin_stripe_sandbox_checkout',
+          },
+        })
+        .eq('id', order.id);
+      if (updErr) return errorResponse(`simulation_order_update_failed:${updErr.message}`, 500);
+
+      const { data: insertedEvent, error: eventErr } = await supabase
+        .from('provider_events')
+        .insert({
+          provider: 'stripe',
+          account_code: body.account_code ?? String(orderMeta.account_code ?? 'stripe_poland'),
+          event_id: eventId,
+          event_type: 'checkout.session.completed',
+          idempotency_key: idempotencyKey,
+          payload: {
+            id: eventId,
+            type: 'checkout.session.completed',
+            livemode: false,
+            simulated: true,
+            data: { object: { id: `cs_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`, client_reference_id: order.id, payment_intent: providerPaymentId } },
+          },
+          signature_valid: true,
+          processing_status: 'received',
+          related_order_id: order.id,
+          related_payment_id: paymentId,
+        })
+        .select('id')
+        .maybeSingle();
+      if (eventErr && eventErr.code !== '23505') return errorResponse(`simulation_provider_event_failed:${eventErr.message}`, 500);
+
+      const grant = await supabase.functions.invoke('grant-access-for-order', {
+        body: { order_id: order.id, source: 'stripe_sandbox_simulation', provider: 'stripe' },
+      });
+
+      if (insertedEvent?.id) {
+        await supabase
+          .from('provider_events')
+          .update({
+            processed_at: new Date().toISOString(),
+            processing_status: grant.error ? 'failed' : 'processed',
+            processing_error: grant.error?.message ?? null,
+          })
+          .eq('id', insertedEvent.id);
+      }
+
+      return jsonResponse({
+        ok: !grant.error,
+        simulated: true,
+        status: grant.error ? 'failed' : (eventErr?.code === '23505' ? 'skipped_duplicate' : 'processed'),
+        order_id: order.id,
+        payment_id: paymentId,
+        provider_payment_id: providerPaymentId,
+        grant_result: grant.data ?? null,
+        grant_error: grant.error?.message ?? null,
+      });
+    }
 
     if (!body.product_id) return errorResponse('missing_product_id', 400);
 
@@ -160,6 +297,17 @@ Deno.serve(async (req) => {
     if (onErr || !orderNumber) return errorResponse('order_number_failed', 500);
 
     const customerEmail = body.customer_email ?? user.email ?? null;
+    let profileId: string | null = null;
+    let userId: string | null = null;
+    if (customerEmail) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, user_id')
+        .ilike('email', customerEmail)
+        .maybeSingle();
+      profileId = profile?.id ?? null;
+      userId = profile?.user_id ?? null;
+    }
 
     const meta: Record<string, unknown> = {
       sandbox: true,
@@ -191,6 +339,8 @@ Deno.serve(async (req) => {
         status: 'pending',
         provider: 'stripe',
         customer_email: customerEmail,
+        user_id: userId,
+        profile_id: profileId,
         meta,
       })
       .select('id')
