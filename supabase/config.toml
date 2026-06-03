@@ -279,3 +279,5 @@ project_id = "hdjgkjceownmmnrqqtuz"
     verify_jwt = false
   [functions.users-admin-actions]
     verify_jwt = false
+  [functions.stripe-webhook]
+    verify_jwt = false
