@@ -318,3 +318,18 @@ Webhook-ingest:
 - Invoices, Stripe Tax, Customer Portal, Coupons — Backlog.
 
 После approve — стартую с миграции `acquiring_connections` + `provider_events`.
+
+---
+
+## Execute log — 2026-06-03 (Фаза 2)
+
+✅ Фаза 2 выполнена. Полный отчёт: `.lovable/proofs/stripe_phase_2_execute.md`.
+
+Кратко:
+- Миграции применены (acquiring_connections, provider_events, 3 RPC).
+- 8 edge-функций созданы (4 self-service + 4 stripe write-path).
+- UI `/admin/integrations/acquiring` перестроен: tabs (Подключения / Stripe events), Stripe card с Settings/Test/Disable, безопасный StripeConnectionDialog.
+- bePaid пайплайн не затронут (denylist verifier чист, 106/106 payment_links остались provider=`bepaid`).
+- config.toml: `[functions.stripe-webhook] verify_jwt = false`.
+
+Далее: super_admin вводит test-ключи Stripe через UI → регистрирует webhook URL в Stripe Dashboard → end-to-end sandbox-проверка.
