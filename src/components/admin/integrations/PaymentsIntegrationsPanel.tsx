@@ -135,6 +135,7 @@ export function PaymentsIntegrationsPanel({
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [disableTarget, setDisableTarget] = useState<AcquiringConnectionRow | null>(null);
   const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
+  const [sandboxTarget, setSandboxTarget] = useState<AcquiringConnectionRow | null>(null);
 
   const loadStripe = useCallback(async () => {
     setStripeLoading(true);
