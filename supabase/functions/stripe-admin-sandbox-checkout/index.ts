@@ -44,7 +44,7 @@ interface Body {
 
 const ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN', 'RUB']);
 const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
-const EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function toMinorUnits(amountMajor: number, currency: string): number {
   if (ZERO_DECIMAL.has(currency)) return Math.round(amountMajor);
