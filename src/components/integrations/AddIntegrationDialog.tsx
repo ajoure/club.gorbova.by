@@ -79,10 +79,17 @@ export function AddIntegrationDialog({
     : PROVIDERS;
 
   const handleSelectProvider = (provider: ProviderConfig) => {
+    // UI-only PATCH: Stripe — delegate to dedicated dialog, do not create integration_instances row.
+    if (provider.id === "stripe") {
+      onOpenChange(false);
+      onSelectStripe?.();
+      return;
+    }
     setSelectedProvider(provider);
     setFormData({ alias: provider.name, is_default: false });
     setStep("config");
   };
+
 
   const handleFieldChange = (key: string, value: string | boolean) => {
     setFormData((prev) => {
