@@ -225,6 +225,20 @@ export default function AdminIntegrations() {
           <div className="mt-6">
             <SocialIntegrationsTab />
           </div>
+        ) : activeTab === "payments" ? (
+          <div className="mt-6">
+            <PaymentsIntegrationsPanel
+              bepaidInstances={instances || []}
+              isLoading={isLoading}
+              canEdit={canEdit}
+              onEditBepaid={canEdit ? setEditInstance : undefined}
+              onViewLogs={setLogsInstance}
+              onHealthCheckBepaid={canEdit ? handleHealthCheck : undefined}
+              onSyncSettings={canEdit ? setSyncSettingsInstance : undefined}
+              stripeDialogOpen={stripeDialogOpen}
+              onStripeDialogOpenChange={setStripeDialogOpen}
+            />
+          </div>
         ) : (
         <div className="mt-6 space-y-6">
           {/* All instances */}
@@ -259,7 +273,9 @@ export default function AdminIntegrations() {
         onOpenChange={setAddDialogOpen}
         category={addDialogCategory}
         preselectedProvider={addDialogProvider}
+        onSelectStripe={() => setStripeDialogOpen(true)}
       />
+
 
       <EditIntegrationDialog
         instance={editInstance}
