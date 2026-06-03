@@ -54,7 +54,7 @@ async function transitionOrderPaid(
   currency: string,
   provider_payment_id: string,
 ) {
-  // Idempotent transition; do not regress from paid → paid (skip if already paid).
+  // Idempotent transition; do not regress from paid → paid (skip if already paid AND amount set).
   const { data: ord } = await supabase
     .from('orders_v2')
     .select('id, status, paid_amount')
@@ -69,10 +69,10 @@ async function transitionOrderPaid(
       paid_amount: amountMajor,
       currency: currency.toUpperCase(),
       provider_payment_id,
-      paid_at: new Date().toISOString(),
     })
     .eq('id', order_id);
 }
+
 
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
   const supabase = svc();
