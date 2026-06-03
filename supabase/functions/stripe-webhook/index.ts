@@ -184,27 +184,53 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   }
 
   if (event.type === 'charge.refunded') {
-    const refund = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string }> } | undefined)?.data?.[0];
+    const refund = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string; reason?: string | null }> } | undefined)?.data?.[0];
     if (refund) {
       const refund_currency = refund.currency.toUpperCase();
-      await supabase.rpc('record_refund_atomic', {
+      const pi_id = (obj as { payment_intent?: string }).payment_intent || null;
+      let parent_payment_id: string | null = null;
+      if (pi_id) {
+        const { data: parent } = await supabase
+          .from('payments_v2')
+          .select('id')
+          .eq('provider', 'stripe')
+          .eq('provider_payment_id', pi_id)
+          .maybeSingle();
+        parent_payment_id = parent?.id ?? null;
+      }
+      if (!parent_payment_id) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe.refund.parent_payment_not_found',
+          entity_type: 'orders_v2',
+          entity_id: order_id_meta,
+          meta: { refund_id: refund.id, payment_intent: pi_id, account_code },
+        });
+        return { order_id: order_id_meta, note: 'refund_parent_not_found' };
+      }
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('record_refund_atomic_multi', {
+        p_order_id: order_id_meta,
+        p_parent_payment_id: parent_payment_id,
+        p_refund_amount: toMajorUnits(Number(refund.amount), refund_currency),
         p_refund_uid: refund.id,
         p_provider: 'stripe',
-        p_order_id: order_id_meta,
-        p_amount: toMajorUnits(Number(refund.amount), refund_currency),
-        p_currency: refund_currency,
-        p_meta: { stripe: { charge_id: obj.id, account_code } },
-      }).catch((e: unknown) => {
-        // Soft-log; sweep will pick up if needed
-        return supabase.from('audit_logs').insert({
+        p_refund_reason: refund.reason ?? 'stripe_charge_refunded',
+        p_actor_user_id: null,
+        p_target_user_id: null,
+        p_provider_response: { stripe: { charge_id: obj.id, payment_intent: pi_id, account_code, refund } },
+        p_meta_extra: {},
+      });
+      if (rpcErr) {
+        await supabase.from('audit_logs').insert({
           action: 'stripe.refund.record_failed',
           entity_type: 'orders_v2',
           entity_id: order_id_meta,
-          meta: { error: e instanceof Error ? e.message : String(e) },
+          meta: { error: rpcErr.message, refund_id: refund.id, parent_payment_id },
         });
-      });
+        return { order_id: order_id_meta, note: 'refund_record_failed', error: rpcErr.message };
+      }
+      return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
     }
-    return { order_id: order_id_meta, note: 'refund_recorded' };
+    return { order_id: order_id_meta, note: 'refund_no_data' };
   }
 
 
