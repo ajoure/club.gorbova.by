@@ -4,7 +4,7 @@
 // returned signing secret (`whsec_*`) to vault. Idempotent.
 
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
-import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
+import { requireSuperAdmin, actorSupabase } from '../_shared/acquiring/auth-guard.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 import { stripeFetch } from '../_shared/acquiring/stripe-client.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -108,10 +108,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3) If we just created, Stripe returns `secret`. Save to vault.
+    // 3) If we just created, Stripe returns `secret`. Save to vault as the actor.
     let secret_saved = false;
     if (created && endpoint?.secret) {
-      const { error: rpcErr } = await svc.rpc('admin_save_acquiring_secret', {
+      const actor = actorSupabase(req);
+      const { error: rpcErr } = await actor.rpc('admin_save_acquiring_secret', {
         p_connection_id: connection_id,
         p_kind: 'webhook_signing_secret',
         p_value: endpoint.secret,
@@ -119,6 +120,7 @@ Deno.serve(async (req) => {
       if (rpcErr) return jsonResponse({ ok: false, step: 'vault_save', error: rpcErr.message });
       secret_saved = true;
     }
+
 
 
     return jsonResponse({
