@@ -172,11 +172,11 @@ Deno.serve(async (req) => {
           paid_amount: amount_major,
           currency,
           provider_payment_id: pi_id ?? session_id,
-          paid_at: new Date().toISOString(),
           meta: mergedMeta,
         })
         .eq('id', order_id);
       order_status_updated = !updErr;
+
     }
 
 
