@@ -16,6 +16,14 @@ function svc() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 }
 
+const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
+function toMajorUnits(minor: number, currency: string): number {
+  const cur = currency.toUpperCase();
+  if (ZERO_DECIMAL.has(cur)) return minor;
+  return Math.round(minor) / 100;
+}
+
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
