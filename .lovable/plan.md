@@ -1,211 +1,139 @@
 да, согласен, с учетом правок:
 
-1. **Не удалять файл** `AdminAcquiring.tsx` **сразу.**  
-Сначала убрать маршрут и все ссылки. Файл можно удалить только если `rg "AdminAcquiring|/admin/integrations/acquiring"` подтвердит, что он нигде не используется. Иначе — оставить как internal/unused до cleanup.
-2. **Не показывать Stripe в** `AddIntegrationDialog`**, если подключение уже существует.**  
-Если `acquiring_connections` уже содержит `provider='stripe' AND account_code='stripe_poland'`, вариант Stripe в «Добавить подключение» должен быть disabled или скрыт с текстом «Уже подключено».
-3. **После сохранения Stripe нужно обновлять список без перезагрузки страницы.**  
-Добавить в DoD: после `StripeConnectionDialog → Сохранить` карточка Stripe появляется сразу.
-4. **Proof должен включать проверку отсутствия старого маршрута.**  
-Добавить:
-5. **Фиксировать как UI-only patch.**  
-Никаких runtime-тестов Stripe, sandbox checkout, webhook/refund в этом патче. Это продолжается после merge UI.
+1. В UI не писать «тестовые ключи». Формулировка:
+  - **ключи тестового режима Stripe**
+  - **ключи боевого режима Stripe**
+2. В конце заменить:
+  - «ввод тестовых ключей»
+  на:
+  - «ввод ключей тестового режима Stripe».
+3. В подсказках не писать, что аккаунт тестовый. Правильно:
+  - «Stripe-аккаунт реальный. В тестовом режиме Stripe платежи проверяются без реального списания денег».
+4. `PUBLIC_APP_HOST = https://gorbova.by` — ок, но добавить правило:
+  - если позже будет установлен production app domain в env/config, использовать его вместо хардкода.
+5. `CANONICAL_PUBLIC_HOST = https://club.gorbova.by` для `/pay/:token` не трогать.
 
 После этих правок план можно запускать.
 
 &nbsp;
 
-Да, верно. Мой пункт про скрытие Stripe нужно убрать.
+План: PATCH Stripe Phase 2 — Settings UX + domain-safe redirect URLs
 
-Замени на это:
+Скоуп: UI/config only. Файл `StripeConnectionDialog.tsx` + лёгкий guard в `acquiring-save-connection` (валидация режим↔префикс ключа и запрет lovable-доменов в success/cancel). bePaid pipeline, `create-payment-checkout.ts`, Stripe webhook/checkout edge-функции — НЕ трогаем (кроме чтения существующего `success_url`/`cancel_url`, контракт не меняется).
+
+## 1. Изменяемые файлы
+
+1. `src/components/admin/integrations/StripeConnectionDialog.tsx` — полная русификация, режим Stripe (test/live, live disabled), domain-safe дефолты URL.
+2. `supabase/functions/acquiring-save-connection/index.ts` — server-side guard:
+  - если `test_mode=true` и `secret_key` задан → должен начинаться с `sk_test_`; `publishable_key` → `pk_test_`;
+  - если `test_mode=false` (live) → `sk_live_`/`pk_live_`; в Фазе 2 live запрещён (возврат `code: live_mode_disabled`);
+  - `success_url`/`cancel_url` не должны содержать `lovable.app|lovable.dev|lovableproject.com|localhost|127.0.0.1` и не должны указывать на `*.supabase.co/functions/v1/*` (используем существующий helper `isForbiddenPublicHost` через копию constants на сервере — без импорта из `src/`).
+3. `.lovable/proofs/stripe_phase_2_settings_ux_domain_patch.md` — proof.
+
+## 2. UI: русские подписи и подсказки (StripeConnectionDialog)
+
+Заменить:
+
+- «Publishable key (pk_test_...)» → **«Публичный ключ Stripe»** + подсказка: «Используется для публичных клиентских сценариев Stripe. Не является секретом.»
+- «Secret key (sk_test_...)» → **«Секретный ключ Stripe»** + подсказка: «Используется сервером для создания платежей. В браузер не возвращается.»
+- «Webhook signing secret (whsec_...)» → **«Секрет подписи webhook»** + подсказка: «Нужен для проверки, что уведомления действительно пришли от Stripe.»
+- «Success URL» → **«URL после успешной оплаты»** + подсказка: «Куда клиент вернётся после оплаты. Не указывайте Supabase или preview-домен.»
+- «Cancel URL» → **«URL после отмены оплаты»** + подсказка: «Куда клиент вернётся, если отменит оплату.»
+- «Account code» → **«Внутренний код подключения»**.
+- «Locale» → **«Язык писем/чеков»**.
+- Title diaog: «Настройки Stripe» (как сейчас).
+
+Все toast/error: русские формулировки.
+
+Удалить «технические» placeholder `pk_test_...`, `sk_test_...`, `whsec_...` как самостоятельные подписи — оставить только в `placeholder` поля с поясняющей подписью рядом.
+
+## 3. Режим Stripe (test/live)
+
+Заменить нынешний alert «Фаза 2: только test mode…» на блок **«Режим Stripe»** с двумя радио-опциями (`RadioGroup`):
+
+- ● **Тестовый режим** — для проверки без реального списания денег. Ключи: `pk_test_…`, `sk_test_…`.
+- ○ **Боевой режим** *(disabled)* — для реальных платежей. Ключи: `pk_live_…`, `sk_live_…`. Подсказка: «Live-режим будет включён отдельным согласованием после sandbox-проверки.»
+
+Под группой текст: «Stripe-аккаунт реальный. В Stripe есть два режима ключей: sandbox (test) и live. Тестовый режим использует отдельные sandbox-ключи и позволяет проверить оплату без реального списания денег.»
+
+В Фазе 2 `testMode` остаётся `true` и не редактируется. Запретить отправку live в edge-функции (см. §6).
+
+## 4. Domain-safe success/cancel URL (UI default)
+
+Логика дефолта при создании подключения:
 
 ```text
-Правка к плану Stripe Phase 2 — UI Merge Patch
-
-Убрать ограничение:
-
-“Не показывать Stripe в AddIntegrationDialog, если подключение уже существует”.
-
-Это неверно.
-
-Нужно сделать как с bePaid:
-
-1. Stripe всегда доступен в «Добавить подключение».
-2. Можно создать несколько Stripe-подключений.
-3. Каждое подключение имеет свои:
-   - account_name;
-   - account_code;
-   - publishable_key;
-   - secret_key;
-   - webhook_signing_secret;
-   - test_mode;
-   - status;
-   - success_url;
-   - cancel_url.
-4. Для первого подключения default account_code может быть:
-   - stripe_poland.
-5. Для следующих подключений account_code должен генерироваться или задаваться уникально:
-   - stripe_poland_2;
-   - stripe_poland_test;
-   - stripe_company_a;
-   - stripe_company_b.
-6. В списке `/admin/integrations/payments` показывать все Stripe-подключения из `acquiring_connections`, а не только `account_code='stripe_poland'`.
-7. `account_code` должен быть unique, но не должен запрещать несколько Stripe-подключений.
-8. Кнопка «Добавить подключение → Stripe» всегда открывает создание нового подключения.
-9. Редактирование существующего Stripe — через кнопку «Настройки» на конкретной карточке.
-10. Подключение по умолчанию может быть только одно для provider='stripe'. При установке нового default остальные Stripe default=false.
-
-DoD дополнить:
-
-- можно добавить второй Stripe;
-- в списке отображаются два Stripe-подключения;
-- каждый Stripe редактируется отдельно;
-- bePaid работает как раньше;
-- никаких изменений write-path.
+1. canonicalHost = "https://gorbova.by"            (новая константа PUBLIC_APP_HOST)
+2. success default = `${canonicalHost}/admin/integrations/payments?stripe_result=success`
+3. cancel  default = `${canonicalHost}/admin/integrations/payments?stripe_result=cancel`
 ```
 
-Логика: **у нас один Stripe сейчас**, но UI и модель должны позволять несколько подключений, как bePaid.
+(admin redirect для sandbox-проверки оставляем на admin-странице, но base — production domain, НЕ `window.location.origin`, НЕ `*.lovableproject.com`.)
 
-&nbsp;
+Для будущих клиентских платежей в подсказке указать рекомендуемые значения:
 
-План: Stripe Phase 2 — UI Merge Patch (Stripe → Интеграции → Платежи)
+- `https://gorbova.by/dashboard?payment=success`
+- `https://gorbova.by/pricing?payment=cancel`
 
-Скоуп: UI-only. Без миграций. Без изменений write-path. Без правок bepaid-*, create-payment-checkout.ts, stripe-* edge-функций, payment_links, integration_instances.
+Если текущий `window.location.hostname` подпадает под `isForbiddenPublicHost` (lovable preview) — показать жёлтое предупреждение:
 
-## 1. Цель
+> «Сейчас открыт preview-домен. Для реальных платежей будут использоваться URL основного сайта (gorbova.by).»
 
-Сделать единственным пользовательским входом для управления Stripe-подключением существующую вкладку `/admin/integrations/payments`. Раздел `/admin/integrations/acquiring` убрать из навигации/маршрутизации. Stripe-карточка появляется в списке только если в `acquiring_connections` существует строка с `provider='stripe'` и `account_code='stripe_poland'`.
+Существующий `CANONICAL_PUBLIC_HOST` (`https://club.gorbova.by`) — для `/pay/:token`. Для admin-возврата используем `https://gorbova.by`. Введём отдельную константу `PUBLIC_APP_HOST` в новый файл-helper `src/utils/publicAppHost.ts` (или дополним `buildPublicPaymentUrl.ts`), переиспользуя `isForbiddenPublicHost`.
 
-## 2. Текущее состояние (факты)
+UI-валидация на blur: если введённый URL содержит lovable-домен / supabase function URL → красная подсказка «Этот домен нельзя использовать для возврата клиента».
 
-- `src/App.tsx:272` — `/admin/integrations/payments` → `AdminIntegrations`.
-- `src/App.tsx:277` — `/admin/integrations/acquiring` → `AdminAcquiring`.
-- `AdminIntegrations.tsx` — для категории `payments` рендерит карточку «Все подключения» (`IntegrationInstanceList`) поверх `integration_instances` (там лежит bePaid). Кнопка «Добавить подключение» → `AddIntegrationDialog`, провайдеры из `PROVIDERS` (`useIntegrations.tsx`, payments-провайдер только `bepaid`).
-- `AdminAcquiring.tsx` — отдельная страница: вкладки Подключения / Stripe events. Карточки: bePaid (статический stub), Stripe Poland (реальная или pending-stub). Сейчас он показывает Stripe «как уже существующее» — это нарушение PATCH-2.
-- `StripeConnectionDialog`, `StripeEventsTab`, `acquiring-*` edge-функции и Vault — оставляем как есть, переиспользуем.
+## 5. Webhook URL
 
-## 3. Изменения
-
-### 3.1 Маршрутизация
-
-- В `src/App.tsx`:
-  - Удалить `Route path="/admin/integrations/acquiring"`.
-  - Удалить импорт `AdminAcquiring`.
-- Файл `src/pages/admin/AdminAcquiring.tsx` оставить на диске (используем фрагменты при копировании) либо удалить, если не используется нигде; в этом патче — удаляем, чтобы не было «второго входа».
-- Убрать упоминания `/admin/integrations/acquiring` из меню/бредкрамбов, если найдутся (поиск перед патчем).
-
-### 3.2 AdminIntegrations — расширение для категории `payments`
-
-В `src/pages/admin/AdminIntegrations.tsx` добавить отдельный блок рендеринга для `activeTab === 'payments'`, не меняя другие категории и не трогая `integration_instances`-flow:
+В диалоге добавить read-only блок **«URL для webhook в Stripe Dashboard»** с значением:
 
 ```
-{activeTab === 'payments' ? (
-  <PaymentsIntegrationsPanel
-    bepaidInstances={instances || []}
-    isLoading={isLoading}
-    onEditBepaid={canEdit ? setEditInstance : undefined}
-    onViewLogs={setLogsInstance}
-    onHealthCheckBepaid={canEdit ? handleHealthCheck : undefined}
-    onSyncSettings={canEdit ? setSyncSettingsInstance : undefined}
-    onAddNew={() => handleAddNew('payments')}   // делегирует в существующий AddIntegrationDialog
-    canEdit={canEdit}
-  />
-) : /* existing branches */}
+https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/stripe-webhook
 ```
 
-Кнопка «Добавить подключение» в шапке остаётся как есть: при `activeTab==='payments'` она открывает `AddIntegrationDialog` с `category='payments'`. Внутри диалога теперь будут два провайдера: `bepaid` (legacy flow) и `stripe` (новый — открывает `StripeConnectionDialog`).
+- кнопка «Скопировать» + подсказка: «Это server-to-server endpoint, клиент его не видит. Вставьте его в Stripe Dashboard → Developers → Webhooks. Полученный `whsec_…` вставьте в поле "Секрет подписи webhook" выше.»
 
-### 3.3 Новый компонент `PaymentsIntegrationsPanel`
+Webhook URL остаётся Supabase Edge Function — это допустимо.
 
-Файл: `src/components/admin/integrations/PaymentsIntegrationsPanel.tsx` (UI-only).
+## 6. Server-side guard (`acquiring-save-connection`)
 
-Поведение:
+Минимальные дополнения, без изменения контракта:
 
-1. Грузит Stripe-подключения через существующую edge-функцию `acquiring-list-connections` (`provider='stripe'`, фильтр на клиенте по `account_code='stripe_poland'`).
-2. Показывает карточки в едином списке/grid:
-  - bePaid: использует существующий `IntegrationInstanceList` (как сейчас в `AdminIntegrations`). Никаких визуальных или функциональных изменений.
-  - Stripe: показывается **только если** найдена строка в `acquiring_connections`. Без stub-карточки.
-3. Stripe-карточка содержит:
-  - название (`account_name`), бейдж статуса (`active|pending|disabled|invalid`), `account_code`, режим test/live, флаги «secret сохранён / webhook secret сохранён», `last_error`.
-  - Кнопки: «Настройки» (открывает `StripeConnectionDialog` с этим `connection`), «Проверить подключение» (`acquiring-test-connection`), «Отключить» (`acquiring-disable-connection`, под AlertDialog).
-4. Под списком — небольшой info-блок с webhook URL `…/functions/v1/stripe-webhook` и ссылкой на вкладку Stripe events (вкладку events встроим как раскрывающийся блок внизу панели или отдельный `Tabs` внутри панели — см. 3.5).
+- `test_mode=true`:
+  - `publishable_key`, если задан, must match `^pk_test_`;
+  - `secret_key`, если задан, must match `^sk_test_`;
+  - mismatch → 200 `{ ok:false, code:"key_mode_mismatch", message:"Ключ не соответствует режиму Stripe" }`.
+- `test_mode=false` → 200 `{ ok:false, code:"live_mode_disabled", message:"Live-режим отключён в Фазе 2" }`.
+- `success_url`/`cancel_url`:
+  - regex `^https://`;
+  - не содержит `lovable.app|lovable.dev|lovableproject.com|localhost|127\.0\.0\.1`;
+  - не содержит `supabase.co/functions/v1/`;
+  - нарушение → 200 `{ ok:false, code:"forbidden_redirect_host", message:"URL возврата не должен указывать на preview/Supabase-домен" }`.
 
-Компонент полностью переиспользует `StripeConnectionDialog`, `StripeEventsTab`, `acquiring-list-connections`, `acquiring-test-connection`, `acquiring-disable-connection`, `normalizeEdgeFunctionError`. Логика 1:1 как в `AdminAcquiring.tsx`, просто живёт внутри `payments`-вкладки.
+UI отображает эти коды русскими сообщениями через `normalizeEdgeFunctionError`.
 
-### 3.4 Расширение провайдеров платежей в `AddIntegrationDialog`
+## 7. Freeze-зоны (диффы пустые)
 
-- В `src/hooks/useIntegrations.tsx` добавить в `PROVIDERS` запись:
-  ```
-  { id: 'stripe', name: 'Stripe', category: 'payments', description: 'Stripe Checkout (sandbox)' }
-  ```
-  без полей `configFields` (Stripe настраивается отдельным диалогом, а не generic-формой `integration_instances`).
-- В `src/components/integrations/AddIntegrationDialog.tsx` — перехватить выбор провайдера `stripe`:
-  - не переходить на шаг `config` generic-формы;
-  - не писать в `integration_instances`;
-  - закрыть `AddIntegrationDialog` и открыть `StripeConnectionDialog` (через колбэк/контекст, прокинутый из `PaymentsIntegrationsPanel`/`AdminIntegrations`).
-- bePaid в выборе остаётся, его flow не трогаем.
+- `supabase/functions/bepaid-*`
+- `supabase/functions/create-payment-checkout.ts`
+- `supabase/functions/stripe-create-checkout/index.ts` (контракт `success_url`/`cancel_url` уже читает из БД)
+- `supabase/functions/stripe-webhook/index.ts`
+- `supabase/functions/_shared/acquiring/vault.ts`, `stripe-adapter.ts`, `stripe-client.ts`
+- Миграции — не создаём.
+- `integration_instances` — не трогаем.
 
-Имплементация колбэка: добавить опциональный prop `onSelectStripe?: () => void` в `AddIntegrationDialog`. Если выбран `stripe` — вызываем колбэк и закрываем диалог. Колбэк прокидывается только из `payments`-вкладки `AdminIntegrations`, который владеет состоянием `stripeDialogOpen`.
+## 8. DoD
 
-### 3.5 Stripe events
+1. Все подписи/подсказки/тосты/ошибки `StripeConnectionDialog` — на русском.
+2. Нет голых placeholder вида `pk_test_...` без сопровождающего русского описания.
+3. Поле «Режим Stripe» с двумя опциями; «Боевой режим» disabled с подсказкой.
+4. Secret key и webhook secret не возвращаются в браузер (как сейчас).
+5. Дефолтные success/cancel URL построены от `https://gorbova.by`, не от `lovableproject.com`.
+6. Customer-facing URL не могут содержать `*.supabase.co/functions/v1/*` (UI + server guard).
+7. Webhook URL отображается в UI с возможностью скопировать; это Supabase Edge Function — допустимо.
+8. bePaid UI и pipeline визуально и функционально неизменны.
+9. `git diff` по `bepaid-*` и `create-payment-checkout.ts` пуст.
+10. Build green.
+11. Proof: `.lovable/proofs/stripe_phase_2_settings_ux_domain_patch.md` с чек-листом DoD и списком неизменённых файлов.
 
-Перенести вкладку «Stripe events» в `PaymentsIntegrationsPanel` как внутренний `Tabs`:
-
-- `Подключения` (default) — список карточек bePaid + Stripe.
-- `Stripe events` — встроенный `<StripeEventsTab />`.
-
-Альтернатива (если хотим минимальный визуальный шум): collapsible-блок «Stripe events» под списком карточек, открывающий `StripeEventsTab`. По умолчанию реализуем через внутренние `Tabs` — это ближе к текущему UX `/admin/integrations/acquiring`.
-
-### 3.6 Удаление acquiring-страницы
-
-- Удалить файл `src/pages/admin/AdminAcquiring.tsx`.
-- Удалить `Route` и импорт в `src/App.tsx`.
-- Перед удалением — grep по проекту на `'/admin/integrations/acquiring'` и `AdminAcquiring`; убрать оставшиеся ссылки (если есть в сайдбаре/меню/бредкрамбах).
-
-## 4. Что НЕ трогаем
-
-- `supabase/functions/bepaid-*` — полный freeze.
-- `supabase/functions/create-payment-checkout.ts`, `bepaid-webhook`, refund/recurring — freeze.
-- `supabase/functions/_shared/acquiring/bepaid-adapter.ts` и stripe-адаптеры/edge — freeze.
-- `acquiring_connections`, `provider_events`, `payment_links`, миграции — freeze.
-- `integration_instances` (где живёт bePaid) — freeze.
-- `IntegrationInstanceList`, `EditIntegrationDialog`, `IntegrationLogsSheet`, `IntegrationSyncSettingsDialog` — freeze, только переиспользуем.
-- `StripeConnectionDialog`, `StripeEventsTab` — freeze, только переиспользуем.
-
-## 5. DoD
-
-1. Маршрут `/admin/integrations/acquiring` больше не существует (404/NotFound).
-2. На `/admin/integrations/payments` видна существующая карточка bePaid.
-3. Если в `acquiring_connections` нет строки Stripe — Stripe-карточки НЕТ.
-4. В диалоге «Добавить подключение» (категория Платежи) есть два варианта: bePaid, Stripe.
-5. Выбор bePaid → существующий flow (без изменений).
-6. Выбор Stripe → закрывает `AddIntegrationDialog`, открывает `StripeConnectionDialog`.
-7. После успешного сохранения Stripe — в списке появляется карточка Stripe Poland; на ней доступны «Настройки», «Проверить подключение», «Отключить» — поведение 1:1 как раньше в `/admin/integrations/acquiring`.
-8. bePaid визуально и функционально работает как раньше (smoke: список подключений, edit, healthcheck, logs).
-9. `git diff` пуст по: `supabase/functions/bepaid-*`, `supabase/functions/create-payment-checkout.ts`, `supabase/functions/stripe-*`, `supabase/functions/_shared/acquiring/*`, `supabase/migrations/*`, `src/integrations/supabase/types.ts`.
-10. Build green (TS, vite).
-11. Proof-файл: `.lovable/proofs/stripe_phase_2_payments_ui_merge_patch.md` с:
-  - списком изменённых файлов и их назначением;
-    - выводом `git diff --stat` по freeze-зонам (ожидаем пусто);
-    - скриншот-сценарием (текстовое описание) для всех пунктов DoD;
-    - подтверждением, что новых миграций и новых edge-функций нет.
-
-## 6. Технические детали (для разработчика)
-
-Файлы создаются:
-
-- `src/components/admin/integrations/PaymentsIntegrationsPanel.tsx`
-- `.lovable/proofs/stripe_phase_2_payments_ui_merge_patch.md`
-
-Файлы изменяются (минимально, surgical):
-
-- `src/App.tsx` — снять Route + импорт `AdminAcquiring`.
-- `src/pages/admin/AdminIntegrations.tsx` — добавить ветку рендера для `payments`-вкладки + состояние `stripeDialogOpen`/`stripeEditing` + проброс `onSelectStripe` в `AddIntegrationDialog`.
-- `src/components/integrations/AddIntegrationDialog.tsx` — поддержать `onSelectStripe` и шорт-сёркит для провайдера `stripe`.
-- `src/hooks/useIntegrations.tsx` — добавить провайдер `stripe` в `PROVIDERS` (только метаданные, без configFields).
-
-Файлы удаляются:
-
-- `src/pages/admin/AdminAcquiring.tsx`.
-
-Ничего более.
+После merge — продолжаем Фазу 2: ввод тестовых ключей через UI, test connection, sandbox checkout, webhook, idempotency, refund.
