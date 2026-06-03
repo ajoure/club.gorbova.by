@@ -94,8 +94,9 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
       const payload = {
         id: connection?.id,
         provider: "stripe" as const,
-        account_code: "stripe_poland",
+        account_code: accountCode.trim(),
         account_name: accountName,
+
         is_default: isDefault,
         test_mode: testMode,
         publishable_key: publishableKey || null,
