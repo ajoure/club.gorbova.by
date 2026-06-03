@@ -40,12 +40,47 @@ interface StripeEvent {
   account?: string;
 }
 
+const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
+function toMajorUnits(minor: number, currency: string): number {
+  const cur = currency.toUpperCase();
+  if (ZERO_DECIMAL.has(cur)) return minor;
+  return Math.round(minor) / 100;
+}
+
+async function transitionOrderPaid(
+  supabase: ReturnType<typeof svc>,
+  order_id: string,
+  amountMajor: number,
+  currency: string,
+  provider_payment_id: string,
+) {
+  // Idempotent transition; do not regress from paid → paid (skip if already paid AND amount set).
+  const { data: ord } = await supabase
+    .from('orders_v2')
+    .select('id, status, paid_amount')
+    .eq('id', order_id)
+    .maybeSingle();
+  if (!ord) return;
+  if (ord.status === 'paid' && Number(ord.paid_amount ?? 0) > 0) return;
+  await supabase
+    .from('orders_v2')
+    .update({
+      status: 'paid',
+      paid_amount: amountMajor,
+      currency: currency.toUpperCase(),
+      provider_payment_id,
+    })
+    .eq('id', order_id);
+}
+
+
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
   const supabase = svc();
   const obj = event.data.object as Record<string, unknown>;
   const md = (obj.metadata ?? {}) as Record<string, string>;
   const meta_account_code = md.account_code;
   const order_id_meta = md.order_id ?? (obj.client_reference_id as string | undefined);
+
 
   // Cross-check resolved (from webhook secret) vs metadata account_code
   if (meta_account_code && meta_account_code !== account_code) {
@@ -63,8 +98,10 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     // Insert payments_v2 if not exists
     const pi_id = (obj.payment_intent as string) ?? null;
     const session_id = obj.id as string;
-    const amount_total = Number(obj.amount_total ?? 0);
+    const amount_total_minor = Number(obj.amount_total ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
+    const amount_major = toMajorUnits(amount_total_minor, currency);
+    let payment_id: string | undefined;
     if (pi_id) {
       const { data: existing } = await supabase
         .from('payments_v2')
@@ -78,7 +115,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             order_id: order_id_meta,
             provider: 'stripe',
             provider_payment_id: pi_id,
-            amount: amount_total,
+            amount: amount_major,
             currency,
             status: 'succeeded',
             paid_at: new Date().toISOString(),
@@ -86,39 +123,51 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           })
           .select('id')
           .maybeSingle();
-        return { order_id: order_id_meta, payment_id: ins?.id };
+        payment_id = ins?.id;
+      } else {
+        payment_id = existing.id;
       }
-      return { order_id: order_id_meta, payment_id: existing.id, note: 'payment_already_exists' };
     }
-    return { order_id: order_id_meta };
+    await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
+    return { order_id: order_id_meta, payment_id };
   }
 
   if (event.type === 'payment_intent.succeeded') {
     const pi_id = obj.id as string;
+    const amount_minor = Number(obj.amount_received ?? obj.amount ?? 0);
+    const currency = String(obj.currency ?? 'usd').toUpperCase();
+    const amount_major = toMajorUnits(amount_minor, currency);
     const { data: existing } = await supabase
       .from('payments_v2')
       .select('id')
       .eq('provider_payment_id', pi_id)
       .maybeSingle();
-    if (existing) return { order_id: order_id_meta, payment_id: existing.id, note: 'dedup_with_checkout_completed' };
-    const charges = (obj.charges as { data?: Array<{ id: string }> } | undefined)?.data ?? [];
-    const charge_id = charges[0]?.id ?? null;
-    const { data: ins } = await supabase
-      .from('payments_v2')
-      .insert({
-        order_id: order_id_meta,
-        provider: 'stripe',
-        provider_payment_id: pi_id,
-        amount: Number(obj.amount_received ?? obj.amount ?? 0),
-        currency: String(obj.currency ?? 'usd').toUpperCase(),
-        status: 'succeeded',
-        paid_at: new Date().toISOString(),
-        meta: { stripe: { charge_id, account_code, source: 'payment_intent.succeeded' } },
-      })
-      .select('id')
-      .maybeSingle();
-    return { order_id: order_id_meta, payment_id: ins?.id };
+    let payment_id: string | undefined;
+    if (existing) {
+      payment_id = existing.id;
+    } else {
+      const charges = (obj.charges as { data?: Array<{ id: string }> } | undefined)?.data ?? [];
+      const charge_id = charges[0]?.id ?? null;
+      const { data: ins } = await supabase
+        .from('payments_v2')
+        .insert({
+          order_id: order_id_meta,
+          provider: 'stripe',
+          provider_payment_id: pi_id,
+          amount: amount_major,
+          currency,
+          status: 'succeeded',
+          paid_at: new Date().toISOString(),
+          meta: { stripe: { charge_id, account_code, source: 'payment_intent.succeeded' } },
+        })
+        .select('id')
+        .maybeSingle();
+      payment_id = ins?.id;
+    }
+    await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
+    return { order_id: order_id_meta, payment_id };
   }
+
 
   if (event.type === 'payment_intent.payment_failed') {
     await supabase.from('audit_logs').insert({
@@ -137,12 +186,13 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   if (event.type === 'charge.refunded') {
     const refund = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string }> } | undefined)?.data?.[0];
     if (refund) {
+      const refund_currency = refund.currency.toUpperCase();
       await supabase.rpc('record_refund_atomic', {
         p_refund_uid: refund.id,
         p_provider: 'stripe',
         p_order_id: order_id_meta,
-        p_amount: refund.amount,
-        p_currency: refund.currency.toUpperCase(),
+        p_amount: toMajorUnits(Number(refund.amount), refund_currency),
+        p_currency: refund_currency,
         p_meta: { stripe: { charge_id: obj.id, account_code } },
       }).catch((e: unknown) => {
         // Soft-log; sweep will pick up if needed
@@ -156,6 +206,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     }
     return { order_id: order_id_meta, note: 'refund_recorded' };
   }
+
 
   if (event.type === 'checkout.session.expired') {
     await supabase.from('audit_logs').insert({

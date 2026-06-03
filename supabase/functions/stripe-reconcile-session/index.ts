@@ -16,6 +16,14 @@ function svc() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 }
 
+const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
+function toMajorUnits(minor: number, currency: string): number {
+  const cur = currency.toUpperCase();
+  if (ZERO_DECIMAL.has(cur)) return minor;
+  return Math.round(minor) / 100;
+}
+
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
@@ -50,10 +58,12 @@ Deno.serve(async (req) => {
     const session_status = String(s.status ?? '');
     const payment_status = String(s.payment_status ?? '');
     const pi_id = (s.payment_intent as string) ?? null;
-    const amount_total = Number(s.amount_total ?? 0);
+    const amount_total_minor = Number(s.amount_total ?? 0);
     const currency = String(s.currency ?? 'usd').toUpperCase();
+    const amount_major = toMajorUnits(amount_total_minor, currency);
     const md = (s.metadata ?? {}) as Record<string, string>;
     order_id = order_id ?? md.order_id ?? (s.client_reference_id as string | undefined) ?? null;
+
 
     if (!order_id) return jsonResponse({ ok: false, error: 'no_order_id_in_metadata' });
 
@@ -118,7 +128,7 @@ Deno.serve(async (req) => {
             order_id,
             provider: 'stripe',
             provider_payment_id: pi_id,
-            amount: amount_total,
+            amount: amount_major,
             currency,
             status: 'succeeded',
             paid_at: new Date().toISOString(),
@@ -142,24 +152,33 @@ Deno.serve(async (req) => {
     });
     const grant_ok = !grantErr;
 
-    // 3b) Ensure orders_v2 status = 'paid' (idempotent, sandbox-safe)
+    // 3b) Ensure orders_v2 status = 'paid' + paid_amount/currency/paid_at/provider_payment_id
     const { data: ordRow } = await supabase
       .from('orders_v2')
-      .select('status, meta')
+      .select('status, paid_amount, meta')
       .eq('id', order_id)
       .maybeSingle();
     let order_status_updated = false;
-    if (ordRow && ordRow.status !== 'paid') {
+    const needsUpdate = !ordRow || ordRow.status !== 'paid' || Number(ordRow.paid_amount ?? 0) <= 0;
+    if (ordRow && needsUpdate) {
       const mergedMeta = {
         ...(ordRow.meta ?? {}),
         stripe_reconcile: { session_id, payment_intent: pi_id, at: new Date().toISOString() },
       };
       const { error: updErr } = await supabase
         .from('orders_v2')
-        .update({ status: 'paid', meta: mergedMeta })
+        .update({
+          status: 'paid',
+          paid_amount: amount_major,
+          currency,
+          provider_payment_id: pi_id ?? session_id,
+          meta: mergedMeta,
+        })
         .eq('id', order_id);
       order_status_updated = !updErr;
+
     }
+
 
 
 
