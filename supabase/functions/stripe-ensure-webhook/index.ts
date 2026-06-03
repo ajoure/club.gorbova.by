@@ -30,12 +30,15 @@ interface WebhookEndpoint {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
-    await requireSuperAdmin(req);
+    const { supabase: guardSupabase } = await requireSuperAdmin(req);
     const { account_code, force_recreate } = (await req.json().catch(() => ({}))) as {
       account_code?: string;
       force_recreate?: boolean;
     };
-    const code = account_code ?? 'stripe_poland';
+    // MP-A2-1: SOT resolver instead of hardcoded 'stripe_poland' fallback.
+    const { resolveDefaultStripeAccount } = await import('../_shared/acquiring/default-account.ts');
+    const acct = await resolveDefaultStripeAccount(guardSupabase, account_code);
+    const code = acct.account_code;
 
     const targetUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/stripe-webhook`;
     const sk = await readAcquiringSecret('stripe', code, 'secret_key');
@@ -45,14 +48,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
-    const { data: conn, error: connErr } = await svc
-      .from('acquiring_connections')
-      .select('id')
-      .eq('provider', 'stripe')
-      .eq('account_code', code)
-      .maybeSingle();
-    if (connErr || !conn) return jsonResponse({ ok: false, step: 'resolve_connection', error: connErr?.message ?? 'not_found' });
-    const connection_id = conn.id as string;
+    const connection_id = acct.connection_id;
 
     // 1) List existing endpoints
     const list = await stripeFetch<{ data: WebhookEndpoint[] }>(

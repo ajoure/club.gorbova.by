@@ -7,6 +7,7 @@
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
+import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
 
 interface Body {
   payment_intent: string;            // pi_*
@@ -18,12 +19,14 @@ interface Body {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
-    await requireSuperAdmin(req);
+    const { supabase } = await requireSuperAdmin(req);
     const body = (await req.json()) as Body;
     if (!body.payment_intent || !/^pi_[A-Za-z0-9]+$/.test(body.payment_intent)) {
       return errorResponse('invalid_payment_intent', 400);
     }
-    const account_code = body.account_code ?? 'stripe_poland';
+    // MP-A2-1: SOT resolver instead of hardcoded 'stripe_poland' fallback.
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const account_code = acct.account_code;
     const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
 
     const form = new URLSearchParams();
