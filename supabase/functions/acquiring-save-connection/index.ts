@@ -22,8 +22,36 @@ interface SaveBody {
   locale?: string | null;
 }
 
+const FORBIDDEN_REDIRECT_FRAGMENTS = [
+  'lovable.dev',
+  'lovable.app',
+  'lovableproject.com',
+  'localhost',
+  '127.0.0.1',
+];
+
+function isForbiddenRedirectUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = String(url).trim().toLowerCase();
+  if (!u) return false;
+  if (!/^https:\/\//.test(u)) return true;
+  try {
+    const parsed = new URL(u);
+    const host = parsed.hostname.toLowerCase();
+    if (FORBIDDEN_REDIRECT_FRAGMENTS.some((bad) => host.includes(bad))) return true;
+    if (host.endsWith('.supabase.co') && parsed.pathname.startsWith('/functions/v1/')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function validatePrefixes(body: SaveBody): string | null {
   if (body.provider !== 'stripe') return null;
+  // Phase 2: live mode disabled.
+  if (body.test_mode === false) {
+    return 'live_mode_disabled';
+  }
   if (body.publishable_key && !/^pk_(test|live)_/.test(body.publishable_key)) {
     return 'invalid_publishable_key_prefix';
   }
@@ -33,12 +61,23 @@ function validatePrefixes(body: SaveBody): string | null {
   if (body.webhook_signing_secret && !/^whsec_/.test(body.webhook_signing_secret)) {
     return 'invalid_webhook_secret_prefix';
   }
-  if (body.secret_key && body.test_mode !== undefined) {
-    const isTestKey = body.secret_key.startsWith('sk_test_') || body.secret_key.startsWith('rk_test_');
-    if (isTestKey !== !!body.test_mode) return 'mode_mismatch';
+  // Test mode requires pk_test_/sk_test_ when keys provided.
+  const testMode = body.test_mode !== false;
+  if (testMode) {
+    if (body.publishable_key && !body.publishable_key.startsWith('pk_test_')) {
+      return 'mode_mismatch';
+    }
+    if (body.secret_key) {
+      const ok = body.secret_key.startsWith('sk_test_') || body.secret_key.startsWith('rk_test_');
+      if (!ok) return 'mode_mismatch';
+    }
+  }
+  if (isForbiddenRedirectUrl(body.success_url) || isForbiddenRedirectUrl(body.cancel_url)) {
+    return 'forbidden_redirect_host';
   }
   return null;
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
