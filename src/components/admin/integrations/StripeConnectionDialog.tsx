@@ -2,6 +2,11 @@
 // Self-service form. Submits to acquiring-save-connection.
 // SECURITY: secret_key & webhook_signing_secret are write-only — never preloaded
 // or echoed back. Empty submit = "keep current".
+//
+// MODE-DERIVED-FROM-KEYS PATCH: connection mode (test/live) is derived ONLY from
+// the secret_key prefix. The mode radio is removed; the dialog shows a derived
+// badge and a phase-2 notice when live keys are entered. Entered secret/webhook
+// values are preserved across failed save/test attempts until the dialog closes.
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,9 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Loader2, AlertCircle, CheckCircle2, Copy } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, Copy, Info } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { PUBLIC_APP_HOST, isForbiddenRedirectUrl, isCurrentHostPreview } from "@/utils/publicAppHost";
@@ -51,19 +56,31 @@ function nextStripeAccountCode(existing: string[]): string {
   return `${base}_${i}`;
 }
 
+function keyFamily(k: string): "test" | "live" | null {
+  if (/_test_/.test(k)) return "test";
+  if (/_live_/.test(k)) return "live";
+  return null;
+}
+
 /** Map server-side error codes to Russian messages. */
 function translateServerError(raw: string): string {
-  if (/live_mode_disabled/i.test(raw)) {
-    return "Боевой режим Stripe отключён в Фазе 2. Сейчас доступен только тестовый режим.";
-  }
   if (/forbidden_redirect_host/i.test(raw)) {
     return "URL после оплаты не должен указывать на preview-домен или Supabase Edge Function. Используйте домен сайта (например, gorbova.by).";
   }
-  if (/mode_mismatch|invalid_publishable_key_prefix|invalid_secret_key_prefix/i.test(raw)) {
-    return "Ключ не соответствует выбранному режиму Stripe. Для тестового режима используйте ключи с префиксом pk_test / sk_test.";
+  if (/key_family_mismatch/i.test(raw)) {
+    return "Публичный и секретный ключи относятся к разным режимам Stripe. Используйте оба ключа одного режима — оба test или оба live.";
+  }
+  if (/invalid_publishable_key_prefix/i.test(raw)) {
+    return "Публичный ключ Stripe должен начинаться с pk_test_ или pk_live_.";
+  }
+  if (/invalid_secret_key_prefix/i.test(raw)) {
+    return "Секретный ключ Stripe должен начинаться с sk_test_/rk_test_ или sk_live_/rk_live_.";
   }
   if (/invalid_webhook_secret_prefix/i.test(raw)) {
     return "Секрет подписи webhook должен начинаться с whsec_.";
+  }
+  if (/sandbox_checkout_requires_test_keys/i.test(raw)) {
+    return "Подключены боевые ключи Stripe. Тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки нужны тестовые ключи Stripe (pk_test_/sk_test_).";
   }
   return raw;
 }
@@ -72,8 +89,6 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
   const isEdit = !!connection?.id;
   const [accountName, setAccountName] = useState("Stripe Poland");
   const [accountCode, setAccountCode] = useState("stripe_poland");
-  // Фаза 2: режим залочен на «test». Боевой режим в UI disabled.
-  const [mode, setMode] = useState<"test" | "live">("test");
   const [publishableKey, setPublishableKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -94,7 +109,6 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
     if (!open) return;
     setAccountName(connection?.account_name ?? "Stripe Poland");
     setAccountCode(connection?.account_code ?? nextStripeAccountCode(existingStripeCodes));
-    setMode(connection?.test_mode === false ? "live" : "test");
     setPublishableKey(connection?.publishable_key ?? "");
     setSecretKey("");
     setWebhookSecret("");
@@ -110,6 +124,13 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
     setIsDefault(connection?.is_default ?? true);
   }, [open, connection, existingStripeCodes]);
 
+  // Derive mode from entered keys; fall back to stored connection.test_mode.
+  const pkFam = keyFamily(publishableKey.trim());
+  const skFam = keyFamily(secretKey.trim());
+  const familyMismatch = pkFam && skFam && pkFam !== skFam;
+  const derivedMode: "test" | "live" | "unknown" =
+    skFam ?? pkFam ?? (connection ? (connection.test_mode ? "test" : "live") : "unknown");
+
   const successUrlError = isForbiddenRedirectUrl(successUrl)
     ? "Этот домен нельзя использовать для возврата клиента (preview / Supabase / localhost)."
     : null;
@@ -122,6 +143,10 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
       toast.error("Проверьте URL после оплаты и URL после отмены оплаты.");
       return;
     }
+    if (familyMismatch) {
+      toast.error(translateServerError("key_family_mismatch"));
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -130,7 +155,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
         account_code: accountCode.trim(),
         account_name: accountName,
         is_default: isDefault,
-        test_mode: mode === "test",
+        // test_mode is derived on the server from the secret_key; sent only as a hint.
         publishable_key: publishableKey.trim() || null,
         secret_key: secretKey.trim() || null,
         webhook_signing_secret: webhookSecret.trim() || null,
@@ -153,6 +178,8 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
     } catch (e) {
       const raw = normalizeEdgeFunctionError(e, "Не удалось сохранить подключение");
       toast.error(translateServerError(raw));
+      // NOTE: secretKey / webhookSecret are intentionally NOT cleared so the
+      // admin can fix a typo and retry without re-pasting.
     } finally {
       setSaving(false);
     }
@@ -230,32 +257,50 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
             </div>
           </div>
 
-          {/* Режим Stripe */}
+          {/* Тип подключения — derived from keys, not chosen by user */}
           <div className="space-y-2 border rounded-md p-3">
-            <Label>Режим Stripe</Label>
-            <RadioGroup value={mode} onValueChange={(v) => setMode(v as "test" | "live")} className="space-y-2">
-              <div className="flex items-start gap-2">
-                <RadioGroupItem value="test" id="stripe-mode-test" className="mt-0.5" />
-                <Label htmlFor="stripe-mode-test" className="font-normal cursor-pointer">
-                  <span className="font-medium">Тестовый режим</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Для проверки оплаты без реального списания денег. Ключи тестового режима Stripe: pk_test_… и sk_test_…
-                  </span>
-                </Label>
-              </div>
-              <div className="flex items-start gap-2 opacity-60">
-                <RadioGroupItem value="live" id="stripe-mode-live" disabled className="mt-0.5" />
-                <Label htmlFor="stripe-mode-live" className="font-normal cursor-not-allowed">
-                  <span className="font-medium">Боевой режим</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Для реальных платежей. Ключи боевого режима Stripe: pk_live_… и sk_live_… Live-режим будет включён отдельным согласованием после sandbox-проверки.
-                  </span>
-                </Label>
-              </div>
-            </RadioGroup>
-            <p className="text-xs text-muted-foreground pt-1">
-              Stripe-аккаунт реальный. В тестовом режиме Stripe платежи проверяются без реального списания денег.
+            <div className="flex items-center justify-between">
+              <Label>Тип подключения</Label>
+              {derivedMode === "test" && (
+                <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 hover:bg-amber-500/15">
+                  Тестовое подключение
+                </Badge>
+              )}
+              {derivedMode === "live" && (
+                <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15">
+                  Боевое подключение
+                </Badge>
+              )}
+              {derivedMode === "unknown" && (
+                <Badge variant="outline">Будет определён по ключам</Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Режим Stripe определяется автоматически по введённым ключам:
+              {" "}<code>pk_test_/sk_test_</code> — тестовое подключение,
+              {" "}<code>pk_live_/sk_live_</code> — боевое. Переключателя «тестовый/боевой режим»
+              в Stripe нет — режим всегда привязан к самим ключам.
             </p>
+            {derivedMode === "live" && (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  Подключены боевые ключи Stripe. Проверка аккаунта доступна, но
+                  тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки нужны
+                  ключи тестового режима Stripe (Stripe Dashboard → Developers →
+                  API keys → View test data → Reveal test key).
+                </AlertDescription>
+              </Alert>
+            )}
+            {familyMismatch && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  Публичный и секретный ключи относятся к разным режимам Stripe.
+                  Используйте оба ключа одного режима — оба test или оба live.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -263,7 +308,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
             <Input
               value={publishableKey}
               onChange={(e) => setPublishableKey(e.target.value)}
-              placeholder="pk_test_..."
+              placeholder="pk_test_… или pk_live_…"
               className="font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
@@ -283,7 +328,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
               type="password"
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}
-              placeholder={connection?.has_secret_key ? "••••• (текущее значение)" : "sk_test_..."}
+              placeholder={connection?.has_secret_key ? "••••• (текущее значение)" : "sk_test_… или sk_live_…"}
               className="font-mono text-sm"
               autoComplete="off"
             />
@@ -304,7 +349,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
               type="password"
               value={webhookSecret}
               onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder={connection?.has_webhook_secret ? "••••• (текущее значение)" : "whsec_..."}
+              placeholder={connection?.has_webhook_secret ? "••••• (текущее значение)" : "whsec_…"}
               className="font-mono text-sm"
               autoComplete="off"
             />
@@ -352,7 +397,6 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
               ) : (
                 <p className="text-xs text-muted-foreground">
                   Куда клиент вернётся после оплаты. Используйте домен сайта, не указывайте Supabase или preview-домен.
-                  Для клиентских платежей рекомендуется <code>{PUBLIC_APP_HOST}/dashboard?payment=success</code>.
                 </p>
               )}
             </div>
@@ -368,8 +412,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
                 <p className="text-xs text-destructive">{cancelUrlError}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Куда клиент вернётся, если отменит оплату. Рекомендуется{" "}
-                  <code>{PUBLIC_APP_HOST}/pricing?payment=cancel</code>.
+                  Куда клиент вернётся, если отменит оплату.
                 </p>
               )}
             </div>
@@ -407,7 +450,7 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
             Отмена
           </Button>
-          <Button onClick={() => handleSave(true)} disabled={saving || testing}>
+          <Button onClick={() => handleSave(true)} disabled={saving || testing || !!familyMismatch}>
             {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
             Сохранить и проверить
           </Button>

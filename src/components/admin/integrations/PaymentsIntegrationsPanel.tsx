@@ -1,20 +1,25 @@
 // UI-only PATCH (Phase 2): unified entry for payment provider connections.
 // Shows the existing bePaid list (integration_instances, untouched) AND any
-// Stripe connections from acquiring_connections. Stripe cards appear ONLY if
-// rows exist in acquiring_connections (no stub). Multiple Stripe connections
-// supported. Add/edit/test/disable Stripe is handled here without leaving
-// /admin/integrations/payments.
+// Stripe connections from acquiring_connections, rendered in the same
+// row-style layout as bePaid for visual parity.
 //
 // FREEZE: bePaid pipeline, integration_instances, payment_links, all bepaid-*
 // edge functions, create-payment-checkout.ts, stripe-* edge functions, Vault
 // shared layer — none of those are touched by this patch.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,16 +29,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
   AlertCircle,
+  CheckCircle,
+  Clock,
+  Copy,
+  Link as LinkIcon,
   Loader2,
+  MoreHorizontal,
   PowerOff,
+  RefreshCw,
   Settings,
-  ShieldCheck,
-  Plug,
+  XCircle,
 } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
@@ -53,39 +65,54 @@ interface Props {
   onViewLogs?: (i: IntegrationInstance) => void;
   onHealthCheckBepaid?: (i: IntegrationInstance) => void;
   onSyncSettings?: (i: IntegrationInstance) => void;
-  /** Externally-controlled signal to open the Stripe dialog (e.g. from
-   * "Добавить подключение → Stripe" in AddIntegrationDialog). */
+  /** Externally-controlled signal to open the Stripe dialog. */
   stripeDialogOpen: boolean;
   onStripeDialogOpenChange: (open: boolean) => void;
 }
 
-function statusBadge(status: AcquiringConnectionRow["status"]) {
+function stripeStatusBadge(status: AcquiringConnectionRow["status"]) {
   switch (status) {
     case "active":
       return (
-        <Badge variant="default" className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15">
-          <ShieldCheck className="h-3 w-3" /> Активен
-        </Badge>
-      );
-    case "pending":
-      return (
-        <Badge variant="outline" className="gap-1 text-muted-foreground">
-          <Plug className="h-3 w-3" /> Не настроен
-        </Badge>
-      );
-    case "disabled":
-      return (
-        <Badge variant="secondary" className="gap-1">
-          <PowerOff className="h-3 w-3" /> Отключён
+        <Badge variant="secondary" className="bg-green-100 text-green-700 border-green-200 gap-1">
+          <CheckCircle className="h-3 w-3" />
+          Подключено
         </Badge>
       );
     case "invalid":
       return (
         <Badge variant="destructive" className="gap-1">
-          <AlertCircle className="h-3 w-3" /> Ошибка
+          <XCircle className="h-3 w-3" />
+          Ошибка
+        </Badge>
+      );
+    case "disabled":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <PowerOff className="h-3 w-3" />
+          Отключено
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Clock className="h-3 w-3" />
+          Не настроено
         </Badge>
       );
   }
+}
+
+function modeBadge(testMode: boolean) {
+  return testMode ? (
+    <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 hover:bg-amber-500/15">
+      Тестовое подключение
+    </Badge>
+  ) : (
+    <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15">
+      Боевое подключение
+    </Badge>
+  );
 }
 
 export function PaymentsIntegrationsPanel({
@@ -104,6 +131,8 @@ export function PaymentsIntegrationsPanel({
   const [editing, setEditing] = useState<AcquiringConnectionRow | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [disablingId, setDisablingId] = useState<string | null>(null);
+  const [disableTarget, setDisableTarget] = useState<AcquiringConnectionRow | null>(null);
+  const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
 
   const loadStripe = useCallback(async () => {
     setStripeLoading(true);
@@ -162,12 +191,24 @@ export function PaymentsIntegrationsPanel({
       toast.error(normalizeEdgeFunctionError(e));
     } finally {
       setDisablingId(null);
+      setDisableTarget(null);
     }
   };
 
-  const webhookUrl = `${
-    import.meta.env.VITE_SUPABASE_URL ?? "https://<project-ref>.functions.supabase.co"
-  }/functions/v1/stripe-webhook`;
+  const projectId = (import.meta as any)?.env?.VITE_SUPABASE_PROJECT_ID ?? "";
+  const stripeWebhookUrl = projectId
+    ? `https://${projectId}.supabase.co/functions/v1/stripe-webhook`
+    : "";
+
+  const copyWebhook = async () => {
+    if (!stripeWebhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(stripeWebhookUrl);
+      toast.success("URL для webhook скопирован");
+    } catch {
+      toast.error("Не удалось скопировать URL");
+    }
+  };
 
   return (
     <Tabs defaultValue="connections" className="space-y-4">
@@ -204,7 +245,7 @@ export function PaymentsIntegrationsPanel({
           </CardContent>
         </Card>
 
-        {/* Stripe — appears only if rows exist in acquiring_connections */}
+        {/* Stripe — same row-style layout as bePaid */}
         {stripeLoading ? (
           <Card>
             <CardHeader className="pb-2">
@@ -220,96 +261,154 @@ export function PaymentsIntegrationsPanel({
               <CardTitle className="text-lg">Stripe</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {stripeConnections.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="border rounded-lg p-3 space-y-2 bg-card"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium">{acc.account_name}</div>
-                      {statusBadge(acc.status)}
-                    </div>
-                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                      <dt className="text-muted-foreground">Account</dt>
-                      <dd className="font-mono">{acc.account_code}</dd>
-                      <dt className="text-muted-foreground">Режим</dt>
-                      <dd>{acc.test_mode ? "test" : "live"}</dd>
-                      <dt className="text-muted-foreground">По умолчанию</dt>
-                      <dd>{acc.is_default ? "да" : "нет"}</dd>
-                      <dt className="text-muted-foreground">Secret key</dt>
-                      <dd>{acc.has_secret_key ? "сохранён" : "—"}</dd>
-                      <dt className="text-muted-foreground">Webhook secret</dt>
-                      <dd>{acc.has_webhook_secret ? "сохранён" : "—"}</dd>
-                      {acc.last_error && (
-                        <>
-                          <dt className="text-muted-foreground">Ошибка</dt>
-                          <dd className="text-destructive font-mono break-all">{acc.last_error}</dd>
-                        </>
+              <div className="space-y-3">
+                {stripeConnections.map((acc) => {
+                  const isExpanded = expandedWebhookId === acc.id;
+                  return (
+                    <div
+                      key={acc.id}
+                      className={cn(
+                        "rounded-xl p-4 transition-all duration-200",
+                        "bg-card border hover:shadow-sm",
+                        acc.status === "invalid"
+                          ? "border-destructive/50"
+                          : acc.status === "active"
+                            ? "border-green-500/30"
+                            : "border-border",
                       )}
-                    </dl>
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!canEdit}
-                        onClick={() => {
-                          setEditing(acc);
-                          onStripeDialogOpenChange(true);
-                        }}
-                      >
-                        <Settings className="h-3.5 w-3.5 mr-1" />
-                        Настройки
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={!canEdit || testingId === acc.id}
-                        onClick={() => handleTest(acc.id)}
-                      >
-                        {testingId === acc.id && (
-                          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                        )}
-                        Проверить
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive"
-                            disabled={!canEdit || disablingId === acc.id}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={cn(
+                              "h-10 w-10 rounded-lg flex items-center justify-center",
+                              acc.status === "active"
+                                ? "bg-green-100"
+                                : acc.status === "invalid"
+                                  ? "bg-destructive/10"
+                                  : "bg-muted",
+                            )}
                           >
-                            Отключить
+                            <div
+                              className={cn(
+                                "h-3 w-3 rounded-full",
+                                acc.status === "active"
+                                  ? "bg-green-500"
+                                  : acc.status === "invalid"
+                                    ? "bg-destructive animate-pulse"
+                                    : "bg-muted-foreground/30",
+                              )}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-foreground">{acc.account_name}</span>
+                              {stripeStatusBadge(acc.status)}
+                              {modeBadge(acc.test_mode)}
+                              {acc.is_default && (
+                                <Badge variant="outline" className="text-xs">
+                                  По умолчанию
+                                </Badge>
+                              )}
+                            </div>
+                            {acc.last_error && (
+                              <p className="text-xs text-destructive max-w-[400px] truncate">
+                                {acc.last_error}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              {acc.last_verified_at
+                                ? `Проверено ${format(new Date(acc.last_verified_at), "dd MMM, HH:mm", { locale: ru })}`
+                                : "Ещё не проверялось"}
+                              {!acc.test_mode && acc.status === "active" && (
+                                <>
+                                  {" · "}
+                                  <span className="text-muted-foreground/80">
+                                    Sandbox-checkout в Фазе 2 недоступен
+                                  </span>
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setExpandedWebhookId(isExpanded ? null : acc.id)}
+                            title="Показать Webhook URL"
+                          >
+                            <LinkIcon className="h-4 w-4" />
                           </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Отключить Stripe?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Секретные ключи будут удалены из защищённого хранилища.
-                              Существующие платежи bePaid не затрагиваются.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Отмена</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => handleDisable(acc.id)}>
-                              Отключить
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="w-48 bg-popover text-popover-foreground border shadow-md z-50"
+                            >
+                              <DropdownMenuItem
+                                disabled={!canEdit || testingId === acc.id}
+                                onClick={() => handleTest(acc.id)}
+                                className="gap-2 cursor-pointer"
+                              >
+                                {testingId === acc.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4" />
+                                )}
+                                <span>Проверить</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={!canEdit}
+                                onClick={() => {
+                                  setEditing(acc);
+                                  onStripeDialogOpenChange(true);
+                                }}
+                                className="gap-2 cursor-pointer"
+                              >
+                                <Settings className="h-4 w-4" />
+                                <span>Настройки</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                disabled={!canEdit || disablingId === acc.id}
+                                onClick={() => setDisableTarget(acc)}
+                                className="gap-2 cursor-pointer text-destructive focus:text-destructive"
+                              >
+                                <PowerOff className="h-4 w-4" />
+                                <span>Отключить</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+
+                      {isExpanded && stripeWebhookUrl && (
+                        <div className="mt-4 pt-4 border-t border-border space-y-2">
+                          <Label className="text-xs">URL для webhook в Stripe Dashboard</Label>
+                          <div className="flex gap-2">
+                            <code className="flex-1 bg-muted p-2 rounded text-xs text-foreground break-all">
+                              {stripeWebhookUrl}
+                            </code>
+                            <Button type="button" variant="outline" size="sm" onClick={copyWebhook}>
+                              <Copy className="h-3.5 w-3.5 mr-1" /> Копировать
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Вставьте этот URL в Stripe Dashboard → Developers → Webhooks.
+                            Полученный <code>whsec_…</code> сохраните в настройках подключения.
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 text-xs text-muted-foreground space-y-1">
-                <p>
-                  Webhook URL для Stripe Dashboard (test mode):
-                </p>
-                <code className="block bg-muted p-2 rounded text-foreground break-all">
-                  {webhookUrl}
-                </code>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
@@ -330,6 +429,34 @@ export function PaymentsIntegrationsPanel({
         existingStripeCodes={existingStripeCodes}
         onSaved={loadStripe}
       />
+
+      <AlertDialog open={!!disableTarget} onOpenChange={(open) => !open && setDisableTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отключить Stripe?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Секретные ключи будут удалены из защищённого хранилища.
+              Существующие платежи bePaid не затрагиваются.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => disableTarget && handleDisable(disableTarget.id)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Отключить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Tabs>
   );
 }
+
+// Local label helper to keep the per-row webhook reveal lightweight.
+function Label({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("text-sm font-medium text-foreground", className)}>{children}</div>;
+}
+
+

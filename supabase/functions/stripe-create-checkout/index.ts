@@ -49,7 +49,18 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (connErr || !conn) return errorResponse('connection_not_found', 404);
     if (conn.status !== 'active') return errorResponse(`connection_not_active:${conn.status}`, 400);
-    if (!conn.test_mode) return errorResponse('phase_2_test_mode_only', 400);
+    // Sandbox checkout in Phase 2 is allowed only on test-mode connections.
+    // Live connections can be saved & verified, but real charges are not opened here.
+    if (!conn.test_mode) {
+      return jsonResponse({
+        ok: false,
+        fallback: true,
+        code: 'sandbox_checkout_requires_test_keys',
+        message:
+          'Подключены боевые ключи Stripe. Тестовая оплата в Фазе 2 недоступна. Для sandbox-проверки переключите подключение на тестовые ключи Stripe (pk_test_/sk_test_).',
+      });
+    }
+
 
     // Verify order exists & is pending stripe
     const { data: order, error: ordErr } = await supabase

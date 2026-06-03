@@ -2,11 +2,13 @@
 // Validates a stored Stripe connection end-to-end (no live charge):
 //   1) secret_key valid (GET /balance)
 //   2) account accessible (GET /account)
-//   3) test/live mode matches
-//   4) webhook signing secret present in Vault
-//   5) currency discovery (GET /country_specs/{country})
+//   3) webhook signing secret present in Vault
+//   4) currency discovery (GET /country_specs/{country})
 //
 // Writes capabilities snapshot, status, last_verified_at, last_error.
+//
+// MODE-DERIVED-FROM-KEYS PATCH: there is no `mode_mismatch` — connection mode
+// is derived from the secret_key prefix and persisted as `test_mode` on the row.
 
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
@@ -28,7 +30,12 @@ Deno.serve(async (req) => {
     if (connErr || !conn) return errorResponse('connection_not_found', 404);
     if (conn.provider !== 'stripe') return errorResponse('only_stripe_supported_in_phase_2', 400);
 
-    const updateStatus = async (status: string, last_error: string | null, capabilities: Record<string, unknown>) => {
+    const updateStatus = async (
+      status: string,
+      last_error: string | null,
+      capabilities: Record<string, unknown>,
+      patch: Record<string, unknown> = {},
+    ) => {
       await supabase
         .from('acquiring_connections')
         .update({
@@ -36,6 +43,7 @@ Deno.serve(async (req) => {
           last_error,
           last_verified_at: new Date().toISOString(),
           capabilities_snapshot: capabilities,
+          ...patch,
         })
         .eq('id', connection_id);
     };
@@ -47,6 +55,9 @@ Deno.serve(async (req) => {
       await updateStatus('invalid', 'secret_key_missing', conn.capabilities_snapshot ?? {});
       return jsonResponse({ ok: false, code: 'secret_key_missing' });
     }
+
+    const isTestKey = secret_key.startsWith('sk_test_') || secret_key.startsWith('rk_test_');
+    const keyMode: 'test' | 'live' = isTestKey ? 'test' : 'live';
 
     // 1) balance
     const bal = await stripeGetBalance(secret_key);
@@ -61,26 +72,16 @@ Deno.serve(async (req) => {
       await updateStatus('invalid', 'account_unreachable', conn.capabilities_snapshot ?? {});
       return jsonResponse({ ok: false, code: 'account_unreachable', detail: acc.error });
     }
-    // 3) mode
-    const isTestKey = secret_key.startsWith('sk_test_') || secret_key.startsWith('rk_test_');
-    if (isTestKey !== !!conn.test_mode) {
-      const code = 'mode_mismatch';
-      await updateStatus('invalid', code, {
-        ...(conn.capabilities_snapshot ?? {}),
-        account: { id: acc.data.id, country: acc.data.country },
-      });
-      return jsonResponse({ ok: false, code, expected_test_mode: conn.test_mode, key_is_test: isTestKey });
-    }
-    // 4) webhook secret
+    // 3) webhook secret
     const hasWebhook = await hasAcquiringVaultSecret('stripe', conn.account_code, 'webhook_signing_secret');
     if (!hasWebhook) {
       await updateStatus('invalid', 'webhook_secret_missing', {
         ...(conn.capabilities_snapshot ?? {}),
-        account: { id: acc.data.id, country: acc.data.country },
+        account: { id: acc.data.id, country: acc.data.country, key_mode: keyMode },
       });
       return jsonResponse({ ok: false, code: 'webhook_secret_missing' });
     }
-    // 5) currencies
+    // 4) currencies
     const spec = await stripeGetCountrySpec(secret_key, acc.data.country);
     const currencies = spec.ok && spec.data ? spec.data.supported_payment_currencies : [];
 
@@ -92,12 +93,14 @@ Deno.serve(async (req) => {
         charges_enabled: acc.data.charges_enabled,
         payouts_enabled: acc.data.payouts_enabled,
         business_name: acc.data.business_profile?.name ?? null,
+        key_mode: keyMode,
       },
       supported_currencies: currencies,
       verified_at: new Date().toISOString(),
     };
-    await updateStatus('active', null, snapshot);
-    return jsonResponse({ ok: true, capabilities: snapshot });
+    // Normalize test_mode on the row to match the actual key family.
+    await updateStatus('active', null, snapshot, { test_mode: isTestKey });
+    return jsonResponse({ ok: true, capabilities: snapshot, connection_mode: keyMode });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
     if (msg.startsWith('unauthorized')) return errorResponse(msg, 401);
