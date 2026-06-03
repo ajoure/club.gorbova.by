@@ -47,7 +47,9 @@ export function AddIntegrationDialog({
   onOpenChange,
   category,
   preselectedProvider,
+  onSelectStripe,
 }: AddIntegrationDialogProps) {
+
   const { createInstance } = useIntegrationMutations();
   const [step, setStep] = useState<"provider" | "config">("provider");
   const [selectedProvider, setSelectedProvider] = useState<ProviderConfig | null>(null);
