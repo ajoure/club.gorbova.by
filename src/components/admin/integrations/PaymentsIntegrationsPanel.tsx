@@ -7,7 +7,7 @@
 // edge functions, create-payment-checkout.ts, stripe-* edge functions, Vault
 // shared layer — none of those are touched by this patch.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -454,7 +454,9 @@ export function PaymentsIntegrationsPanel({
   );
 }
 
-// Local Label to avoid extra import churn
-function Label({ children, className }: { children: React.ReactNode; className?: string }) {
+// Local label helper to keep the per-row webhook reveal lightweight.
+function Label({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("text-sm font-medium text-foreground", className)}>{children}</div>;
 }
+
+
