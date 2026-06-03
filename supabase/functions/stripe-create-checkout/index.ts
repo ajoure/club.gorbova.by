@@ -12,6 +12,9 @@
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { resolveAdapter } from '../_shared/acquiring/index.ts';
+import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
+import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
+import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
 
 interface CreateBody {
   order_id: string;
@@ -38,20 +41,14 @@ Deno.serve(async (req) => {
     if (!body.order_id || !body.amount || !body.currency || !body.product_id || !body.tariff_id) {
       return errorResponse('missing_required_fields', 400);
     }
-    const account_code = body.account_code ?? 'stripe_poland';
 
-    // Resolve & validate connection
-    const { data: conn, error: connErr } = await supabase
-      .from('acquiring_connections')
-      .select('*')
-      .eq('provider', 'stripe')
-      .eq('account_code', account_code)
-      .maybeSingle();
-    if (connErr || !conn) return errorResponse('connection_not_found', 404);
-    if (conn.status !== 'active') return errorResponse(`connection_not_active:${conn.status}`, 400);
-    // Sandbox checkout in Phase 2 is allowed only on test-mode connections.
-    // Live connections can be saved & verified, but real charges are not opened here.
-    if (!conn.test_mode) {
+    // MP-A2-1: SOT resolver — no hardcoded 'stripe_poland' default.
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const account_code = acct.account_code;
+
+    // Re-fetch the full connection row (status/test_mode already validated by resolver,
+    // but we still surface the legacy not-test guard for parity with previous behavior).
+    if (!acct.test_mode) {
       return jsonResponse({
         ok: false,
         fallback: true,
@@ -61,11 +58,10 @@ Deno.serve(async (req) => {
       });
     }
 
-
     // Verify order exists & is pending stripe
     const { data: order, error: ordErr } = await supabase
       .from('orders_v2')
-      .select('id, status, provider, amount, currency, contact_id, user_id')
+      .select('id, status, provider, amount, currency, contact_id, user_id, product_id, tariff_id, offer_id')
       .eq('id', body.order_id)
       .maybeSingle();
     if (ordErr || !order) return errorResponse('order_not_found', 404);
@@ -74,6 +70,34 @@ Deno.serve(async (req) => {
       return errorResponse(`order_invalid_status:${order.status}`, 400);
     }
 
+    // MP-A2-1: business_stream via SOT resolver (offer → product → body override → 'unspecified').
+    let bs: string | null = body.business_stream ?? null;
+    if (!bs) {
+      const offerId = body.offer_id ?? order.offer_id ?? null;
+      const productId = body.product_id ?? order.product_id ?? null;
+      const [offerRes, productRes] = await Promise.all([
+        offerId
+          ? supabase.from('tariff_offers').select('meta').eq('id', offerId).maybeSingle()
+          : Promise.resolve({ data: null } as { data: null }),
+        productId
+          ? supabase.from('products_v2').select('meta').eq('id', productId).maybeSingle()
+          : Promise.resolve({ data: null } as { data: null }),
+      ]);
+      bs = resolveBusinessStream({
+        tariff_offer_meta: (offerRes.data as { meta?: Record<string, unknown> } | null)?.meta ?? null,
+        product_meta: (productRes.data as { meta?: Record<string, unknown> } | null)?.meta ?? null,
+        link_business_stream: null,
+      });
+    }
+
+    // MP-A2-1: redirect URLs — connection → PUBLIC_APP_HOST fallback, no example.com.
+    const urls = resolveStripeCheckoutUrls({
+      connection_success_url: acct.success_url,
+      connection_cancel_url: acct.cancel_url,
+      test_mode: acct.test_mode,
+      sandbox: false,
+    });
+
     const adapter = resolveAdapter('stripe', account_code);
     const result = await adapter.createCheckout({
       order_id: body.order_id,
@@ -81,8 +105,8 @@ Deno.serve(async (req) => {
       currency: body.currency,
       description: body.description,
       customer_email: body.customer_email,
-      return_url: conn.success_url ?? undefined,
-      cancel_url: conn.cancel_url ?? undefined,
+      return_url: urls.success_url,
+      cancel_url: urls.cancel_url,
       is_one_time: true,
       metadata: {
         product_id: body.product_id,
@@ -95,7 +119,7 @@ Deno.serve(async (req) => {
       context: {
         provider: 'stripe',
         account_code,
-        business_stream: body.business_stream ?? null,
+        business_stream: bs,
       },
     });
 
