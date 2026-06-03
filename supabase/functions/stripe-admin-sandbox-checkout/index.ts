@@ -297,6 +297,17 @@ Deno.serve(async (req) => {
     if (onErr || !orderNumber) return errorResponse('order_number_failed', 500);
 
     const customerEmail = body.customer_email ?? user.email ?? null;
+    let profileId: string | null = null;
+    let userId: string | null = null;
+    if (customerEmail) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, user_id')
+        .ilike('email', customerEmail)
+        .maybeSingle();
+      profileId = profile?.id ?? null;
+      userId = profile?.user_id ?? null;
+    }
 
     const meta: Record<string, unknown> = {
       sandbox: true,
@@ -328,6 +339,8 @@ Deno.serve(async (req) => {
         status: 'pending',
         provider: 'stripe',
         customer_email: customerEmail,
+        user_id: userId,
+        profile_id: profileId,
         meta,
       })
       .select('id')
