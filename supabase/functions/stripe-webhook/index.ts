@@ -196,7 +196,15 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         refund = { ...inline, payment_intent: pi_id ?? undefined, charge: charge_id ?? undefined };
       } else if (charge_id) {
         // Stripe (API >= 2024) no longer embeds refunds.data in charge.refunded payload. Fetch via API.
-        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key').catch(() => null);
+        let sk: string | null = null;
+        try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); }
+        catch (e) {
+          await supabase.from('audit_logs').insert({
+            action: 'stripe.refund.secret_lookup_failed',
+            entity_type: 'orders_v2', entity_id: order_id_meta,
+            meta: { account_code, error: e instanceof Error ? e.message : String(e) },
+          });
+        }
         if (sk) {
           const resp = await fetch(`https://api.stripe.com/v1/charges/${charge_id}?expand[]=refunds`, {
             headers: { 'Authorization': `Bearer ${sk}` },
@@ -204,6 +212,13 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           const data = await resp.json();
           const r = data?.refunds?.data?.[0];
           if (r) refund = { id: r.id, amount: r.amount, currency: r.currency, reason: r.reason, payment_intent: data?.payment_intent ?? pi_id ?? undefined, charge: charge_id };
+          else {
+            await supabase.from('audit_logs').insert({
+              action: 'stripe.refund.api_fetch_no_refund',
+              entity_type: 'orders_v2', entity_id: order_id_meta,
+              meta: { charge_id, api_status: resp.status, api_data_summary: { has_refunds: !!data?.refunds, count: data?.refunds?.data?.length ?? 0 } },
+            });
+          }
         }
       }
     } else {
@@ -219,7 +234,14 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       }
     }
 
-    if (!refund) return { order_id: order_id_meta, note: 'refund_no_data' };
+    if (!refund) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.refund.no_data',
+        entity_type: 'orders_v2', entity_id: order_id_meta,
+        meta: { event_type: event.type, charge_id, pi_id, account_code },
+      });
+      return { order_id: order_id_meta, note: 'refund_no_data' };
+    }
 
     const refund_currency = refund.currency.toUpperCase();
     let parent_payment_id: string | null = null;
