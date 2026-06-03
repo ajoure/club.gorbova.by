@@ -33,8 +33,11 @@ Deno.serve(async (req) => {
       session_id?: string;
       account_code?: string;
     };
-    const code = body.account_code ?? 'stripe_poland';
     const supabase = svc();
+    // MP-A2-1: SOT resolver instead of hardcoded 'stripe_poland' fallback.
+    const { resolveDefaultStripeAccount } = await import('../_shared/acquiring/default-account.ts');
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const code = acct.account_code;
 
     // Resolve session_id from order_id if needed
     let session_id = body.session_id ?? null;

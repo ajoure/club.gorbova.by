@@ -11,7 +11,30 @@ export const stripeAdapter: AcquiringAdapter = {
   provider: 'stripe',
   async createCheckout(req: CheckoutRequest): Promise<CheckoutResponse> {
     try {
-      const account_code = req.context.account_code ?? 'stripe_poland';
+      // MP-A2-1: account_code is a hard requirement from the caller.
+      // No `?? 'stripe_poland'` fallback — callers MUST resolve account via
+      // resolveDefaultStripeAccount() and pass it through req.context.
+      const account_code = req.context.account_code?.trim();
+      if (!account_code) {
+        return {
+          ok: false,
+          fallback: true,
+          error: 'stripe_adapter_missing_account_code',
+        };
+      }
+
+      // MP-A2-1: success_url / cancel_url are a hard requirement.
+      // No `?? 'https://example.com/...'` fallback — callers MUST pass URLs
+      // resolved from acquiring_connections or PUBLIC_APP_HOST.
+      const success_url = req.return_url?.trim();
+      const cancel_url = req.cancel_url?.trim();
+      if (!success_url || !cancel_url) {
+        return {
+          ok: false,
+          fallback: true,
+          error: 'stripe_adapter_missing_redirect_urls',
+        };
+      }
 
       // Resolve required metadata fields from caller-provided metadata bag.
       const md = (req.metadata ?? {}) as Record<string, string | number | null | undefined>;
@@ -33,8 +56,8 @@ export const stripeAdapter: AcquiringAdapter = {
       const form: Array<[string, string]> = [
         ['mode', 'payment'],
         ['client_reference_id', req.order_id],
-        ['success_url', req.return_url ?? 'https://example.com/success'],
-        ['cancel_url', req.cancel_url ?? 'https://example.com/cancel'],
+        ['success_url', success_url],
+        ['cancel_url', cancel_url],
         ['line_items[0][quantity]', '1'],
         ['line_items[0][price_data][currency]', req.currency.toLowerCase()],
         ['line_items[0][price_data][unit_amount]', String(Math.round(req.amount))],

@@ -24,6 +24,9 @@
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { resolveAdapter } from '../_shared/acquiring/index.ts';
+import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
+import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
+import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
 
 interface Body {
   mode?: 'manual' | 'catalog';
@@ -127,9 +130,11 @@ Deno.serve(async (req) => {
         user_id: userId, profile_id: profileId,
         meta: { ...orderMeta, sandbox_simulated_paid: true, sandbox_simulated_paid_at: new Date().toISOString() },
       }).eq('id', order.id);
+      // MP-A2-1: resolve account_code via SOT (no hardcoded 'stripe_poland').
+      const simAcct = await resolveDefaultStripeAccount(supabase, body.account_code);
       const { data: insertedEvent, error: eventErr } = await supabase
         .from('provider_events').insert({
-          provider: 'stripe', account_code: body.account_code ?? 'stripe_poland',
+          provider: 'stripe', account_code: simAcct.account_code,
           event_id: eventId, event_type: 'checkout.session.completed',
           idempotency_key: `stripe:simulation:${eventId}`,
           payload: { id: eventId, type: 'checkout.session.completed', simulated: true,
@@ -156,7 +161,9 @@ Deno.serve(async (req) => {
       ?? (body.product_id ? 'catalog' : 'manual');
 
     // ---------- Common validation ----------
-    const account_code = body.account_code ?? 'stripe_poland';
+    // MP-A2-1: resolve account via SOT — no hardcoded 'stripe_poland' fallback.
+    const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
+    const account_code = acct.account_code;
     const currency = (body.currency ?? 'USD').toUpperCase();
     if (!ALLOWED_CURRENCIES.has(currency)) {
       return jsonResponse({ ok: false, code: 'currency_not_allowed', message: `Валюта ${currency} не во whitelist (USD/EUR/PLN/BYN/RUB).` });
@@ -170,29 +177,29 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, code: 'minor_units_conversion_failed' });
     }
 
-    // ---------- Stripe connection ----------
-    const { data: conn, error: connErr } = await supabase
-      .from('acquiring_connections')
-      .select('*').eq('provider', 'stripe').eq('account_code', account_code).maybeSingle();
-    if (connErr || !conn) return errorResponse('connection_not_found', 404);
-    if (conn.status !== 'active') return errorResponse(`connection_not_active:${conn.status}`, 400);
-    if (!conn.test_mode) {
+    // ---------- Stripe connection guards (test_mode required for sandbox) ----------
+    if (acct.status !== 'active') return errorResponse(`connection_not_active:${acct.status}`, 400);
+    if (!acct.test_mode) {
       return jsonResponse({ ok: false, fallback: true, code: 'sandbox_checkout_requires_test_keys',
         message: 'Для тестовой оплаты нужны тестовые ключи Stripe (pk_test_/sk_test_).' });
     }
 
     // ---------- Mode-specific data ----------
-    let productRow: { id: string; name: string } | null = null;
+    let productRow: { id: string; name: string; meta: Record<string, unknown> | null } | null = null;
     let tariffRow: { id: string; name: string } | null = null;
-    let offerRow: { id: string; button_label: string; amount: number } | null = null;
+    let offerRow: { id: string; button_label: string; amount: number; meta: Record<string, unknown> | null } | null = null;
     let description = '';
 
     if (mode === 'catalog') {
       if (!body.product_id) return errorResponse('missing_product_id', 400);
       const { data: product } = await supabase
-        .from('products_v2').select('id, name').eq('id', body.product_id).maybeSingle();
+        .from('products_v2').select('id, name, meta').eq('id', body.product_id).maybeSingle();
       if (!product) return errorResponse('product_not_found', 404);
-      productRow = product as any;
+      productRow = {
+        id: (product as any).id,
+        name: (product as any).name,
+        meta: ((product as any).meta as Record<string, unknown> | null) ?? null,
+      };
       if (body.tariff_id) {
         const { data: t } = await supabase
           .from('tariffs').select('id, product_id, name').eq('id', body.tariff_id).maybeSingle();
@@ -201,12 +208,17 @@ Deno.serve(async (req) => {
       }
       if (body.offer_id) {
         const { data: o } = await supabase
-          .from('tariff_offers').select('id, tariff_id, button_label, amount, is_active')
+          .from('tariff_offers').select('id, tariff_id, button_label, amount, is_active, meta')
           .eq('id', body.offer_id).maybeSingle();
         if (!o) return errorResponse('offer_not_found', 404);
         if (body.tariff_id && o.tariff_id !== body.tariff_id) return errorResponse('offer_mismatch', 400);
         if (o.is_active === false) return errorResponse('offer_inactive', 400);
-        offerRow = { id: o.id, button_label: o.button_label, amount: Number(o.amount) };
+        offerRow = {
+          id: o.id,
+          button_label: o.button_label,
+          amount: Number(o.amount),
+          meta: ((o as any).meta as Record<string, unknown> | null) ?? null,
+        };
       }
       description = `[SANDBOX] ${productRow!.name}${tariffRow ? ` / ${tariffRow.name}` : ''}${offerRow ? ` / ${offerRow.button_label}` : ''}`;
     } else {
@@ -217,6 +229,23 @@ Deno.serve(async (req) => {
       if (!emailRaw || !EMAIL_RE.test(emailRaw)) return errorResponse('invalid_customer_email', 400);
       description = `[SANDBOX manual] ${desc}`;
     }
+
+    // MP-A2-1: business_stream via SOT resolver. Manual mode → 'unspecified'.
+    const businessStream = mode === 'catalog'
+      ? resolveBusinessStream({
+          tariff_offer_meta: offerRow?.meta ?? null,
+          product_meta: productRow?.meta ?? null,
+          link_business_stream: null,
+        })
+      : null;
+
+    // MP-A2-1: redirect URLs — connection → PUBLIC_APP_HOST sandbox fallback, no example.com.
+    const urls = resolveStripeCheckoutUrls({
+      connection_success_url: acct.success_url,
+      connection_cancel_url: acct.cancel_url,
+      test_mode: acct.test_mode,
+      sandbox: true,
+    });
 
     // ---------- Resolve buyer profile ----------
     const customerEmail = (body.customer_email ?? user.email ?? '').trim() || null;
@@ -233,9 +262,6 @@ Deno.serve(async (req) => {
     const { data: orderNumber, error: onErr } = await supabase.rpc('generate_order_number');
     if (onErr || !orderNumber) return errorResponse('order_number_failed', 500);
 
-    // We'll pre-generate the orders_v2 UUID so that Stripe Checkout's
-    // client_reference_id can be set up-front. We INSERT the order ONLY after
-    // Stripe Session creation succeeds.
     const preOrderId = crypto.randomUUID();
 
     // ---------- Create Stripe Checkout Session FIRST ----------
@@ -246,8 +272,8 @@ Deno.serve(async (req) => {
       currency,
       description,
       customer_email: customerEmail ?? undefined,
-      return_url: conn.success_url ?? undefined,
-      cancel_url: conn.cancel_url ?? undefined,
+      return_url: urls.success_url,
+      cancel_url: urls.cancel_url,
       is_one_time: true,
       metadata: {
         mode,
@@ -258,7 +284,7 @@ Deno.serve(async (req) => {
         sandbox: 'true',
         order_number: String(orderNumber),
       },
-      context: { provider: 'stripe', account_code, business_stream: null },
+      context: { provider: 'stripe', account_code, business_stream: businessStream },
     });
 
     if (!result.ok) {
