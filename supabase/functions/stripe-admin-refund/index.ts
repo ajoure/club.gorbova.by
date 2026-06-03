@@ -6,7 +6,7 @@
 
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
-import { getAcquiringSecret } from '../_shared/acquiring/secrets.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 interface Body {
   payment_intent: string;            // pi_*
