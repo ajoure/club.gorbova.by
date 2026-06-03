@@ -169,8 +169,20 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, existin
             </div>
             <div className="space-y-1.5">
               <Label>Account code</Label>
-              <Input value="stripe_poland" disabled className="font-mono" />
+              <Input
+                value={accountCode}
+                onChange={(e) => setAccountCode(e.target.value.replace(/[^a-z0-9_]/gi, "_").toLowerCase())}
+                disabled={isEdit}
+                className="font-mono"
+                placeholder="stripe_poland"
+              />
+              {!isEdit && (
+                <p className="text-xs text-muted-foreground">
+                  Уникальный код подключения. Можно подключить несколько Stripe-аккаунтов.
+                </p>
+              )}
             </div>
+
           </div>
 
           <Alert>
