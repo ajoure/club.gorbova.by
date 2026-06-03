@@ -183,28 +183,108 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     return { order_id: order_id_meta, note: 'logged' };
   }
 
-  if (event.type === 'charge.refunded') {
-    const refund = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string }> } | undefined)?.data?.[0];
-    if (refund) {
-      const refund_currency = refund.currency.toUpperCase();
-      await supabase.rpc('record_refund_atomic', {
-        p_refund_uid: refund.id,
-        p_provider: 'stripe',
-        p_order_id: order_id_meta,
-        p_amount: toMajorUnits(Number(refund.amount), refund_currency),
-        p_currency: refund_currency,
-        p_meta: { stripe: { charge_id: obj.id, account_code } },
-      }).catch((e: unknown) => {
-        // Soft-log; sweep will pick up if needed
-        return supabase.from('audit_logs').insert({
-          action: 'stripe.refund.record_failed',
-          entity_type: 'orders_v2',
-          entity_id: order_id_meta,
-          meta: { error: e instanceof Error ? e.message : String(e) },
-        });
-      });
+  if (event.type === 'charge.refunded' || event.type === 'refund.created' || event.type === 'refund.updated') {
+    let refund: { id: string; amount: number; currency: string; reason?: string | null; payment_intent?: string; charge?: string } | null = null;
+    let pi_id: string | null = null;
+    let charge_id: string | null = null;
+
+    if (event.type === 'charge.refunded') {
+      charge_id = (obj as { id?: string }).id ?? null;
+      pi_id = (obj as { payment_intent?: string }).payment_intent ?? null;
+      const inline = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string; reason?: string | null }> } | undefined)?.data?.[0];
+      if (inline) {
+        refund = { ...inline, payment_intent: pi_id ?? undefined, charge: charge_id ?? undefined };
+      } else if (charge_id) {
+        // Stripe (API >= 2024) no longer embeds refunds.data in charge.refunded payload. Fetch via API.
+        let sk: string | null = null;
+        try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); }
+        catch (e) {
+          await supabase.from('audit_logs').insert({
+            action: 'stripe.refund.secret_lookup_failed',
+            entity_type: 'orders_v2', entity_id: order_id_meta,
+            meta: { account_code, error: e instanceof Error ? e.message : String(e) },
+          });
+        }
+        if (sk) {
+          const resp = await fetch(`https://api.stripe.com/v1/charges/${charge_id}?expand[]=refunds`, {
+            headers: { 'Authorization': `Bearer ${sk}` },
+          });
+          const data = await resp.json();
+          const r = data?.refunds?.data?.[0];
+          if (r) refund = { id: r.id, amount: r.amount, currency: r.currency, reason: r.reason, payment_intent: data?.payment_intent ?? pi_id ?? undefined, charge: charge_id };
+          else {
+            await supabase.from('audit_logs').insert({
+              action: 'stripe.refund.api_fetch_no_refund',
+              entity_type: 'orders_v2', entity_id: order_id_meta,
+              meta: { charge_id, api_status: resp.status, api_data_summary: { has_refunds: !!data?.refunds, count: data?.refunds?.data?.length ?? 0 } },
+            });
+          }
+        }
+      }
+    } else {
+      // refund.created / refund.updated → obj IS the refund
+      const r = obj as { id?: string; amount?: number; currency?: string; reason?: string | null; payment_intent?: string; charge?: string; status?: string };
+      if (r.status && r.status !== 'succeeded') {
+        return { order_id: order_id_meta, note: `refund_skip_status_${r.status}` };
+      }
+      if (r.id && typeof r.amount === 'number' && r.currency) {
+        refund = { id: r.id, amount: r.amount, currency: r.currency, reason: r.reason ?? null, payment_intent: r.payment_intent, charge: r.charge };
+        pi_id = r.payment_intent ?? null;
+        charge_id = r.charge ?? null;
+      }
     }
-    return { order_id: order_id_meta, note: 'refund_recorded' };
+
+    if (!refund) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.refund.no_data',
+        entity_type: 'orders_v2', entity_id: order_id_meta,
+        meta: { event_type: event.type, charge_id, pi_id, account_code },
+      });
+      return { order_id: order_id_meta, note: 'refund_no_data' };
+    }
+
+    const refund_currency = refund.currency.toUpperCase();
+    let parent_payment_id: string | null = null;
+    if (pi_id) {
+      const { data: parent } = await supabase
+        .from('payments_v2')
+        .select('id')
+        .eq('provider', 'stripe')
+        .eq('provider_payment_id', pi_id)
+        .maybeSingle();
+      parent_payment_id = parent?.id ?? null;
+    }
+    if (!parent_payment_id) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.refund.parent_payment_not_found',
+        entity_type: 'orders_v2',
+        entity_id: order_id_meta,
+        meta: { refund_id: refund.id, payment_intent: pi_id, charge_id, account_code },
+      });
+      return { order_id: order_id_meta, note: 'refund_parent_not_found' };
+    }
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('record_refund_atomic_multi', {
+      p_order_id: order_id_meta,
+      p_parent_payment_id: parent_payment_id,
+      p_refund_amount: toMajorUnits(Number(refund.amount), refund_currency),
+      p_refund_uid: refund.id,
+      p_provider: 'stripe',
+      p_refund_reason: refund.reason ?? 'stripe_refund',
+      p_actor_user_id: null,
+      p_target_user_id: null,
+      p_provider_response: { stripe: { charge_id, payment_intent: pi_id, account_code, event_type: event.type, refund } },
+      p_meta_extra: {},
+    });
+    if (rpcErr) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.refund.record_failed',
+        entity_type: 'orders_v2',
+        entity_id: order_id_meta,
+        meta: { error: rpcErr.message, refund_id: refund.id, parent_payment_id },
+      });
+      return { order_id: order_id_meta, note: 'refund_record_failed', error: rpcErr.message };
+    }
+    return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
   }
 
 
