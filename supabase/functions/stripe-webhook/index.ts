@@ -186,12 +186,13 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   if (event.type === 'charge.refunded') {
     const refund = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string }> } | undefined)?.data?.[0];
     if (refund) {
+      const refund_currency = refund.currency.toUpperCase();
       await supabase.rpc('record_refund_atomic', {
         p_refund_uid: refund.id,
         p_provider: 'stripe',
         p_order_id: order_id_meta,
-        p_amount: refund.amount,
-        p_currency: refund.currency.toUpperCase(),
+        p_amount: toMajorUnits(Number(refund.amount), refund_currency),
+        p_currency: refund_currency,
         p_meta: { stripe: { charge_id: obj.id, account_code } },
       }).catch((e: unknown) => {
         // Soft-log; sweep will pick up if needed
@@ -205,6 +206,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     }
     return { order_id: order_id_meta, note: 'refund_recorded' };
   }
+
 
   if (event.type === 'checkout.session.expired') {
     await supabase.from('audit_logs').insert({
