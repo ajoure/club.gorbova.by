@@ -564,6 +564,63 @@ export type Database = {
           },
         ]
       }
+      acquiring_connections: {
+        Row: {
+          account_code: string
+          account_name: string
+          cancel_url: string | null
+          capabilities_snapshot: Json
+          created_at: string
+          id: string
+          is_default: boolean
+          last_error: string | null
+          last_verified_at: string | null
+          locale: string | null
+          provider: string
+          publishable_key: string | null
+          status: string
+          success_url: string | null
+          test_mode: boolean
+          updated_at: string
+        }
+        Insert: {
+          account_code: string
+          account_name: string
+          cancel_url?: string | null
+          capabilities_snapshot?: Json
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          last_error?: string | null
+          last_verified_at?: string | null
+          locale?: string | null
+          provider: string
+          publishable_key?: string | null
+          status?: string
+          success_url?: string | null
+          test_mode?: boolean
+          updated_at?: string
+        }
+        Update: {
+          account_code?: string
+          account_name?: string
+          cancel_url?: string | null
+          capabilities_snapshot?: Json
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          last_error?: string | null
+          last_verified_at?: string | null
+          locale?: string | null
+          provider?: string
+          publishable_key?: string | null
+          status?: string
+          success_url?: string | null
+          test_mode?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       admin_docs: {
         Row: {
           content_text: string
@@ -10548,6 +10605,57 @@ export type Database = {
           },
         ]
       }
+      provider_events: {
+        Row: {
+          account_code: string
+          created_at: string
+          event_id: string
+          event_type: string
+          id: string
+          idempotency_key: string
+          payload: Json
+          processed_at: string | null
+          processing_error: string | null
+          processing_status: string
+          provider: string
+          related_order_id: string | null
+          related_payment_id: string | null
+          signature_valid: boolean
+        }
+        Insert: {
+          account_code: string
+          created_at?: string
+          event_id: string
+          event_type: string
+          id?: string
+          idempotency_key: string
+          payload: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          processing_status?: string
+          provider: string
+          related_order_id?: string | null
+          related_payment_id?: string | null
+          signature_valid: boolean
+        }
+        Update: {
+          account_code?: string
+          created_at?: string
+          event_id?: string
+          event_type?: string
+          id?: string
+          idempotency_key?: string
+          payload?: Json
+          processed_at?: string | null
+          processing_error?: string | null
+          processing_status?: string
+          provider?: string
+          related_order_id?: string | null
+          related_payment_id?: string | null
+          signature_valid?: boolean
+        }
+        Relationships: []
+      }
       provider_subscriptions: {
         Row: {
           amount_cents: number | null
@@ -15260,6 +15368,10 @@ export type Database = {
         Args: { p_mode?: string }
         Returns: Json
       }
+      admin_delete_acquiring_secrets: {
+        Args: { p_connection_id: string }
+        Returns: Json
+      }
       admin_get_club_membership: {
         Args: { p_profile_id: string }
         Returns: {
@@ -15339,6 +15451,10 @@ export type Database = {
       }
       admin_safe_delete_profile: {
         Args: { _dry_run?: boolean; _profile_id: string }
+        Returns: Json
+      }
+      admin_save_acquiring_secret: {
+        Args: { p_connection_id: string; p_kind: string; p_value: string }
         Returns: Json
       }
       admin_tenants_overview: {
@@ -15745,6 +15861,10 @@ export type Database = {
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
+      get_acquiring_secret: {
+        Args: { p_account_code: string; p_kind: string; p_provider: string }
+        Returns: string
+      }
       get_admin_payment_links_v1: {
         Args: { p_limit?: number; p_since?: string }
         Returns: {
