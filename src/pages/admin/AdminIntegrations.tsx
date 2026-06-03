@@ -25,10 +25,12 @@ import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
 import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { OtherIntegrationsTab } from "@/components/integrations/kinescope/OtherIntegrationsTab";
 import { SocialIntegrationsTab } from "@/components/integrations/socials/SocialIntegrationsTab";
+import { PaymentsIntegrationsPanel } from "@/components/admin/integrations/PaymentsIntegrationsPanel";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePermissions } from "@/hooks/usePermissions";
+
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
   crm: Link2,
@@ -58,6 +60,10 @@ export default function AdminIntegrations() {
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [massBroadcastOpen, setMassBroadcastOpen] = useState(false);
   const [getcourseImportOpen, setGetcourseImportOpen] = useState(false);
+  // UI-only PATCH: Stripe dialog state owned here; AddIntegrationDialog
+  // delegates "Stripe" selection via onSelectStripe.
+  const [stripeDialogOpen, setStripeDialogOpen] = useState(false);
+
 
   // Determine active tab from URL
   const getActiveTab = (): IntegrationCategory => {
@@ -219,6 +225,20 @@ export default function AdminIntegrations() {
           <div className="mt-6">
             <SocialIntegrationsTab />
           </div>
+        ) : activeTab === "payments" ? (
+          <div className="mt-6">
+            <PaymentsIntegrationsPanel
+              bepaidInstances={instances || []}
+              isLoading={isLoading}
+              canEdit={canEdit}
+              onEditBepaid={canEdit ? setEditInstance : undefined}
+              onViewLogs={setLogsInstance}
+              onHealthCheckBepaid={canEdit ? handleHealthCheck : undefined}
+              onSyncSettings={canEdit ? setSyncSettingsInstance : undefined}
+              stripeDialogOpen={stripeDialogOpen}
+              onStripeDialogOpenChange={setStripeDialogOpen}
+            />
+          </div>
         ) : (
         <div className="mt-6 space-y-6">
           {/* All instances */}
@@ -253,7 +273,9 @@ export default function AdminIntegrations() {
         onOpenChange={setAddDialogOpen}
         category={addDialogCategory}
         preselectedProvider={addDialogProvider}
+        onSelectStripe={() => setStripeDialogOpen(true)}
       />
+
 
       <EditIntegrationDialog
         instance={editInstance}

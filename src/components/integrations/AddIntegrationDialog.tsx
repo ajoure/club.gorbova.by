@@ -33,14 +33,23 @@ interface AddIntegrationDialogProps {
   onOpenChange: (open: boolean) => void;
   category?: IntegrationCategory;
   preselectedProvider?: string;
+  /**
+   * UI-only PATCH: Stripe doesn't use the generic integration_instances flow.
+   * When provider 'stripe' is selected, this dialog closes and delegates to
+   * StripeConnectionDialog owned by the parent page.
+   */
+  onSelectStripe?: () => void;
 }
+
 
 export function AddIntegrationDialog({
   open,
   onOpenChange,
   category,
   preselectedProvider,
+  onSelectStripe,
 }: AddIntegrationDialogProps) {
+
   const { createInstance } = useIntegrationMutations();
   const [step, setStep] = useState<"provider" | "config">("provider");
   const [selectedProvider, setSelectedProvider] = useState<ProviderConfig | null>(null);
@@ -70,10 +79,17 @@ export function AddIntegrationDialog({
     : PROVIDERS;
 
   const handleSelectProvider = (provider: ProviderConfig) => {
+    // UI-only PATCH: Stripe — delegate to dedicated dialog, do not create integration_instances row.
+    if (provider.id === "stripe") {
+      onOpenChange(false);
+      onSelectStripe?.();
+      return;
+    }
     setSelectedProvider(provider);
     setFormData({ alias: provider.name, is_default: false });
     setStep("config");
   };
+
 
   const handleFieldChange = (key: string, value: string | boolean) => {
     setFormData((prev) => {

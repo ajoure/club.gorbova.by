@@ -91,7 +91,9 @@ const AdminEntitlements = lazy(() => import("./pages/admin/AdminEntitlements"));
 const AdminContent = lazy(() => import("./pages/admin/AdminContent"));
 const AdminDuplicates = lazy(() => import("./pages/admin/AdminDuplicates"));
 const AdminIntegrations = lazy(() => import("./pages/admin/AdminIntegrations"));
-const AdminAcquiring = lazy(() => import("./pages/admin/AdminAcquiring"));
+// UI-only PATCH (Phase 2): Stripe настраивается из /admin/integrations/payments,
+// отдельный маршрут /admin/integrations/acquiring убран.
+
 const TelegramClubMembers = lazy(() => import("./pages/admin/TelegramClubMembers"));
 const TelegramInvites = lazy(() => import("./pages/admin/TelegramInvites"));
 const ProductClubMappings = lazy(() => import("./pages/admin/ProductClubMappings"));
@@ -274,7 +276,7 @@ const App = () => {
               <Route path="/admin/integrations/telegram" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/other" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/socials" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
-              <Route path="/admin/integrations/acquiring" element={<ProtectedRoute><LazyRoute><AdminAcquiring /></LazyRoute></ProtectedRoute>} />
+              {/* /admin/integrations/acquiring removed (UI merge patch — Stripe lives in /admin/integrations/payments). */}
               <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><LazyRoute><TelegramClubMembers /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><LazyRoute><TelegramInvites /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><LazyRoute><ProductClubMappings /></LazyRoute></ProtectedRoute>} />

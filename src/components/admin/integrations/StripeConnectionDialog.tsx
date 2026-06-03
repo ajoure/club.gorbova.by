@@ -37,11 +37,25 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connection?: AcquiringConnectionRow | null;
+  /** UI-only PATCH: when creating a new connection, parent passes the list of
+   * already-used Stripe account_code values so we can auto-suggest a unique one
+   * (stripe_poland, stripe_poland_2, ...). */
+  existingStripeCodes?: string[];
   onSaved: () => void;
 }
 
-export function StripeConnectionDialog({ open, onOpenChange, connection, onSaved }: Props) {
+function nextStripeAccountCode(existing: string[]): string {
+  const base = "stripe_poland";
+  if (!existing.includes(base)) return base;
+  let i = 2;
+  while (existing.includes(`${base}_${i}`)) i++;
+  return `${base}_${i}`;
+}
+
+export function StripeConnectionDialog({ open, onOpenChange, connection, existingStripeCodes = [], onSaved }: Props) {
+  const isEdit = !!connection?.id;
   const [accountName, setAccountName] = useState("Stripe Poland");
+  const [accountCode, setAccountCode] = useState("stripe_poland");
   const [testMode] = useState(true); // Phase 2: locked to test
   const [publishableKey, setPublishableKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -57,20 +71,22 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, onSaved
     if (!open) return;
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     setAccountName(connection?.account_name ?? "Stripe Poland");
+    setAccountCode(connection?.account_code ?? nextStripeAccountCode(existingStripeCodes));
     setPublishableKey(connection?.publishable_key ?? "");
     setSecretKey("");
     setWebhookSecret("");
     setSuccessUrl(
       connection?.success_url ??
-        `${origin}/admin/integrations/acquiring?stripe_result=success`,
+        `${origin}/admin/integrations/payments?stripe_result=success`,
     );
     setCancelUrl(
       connection?.cancel_url ??
-        `${origin}/admin/integrations/acquiring?stripe_result=cancel`,
+        `${origin}/admin/integrations/payments?stripe_result=cancel`,
     );
     setLocale(connection?.locale ?? "ru");
     setIsDefault(connection?.is_default ?? true);
-  }, [open, connection]);
+  }, [open, connection, existingStripeCodes]);
+
 
   const handleSave = async (alsoTest = false) => {
     setSaving(true);
@@ -78,8 +94,9 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, onSaved
       const payload = {
         id: connection?.id,
         provider: "stripe" as const,
-        account_code: "stripe_poland",
+        account_code: accountCode.trim(),
         account_name: accountName,
+
         is_default: isDefault,
         test_mode: testMode,
         publishable_key: publishableKey || null,
@@ -152,8 +169,20 @@ export function StripeConnectionDialog({ open, onOpenChange, connection, onSaved
             </div>
             <div className="space-y-1.5">
               <Label>Account code</Label>
-              <Input value="stripe_poland" disabled className="font-mono" />
+              <Input
+                value={accountCode}
+                onChange={(e) => setAccountCode(e.target.value.replace(/[^a-z0-9_]/gi, "_").toLowerCase())}
+                disabled={isEdit}
+                className="font-mono"
+                placeholder="stripe_poland"
+              />
+              {!isEdit && (
+                <p className="text-xs text-muted-foreground">
+                  Уникальный код подключения. Можно подключить несколько Stripe-аккаунтов.
+                </p>
+              )}
             </div>
+
           </div>
 
           <Alert>
