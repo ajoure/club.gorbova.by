@@ -77,6 +77,7 @@ Deno.serve(async (req) => {
   try {
     const { user, supabase } = await requireSuperAdmin(req);
     const body = (await req.json()) as Body;
+    console.log('[stripe-admin-sandbox-checkout] body keys:', Object.keys(body ?? {}), 'mode:', body?.mode, 'email_len:', (body?.customer_email ?? '').length, 'desc_len:', (body?.description ?? '').length);
 
     // ---------- Legacy simulation branch (unchanged, kept for prior proof) ----------
     if (body.simulate_order_id) {
