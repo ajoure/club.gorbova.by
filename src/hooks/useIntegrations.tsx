@@ -109,6 +109,16 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
   },
   {
+    // UI-only entry: selection routes to StripeConnectionDialog
+    // (see AddIntegrationDialog onSelectStripe). No generic config fields.
+    id: "stripe",
+    name: "Stripe",
+    icon: "CreditCard",
+    category: "payments",
+    description: "Stripe Checkout (sandbox)",
+    fields: [],
+  },
+  {
     id: "smtp",
     name: "SMTP",
     icon: "Mail",
