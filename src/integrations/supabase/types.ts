@@ -1540,6 +1540,8 @@ export type Database = {
           actor_type: string
           actor_user_id: string | null
           created_at: string
+          entity_id: string | null
+          entity_type: string | null
           id: string
           meta: Json | null
           target_user_id: string | null
@@ -1550,6 +1552,8 @@ export type Database = {
           actor_type?: string
           actor_user_id?: string | null
           created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
           id?: string
           meta?: Json | null
           target_user_id?: string | null
@@ -1560,6 +1564,8 @@ export type Database = {
           actor_type?: string
           actor_user_id?: string | null
           created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
           id?: string
           meta?: Json | null
           target_user_id?: string | null
