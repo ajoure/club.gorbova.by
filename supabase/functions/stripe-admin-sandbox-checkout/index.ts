@@ -252,8 +252,9 @@ Deno.serve(async (req) => {
       is_one_time: true,
       metadata: {
         mode,
-        product_id: productRow?.id ?? '',
-        tariff_id: tariffRow?.id ?? '',
+        // adapter contract requires non-empty product_id + tariff_id strings
+        product_id: productRow?.id ?? 'sandbox_manual',
+        tariff_id: tariffRow?.id ?? 'sandbox_manual',
         offer_id: offerRow?.id ?? '',
         sandbox: 'true',
         order_number: String(orderNumber),
