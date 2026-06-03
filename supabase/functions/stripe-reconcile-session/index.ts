@@ -156,10 +156,11 @@ Deno.serve(async (req) => {
       };
       const { error: updErr } = await supabase
         .from('orders_v2')
-        .update({ status: 'paid', paid_at: new Date().toISOString(), meta: mergedMeta })
+        .update({ status: 'paid', meta: mergedMeta })
         .eq('id', order_id);
       order_status_updated = !updErr;
     }
+
 
 
     // 4) Mark event processed
