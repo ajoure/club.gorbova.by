@@ -1,42 +1,53 @@
-// PATCH Phase 2 (fix) — Admin-only Stripe Sandbox Checkout.
+// PATCH Phase 2 (manual + currency-policy fix) — Admin-only Stripe Sandbox Checkout.
 //
-// Scope:
-//   - Creates a test orders_v2 (provider='stripe', status='pending', meta.sandbox=true)
-//   - Calls Stripe adapter to open a real sandbox Checkout Session
-//   - Supports offer-based amount AND manual-amount sandbox fallback
-//   - Returns { url, session_id, order_id }
+// Modes:
+//   - "catalog" — product_id + (tariff_id/offer_id) — текущий путь через products_v2
+//   - "manual"  — без product/tariff/offer; обязательны description, amount, currency, customer_email
+//
+// Currency whitelist (UI + backend): USD, EUR, PLN, BYN, RUB.
+// BYN/RUB НЕ блокируются заранее — отдаём в Stripe; если Stripe откажет —
+// маппим в { ok:false, code:'stripe_currency_rejected_by_stripe', stripe_message }.
+//
+// Order create order:
+//   1) validate
+//   2) resolve profile/user_id by email
+//   3) create Stripe Checkout Session
+//   4) ONLY on success → INSERT orders_v2 (status='pending', provider='stripe', meta.sandbox=true)
+//   No more "pending без cs_*".
 //
 // Hard guards:
 //   - super_admin only
-//   - Stripe connection MUST be active AND test_mode=true
-//   - Does NOT touch bePaid, payment_links, create-payment-checkout.ts
+//   - Stripe connection active AND test_mode=true
 //
-// Add-only.
+// FREEZE: bePaid, payment_links, create-payment-checkout.ts — не трогаем.
 
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { resolveAdapter } from '../_shared/acquiring/index.ts';
 
 interface Body {
-  product_id: string;
+  mode?: 'manual' | 'catalog';
+  // catalog
+  product_id?: string;
   tariff_id?: string;
   offer_id?: string;
+  // manual
+  description?: string;
+  // shared
   amount?: number;
   currency?: string;
   customer_email?: string;
   account_code?: string;
-  sandbox_fallback?: boolean;
+  // legacy simulation (kept for prior proof)
   simulate_order_id?: string;
 }
 
-const ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN']);
-// Stripe minor-unit conventions (ISO 4217 default ×100; zero-decimal exceptions exist
-// but none of our whitelisted currencies are zero-decimal).
+const ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN', 'RUB']);
 const ZERO_DECIMAL = new Set<string>(['JPY', 'KRW', 'VND']);
+const EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
 
 function toMinorUnits(amountMajor: number, currency: string): number {
   if (ZERO_DECIMAL.has(currency)) return Math.round(amountMajor);
-  // Round-half-away-from-zero via Math.round on (×100)
   return Math.round(amountMajor * 100);
 }
 
@@ -47,8 +58,18 @@ function isCurrencyError(msg: string): boolean {
     (s.includes('not supported') ||
       s.includes('invalid') ||
       s.includes('unsupported') ||
-      s.includes('not allowed'))
+      s.includes('not allowed') ||
+      s.includes('not a supported'))
   );
+}
+
+function safeStripeMessage(raw: string): string {
+  // Strip anything that looks like a key/secret prefix
+  return raw
+    .replace(/sk_[A-Za-z0-9_]+/g, '[REDACTED]')
+    .replace(/pk_[A-Za-z0-9_]+/g, '[REDACTED]')
+    .replace(/whsec_[A-Za-z0-9_]+/g, '[REDACTED]')
+    .slice(0, 500);
 }
 
 Deno.serve(async (req) => {
@@ -57,6 +78,7 @@ Deno.serve(async (req) => {
     const { user, supabase } = await requireSuperAdmin(req);
     const body = (await req.json()) as Body;
 
+    // ---------- Legacy simulation branch (unchanged, kept for prior proof) ----------
     if (body.simulate_order_id) {
       const { data: order, error: orderErr } = await supabase
         .from('orders_v2')
@@ -68,16 +90,12 @@ Deno.serve(async (req) => {
       if (order.provider !== 'stripe' || orderMeta.sandbox !== true) {
         return errorResponse('simulation_requires_stripe_sandbox_order', 400);
       }
-
       let profileId = order.profile_id ?? null;
       let userId = order.user_id ?? null;
       const buyerEmail = order.customer_email ?? user.email ?? null;
       if ((!profileId || !userId) && buyerEmail) {
         const { data: profile } = await supabase
-          .from('profiles')
-          .select('id, user_id')
-          .ilike('email', buyerEmail)
-          .maybeSingle();
+          .from('profiles').select('id, user_id').ilike('email', buyerEmail).maybeSingle();
         profileId = profile?.id ?? profileId;
         userId = profile?.user_id ?? userId;
       }
@@ -85,276 +103,145 @@ Deno.serve(async (req) => {
 
       const providerPaymentId = `pi_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`;
       const eventId = `evt_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`;
-      const idempotencyKey = `stripe:simulation:${eventId}`;
       const amountMajor = Number(order.final_price ?? 0);
       if (!Number.isFinite(amountMajor) || amountMajor <= 0) return errorResponse('simulation_invalid_order_amount', 400);
 
       const { data: existingPayment } = await supabase
-        .from('payments_v2')
-        .select('id')
-        .eq('provider', 'stripe')
-        .eq('provider_payment_id', providerPaymentId)
-        .maybeSingle();
-
+        .from('payments_v2').select('id')
+        .eq('provider', 'stripe').eq('provider_payment_id', providerPaymentId).maybeSingle();
       let paymentId = existingPayment?.id ?? null;
       if (!paymentId) {
         const { data: payment, error: payErr } = await supabase
-          .from('payments_v2')
-          .insert({
-            order_id: order.id,
-            user_id: userId,
-            profile_id: profileId,
-            provider: 'stripe',
-            provider_payment_id: providerPaymentId,
-            amount: amountMajor,
-            currency: order.currency,
-            status: 'succeeded',
+          .from('payments_v2').insert({
+            order_id: order.id, user_id: userId, profile_id: profileId,
+            provider: 'stripe', provider_payment_id: providerPaymentId,
+            amount: amountMajor, currency: order.currency, status: 'succeeded',
             paid_at: new Date().toISOString(),
-            meta: {
-              stripe: {
-                simulation: true,
-                checkout_session_id: `cs_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`,
-                source: 'admin_stripe_sandbox_simulation',
-              },
-            },
-          })
-          .select('id')
-          .single();
+            meta: { stripe: { simulation: true, source: 'admin_stripe_sandbox_simulation' } },
+          }).select('id').single();
         if (payErr || !payment) return errorResponse(`simulation_payment_create_failed:${payErr?.message ?? 'unknown'}`, 500);
         paymentId = payment.id;
       }
-
-      const { error: updErr } = await supabase
-        .from('orders_v2')
-        .update({
-          status: 'paid',
-          paid_amount: amountMajor,
-          provider_payment_id: providerPaymentId,
-          user_id: userId,
-          profile_id: profileId,
-          meta: {
-            ...orderMeta,
-            sandbox_simulated_paid: true,
-            sandbox_simulated_paid_at: new Date().toISOString(),
-            sandbox_simulation_source: 'admin_stripe_sandbox_checkout',
-          },
-        })
-        .eq('id', order.id);
-      if (updErr) return errorResponse(`simulation_order_update_failed:${updErr.message}`, 500);
-
+      await supabase.from('orders_v2').update({
+        status: 'paid', paid_amount: amountMajor, provider_payment_id: providerPaymentId,
+        user_id: userId, profile_id: profileId,
+        meta: { ...orderMeta, sandbox_simulated_paid: true, sandbox_simulated_paid_at: new Date().toISOString() },
+      }).eq('id', order.id);
       const { data: insertedEvent, error: eventErr } = await supabase
-        .from('provider_events')
-        .insert({
-          provider: 'stripe',
-          account_code: body.account_code ?? String(orderMeta.account_code ?? 'stripe_poland'),
-          event_id: eventId,
-          event_type: 'checkout.session.completed',
-          idempotency_key: idempotencyKey,
-          payload: {
-            id: eventId,
-            type: 'checkout.session.completed',
-            livemode: false,
-            simulated: true,
-            data: { object: { id: `cs_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`, client_reference_id: order.id, payment_intent: providerPaymentId } },
-          },
-          signature_valid: true,
-          processing_status: 'received',
-          related_order_id: order.id,
-          related_payment_id: paymentId,
-        })
-        .select('id')
-        .maybeSingle();
+        .from('provider_events').insert({
+          provider: 'stripe', account_code: body.account_code ?? 'stripe_poland',
+          event_id: eventId, event_type: 'checkout.session.completed',
+          idempotency_key: `stripe:simulation:${eventId}`,
+          payload: { id: eventId, type: 'checkout.session.completed', simulated: true,
+            data: { object: { id: `cs_sim_${String(order.id).replaceAll('-', '').slice(0, 24)}`, client_reference_id: order.id, payment_intent: providerPaymentId } } },
+          signature_valid: true, processing_status: 'received',
+          related_order_id: order.id, related_payment_id: paymentId,
+        }).select('id').maybeSingle();
       if (eventErr && eventErr.code !== '23505') return errorResponse(`simulation_provider_event_failed:${eventErr.message}`, 500);
-
       const grant = await supabase.functions.invoke('grant-access-for-order', {
         body: { order_id: order.id, source: 'stripe_sandbox_simulation', provider: 'stripe' },
       });
-
       if (insertedEvent?.id) {
-        await supabase
-          .from('provider_events')
-          .update({
-            processed_at: new Date().toISOString(),
-            processing_status: grant.error ? 'failed' : 'processed',
-            processing_error: grant.error?.message ?? null,
-          })
-          .eq('id', insertedEvent.id);
+        await supabase.from('provider_events').update({
+          processed_at: new Date().toISOString(),
+          processing_status: grant.error ? 'failed' : 'processed',
+          processing_error: grant.error?.message ?? null,
+        }).eq('id', insertedEvent.id);
       }
-
-      return jsonResponse({
-        ok: !grant.error,
-        simulated: true,
-        status: grant.error ? 'failed' : (eventErr?.code === '23505' ? 'skipped_duplicate' : 'processed'),
-        order_id: order.id,
-        payment_id: paymentId,
-        provider_payment_id: providerPaymentId,
-        grant_result: grant.data ?? null,
-        grant_error: grant.error?.message ?? null,
-      });
+      return jsonResponse({ ok: !grant.error, simulated: true, order_id: order.id });
     }
 
-    if (!body.product_id) return errorResponse('missing_product_id', 400);
+    // ---------- Mode detection ----------
+    const mode: 'manual' | 'catalog' = body.mode
+      ?? (body.product_id ? 'catalog' : 'manual');
 
+    // ---------- Common validation ----------
     const account_code = body.account_code ?? 'stripe_poland';
     const currency = (body.currency ?? 'USD').toUpperCase();
     if (!ALLOWED_CURRENCIES.has(currency)) {
-      return errorResponse(`currency_not_allowed:${currency}`, 400);
+      return jsonResponse({ ok: false, code: 'currency_not_allowed', message: `Валюта ${currency} не во whitelist (USD/EUR/PLN/BYN/RUB).` });
+    }
+    const amountMajor = typeof body.amount === 'number' ? body.amount : Number(body.amount);
+    if (!Number.isFinite(amountMajor) || amountMajor <= 0) {
+      return jsonResponse({ ok: false, code: 'invalid_amount', message: 'Сумма должна быть > 0.' });
+    }
+    const minorAmount = toMinorUnits(amountMajor, currency);
+    if (!Number.isInteger(minorAmount) || minorAmount <= 0) {
+      return jsonResponse({ ok: false, code: 'minor_units_conversion_failed' });
     }
 
-    // 1) Resolve Stripe connection & enforce test_mode
+    // ---------- Stripe connection ----------
     const { data: conn, error: connErr } = await supabase
       .from('acquiring_connections')
-      .select('*')
-      .eq('provider', 'stripe')
-      .eq('account_code', account_code)
-      .maybeSingle();
+      .select('*').eq('provider', 'stripe').eq('account_code', account_code).maybeSingle();
     if (connErr || !conn) return errorResponse('connection_not_found', 404);
     if (conn.status !== 'active') return errorResponse(`connection_not_active:${conn.status}`, 400);
     if (!conn.test_mode) {
-      return jsonResponse({
-        ok: false,
-        fallback: true,
-        code: 'sandbox_checkout_requires_test_keys',
-        message:
-          'Для тестовой оплаты нужны ключи тестового режима Stripe (pk_test_/sk_test_).',
-      });
+      return jsonResponse({ ok: false, fallback: true, code: 'sandbox_checkout_requires_test_keys',
+        message: 'Для тестовой оплаты нужны тестовые ключи Stripe (pk_test_/sk_test_).' });
     }
 
-    // 2) Resolve Products V2 product (required).
-    // tariffs.product_id points to products_v2.id; legacy products is not the SOT here.
-    const { data: product } = await supabase
-      .from('products_v2')
-      .select('id, name')
-      .eq('id', body.product_id)
-      .maybeSingle();
-    if (!product) return errorResponse('product_not_found', 404);
+    // ---------- Mode-specific data ----------
+    let productRow: { id: string; name: string } | null = null;
+    let tariffRow: { id: string; name: string } | null = null;
+    let offerRow: { id: string; button_label: string; amount: number } | null = null;
+    let description = '';
 
-    // 3) Resolve tariff/offer if provided; otherwise sandbox-fallback path
-    let tariff: { id: string; product_id: string; name: string } | null = null;
-    let offer: { id: string; tariff_id: string; button_label: string; amount: number; is_active: boolean | null } | null = null;
-
-    if (body.tariff_id) {
-      const { data: t } = await supabase
-        .from('tariffs')
-        .select('id, product_id, name')
-        .eq('id', body.tariff_id)
-        .maybeSingle();
-      if (!t || t.product_id !== body.product_id) {
-        return errorResponse('tariff_mismatch', 400);
+    if (mode === 'catalog') {
+      if (!body.product_id) return errorResponse('missing_product_id', 400);
+      const { data: product } = await supabase
+        .from('products_v2').select('id, name').eq('id', body.product_id).maybeSingle();
+      if (!product) return errorResponse('product_not_found', 404);
+      productRow = product as any;
+      if (body.tariff_id) {
+        const { data: t } = await supabase
+          .from('tariffs').select('id, product_id, name').eq('id', body.tariff_id).maybeSingle();
+        if (!t || t.product_id !== body.product_id) return errorResponse('tariff_mismatch', 400);
+        tariffRow = { id: t.id, name: t.name };
       }
-      tariff = t as any;
-    }
-
-    if (body.offer_id) {
-      const { data: o } = await supabase
-        .from('tariff_offers')
-        .select('id, tariff_id, button_label, amount, is_active')
-        .eq('id', body.offer_id)
-        .maybeSingle();
-      if (!o) return errorResponse('offer_not_found', 404);
-      if (body.tariff_id && o.tariff_id !== body.tariff_id) return errorResponse('offer_mismatch', 400);
-      if (o.is_active === false) return errorResponse('offer_inactive', 400);
-      offer = o as any;
-    }
-
-    // Determine final amount (major units)
-    let amountMajor: number;
-    let amountSource: 'offer' | 'override' | 'manual' = 'offer';
-    let originalOfferAmount: number | null = null;
-
-    const bodyAmount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
-    const bodyAmountValid = Number.isFinite(bodyAmount) && bodyAmount > 0;
-
-    if (offer) {
-      const offerAmount = Number(offer.amount);
-      if (bodyAmountValid && Math.abs(bodyAmount - offerAmount) > 0.005) {
-        amountMajor = bodyAmount;
-        amountSource = 'override';
-        originalOfferAmount = offerAmount;
-      } else {
-        amountMajor = offerAmount;
+      if (body.offer_id) {
+        const { data: o } = await supabase
+          .from('tariff_offers').select('id, tariff_id, button_label, amount, is_active')
+          .eq('id', body.offer_id).maybeSingle();
+        if (!o) return errorResponse('offer_not_found', 404);
+        if (body.tariff_id && o.tariff_id !== body.tariff_id) return errorResponse('offer_mismatch', 400);
+        if (o.is_active === false) return errorResponse('offer_inactive', 400);
+        offerRow = { id: o.id, button_label: o.button_label, amount: Number(o.amount) };
       }
+      description = `[SANDBOX] ${productRow!.name}${tariffRow ? ` / ${tariffRow.name}` : ''}${offerRow ? ` / ${offerRow.button_label}` : ''}`;
     } else {
-      // Sandbox manual-amount path
-      if (!body.sandbox_fallback || !bodyAmountValid) {
-        return errorResponse('missing_amount_or_offer', 400);
-      }
-      amountMajor = bodyAmount;
-      amountSource = 'manual';
+      // manual
+      const desc = (body.description ?? '').trim();
+      const emailRaw = (body.customer_email ?? '').trim();
+      if (!desc) return errorResponse('missing_description', 400);
+      if (!emailRaw || !EMAIL_RE.test(emailRaw)) return errorResponse('invalid_customer_email', 400);
+      description = `[SANDBOX manual] ${desc}`;
     }
 
-    if (!Number.isFinite(amountMajor) || amountMajor <= 0) {
-      return errorResponse('invalid_amount', 400);
-    }
-
-    const minorAmount = toMinorUnits(amountMajor, currency);
-    if (!Number.isInteger(minorAmount) || minorAmount <= 0) {
-      return errorResponse('minor_units_conversion_failed', 500);
-    }
-
-    // 4) Generate order_number & create sandbox order
-    const { data: orderNumber, error: onErr } = await supabase.rpc('generate_order_number');
-    if (onErr || !orderNumber) return errorResponse('order_number_failed', 500);
-
-    const customerEmail = body.customer_email ?? user.email ?? null;
+    // ---------- Resolve buyer profile ----------
+    const customerEmail = (body.customer_email ?? user.email ?? '').trim() || null;
     let profileId: string | null = null;
     let userId: string | null = null;
     if (customerEmail) {
       const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, user_id')
-        .ilike('email', customerEmail)
-        .maybeSingle();
+        .from('profiles').select('id, user_id').ilike('email', customerEmail).maybeSingle();
       profileId = profile?.id ?? null;
       userId = profile?.user_id ?? null;
     }
 
-    const meta: Record<string, unknown> = {
-      sandbox: true,
-      sandbox_source: 'admin_stripe_sandbox_checkout',
-      created_by_user_id: user.user_id,
-      account_code,
-      amount_source: amountSource,
-      minor_units: minorAmount,
-    };
-    if (amountSource === 'override' && originalOfferAmount != null) {
-      meta.amount_override = true;
-      meta.original_offer_amount = originalOfferAmount;
-    }
-    if (amountSource === 'manual') {
-      meta.sandbox_fallback = true;
-      meta.manual_amount = true;
-    }
+    // ---------- Generate order_number (kept for tracing in Stripe metadata) ----------
+    const { data: orderNumber, error: onErr } = await supabase.rpc('generate_order_number');
+    if (onErr || !orderNumber) return errorResponse('order_number_failed', 500);
 
-    const { data: order, error: ordErr } = await supabase
-      .from('orders_v2')
-      .insert({
-        order_number: orderNumber as string,
-        product_id: body.product_id,
-        tariff_id: tariff?.id ?? null,
-        offer_id: offer?.id ?? null,
-        base_price: amountMajor,
-        final_price: amountMajor,
-        currency,
-        status: 'pending',
-        provider: 'stripe',
-        customer_email: customerEmail,
-        user_id: userId,
-        profile_id: profileId,
-        meta,
-      })
-      .select('id')
-      .single();
-    if (ordErr || !order) return errorResponse(`order_create_failed:${ordErr?.message ?? 'unknown'}`, 500);
+    // We'll pre-generate the orders_v2 UUID so that Stripe Checkout's
+    // client_reference_id can be set up-front. We INSERT the order ONLY after
+    // Stripe Session creation succeeds.
+    const preOrderId = crypto.randomUUID();
 
-    // 5) Create Stripe Checkout Session via adapter
+    // ---------- Create Stripe Checkout Session FIRST ----------
     const adapter = resolveAdapter('stripe', account_code);
-    const description = `[SANDBOX] ${product.name}${tariff ? ` / ${tariff.name}` : ''}${
-      offer ? ` / ${offer.button_label}` : ' / manual-amount'
-    }`;
-
     const result = await adapter.createCheckout({
-      order_id: order.id,
+      order_id: preOrderId,
       amount: minorAmount,
       currency,
       description,
@@ -363,43 +250,72 @@ Deno.serve(async (req) => {
       cancel_url: conn.cancel_url ?? undefined,
       is_one_time: true,
       metadata: {
-        product_id: body.product_id,
-        tariff_id: tariff?.id ?? '',
-        offer_id: offer?.id ?? '',
+        mode,
+        product_id: productRow?.id ?? '',
+        tariff_id: tariffRow?.id ?? '',
+        offer_id: offerRow?.id ?? '',
         sandbox: 'true',
-        amount_source: amountSource,
+        order_number: String(orderNumber),
       },
-      context: {
-        provider: 'stripe',
-        account_code,
-        business_stream: null,
-      },
+      context: { provider: 'stripe', account_code, business_stream: null },
     });
 
     if (!result.ok) {
-      const errStr = String(result.error ?? 'unknown');
-      const currencyIssue = isCurrencyError(errStr);
-      await supabase
-        .from('orders_v2')
-        .update({
-          meta: {
-            ...meta,
-            checkout_init_error: errStr,
-            ...(currencyIssue ? { stripe_currency_not_supported: true } : {}),
-          },
-        })
-        .eq('id', order.id);
-
-      if (currencyIssue) {
+      const errStr = safeStripeMessage(String(result.error ?? 'unknown'));
+      if (isCurrencyError(errStr)) {
         return jsonResponse({
-          ok: false,
-          fallback: true,
-          code: 'stripe_currency_not_supported',
-          message: `Stripe не принял валюту ${currency} для аккаунта ${account_code}. Выберите другую валюту.`,
-          order_id: order.id,
+          ok: false, fallback: true,
+          code: 'stripe_currency_rejected_by_stripe',
+          stripe_message: errStr,
+          currency,
+          account_code,
         });
       }
-      return jsonResponse({ ok: false, fallback: true, error: errStr, order_id: order.id });
+      return jsonResponse({ ok: false, fallback: true, code: 'stripe_checkout_create_failed', stripe_message: errStr });
+    }
+
+    // ---------- INSERT orders_v2 ONLY after Stripe success ----------
+    const meta: Record<string, unknown> = {
+      sandbox: true,
+      sandbox_source: 'admin_stripe_sandbox_checkout',
+      checkout_mode: mode,
+      created_by_user_id: user.user_id,
+      account_code,
+      minor_units: minorAmount,
+      stripe_session_id: result.session_id,
+    };
+    if (mode === 'manual') {
+      meta.manual_description = body.description?.trim();
+    }
+
+    const { data: order, error: ordErr } = await supabase
+      .from('orders_v2')
+      .insert({
+        id: preOrderId,
+        order_number: orderNumber as string,
+        product_id: productRow?.id ?? null,
+        tariff_id: tariffRow?.id ?? null,
+        offer_id: offerRow?.id ?? null,
+        base_price: amountMajor,
+        final_price: amountMajor,
+        currency,
+        status: 'pending',
+        provider: 'stripe',
+        provider_payment_id: result.session_id ?? null,
+        customer_email: customerEmail,
+        user_id: userId,
+        profile_id: profileId,
+        meta,
+      })
+      .select('id, order_number')
+      .single();
+    if (ordErr || !order) {
+      // Order create failed AFTER Stripe Session created — surface error; the session will simply expire.
+      return jsonResponse({
+        ok: false, fallback: true, code: 'order_insert_failed_after_stripe',
+        stripe_message: safeStripeMessage(ordErr?.message ?? 'unknown'),
+        stripe_session_id: result.session_id,
+      });
     }
 
     return jsonResponse({
@@ -407,10 +323,11 @@ Deno.serve(async (req) => {
       url: result.redirect_url,
       session_id: result.session_id,
       order_id: order.id,
-      order_number: orderNumber,
+      order_number: order.order_number,
       amount: amountMajor,
       minor_units: minorAmount,
       currency,
+      mode,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
