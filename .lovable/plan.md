@@ -1,147 +1,149 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **BYN оставить в UI, но добавить backend fallback-проверку Stripe.**
+1. **Не делать миграцию для уборки ORD-26-00127/00128.**  
+Это разовая sandbox-уборка, не schema change. Сделать через отдельный SQL execute/dry-run с backup/returning, а не миграцией.
+2. **Не требовать от агента “оплатить руками”, если среда Lovable блокирует внешний checkout.**  
+Формулировка:
+3. **Для manual checkout явно указать, что grant-access может быть skipped.**  
+Если нет product/tariff/offer, доступ выдавать нельзя. Это нормально:
   &nbsp;
-  В `stripe-admin-sandbox-checkout` при ошибке Stripe по валюте BYN вернуть понятный код:
   ```text
-  stripe_currency_not_supported
+  grant-access-for-order должен либо корректно skipped: manual_sandbox_no_entitlement, либо не вызываться.
   ```
-  Сообщение:
-2. **В proof не писать полный Checkout URL, если он содержит чувствительные session-параметры.**
-  &nbsp;
-  Достаточно:
-3. **Email fallback уточнить.**
-  &nbsp;
-  Если email пустой:
-  - использовать email текущего admin-пользователя;
-  - если его нет — разрешить checkout без email, если Stripe API допускает;
-  - иначе вернуть понятную ошибку `buyer_email_required`.
-4. **Добавить проверку minor units.**
-  &nbsp;
-  Backend должен конвертировать major units в minor units:
-  ```text
-  10.50 USD → 1050
-  ```
-  Для валют с разными правилами округления использовать существующий/новый helper, не делать на глаз строковой конкатенацией.
-5. **DoD дополнить:**
+  Нельзя требовать entitlement для ручного платежа без тарифа.
+4. **В proof по BYN/RUB фиксировать не только JSON, но и endpoint/action.**  
+Например:
+5. **В DoD добавить zero-secrets check.**
 
 ```text
-- сумма 10.50 корректно уходит в Stripe как 1050 minor units;
-- ошибка неподдерживаемой валюты BYN возвращается понятно;
-- в proof нет полного checkout URL и нет секретов.
+proof/logs не содержат pk_, sk_, whsec_, checkout full URL.
 ```
 
 После этих правок план можно запускать.
 
 &nbsp;
 
-План: Фикс admin-only Stripe Sandbox Checkout (Фаза 2)
+План: PATCH Stripe Phase 2 — Manual Sandbox Checkout + currency policy fix
 
-Скоуп: только `src/components/admin/integrations/StripeSandboxCheckoutDialog.tsx` и `supabase/functions/stripe-admin-sandbox-checkout/index.ts`. Никаких изменений в bePaid, `create-payment-checkout.ts`, public `payment_links`, обычном flow «Ссылка на оплату», Stripe webhook/idempotency/refund.
+## Проблема
 
-## 1. Продукты (только те, у кого есть активные офферы)
+1. Runtime proof Фазы 2 снова заблокирован из-за жёсткой зависимости формы от `products_v2 → tariffs → offers`. Если в каталоге не находится валидной связки product/tariff/offer — кнопка checkout остаётся неактивной.
+2. Форма должна позволять создать ручную тестовую оплату даже без продукта/тарифа/offer.
+3. Валютная логика неверно трактует BYN/RUB: edge function отбрасывает BYN до запроса в Stripe (`stripe_currency_not_supported`), хотя Stripe сам должен решать, принимать ли валюту.
+4. Нужно различать три разные сущности:
+  - валюту выставленного счёта (charge / presentment currency в Stripe);
+  - валюту карты клиента (банк клиента сам конвертирует);
+  - settlement currency Stripe-аккаунта.
+5. В БД остались мусорные pending-заказы `ORD-26-00127` (BYN 100) и `ORD-26-00128` (BYN 4500), созданные без Stripe Checkout Session.
 
-Заменить простой `from('products')` на двухшаговую загрузку:
+## Решение
 
-1. выбрать все `tariff_offers` где `is_active=true AND offer_type='pay_now'`, взять `tariff_id`;
-2. по этим `tariff_id` взять `tariffs (id, product_id) where is_active=true`;
-3. по полученным `product_id` загрузить `products(id, name) where is_active=true`, отсортировать по `name`.
+### 1. UI — `StripeSandboxCheckoutDialog`
 
-В UI:
+Добавить переключатель режимов в верх формы:
 
-- placeholder «Выберите продукт» — никакого автоподстановления (state стартует пустой строкой; убедиться, что нет дефолтного `setProductId`).
-- если список пуст — disabled select + подсказка «Нет продуктов с активными офферами».
+- **По продукту/тарифу** — текущий flow через `products_v2`.
+- **Ручная тестовая оплата** — новый flow, основной fallback.
 
-## 2. Тарифы
+В ручном режиме обязательные поля и только они:
 
-После выбора продукта грузить только тарифы с активными `pay_now` офферами:
+- Название платежа (`description`);
+- Сумма (`amount`);
+- Валюта (`currency`);
+- Email покупателя (`customer_email`).
 
-- `tariffs.select('id, product_id, name').eq('product_id', productId).eq('is_active', true).order('display_order')`;
-- затем отфильтровать по `tariff_offers (tariff_id in …, is_active=true, offer_type='pay_now')`.
+Whitelist валют в UI (Select): `USD`, `EUR`, `PLN`, `BYN`, `RUB`. Никакого GBP.
 
-Если результат пуст — рендерить в SelectContent disabled-строку «У продукта нет активных тарифов».
+Заменить текущее жёлтое предупреждение про BYN на нейтральную подсказку под полем валюты:
 
-## 3. Offer (кнопка оплаты)
+> Stripe принимает валюту платежа отдельно от валюты карты. Если валюта платежа отличается от валюты карты или валюты вывода средств, Stripe или банк клиента может выполнить конвертацию.
 
-После выбора тарифа:
+Кнопка «Создать Checkout» в ручном режиме активна, как только заполнены 4 обязательных поля. Никакой зависимости от продукта/тарифа/offer.
 
-- грузить `tariff_offers` как сейчас (`is_active=true`, `offer_type='pay_now'`, `order('sort_order')`);
-- если массив непуст — автоматически `setOfferId(offers[0].id)`;
-- если пуст — показать checkbox «Sandbox fallback: ввести сумму вручную» и при включении разрешить submit без `offer_id` (см. §6 и backend §B).
+### 2. Backend — `stripe-admin-sandbox-checkout`
 
-## 4. Валюты
+- Расширить input schema: `mode: 'catalog' | 'manual'`. Для `manual` — `{ description, amount, currency, customer_email }`.
+- `ALLOWED_CURRENCIES = ['USD','EUR','PLN','BYN','RUB']` — общий whitelist для обоих режимов.
+- **Снять предварительную блокировку BYN/RUB.** Передавать валюту прямо в `stripe.checkout.sessions.create`.
+- Если Stripe API возвращает ошибку валюты (`StripeInvalidRequestError`, param `currency` / message содержит `currency`), маппить в:
+  ```json
+  { "ok": false, "code": "stripe_currency_rejected_by_stripe", "stripe_message": "<safe message>" }
+  ```
+  Никаких ключей/секретов в ответе.
+- **Порядок создания записей (исправление мусорных pending):**
+  1. Валидация input.
+  2. Резолв profile/user_id по email (как сейчас).
+  3. Попытка создать Stripe Checkout Session.
+  4. Только при успехе (`cs_*` получен) — `INSERT orders_v2` со `status='pending'`, `provider='stripe'`, `provider_payment_id=cs_id`, `meta.sandbox=true`, `meta.checkout_mode='manual'|'catalog'`.
+  5. Если Stripe вернул ошибку — `orders_v2` НЕ создаётся вовсе; вернуть ошибку клиенту. (Альтернатива: если order уже создан для трассировки — сразу проставить `status='failed'`, `meta.sandbox_aborted=true`, `meta.abort_reason='stripe_currency_rejected_by_stripe'`. Выбираем первый вариант — не плодить failed-мусор.)
 
-В UI: `const CURRENCIES = ['USD','EUR','PLN','BYN']` — убрать GBP, не добавлять RUB.
+### 3. Уборка мусора
 
-В edge: `ALLOWED_CURRENCIES = new Set(['USD','EUR','PLN','BYN'])`.
+Пометить существующие `ORD-26-00127`, `ORD-26-00128`:
 
-## 5. BYN warning
+```sql
+UPDATE orders_v2
+SET status = 'failed',
+    meta = meta
+      || jsonb_build_object(
+        'sandbox_aborted', true,
+        'abort_reason', 'stripe_currency_not_supported_legacy_pre_patch'
+      )
+WHERE order_id IN ('ORD-26-00127','ORD-26-00128');
+```
 
-Если `currency === 'BYN'` — под селектом валюты показывать:
-«BYN выбран как бизнес-валюта. Stripe может конвертировать/обработать валюту в зависимости от настроек аккаунта. Если Stripe отклонит валюту, checkout вернёт ошибку.»
-(жёлтый бордер `border-yellow-500/40 bg-yellow-500/10`, без блокировки кнопки).
+### 4. Runtime proof (обязательный)
 
-## 6. Сумма
+Один зелёный сценарий выполняется руками агента:
 
-Поле «Сумма» больше не readOnly:
+- Режим: ручная тестовая оплата.
+- Сумма: 10.
+- Валюта: USD (или EUR).
+- Email: `7500084@gmail.com`.
+- Открыть Stripe Checkout по возвращённой URL.
+- Оплатить картой `4242 4242 4242 4242`.
+- Проверить:
+  - `orders_v2` → `status='paid'`, `provider='stripe'`, `meta.sandbox=true`;
+  - `payments_v2` → запись с `provider='stripe'`, `status='succeeded'`;
+  - `provider_events` → событие из webhook, `processed=true`;
+  - `grant-access-for-order` отработал (entitlement выдан, либо для manual без tariff — корректно залогирован skip).
 
-- при выборе offer — автозаполнить значением `offer.amount` (через `useEffect`) и держать поле редактируемым;
-- если offer нет (sandbox fallback включён) — пустое поле, ручной ввод;
-- валидация: `Number(amount) > 0`; иначе hint «Сумма должна быть больше 0» и блок кнопки.
+### 5. Дополнительная фактическая проверка BYN/RUB
 
-State: `const [amount, setAmount] = useState<string>('')`.
+Отдельные два вызова через ту же форму:
 
-## 7. Email
+- ручной checkout, 10 BYN, email `7500084@gmail.com` — зафиксировать фактический ответ Stripe API;
+- ручной checkout, 10 RUB, email `7500084@gmail.com` — зафиксировать фактический ответ Stripe API.
 
-Валидация лёгкой regex `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`. Пустой email допустим (используется `user.email` на бэке). Если введён и невалиден — inline ошибка + блок кнопки.
+Никаких теоретических рассуждений: в proof кладём реальный JSON ответа (без секретов).
 
-## 8. Кнопка submit
+### 6. Freeze zones (не трогать)
 
-`canSubmit = !!connection && !!productId && (!!offerId || sandboxFallback) && currency && amountValid && emailValid && !submitting`.
+- bePaid и все его edge functions;
+- `create-payment-checkout.ts`;
+- публичные `payment_links` и `/pay/:token`;
+- обычное создание ссылок из карточки контакта;
+- любой код вне `StripeSandboxCheckoutDialog` и `stripe-admin-sandbox-checkout`.
 
-В payload edge-функции добавить `amount` (число, major units) — backend будет использовать его как override.
+## DoD
 
-## A. Backend изменения (минимально, add-only)
+- В форме «Тестовая оплата Stripe» работает режим ручной тестовой оплаты без product/tariff/offer.
+- В UI валюты: `USD`, `EUR`, `PLN`, `BYN`, `RUB`. GBP отсутствует.
+- BYN/RUB не блокируются до запроса в Stripe; решение принимает сам Stripe API.
+- При отказе Stripe возвращается понятный код `stripe_currency_rejected_by_stripe` с safe-message.
+- Pending-orders без Stripe Checkout Session больше не создаются.
+- Мусорные `ORD-26-00127`, `ORD-26-00128` помечены `failed` + `meta.sandbox_aborted=true`.
+- Зелёный сценарий (USD/EUR, карта 4242) выполнен: `orders_v2.paid` + `payments_v2(succeeded)` + `provider_events.processed`.
+- Зафиксированы фактические ответы Stripe API на BYN и RUB.
+- Proof: `.lovable/proofs/stripe_phase_2_manual_sandbox_checkout_currency_fix.md`.
 
-`supabase/functions/stripe-admin-sandbox-checkout/index.ts`:
+## Технические детали
 
-- whitelist валют → `USD/EUR/PLN/BYN`;
-- принимать опциональный `amount?: number` и опциональный `offer_id?: string` (если оба отсутствуют → 400 `missing_amount_or_offer`);
-- если `offer_id` есть — сохранять текущую валидацию tariff/offer match;
-- если `offer_id` отсутствует и передан `amount` (>0) — режим sandbox fallback:
-  - не делать lookup `tariff_offers`;
-  - использовать `offer_id=null` в `orders_v2`;
-  - в `meta` добавить `sandbox_fallback: true, manual_amount: true`;
-- если `amount` передан вместе с `offer_id` и отличается от `offer.amount` — использовать переданный `amount`, в `meta` записать `amount_override: true, original_offer_amount`;
-- остальные guard'ы (super_admin, test_mode, account_code) — без изменений.
+**Файлы:**
 
-## DoD / Proof
+- `src/components/admin/integrations/StripeSandboxCheckoutDialog.tsx` — добавить tabs `catalog | manual`, manual-форму, обновлённый currency whitelist + подсказку.
+- `supabase/functions/stripe-admin-sandbox-checkout/index.ts` — поддержка `mode='manual'`, снятие предварительной блокировки BYN/RUB, маппинг Stripe-ошибки в `stripe_currency_rejected_by_stripe`, перенос `INSERT orders_v2` после успешного `sessions.create`.
+- Миграция-уборка `ORD-26-00127`, `ORD-26-00128`.
+- `.lovable/proofs/stripe_phase_2_manual_sandbox_checkout_currency_fix.md` — runtime proof с тремя API-ответами (USD/EUR success + BYN actual + RUB actual).
 
-После реализации проверить вручную:
-
-1. dropdown «Продукт» — только продукты с активными offers;
-2. «Тариф» открывается и показывает корректный список;
-3. «Кнопка оплаты» автоматически выбирает первую;
-4. Валюты: USD/EUR/PLN/BYN, GBP отсутствует;
-5. BYN показывает warning;
-6. Сумма автоподтягивается и редактируется;
-7. Кнопка активна при валидных данных;
-8. Создаётся `orders_v2` с `provider='stripe'`, `meta.sandbox=true`;
-9. Открывается Stripe Checkout (`https://checkout.stripe.com/...`).
-
-Proof-документ: `.lovable/proofs/stripe_phase_2_admin_sandbox_checkout_fix.md` — содержит чек-лист DoD, SQL-выборку нового sandbox order и URL Checkout session.
-
-## Технические детали (для подрядчика)
-
-Файлы:
-
-- `src/components/admin/integrations/StripeSandboxCheckoutDialog.tsx` — переписать загрузку продуктов/тарифов, убрать readOnly, добавить amount/sandboxFallback/emailValid state, BYN warning, обновить `canSubmit`.
-- `supabase/functions/stripe-admin-sandbox-checkout/index.ts` — обновить `ALLOWED_CURRENCIES`, добавить ветку `manual_amount`/`sandbox_fallback`, опциональный `offer_id`.
-
-Freeze-зоны (не трогать):
-
-- `supabase/functions/bepaid-*`
-- `supabase/functions/_shared/create-payment-checkout.ts`
-- `supabase/functions/stripe-create-checkout/index.ts`
-- `supabase/functions/stripe-webhook*`
-- `payment_links`, `CreatePublicLinkDialog`.
+**Не меняем:** schema `orders_v2/payments_v2/provider_events`, `grant-access-for-order`, webhook `stripe-webhook`.
