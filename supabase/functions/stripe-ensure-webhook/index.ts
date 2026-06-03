@@ -92,12 +92,12 @@ Deno.serve(async (req) => {
       endpoint = created_res.data;
       created = true;
     } else {
-      const missing = ENABLED_EVENTS.filter((e) => !existing.enabled_events.includes(e));
+      const missing = ENABLED_EVENTS.filter((e) => !existing!.enabled_events.includes(e));
       if (missing.length > 0) {
         const body: Array<[string, string]> = [];
         for (const ev of ENABLED_EVENTS) body.push(['enabled_events[]', ev]);
         const upd = await stripeFetch<WebhookEndpoint>(
-          `/webhook_endpoints/${encodeURIComponent(existing.id)}`,
+          `/webhook_endpoints/${encodeURIComponent(existing!.id)}`,
           { secret_key: sk, method: 'POST', formBody: body },
         );
         if (!upd.ok) return jsonResponse({ ok: false, step: 'update', error: upd.error });
@@ -109,19 +109,15 @@ Deno.serve(async (req) => {
     // 3) If we just created, Stripe returns `secret`. Save to vault.
     let secret_saved = false;
     if (created && endpoint?.secret) {
-      const svc = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      );
       const { error: rpcErr } = await svc.rpc('admin_save_acquiring_secret', {
-        p_provider: 'stripe',
-        p_account_code: code,
+        p_connection_id: connection_id,
         p_kind: 'webhook_signing_secret',
         p_value: endpoint.secret,
       });
       if (rpcErr) return jsonResponse({ ok: false, step: 'vault_save', error: rpcErr.message });
       secret_saved = true;
     }
+
 
     return jsonResponse({
       ok: true,
