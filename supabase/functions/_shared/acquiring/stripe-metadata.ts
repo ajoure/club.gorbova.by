@@ -42,11 +42,31 @@ export function buildStripeMetadata(input: StripeMetadataInput): ValidatedStripe
     }
   }
 
+  // MP-A2-1: removed literal 'default'. Caller MUST resolve business_stream via
+  // _shared/acquiring/business-stream-resolver (offer→product→override). When the
+  // resolver returns null/empty we fall back to the explicit 'unspecified' sentinel
+  // and emit a console audit so analytics can detect uncovered combinations.
+  let business_stream = input.business_stream?.trim() ?? '';
+  if (!business_stream) {
+    business_stream = 'unspecified';
+    try {
+      // structured audit line — picked up by edge_logs
+      console.warn(JSON.stringify({
+        audit: 'business_stream_unspecified',
+        order_id: input.order_id,
+        product_id: input.product_id,
+        tariff_id: input.tariff_id,
+        offer_id: input.offer_id ?? null,
+        account_code: input.account_code,
+      }));
+    } catch { /* noop */ }
+  }
+
   const meta: ValidatedStripeMetadata = {
     order_id: input.order_id,
     product_id: input.product_id,
     tariff_id: input.tariff_id,
-    business_stream: input.business_stream ?? 'default',
+    business_stream,
     account_code: input.account_code,
     provider: 'stripe',
   };
