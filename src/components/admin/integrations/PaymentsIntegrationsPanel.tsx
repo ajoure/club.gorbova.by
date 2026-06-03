@@ -56,6 +56,8 @@ import {
   type AcquiringConnectionRow,
 } from "./StripeConnectionDialog";
 import { StripeEventsTab } from "./StripeEventsTab";
+import { StripeSandboxCheckoutDialog } from "./StripeSandboxCheckoutDialog";
+import { FlaskConical } from "lucide-react";
 
 interface Props {
   bepaidInstances: IntegrationInstance[];
