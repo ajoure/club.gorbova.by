@@ -15861,6 +15861,10 @@ export type Database = {
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
+      get_acquiring_secret: {
+        Args: { p_account_code: string; p_kind: string; p_provider: string }
+        Returns: string
+      }
       get_admin_payment_links_v1: {
         Args: { p_limit?: number; p_since?: string }
         Returns: {
