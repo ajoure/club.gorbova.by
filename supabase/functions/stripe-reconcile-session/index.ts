@@ -128,7 +128,7 @@ Deno.serve(async (req) => {
             order_id,
             provider: 'stripe',
             provider_payment_id: pi_id,
-            amount: amount_total,
+            amount: amount_major,
             currency,
             status: 'succeeded',
             paid_at: new Date().toISOString(),
@@ -152,24 +152,33 @@ Deno.serve(async (req) => {
     });
     const grant_ok = !grantErr;
 
-    // 3b) Ensure orders_v2 status = 'paid' (idempotent, sandbox-safe)
+    // 3b) Ensure orders_v2 status = 'paid' + paid_amount/currency/paid_at/provider_payment_id
     const { data: ordRow } = await supabase
       .from('orders_v2')
-      .select('status, meta')
+      .select('status, paid_amount, meta')
       .eq('id', order_id)
       .maybeSingle();
     let order_status_updated = false;
-    if (ordRow && ordRow.status !== 'paid') {
+    const needsUpdate = !ordRow || ordRow.status !== 'paid' || Number(ordRow.paid_amount ?? 0) <= 0;
+    if (ordRow && needsUpdate) {
       const mergedMeta = {
         ...(ordRow.meta ?? {}),
         stripe_reconcile: { session_id, payment_intent: pi_id, at: new Date().toISOString() },
       };
       const { error: updErr } = await supabase
         .from('orders_v2')
-        .update({ status: 'paid', meta: mergedMeta })
+        .update({
+          status: 'paid',
+          paid_amount: amount_major,
+          currency,
+          provider_payment_id: pi_id ?? session_id,
+          paid_at: new Date().toISOString(),
+          meta: mergedMeta,
+        })
         .eq('id', order_id);
       order_status_updated = !updErr;
     }
+
 
 
 
