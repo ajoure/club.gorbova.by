@@ -58,10 +58,12 @@ Deno.serve(async (req) => {
     const session_status = String(s.status ?? '');
     const payment_status = String(s.payment_status ?? '');
     const pi_id = (s.payment_intent as string) ?? null;
-    const amount_total = Number(s.amount_total ?? 0);
+    const amount_total_minor = Number(s.amount_total ?? 0);
     const currency = String(s.currency ?? 'usd').toUpperCase();
+    const amount_major = toMajorUnits(amount_total_minor, currency);
     const md = (s.metadata ?? {}) as Record<string, string>;
     order_id = order_id ?? md.order_id ?? (s.client_reference_id as string | undefined) ?? null;
+
 
     if (!order_id) return jsonResponse({ ok: false, error: 'no_order_id_in_metadata' });
 
