@@ -73,8 +73,10 @@ Deno.serve(async (req) => {
       existing = null;
     }
 
+    let endpoint: WebhookEndpoint | null = existing ?? null;
     let created = false;
     let updated = false;
+
 
     // 2) If exists but missing events → update; if missing → create
     if (!existing) {
