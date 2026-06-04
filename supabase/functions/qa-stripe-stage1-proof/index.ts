@@ -271,6 +271,7 @@ Deno.serve(async (req) => {
 
     // ============ G4: active duplicate ============
     // Flip current pending sub to active + provider state=active
+    await cleanupPendingForUser(subV2Id); // strip any stray pending residue
     if (subV2Id && provRowId) {
       try {
         await admin.from('subscriptions_v2')
