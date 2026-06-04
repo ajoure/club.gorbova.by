@@ -21,6 +21,13 @@ export interface CheckoutRequest {
   cancel_url?: string;
   customer_email?: string;
   is_one_time?: boolean;
+  // MP-A2-2: resolved Stripe Customer (per (user_id, account_code)).
+  // When set, adapter wires `customer: customer_id` into the Checkout Session.
+  customer_id?: string | null;
+  // MP-A2-2: when true on one-time checkout, adapter adds
+  // `payment_intent_data[setup_future_usage]=off_session` so the PaymentMethod
+  // is attached to the Customer for future off-session reuse.
+  save_payment_method?: boolean;
   context: AcquiringContext;
 }
 
