@@ -152,10 +152,15 @@ Deno.serve(async (req) => {
   const results: any = { verify_tag: VERIFY_TAG, scenarios: {}, created_customer_ids: [] };
   const created: string[] = [];
   try {
-    // Pre-clean any existing customers for this user
-    const pre = await sfetch<any>(SK, `/customers/search?query=${encodeURIComponent(`metadata['user_id']:'${USER_ID}'`)}&limit=50`);
-    for (const c of pre.data?.data ?? []) await sfetch(SK, `/customers/${c.id}`, { method: 'DELETE' });
-    await new Promise((r) => setTimeout(r, 1500));
+    // Pre-clean any existing customers for this email (list is strongly consistent;
+    // search has ~1 min index lag and may miss/show ghost rows).
+    for (const email of [EMAIL, '7500084+s6@gmail.com']) {
+      const pre = await sfetch<any>(SK, `/customers?email=${encodeURIComponent(email)}&limit=100`);
+      for (const c of pre.data?.data ?? []) {
+        await sfetch(SK, `/customers/${c.id}`, { method: 'DELETE' });
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2500));
 
     await resetCache();
     const before_s1 = (await readMeta()).stripe?.customers ?? {};
