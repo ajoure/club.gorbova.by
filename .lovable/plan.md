@@ -3,8 +3,8 @@
 - GAP-A — BYN Price Capability: ✅ **PASS**
 - GAP-B — Billing Period Resolver: ✅ **PASS**
 - GAP-C — Product/Price Provisioning: ✅ **PASS** (pilot `prod_UdwjYeet4QFbtW` / `price_1Teeq26UYJj2vm0GPXHSLKlz`)
-- GAP-D — Runtime Stripe Subscription Capability Proof: ⏳ **IN PROGRESS** (edge function `admin-stripe-subscription-capability-probe` задеплоена; proof заполняется по факту run create→pay→inspect→cancel→verify_isolation)
-- Phase 3.1 Infinite Subscription MVP Execution: 🔒 BLOCKED до PASS GAP-D
+- GAP-D — Runtime Stripe Subscription Capability Proof: ✅ **PASS** (executed 2026-06-04 18:00–18:04 UTC агентом через browser automation; proof: `.lovable/proofs/stripe_phase_3_1_3_gap_d_runtime_capability_v1.md`; sub `sub_1Tefbl6UYJj2vm0GRRkvZEBQ` canceled; isolation diff=0 во всех бизнес-таблицах)
+- Phase 3.1 Infinite Subscription MVP Execution: 🟡 READY (план — следующий шаг, ещё не stretched)
 
 ---
 
