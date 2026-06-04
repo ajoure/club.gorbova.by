@@ -87,16 +87,18 @@ WHERE tariff_id IN ( … 5 tariff_id … ) AND is_active = true;
 
 ## 4. Бизнес-SOT периода (зафиксировано)
 
-| Величина                                 | Источник                                        | Семантика                                              |
-|------------------------------------------|-------------------------------------------------|--------------------------------------------------------|
-| Период биллинга (как часто списывать)    | `tariff_offers.meta.recurring.billing_period_*` | Вход для Stripe `recurring.interval/interval_count`   |
-| Длительность доступа после оплаты        | `tariffs.access_days`                           | Используется `grant-access-for-order`, **не** биллинг |
-| Сумма (цена позиции)                     | `tariff_prices` (active row), `final_price`     | **SOT для Stripe `unit_amount`** (GAP-C)              |
-| Сумма (legacy/диагностика)               | `tariff_offers.amount`                          | **Fallback only**, не используется для Stripe mapping |
-| Валюта                                   | `tariff_prices.currency` (active row)           | SOT для Stripe `currency` (GAP-C)                     |
-| Класс «recurring» offer'а                | `meta.recurring.is_recurring=true`              | Core memory: Product Type SOT                          |
+| Величина                                 | Источник                                        | Приоритет | Семантика                                              |
+|------------------------------------------|-------------------------------------------------|-----------|--------------------------------------------------------|
+| Период биллинга (как часто списывать)    | `tariff_offers.meta.recurring.billing_period_*` | SOT       | Вход для Stripe `recurring.interval/interval_count`   |
+| Длительность доступа после оплаты        | `tariffs.access_days`                           | SOT       | Используется `grant-access-for-order`, **не** биллинг |
+| **Сумма (цена позиции)**                 | **`tariff_prices` (active row), `final_price`** | **SOT (P1)** | **Единственный источник для Stripe `unit_amount`** (GAP-C) |
+| Сумма (legacy/диагностика)               | `tariff_offers.amount`                          | fallback (P2), diagnostic only | **В Stripe НЕ уходит**. Используется только для warning-audit при расхождении с `tariff_prices.final_price` |
+| **Валюта**                               | **`tariff_prices.currency` (active row)**       | **SOT (P1)** | SOT для Stripe `currency` (GAP-C)                     |
+| Класс «recurring» offer'а                | `meta.recurring.is_recurring=true`              | SOT       | Core memory: Product Type SOT                          |
 
 **Инвариант:** `access_days` и `billing interval` семантически разные. На пилоте они совпадают (30/30), но резолвер их не объединяет и не выводит одно из другого.
+
+**Инвариант цены:** при отсутствии активной строки в `tariff_prices` резолвер GAP-C обязан вернуть `price_source_missing` (HTTP 422), а **не** падать на `tariff_offers.amount`. `tariff_offers.amount` используется исключительно для diagnostic audit.
 
 ---
 
