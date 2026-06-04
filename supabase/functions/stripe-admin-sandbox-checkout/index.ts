@@ -269,6 +269,28 @@ Deno.serve(async (req) => {
 
     const preOrderId = crypto.randomUUID();
 
+    // MP-A2-2: catalog branch may resolve a Stripe Customer when buyer profile is known.
+    // Manual branch (no real user_id) MUST NOT create a Customer from email alone.
+    let customer_id: string | null = null;
+    if (mode === 'catalog' && userId && customerEmail) {
+      try {
+        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+        const cust = await resolveStripeCustomer(supabase, sk, {
+          user_id: userId,
+          account_code,
+          email: customerEmail,
+        });
+        customer_id = cust.customer_id;
+      } catch (e) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe_customer_resolver_failed',
+          entity_type: 'orders_v2',
+          entity_id: preOrderId,
+          meta: { error: e instanceof Error ? e.message : String(e), account_code, mode },
+        });
+      }
+    }
+
     // ---------- Create Stripe Checkout Session FIRST ----------
     const adapter = resolveAdapter('stripe', account_code);
     const result = await adapter.createCheckout({
@@ -277,6 +299,9 @@ Deno.serve(async (req) => {
       currency,
       description,
       customer_email: customerEmail ?? undefined,
+      customer_id,
+      // Save PM only when caller asked AND we have a customer (pilot one-time path).
+      save_payment_method: body.save_payment_method === true && !!customer_id,
       return_url: urls.success_url,
       cancel_url: urls.cancel_url,
       is_one_time: true,
@@ -288,6 +313,7 @@ Deno.serve(async (req) => {
         offer_id: offerRow?.id ?? '',
         sandbox: 'true',
         order_number: String(orderNumber),
+        user_id: userId ?? '',
       },
       context: { provider: 'stripe', account_code, business_stream: businessStream },
     });
