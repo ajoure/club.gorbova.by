@@ -38,6 +38,18 @@ Master Sprint статус (зафиксировано):
 - Никаких изменений resolver/adapter/webhook кода. Если по ходу прогона выявлен баг, который блокирует prove — НЕ фиксить молча. Зафиксировать finding и предложить отдельный mini-plan.
 - Допускаются точечные edits в `supabase/functions/stripe-create-checkout/index.ts` и `stripe-webhook/index.ts` ТОЛЬКО для добавления `account_code`/`business_stream` в top-level `orders_v2.meta` / `payments_v2.meta` (если выяснится, что они лежат только в nested `metadata`). Любое изменение — с before/after snippet в proof.
 
+## STOP-GATE: запрет искусственных артефактов
+
+Для закрытия F-PRR-09 и F-PRR-11 **категорически запрещено** использовать любые синтетические/симулированные объекты:
+
+- `stripe-admin-sandbox-checkout` (sandbox-simulate), `manual-sandbox-order`, любые admin-симуляторы.
+- `simulate_order_id`, искусственные `order_id`, помеченные `meta.sandbox=true` или `meta.sandbox_source`.
+- Идентификаторы вида `pi_sim_*`, `cs_sim_*`, `evt_sim_*`, `pi_fake_*` и любые non-Stripe-issued.
+- Ручные INSERT в `provider_events`, `payments_v2`, `orders_v2` для имитации webhook.
+- Любые «искусственные provider_events».
+
+Принимаются **только реальные Stripe test-mode объекты**, выпущенные Stripe API: `cs_test_*`, `pi_*` (real), `evt_*` (real), `ch_*` (real). Любой синтетический артефакт в evidence = автоматический FAIL PRR-FIX-01 и возврат на доработку.
+
 ## Подготовка (read-only verify)
 
 1. Подтвердить, что продукт «Платная консультация» (`products_v2.code = 'consultation'`) имеет:
