@@ -211,8 +211,8 @@ function resolveStripeRecurring(input: Input): Output;
 
 - **Offer:** `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e` (CHAT, Gorbova Club).
 - **Период:** `mode=days, days=30` → резолвер: `interval=month, count=1`. PASS.
-- **Сумма/валюта (SOT для GAP-C):** `tariff_prices` (active row, CHAT): `BYN 100.00`.
-- **Валютная капабильность Stripe:** закрыта в **GAP-A = PASS** (см. `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`). В GAP-B валютные проверки не блокер.
+- **Сумма/валюта (SOT для GAP-C):** `tariff_prices` (active row, CHAT): `BYN 100.00`. `tariff_offers.amount=100.00` совпадает → diagnostic-warning не сработает.
+- **Валютная капабильность Stripe:** **BYN Price Capability = PASS** (закрыто в **GAP-A**, см. `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`). Валютная часть пилота закрыта; **GAP-B валютой не блокируется**. Subscription/Checkout-капабильность в BYN остаётся на GAP-D (runtime proof).
 - **access_days:** 30 (используется только `grant-access-for-order`, не уходит в Stripe Price).
 
 **Целевой Stripe Price для GAP-C:**
