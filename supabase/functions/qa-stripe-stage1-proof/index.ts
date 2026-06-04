@@ -27,8 +27,8 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 // Fixtures
 const QA_ADMIN_EMAIL = 'qa.admin@gorbova.test';
 const QA_ADMIN_PASSWORD = 'QaAdmin!2026';
-const QA_ADMIN_USER_ID = '2989ffb9-9351-4bf1-a018-6dcb7b4da723';
-const QA_USER_ID = '3bdd6b71-80e4-439e-9b83-3a952698dd5a';
+const QA_ADMIN_USER_ID = '913bc4cf-c68c-4a1b-a98d-adf778ef02d1'; // auth.users.id (FK target for user_roles_v2)
+const QA_USER_ID = '3bdd6b71-80e4-439e-9b83-3a952698dd5a'; // profiles.id (FK target for subscriptions_v2.user_id)
 const PRODUCT_ID = '11c9f1b8-0355-4753-bd74-40b42aa53616';
 const TARIFF_ID = '31f75673-a7ae-420a-b5ab-5906e34cbf84';
 const TARIFF_OFFER_ID = '6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e';
