@@ -469,7 +469,7 @@ Deno.serve(async (req) => {
     }
 
     // ============ Final cleanup ============
-    await cleanupPendingForUser();
+    await cleanupAllForUser();
     await ROLE_CLEANUP();
 
     const allOk = report.every((r) => r.ok);
