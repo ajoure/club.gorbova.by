@@ -4,7 +4,12 @@
 - GAP-B — Billing Period Resolver: ✅ **PASS**
 - GAP-C — Product/Price Provisioning: ✅ **PASS** (pilot `prod_UdwjYeet4QFbtW` / `price_1Teeq26UYJj2vm0GPXHSLKlz`)
 - GAP-D — Runtime Stripe Subscription Capability Proof: ✅ **PASS** (executed 2026-06-04 18:00–18:04 UTC агентом через browser automation; proof: `.lovable/proofs/stripe_phase_3_1_3_gap_d_runtime_capability_v1.md`; sub `sub_1Tefbl6UYJj2vm0GRRkvZEBQ` canceled; isolation diff=0 во всех бизнес-таблицах)
-- Phase 3.1 Infinite Subscription MVP Execution: 🟡 READY (план — следующий шаг, ещё не stretched)
+- Phase 3.1 Infinite Subscription MVP Execution: 🟡 IN PROGRESS
+  - Stage 0 — Pre-MVP Webhook Contract Discovery: ✅ **PASS** (2026-06-04; proof: `.lovable/proofs/stripe_phase_3_1_stage_0_webhook_contract_discovery_v1.md`)
+  - Stage 1 — Pre-create writer + adapter extension: ⏳ ожидает approve
+  - Stage 2 — Webhook 5 event-веток + shared resolver: ⏸ TODO
+  - Stage 3 — Runtime Proof G1–G10 + bePaid non-regression: ⏸ TODO
+  - Stage 4 — Lost Webhook Recovery (reconcile/replay): ⏸ TODO
 
 ---
 
