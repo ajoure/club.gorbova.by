@@ -27,6 +27,8 @@ import { resolveAdapter } from '../_shared/acquiring/index.ts';
 import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
+import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 interface Body {
   mode?: 'manual' | 'catalog';
@@ -41,6 +43,9 @@ interface Body {
   currency?: string;
   customer_email?: string;
   account_code?: string;
+  // MP-A2-2: explicit save-PM flag. Catalog branch with resolved user_id may set true to
+  // test pilot one-time saved-card flow. Manual branch ignores (no resolver, no user).
+  save_payment_method?: boolean;
   // legacy simulation (kept for prior proof)
   simulate_order_id?: string;
 }
@@ -264,6 +269,28 @@ Deno.serve(async (req) => {
 
     const preOrderId = crypto.randomUUID();
 
+    // MP-A2-2: catalog branch may resolve a Stripe Customer when buyer profile is known.
+    // Manual branch (no real user_id) MUST NOT create a Customer from email alone.
+    let customer_id: string | null = null;
+    if (mode === 'catalog' && userId && customerEmail) {
+      try {
+        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+        const cust = await resolveStripeCustomer(supabase, sk, {
+          user_id: userId,
+          account_code,
+          email: customerEmail,
+        });
+        customer_id = cust.customer_id;
+      } catch (e) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe_customer_resolver_failed',
+          entity_type: 'orders_v2',
+          entity_id: preOrderId,
+          meta: { error: e instanceof Error ? e.message : String(e), account_code, mode },
+        });
+      }
+    }
+
     // ---------- Create Stripe Checkout Session FIRST ----------
     const adapter = resolveAdapter('stripe', account_code);
     const result = await adapter.createCheckout({
@@ -272,6 +299,9 @@ Deno.serve(async (req) => {
       currency,
       description,
       customer_email: customerEmail ?? undefined,
+      customer_id,
+      // Save PM only when caller asked AND we have a customer (pilot one-time path).
+      save_payment_method: body.save_payment_method === true && !!customer_id,
       return_url: urls.success_url,
       cancel_url: urls.cancel_url,
       is_one_time: true,
@@ -283,6 +313,7 @@ Deno.serve(async (req) => {
         offer_id: offerRow?.id ?? '',
         sandbox: 'true',
         order_number: String(orderNumber),
+        user_id: userId ?? '',
       },
       context: { provider: 'stripe', account_code, business_stream: businessStream },
     });
@@ -310,6 +341,8 @@ Deno.serve(async (req) => {
       account_code,
       minor_units: minorAmount,
       stripe_session_id: result.session_id,
+      stripe_customer_id: customer_id,
+      save_payment_method: body.save_payment_method === true && !!customer_id,
     };
     if (mode === 'manual') {
       meta.manual_description = body.description?.trim();
@@ -355,6 +388,7 @@ Deno.serve(async (req) => {
       minor_units: minorAmount,
       currency,
       mode,
+      stripe_customer_id: customer_id,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';

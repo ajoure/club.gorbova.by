@@ -63,7 +63,17 @@ export const stripeAdapter: AcquiringAdapter = {
         ['line_items[0][price_data][unit_amount]', String(Math.round(req.amount))],
         ['line_items[0][price_data][product_data][name]', req.description ?? `Order ${req.order_id}`],
       ];
-      if (req.customer_email) form.push(['customer_email', req.customer_email]);
+      // MP-A2-2: resolved Customer takes precedence over customer_email.
+      // Stripe rejects sessions that set both `customer` and `customer_email`.
+      if (req.customer_id) {
+        form.push(['customer', req.customer_id]);
+      } else if (req.customer_email) {
+        form.push(['customer_email', req.customer_email]);
+      }
+      // MP-A2-2: attach PaymentMethod to Customer on success for future off-session reuse.
+      if (req.save_payment_method && req.customer_id) {
+        form.push(['payment_intent_data[setup_future_usage]', 'off_session']);
+      }
       for (const pair of metadataToFormPairs(validated as unknown as Record<string, string>)) {
         form.push(pair);
         // also mirror to payment_intent_data so PI carries metadata

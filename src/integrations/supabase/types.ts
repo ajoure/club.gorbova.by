@@ -10445,6 +10445,7 @@ export type Database = {
           loyalty_updated_at: string | null
           marketing_consent: boolean | null
           merged_to_profile_id: string | null
+          meta: Json
           onboarding_completed_at: string | null
           onboarding_dismissed_at: string | null
           phone: string | null
@@ -10507,6 +10508,7 @@ export type Database = {
           loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
+          meta?: Json
           onboarding_completed_at?: string | null
           onboarding_dismissed_at?: string | null
           phone?: string | null
@@ -10569,6 +10571,7 @@ export type Database = {
           loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
+          meta?: Json
           onboarding_completed_at?: string | null
           onboarding_dismissed_at?: string | null
           phone?: string | null

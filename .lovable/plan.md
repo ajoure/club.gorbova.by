@@ -1,325 +1,314 @@
 да, согласен, с учетом правок:
 
-```text
-MP-A2-1 и MP-A2-2 можно утверждать к execute по очереди.
+MP-A2-2 можно approve к execute.
+
+&nbsp;
 
 Правки перед execute:
 
-1. MP-A2-1 — `rg "'default'"` по всему проекту может дать много ложных срабатываний.
-   В proof разделить:
-   - Stripe payment context hardcodes;
-   - unrelated UI/default values;
-   - comments/tests.
-   Не требовать 0 по всему проекту, требовать 0 только по Stripe payment context MUST-FIX.
+&nbsp;
 
-2. MP-A2-1 — `PUBLIC_APP_HOST` из `src/utils` нельзя напрямую импортировать в edge-функции.
-   Для edge-функций сделать отдельный shared helper или продублировать безопасную server-side константу:
-   - сначала брать acquiring_connections.success_url/cancel_url;
-   - затем server-side PUBLIC_APP_HOST;
-   - без импорта из `src/`.
+1. В пункте 2.1 уточнить:
 
-3. MP-A2-2 — временный второй Stripe account_code для S9 не должен требовать новых live/test секретов.
-   Это должен быть safe fake/mock connection или controlled test entry, который не делает реальный Stripe API call, либо использовать тот же test secret через отдельный `account_code` только в тестовом окружении.
-   В proof явно указать, что это multi-account resolver test, а не реальный второй Stripe-аккаунт.
+   setup_future_usage ставить не только для recurring продуктов.
 
-4. MP-A2-2 — `stripe.customers.search` может иметь задержку индексации.
-   Если search сразу не находит созданного customer — использовать повтор с короткой паузой или fallback, но не создавать дубль.
+   
 
-5. MP-A2-2 — не хранить `pm_` в `profiles.meta`.
-   В `profiles.meta` хранить только `customer_id` per account_code. PaymentMethod ID можно показывать только в proof/API dump, но не сохранять локально.
+   Для цели MP-A2-2 нам нужно доказать сохранение карты на one-time пилоте.
 
-6. Pilot Readiness Review — пункт “No live keys” формулировать так:
-   - активное пилотное подключение должно быть `test_mode=true`;
-   - наличие live-подключений в системе само по себе не FAIL, если они не используются в пилоте.
-```
+   
 
-После этих правок:
+   Поэтому:
 
-```text
-Approve MP-A2-1 execute.
-После отчета по MP-A2-1 отдельно approve MP-A2-2.
+   - для пилотного one-time checkout «Платная консультация» ставить setup_future_usage='off_session';
 
-План: Stripe Phase 3.1 — MP-A2-1, MP-A2-2, Pilot Readiness Review (v2, plan-mode)
-```
+   - для остальных one-time потоков — только если явно включён флаг save_payment_method;
 
-Все три блока — plan-mode. Execute только после отдельного approve каждого. Add-only, test-mode only, без изменений bePaid, без новых таблиц, без live-ключей. Все proof и отчёты на русском, в `.lovable/proofs/`.
+   - для recurring — по необходимости Stripe сам сохраняет PM в Subscription flow.
 
-Общий порядок: **MP-A2-1 → MP-A2-2 → Pilot Readiness Review → Stage C Runtime Pilot**. Каждый этап утверждается отдельно.
+&nbsp;
+
+2. Manual branch sandbox-checkout без real user_id может оставаться без resolver.
+
+   Но если в manual форме указан email, не создавать Customer только по email.
+
+   Это должно быть явно зафиксировано:
+
+   - no user_id → no customer resolver;
+
+   - email-only customer creation запрещён.
+
+&nbsp;
+
+3. S9 multi-account:
+
+   временная запись второго account_code должна быть создана только в test environment и удалена после verify.
+
+   В proof показать cleanup:
+
+   - created test connection;
+
+   - used;
+
+   - removed/disabled;
+
+   - no active fake connection remains.
+
+&nbsp;
+
+4. provider_events для customer mismatch:
+
+   если создание provider_events без Stripe event_id технически неудобно, допустимо использовать audit_logs + отдельный proof/manual_review table.
+
+   Но нельзя молча продолжать без видимого статуса.
+
+   Минимум:
+
+   - audit;
+
+   - UI/логическая причина manual_review;
+
+   - proof.
+
+&nbsp;
+
+5. Для email_fallback:
+
+   не использовать Customer без metadata.user_id, если в Stripe найдено больше одного Customer с таким email.
+
+   В этом случае:
+
+   - audit email_ambiguous;
+
+   - create new Customer;
+
+   - не делать backfill metadata чужому/неоднозначному Customer.
+
+&nbsp;
+
+6. В финальный grep добавить:
+
+   ```text
+
+   payment_method_details
+
+   card
+
+   exp_month
+
+   exp_year
+
+Но классифицировать: чтение из Stripe API для proof допустимо, сохранение локально запрещено.
+
+7. В proof не публиковать полные email/имена/секреты.  
+Можно маскировать:
+  - email: [7500***@gmail.com](mailto:7500***@gmail.com)
+  - customer_id/payment_method id можно показывать полностью;
+  - card details не показывать.
+
+После этих правок можно запускать MP-A2-2 execute.
+
+Ключевое: для пилота консультаций нужно именно сохранить карту на one-time checkout, иначе MP-A2-2 не докажет свою цель.
+
+&nbsp;
+
+# План: Stripe Phase 3.1 — MP-A2-2 (v3)
+
+**Stripe Customer Resolver + Saved Payment Method**
+
+Режим: plan-mode. Execute только после approve. После принятия MP-A2-2 — сразу Pilot Readiness Review без отдельного approve.
 
 ---
 
-# Mini-Plan 1 — MP-A2-1: Account / Business Stream Defaults Cleanup (v2)
+## 0. Контекст и инварианты
 
-## Цель
+- **SOT идентичности Customer:** пара `(user_id, account_code)`. Один пользователь = **разные** Stripe Customer в разных аккаунтах. Никогда не сливаем кросс-аккаунт.
+- **Email и name НЕ являются ключом идентичности.** Они могут меняться без создания нового Customer.
+- **Add-only** хранилище: `profiles.meta.stripe.customers[<account_code>] = { customer_id, created_at, last_synced_at, source }`. Никакой миграции схемы, никаких новых таблиц.
+- **bePaid freeze**: ни один файл `bepaid-*`, `_shared/create-payment-checkout.ts`, `bepaid_*` таблицы не трогаем.
+- **Test mode only.** Live ключи не вводятся, не используются.
+- **Карты локально не хранятся.** Stripe = SOT по PaymentMethod.
 
-Убрать хардкоды:
+---
 
-- `account_code = 'stripe_poland'` (H3, H7);
-- `business_stream = 'default'` (H6);
-- fallback URL `https://example.com` (H4).
+## 1. Customer Resolver — контракт
 
-Поведение становится data-driven: значения резолвятся из `acquiring_connections`, product/tariff/offer meta, production domain resolver.
+Новый shared-модуль `supabase/functions/_shared/acquiring/stripe-customer-resolver.ts`.
 
-## Scope
-
-- `supabase/functions/_shared/acquiring/resolver.ts` — добавить `resolveDefaultStripeAccount()`.
-- `supabase/functions/_shared/acquiring/business-stream-resolver.ts` — существующий, подключить в точках хардкода.
-- `supabase/functions/_shared/stripe-metadata.ts` — убрать literal `'default'`.
-- `supabase/functions/stripe-create-checkout/index.ts`.
-- `supabase/functions/stripe-admin-sandbox-checkout/index.ts`.
-- `supabase/functions/stripe-webhook/index.ts` (refund-ветка).
-- Frontend: точечно заменить хардкоды, найденные расширенным audit (см. шаг 1).
-
-bePaid, RLS, schema, `record_refund_atomic_multi` — не трогаем.
-
-## Шаги
-
-### 1. Расширенный hardcode audit (правка #3)
-
-Запуск по всему проекту, не только Stripe-функции:
-
-```bash
-rg -n "stripe_poland|'default'|example\.com|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET" \
-   --type ts --type tsx --type sql --type toml
-```
-
-Каждое попадание классифицируется: `MUST-FIX-A2-1` / `BACKLOG` / `OK` (env reference, comment, test fixture). Результат — `.lovable/proofs/mp_a2_1_extended_audit.md`. Frontend MUST-FIX попадания включаются в Scope этого mini-plan.
-
-### 2. Default account resolver
+Сигнатура:
 
 ```ts
-async function resolveDefaultStripeAccount(): Promise<{
-  account_code: string;
-  test_mode: boolean;
-  success_url: string | null;
-  cancel_url: string | null;
+resolveStripeCustomer(supabase, stripe, {
+  user_id: string,
+  account_code: string,
+  email: string,
+  name?: string,
+}): Promise<{
+  customer_id: string,
+  source: 'profile_cache' | 'stripe_search' | 'email_fallback' | 'created',
+  mismatch?: { profile_customer_id: string, stripe_customer_id: string }
 }>
 ```
 
-SQL: `SELECT account_code, test_mode, success_url, cancel_url FROM acquiring_connections WHERE provider='stripe' AND is_default=true AND status='active' LIMIT 1`. Если нет — throw `no_active_default_stripe_account` (HTTP 500, audit).
+### Порядок поиска (строго):
 
-### 3. Business stream contract
+1. **profile_cache** — `profiles.meta.stripe.customers[account_code].customer_id`. Если есть → `stripe.customers.retrieve()` для валидации (не deleted). Hit → return.
+2. **stripe_search** — `stripe.customers.search({ query: "metadata['user_id']:'<uid>' AND metadata['account_code']:'<code>'" })`. Hit → записать в profile cache (`source: 'stripe_search'`) → return.
+3. **email_fallback** — `stripe.customers.list({ email })`. Если найден Customer **без** `metadata.user_id` или с тем же `user_id` → backfill metadata (`user_id`, `account_code`) → записать в profile cache (`source: 'email_fallback'`) → **отдельный audit `stripe_customer_email_fallback_used**` (warning-level) → return.
+  - Если найден Customer с **другим** `metadata.user_id` → **не использовать**, перейти к шагу 4 + audit `stripe_customer_email_collision`.
+4. **created** — `stripe.customers.create({ email, name, metadata: { user_id, account_code, business_stream? } })` → записать в profile cache (`source: 'created'`) → return.
 
-- `stripe-metadata.ts`: параметр `business_stream` обязательный non-null.
-- Caller обязан передать значение из `resolveBusinessStream({ offer, tariff, product })`.
-- Если резолвер вернул null → пишем `'unspecified'` (НЕ `'default'`) + audit `business_stream_unspecified` с `{product_id, tariff_id, offer_id}`.
+### Mismatch policy (требование №3)
 
-### 4. URL resolver (правка #1 — без жёсткого throw)
+Если на шаге 2 `stripe_search` вернул `customer_id`, **отличный** от `profiles.meta.stripe.customers[account_code].customer_id`:
 
-Приоритет:
+- **НЕ перезаписывать автоматически.**
+- Audit `stripe_customer_mismatch` с обоими id.
+- Запись в `provider_events` с `processing_status='manual_review'` и тегом `reason='stripe_customer_mismatch'`.
+- Резолвер возвращает `profile_cache` customer_id (старое поведение, без изменений), вместе с полем `mismatch`.
+- Решение о merge — только ручной операцией супер-админа отдельным mini-plan.
 
-1. `acquiring_connections.success_url` / `cancel_url` (per-account).
-2. `PUBLIC_APP_HOST` из `src/utils/publicAppHost.ts` (production canonical, `https://gorbova.by`) + конвенциональные пути `/payment/success`, `/payment/cancel`.
-3. **Sandbox-only fallback**: если `test_mode=true` AND вызов через `stripe-admin-sandbox-checkout` → разрешаем `${PUBLIC_APP_HOST}/admin/payments/sandbox-return` с audit `sandbox_fallback_url_used`. Production checkout sandbox-fallback НЕ использует.
-4. `example.com` удаляется полностью из кода.
+### Email/name change (требование №6)
 
-Никакого жёсткого `throw no_redirect_url_configured` — для test-mode всегда есть deterministic fallback через PUBLIC_APP_HOST.
-
-### 5. Замена хардкодов
-
-Точечные правки в файлах из Scope. Публичный API edge-функций не меняется (request/response shape без изменений).
-
-### 6. End-to-end metadata trace (правка #2)
-
-Обязательная проверка, что `account_code` и `business_stream` доходят до:
-
-- Stripe Checkout Session `metadata`;
-- Stripe PaymentIntent `metadata` (наследование из session);
-- `payments_v2.meta.{account_code, business_stream}`;
-- `orders_v2.meta.{account_code, business_stream}`;
-- `provider_events.account_code` (для webhook);
-- Stripe Dashboard (визуально на Session / PaymentIntent).
-
-Каждая точка — отдельный bullet в proof с реальными значениями.
-
-### 7. Verify
-
-- Smoke: `stripe-admin-sandbox-checkout` → Checkout Session с правильными metadata + правильным success_url из connection.
-- 10/10 регрессия Phase 2 — PASS.
-- E2E metadata trace (шаг 6) — 6/6 точек PASS.
-
-### 8. Proof
-
-`.lovable/proofs/mp_a2_1_defaults_cleanup_v1.md` (RU):
-
-- `mp_a2_1_extended_audit.md` (классификация всех попаданий по проекту);
-- diff по каждому файлу;
-- smoke output (Session ID, metadata JSON, success_url);
-- e2e metadata trace по 6 точкам с реальными значениями;
-- 10/10 регрессия;
-- `git diff --stat supabase/functions/bepaid-*` — пусто.
-
-## DoD
-
-- Все три хардкода удалены (`rg` по всему проекту в MUST-FIX = 0).
-- E2E metadata trace 6/6 PASS.
-- Smoke + регрессия PASS.
-- Proof создан, на русском.
-- User approve получен **до** execute.
+- При hit на шаге 1/2 если `email` или `name` в Stripe отличается от текущего → `stripe.customers.update({ email, name })`. `customer_id` **не меняется**. Audit `stripe_customer_profile_synced` (info-level).
 
 ---
 
-# Mini-Plan 2 — MP-A2-2: Stripe Customer Resolver + Saved Payment Method (v2)
+## 2. Интеграция в Stripe checkout/webhook
 
-## Цель
+### 2.1 `stripe-create-checkout` / `stripe-admin-sandbox-checkout` (catalog branch)
 
-Reuse карты для пилота «Платная консультация»:
+- Перед созданием `checkout.sessions.create` вызвать `resolveStripeCustomer(...)`.
+- Передать `customer: customer_id` в session payload.
+- В `payment_intent_data` добавить `setup_future_usage: 'off_session'` (для recurring продуктов — по resolver `tariff_offers.meta.recurring.is_recurring`; для one-time не ставим, чтобы не платить за хранение PM без нужды).
+- Manual branch sandbox-checkout — **без resolver** (нет реального user_id), как сейчас.
 
-- Stripe `Customer` per `(user_id, account_code)` (SOT, не email);
-- хранение `customer_id` в `profiles.meta.stripe.customers[account_code]`;
-- сохранение карты через `setup_future_usage='off_session'` (или эквивалент по Discovery);
-- повторная покупка использует тот же `Customer`;
-- разные `account_code` → разные `Customer` (multi-account safe).
+### 2.2 `stripe-webhook`
 
-**Зависимость**: MP-A2-1 закрыт + approved.
+- На `checkout.session.completed`: если `session.customer` != `profile_cache[account_code]` → audit `stripe_customer_mismatch_on_webhook` + `manual_review`, **не перезаписывать**.
+- Иначе: `mergeStripeCustomerIntoProfile()` обновляет `last_synced_at`.
 
-## Scope
+---
 
-- `supabase/functions/_shared/acquiring/stripe-customer-resolver.ts` (новый).
-- `supabase/functions/stripe-create-checkout/index.ts`.
-- `supabase/functions/stripe-admin-sandbox-checkout/index.ts`.
-- `supabase/functions/stripe-webhook/index.ts` (`checkout.session.completed` → merge `customer_id`).
+## 3. Хранилище в `profiles.meta.stripe.customers`
 
-НЕ создаём таблицы, не меняем schema `profiles`, не храним PAN/last4/fingerprint локально.
+Структура (add-only JSON merge, без миграции):
 
-## SOT (правка #4)
-
-**Идентичность Customer = `(user_id, account_code)`. Email и name — НЕ идентичность, могут меняться без создания нового Customer.**
-
-При смене email/имени:
-
-- `profiles.meta.stripe.customers[account_code].customer_id` остаётся;
-- если email менялся, опционально шлём `stripe.customers.update(customer_id, { email })` — но НЕ создаём нового.
-
-## Поиск Customer (правка #6 — приоритет SOT, email как последний fallback)
-
-Порядок lookup в `resolveStripeCustomerId({user_id, account_code, email, name})`:
-
-1. **Cache hit**: `profiles.meta.stripe.customers[account_code].customer_id` → вернуть, source `profile_cache`.
-2. **Stripe search by metadata** (НЕ list-by-email): `stripe.customers.search({ query: \`metadata['user_id']:'${user_id}' AND metadata['account_code']:'${account_code}' })`→ если найден, merge в profile, source`stripe_search_metadata`.
-3. **Email fallback** (только если шаги 1-2 пусты): `stripe.customers.list({ email, limit: 100 })` → фильтр по `metadata.user_id === user_id AND metadata.account_code === account_code`. Source `stripe_list_email_fallback`. Audit предупреждение `customer_email_fallback_used`.
-4. **Create**: `stripe.customers.create({ email, name, metadata: { user_id, account_code } })`. Source `stripe_create`. Merge в profile.
-
-Audit `stripe_customer_resolved` с `{user_id, account_code, customer_id, created, source}`.
-
-## Контракт
-
-```ts
-async function resolveStripeCustomerId(args: {
-  user_id: string;
-  account_code: string;
-  email: string;
-  name?: string;
-}): Promise<{ customer_id: string; created: boolean; source: 'profile_cache'|'stripe_search_metadata'|'stripe_list_email_fallback'|'stripe_create' }>
+```json
+{
+  "stripe": {
+    "customers": {
+      "stripe_poland": {
+        "customer_id": "cus_...",
+        "created_at": "2026-06-03T...",
+        "last_synced_at": "2026-06-03T...",
+        "source": "stripe_search"
+      },
+      "stripe_eu": { "customer_id": "cus_...", ... }
+    }
+  }
+}
 ```
 
-## Шаги
-
-### 1. Discovery
-
-- Подтвердить `setup_future_usage='off_session'` в `mode=payment` для cards в test-mode.
-- Подтвердить доступность `stripe.customers.search` API (нужен версионный bump search index — обычно minute-level).
-- `.lovable/proofs/mp_a2_2_stripe_capabilities.md`.
-
-### 2. Customer resolver
-
-Реализовать `_shared/acquiring/stripe-customer-resolver.ts` по контракту.
-
-### 3. Profile meta merge
-
-Helper `mergeStripeCustomerIntoProfile(user_id, account_code, customer_id)` — idempotent jsonb-merge через RPC или `jsonb_set`. Не перезаписывает существующий `customer_id` если он отличается — в этом случае throw `customer_id_collision` + audit (защита от случайной потери reference).
-
-### 4. Checkout integration
-
-- Резолвим `customer_id` ДО создания Session.
-- `customer: customer_id` в session params.
-- `payment_intent_data: { setup_future_usage: 'off_session' }`.
-- `customer_creation` НЕ ставим.
-
-### 5. Webhook
-
-`checkout.session.completed` → если `session.customer` есть и не совпадает с profile → audit + manual_review (не молча перезаписываем). Если совпадает или profile пуст — `mergeStripeCustomerIntoProfile`.
-
-### 6. Saved PM gap check
-
-Проверить, может ли клиент выбрать сохранённую карту в Stripe Checkout `mode=payment`. Зафиксировать gap в proof. Follow-up предложить:
-
-- Stripe Customer Portal (MVP управление PM, без выбора в Checkout);
-- либо Stripe Payment Element (отдельный mini-plan).
-
-### 7. Verify (расширенный, правки #4 и #5)
-
-- **S1** Новый user → checkout → Customer создан → profile записан.
-- **S2** Тот же user → второй checkout → тот же `customer_id`, новый Customer НЕ создан.
-- **S3** Stripe Dashboard / API dump: у Customer появилась `PaymentMethod`, привязка `PaymentMethod.customer === customer_id` подтверждена.
-- **S4** Локально PAN/last4/token НЕ хранится (`rg "card_number|pan|fingerprint|last4" supabase/functions/stripe-*` — 0).
-- **S5** UI ответ Checkout Session не содержит `payment_method` details (только session URL).
-- **S6 (правка #4a) — смена email**: user меняет email в profile → новый checkout → тот же `customer_id`, Stripe Customer.email опционально обновлён.
-- **S7 (правка #4b) — смена name**: то же, тот же `customer_id`.
-- **S8 (правка #4c) — повторная покупка**: 3-й checkout того же user → тот же `customer_id`.
-- **S9 (правка #5 negative test) — multi-account**: один user, ДВА разных `account_code` (`stripe_poland` + тестовый второй connection в `acquiring_connections`, добавляется временно через INSERT в test) → checkout по каждому → ДВА разных `customer_id`, оба сохранены в `profiles.meta.stripe.customers[]` по разным ключам.
-- Регрессия: 10/10 Phase 2 + smoke MP-A2-1 — PASS.
-
-### 8. Proof (правка #7)
-
-`.lovable/proofs/mp_a2_2_customer_resolver_v1.md` (RU):
-
-- diff по каждому файлу;
-- 9 сценариев с реальными Stripe test IDs (`cus_...`, `pm_...`, `cs_test_...`, `pi_...`);
-- **Stripe Dashboard screenshot ИЛИ API dump** для S3: объекты `Customer`, `PaymentMethod`, и подтверждение `PaymentMethod.customer === Customer.id` (через `stripe.paymentMethods.list({ customer })`);
-- JSON-фрагменты `profiles.meta.stripe.customers` для тестовых users (S1, S9 multi-account);
-- раздел «Gap: выбор saved PM в Checkout» с follow-up рекомендацией;
-- `git diff --stat supabase/functions/bepaid-*` — пусто.
-
-## Не делаем
-
-- Не создаём таблицы для PM/customers.
-- Не храним PAN/fingerprint/last4 локально.
-- Не возвращаем `payment_method` объекты в UI.
-- Не включаем live.
-- Не меняем bePaid.
-- Не реализуем Payment Element / Customer Portal в этом mini-plan.
-
-## DoD
-
-- 9/9 runtime сценариев PASS (включая multi-account negative test).
-- Stripe Dashboard / API dump приложен.
-- Saved PM gap зафиксирован.
-- Proof создан, на русском.
-- User approve получен **до** execute.
+Helper `mergeStripeCustomerIntoProfile(supabase, user_id, account_code, payload)` — единственная точка записи. Использует `profiles` UPDATE с jsonb merge (`meta = meta || jsonb_build_object(...)`).
 
 ---
 
-# Pilot Readiness Review (правка #8) — отдельный gate перед Stage C
+## 4. Saved Payment Method — гарантии и gap
 
-После закрытия MP-A2-2, **до** старта Runtime Pilot, выполняется отдельный read-only review с чек-листом.
+### Что делаем:
 
-## Чек-лист (PASS/FAIL по каждому пункту)
+- `customer` присутствует в Checkout Session → Stripe автоматически attach PaymentMethod к Customer после успешной оплаты (при `setup_future_usage`).
+- Локально PaymentMethod **не хранится**. Никаких `card_number`, `pan`, `fingerprint`, `last4` колонок не добавляем.
+- В UI пользователь видит сохранённые карты **только** через Stripe (Customer Portal или Payment Element в follow-up).
 
-1. **Account resolver** — `resolveDefaultStripeAccount()` возвращает корректный `(account_code, test_mode, success_url, cancel_url)` из БД. Хардкод `stripe_poland` отсутствует.
-2. **Customer resolver** — 4-step lookup (cache → search → email fallback → create) работает; SOT = `(user_id, account_code)`.
-3. **Saved Payment Method** — `setup_future_usage='off_session'` активен; PM привязан к Customer (подтверждено через `stripe.paymentMethods.list({customer})`).
-4. **Customer Portal readiness** — оценить, нужен ли Stripe Customer Portal Session для пилота (только консультация, single charge — может НЕ требоваться). Решение зафиксировать.
-5. **Hardcode audit** — повторный `rg` по правке #3 показывает 0 MUST-FIX попаданий.
-6. **Phase 2 regression** — 10/10 PASS.
-7. **bePaid frozen** — `git diff` по `bepaid-*` за период MP-A2-1+MP-A2-2 — пусто.
-8. **Multi-account safety** — S9 negative test переподтверждён (один user, два account_code, два разных Customer).
-9. **E2E metadata trace** — 6/6 точек (Checkout/PaymentIntent/payments_v2/orders_v2/provider_events/Dashboard) — PASS.
-10. **No live keys** — `acquiring_connections.test_mode=true` для активного дефолтного Stripe-аккаунта; в env нет live-ключей.
+### Известный gap (фиксируется в proof):
 
-## Proof
-
-`.lovable/proofs/pilot_readiness_review_v1.md` (RU): по каждому пункту PASS/FAIL с короткой ссылкой на источник (proof-файл, SQL, screenshot).
-
-## Gate
-
-Runtime Pilot Stage C запускается **только при 10/10 PASS**. Любой FAIL — возврат в соответствующий mini-plan, без перехода к пилоту.
+- Stripe Checkout `mode=payment` (one-time) **не показывает picker сохранённых карт** автоматически — он только сохраняет новую. Чтобы пользователь мог выбрать сохранённую карту, нужен один из двух follow-up'ов:
+  - **Вариант A:** Customer Portal — кнопка «Управлять способами оплаты» в кабинете.
+  - **Вариант B:** Перевод checkout-флоу на Payment Element (Embedded) с явным `payment_method_types` + `customer` — позволяет picker.
+- Решение по follow-up'у выносим в backlog `.lovable/backlog/stripe_saved_pm_followup.md` (создаётся в proof). MP-A2-2 это **не реализует** — только фиксирует gap.
 
 ---
 
-# Общий порядок execute
+## 5. Verify (runtime, test_mode)
 
-1. Approve MP-A2-1 v2 → execute → proof → review.
-2. Approve MP-A2-2 v2 → execute → proof → review.
-3. Approve Pilot Readiness Review → execute (read-only) → proof.
-4. Только при 10/10 PASS Pilot Readiness Review → Approve Stage C Runtime Pilot («Платная консультация»).
+Все сценарии — на `stripe_poland` (single account). Multi-account S9 — на симуляции второго account_code через временную запись в `acquiring_connections` (test-only, удалить после verify).
+
+
+| #      | Сценарий                                                                                             | Ожидание                                                                                     |
+| ------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| S1     | Новый user, нет profile cache → create                                                               | `source='created'`, metadata.user_id + account_code в Stripe                                 |
+| S2     | Повторная покупка тем же user → profile cache hit                                                    | `source='profile_cache'`, тот же `customer_id`                                               |
+| S3     | Чистый profile cache, но Customer существует в Stripe (metadata) → search hit                        | `source='stripe_search'`, cache заполнен                                                     |
+| S4     | Email fallback: Customer без metadata.user_id, email совпал                                          | `source='email_fallback'`, audit `email_fallback_used`, metadata backfilled                  |
+| S5     | Email collision: Customer с **чужим** user_id в metadata                                             | НЕ использован, audit `email_collision`, создан новый Customer                               |
+| S6     | Смена email пользователя → повторная покупка                                                         | `customer_id` тот же, в Stripe email обновлён, audit `profile_synced`                        |
+| S7     | Смена name пользователя → повторная покупка                                                          | `customer_id` тот же, name обновлён, audit `profile_synced`                                  |
+| S8     | Mismatch: ручная подмена `profile.customer_id` ≠ `stripe.search`                                     | НЕ перезаписан, audit `mismatch`, `provider_events.processing_status='manual_review'`, proof |
+| **S9** | **Один user, два account_code (`stripe_poland` + временный `stripe_test_eu`) → два разных Customer** | Два разных `cus_*`, profile.meta.customers содержит обе записи независимо                    |
+| S10    | Saved PM: после S1 проверить через Stripe API `paymentMethods.list({ customer, type: 'card' })`      | PM существует, `pm.customer === customer_id` (требование №5)                                 |
+
+
+### Доказательства для proof
+
+- Реальные `cus_*` и `pm_*` id для каждого сценария.
+- Dump Stripe API `customers.retrieve(cus_*)` и `paymentMethods.list({ customer })` (не Dashboard screenshot).
+- JSON-фрагмент `profiles.meta.stripe.customers` **до** и **после** каждого ключевого сценария (требование №7) — минимум для S1, S2, S6, S9.
+- Audit log entries для S4, S5, S6, S8.
+
+### Финальный grep (требование №8)
+
+В конце MP-A2-2 — `rg -n "card_number|pan|fingerprint|last4"` по `supabase/functions/`, `src/`. Допускаются только:
+
+- Существующие bePaid-related упоминания (не трогаем).
+- Возможные UI labels вида «последние 4 цифры» без сохранения значения.
+
+Никаких новых записей карт в БД проекта.
+
+---
+
+## 6. Артефакты
+
+
+| Файл                                                               | Назначение                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------ |
+| `supabase/functions/_shared/acquiring/stripe-customer-resolver.ts` | Резолвер + merge helper                          |
+| `supabase/functions/stripe-create-checkout/index.ts`               | Edit: вызов resolver, передача `customer`        |
+| `supabase/functions/stripe-admin-sandbox-checkout/index.ts`        | Edit: catalog branch использует resolver         |
+| `supabase/functions/stripe-webhook/index.ts`                       | Edit: webhook merge + mismatch guard             |
+| `.lovable/proofs/mp_a2_2_customer_resolver_v1.md`                  | RU proof, 10 сценариев, до/после JSON, grep, gap |
+| `.lovable/backlog/stripe_saved_pm_followup.md`                     | Customer Portal vs Payment Element decision      |
+
+
+---
+
+## 7. Out of scope
+
+- bePaid (полностью заморожен).
+- Live mode.
+- Любые миграции схемы / новые таблицы.
+- Реальная реализация Customer Portal / Payment Element (только gap в backlog).
+- Авто-merge mismatched customer_id.
+- Кросс-аккаунт слияние Customer.
+
+---
+
+## 8. DoD MP-A2-2
+
+1. Resolver создан, ключ идентичности = `(user_id, account_code)`.
+2. Email — никогда не первичный ключ, только последний шаг + отдельный audit.
+3. Mismatch не правится автоматически (audit + manual_review).
+4. S9 (multi-account, два Customer для одного user) — PASS.
+5. S10 — `PaymentMethod.customer === customer_id` подтверждён через Stripe API.
+6. S6/S7 — email/name change не создаёт нового Customer.
+7. Proof содержит `profiles.meta.stripe.customers` до/после.
+8. Финальный grep `card_number|pan|fingerprint|last4` — чисто.
+9. bePaid freeze runtime подтверждён.
+10. Phase 2 regression 10/10 — без изменений.
+
+---
+
+## 9. Next step после approve
+
+Execute MP-A2-2 → сразу **Pilot Readiness Review** (без отдельного approve между ними, по решению пользователя) → gate 10/10 → Stage C Runtime Pilot.

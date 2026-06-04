@@ -15,6 +15,8 @@ import { resolveAdapter } from '../_shared/acquiring/index.ts';
 import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
+import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 interface CreateBody {
   order_id: string;
@@ -30,6 +32,9 @@ interface CreateBody {
   payment_link_id?: string;
   contact_id?: string;
   user_id?: string;
+  // MP-A2-2: caller may explicitly request PaymentMethod saving for one-time checkout.
+  // Pilot ("Платная консультация") will pass true. Other one-time flows default to false.
+  save_payment_method?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -98,6 +103,31 @@ Deno.serve(async (req) => {
       sandbox: false,
     });
 
+    // MP-A2-2: resolve Stripe Customer for (user_id, account_code). user_id is REQUIRED for
+    // resolver — if absent (legacy / guest), skip resolver and fall back to customer_email.
+    const resolvedUserId = body.user_id ?? order.user_id ?? null;
+    const resolvedEmail = body.customer_email ?? null;
+    let customer_id: string | null = null;
+    if (resolvedUserId && resolvedEmail) {
+      try {
+        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+        const cust = await resolveStripeCustomer(supabase, sk, {
+          user_id: resolvedUserId,
+          account_code,
+          email: resolvedEmail,
+        });
+        customer_id = cust.customer_id;
+      } catch (e) {
+        // Resolver failure is non-fatal for checkout; degrade to email-only mode + audit.
+        await supabase.from('audit_logs').insert({
+          action: 'stripe_customer_resolver_failed',
+          entity_type: 'orders_v2',
+          entity_id: body.order_id,
+          meta: { error: e instanceof Error ? e.message : String(e), account_code },
+        });
+      }
+    }
+
     const adapter = resolveAdapter('stripe', account_code);
     const result = await adapter.createCheckout({
       order_id: body.order_id,
@@ -105,6 +135,8 @@ Deno.serve(async (req) => {
       currency: body.currency,
       description: body.description,
       customer_email: body.customer_email,
+      customer_id,
+      save_payment_method: body.save_payment_method === true,
       return_url: urls.success_url,
       cancel_url: urls.cancel_url,
       is_one_time: true,
@@ -114,7 +146,7 @@ Deno.serve(async (req) => {
         offer_id: body.offer_id,
         payment_link_id: body.payment_link_id,
         contact_id: body.contact_id ?? order.contact_id,
-        user_id: body.user_id ?? order.user_id,
+        user_id: resolvedUserId,
       },
       context: {
         provider: 'stripe',
@@ -126,7 +158,7 @@ Deno.serve(async (req) => {
     if (!result.ok) {
       return jsonResponse({ ok: false, fallback: true, error: result.error });
     }
-    return jsonResponse({ ok: true, url: result.redirect_url, session_id: result.session_id });
+    return jsonResponse({ ok: true, url: result.redirect_url, session_id: result.session_id, customer_id });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
     if (msg.startsWith('unauthorized')) return errorResponse(msg, 401);
