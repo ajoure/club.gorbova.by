@@ -1,312 +1,219 @@
 # да, согласен, с учетом правок:
 
 ```text
-План Infinite Subscription MVP можно принять как основу, но перед execute нужны правки.
+Phase 3.1.0 Pending Enum Mini-plan можно approve к Discovery/Dry-run, но не к миграции сразу.
 
-1. Price Mapping Validation — правильно вынесен как STOP-GATE.
-   Добавить туда обязательную проверку:
-   - Stripe Product/Price должны быть test-mode;
-   - Price должен быть active=true;
-   - Price должен быть recurring;
-   - Price lookup должен идти через Stripe API, а не только по сохранённому price_id.
+Правки перед execute:
 
-2. Нельзя использовать `invoice.payment_succeeded` в одном месте и `invoice.paid` в другом.
-   Выбрать один канон: `invoice.paid`.
-   Весь план привести к единому имени.
+1. ALTER TYPE BEFORE 'active'
+   Проверить поддержку в текущей версии PostgreSQL/Supabase.
+   Если `ADD VALUE ... BEFORE` недоступен или рискованен — использовать:
+   `ALTER TYPE ... ADD VALUE IF NOT EXISTS 'pending'`
+   без позиционирования.
+   Порядок enum не должен использоваться как бизнес-логика.
 
-3. `checkout.session.completed` для subscription не должен активировать доступ.
-   Это правильно указано.
-   Но добавить:
-   - он может быть использован только для связывания `checkout_session_id`, `customer_id`, `subscription_id`;
-   - активация только через `invoice.paid`.
+2. Memory update убрать из DoD текущего mini-plan.
+   Memory обновлять только после отдельного approve итогового proof.
+   В DoD оставить только рекомендацию:
+   `memory update candidate`.
 
-4. Pre-create pending subscription:
-   Добавить cleanup/TTL правило:
-   - если Stripe Checkout не завершён;
-   - если subscription не получена;
-   - если invoice.paid не пришёл.
-   
-   Например:
-   `pending > 24h → expired/manual_review`.
+3. Unit-тесты
+   Если часть тестов не запускается в окружении Lovable, это не FAIL при условии:
+   - указана команда;
+   - указан результат/причина недоступности;
+   - заменено на статический grep + SQL proof.
+   Не требовать невозможный test runner как блокер.
 
-5. `provider_subscriptions.provider_subscription_id` может быть неизвестен до Stripe Checkout.
-   Поэтому:
-   - pre-create provider_subscriptions с временным `provider_subscription_id='pending:{order_id}'` или null, если схема позволяет;
-   - после `customer.subscription.created` обновить на `sub_*`.
-   Нужно указать фактическое допустимое значение по текущей схеме.
+4. Admin UI smoke
+   `/admin/payments/bepaid-subscriptions` — можно проверить визуально, но если browser automation недоступна, заменить на:
+   - build green;
+   - query данных подписок;
+   - proof, что нет pending rows.
+   Не блокировать миграцию UI-скрином, если UI не запускается.
 
-6. `provider_subscriptions.state`
-   Уточнить маппинг:
-   - pending
-   - active
-   - past_due
-   - canceled
-   - incomplete
-   - unpaid
-   
-   Если state enum/constraint не поддерживает Stripe-статусы — STOP и отдельный mini-plan.
+5. Reader audit
+   Добавить обязательный поиск по опасным паттернам:
+   - `status != 'canceled'`
+   - `status <> 'canceled'`
+   - `status not in (...)`
+   - `.neq('status', 'canceled')`
+   - `.not('status'`
+   - `status !== 'canceled'`
+   - `status != "canceled"`
+   - `status === 'active' || status`
+   Это критично для выявления unknown-as-active.
 
-7. `subscriptions_v2.status`
-   Уточнить, можно ли использовать `pending`.
-   В discovery enum был:
-   `active, trial, past_due, canceled, expired, superseded, expired_reentry`.
-   
-   `pending` там нет.
-   Поэтому текущий пункт:
-   `pre-create subscriptions_v2(status=pending)`
-   невозможен без schema change.
-   
-   Нужно изменить стратегию:
-   - либо использовать допустимый статус, например `past_due`/`trial` нельзя семантически;
-   - либо pre-create только provider_subscriptions pending и orders_v2 pending;
-   - либо отдельный schema mini-plan добавить `pending`.
-   
-   Это блокер. Нельзя approve execute, пока не решено.
+6. Conflict guard
+   Я бы уточнил: pending не должен выдавать доступ, но может блокировать вторую попытку checkout на короткое время.
+   То есть:
+   - pending НЕ active;
+   - pending НЕ grantable;
+   - pending MAY block duplicate pending checkout до TTL.
+   Это нужно явно зафиксировать, иначе один пользователь сможет нащёлкать несколько pending checkout.
 
-8. `subscriptions_v2` создавать из webhook запрещено — согласен.
-   Но если `pending` невозможен, нужен альтернативный pre-create status contract.
+7. Pending cleanup worker
+   Не обязательно делать до MVP, если duplicate guard блокирует pending и MVP proof не создаёт abandoned pending rows.
+   Но если pending блокирует duplicate checkout — нужен ручной админ/cleanup путь.
+   Зафиксировать:
+   - MVP может стартовать без worker только при доказанном ручном cleanup/admin fallback;
+   - worker — отдельный mini-plan до public rollout.
 
-9. Для `invoice.paid`:
-   Не создавать новую подписку.
-   Только:
-   - найти pre-created subscription;
-   - создать order/payment;
-   - вызвать grant-access-for-order;
-   - активировать найденную subscription.
-   
-   Если pre-created subscription не найдена → manual_review.
+8. Proof C.2
+   В counts до/после добавлять `pending=0` до миграции нельзя, если enum ещё не содержит pending.
+   Формулировать:
+   - до: counts по существующим enum values;
+   - после: counts + pending=0.
 
-10. Duplicate guard:
-   В G3 не только “bePaid active blocks Stripe”.
-   Проверить:
-   - Stripe active blocks bePaid;
-   - Stripe active on account A blocks Stripe on account B;
-   - canceled/superseded не блокирует.
+9. bePaid proof
+   `provider_subscriptions row count` может измениться органически.
+   Правильнее:
+   - никаких строк provider='bepaid' не изменено этим миграционным transaction;
+   - bePaid code diff пустой;
+   - органические изменения не считаются FAIL.
 
-11. Test Clock:
-   Перед runtime proof добавить discovery:
-   - поддерживается ли Test Clock для Checkout Subscriptions в данном аккаунте;
-   - можно ли создать Customer с test_clock;
-   - совместимо ли это с Checkout Session.
-   
-   Если нет — использовать короткий recurring interval или manual invoice test strategy.
-
-12. bePaid smoke:
-   Не требовать реальный bePaid recurring renewal, если это рискованно/долго.
-   Достаточно:
-   - read-only freeze;
-   - органический recent bePaid recurring check;
-   - либо безопасный existing test hook.
-   
-   Нельзя ради Stripe MVP запускать потенциально рискованный bePaid renewal.
-
-13. Frontend:
-   PaymentDialog branch нельзя добавлять до backend MVP green.
-   Сначала backend edge + direct admin/test call.
-   Потом отдельный UI mini-patch.
-
-14. Memory update не делать в DoD автоматически.
-   Только после approve итогового runtime proof.
-
-15. Добавить обязательный раздел:
-   “No schema-change decision”
-   Если без нового статуса `pending` нельзя корректно pre-create, нужно остановиться и оформить schema mini-plan.
-
-Итог:
-
-План хороший, но есть один критический блокер:
-
-`subscriptions_v2.status=pending` невозможен по текущему enum.
-
-Перед approve execute нужно сначала закрыть sub-discovery:
-
-`Subscription Pending State Strategy`
-
-В нём выбрать один вариант:
-
-A. Добавить `pending` в enum отдельной миграцией.
-B. Pre-create без subscriptions_v2, только provider_subscriptions/orders_v2, а subscriptions_v2 создавать после invoice.paid — но это противоречит Discovery.
-C. Использовать существующий статус с meta.pending=true — рискованно и нужно доказать безопасность.
-
-Я бы рекомендовал вариант A: add-only расширить enum `subscription_status` значением `pending`, но только отдельным mini-plan + dry-run + proof.
-
-Phase 3.1 — Infinite Subscription MVP
+10. STOP
+   Если найден reader `status != canceled`, не делать миграцию.
+   Сначала отдельный patch нормализации reader.
 ```
 
-Цель: запустить **один** рекуррентный Stripe-тариф в test mode по каноническому write-path, утверждённому в Discovery v1.1. До прохождения Runtime Proof — никаких следующих шагов из роадмапа §23.
+Ключевой смысл: сам подход правильный. Но сначала **A-stage reader audit**. Миграция только при `ALL_READERS_SAFE=true`.
 
-## Жёсткий scope (что входит и что НЕ входит)
+&nbsp;
 
+План: Phase 3.1.0 — Subscription Pending State Schema Mini-plan
 
-| Входит                                                                                                      | НЕ входит (явный запрет)                                                   |
-| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Infinite Subscription (бесконечная рекуррентная)                                                            | Subscription Schedule                                                      |
-| Pre-create `subscriptions_v2` + `provider_subscriptions` (canonical write-path)                             | Finite installments через Stripe                                           |
-| Stripe Checkout `mode=subscription` (один пилотный тариф)                                                   | Pause/Resume Stripe-подписки                                               |
-| Webhook handlers: `customer.subscription.created/updated/deleted`, `invoice.paid`, `invoice.payment_failed` | Изменения `nightly-access-reconcile`                                       |
-| Расширение `subscription-conflict.ts` на provider-agnostic detection                                        | Customer Portal implementation (handlers — да, UI — нет)                   |
-| Расширение `provider-linked-extend-priority` на Stripe lookup                                               | Stripe live mode                                                           |
-| Один пилотный recurring `tariff_offer` с `meta.recurring.is_recurring=true`                                 | Любые изменения bePaid edge-функций                                        |
-| Runtime Proof (Test Clock + реальная test-card)                                                             | Phase 3.2+ (Customer Portal Actions, Dunning runtime, Reconcile, Schedule) |
+## Цель
 
+Add-only расширить enum `public.subscription_status` значением `'pending'`, чтобы `stripe-create-subscription-checkout` мог безопасно pre-create `subscriptions_v2` ДО Stripe Checkout (Discovery §17, CR-3 — провайдер-link через subv2). bePaid контур не трогаем. Никаких backfill, никаких изменений существующих строк.
 
-## STOP-GATE: Price Mapping Validation (обязательный sub-discovery ДО кода)
-
-Это первый блок исполнения MVP. Без зафиксированного решения по mapping — код не пишется.
-
-Что нужно подтвердить и записать в `.lovable/proofs/stripe_phase_3_1_price_mapping_v1.md`:
-
-1. **Где хранится Stripe `price_id` (`price_*`)?**
-  Кандидаты:
-  - `tariff_offers.meta.stripe.price_id` (add-only через meta, без миграции) — **предлагаемый канон**;
-  - отдельная таблица `provider_price_mappings` — отклонить как преждевременную нормализацию;
-  - `tariff_offers.meta.stripe.account_code → price_id` словарь — потребуется при multi-account, но в MVP один account.
-2. **SOT по цене:**
-  - **Stripe Price** — внешняя истина суммы/валюты/интервала;
-  - `**tariff_offers.amount` / `currency**` — бизнес-SOT для UI/CRM/документов;
-  - `**tariff_offers.meta.stripe.price_id**` — связка, не SOT суммы.
-  - **Правило:** при расхождении (Stripe Price amount ≠ `tariff_offers.amount`) — `manual_review`, не продаём.
-3. **Кто создаёт Stripe Price?**
-  - В MVP — **вручную в Stripe Dashboard** для пилотного тарифа. Автосоздание Product/Price из админки = backlog (Phase 5).
-  - В meta также сохраняем `meta.stripe.product_id` (`prod_*`) для traceability.
-4. **Валидация на create-checkout:**
-  - `price.currency` == `tariff_offer.currency` (case-insensitive);
-  - `price.unit_amount` == `tariff_offer.amount` * 100 (toleranceless);
-  - `price.recurring.interval` ↔ `tariff_offer.meta.recurring.*` (мапа интервалов);
-  - при mismatch → 422 `price_mismatch`, не создаём подписку.
-5. **Идемпотентность mapping:** один `tariff_offer.id` ↔ один активный `price_id`. Смена цены = новый `price_id` + supersede старого через `meta.stripe.price_id_history[]`.
-
-**Gate:** approve этого sub-discovery → переход к §1 ниже.
-
-## 1. Затронутые файлы (add-only, без новых колонок в БД)
-
-### Новые edge-функции
-
-- `supabase/functions/stripe-create-subscription-checkout/index.ts` — pre-create + Stripe Checkout `mode=subscription`.
-
-### Существующие edge-функции (add-only расширения)
-
-- `supabase/functions/stripe-webhook/index.ts` — добавить handlers `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`. Существующая one-time ветка не трогается.
-- `supabase/functions/_shared/subscription-conflict.ts` — расширить detection на `provider='stripe'` (provider-agnostic по `subscriptions_v2.status`).
-- `supabase/functions/_shared/provider-linked-extend-priority` (или ближайший по имени) — добавить Stripe lookup через `provider_subscriptions(provider='stripe')`.
-- `supabase/functions/grant-access-for-order/index.ts` — НЕ модифицируется по логике; используется как есть.
-
-### Frontend
-
-- Кнопка checkout на пилотном тарифе — реюз существующего `PaymentDialog` flow с новым `provider='stripe'` branch для recurring (минимальный diff, см. §3).
-
-### Миграций нет
-
-- Все Stripe-данные → `subscriptions_v2.meta.stripe.*`, `provider_subscriptions.meta.stripe.*`, `tariff_offers.meta.stripe.*`, `orders_v2.meta.stripe.*`. Schema contract `subscriptions-v2-schema-contract` соблюдён.
-
-## 2. Канонический поток (фиксация из Discovery)
-
-```
-[user clicks pay on pilot recurring tariff]
-    ↓
-stripe-create-subscription-checkout:
-    - subscription-conflict check (provider-agnostic)
-    - validate price mapping (§STOP-GATE p.4)
-    - pre-create subscriptions_v2(status=pending)
-    - pre-create provider_subscriptions(provider=stripe, state=pending,
-        tracking_id='stripe_sub:pending:order:<order_id>')
-    - stripe.checkout.sessions.create(mode=subscription, price, metadata)
-    - return session.url
-    ↓
-[Stripe Checkout UI → user pays test card 4242…]
-    ↓
-stripe-webhook receives:
-    1. customer.subscription.created → update provider_subscriptions.provider_subscription_id = sub_*
-    2. invoice.paid → CANONICAL WRITE PATH (§19 Discovery):
-        - create orders_v2 (idem by invoice.id)
-        - create payments_v2 (idem by ch_*)
-        - call grant-access-for-order(order_id)
-        - update subscriptions_v2: pending → active, meta.stripe.current_period_*
-        - update tracking_id → 'stripe_sub:{sub_id}:order:{first_order_id}'
-        - emit domain_event 'subscription.activated'
-    3. customer.subscription.updated → sync state mirror only
-    4. invoice.payment_failed → subscriptions_v2.status = past_due (grace, без revoke)
-    5. customer.subscription.deleted → subscriptions_v2.status = canceled (доступ до access_end_at)
-```
-
-## 3. Frontend (минимальный diff)
-
-- `resolveProductRenewability` уже SOT (см. Product Type SOT). Для пилотного тарифа `meta.recurring.is_recurring=true` уже работает.
-- В `PaymentDialog` / `createPaymentCheckout` добавить branch: если `acquiring_provider='stripe'` И `recurring=true` → вызвать `stripe-create-subscription-checkout` вместо bePaid.
-- UI-полей не добавляем. Saved-card picker — defer (Saved Card UI Policy).
-
-## 4. Runtime Proof (обязательный, как Stage C)
-
-Документ: `.lovable/proofs/stripe_phase_3_1_subscription_mvp_runtime_v1.md`. Формат — 10-пунктовый прогон, аналогично Stage C.
-
-### Acceptance gates (PASS обязателен по всем)
-
-
-| #   | Проверка                                                                                                     | Метод                                                                                       |
-| --- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| G1  | Price mapping validation работает (mismatch → 422)                                                           | unit + curl с подменённым `meta.stripe.price_id`                                            |
-| G2  | Pre-create subv2+ps идёт ДО Stripe API call                                                                  | trace: при искусственном fail `subscriptions.create` запись остаётся pending, TTL её чистит |
-| G3  | Duplicate guard: вторая попытка купить тот же продукт (bePaid active) блокируется                            | provider-agnostic conflict                                                                  |
-| G4  | `customer.subscription.created` → ps.provider_subscription_id обновлён                                       | webhook log + DB row                                                                        |
-| G5  | `invoice.paid` (первый) → orders_v2 создан 1 раз, payments_v2 создан, grant-access-for-order вызван          | DB + audit                                                                                  |
-| G6  | Идемпотентность: повторная доставка `invoice.paid` (`stripe-list-events` replay) НЕ создаёт второй orders_v2 | `meta.stripe.invoice_id` unique check                                                       |
-| G7  | Renewal (Test Clock advance period) → новый orders_v2, extend через GREATEST, tariff_id match                | Test Clock + DB                                                                             |
-| G8  | `invoice.payment_failed` → status past_due, доступ НЕ отозван                                                | webhook + UI + DB                                                                           |
-| G9  | `customer.subscription.deleted` → status canceled, access сохраняется до access_end_at                       | webhook + DB                                                                                |
-| G10 | bePaid контур не затронут (smoke: один bePaid-recurring renewal проходит как раньше)                         | bePaid webhook log + DB                                                                     |
-
-
-### Двойной прогон оплаты (CR-5 mitigation)
-
-- Pass A: реальная test-card 4242… без Test Clock — первый `invoice.paid`.
-- Pass B: Test Clock advance → renewal цикла.
-- Оба = PASS-условие.
-
-## 5. STOP-GATE'ы после MVP
-
-После зелёного Runtime Proof — НЕ начинаем следующее без отдельного approve:
-
-- ❌ Customer Portal Actions integration
-- ❌ Dunning runtime (полный прогон §20 матрицы)
-- ❌ Stripe-ветка `subscriptions-reconcile`
-- ❌ Subscription Schedule
-- ❌ Live mode
-
-Каждый — отдельный план Phase 3.2 / 3.3 / 3.4 / 4 / 5.
-
-## 6. Definition of Done
-
-- `stripe_phase_3_1_price_mapping_v1.md` approve'нут.
-- `stripe-create-subscription-checkout` развёрнута, ENV/secrets подтянуты.
-- `stripe-webhook` расширен add-only handlers'ами.
-- `subscription-conflict.ts` provider-agnostic.
-- `provider-linked-extend-priority` поддерживает Stripe lookup.
-- Один пилотный recurring `tariff_offer` сконфигурирован (meta.stripe.price_id, meta.recurring).
-- Runtime Proof 10/10 PASS (включая bePaid smoke).
-- Memory обновлена: новая запись `stripe-subscription-canonical-write-path` со ссылкой на Discovery v1.1 §17–19.
-- Master Sprint Alignment в proof: Phase 3.1 = Done, далее перечислены deferred Phase 3.2+.
-
-## 7. Риски и их mitigation (из Discovery §22)
-
-
-| Risk                                          | Где закрывается в MVP                                       |
-| --------------------------------------------- | ----------------------------------------------------------- |
-| CR-1 двойное продление webhook+reconcile      | G6 идемпотентность; reconcile в MVP не трогаем              |
-| CR-2 bePaid↔Stripe конфликт                   | §1 расширение subscription-conflict, G3                     |
-| CR-3 потеря связки sub↔order                  | manual_review HTTP 200 при lookup miss, не пишем orders     |
-| CR-4 неправильный extend по другому tariff_id | extend-tariff-match-required уже работает, проверяется в G7 |
-| CR-5 Test Clock vs реальная карта             | двойной прогон Pass A + Pass B                              |
-
-
-## 8. Что прямо запрещено в этом плане
-
-- Любые UPDATE в bePaid edge-функциях / RPC.
-- Создание `subscriptions_v2` из webhook'а как первичной записи.
-- Прямой UPDATE `entitlements` / `access_grant_ledger` минуя `grant-access-for-order`.
-- Использование `checkout.session.completed` как триггера активации для подписочного режима (только `invoice.paid`).
-- Любое автосоздание Stripe Product/Price из админки — backlog Phase 5.
-- Включение live mode на любом этапе MVP.
+Это **schema-only mini-plan**. Он блокирует Phase 3.1 Infinite Subscription MVP до полного PASS.
 
 ---
 
-После approve этого плана: первым шагом — sub-discovery Price Mapping Validation (STOP-GATE). Код не пишется до её закрытия.
+## Стадия A — Discovery readers (dry-run, без кода)
+
+Цель: убедиться, что ни один читатель `subscriptions_v2.status` не интерпретирует unknown enum value как `active`/grantable/конфликт-доступ.
+
+### A.1 Перечень областей для аудита
+
+1. **Frontend** — `src/**` (hooks, pages, components, `subscriptionStatusLabels.ts`, replacement helpers, admin panels вкл. `/admin/payments/bepaid-subscriptions`).
+2. **Edge functions** — список по `rg "subscriptions_v2" supabase/functions`:
+  - Access / grant chain: `grant-access-for-order/**`, `_shared/resolve-effective-access.ts`, `_shared/resolve-access-window.ts`, `_shared/entitlement-sync.ts`, `_shared/extra-access-classifier.ts`, `_shared/renewal-offer-resolver.ts`, `_shared/token-resolver.ts`, `provider_linked_subscription_resolver.ts`, `access-rules-nightly-reconcile`, `repair-module-entitlements` (если читает).
+  - Subscription lifecycle: `subscription-actions`, `subscription-admin-actions`, `subscriptions-reconcile`, `subscription-charge`, `subscription-renewal-reminders`, `subscription-grace-reminders`, `installment-notifications`, `installment-charge-cron`, `monitor-rebill-no-extension`, `cancel-trial`, `direct-charge`, `payment-method-verify-recurring`.
+  - Duplicate / conflict guard: `_shared/subscription-conflict.ts` (+ test), `_shared/create-payment-checkout.ts`, `bepaid-create-subscription-checkout`, `bepaid-admin-create-subscription-link`, `public-checkout`.
+  - bePaid контур (read-only, проверить что не падает на новом enum): `bepaid-webhook/**`, `bepaid-*`, `admin-bepaid-*`, `bepaid-subscription-audit*`.
+  - Telegram (читает status для kick/grant): `telegram-kick-violators`, `telegram-club-members`, `telegram-check-expired`, `telegram-grant-access`, `telegram-revoke-access`, `telegram-process-access-queue`, `telegram-send-reminders`, `telegram-ai-support`.
+  - System health / INV-22: `system-health-full-check`, `system-health-inv22-plan`, `system-health-inv22-resolve`, `nightly-system-health`, `nightly-payments-invariants`, `monitor-rebill-no-extension`.
+  - Прочее: `merge-clients`, `admin-batch-disable-auto-renew`, `admin-repair-zombie-provider-subs`, `admin-backfill-recurring-snapshot`, `live-event-notifications-cron`.
+3. **RPC / DB functions / views** — `pg_proc` + `pg_views` поиск по `subscription_status`/`subscriptions_v2.status` (вкл. `has_active_subscription`, view `payment_links_enriched_v` и любые reconcile-RPC).
+4. **Cron** — `cron.job` + `supabase/config.toml` (расписания reconcile/reminders/kick).
+5. **Broadcasts / audience** — `broadcast_*`, `email-mass-broadcast` (фильтр аудитории по статусу подписки).
+6. **Аналитика / отчёты** — admin-страницы и SQL view'хи.
+
+### A.2 Классификация каждого reader'а (по результатам grep)
+
+Для каждого читателя зафиксировать в proof одну из меток:
+
+- `ignores_unknown` — switch/IN-list, unknown → no-op. OK.
+- `treats_as_active` — `status != 'canceled'` или whitelist без default. **BLOCKER**, нужен patch до миграции.
+- `treats_as_grantable` — открывает доступ/Telegram/reminders. **BLOCKER**.
+- `treats_as_conflict` — попадает в duplicate guard. По спецификации `subscription-conflict.ts` conflict statuses = `('active','trial','past_due')` — pending не должен туда попасть. Проверить буквально.
+- `ui_label_only` — отображает строку (см. `subscriptionStatusLabels.ts`, где `pending` уже есть как «В обработке»). OK.
+
+### A.3 STOP-условия (миграция НЕ выполняется)
+
+- Хотя бы один reader = `treats_as_active` / `treats_as_grantable`.
+- Conflict guard воспринимает `pending` как active-конфликт (а не как pending-checkout slot, который очищается по TTL).
+- Reconcile/INV-22 классифицирует `pending` как зомби и пытается отозвать доступ или закрыть строку без TTL-окна.
+- Reminders/Telegram включают `pending` в рассылку/grant/kick.
+
+Если есть BLOCKER — отдельный patch-план «нормализация unknown-status readers» до возврата к миграции.
+
+### A.4 Артефакт стадии A
+
+`/.lovable/proofs/stripe_phase_3_1_0_pending_readers_audit_v1.md` со списком файл:строка + меткой классификации + явным `ALL_READERS_SAFE: true|false`.
+
+---
+
+## Стадия B — Миграция (только при `ALL_READERS_SAFE=true`)
+
+### B.1 SQL (единственный statement)
+
+```sql
+ALTER TYPE public.subscription_status ADD VALUE IF NOT EXISTS 'pending' BEFORE 'active';
+```
+
+Никаких UPDATE, никакого backfill, никаких изменений `subscriptions_v2`/`provider_subscriptions`/RLS/grants/триггеров/RPC.
+
+Позиция `BEFORE 'active'` — чтобы порядковый номер `pending` был ниже `active` (полезно для ORDER BY status в админ-листах; функционально неважно).
+
+### B.2 Что миграция НЕ делает (явный freeze)
+
+- НЕ меняет `subscription-conflict.ts` conflict-list.
+- НЕ добавляет cleanup-функцию для pending TTL (отдельный mini-plan B' после approve, см. ниже).
+- НЕ трогает bePaid edge-функции и `provider_subscriptions`.
+- НЕ обновляет `entitlement-sync` / `grant-access-for-order`.
+- НЕ обновляет reminders / Telegram kick.
+- НЕ создаёт placeholder-rows в `provider_subscriptions`.
+
+### B.3 Pending cleanup policy (зафиксировать as documentation, без кода)
+
+- Hard TTL = 24h: pending-row без перехода в active/canceled → должен быть закрыт как `expired` с `meta.lifecycle.timeout_reason='checkout_abandoned'`.
+- Реализация — отдельный mini-plan **Phase 3.1.0-B (Pending Cleanup Worker)**, подаётся **после** PASS текущего mini-plan и **до** старта MVP runtime. В рамках текущего плана только записываем policy в proof.
+
+---
+
+## Стадия C — Proof (обязательные пункты)
+
+`/.lovable/proofs/stripe_phase_3_1_0_pending_enum_proof_v1.md`:
+
+1. `SELECT enum_range(NULL::public.subscription_status)` — содержит `pending`, позиция перед `active`.
+2. `SELECT status, count(*) FROM subscriptions_v2 GROUP BY status` до и после миграции — идентичные числа для всех существующих значений; `pending = 0`.
+3. Snapshot counts active/trial/past_due/canceled/expired/superseded/expired_reentry — идентичны до/после.
+4. bePaid recurring untouched: hash/diff списка bePaid edge-функций и `provider_subscriptions` row count — не меняется.
+5. Grep-аудит читателей (ссылка на artifact стадии A) приложен, `ALL_READERS_SAFE=true`.
+6. Прогон существующих unit-тестов:
+  - `supabase/functions/_shared/subscription-conflict_test.ts`
+  - `supabase/functions/bepaid-webhook/*_test.ts`
+  - `supabase/functions/grant-access-for-order/three_ds_writer_test.ts`
+   — все PASS без модификаций тестов.
+7. Smoke в `/admin/payments/bepaid-subscriptions`: список подписок рендерится, фильтры работают, ни одной `pending`-строки нет (поскольку никто их ещё не создаёт).
+
+### DoD
+
+- Все 7 пунктов proof PASS.
+- 0 строк `subscriptions_v2` изменено.
+- bePaid контур не задет (диагностика payments_v2 / orders_v2 нулевая дельта).
+- Memory `subscriptions_v2-schema-contract` дополнена строкой: «enum `subscription_status` содержит `pending` — означает pre-created checkout slot, НЕ даёт доступ, НЕ участвует в conflict guard как active, TTL 24h обрабатывается отдельным worker'ом (Phase 3.1.0-B)».
+
+---
+
+## Последовательность Phase 3 после этого mini-plan
+
+```
+Discovery ✅
+  → Pending State Strategy ✅ (утверждён)
+    → Phase 3.1.0 Pending Enum Mini-plan  ← ЭТОТ ПЛАН
+      → Phase 3.1.0-B Pending Cleanup Worker (отдельный approve)
+        → Phase 3.1.1 Price Mapping Validation STOP-GATE
+          → Phase 3.1 Infinite Subscription MVP execute
+            → Runtime Proof (G1–G10)
+              → Phase 3.2+ deferred
+```
+
+MVP остаётся заблокированным до закрытия Phase 3.1.0 + 3.1.0-B + 3.1.1.
+
+## Файлы, которые будут созданы (только на стадии Execute)
+
+- `supabase/migrations/<ts>_phase_3_1_0_subscription_status_pending.sql` — один `ALTER TYPE`.
+- `.lovable/proofs/stripe_phase_3_1_0_pending_readers_audit_v1.md`
+- `.lovable/proofs/stripe_phase_3_1_0_pending_enum_proof_v1.md`
+- Обновление `.lovable/plan.md` (отметка Phase 3.1.0 статуса).
+- Обновление memory `subscriptions_v2-schema-contract`.
+
+## Файлы, которые НЕ будут изменены
+
+- Любая edge-function (включая весь bePaid контур и `grant-access-for-order`).
+- Любой frontend файл.
+- `provider_subscriptions`, `entitlements`, `access_rules`, RLS, RPC.
+- `supabase/config.toml`, cron расписания.
