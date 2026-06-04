@@ -341,6 +341,8 @@ Deno.serve(async (req) => {
       account_code,
       minor_units: minorAmount,
       stripe_session_id: result.session_id,
+      stripe_customer_id: customer_id,
+      save_payment_method: body.save_payment_method === true && !!customer_id,
     };
     if (mode === 'manual') {
       meta.manual_description = body.description?.trim();
@@ -386,6 +388,7 @@ Deno.serve(async (req) => {
       minor_units: minorAmount,
       currency,
       mode,
+      stripe_customer_id: customer_id,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
