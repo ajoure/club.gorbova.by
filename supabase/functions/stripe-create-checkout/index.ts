@@ -163,6 +163,80 @@ Deno.serve(async (req) => {
     if (!result.ok) {
       return jsonResponse({ ok: false, fallback: true, error: result.error });
     }
+
+    // PRR-FIX-02 (F3): materialize crm_routing_snapshot + pipeline pending on order BEFORE
+    // returning redirect URL. Same Layer A contract as create-payment-checkout.ts (bePaid).
+    const offerIdForRouting = body.offer_id ?? order.offer_id ?? null;
+    const tariffIdForRouting = body.tariff_id ?? order.tariff_id ?? null;
+    const routing = await resolveOfferRoutingWithFallback(supabase, {
+      offer_id: offerIdForRouting,
+      tariff_id: tariffIdForRouting,
+    });
+    const crmSnapshot = routing.ok && routing.snapshot
+      ? routing.snapshot
+      : buildNegativeSnapshot({
+          reason: routing.reason || 'unknown',
+          offer_id: offerIdForRouting,
+          tariff_id: tariffIdForRouting,
+          resolved_via: routing.resolved_via ?? 'none',
+          candidates_count: routing.candidates_count ?? 0,
+        });
+
+    // PRR-FIX-02 (F2, F4): sticky stripe meta + business_stream on order.
+    const { data: curOrder } = await supabase
+      .from('orders_v2')
+      .select('meta, pipeline_id, pipeline_stage_id')
+      .eq('id', body.order_id)
+      .maybeSingle();
+    const curMeta = (curOrder?.meta && typeof curOrder.meta === 'object')
+      ? curOrder.meta as Record<string, unknown>
+      : {};
+    const curStripeMeta = (curMeta.stripe && typeof curMeta.stripe === 'object')
+      ? curMeta.stripe as Record<string, unknown>
+      : {};
+    const mergedStripeMeta = {
+      ...curStripeMeta,
+      checkout_session_id: curStripeMeta.checkout_session_id ?? result.session_id,
+      customer_id: customer_id ?? curStripeMeta.customer_id ?? null,
+      account_code,
+      business_stream: bs,
+    };
+    const nextMeta: Record<string, unknown> = {
+      ...curMeta,
+      crm_routing_snapshot: crmSnapshot,
+      business_stream: bs ?? (curMeta.business_stream ?? null),
+      stripe: mergedStripeMeta,
+    };
+
+    const updatePayload: Record<string, unknown> = { meta: nextMeta };
+    // Only set pipeline fields if currently NULL (don't overwrite manual moves).
+    if (routing.ok && routing.snapshot) {
+      if (!curOrder?.pipeline_id) updatePayload.pipeline_id = routing.snapshot.pipeline_id;
+      if (!curOrder?.pipeline_stage_id) updatePayload.pipeline_stage_id = routing.snapshot.stage_on_pending;
+    }
+    const { error: upErr } = await supabase
+      .from('orders_v2')
+      .update(updatePayload)
+      .eq('id', body.order_id);
+    if (upErr) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.create_checkout.order_meta_update_failed',
+        entity_type: 'orders_v2',
+        entity_id: body.order_id,
+        meta: { error: upErr.message, session_id: result.session_id },
+      });
+    }
+    if (!routing.ok || !routing.snapshot) {
+      await auditNegativeSnapshot(supabase, {
+        order_id: body.order_id,
+        offer_id: offerIdForRouting,
+        tariff_id: tariffIdForRouting,
+        reason: routing.reason || 'unknown',
+        resolved_via: routing.resolved_via ?? 'none',
+        candidates_count: routing.candidates_count ?? 0,
+      });
+    }
+
     return jsonResponse({ ok: true, url: result.redirect_url, session_id: result.session_id, customer_id });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
