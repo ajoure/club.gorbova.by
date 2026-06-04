@@ -156,8 +156,9 @@ Deno.serve(async (req) => {
     }
 
     // ---- 6) active/trial duplicate guard ----
-    // Spec says active/trial/past_due — но SOT helper покрывает active+trial с provider_managed nature;
-    // past_due отдельно проверим below через subscriptions_v2 + provider_subscriptions.
+    // Spec says active/trial/past_due — но SOT helper checkSubscriptionConflict
+    // покрывает только provider='bepaid' (исторически). Для Stripe Stage 1
+    // добавляем provider-aware guard поверх того же датасета.
     const dupCheck = await checkSubscriptionConflict(admin, {
       user_id: body.user_id,
       product_id: body.product_id,
@@ -169,7 +170,40 @@ Deno.serve(async (req) => {
     if (dupCheck.status === 'conflict') {
       return json(409, { ok: false, error: 'duplicate_subscription', conflict: dupCheck.conflict });
     }
-    // past_due provider-managed guard (extension of CONFLICTING_STATUSES для подписочного Stripe Stage 1)
+    // 6.b) Stripe-aware active/trial duplicate guard
+    const { data: activeRows } = await admin
+      .from('subscriptions_v2')
+      .select('id, status, tariff_id, access_end_at, next_charge_at')
+      .eq('user_id', body.user_id)
+      .eq('product_id', body.product_id)
+      .in('status', ['active', 'trial']);
+    const activeIds = ((activeRows as any[] | null) ?? []).map((r) => r.id);
+    if (activeIds.length > 0) {
+      const { data: stripeActive } = await admin
+        .from('provider_subscriptions')
+        .select('subscription_v2_id, state, provider, provider_subscription_id')
+        .in('subscription_v2_id', activeIds)
+        .eq('provider', 'stripe')
+        .eq('state', 'active');
+      const hit = ((stripeActive as any[] | null) ?? [])[0];
+      if (hit) {
+        const subRow = (activeRows as any[]).find((r) => r.id === hit.subscription_v2_id);
+        return json(409, {
+          ok: false,
+          error: 'duplicate_subscription',
+          conflict: {
+            subscription_v2_id: hit.subscription_v2_id,
+            status: subRow?.status,
+            tariff_id: subRow?.tariff_id,
+            provider: 'stripe',
+            provider_subscription_id: hit.provider_subscription_id,
+            access_end_at: subRow?.access_end_at ?? null,
+            next_charge_at: subRow?.next_charge_at ?? null,
+          },
+        });
+      }
+    }
+    // 6.c) past_due provider-managed guard (Stripe + bePaid, любая provider-связь)
     const { data: pastDueRows } = await admin
       .from('subscriptions_v2')
       .select('id, status')
@@ -193,6 +227,7 @@ Deno.serve(async (req) => {
         });
       }
     }
+
 
     // ---- 7) DRY RUN preview ----
     const success_url = resolveStripeCheckoutUrls({
