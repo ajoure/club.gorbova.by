@@ -440,3 +440,202 @@ customer.updated
 - mini-plan на price.id ↔ tariff_offer mapping (где хранить);
 - mini-plan на `subscription.metadata` schema;
 - список затрагиваемых файлов с явными add-only extension диффами (но БЕЗ кода в плане — только список).
+
+---
+
+# Addendum v1.1 — Расширение Discovery по правкам approve
+
+Раздел добавлен по запросу. Никакого кода/миграций не вносится; это уточнение Discovery, обязательное к чтению перед началом Phase 3.1 Infinite Subscription MVP.
+
+## 17. Subscription Creation Strategy (канон)
+
+Три варианта, рассмотренные при ревью:
+
+| # | Вариант | Решение |
+|---|---|---|
+| A | Pre-create `subscriptions_v2` + `provider_subscriptions` ДО Stripe Checkout, статус `pending`, активация по `invoice.paid` | **CANONICAL** |
+| B | Создавать `subscriptions_v2` только после `checkout.session.completed` | Отклонено |
+| C | Гибрид (Checkout сам, потом «дотягиваем» локально) | Отклонено |
+
+**Канон = вариант A (Pre-create → Activate).**
+
+### Обоснование
+
+1. **Parity с bePaid.** В `bepaid-create-subscription-checkout` мы уже pre-create-аем `subscriptions_v2(pending)` + `provider_subscriptions(pending)` и активируем по webhook'у. Та же модель → одинаковая ментальная карта, одинаковый conflict-guard, одинаковый recovery.
+2. **Duplicate-guard работает ДО провайдера.** `subscription-conflict.ts` читает `subscriptions_v2.status in (active, trial, past_due)`. Если создавать только после Checkout, юзер может открыть 2 вкладки и получить 2 Stripe-subscription. Pre-create + idempotent `tracking_id` это убивает.
+3. **Tracking_id известен заранее.** `stripe_sub:pending:order:{order_id}` → после первого `invoice.paid` мигрирует в `stripe_sub:{sub_id}:order:{order_id}`. Это даёт идемпотентность webhook'у даже если он прилетит раньше, чем мы получим ответ от `subscriptions.create`.
+4. **Rollback по таймауту.** TTL-чистка `pending` строк уже есть для bePaid (см. `subscription-conflict.ts` + `inv22-desync-resolution`). Переиспользуется.
+5. **Recovery от потерянного `checkout.session.completed`.** При варианте B потеря события = «висящая» подписка в Stripe без локальной записи. При варианте A локальная запись уже есть → reconcile её закрывает.
+
+### Жёсткий запрет
+
+- НЕ создавать `subscriptions_v2` из webhook'а как первичную запись. Webhook только UPDATE.
+- НЕ использовать `checkout.session.completed` как триггер активации подписки — для подписок SOT = `invoice.paid` (первый paid invoice = активация).
+
+## 18. Provider Subscriptions Ownership (SOT по статусам)
+
+Три кандидата на «владельца статуса»:
+
+- **Stripe Subscription** (`sub_*.status`) — внешняя истина провайдера.
+- **`provider_subscriptions.state`** — зеркало провайдера в нашей БД.
+- **`subscriptions_v2.status`** — бизнес-статус, на котором завязаны UI/доступ/conflict-guard.
+
+### Правило
+
+`subscriptions_v2.status` — **бизнес-SOT**, к которому привязан доступ и duplicate-guard.
+`provider_subscriptions.state` — **зеркало провайдера**, обновляется ТОЛЬКО из webhook/reconcile.
+`Stripe.subscription.status` — **внешняя истина**, к ней приводят `provider_subscriptions.state`, и уже от него — `subscriptions_v2.status`.
+
+Поток: `Stripe → provider_subscriptions.state → subscriptions_v2.status`. В обратную сторону писать запрещено.
+
+### Таблица истины по статусам
+
+| `subscriptions_v2.status` | Stripe (`sub.status`) | `provider_subscriptions.state` | Кто пишет | Доступ |
+|---|---|---|---|---|
+| `pending` | `incomplete` (или ещё нет sub) | `pending` | Pre-create (canonical write-path) | Нет |
+| `active` | `active` | `active` | webhook `invoice.paid` (первый) или `customer.subscription.updated` | Да, до `access_end_at` |
+| `trial` | `trialing` | `active` (с `meta.trial=true`) | webhook | Да (если разрешено) |
+| `past_due` | `past_due` или `unpaid` | `past_due` | webhook `invoice.payment_failed` / `customer.subscription.updated` | Grace, не отзывается |
+| `canceled` | `canceled` | `canceled` | webhook `customer.subscription.deleted` ИЛИ admin cancel | Сохраняется до `entitlements.expires_at` |
+| `expired` | `canceled` (давно) | `canceled` | nightly reconcile при `access_end_at < now()` | Нет |
+| `superseded` | `canceled` (через admin replace) | `superseded` | `cancel → supersede → create new` протокол | Зависит от новой подписки |
+
+### Запреты
+
+- Никто, кроме webhook/reconcile, не пишет `provider_subscriptions.state` для Stripe.
+- `subscriptions_v2.status=active` без соответствующего `provider_subscriptions(state=active, provider='stripe')` = аномалия → manual_review.
+- Прямой UPDATE `subscriptions_v2.status` из UI запрещён; только через `subscription-actions` или canonical write-path.
+
+## 19. `invoice.paid` Write Path (критический контур)
+
+Это **единственный** разрешённый путь активации/продления Stripe-подписки.
+
+### Алгоритм (idempotent by `invoice.id`)
+
+```
+on invoice.paid:
+  1. resolve account_code by webhook signing secret
+  2. lookup provider_subscriptions by provider_subscription_id = invoice.subscription
+     - if not found → manual_review (HTTP 200), STOP
+  3. lookup subscriptions_v2 by provider_subscriptions.subscription_v2_id
+     - if status='canceled'/'superseded' → manual_review, STOP
+  4. idempotency check: SELECT orders_v2 WHERE meta.stripe.invoice_id = invoice.id
+     - if exists → return (already processed)
+  5. CREATE orders_v2:
+       - user_id, product_id, tariff_id, offer_id ← из subscriptions_v2 (snapshot)
+       - amount, currency ← из invoice.amount_paid
+       - status='paid', paid_at=invoice.status_transitions.paid_at
+       - meta.stripe.invoice_id, payment_intent_id, charge_id
+       - meta.tracking_id = 'stripe_sub:{sub_id}:order:{order_id}'
+  6. CREATE payments_v2:
+       - provider='stripe', provider_payment_id = charge.id
+       - linked to orders_v2 via order_id
+  7. CALL grant-access-for-order(order_id):
+       - Это единственная точка extend.
+       - Использует provider-linked-extend-priority → находит существующую subv2 через provider_subscriptions
+       - extend-tariff-match-required: если tariff_id из order != tariff_id из subv2 → manual_review, не extend
+       - GREATEST(current access_end_at, new) — никогда не уменьшаем
+  8. UPDATE subscriptions_v2 (если это первый invoice):
+       - status: pending → active
+       - meta.stripe.current_period_start/end ← из invoice.period
+  9. emit domain_event 'subscription.renewed' (или 'subscription.activated' для первого)
+```
+
+### Ответы на вопросы из правки
+
+| Вопрос | Ответ |
+|---|---|
+| Создаётся ли новый `orders_v2`? | **Да**, на каждый `invoice.paid`. Idempotent by `meta.stripe.invoice_id`. |
+| Создаётся ли новый `payments_v2`? | **Да**, на каждый успешный `Charge`. Idempotent by `provider_payment_id = ch_*`. |
+| Вызывается ли `grant-access-for-order`? | **Да, всегда.** Единственная точка extend. Прямые UPDATE `entitlements` запрещены. |
+| Когда происходит extend? | Внутри `grant-access-for-order`, через `provider-linked-extend-priority` + `extend-tariff-match-required` + GREATEST. |
+| Когда создаётся новая подписка? | Только из `stripe-create-subscription-checkout` (pre-create). НИКОГДА из webhook. Webhook только активирует pre-created или manual_review. |
+
+### Запреты
+
+- НЕ вызывать `grant-access-for-order` из `checkout.session.completed` для подписочного режима. Только из `invoice.paid`.
+- НЕ создавать `orders_v2` из `invoice.created` / `invoice.finalized`. Только из `invoice.paid` (или эквивалент при reconcile recovery).
+- НЕ extend по `current_period_end` из Stripe-подписки напрямую — только через `grant-access-for-order` (см. bePaid overshoot guard как прецедент).
+
+## 20. Failure / Dunning Matrix
+
+| Stripe event / state | `subscriptions_v2.status` | `entitlements` / доступ | `access_grant_ledger` | reconcile action |
+|---|---|---|---|---|
+| `invoice.payment_failed` (1-я попытка) | `past_due` | без изменений (grace) | без изменений | sync `meta.stripe.last_payment_error` |
+| Smart Retries в процессе | `past_due` | без изменений | без изменений | no-op |
+| `invoice.payment_succeeded` после retry | `active` | extend через стандартный write-path (§19) | новая запись `extend` | sync periods |
+| `customer.subscription.updated → status=unpaid` (Stripe закрыл retries) | `past_due` | без изменений до `access_end_at` | без изменений | если `access_end_at < now()` → `expired` |
+| `customer.subscription.deleted → status=canceled` (Stripe признал смерть) | `canceled` | сохраняется до `entitlements.expires_at`, дальше естественное закрытие | без изменений | INV-22 Stripe-аналог: локальный cancel при providerDead, без revoke |
+| Истёк `access_end_at` после canceled | `expired` | revoke (через стандартный engine, не вручную) | запись `revoke` | nightly access reconcile (03:00 Minsk) |
+| `payment_action_required` (SCA) | `past_due` | без изменений | без изменений | email с Customer Portal link |
+
+**Жёсткое правило:** revoke доступа в Stripe-контуре идёт ТОЛЬКО через `nightly-access-reconcile` по `access_end_at < now()`, никогда напрямую из webhook.
+
+## 21. Subscription Schedule Impact (deferred, но проверено заранее)
+
+Хотя Schedule отложен, проверяем, что MVP не закроет ему дорогу.
+
+### Достаточно ли текущих полей?
+
+**Да.** Никаких новых колонок не нужно. Все Schedule-данные ложатся в `meta`:
+
+| Данные Schedule | Где хранить |
+|---|---|
+| `schedule_id` (`sub_sched_*`) | `subscriptions_v2.meta.stripe.schedule_id` + `provider_subscriptions.meta.stripe.schedule_id` |
+| `cycles_total` (N итераций) | `subscriptions_v2.meta.installment.cycles_total` (уже есть прецедент в bePaid finite, см. `installment-public-link-finite-subscription`) |
+| `cycles_done` | `subscriptions_v2.meta.installment.cycles_done` (инкремент по каждому `invoice.paid`) |
+| `phases[]` snapshot | `subscriptions_v2.meta.stripe.schedule_phases` |
+| `end_behavior` (canonical = `cancel`) | `subscriptions_v2.meta.stripe.schedule_end_behavior` |
+
+### Нужна ли отдельная сущность?
+
+**Нет.** Schedule — это «обёртка» вокруг Subscription. Для нас `provider_subscriptions.provider_subscription_id` = дочерний `sub_*`, а `schedule_id` живёт в meta. Это даёт:
+- единый conflict-guard по `subscription_v2_id`;
+- единый write-path через `invoice.paid` (Schedule генерирует те же invoice'ы);
+- единый extend через `grant-access-for-order`.
+
+### Что Schedule добавит к MVP позже
+
+- handler `subscription_schedule.completed` → закрыть подписку локально (`status=canceled`, без revoke);
+- handler `subscription_schedule.released` без причины → manual_review;
+- инкремент `meta.installment.cycles_done` внутри `invoice.paid` handler.
+
+**Вывод:** Infinite Subscription MVP не блокирует Schedule. Никаких миграций под Schedule заранее не нужно.
+
+## 22. Critical Phase 3 Risks (отдельный риск-блок)
+
+Этот блок имеет приоритет над общим Risk Register D8. Эти 5 рисков обязаны быть покрыты **до** runtime proof Phase 3.1.
+
+| # | Риск | Триггер | Mitigation (обязательная) |
+|---|---|---|---|
+| CR-1 | **Двойное продление доступа через webhook + reconcile** | `invoice.paid` пришёл и был обработан, затем reconcile «повторно материализовал» тот же invoice | Идемпотентность по `orders_v2.meta.stripe.invoice_id` (unique check) + reconcile использует тот же canonical write-path, никаких прямых INSERT в `entitlements` |
+| CR-2 | **Конфликт bePaid active ↔ Stripe active на одном продукте** | Юзер начал оплату через Stripe-ссылку, имея активную bePaid-подписку на тот же `product_id` | Расширить `subscription-conflict.ts`: конфликт детектится по `(user_id, product_id, status active/trial/past_due)` **независимо от provider**. Provider-agnostic check ДО создания Stripe Customer. |
+| CR-3 | **Потеря связки subscription ↔ order** | Webhook `invoice.paid` пришёл, но `provider_subscriptions` lookup провалился (race / wrong account_code) | НЕ создавать orders_v2 «вслепую». При lookup miss → HTTP 200 + `manual_review` + audit `stripe.invoice_paid.subscription_not_found`. Reconcile позже свяжет. |
+| CR-4 | **Неправильный extend по другому tariff_id** | Юзер купил тариф T1, потом upgrade в Stripe Portal на T2 (другой price_id того же продукта) | `extend-tariff-match-required` применяется и к Stripe: если `order.tariff_id != subv2.tariff_id` → НЕ extend, manual_review. Tariff change = explicit cancel → supersede → new sub (см. Extend↔Tariff Match SOT). |
+| CR-5 | **Stripe Test Clock vs production behavior** | Test Clock симулирует переходы периодов, но не покрывает все провайдерские edge-cases (SCA, network 3DS, банковские retries) | Runtime proof Phase 3.1 = два прохода: (1) Test Clock для ускоренной симуляции renewal/cancel; (2) реальная карта Stripe test mode для первого `invoice.paid` без ускорения. Оба прохода = PASS-условие. |
+
+## 23. Финальная матрица реализации Phase 3
+
+Последовательность шагов до полного закрытия подписочного контура Stripe. Перепрыгивать через статусы запрещено.
+
+| # | Шаг | Статус | Gate перед следующим |
+|---|---|---|---|
+| 1 | Phase 3 Discovery | **Done** | Approve этого документа (v1.1) |
+| 2 | Infinite Subscription MVP plan | **Next** | Approve плана (отдельный артефакт) |
+| 3 | Infinite Subscription MVP execute | Pending | Все edge-функции деплоятся, миграции применены |
+| 4 | Runtime Proof (Test Clock + real test card) | Pending | 10-пунктовый прогон, аналогично Stage C |
+| 5 | Customer Portal Actions integration | Pending | Webhook handlers `customer.subscription.updated`, `payment_method.*` стабильны |
+| 6 | Failed Payment / Dunning runtime | Pending | Полное прохождение Dunning Matrix §20 |
+| 7 | Reconcile (Stripe-ветка) | Pending | Lost-webhook сценарий пройден на проде test-mode |
+| 8 | Subscription Schedule | **Deferred** | Только после полного закрытия 1–7 + отдельный approve |
+
+### Жёсткие правила переходов
+
+- **Шаг 4 (Runtime Proof) обязателен.** Без него запрещено начинать Customer Portal Actions.
+- **Шаг 7 (Reconcile) НЕ модифицирует существующий `nightly-access-reconcile` для bePaid.** Только add-only Stripe-ветка.
+- **Шаг 8 (Schedule) не начинается** до того, как Infinite Subscription + Customer Portal + Dunning + Reconcile прошли green-light.
+- **Live mode** не включается ни на одном из шагов 1–8 без отдельного approve пользователя.
+
+---
+
+**Итог Addendum v1.1:** Discovery закрыто полностью. Канонизированы strategy создания, ownership статусов, write-path `invoice.paid`, dunning-матрица, Schedule-готовность, критические риски и пошаговая матрица. Готов к составлению плана Phase 3.1 Infinite Subscription MVP.
