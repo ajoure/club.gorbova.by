@@ -249,6 +249,7 @@ export async function resolveStripeCustomer(
       customer_id: hit.id, source: 'stripe_search',
     });
     return { customer_id: hit.id, source: 'stripe_search' };
+    } // close else { ... } from search hit validation
   }
 
   // ── Step 3: email_fallback ───────────────────────────────────────────────
