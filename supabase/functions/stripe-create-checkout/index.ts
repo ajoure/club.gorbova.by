@@ -150,7 +150,7 @@ Deno.serve(async (req) => {
         tariff_id: body.tariff_id,
         offer_id: body.offer_id,
         payment_link_id: body.payment_link_id,
-        contact_id: body.contact_id ?? order.contact_id,
+        contact_id: body.contact_id ?? null,
         user_id: resolvedUserId,
       },
       context: {
