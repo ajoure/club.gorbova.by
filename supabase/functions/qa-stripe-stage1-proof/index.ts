@@ -300,6 +300,7 @@ Deno.serve(async (req) => {
     }
 
     // ============ G5: past_due duplicate ============
+    await cleanupPendingForUser(subV2Id);
     if (subV2Id && provRowId) {
       try {
         await admin.from('subscriptions_v2').update({ status: 'past_due' }).eq('id', subV2Id);
