@@ -80,8 +80,24 @@ Deno.serve(async (req) => {
   const startedAt = new Date().toISOString();
   const startedAtMs = Date.now();
 
-  async function cleanupPendingForUser() {
+  async function cleanupPendingForUser(exceptSubV2Id?: string | null) {
     // delete pending provider_subscriptions + subscriptions_v2 for QA user/product/tariff
+    let q = admin
+      .from('subscriptions_v2')
+      .select('id')
+      .eq('user_id', QA_USER_ID)
+      .eq('product_id', PRODUCT_ID)
+      .eq('status', 'pending');
+    const { data: subs } = await q;
+    let ids = ((subs as any[] | null) ?? []).map((r) => r.id);
+    if (exceptSubV2Id) ids = ids.filter((id) => id !== exceptSubV2Id);
+    if (ids.length > 0) {
+      await admin.from('provider_subscriptions').delete().in('subscription_v2_id', ids);
+      await admin.from('subscriptions_v2').delete().in('id', ids);
+    }
+  }
+
+  async function cleanupAllForUser() {
     const { data: subs } = await admin
       .from('subscriptions_v2')
       .select('id')
@@ -93,6 +109,7 @@ Deno.serve(async (req) => {
       await admin.from('subscriptions_v2').delete().in('id', ids);
     }
   }
+
 
   try {
     // ---- 0a) Snapshot bePaid baseline for G9 ----
