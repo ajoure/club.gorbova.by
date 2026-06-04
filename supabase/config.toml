@@ -287,3 +287,5 @@ project_id = "hdjgkjceownmmnrqqtuz"
     verify_jwt = true
   [functions.admin-stripe-subscription-capability-probe]
     verify_jwt = true
+  [functions.stripe-create-subscription-checkout]
+    verify_jwt = true
