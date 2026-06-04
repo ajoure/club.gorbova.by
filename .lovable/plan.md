@@ -60,3 +60,79 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 ## Следующий шаг
 
 **Phase 3.1.2 — GAP-C Provisioning Strategy.** Mini-plan на edge function `admin-provision-stripe-price`: реальное создание `prod_*`/`price_*` для пилота `6f306cbc…` (BYN 100.00, month/1), запись в `tariff_offers.meta.stripe.{product_id, price_id, price_id_history[]}`, idempotency через `Idempotency-Key`, rotation-стратегия supersede-only, audit на каждую попытку. Discovery + mini-plan before execute (Diagnose → Plan → Dry run → Execute → Verify).
+
+### GAP-C — обязательный объём (зафиксировано 2026-06-04)
+
+#### C.1 Discovery по существующим Stripe объектам (обязательно до любого provisioning)
+- Цель: **не создать дубликат Product/Price** для пилотного оффера `6f306cbc…`.
+- Проверить источники:
+  - `tariff_offers.meta.stripe.*` (product_id, price_id, price_id_history[], accounts[*]);
+  - `products_v2.meta.stripe.*` и `products.meta.stripe.*`;
+  - legacy mapping-хранилища: `bepaid_product_mappings` (на предмет stripe-веток), `provider_subscriptions.meta` (sub_*/price_*), `payment_links.meta`, `payments_v2.meta.stripe.*`;
+  - admin-конфиги: `payment_settings`, `acquiring_connections.capabilities_snapshot`;
+  - реальный Stripe API: `GET /v1/products?ids[]=...` и `GET /v1/prices?product=...&active=all` под `account_code=stripe_poland`.
+- Результат фиксируется в `.lovable/proofs/stripe_phase_3_1_1_gap_c_existing_objects_discovery_v1.md` до старта provisioning.
+
+#### C.2 Provisioning idempotency (контракт)
+- На один `tariff_offer_id` повторный запуск provisioning **не создаёт** новый Product/Price.
+- Алгоритм:
+  1. если `meta.stripe.price_id` существует **и** Stripe `prices.retrieve(price_id)` подтверждает `active=true, livemode=false (test), currency=BYN, unit_amount=10000, recurring={interval:month, count:1}` → вернуть существующий mapping, статус `idempotent_hit`;
+  2. если Price `archived` (`active=false`) **или** Stripe возвращает 404 → статус `manual_review` + audit `stripe_price_state_drift`, **без silent recreate**;
+  3. если `meta.stripe.price_id` пуст **и** Discovery (C.1) не нашёл existing → создать новый Product+Price с `Idempotency-Key = stripe-provision:{tariff_offer_id}:v1`;
+  4. mismatch по currency/amount/interval → 422 + audit `stripe_price_parameter_drift`, без перезаписи.
+- Silent recreate, force-overwrite, авто-rotation **запрещены**.
+
+#### C.3 Stripe Product SOT (роли источников)
+- **Stripe Product** = контейнер (имя, описание, metadata `{product_id, business_stream, account_code}`);
+- **Stripe Price** = коммерческие условия (amount, currency, recurring);
+- **Бизнес-SOT** остаётся в БД: `tariff_offers` (период, business_stream, account_code), `tariff_prices` (amount, currency);
+- Stripe **не становится** источником истины по сумме/периоду — мы только зеркалим БД-факт в Stripe и храним обратные id;
+- Любое расхождение Stripe ↔ БД = ошибка нашей синхронизации, не повод доверять Stripe.
+
+#### C.4 Rotation / supersede (изменение стоимости подписки)
+- При изменении amount/currency/interval активного оффера:
+  - старый `price_*` **не удаляется** локально и **не deactivate** до append в history;
+  - создаётся новый `price_*` в Stripe;
+  - старый `price_id` переносится в `meta.stripe.price_id_history[]` с `{price_id, archived_at, reason}`;
+  - старый Price помечается `active=false` в Stripe (archive);
+  - в `meta.stripe.price_id` записывается новый id;
+  - **новые подписки** идут на новый Price;
+  - **существующие подписки не мигрируются автоматически** (миграция = отдельный operator flow, вне GAP-C).
+- Несколько одновременно активных Price per (offer, account_code) запрещены.
+
+#### C.5 Write-path audit (до написания edge function)
+- **Кто запускает:** только `super_admin` через UI или ручной вызов; service-role вызовы запрещены без явного actor.
+- **actor_type:** `admin` (с `actor_user_id` из JWT); системные ретраи — `system` с `caller='admin-provision-stripe-price'`.
+- **audit_logs (обязательные events):**
+  - `stripe_provision_started` (input: offer_id, account_code, dry_run flag);
+  - `stripe_provision_discovery_result` (existing/missing/drift);
+  - `stripe_product_created` или `stripe_product_reused`;
+  - `stripe_price_created` или `stripe_price_reused`;
+  - `stripe_provision_completed` (final mapping snapshot);
+  - `stripe_provision_failed` (error, http_status, stripe_request_id);
+  - `stripe_price_state_drift` / `stripe_price_parameter_drift` (для manual_review).
+- **dry-run mode:** обязателен, выполняет C.1 + симуляцию C.2 без вызовов `POST /v1/products` и `POST /v1/prices`, возвращает план действий + diff.
+- Provisioning **без полного audit trail** запрещён.
+
+#### C.6 Multi-account guard
+- Хотя MVP использует только `stripe_poland`, контракт фиксируется сразу:
+  - каждый Product и Price принадлежит конкретному `account_code`;
+  - целевая future-ready схема хранения — `tariff_offers.meta.stripe.accounts[<account_code>] = { product_id, price_id, price_id_history[] }`;
+  - MVP пишет одновременно во **flat** (`meta.stripe.{product_id, price_id, ...}`) и в `meta.stripe.accounts[stripe_poland]` (dual-write), чтение MVP — flat;
+  - вызов provisioning **без явного `account_code`** запрещён (422 `account_code_required`);
+  - cross-account reuse `price_id` запрещён (Stripe Price принадлежит ровно одному аккаунту).
+
+#### C.7 STOP-GATE GAP-C
+GAP-C = **PASS** только при одновременном выполнении:
+1. найден или создан **единственный** Stripe Product для пилотного оффера;
+2. найден или создан **единственный** активный Stripe Price для пилотного оффера;
+3. `tariff_offers.meta.stripe.price_id` (и `product_id`) заполнен и подтверждён `prices.retrieve`;
+4. Validation Matrix GAP-B остаётся PASS (currency=BYN, unit_amount=10000, interval=month/1);
+5. provisioning полностью идемпотентен (повторный запуск → `idempotent_hit`, без новых объектов);
+6. audit trail (C.5) доказан в `audit_logs`;
+7. bePaid pipeline (`bepaid-webhook`, `bepaid-sync-*`, `provider_subscriptions` bePaid-ветка) **не затронут** — diff edge functions = 0 в bePaid-области.
+
+#### C.8 Что следует ПОСЛЕ PASS GAP-C
+- **GAP-D — Runtime Stripe Subscription Capability Proof:** реальный `subscription.create` + `checkout.session.create (mode=subscription)` на полученном `price_id` в BYN, тестовая карта, проверка `customer.subscription.created` webhook.
+- **Только после PASS GAP-D** разрешается переход к **Phase 3.1 Infinite Subscription MVP Execution**.
+- До PASS GAP-D запрещено: `stripe-create-subscription-checkout`, subscription webhooks wiring, `provider_subscriptions` Stripe-записи, любые продовые MVP-шаги.
