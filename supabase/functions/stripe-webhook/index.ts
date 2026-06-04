@@ -24,6 +24,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 import { verifyStripeSignature } from '../_shared/acquiring/stripe-signature.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
+import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 
 function svc() {
   return createClient(
