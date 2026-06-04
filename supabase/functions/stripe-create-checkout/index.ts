@@ -17,6 +17,11 @@ import { resolveBusinessStream } from '../_shared/acquiring/business-stream-reso
 import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
 import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
+import {
+  resolveOfferRoutingWithFallback,
+  buildNegativeSnapshot,
+  auditNegativeSnapshot,
+} from '../_shared/crm-routing.ts';
 
 interface CreateBody {
   order_id: string;
