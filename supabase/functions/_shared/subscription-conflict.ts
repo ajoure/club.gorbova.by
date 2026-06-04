@@ -358,3 +358,141 @@ export async function classifySameProductState(
   return { status: 'ok', decision: 'no_existing', existing: null };
 }
 
+// =====================================================================
+// Phase 3.1.0-B — Pending Checkout Guard (CR-2 closure)
+//
+// Назначение: блокировать дубликат checkout, который ещё не дошёл до оплаты
+// (status='pending' в subscriptions_v2 после pre-create перед Stripe Checkout).
+//
+// КЛЮЧЕВЫЕ ИНВАРИАНТЫ:
+//   - pending НЕ grantable / НЕ active / НЕ блокирует bePaid CONFLICTING_STATUSES.
+//   - Блокировка строго по (user_id, product_id, tariff_id, status='pending').
+//     Provider в условие НЕ входит (Stripe pending должен блокировать новый
+//     Stripe/bePaid checkout того же тарифа).
+//   - Guard НЕ изменяет статус строк. stale_pending — только репорт.
+//   - fail-closed на ошибках запроса.
+// =====================================================================
+
+export const PENDING_TTL_MS = 24 * 60 * 60 * 1000; // 24 часа
+
+export type PendingRecommendedAction =
+  | 'reuse_or_block'      // активный pending < TTL → caller возвращает существующую сессию или 409
+  | 'cleanup_candidate'   // pending >= TTL → caller может звать admin cleanup function
+  | 'none';
+
+export interface PendingSubscriptionInfo {
+  subscription_v2_id: string;
+  user_id: string;
+  product_id: string;
+  tariff_id: string | null;
+  created_at: string;
+  age_minutes: number;
+  order_id: string | null;
+  provider_subscription_id: string | null;
+  provider: string | null;
+  recommended_action: PendingRecommendedAction;
+}
+
+export type PendingCheckResult =
+  | { status: 'no_pending' }
+  | { status: 'pending_conflict'; pending: PendingSubscriptionInfo }
+  | { status: 'stale_pending'; stale: PendingSubscriptionInfo[] }
+  | { status: 'error'; error: string };
+
+/**
+ * Проверка наличия живого pending checkout на тот же (user, product, tariff).
+ *
+ * Возвращает:
+ *   - pending_conflict: есть pending < 24h → caller обязан reuse сессию или вернуть 409.
+ *   - stale_pending:    есть только pending >= 24h → caller знает про cleanup candidate.
+ *   - no_pending:       чисто, можно создавать новую pending запись.
+ *
+ * Никаких UPDATE — guard read-only.
+ */
+export async function checkPendingCheckoutConflict(
+  supabase: SupabaseClient,
+  params: {
+    user_id: string;
+    product_id: string;
+    tariff_id: string | null | undefined;
+    provider?: string | null; // только для логов/возврата, не для фильтра
+  },
+): Promise<PendingCheckResult> {
+  const { user_id, product_id, tariff_id } = params;
+
+  if (!user_id || !product_id) {
+    return { status: 'error', error: 'Missing required fields (user_id, product_id)' };
+  }
+  if (!tariff_id) {
+    return { status: 'error', error: 'Missing tariff_id for pending checkout guard' };
+  }
+
+  const { data: rowsRaw, error } = await supabase
+    .from('subscriptions_v2')
+    .select('id, user_id, product_id, tariff_id, status, created_at')
+    .eq('user_id', user_id)
+    .eq('product_id', product_id)
+    .eq('tariff_id', tariff_id)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[checkPendingCheckoutConflict] query failed (fail-closed)', error);
+    return { status: 'error', error: 'Ошибка проверки pending checkout. Повторите попытку.' };
+  }
+
+  const rows = (rowsRaw as Array<{
+    id: string; user_id: string; product_id: string; tariff_id: string | null;
+    status: string; created_at: string;
+  }> | null) ?? [];
+
+  if (rows.length === 0) return { status: 'no_pending' };
+
+  const now = Date.now();
+  const ids = rows.map((r) => r.id);
+
+  // Подтянуть placeholder из provider_subscriptions (state='pending').
+  const { data: provRaw } = await supabase
+    .from('provider_subscriptions')
+    .select('subscription_v2_id, provider, provider_subscription_id, order_id, state')
+    .in('subscription_v2_id', ids)
+    .eq('state', 'pending');
+  const provMap = new Map<string, { provider: string; provider_subscription_id: string; order_id: string | null }>();
+  for (const p of (provRaw as Array<{
+    subscription_v2_id: string; provider: string;
+    provider_subscription_id: string; order_id: string | null; state: string;
+  }> | null) ?? []) {
+    if (!provMap.has(p.subscription_v2_id)) {
+      provMap.set(p.subscription_v2_id, {
+        provider: p.provider,
+        provider_subscription_id: p.provider_subscription_id,
+        order_id: p.order_id,
+      });
+    }
+  }
+
+  const toInfo = (r: typeof rows[number], action: PendingRecommendedAction): PendingSubscriptionInfo => {
+    const ageMs = now - new Date(r.created_at).getTime();
+    const prov = provMap.get(r.id) ?? null;
+    return {
+      subscription_v2_id: r.id,
+      user_id: r.user_id,
+      product_id: r.product_id,
+      tariff_id: r.tariff_id,
+      created_at: r.created_at,
+      age_minutes: Math.floor(ageMs / 60000),
+      order_id: prov?.order_id ?? null,
+      provider_subscription_id: prov?.provider_subscription_id ?? null,
+      provider: prov?.provider ?? null,
+      recommended_action: action,
+    };
+  };
+
+  const fresh = rows.filter((r) => now - new Date(r.created_at).getTime() < PENDING_TTL_MS);
+  if (fresh.length > 0) {
+    return { status: 'pending_conflict', pending: toInfo(fresh[0], 'reuse_or_block') };
+  }
+  const stale = rows.map((r) => toInfo(r, 'cleanup_candidate'));
+  return { status: 'stale_pending', stale };
+}
+
