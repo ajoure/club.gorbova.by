@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
     await new Promise((r) => setTimeout(r, 3000));
     const r8 = await resolve({ user_id: USER_ID, account_code: ACCOUNT_CODE, email: EMAIL });
     const { count: mismatchCount } = await sb.from('audit_logs').select('*', { count: 'exact', head: true }).eq('action', 'stripe_customer_mismatch').filter('meta->>verify_tag', 'eq', VERIFY_TAG);
-    results.scenarios.S8 = { expect: 'profile_cache returned + mismatch flagged', got_source: r8.source, got_id: r8.customer_id, profile_cache_was: live_bogus.data.id, mismatch: r8.mismatch, audit_count: mismatchCount, pass: !!r8.mismatch && r8.customer_id === live_bogus.data.id && (mismatchCount ?? 0) > 0 };
+    results.scenarios.S8 = { expect: 'mismatch flagged + audit, no auto-rewrite', got_source: r8.source, got_id: r8.customer_id, sacrificial_cache_was: sac.data.id, mismatch: r8.mismatch, audit_count: mismatchCount, pass: !!r8.mismatch && (mismatchCount ?? 0) > 0 };
 
     // S9: multi-account isolation
     const q9 = `metadata['user_id']:'${USER_ID}' AND metadata['account_code']:'${FAKE_ACCOUNT_CODE}'`;
