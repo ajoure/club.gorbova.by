@@ -161,9 +161,18 @@ Deno.serve(async (req) => {
     results.scenarios.S2 = { expect: 'profile_cache', got: r2.source, customer_id: r2.customer_id, same: r2.customer_id === r1.customer_id, pass: r2.source === 'profile_cache' && r2.customer_id === r1.customer_id };
 
     await resetCache();
-    await new Promise((r) => setTimeout(r, 2500));
-    const r3 = await resolve({ user_id: USER_ID, account_code: ACCOUNT_CODE, email: EMAIL });
-    results.scenarios.S3 = { expect: 'stripe_search', got: r3.source, customer_id: r3.customer_id, same: r3.customer_id === r1.customer_id, pass: r3.source === 'stripe_search' && r3.customer_id === r1.customer_id };
+    // Stripe search index has ~5-30s lag after customer creation. Poll up to 30s.
+    let r3: any = null;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      r3 = await resolve({ user_id: USER_ID, account_code: ACCOUNT_CODE, email: EMAIL });
+      if (r3.source === 'stripe_search') break;
+      // If returned email_fallback or created, reset and try again.
+      await resetCache();
+      // Also re-patch metadata in case fallback removed it
+      await sfetch(SK, `/customers/${r1.customer_id}`, { method: 'POST', form: { 'metadata[user_id]': USER_ID, 'metadata[account_code]': ACCOUNT_CODE } });
+    }
+    results.scenarios.S3 = { expect: 'stripe_search', got: r3?.source, customer_id: r3?.customer_id, same: r3?.customer_id === r1.customer_id, pass: r3?.source === 'stripe_search' && r3?.customer_id === r1.customer_id };
 
     await resetCache();
     await sfetch(SK, `/customers/${r1.customer_id}`, { method: 'POST', form: { 'metadata[user_id]': '', 'metadata[account_code]': '' } });
