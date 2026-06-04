@@ -5,7 +5,7 @@
 3. ✅ Phase 3.1.0 — enum `pending`
 4. ✅ Phase 3.1.0-B — Pending Guard helper + manual cleanup (CR-2 helper closure)
 5. ✅ Phase 3.1.1 — Price Mapping STOP-GATE: GAP-A **PASS**, GAP-B **PASS (with backlog, approved 2026-06-04)**.
-6. ⏳ **Phase 3.1.2 — GAP-C Provisioning Strategy.** NEXT.
+6. ⏳ **Phase 3.1.2 — GAP-C Provisioning Strategy.** C.1 ✅ PASS (2026-06-04). C.2–C.7 NEXT.
 7. ⛔ Phase 3.1 Infinite Subscription MVP — заблокирован до PASS GAP-C/D.
 8. ⛔ Runtime Proof — GAP-D, заблокирован.
 9. ⛔ Phase 3.2+ (Customer Portal, Dunning, Reconcile) deferred.
