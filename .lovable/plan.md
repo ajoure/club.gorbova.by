@@ -1,3 +1,13 @@
+# Stripe Subscription MVP — статус этапов
+
+- GAP-A — BYN Price Capability: ✅ **PASS**
+- GAP-B — Billing Period Resolver: ✅ **PASS**
+- GAP-C — Product/Price Provisioning: ✅ **PASS** (pilot `prod_UdwjYeet4QFbtW` / `price_1Teeq26UYJj2vm0GPXHSLKlz`)
+- GAP-D — Runtime Stripe Subscription Capability Proof: ⏳ **IN PROGRESS** (edge function `admin-stripe-subscription-capability-probe` задеплоена; proof заполняется по факту run create→pay→inspect→cancel→verify_isolation)
+- Phase 3.1 Infinite Subscription MVP Execution: 🔒 BLOCKED до PASS GAP-D
+
+---
+
 # Да, согласен, с учетом правок:
 
 1. **Webhook формулировку лучше уточнить.**
