@@ -74,7 +74,10 @@ Deno.serve(async (req) => {
       .select('id, status, provider, final_price, currency, user_id, product_id, tariff_id, offer_id')
       .eq('id', body.order_id)
       .maybeSingle();
-    if (ordErr || !order) return errorResponse('order_not_found', 404);
+    if (ordErr || !order) {
+      console.log('[stripe-create-checkout] order lookup miss', { order_id: body.order_id, ordErr: ordErr?.message, hasOrder: !!order });
+      return errorResponse('order_not_found', 404);
+    }
     if (order.provider !== 'stripe') return errorResponse('order_provider_mismatch', 400);
     if (!['pending', 'processing'].includes(order.status)) {
       return errorResponse(`order_invalid_status:${order.status}`, 400);
