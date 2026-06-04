@@ -49,7 +49,7 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 
 **Candidate (требует approve):** `mem://architecture/payments/stripe-price-mapping-sot-v1`, `mem://architecture/payments/stripe-secret-resolver-sot`, `mem://architecture/payments/stripe-billing-period-resolver-v1`.
 
-## Что заблокировано до полного PASS Phase 3.1.1
+## Что заблокировано до PASS GAP-C (Phase 3.1.2)
 
 - `stripe-create-subscription-checkout`;
 - subscription webhooks (`customer.subscription.*`, recurring `invoice.paid`);
@@ -59,4 +59,4 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 
 ## Следующий шаг
 
-**GAP-C — Stripe Product+Price Provisioning** (mini-plan `admin-provision-stripe-price`, реальное создание `prod_*`/`price_*` для пилота, запись `tariff_offers.meta.stripe.*`).
+**Phase 3.1.2 — GAP-C Provisioning Strategy.** Mini-plan на edge function `admin-provision-stripe-price`: реальное создание `prod_*`/`price_*` для пилота `6f306cbc…` (BYN 100.00, month/1), запись в `tariff_offers.meta.stripe.{product_id, price_id, price_id_history[]}`, idempotency через `Idempotency-Key`, rotation-стратегия supersede-only, audit на каждую попытку. Discovery + mini-plan before execute (Diagnose → Plan → Dry run → Execute → Verify).
