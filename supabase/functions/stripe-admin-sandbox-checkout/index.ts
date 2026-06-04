@@ -27,6 +27,8 @@ import { resolveAdapter } from '../_shared/acquiring/index.ts';
 import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
+import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 interface Body {
   mode?: 'manual' | 'catalog';
@@ -41,6 +43,9 @@ interface Body {
   currency?: string;
   customer_email?: string;
   account_code?: string;
+  // MP-A2-2: explicit save-PM flag. Catalog branch with resolved user_id may set true to
+  // test pilot one-time saved-card flow. Manual branch ignores (no resolver, no user).
+  save_payment_method?: boolean;
   // legacy simulation (kept for prior proof)
   simulate_order_id?: string;
 }
