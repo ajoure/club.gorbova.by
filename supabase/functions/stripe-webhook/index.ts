@@ -244,6 +244,18 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     const amount_minor = Number(obj.amount_received ?? obj.amount ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
     const amount_major = toMajorUnits(amount_minor, currency);
+    const md_business_stream = (md.business_stream as string | undefined) ?? null;
+    const pi_customer = (obj.customer as string | null) ?? null;
+    const charges = (obj.charges as { data?: Array<{ id: string }> } | undefined)?.data ?? [];
+    const charge_id = charges[0]?.id ?? null;
+    // PRR-FIX-02 (F4 + F2): sticky meta merge before downstream.
+    await mergeStripeMetaOnOrder(supabase, order_id_meta, {
+      payment_intent_id: pi_id,
+      charge_id,
+      customer_id: pi_customer,
+      account_code,
+      business_stream: md_business_stream,
+    });
     const { data: existing } = await supabase
       .from('payments_v2')
       .select('id')
@@ -253,8 +265,6 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     if (existing) {
       payment_id = existing.id;
     } else {
-      const charges = (obj.charges as { data?: Array<{ id: string }> } | undefined)?.data ?? [];
-      const charge_id = charges[0]?.id ?? null;
       const { data: ins } = await supabase
         .from('payments_v2')
         .insert({
@@ -265,13 +275,18 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           currency,
           status: 'succeeded',
           paid_at: new Date().toISOString(),
-          meta: { stripe: { charge_id, account_code, source: 'payment_intent.succeeded' } },
+          meta: {
+            business_stream: md_business_stream,
+            stripe: { payment_intent_id: pi_id, charge_id, account_code, customer: pi_customer, business_stream: md_business_stream, source: 'payment_intent.succeeded' },
+          },
         })
         .select('id')
         .maybeSingle();
       payment_id = ins?.id;
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
+    // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
+    await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.payment_intent.succeeded');
     return { order_id: order_id_meta, payment_id };
   }
 
@@ -287,6 +302,8 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         account_code,
       },
     });
+    // PRR-FIX-02 (F3): apply CRM stage_on_failed.
+    await applyCrmStageOnTerminal(supabase, order_id_meta, 'failed', 'stripe.payment_intent.payment_failed');
     return { order_id: order_id_meta, note: 'logged' };
   }
 
