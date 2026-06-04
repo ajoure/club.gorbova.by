@@ -103,18 +103,20 @@ async function audit(
   entity_id: string,
   meta: Record<string, unknown>,
 ): Promise<string | null> {
-  const { data } = await svc()
+  const { data, error } = await svc()
     .from('audit_logs')
     .insert({
       action: `stripe_provision_${action}`,
       actor_user_id,
-      actor_type: 'admin',
+      actor_type: 'user',
+      actor_label: 'super_admin:admin-provision-stripe-price',
       entity_type: 'tariff_offer',
       entity_id,
       meta,
     })
     .select('id')
     .single();
+  if (error) console.error('audit_insert_failed', error.message);
   return (data as { id?: string } | null)?.id ?? null;
 }
 
