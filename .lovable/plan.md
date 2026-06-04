@@ -1,158 +1,163 @@
-да, согласен, с учетом правок:
+План: PRR-FIX-01 — Runtime Consultation Pilot Evidence
 
-1. Добавить пункт **11. CRM Routing (обязательный)**:
-  &nbsp;
-  &nbsp;
-  - Проверить на одном Stripe sandbox order полный маршрут:  
-  `order → contact → deal → CRM linkage`.
-  - Подтвердить отсутствие orphan contacts/deals.
-  - Это входит в DoD Фазы 2 мастер-спринта.
-2. Добавить пункт **12. Telegram Routing (обязательный)**:
-  - Проверить:  
-  `order → entitlement → telegram access`.
-  - Даже если продукт консультации не выдаёт Telegram-доступ, требуется доказательство корректного прохождения маршрутизации или корректного skip по бизнес-правилу.
-3. Добавить пункт **13. Document Routing (обязательный)**:
-  - Проверить:  
-  `order → document pipeline`.
-  - Подтвердить отсутствие ошибок маршрутизации документов.
-  - Это также входит в DoD Фазы 2 мастер-спринта.
-4. В итоговом файле:  
-`.lovable/proofs/mp_a2_pilot_readiness_review_v1.md`
-  &nbsp;
-  изменить итоговый gate:
-  - было: **10/10 PASS**
-  - должно быть: **13/13 PASS**
-5. Дополнительно добавить отдельную секцию:  
-**Master Sprint Alignment Check**
-  &nbsp;
-  Проверить соответствие текущего состояния мастер-спринту:
-  - Фаза 0 — статус.
-  - Фаза 1 — статус.
-  - Фаза 2 — статус.
-  - Фаза 3 — статус.
-  - Выход за scope.
-  - Риск регрессии bePaid.
-  - Попытка преждевременного перехода к Фазам 4–10.
-  Отдельный итог:
-  - Выполнено.
-  - Частично выполнено.
-  - Не выполнено.
-  - Backlog.
-  - Blockers.
-6. Добавить STOP-GATE:  
-До получения **13/13 PASS** запрещено:
-  - запускать Stage C Runtime Pilot;
-  - создавать Stripe Subscription;
-  - создавать Subscription Schedule;
-  - расширять subscription-actions;
-  - расширять reconcile jobs;
-  - выполнять любые работы из Фазы 3 кроме проверки готовности.
+## Контекст
 
-&nbsp;
+Pilot Readiness Review v1 завершён со счётом **11/13 PASS**. FAIL:
+- **F-PRR-09** (E2E metadata trace) — нет реального Stripe Checkout по продукту «Платная консультация»; отсутствуют узлы Checkout Session → PaymentIntent → provider_events → payments_v2 → orders_v2 с полной metadata.
+- **F-PRR-11** (CRM routing) — sandbox-заказы не триггерили deal/pipeline-binding; offer_id отсутствует.
 
-В остальном план соответствует мастер-спринту и не противоречит утвержденной дорожной карте Stripe Integration Master Sprint v1.0.
+Master Sprint статус (зафиксировано):
 
-&nbsp;
+| Фаза | Статус |
+|---|---|
+| Phase 0 Discovery | Выполнено |
+| Phase 1 Provider Abstraction | Выполнено |
+| Phase 2 Stripe Sandbox | Частично выполнено (11/13 PRR) |
+| Phase 3 Subscriptions | Discovery выполнен, implementation НЕ начат |
+| Phase 4–10 | Не начаты |
 
-План: Pilot Readiness Review (read-only gate 10/10)
+## Цель PRR-FIX-01
 
-## Цель
+Выполнить **один реальный test-mode Stripe Checkout по продукту «Платная консультация»** и собрать недостающие доказательства одновременно по F-PRR-09 и F-PRR-11. Один общий mini-plan, один прогон, один артефакт.
 
-Read-only проверка готовности к Stage C Runtime Pilot «Платная консультация». Никаких изменений кода, миграций, секретов или live-режима. Только сбор доказательств по 10 пунктам и вынесение вердикта PASS/FAIL.
+## Жёсткие STOP-GATE'ы (запрещено до закрытия PRR-FIX-01)
 
-## Жёсткие ограничения
+- Stage C Runtime Pilot (объявление продукта «живым» для реальных клиентов).
+- Stripe Subscriptions (mode=subscription, любые `sub_*`).
+- Subscription Schedule.
+- Provider migration execute (любые ALTER provider на действующих ссылках/заказах).
+- Расширения `subscription-actions`.
+- Расширения reconcile jobs.
+- Любые работы из Фазы 3 кроме discovery (уже выполнен).
 
-- Read-only: запрещены любые edits в `supabase/functions/_shared/acquiring/*`, `stripe-*`, `bepaid-*`, миграции, RPC, RLS, secrets, config.toml.
-- Запрещено создание временных edge functions (в отличие от MP-A2-2R).
-- Запрещено включение live mode / live keys.
-- Запрещены любые касания bePaid path.
-- При FAIL — НЕ фиксить, а оформить mini-plan отдельным шагом.
+## Жёсткие ограничения исполнения
 
-## 10 пунктов гейта
+- Test mode only. `acquiring_connections.test_mode=true` обязателен.
+- bePaid не трогать (denylist verifier exit=1).
+- Никаких новых миграций, RPC, RLS, secrets, изменений config.toml.
+- Никаких изменений resolver/adapter/webhook кода. Если по ходу прогона выявлен баг, который блокирует prove — НЕ фиксить молча. Зафиксировать finding и предложить отдельный mini-plan.
+- Допускаются точечные edits в `supabase/functions/stripe-create-checkout/index.ts` и `stripe-webhook/index.ts` ТОЛЬКО для добавления `account_code`/`business_stream` в top-level `orders_v2.meta` / `payments_v2.meta` (если выяснится, что они лежат только в nested `metadata`). Любое изменение — с before/after snippet в proof.
 
-### 1. Account resolver
+## Подготовка (read-only verify)
 
-- Проверить `_shared/acquiring/account-resolver.ts` (или эквивалент): SOT = `acquiring_connections`, выбор default через `is_default=true AND status='active'`, fallback запрещён к хардкоду.
-- `rg` по репо: отсутствие литералов `'stripe_poland'` / `'stripe_eu'` / `'default'` как account_code вне seed-миграций и proof-файлов.
-- Доказательство: список найденных мест + комментарий PASS/FAIL.
+1. Подтвердить, что продукт «Платная консультация» (`products_v2.code = 'consultation'`) имеет:
+   - активный pay_now `tariff_offer` с `meta.business_stream` и `meta.crm_routing.pipeline_id` (Канон mapping memory `product-pipeline-mapping-canon`).
+   - привязку к `crm_pipelines` через `crm_pipeline_product_bindings` ИЛИ через `tariff_offers.meta.crm_routing`.
+   - `document_scenarios` (для будущих документов, в пилоте достаточно отсутствия ошибки маршрутизации).
+2. Подтвердить наличие активного `acquiring_connections` (`provider='stripe' AND status='active' AND test_mode=true AND is_default=true`).
+3. Подтвердить, что Stripe webhook endpoint зарегистрирован в Stripe Dashboard test mode и `provider_events` получает события (последняя запись < 24h либо обновится в прогоне).
 
-### 2. Customer resolver
+## Шаги прогона (один реальный платёж)
 
-- Подтвердить, что `_shared/acquiring/stripe-customer-resolver.ts` использует ключ identity `(user_id, account_code)`; email — только last-step fallback с отдельным audit-событием.
-- Сослаться на `.lovable/proofs/mp_a2_2_customer_resolver_v1.md` и `mp_a2_2_runtime_completion_v1.md` (S1/S4/S5/S6/S7 = runtime PASS).
+### Шаг 1. Реальный Stripe Checkout по консультации
 
-### 3. Saved Payment Method
+- Через продакшен-флоу (UI кабинета или public payment link) инициировать оплату «Платной консультации» под тестовым пользователем (известные `user_id`, `contact_id`, `email`).
+- Использовать тестовую карту Stripe `4242 4242 4242 4242`.
+- Зафиксировать `cs_test_*` (Checkout Session id) и `pi_test_*` (PaymentIntent id) из ответа `stripe-create-checkout` и из Stripe Dashboard.
 
-- Проверить, что в `stripe-create-checkout` (mode=payment) выставлен `setup_future_usage='off_session'` и `customer` подставляется из resolver.
-- Подтвердить, что нет локального хранения PAN/PM (Stripe = SOT).
-- Сослаться на `.lovable/backlog/stripe_saved_pm_followup.md` (картa picker — out of scope пилота).
+### Шаг 2. Сбор F-PRR-09 evidence (metadata trace)
 
-### 4. Customer Portal readiness
+Для одного и того же заказа собрать **5 узлов одновременно**:
 
-- Проверить наличие/отсутствие edge function для Billing Portal (`stripe-create-portal-session` или аналог).
-- Если отсутствует — зафиксировать как ожидаемый gap (пилот = разовая консультация, recurring/portal не требуется) и сослаться на backlog Вариант A.
-- Вердикт: PASS = «не требуется для пилота, явно отложено в backlog», либо FAIL с mini-plan.
+| Узел | Источник | Обязательные поля |
+|---|---|---|
+| Stripe Checkout Session | Stripe API GET `/v1/checkout/sessions/{cs_test_*}` | `metadata.{order_id, account_code, business_stream, user_id, contact_id, product_id, tariff_id, provider=stripe}` |
+| Stripe PaymentIntent | Stripe API GET `/v1/payment_intents/{pi_test_*}` | то же metadata, наследованное |
+| `provider_events` | `SELECT payload, account_code FROM provider_events WHERE provider='stripe' AND idempotency_key LIKE '%pi_test_*%'` | `payload.data.object.metadata.*`, `account_code` колонка |
+| `payments_v2` | `SELECT id, order_id, meta FROM payments_v2 WHERE meta->>'stripe_payment_intent_id' = 'pi_test_*'` | top-level `meta.{order_id, account_code, business_stream, product_id, tariff_id}` |
+| `orders_v2` | `SELECT id, user_id, product_id, tariff_id, offer_id, meta FROM orders_v2 WHERE id = '<order_id>'` | колонки + top-level `meta.{account_code, business_stream}` |
 
-### 5. Hardcode audit
+Cross-check: значения `order_id, account_code, business_stream, product_id, tariff_id` **идентичны во всех 5 узлах**. Если хотя бы одно поле отсутствует или различается — finding.
 
-- `rg` по `supabase/functions/` на: `example.com`, `success_url:`/`cancel_url:` с literal URL, `'default'` business_stream literal, `stripe_poland` вне seed.
-- Подтвердить, что URL'ы идут через server URL resolver, business_stream — через `_shared/acquiring/business-stream-resolver.ts`.
-- Доказательство: список grep-hits с классификацией allowed/forbidden.
+### Шаг 3. Сбор F-PRR-11 evidence (полный CRM маршрут)
 
-### 6. Phase 2 regression
+Полный маршрут: `Checkout → Contact → Deal → CRM linkage → Order → Payment`.
 
-- Проверочный список из MP-A2-1 runtime smoke: `stripe-admin-sandbox-checkout` (manual + catalog mode), webhook, `payments_v2`, `orders_v2`, `provider_events`, refund smoke.
-- Read-only verify через `supabase--read_query` (последние записи в `provider_events`, `payments_v2`, `orders_v2`, `audit_logs` за период после MP-A2-2R).
-- Никаких новых тестовых платежей в этом шаге (это уже сделано в MP-A2-1/2R).
+| Узел | Запрос | Ожидание |
+|---|---|---|
+| Contact resolution | `SELECT id, email, meta FROM profiles WHERE id = '<user_id>'` (+ contacts via `contact_id` если применимо) | контакт существует ДО checkout, не создан синтетически |
+| Order | `SELECT id, user_id, product_id, tariff_id, offer_id, status, meta FROM orders_v2 WHERE id = '<order_id>'` | `offer_id IS NOT NULL`, `user_id` совпадает с Contact, `status='paid'` после webhook |
+| Payment | `SELECT id, order_id, status, provider FROM payments_v2 WHERE order_id = '<order_id>'` | `provider='stripe'`, `status='succeeded'` |
+| Deal | `SELECT * FROM crm_activity_log WHERE meta->>'order_id' = '<order_id>'` + `SELECT * FROM deals/* canonical table */ WHERE order_id = '<order_id>'` | сделка создана, привязана к pipeline консультации |
+| Pipeline linkage | сравнить `deal.pipeline_id` с `tariff_offers.meta.crm_routing.pipeline_id` для оффера консультации | совпадение 1:1 |
 
-### 7. bePaid frozen
+### Шаг 4. Anti-orphan проверки
 
-- Denylist verifier (как в Phase 2 proof):
-  ```
-  rg -l "acquiring/index|stripe-adapter|stripe-customer-resolver|vault\.ts" \
-     supabase/functions/bepaid-webhook \
-     supabase/functions/_shared/create-payment-checkout.ts \
-     supabase/functions/_shared/acquiring/bepaid-adapter.ts
-  ```
-  → exit=1 (no matches).
-- `SELECT count(*) FROM payment_links WHERE provider='bepaid'` — без падения.
+После прогона выполнить SQL:
 
-### 8. Multi-account safety
+```sql
+-- Orphan Contact: контакт без orders за период прогона
+SELECT count(*) FROM profiles p
+ WHERE p.id = '<test_user_id>'
+   AND NOT EXISTS (SELECT 1 FROM orders_v2 o WHERE o.user_id = p.id);
+-- ожидание: 0
 
-- Проверить, что нет кода, который перебирает `acquiring_connections` без фильтра `provider='stripe' AND status='active'`.
-- Проверить, что `provider_events.account_code` пишется на каждом webhook hit (sample SELECT).
-- Подтвердить, что `Customer.id` хранится per-account в `profiles.meta.stripe.customers[account_code]` (схема MP-A2-2).
+-- Orphan Deal: сделка без order_id или с несуществующим order_id
+SELECT d.id FROM /* deals */ d
+ WHERE d.created_at > '<run_start>'
+   AND (d.order_id IS NULL
+        OR NOT EXISTS (SELECT 1 FROM orders_v2 o WHERE o.id = d.order_id));
+-- ожидание: 0 строк за окно прогона
 
-### 9. E2E metadata trace
+-- Orphan Order: заказ без payment / без deal
+SELECT o.id
+  FROM orders_v2 o
+ WHERE o.id = '<order_id>'
+   AND (NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id = o.id AND p.status='succeeded')
+        OR NOT EXISTS (SELECT 1 FROM /* deals */ d WHERE d.order_id = o.id));
+-- ожидание: 0 строк
+```
 
-- Взять 1 успешный sandbox-заказ из MP-A2-1 runtime smoke (есть в proof).
-- Трейс: `orders_v2.id` → `payments_v2.meta` → `provider_events.payload` → Stripe Checkout Session metadata.
-- Подтвердить, что в каждом узле есть: `order_id`, `account_code`, `business_stream` (не `'default'`), `user_id`, `product_id`/`tariff_id`.
+Если orphan найден — finding с классификацией (precondition violation / runtime gap / data integrity).
 
-### 10. No live keys
+### Шаг 5. bePaid frozen re-verify
 
-- `SELECT account_code, test_mode, status FROM acquiring_connections WHERE provider='stripe'` → все строки `test_mode=true`.
-- В UI `StripeConnectionDialog` test_mode заблокирован в ON (см. Phase 2 proof).
-- Vault: подтвердить, что для активных stripe-аккаунтов нет ключей с префиксом `sk_live_` / `pk_live_` / `whsec_` от live mode (косвенная проверка через `acquiring-test-connection` last run в `capabilities_snapshot` / `last_verified_at`).
+```
+rg -l "acquiring/index|stripe-adapter|stripe-customer-resolver|vault\.ts" \
+   supabase/functions/bepaid-webhook \
+   supabase/functions/_shared/create-payment-checkout.ts \
+   supabase/functions/_shared/acquiring/bepaid-adapter.ts
+# exit=1
+```
 
-## Артефакты (только новые proof-файлы, без кода)
+```sql
+SELECT count(*) FROM payment_links WHERE provider='bepaid'; -- без падения, число >= 106
+```
 
-- `.lovable/proofs/mp_a2_pilot_readiness_review_v1.md`
-  - 10 секций, по каждой: команды/SQL, выдержки результатов, вердикт PASS/FAIL, ссылки на исходные proof'ы.
-  - Итоговый вердикт: 10/10 PASS → green-light Stage C; иначе — список FAIL и предложение mini-plan'ов.
+### Шаг 6. Cleanup test artifacts
 
-## Out of scope
+- Stripe test customer/PaymentMethod, созданные прогоном, оставить как evidence (test mode, без финансовых последствий).
+- Тестовый `orders_v2` и `payments_v2` НЕ удалять (нужны для PRR v2 re-run). Пометить `meta.prr_fix_01_evidence = true`.
+- Тестовая сделка в CRM — также оставить с пометкой в meta.
 
-- Любые исправления найденных FAIL (только фиксация и mini-plan).
-- Запуск пилота / live-checkout / реальных платежей.
-- Изменения UI кабинета / админки.
-- bePaid касания любого рода.
+## Артефакты
 
-## DoD
+- `.lovable/proofs/mp_a2_prr_fix_01_runtime_evidence_v1.md`
+  - Section 1: Preconditions (продукт, оффер, connection).
+  - Section 2: F-PRR-09 5-node metadata trace table (фактические значения).
+  - Section 3: F-PRR-11 full route (Contact → Deal → Order → Payment) + pipeline linkage.
+  - Section 4: Anti-orphan SQL + результаты.
+  - Section 5: bePaid frozen re-verify.
+  - Section 6: Findings (если есть) + предложенные mini-planы (без исполнения).
+  - Итог: PASS/FAIL по F-PRR-09, PASS/FAIL по F-PRR-11.
+- Обновить `.lovable/proofs/mp_a2_pilot_readiness_review_v1.md` (только Section 9 и Section 11 — статусы по результатам PRR-FIX-01). Остальные 11/13 не трогать.
 
-1. Создан `.lovable/proofs/mp_a2_pilot_readiness_review_v1.md` с 10 секциями.
-2. По каждой секции — реальные read-only артефакты (rg output, SQL rows, ссылки на существующие proof'ы), без «логических утверждений».
-3. Итоговый вердикт явный: «10/10 PASS, green-light Stage C» либо «X/10 PASS, см. mini-plan(s) ниже».
-4. Никаких изменений вне `.lovable/proofs/`.
-5. bePaid не затронут (verifier exit=1).
-6. `acquiring_connections.test_mode=true` для всех активных stripe-строк.
+## DoD PRR-FIX-01
+
+1. Выполнен **один реальный test-mode Stripe Checkout** по продукту `consultation` через продакшен-флоу.
+2. Собраны 5 узлов metadata trace (Section 2) с полным совпадением `order_id, account_code, business_stream, user_id, contact_id, product_id, tariff_id` во всех узлах.
+3. Подтверждён полный CRM маршрут: Contact (pre-existing) → Order (offer_id IS NOT NULL) → Payment (succeeded) → Deal (pipeline linkage matches `tariff_offers.meta.crm_routing.pipeline_id`).
+4. Anti-orphan SQL: 0 строк по каждой из трёх проверок.
+5. bePaid frozen verifier exit=1, `payment_links.provider='bepaid'` count >= 106.
+6. Никаких изменений вне `.lovable/proofs/` и (при необходимости) точечного top-level meta merge в `stripe-create-checkout` / `stripe-webhook` — каждое изменение задокументировано before/after.
+7. Если возник баг, блокирующий evidence — зафиксирован finding с предложенным mini-plan, без молчаливого фикса.
+
+## После закрытия PRR-FIX-01
+
+Подрядчик повторно выпускает **Pilot Readiness Review v2**:
+- Все 13 секций перепрогон (read-only, как v1).
+- Ожидаемый результат: **13/13 PASS**.
+- Только при 13/13 PASS — green-light на Stage C Runtime Pilot.
+- При любом FAIL — новый точечный mini-plan, Stage C остаётся заблокирован.
+
+Сейчас green-light на Stage C **не выдаётся**.
