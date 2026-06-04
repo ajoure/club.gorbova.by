@@ -1,133 +1,158 @@
-## да, согласен
+да, согласен, с учетом правок:
 
-План MP-A2-2R корректный. Можно запускать.
-
-Ключевые условия:
-
-```text
-1. Никаких новых code changes внутри MP-A2-2R.
-2. Только runtime-доказательства по S1/S4/S5/S6/S7.
-3. Если найден баг — отдельный finding + отдельный mini-plan.
-4. Pilot Readiness Review не начинать до полного PASS.
-```
-
-После отчёта проверять строго по DoD: все 5 сценариев должны быть runtime PASS, без замены фактов логическими выводами.
+1. Добавить пункт **11. CRM Routing (обязательный)**:
+  &nbsp;
+  &nbsp;
+  - Проверить на одном Stripe sandbox order полный маршрут:  
+  `order → contact → deal → CRM linkage`.
+  - Подтвердить отсутствие orphan contacts/deals.
+  - Это входит в DoD Фазы 2 мастер-спринта.
+2. Добавить пункт **12. Telegram Routing (обязательный)**:
+  - Проверить:  
+  `order → entitlement → telegram access`.
+  - Даже если продукт консультации не выдаёт Telegram-доступ, требуется доказательство корректного прохождения маршрутизации или корректного skip по бизнес-правилу.
+3. Добавить пункт **13. Document Routing (обязательный)**:
+  - Проверить:  
+  `order → document pipeline`.
+  - Подтвердить отсутствие ошибок маршрутизации документов.
+  - Это также входит в DoD Фазы 2 мастер-спринта.
+4. В итоговом файле:  
+`.lovable/proofs/mp_a2_pilot_readiness_review_v1.md`
+  &nbsp;
+  изменить итоговый gate:
+  - было: **10/10 PASS**
+  - должно быть: **13/13 PASS**
+5. Дополнительно добавить отдельную секцию:  
+**Master Sprint Alignment Check**
+  &nbsp;
+  Проверить соответствие текущего состояния мастер-спринту:
+  - Фаза 0 — статус.
+  - Фаза 1 — статус.
+  - Фаза 2 — статус.
+  - Фаза 3 — статус.
+  - Выход за scope.
+  - Риск регрессии bePaid.
+  - Попытка преждевременного перехода к Фазам 4–10.
+  Отдельный итог:
+  - Выполнено.
+  - Частично выполнено.
+  - Не выполнено.
+  - Backlog.
+  - Blockers.
+6. Добавить STOP-GATE:  
+До получения **13/13 PASS** запрещено:
+  - запускать Stage C Runtime Pilot;
+  - создавать Stripe Subscription;
+  - создавать Subscription Schedule;
+  - расширять subscription-actions;
+  - расширять reconcile jobs;
+  - выполнять любые работы из Фазы 3 кроме проверки готовности.
 
 &nbsp;
 
-  
-Дополнение плана: MP-A2-2R — Runtime Completion
+В остальном план соответствует мастер-спринту и не противоречит утвержденной дорожной карте Stripe Integration Master Sprint v1.0.
 
-### Контекст
+&nbsp;
 
-MP-A2-2 формально не закрыт. DoD MP-A2-2 был сформулирован как runtime verification, а не как code review. В отчёте `mp_a2_2_customer_resolver_v1.md` сценарии S1/S4/S5/S6/S7 помечены как «не пройдены из-за состояния окружения» и подтверждены через логический вывод о корректности кода, а не фактическим прогоном против Stripe. По правилам Lovable (Diagnose → Plan → Dry run → Execute → Verify) этого недостаточно.
+План: Pilot Readiness Review (read-only gate 10/10)
 
-Pilot Readiness Review запускать рано. Сначала закрываем оставшиеся 5 runtime-сценариев в отдельном mini-step.
+## Цель
 
----
+Read-only проверка готовности к Stage C Runtime Pilot «Платная консультация». Никаких изменений кода, миграций, секретов или live-режима. Только сбор доказательств по 10 пунктам и вынесение вердикта PASS/FAIL.
 
-### MP-A2-2R — цель
+## Жёсткие ограничения
 
-Получить **фактические runtime-доказательства** по S1, S4, S5, S6, S7 вместо логического вывода. Подтвердить, что resolver ведёт себя в реальной Stripe-среде так же, как описано в коде.
+- Read-only: запрещены любые edits в `supabase/functions/_shared/acquiring/*`, `stripe-*`, `bepaid-*`, миграции, RPC, RLS, secrets, config.toml.
+- Запрещено создание временных edge functions (в отличие от MP-A2-2R).
+- Запрещено включение live mode / live keys.
+- Запрещены любые касания bePaid path.
+- При FAIL — НЕ фиксить, а оформить mini-plan отдельным шагом.
 
----
+## 10 пунктов гейта
 
-### Обязательные сценарии (runtime, не code review)
+### 1. Account resolver
 
-**S1 — New user, no profile cache → create**
+- Проверить `_shared/acquiring/account-resolver.ts` (или эквивалент): SOT = `acquiring_connections`, выбор default через `is_default=true AND status='active'`, fallback запрещён к хардкоду.
+- `rg` по репо: отсутствие литералов `'stripe_poland'` / `'stripe_eu'` / `'default'` как account_code вне seed-миграций и proof-файлов.
+- Доказательство: список найденных мест + комментарий PASS/FAIL.
 
-- Предусловие: profile без `meta.stripe.customers[account_code]`, в Stripe нет Customer с этим `user_id` в metadata.
-- Ожидание: создан новый `cus_*`; resolver вернул `source='created'`; `metadata.user_id` и `metadata.account_code` записаны на Customer.
+### 2. Customer resolver
 
-**S4 — Email fallback (clean)**
+- Подтвердить, что `_shared/acquiring/stripe-customer-resolver.ts` использует ключ identity `(user_id, account_code)`; email — только last-step fallback с отдельным audit-событием.
+- Сослаться на `.lovable/proofs/mp_a2_2_customer_resolver_v1.md` и `mp_a2_2_runtime_completion_v1.md` (S1/S4/S5/S6/S7 = runtime PASS).
 
-- Предусловие: в Stripe есть Customer с совпадающим email, БЕЗ `metadata.user_id`, ровно один.
-- Ожидание: использован существующий `cus_*`; `source='email_fallback'`; audit `stripe_customer_email_fallback_used`; metadata backfilled (`user_id`, `account_code`) через `customers.update`.
+### 3. Saved Payment Method
 
-**S5 — Email collision**
+- Проверить, что в `stripe-create-checkout` (mode=payment) выставлен `setup_future_usage='off_session'` и `customer` подставляется из resolver.
+- Подтвердить, что нет локального хранения PAN/PM (Stripe = SOT).
+- Сослаться на `.lovable/backlog/stripe_saved_pm_followup.md` (картa picker — out of scope пилота).
 
-- Предусловие: в Stripe есть Customer с тем же email, но `metadata.user_id` принадлежит другому пользователю.
-- Ожидание: чужой Customer НЕ использован; создан новый `cus_*`; audit `stripe_customer_email_collision`; в `provider_events` запись `manual_review` (или эквивалент по требованию №4 исходного плана).
+### 4. Customer Portal readiness
 
-**S6 — Email change**
+- Проверить наличие/отсутствие edge function для Billing Portal (`stripe-create-portal-session` или аналог).
+- Если отсутствует — зафиксировать как ожидаемый gap (пилот = разовая консультация, recurring/portal не требуется) и сослаться на backlog Вариант A.
+- Вердикт: PASS = «не требуется для пилота, явно отложено в backlog», либо FAIL с mini-plan.
 
-- Предусловие: существующий профиль с привязанным `customer_id`, email пользователя изменён в profile.
-- Ожидание: `customer_id` НЕ изменился; Stripe `Customer.email` обновлён через `customers.update`; audit `stripe_customer_profile_synced`.
+### 5. Hardcode audit
 
-**S7 — Name change**
+- `rg` по `supabase/functions/` на: `example.com`, `success_url:`/`cancel_url:` с literal URL, `'default'` business_stream literal, `stripe_poland` вне seed.
+- Подтвердить, что URL'ы идут через server URL resolver, business_stream — через `_shared/acquiring/business-stream-resolver.ts`.
+- Доказательство: список grep-hits с классификацией allowed/forbidden.
 
-- Предусловие: существующий профиль с привязанным `customer_id`, имя изменено.
-- Ожидание: `customer_id` НЕ изменился; Stripe `Customer.name` обновлён; audit `stripe_customer_profile_synced`.
+### 6. Phase 2 regression
 
----
+- Проверочный список из MP-A2-1 runtime smoke: `stripe-admin-sandbox-checkout` (manual + catalog mode), webhook, `payments_v2`, `orders_v2`, `provider_events`, refund smoke.
+- Read-only verify через `supabase--read_query` (последние записи в `provider_events`, `payments_v2`, `orders_v2`, `audit_logs` за период после MP-A2-2R).
+- Никаких новых тестовых платежей в этом шаге (это уже сделано в MP-A2-1/2R).
 
-### Доказательства для каждого сценария
+### 7. bePaid frozen
 
-Для S1, S4, S5, S6, S7 в proof обязаны быть:
+- Denylist verifier (как в Phase 2 proof):
+  ```
+  rg -l "acquiring/index|stripe-adapter|stripe-customer-resolver|vault\.ts" \
+     supabase/functions/bepaid-webhook \
+     supabase/functions/_shared/create-payment-checkout.ts \
+     supabase/functions/_shared/acquiring/bepaid-adapter.ts
+  ```
+  → exit=1 (no matches).
+- `SELECT count(*) FROM payment_links WHERE provider='bepaid'` — без падения.
 
-1. **Stripe API dump** — реальный JSON ответ `customers.retrieve(cus_*)` (не Dashboard screenshot). Для S1 дополнительно `paymentMethods.list({ customer })`.
-2. **Audit record** — JSON-фрагмент из `audit_logs` с `action`, `meta`, `actor`, `created_at`.
-3. `**profiles.meta.stripe.customers` ДО** — снэпшот до сценария.
-4. `**profiles.meta.stripe.customers` ПОСЛЕ** — снэпшот после.
-5. **Resolver decision** — лог `{ source, customer_id, account_code, user_id }`.
+### 8. Multi-account safety
 
----
+- Проверить, что нет кода, который перебирает `acquiring_connections` без фильтра `provider='stripe' AND status='active'`.
+- Проверить, что `provider_events.account_code` пишется на каждом webhook hit (sample SELECT).
+- Подтвердить, что `Customer.id` хранится per-account в `profiles.meta.stripe.customers[account_code]` (схема MP-A2-2).
 
-### Отдельные обязательные пункты
+### 9. E2E metadata trace
 
-1. **Объяснение env-state проблемы.** В proof — раздел «Почему S1/S4/S5/S6/S7 не были выполнены в первой итерации»: какое именно состояние окружения помешало (отсутствие чистого test user, наличие/отсутствие test Customers в Stripe, ограничение sandbox-checkout, и т. п.).
-2. **Способ воспроизведения в чистом окружении.** Пошаговый рецепт: какой test user используется, как готовится Stripe-сторона (create/seed/cleanup test Customers через API), какая edge function вызывается, как читается результат. Рецепт должен быть детерминированным.
-3. **Подтверждение удаления временной edge function.** Если для прогона создавалась временная функция (например, `stripe-debug-resolver` или аналог) — показать: путь, факт удаления, `rg -l` результат пустой, запись в `supabase/functions.registry.txt` отсутствует.
-4. **Cleanup временного второго `account_code` из S9.** Подтвердить:
-  - временный `acquiring_connections` row (например, `stripe_test_eu`) удалён или `status='disabled'`;
-  - связанные Vault secrets удалены через `admin_delete_acquiring_secrets`;
-  - `SELECT account_code, status FROM acquiring_connections WHERE provider='stripe'` — финальный результат показывает только реальный `stripe_poland`.
+- Взять 1 успешный sandbox-заказ из MP-A2-1 runtime smoke (есть в proof).
+- Трейс: `orders_v2.id` → `payments_v2.meta` → `provider_events.payload` → Stripe Checkout Session metadata.
+- Подтвердить, что в каждом узле есть: `order_id`, `account_code`, `business_stream` (не `'default'`), `user_id`, `product_id`/`tariff_id`.
 
----
+### 10. No live keys
 
-### Out of scope (MP-A2-2R)
+- `SELECT account_code, test_mode, status FROM acquiring_connections WHERE provider='stripe'` → все строки `test_mode=true`.
+- В UI `StripeConnectionDialog` test_mode заблокирован в ON (см. Phase 2 proof).
+- Vault: подтвердить, что для активных stripe-аккаунтов нет ключей с префиксом `sk_live_` / `pk_live_` / `whsec_` от live mode (косвенная проверка через `acquiring-test-connection` last run в `capabilities_snapshot` / `last_verified_at`).
 
-- Никаких изменений в коде resolver / adapter / webhook. Только runtime-прогон. Если по ходу runtime обнаружится баг — он фиксируется в отдельном finding, а не правится молча внутри MP-A2-2R.
-- bePaid не трогаем.
-- Никаких новых миграций.
-- Stripe live mode запрещён.
+## Артефакты (только новые proof-файлы, без кода)
 
----
+- `.lovable/proofs/mp_a2_pilot_readiness_review_v1.md`
+  - 10 секций, по каждой: команды/SQL, выдержки результатов, вердикт PASS/FAIL, ссылки на исходные proof'ы.
+  - Итоговый вердикт: 10/10 PASS → green-light Stage C; иначе — список FAIL и предложение mini-plan'ов.
 
-### Артефакты
+## Out of scope
 
+- Любые исправления найденных FAIL (только фиксация и mini-plan).
+- Запуск пилота / live-checkout / реальных платежей.
+- Изменения UI кабинета / админки.
+- bePaid касания любого рода.
 
-| Файл                                               | Назначение                                                                                                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `.lovable/proofs/mp_a2_2_runtime_completion_v1.md` | RU runtime proof: S1/S4/S5/S6/S7 с Stripe dump, audit, meta before/after, env-state explanation, repro recipe, cleanup-подтверждения |
-| `.lovable/proofs/mp_a2_2_customer_resolver_v1.md`  | **Update**: пометить S1/S4/S5/S6/S7 как PASS со ссылкой на runtime proof; убрать формулировку «логический вывод»                     |
+## DoD
 
-
----
-
-### DoD MP-A2-2R
-
-1. S1, S4, S5, S6, S7 — runtime PASS, каждый с 5 артефактами (Stripe dump, audit, meta before/after, resolver decision).
-2. Env-state причина задокументирована.
-3. Repro recipe воспроизводим в чистом окружении.
-4. Временная edge function (если была) удалена и подтверждено grep'ом + registry.
-5. Временный `stripe_test_eu` (или иной test account_code из S9) удалён/disabled; Vault secrets для него удалены; финальный `SELECT` подтверждает чистоту.
-6. `mp_a2_2_customer_resolver_v1.md` обновлён: S1/S4/S5/S6/S7 = PASS (runtime), без формулировок «логический вывод».
-7. bePaid freeze — без изменений.
-8. Никаких новых code-изменений в resolver/adapter/webhook.
-
----
-
-### Порядок после MP-A2-2R
-
-1. Закрытие MP-A2-2R (PASS по всем 8 пунктам DoD).
-2. **Только после этого** — Pilot Readiness Review (10/10 gate).
-3. **Только после 10/10 PASS** — Stage C Runtime Pilot.
-
-Pilot Readiness Review до закрытия MP-A2-2R запускать запрещено.
-
----
-
-### Обоснование
-
-По правилам Lovable нельзя заменять фактический runtime-pass утверждением «логика покрывает кейс». Архитектурно MP-A2-2 выглядит корректно, но 5 из 10 сценариев DoD не имеют фактических доказательств. MP-A2-2R закрывает именно этот gap — минимальным объёмом работы, без расширения scope.
+1. Создан `.lovable/proofs/mp_a2_pilot_readiness_review_v1.md` с 10 секциями.
+2. По каждой секции — реальные read-only артефакты (rg output, SQL rows, ссылки на существующие proof'ы), без «логических утверждений».
+3. Итоговый вердикт явный: «10/10 PASS, green-light Stage C» либо «X/10 PASS, см. mini-plan(s) ниже».
+4. Никаких изменений вне `.lovable/proofs/`.
+5. bePaid не затронут (verifier exit=1).
+6. `acquiring_connections.test_mode=true` для всех активных stripe-строк.
