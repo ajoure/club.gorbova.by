@@ -283,3 +283,5 @@ project_id = "hdjgkjceownmmnrqqtuz"
     verify_jwt = false
   [functions.admin-cleanup-stale-pending-subscriptions]
     verify_jwt = true
+  [functions.admin-provision-stripe-price]
+    verify_jwt = true
