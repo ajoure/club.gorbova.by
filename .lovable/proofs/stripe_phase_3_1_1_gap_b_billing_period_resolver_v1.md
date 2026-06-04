@@ -87,16 +87,18 @@ WHERE tariff_id IN ( … 5 tariff_id … ) AND is_active = true;
 
 ## 4. Бизнес-SOT периода (зафиксировано)
 
-| Величина                                 | Источник                                        | Семантика                                              |
-|------------------------------------------|-------------------------------------------------|--------------------------------------------------------|
-| Период биллинга (как часто списывать)    | `tariff_offers.meta.recurring.billing_period_*` | Вход для Stripe `recurring.interval/interval_count`   |
-| Длительность доступа после оплаты        | `tariffs.access_days`                           | Используется `grant-access-for-order`, **не** биллинг |
-| Сумма (цена позиции)                     | `tariff_prices` (active row), `final_price`     | **SOT для Stripe `unit_amount`** (GAP-C)              |
-| Сумма (legacy/диагностика)               | `tariff_offers.amount`                          | **Fallback only**, не используется для Stripe mapping |
-| Валюта                                   | `tariff_prices.currency` (active row)           | SOT для Stripe `currency` (GAP-C)                     |
-| Класс «recurring» offer'а                | `meta.recurring.is_recurring=true`              | Core memory: Product Type SOT                          |
+| Величина                                 | Источник                                        | Приоритет | Семантика                                              |
+|------------------------------------------|-------------------------------------------------|-----------|--------------------------------------------------------|
+| Период биллинга (как часто списывать)    | `tariff_offers.meta.recurring.billing_period_*` | SOT       | Вход для Stripe `recurring.interval/interval_count`   |
+| Длительность доступа после оплаты        | `tariffs.access_days`                           | SOT       | Используется `grant-access-for-order`, **не** биллинг |
+| **Сумма (цена позиции)**                 | **`tariff_prices` (active row), `final_price`** | **SOT (P1)** | **Единственный источник для Stripe `unit_amount`** (GAP-C) |
+| Сумма (legacy/диагностика)               | `tariff_offers.amount`                          | fallback (P2), diagnostic only | **В Stripe НЕ уходит**. Используется только для warning-audit при расхождении с `tariff_prices.final_price` |
+| **Валюта**                               | **`tariff_prices.currency` (active row)**       | **SOT (P1)** | SOT для Stripe `currency` (GAP-C)                     |
+| Класс «recurring» offer'а                | `meta.recurring.is_recurring=true`              | SOT       | Core memory: Product Type SOT                          |
 
 **Инвариант:** `access_days` и `billing interval` семантически разные. На пилоте они совпадают (30/30), но резолвер их не объединяет и не выводит одно из другого.
+
+**Инвариант цены:** при отсутствии активной строки в `tariff_prices` резолвер GAP-C обязан вернуть `price_source_missing` (HTTP 422), а **не** падать на `tariff_offers.amount`. `tariff_offers.amount` используется исключительно для diagnostic audit.
 
 ---
 
@@ -147,17 +149,18 @@ function resolveStripeRecurring(input: Input): Output;
 
 ### 5.3 Interval count > 1 — фиксация политики (нет в текущей выборке)
 
-Чтобы исключить неоднозначность в GAP-C, фиксируем поведение для гипотетических кейсов:
+Чтобы исключить неоднозначность в GAP-C, фиксируем поведение для гипотетических кейсов. Все они в MVP **unsupported** и помечаются как **`future-rule` / `manual_review`** — резолвер обязан вернуть `billing_period_not_supported`, Stripe Price не создаётся, audit пишется с тегом `future-rule:interval_count_gt_1`.
 
-| Условие на вход            | Решение                                           |
-|----------------------------|---------------------------------------------------|
-| `mode=days, days=60`       | **unsupported MVP** → `billing_period_not_supported` (потенциальный `month/2` отложен в future-rule, требует отдельного approve) |
-| `mode=days, days=90`       | **unsupported MVP** → `billing_period_not_supported` (future-rule `month/3`) |
-| `mode=days, days=180`      | **unsupported MVP** → `billing_period_not_supported` (future-rule `month/6`) |
-| `mode=days, days=730`      | **unsupported MVP** → `billing_period_not_supported` (future-rule `year/2`) |
-| `mode=days, days ∉ {7,30,365}` | **unsupported MVP** → `billing_period_not_supported` |
+| Условие на вход            | MVP-решение                                     | Future-rule mapping (deferred, требует отдельного approve) |
+|----------------------------|-------------------------------------------------|------------------------------------------------------------|
+| `mode=days, days=60`       | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=2`                         |
+| `mode=days, days=90`       | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=3`                         |
+| `mode=days, days=180`      | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=6`                         |
+| `mode=days, days=730`      | `billing_period_not_supported` + `future-rule`  | `interval=year, interval_count=2`                          |
+| `mode=days, days ∉ {7,30,365}` и не из таблицы выше | `billing_period_not_supported` + `manual_review` | нет mapping, требует discovery |
 
-**Решение MVP:** `interval_count` всегда `= 1`. Любые `count > 1` — backlog (`future-rule:interval_count_gt_1`), активируются только отдельным approve после прецедента в БД.
+**Решение MVP:** `interval_count` всегда `= 1`. Любые `count > 1` — backlog (`future-rule:interval_count_gt_1`), активируются только отдельным approve после прецедента в БД. Никакого автоматического сворачивания `60d→month/2` в MVP не происходит — это сознательный STOP.
+
 
 ---
 
@@ -208,8 +211,8 @@ function resolveStripeRecurring(input: Input): Output;
 
 - **Offer:** `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e` (CHAT, Gorbova Club).
 - **Период:** `mode=days, days=30` → резолвер: `interval=month, count=1`. PASS.
-- **Сумма/валюта (SOT для GAP-C):** `tariff_prices` (active row, CHAT): `BYN 100.00`.
-- **Валютная капабильность Stripe:** закрыта в **GAP-A = PASS** (см. `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`). В GAP-B валютные проверки не блокер.
+- **Сумма/валюта (SOT для GAP-C):** `tariff_prices` (active row, CHAT): `BYN 100.00`. `tariff_offers.amount=100.00` совпадает → diagnostic-warning не сработает.
+- **Валютная капабильность Stripe:** **BYN Price Capability = PASS** (закрыто в **GAP-A**, см. `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`). Валютная часть пилота закрыта; **GAP-B валютой не блокируется**. Subscription/Checkout-капабильность в BYN остаётся на GAP-D (runtime proof).
 - **access_days:** 30 (используется только `grant-access-for-order`, не уходит в Stripe Price).
 
 **Целевой Stripe Price для GAP-C:**

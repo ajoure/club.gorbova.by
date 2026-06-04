@@ -4,10 +4,11 @@
 2. ✅ Pending State Strategy
 3. ✅ Phase 3.1.0 — enum `pending`
 4. ✅ Phase 3.1.0-B — Pending Guard helper + manual cleanup (CR-2 helper closure)
-5. ⏳ **Phase 3.1.1 — Price Mapping STOP-GATE** — частично закрыт. GAP-A **PASS**, GAP-B **PASS (with backlog)**. Остаются GAP-C, GAP-D.
-6. ⛔ Phase 3.1 Infinite Subscription MVP — заблокирован до закрытия GAP-C/D.
-7. ⛔ Runtime Proof — заблокирован (GAP-D).
-8. ⛔ Phase 3.2+ (Customer Portal, Dunning, Reconcile) deferred.
+5. ✅ Phase 3.1.1 — Price Mapping STOP-GATE: GAP-A **PASS**, GAP-B **PASS (with backlog, approved 2026-06-04)**.
+6. ⏳ **Phase 3.1.2 — GAP-C Provisioning Strategy.** NEXT.
+7. ⛔ Phase 3.1 Infinite Subscription MVP — заблокирован до PASS GAP-C/D.
+8. ⛔ Runtime Proof — GAP-D, заблокирован.
+9. ⛔ Phase 3.2+ (Customer Portal, Dunning, Reconcile) deferred.
 
 ## Phase 3.1.1 — что утверждено
 
@@ -22,8 +23,8 @@
 ## Phase 3.1.1 — GAP List
 
 - **GAP-A — Currency Decision.** ✅ **verified_pass** (2026-06-04). Stripe API на test-аккаунте `acct_1Tc88d…` (PL) создаёт recurring Price в BYN (month и year), HTTP 200, `livemode=false`. Гипотеза «BYN не поддерживается» опровергнута. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`. Subscription/Checkout capability в BYN — отдельно в GAP-D.
-- **GAP-B — Recurring Interval Mapping.** ✅ **pass_with_backlog** (2026-06-04). Resolver contract зафиксирован: `mode=days/{7,30,365}` → `week/month/year` с `count=1`; `mode=month|year` без days → legacy-нормализация; `interval_count>1` принципиально unsupported в MVP. Пилот `6f306cbc…` → `month/1`, BYN 100.00 (SOT суммы — `tariff_prices`, не `offer.amount`). 5/5 active recurring offer'ов прогнаны. Backlog: нормализация `88c6f10d…` + отсутствующие `tariff_prices` для `d307b438…`/`88c6f10d…`. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_b_billing_period_resolver_v1.md`.
-- **GAP-C — Stripe Product+Price Provisioning.** Mini-plan `admin-provision-stripe-price` + запись в `tariff_offers.meta.stripe.*`. **NEXT.**
+- **GAP-B — Recurring Interval Mapping.** ✅ **pass_with_backlog, approved 2026-06-04**. Resolver contract зафиксирован: `mode=days/{7,30,365}` → `week/month/year` с `count=1`; `mode=month|year` без days → legacy-нормализация; `interval_count>1` принципиально unsupported в MVP (60/90/180/730 → `billing_period_not_supported` + `future-rule` тег, mapping `month/2|3|6`, `year/2` зафиксирован, но активируется только отдельным approve). SOT цены: `tariff_prices.final_price` (P1), `tariff_offers.amount` = fallback diagnostic only, в Stripe не уходит. Валютная часть пилота закрыта GAP-A (BYN Price Capability PASS) — GAP-B валютой не блокируется. Пилот `6f306cbc…` → `month/1`, BYN 100.00. 5/5 active recurring offer'ов прогнаны. Backlog: нормализация `88c6f10d…` + отсутствующие `tariff_prices` для `d307b438…`/`88c6f10d…`. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_b_billing_period_resolver_v1.md`.
+- **GAP-C — Stripe Product+Price Provisioning.** ⏳ **NEXT (Phase 3.1.2).** Mini-plan `admin-provision-stripe-price` + запись в `tariff_offers.meta.stripe.*`. MVP Stripe Subscriptions остаётся заблокированным до PASS GAP-C.
 - **GAP-D — Runtime Proof.** `prices.retrieve` + capability-проверка `subscription.create` и `checkout.session.create (mode=subscription)` в BYN на пилотном оффере.
 
 ## Источник Stripe-ключа (зафиксировано после Pre-check PATCH)
@@ -48,7 +49,7 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 
 **Candidate (требует approve):** `mem://architecture/payments/stripe-price-mapping-sot-v1`, `mem://architecture/payments/stripe-secret-resolver-sot`, `mem://architecture/payments/stripe-billing-period-resolver-v1`.
 
-## Что заблокировано до полного PASS Phase 3.1.1
+## Что заблокировано до PASS GAP-C (Phase 3.1.2)
 
 - `stripe-create-subscription-checkout`;
 - subscription webhooks (`customer.subscription.*`, recurring `invoice.paid`);
@@ -58,4 +59,4 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 
 ## Следующий шаг
 
-**GAP-C — Stripe Product+Price Provisioning** (mini-plan `admin-provision-stripe-price`, реальное создание `prod_*`/`price_*` для пилота, запись `tariff_offers.meta.stripe.*`).
+**Phase 3.1.2 — GAP-C Provisioning Strategy.** Mini-plan на edge function `admin-provision-stripe-price`: реальное создание `prod_*`/`price_*` для пилота `6f306cbc…` (BYN 100.00, month/1), запись в `tariff_offers.meta.stripe.{product_id, price_id, price_id_history[]}`, idempotency через `Idempotency-Key`, rotation-стратегия supersede-only, audit на каждую попытку. Discovery + mini-plan before execute (Diagnose → Plan → Dry run → Execute → Verify).
