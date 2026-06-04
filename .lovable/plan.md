@@ -1,188 +1,312 @@
-## да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 ```text
-Discovery Subscriptions Compatibility Map можно запускать.
+План Infinite Subscription MVP можно принять как основу, но перед execute нужны правки.
 
-Правки перед execute:
+1. Price Mapping Validation — правильно вынесен как STOP-GATE.
+   Добавить туда обязательную проверку:
+   - Stripe Product/Price должны быть test-mode;
+   - Price должен быть active=true;
+   - Price должен быть recurring;
+   - Price lookup должен идти через Stripe API, а не только по сохранённому price_id.
 
-1. Добавить обязательный раздел:
-   "Subscription SOT Matrix"
+2. Нельзя использовать `invoice.payment_succeeded` в одном месте и `invoice.paid` в другом.
+   Выбрать один канон: `invoice.paid`.
+   Весь план привести к единому имени.
 
-   Для каждой сущности указать SOT:
-   - subscriptions_v2
-   - provider_subscriptions
-   - Stripe Subscription
-   - Stripe Invoice
-   - Stripe PaymentIntent
-   - Entitlement
-   - Access window
-   - Customer
-   - PaymentMethod
+3. `checkout.session.completed` для subscription не должен активировать доступ.
+   Это правильно указано.
+   Но добавить:
+   - он может быть использован только для связывания `checkout_session_id`, `customer_id`, `subscription_id`;
+   - активация только через `invoice.paid`.
 
-2. Добавить обязательный анализ:
-   "Stripe event → our action"
+4. Pre-create pending subscription:
+   Добавить cleanup/TTL правило:
+   - если Stripe Checkout не завершён;
+   - если subscription не получена;
+   - если invoice.paid не пришёл.
+   
+   Например:
+   `pending > 24h → expired/manual_review`.
 
-   Таблица:
-   - checkout.session.completed
-   - customer.subscription.created
-   - customer.subscription.updated
-   - customer.subscription.deleted
-   - invoice.created
-   - invoice.finalized
-   - invoice.paid
-   - invoice.payment_failed
-   - invoice.payment_action_required
-   - charge.refunded
+5. `provider_subscriptions.provider_subscription_id` может быть неизвестен до Stripe Checkout.
+   Поэтому:
+   - pre-create provider_subscriptions с временным `provider_subscription_id='pending:{order_id}'` или null, если схема позволяет;
+   - после `customer.subscription.created` обновить на `sub_*`.
+   Нужно указать фактическое допустимое значение по текущей схеме.
 
-   Для каждого:
-   - что пишет в provider_events;
-   - что меняет в subscriptions_v2;
-   - что меняет в provider_subscriptions;
-   - создаёт ли orders_v2;
-   - вызывает ли grant-access-for-order;
-   - когда manual_review.
+6. `provider_subscriptions.state`
+   Уточнить маппинг:
+   - pending
+   - active
+   - past_due
+   - canceled
+   - incomplete
+   - unpaid
+   
+   Если state enum/constraint не поддерживает Stripe-статусы — STOP и отдельный mini-plan.
 
-3. Добавить обязательный анализ:
-   "First payment vs renewal"
+7. `subscriptions_v2.status`
+   Уточнить, можно ли использовать `pending`.
+   В discovery enum был:
+   `active, trial, past_due, canceled, expired, superseded, expired_reentry`.
+   
+   `pending` там нет.
+   Поэтому текущий пункт:
+   `pre-create subscriptions_v2(status=pending)`
+   невозможен без schema change.
+   
+   Нужно изменить стратегию:
+   - либо использовать допустимый статус, например `past_due`/`trial` нельзя семантически;
+   - либо pre-create только provider_subscriptions pending и orders_v2 pending;
+   - либо отдельный schema mini-plan добавить `pending`.
+   
+   Это блокер. Нельзя approve execute, пока не решено.
 
-   Разделить:
-   - первая оплата subscription checkout;
-   - последующее автосписание invoice.paid;
-   - failed renewal;
-   - cancellation;
-   - resume.
+8. `subscriptions_v2` создавать из webhook запрещено — согласен.
+   Но если `pending` невозможен, нужен альтернативный pre-create status contract.
 
-4. Добавить обязательный анализ:
-   "Duplicate subscription guard"
+9. Для `invoice.paid`:
+   Не создавать новую подписку.
+   Только:
+   - найти pre-created subscription;
+   - создать order/payment;
+   - вызвать grant-access-for-order;
+   - активировать найденную subscription.
+   
+   Если pre-created subscription не найдена → manual_review.
 
-   Проверить не только provider='stripe', но и cross-provider:
-   - bePaid active → Stripe запрещён;
-   - Stripe active → bePaid запрещён;
-   - Stripe account A active → Stripe account B запрещён для того же product_id.
+10. Duplicate guard:
+   В G3 не только “bePaid active blocks Stripe”.
+   Проверить:
+   - Stripe active blocks bePaid;
+   - Stripe active on account A blocks Stripe on account B;
+   - canceled/superseded не блокирует.
 
-5. Добавить анализ:
-   "Customer Portal subscription actions"
+11. Test Clock:
+   Перед runtime proof добавить discovery:
+   - поддерживается ли Test Clock для Checkout Subscriptions в данном аккаунте;
+   - можно ли создать Customer с test_clock;
+   - совместимо ли это с Checkout Session.
+   
+   Если нет — использовать короткий recurring interval или manual invoice test strategy.
 
-   Потому что MVP self-service = Stripe Customer Portal:
-   - отмена подписки через Portal;
-   - смена карты через Portal;
-   - как webhook отражает это в нашей БД;
-   - какие события Stripe должны быть обработаны.
+12. bePaid smoke:
+   Не требовать реальный bePaid recurring renewal, если это рискованно/долго.
+   Достаточно:
+   - read-only freeze;
+   - органический recent bePaid recurring check;
+   - либо безопасный existing test hook.
+   
+   Нельзя ради Stripe MVP запускать потенциально рискованный bePaid renewal.
 
-6. Добавить раздел:
-   "No schema change assumption"
+13. Frontend:
+   PaymentDialog branch нельзя добавлять до backend MVP green.
+   Сначала backend edge + direct admin/test call.
+   Потом отдельный UI mini-patch.
 
-   Подтвердить, что Phase 3 можно сделать через `meta.*`.
-   Если discovery показывает необходимость новых колонок — STOP и отдельный schema mini-plan.
+14. Memory update не делать в DoD автоматически.
+   Только после approve итогового runtime proof.
 
-7. Добавить раздел:
-   "Testing strategy"
+15. Добавить обязательный раздел:
+   “No schema-change decision”
+   Если без нового статуса `pending` нельзя корректно pre-create, нужно остановиться и оформить schema mini-plan.
 
-   Как в test-mode проверять:
-   - first payment;
-   - renewal;
-   - payment_failed;
-   - cancel_at_period_end;
-   - resume;
-   - finite cycles.
+Итог:
 
-   Обязательно указать:
-   - Stripe Test Clock или альтернативу;
-   - как не ждать реального месяца.
+План хороший, но есть один критический блокер:
 
-8. Добавить раздел:
-   "bePaid recurring freeze check"
+`subscriptions_v2.status=pending` невозможен по текущему enum.
 
-   Подтвердить, какие файлы/пути нельзя трогать при будущей реализации:
-   - bepaid-webhook;
-   - bepaid-create-subscription;
-   - bepaid recurring jobs;
-   - existing provider_subscriptions rows provider='bepaid'.
+Перед approve execute нужно сначала закрыть sub-discovery:
 
-9. Добавить итоговую секцию:
-   "Implementation Recommendation"
+`Subscription Pending State Strategy`
 
-   Не код, а порядок будущей реализации:
-   1. Infinite Subscription MVP.
-   2. Runtime proof.
-   3. Customer Portal actions.
-   4. Failed payment / dunning.
-   5. Reconcile.
-   6. Только потом Subscription Schedule / finite installments.
+В нём выбрать один вариант:
 
-10. В отчёте обязательно указать статус:
-   - compatible as-is;
-   - compatible with add-only extension;
-   - requires mini-plan;
-   - blocked.
+A. Добавить `pending` в enum отдельной миграцией.
+B. Pre-create без subscriptions_v2, только provider_subscriptions/orders_v2, а subscriptions_v2 создавать после invoice.paid — но это противоречит Discovery.
+C. Использовать существующий статус с meta.pending=true — рискованно и нужно доказать безопасность.
 
-После этих правок можно выполнять discovery.
+Я бы рекомендовал вариант A: add-only расширить enum `subscription_status` значением `pending`, но только отдельным mini-plan + dry-run + proof.
+
+Phase 3.1 — Infinite Subscription MVP
 ```
 
-Сейчас это правильный следующий шаг по мастер-спринту: **Фаза 3 Subscriptions — сначала compatibility discovery, без кода**.
+Цель: запустить **один** рекуррентный Stripe-тариф в test mode по каноническому write-path, утверждённому в Discovery v1.1. До прохождения Runtime Proof — никаких следующих шагов из роадмапа §23.
 
-&nbsp;
+## Жёсткий scope (что входит и что НЕ входит)
 
-Discovery Subscriptions Compatibility Map — Stripe Subscriptions (Фаза 3)
 
-### 1. Проблема
+| Входит                                                                                                      | НЕ входит (явный запрет)                                                   |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Infinite Subscription (бесконечная рекуррентная)                                                            | Subscription Schedule                                                      |
+| Pre-create `subscriptions_v2` + `provider_subscriptions` (canonical write-path)                             | Finite installments через Stripe                                           |
+| Stripe Checkout `mode=subscription` (один пилотный тариф)                                                   | Pause/Resume Stripe-подписки                                               |
+| Webhook handlers: `customer.subscription.created/updated/deleted`, `invoice.paid`, `invoice.payment_failed` | Изменения `nightly-access-reconcile`                                       |
+| Расширение `subscription-conflict.ts` на provider-agnostic detection                                        | Customer Portal implementation (handlers — да, UI — нет)                   |
+| Расширение `provider-linked-extend-priority` на Stripe lookup                                               | Stripe live mode                                                           |
+| Один пилотный recurring `tariff_offer` с `meta.recurring.is_recurring=true`                                 | Любые изменения bePaid edge-функций                                        |
+| Runtime Proof (Test Clock + реальная test-card)                                                             | Phase 3.2+ (Customer Portal Actions, Dunning runtime, Reconcile, Schedule) |
 
-Сейчас подписочная инфраструктура работает только с bePaid (provider-managed). Stripe в проекте прошёл one-time pilot (Stage C, 10/10 PASS), но подписочный flow (Subscription -> Checkout -> Webhook -> Grant -> Recurring) через Stripe ещё не анализирован на совместимость с существующей архитектурой.
 
-### 2. Диагностика (актуальное состояние)
+## STOP-GATE: Price Mapping Validation (обязательный sub-discovery ДО кода)
 
-- `subscriptions_v2` — поля: id, user_id, order_id, product_id, tariff_id, flow_id, status (USER-DEFINED), access_start_at, access_end_at, is_trial, trial_end_at, next_charge_at, charge_attempts, payment_token, canceled_at, cancel_reason, meta, created_at, updated_at, trial_canceled_at, trial_canceled_by, keep_access_until_trial_end, cancel_at, payment_method_id, auto_renew, profile_id, auto_renew_disabled_by, auto_renew_disabled_at, auto_renew_disabled_by_user_id, grace_period_started_at, grace_period_ends_at, grace_period_status, billing_type.
-- `provider_subscriptions` — поля: id, provider, provider_subscription_id, user_id, subscription_v2_id, profile_id, state, next_charge_at, last_charge_at, amount_cents, currency, interval_days, card_brand, card_last4, card_token, raw_data, created_at, updated_at, meta, order_id. Provider = 'bepaid' по умолчанию.
-- `grant-access-for-order` — решает recurring через `resolveRecurringFromOrderOrTariff` (SOT = `tariff_offers.meta.recurring.is_recurring`). Для recurring-заказа ищет активную подписку через `provider_linked_subscription_resolver.ts` и делает extend (при совпадении tariff_id) или создаёт новую.
-- `subscription-conflict.ts` (duplicate-subscription-prevention-guard) — проверяет конфликт по `user_id + product_id + status in [active, trial] + provider_subscriptions.provider='bepaid' + state in [active]`. Без provider-связи — зомби, не блокирует.
-- `subscription-actions` — cancel, check-resume, resume, change-payment-method. Resume: 3-level eligibility (local -> payment method -> provider bePaid state). Provider-dead = блок.
-- `access-rules-nightly-reconcile` — батчит active `subscriptions_v2`, прогоняет secondary product access grants.
-- `stripe-create-checkout` — только one-time (`is_one_time: true`), `save_payment_method` опционально.
-- `stripe-webhook` — checkout.session.completed -> `grant-access-for-order` (вызывает как есть, без модификаций).
+Это первый блок исполнения MVP. Без зафиксированного решения по mapping — код не пишется.
 
-### 3. Предлагаемое решение (Discovery-only)
+Что нужно подтвердить и записать в `.lovable/proofs/stripe_phase_3_1_price_mapping_v1.md`:
 
-Провести полный аудит каждого subscription-компонента на предмет совместимости с Stripe Subscription API (Checkout Session с `mode='subscription'`, Subscription object, Invoice, Invoice.payment_succeeded). Результат — markdown-отчёт `.lovable/proofs/stripe_phase_3_discovery_subscriptions_compatibility_v1.md` с матрицей совместимости.
+1. **Где хранится Stripe `price_id` (`price_*`)?**
+  Кандидаты:
+  - `tariff_offers.meta.stripe.price_id` (add-only через meta, без миграции) — **предлагаемый канон**;
+  - отдельная таблица `provider_price_mappings` — отклонить как преждевременную нормализацию;
+  - `tariff_offers.meta.stripe.account_code → price_id` словарь — потребуется при multi-account, но в MVP один account.
+2. **SOT по цене:**
+  - **Stripe Price** — внешняя истина суммы/валюты/интервала;
+  - `**tariff_offers.amount` / `currency**` — бизнес-SOT для UI/CRM/документов;
+  - `**tariff_offers.meta.stripe.price_id**` — связка, не SOT суммы.
+  - **Правило:** при расхождении (Stripe Price amount ≠ `tariff_offers.amount`) — `manual_review`, не продаём.
+3. **Кто создаёт Stripe Price?**
+  - В MVP — **вручную в Stripe Dashboard** для пилотного тарифа. Автосоздание Product/Price из админки = backlog (Phase 5).
+  - В meta также сохраняем `meta.stripe.product_id` (`prod_*`) для traceability.
+4. **Валидация на create-checkout:**
+  - `price.currency` == `tariff_offer.currency` (case-insensitive);
+  - `price.unit_amount` == `tariff_offer.amount` * 100 (toleranceless);
+  - `price.recurring.interval` ↔ `tariff_offer.meta.recurring.*` (мапа интервалов);
+  - при mismatch → 422 `price_mismatch`, не создаём подписку.
+5. **Идемпотентность mapping:** один `tariff_offer.id` ↔ один активный `price_id`. Смена цены = новый `price_id` + supersede старого через `meta.stripe.price_id_history[]`.
 
-### 4. Изменяемые компоненты
+**Gate:** approve этого sub-discovery → переход к §1 ниже.
 
-Нет. Discovery — read-only анализ, без изменений кода/таблиц/RPC.
+## 1. Затронутые файлы (add-only, без новых колонок в БД)
 
-### 5. Что не будет изменено (STOP-guards Discovery)
+### Новые edge-функции
 
-- Не писать `stripe-create-subscription-checkout`
-- Не писать Subscription Schedule
-- Не расширять `reconcile` / `nightly-access-reconcile`
-- Не менять `subscription-actions`
-- Не менять `provider_subscriptions`
-- Не менять `grant-access-for-order`
-- Не менять `subscription-conflict.ts`
-- Не менять `subscriptions_v2` схему
-- Не включать live mode
-- Не трогать bePaid
+- `supabase/functions/stripe-create-subscription-checkout/index.ts` — pre-create + Stripe Checkout `mode=subscription`.
 
-### 6. Dry-run
+### Существующие edge-функции (add-only расширения)
 
-Discovery не имеет side-effects. Read-only просмотр кода + схемы.
+- `supabase/functions/stripe-webhook/index.ts` — добавить handlers `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`. Существующая one-time ветка не трогается.
+- `supabase/functions/_shared/subscription-conflict.ts` — расширить detection на `provider='stripe'` (provider-agnostic по `subscriptions_v2.status`).
+- `supabase/functions/_shared/provider-linked-extend-priority` (или ближайший по имени) — добавить Stripe lookup через `provider_subscriptions(provider='stripe')`.
+- `supabase/functions/grant-access-for-order/index.ts` — НЕ модифицируется по логике; используется как есть.
 
-### 7. Execute
+### Frontend
 
-Не применимо. Discovery-задача.
+- Кнопка checkout на пилотном тарифе — реюз существующего `PaymentDialog` flow с новым `provider='stripe'` branch для recurring (минимальный diff, см. §3).
 
-### 8. DoD Discovery
+### Миграций нет
 
-1. Карта полей `subscriptions_v2` -> какие поля нужны/не нужны для Stripe Subscription.
-2. Карта полей `provider_subscriptions` -> какие поля заполнятся из Stripe API (`sub_xxx`, `in_xxx`).
-3. Анализ `grant-access-for-order` — как recurring-flow будет работать со Stripe (pre-create subv2 -> checkout -> webhook -> extend vs new).
-4. Анализ `subscription-conflict.ts` — как добавить provider='stripe' в конфликт-гвард без поломки bePaid.
-5. Анализ `subscription-actions` — cancel/resume/change-payment-method через Stripe API (Cancellation behavior, Resume, PaymentMethod update).
-6. Анализ `access-rules-nightly-reconcile` — нарушит ли Stripe active-записи secondary grants.
-7. Анализ Extend<->Tariff Match SOT — как работает для bePaid, как должно для Stripe.
-8. Анализ `stripe-webhook` — какие Stripe events нужны для subscription lifecycle (`invoice.payment_succeeded`, `customer.subscription.updated`, `customer.subscription.deleted`).
-9. Анализ `stripe-create-checkout` — что нужно изменить для `mode='subscription'` (line_items с recurring price, subscription_data).
-10. Gap-список: что нужно создать/изменить в Phase 3 Execution (после отдельного approve).
+- Все Stripe-данные → `subscriptions_v2.meta.stripe.*`, `provider_subscriptions.meta.stripe.*`, `tariff_offers.meta.stripe.*`, `orders_v2.meta.stripe.*`. Schema contract `subscriptions-v2-schema-contract` соблюдён.
 
-### 9. Риски и зависимости
+## 2. Канонический поток (фиксация из Discovery)
 
-- Discovery-отчёт не должен содержать production-код (только анализ).
-- Нужно убедиться, что анализ не пропускает скрытые зависимости bePaid в subscription-actions (hardcoded provider='bepaid').
+```
+[user clicks pay on pilot recurring tariff]
+    ↓
+stripe-create-subscription-checkout:
+    - subscription-conflict check (provider-agnostic)
+    - validate price mapping (§STOP-GATE p.4)
+    - pre-create subscriptions_v2(status=pending)
+    - pre-create provider_subscriptions(provider=stripe, state=pending,
+        tracking_id='stripe_sub:pending:order:<order_id>')
+    - stripe.checkout.sessions.create(mode=subscription, price, metadata)
+    - return session.url
+    ↓
+[Stripe Checkout UI → user pays test card 4242…]
+    ↓
+stripe-webhook receives:
+    1. customer.subscription.created → update provider_subscriptions.provider_subscription_id = sub_*
+    2. invoice.paid → CANONICAL WRITE PATH (§19 Discovery):
+        - create orders_v2 (idem by invoice.id)
+        - create payments_v2 (idem by ch_*)
+        - call grant-access-for-order(order_id)
+        - update subscriptions_v2: pending → active, meta.stripe.current_period_*
+        - update tracking_id → 'stripe_sub:{sub_id}:order:{first_order_id}'
+        - emit domain_event 'subscription.activated'
+    3. customer.subscription.updated → sync state mirror only
+    4. invoice.payment_failed → subscriptions_v2.status = past_due (grace, без revoke)
+    5. customer.subscription.deleted → subscriptions_v2.status = canceled (доступ до access_end_at)
+```
+
+## 3. Frontend (минимальный diff)
+
+- `resolveProductRenewability` уже SOT (см. Product Type SOT). Для пилотного тарифа `meta.recurring.is_recurring=true` уже работает.
+- В `PaymentDialog` / `createPaymentCheckout` добавить branch: если `acquiring_provider='stripe'` И `recurring=true` → вызвать `stripe-create-subscription-checkout` вместо bePaid.
+- UI-полей не добавляем. Saved-card picker — defer (Saved Card UI Policy).
+
+## 4. Runtime Proof (обязательный, как Stage C)
+
+Документ: `.lovable/proofs/stripe_phase_3_1_subscription_mvp_runtime_v1.md`. Формат — 10-пунктовый прогон, аналогично Stage C.
+
+### Acceptance gates (PASS обязателен по всем)
+
+
+| #   | Проверка                                                                                                     | Метод                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| G1  | Price mapping validation работает (mismatch → 422)                                                           | unit + curl с подменённым `meta.stripe.price_id`                                            |
+| G2  | Pre-create subv2+ps идёт ДО Stripe API call                                                                  | trace: при искусственном fail `subscriptions.create` запись остаётся pending, TTL её чистит |
+| G3  | Duplicate guard: вторая попытка купить тот же продукт (bePaid active) блокируется                            | provider-agnostic conflict                                                                  |
+| G4  | `customer.subscription.created` → ps.provider_subscription_id обновлён                                       | webhook log + DB row                                                                        |
+| G5  | `invoice.paid` (первый) → orders_v2 создан 1 раз, payments_v2 создан, grant-access-for-order вызван          | DB + audit                                                                                  |
+| G6  | Идемпотентность: повторная доставка `invoice.paid` (`stripe-list-events` replay) НЕ создаёт второй orders_v2 | `meta.stripe.invoice_id` unique check                                                       |
+| G7  | Renewal (Test Clock advance period) → новый orders_v2, extend через GREATEST, tariff_id match                | Test Clock + DB                                                                             |
+| G8  | `invoice.payment_failed` → status past_due, доступ НЕ отозван                                                | webhook + UI + DB                                                                           |
+| G9  | `customer.subscription.deleted` → status canceled, access сохраняется до access_end_at                       | webhook + DB                                                                                |
+| G10 | bePaid контур не затронут (smoke: один bePaid-recurring renewal проходит как раньше)                         | bePaid webhook log + DB                                                                     |
+
+
+### Двойной прогон оплаты (CR-5 mitigation)
+
+- Pass A: реальная test-card 4242… без Test Clock — первый `invoice.paid`.
+- Pass B: Test Clock advance → renewal цикла.
+- Оба = PASS-условие.
+
+## 5. STOP-GATE'ы после MVP
+
+После зелёного Runtime Proof — НЕ начинаем следующее без отдельного approve:
+
+- ❌ Customer Portal Actions integration
+- ❌ Dunning runtime (полный прогон §20 матрицы)
+- ❌ Stripe-ветка `subscriptions-reconcile`
+- ❌ Subscription Schedule
+- ❌ Live mode
+
+Каждый — отдельный план Phase 3.2 / 3.3 / 3.4 / 4 / 5.
+
+## 6. Definition of Done
+
+- `stripe_phase_3_1_price_mapping_v1.md` approve'нут.
+- `stripe-create-subscription-checkout` развёрнута, ENV/secrets подтянуты.
+- `stripe-webhook` расширен add-only handlers'ами.
+- `subscription-conflict.ts` provider-agnostic.
+- `provider-linked-extend-priority` поддерживает Stripe lookup.
+- Один пилотный recurring `tariff_offer` сконфигурирован (meta.stripe.price_id, meta.recurring).
+- Runtime Proof 10/10 PASS (включая bePaid smoke).
+- Memory обновлена: новая запись `stripe-subscription-canonical-write-path` со ссылкой на Discovery v1.1 §17–19.
+- Master Sprint Alignment в proof: Phase 3.1 = Done, далее перечислены deferred Phase 3.2+.
+
+## 7. Риски и их mitigation (из Discovery §22)
+
+
+| Risk                                          | Где закрывается в MVP                                       |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| CR-1 двойное продление webhook+reconcile      | G6 идемпотентность; reconcile в MVP не трогаем              |
+| CR-2 bePaid↔Stripe конфликт                   | §1 расширение subscription-conflict, G3                     |
+| CR-3 потеря связки sub↔order                  | manual_review HTTP 200 при lookup miss, не пишем orders     |
+| CR-4 неправильный extend по другому tariff_id | extend-tariff-match-required уже работает, проверяется в G7 |
+| CR-5 Test Clock vs реальная карта             | двойной прогон Pass A + Pass B                              |
+
+
+## 8. Что прямо запрещено в этом плане
+
+- Любые UPDATE в bePaid edge-функциях / RPC.
+- Создание `subscriptions_v2` из webhook'а как первичной записи.
+- Прямой UPDATE `entitlements` / `access_grant_ledger` минуя `grant-access-for-order`.
+- Использование `checkout.session.completed` как триггера активации для подписочного режима (только `invoice.paid`).
+- Любое автосоздание Stripe Product/Price из админки — backlog Phase 5.
+- Включение live mode на любом этапе MVP.
+
+---
+
+После approve этого плана: первым шагом — sub-discovery Price Mapping Validation (STOP-GATE). Код не пишется до её закрытия.
