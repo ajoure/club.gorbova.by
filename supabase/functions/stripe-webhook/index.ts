@@ -445,16 +445,21 @@ Deno.serve(async (req) => {
 
   try {
     const out = await dispatch(event, verifiedAccount);
+    // MP-A2-2: a customer-mismatch in dispatch marks the event as manual_review,
+    // not "processed" — so admins can audit before any side-effects.
+    const status =
+      out.note === 'customer_mismatch_manual_review' ? 'manual_review' : 'processed';
     await supabase
       .from('provider_events')
       .update({
         processed_at: new Date().toISOString(),
-        processing_status: 'processed',
+        processing_status: status,
         related_order_id: out.order_id ?? null,
         related_payment_id: out.payment_id ?? null,
+        processing_error: status === 'manual_review' ? 'customer_mismatch' : null,
       })
       .eq('id', inserted.id);
-    return new Response(JSON.stringify({ ok: true, status: 'processed', ...out }), {
+    return new Response(JSON.stringify({ ok: true, status, ...out }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
