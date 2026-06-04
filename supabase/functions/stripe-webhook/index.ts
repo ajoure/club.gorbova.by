@@ -91,6 +91,57 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   }
 
   if (event.type === 'checkout.session.completed') {
+    // MP-A2-2: customer identity guard. session.customer must match profile cache for
+    // (user_id, account_code). Mismatch → audit + manual_review on provider_events (caller),
+    // do NOT silently rewrite the cache.
+    const session_customer = (obj.customer as string | null) ?? null;
+    const md_user_id = md.user_id ?? null;
+    if (session_customer && md_user_id) {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('id, meta')
+        .eq('user_id', md_user_id)
+        .maybeSingle();
+      const cached = (prof?.meta as any)?.stripe?.customers?.[account_code]?.customer_id ?? null;
+      if (cached && cached !== session_customer) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe_customer_mismatch_on_webhook',
+          entity_type: 'orders_v2',
+          entity_id: order_id_meta,
+          meta: {
+            user_id: md_user_id,
+            account_code,
+            profile_customer_id: cached,
+            session_customer_id: session_customer,
+            session_id: obj.id,
+            manual_review: true,
+          },
+        });
+        return { order_id: order_id_meta, note: 'customer_mismatch_manual_review' };
+      }
+      if (!cached && prof) {
+        // No cache yet → record the session customer (sync, not merge).
+        const meta = (prof.meta ?? {}) as Record<string, any>;
+        const stripeMeta = (meta.stripe ?? {}) as Record<string, any>;
+        const customers = (stripeMeta.customers ?? {}) as Record<string, any>;
+        customers[account_code] = {
+          ...(customers[account_code] ?? {}),
+          customer_id: session_customer,
+          last_synced_at: new Date().toISOString(),
+          source: customers[account_code]?.source ?? 'stripe_webhook',
+          created_at: customers[account_code]?.created_at ?? new Date().toISOString(),
+        };
+        stripeMeta.customers = customers;
+        meta.stripe = stripeMeta;
+        await supabase.from('profiles').update({ meta }).eq('id', prof.id);
+      } else if (cached === session_customer && prof) {
+        // Update last_synced_at only.
+        const meta = (prof.meta ?? {}) as Record<string, any>;
+        meta.stripe.customers[account_code].last_synced_at = new Date().toISOString();
+        await supabase.from('profiles').update({ meta }).eq('id', prof.id);
+      }
+    }
+
     // Find order; call grant-access-for-order (existing, untouched).
     await supabase.functions.invoke('grant-access-for-order', {
       body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
@@ -119,7 +170,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             currency,
             status: 'succeeded',
             paid_at: new Date().toISOString(),
-            meta: { stripe: { checkout_session_id: session_id, account_code } },
+            meta: { stripe: { checkout_session_id: session_id, account_code, customer: session_customer } },
           })
           .select('id')
           .maybeSingle();
