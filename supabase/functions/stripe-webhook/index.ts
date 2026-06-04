@@ -74,6 +74,46 @@ async function transitionOrderPaid(
     .eq('id', order_id);
 }
 
+// PRR-FIX-02 (F4): merge sticky Stripe metadata + business_stream into orders_v2.meta.
+// Immutable fields (checkout_session_id, payment_intent_id) are set-if-absent;
+// charge_id / customer_id last-write-wins.
+async function mergeStripeMetaOnOrder(
+  supabase: ReturnType<typeof svc>,
+  order_id: string,
+  patch: {
+    checkout_session_id?: string | null;
+    payment_intent_id?: string | null;
+    charge_id?: string | null;
+    customer_id?: string | null;
+    account_code?: string | null;
+    business_stream?: string | null;
+  },
+) {
+  const { data: ord } = await supabase
+    .from('orders_v2')
+    .select('meta')
+    .eq('id', order_id)
+    .maybeSingle();
+  if (!ord) return;
+  const curMeta = (ord.meta && typeof ord.meta === 'object') ? ord.meta as Record<string, unknown> : {};
+  const curStripe = (curMeta.stripe && typeof curMeta.stripe === 'object') ? curMeta.stripe as Record<string, unknown> : {};
+  const nextStripe: Record<string, unknown> = { ...curStripe };
+  // set-if-absent for immutable
+  if (patch.checkout_session_id && !nextStripe.checkout_session_id) nextStripe.checkout_session_id = patch.checkout_session_id;
+  if (patch.payment_intent_id && !nextStripe.payment_intent_id) nextStripe.payment_intent_id = patch.payment_intent_id;
+  // last-write-wins
+  if (patch.charge_id) nextStripe.charge_id = patch.charge_id;
+  if (patch.customer_id) nextStripe.customer_id = patch.customer_id;
+  if (patch.account_code) nextStripe.account_code = patch.account_code;
+  if (patch.business_stream) nextStripe.business_stream = patch.business_stream;
+
+  const nextMeta: Record<string, unknown> = { ...curMeta, stripe: nextStripe };
+  if (patch.business_stream && !curMeta.business_stream) {
+    nextMeta.business_stream = patch.business_stream;
+  }
+  await supabase.from('orders_v2').update({ meta: nextMeta }).eq('id', order_id);
+}
+
 
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
   const supabase = svc();
