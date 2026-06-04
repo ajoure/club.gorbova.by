@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     // Verify order exists & is pending stripe
     const { data: order, error: ordErr } = await supabase
       .from('orders_v2')
-      .select('id, status, provider, amount, currency, contact_id, user_id, product_id, tariff_id, offer_id')
+      .select('id, status, provider, final_price, currency, user_id, product_id, tariff_id, offer_id')
       .eq('id', body.order_id)
       .maybeSingle();
     if (ordErr || !order) return errorResponse('order_not_found', 404);
