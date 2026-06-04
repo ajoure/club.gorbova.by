@@ -210,9 +210,18 @@ export async function resolveStripeCustomer(
   }
 
   // ── Step 2: stripe_search by metadata ────────────────────────────────────
+  // Stripe customers.search has up to ~1 min lag and CAN return deleted customers.
+  // Validate each hit via customers.retrieve before using.
   const search = await stripeCustomersSearch(secret_key, user_id, account_code);
   if (search.ok && search.data && Array.isArray(search.data.data) && search.data.data.length > 0) {
-    const hit = search.data.data[0];
+    let hit: StripeCustomer | null = null;
+    for (const candidate of search.data.data) {
+      const v = await stripeCustomersRetrieve(secret_key, candidate.id);
+      if (v.ok && v.data && !v.data.deleted) { hit = v.data; break; }
+    }
+    if (!hit) {
+      // all search hits stale/deleted; fall through to email_fallback
+    } else {
     // Mismatch guard
     if (cached?.customer_id && cached.customer_id !== hit.id) {
       await audit(supabase, 'stripe_customer_mismatch', {
