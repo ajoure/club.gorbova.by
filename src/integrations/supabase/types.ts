@@ -16766,6 +16766,7 @@ export type Database = {
         | "expired"
         | "superseded"
         | "expired_reentry"
+        | "pending"
       subscription_tier: "free" | "pro" | "premium" | "webinar"
     }
     CompositeTypes: {
@@ -16968,6 +16969,7 @@ export const Constants = {
         "expired",
         "superseded",
         "expired_reentry",
+        "pending",
       ],
       subscription_tier: ["free", "pro", "premium", "webinar"],
     },
