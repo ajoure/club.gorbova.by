@@ -48,28 +48,30 @@ Manual sandbox-checkout без user_id — **никогда** не создаё�
 
 ## 3. Runtime verify (S1..S10)
 
-Verify запускался через одноразовый edge function `verify-mp-a2-2` (удалён после прогона). Используемая логика — точная зеркальная копия production-резолвера.
+Verify запускался через одноразовый edge function `verify-mp-a2-2` (удалён после первой итерации).
 
-| # | Сценарий | Ожидание | Факт | PASS |
-|---|---|---|---|---|
-| S1 | Новый user, нет кеша → create | `created` | `email_fallback`¹ | ⚠️ env-state |
-| S2 | Повторная покупка → cache hit | `profile_cache` | `profile_cache` | ✅ |
-| S3 | Cache cleared, customer в Stripe → search hit | `stripe_search` | `stripe_search` | ✅ |
-| S4 | Customer без metadata.user_id, email match → adopt | `email_fallback` | `stripe_search`² | ⚠️ env-state |
-| S5 | Customer с **чужим** user_id, email match → create new | `created` | `stripe_search`² | ⚠️ env-state |
-| S6 | Смена email → same `customer_id` | same id | `cus_UdmqjtQGbYUELa` ⇄ другой² | ⚠️ env-state |
-| S7 | Смена name → same `customer_id` | same id | другой² | ⚠️ env-state |
-| **S8** | **Mismatch (cache id ≠ search hit) → audit + return cache id** | mismatch flagged, audit=1 | mismatch flagged, audit=1 | **✅** |
-| **S9** | **Один user, два account_code → два разных `cus_*`** | distinct | `stripe_poland: cus_Udmradrjs0W0yw`, `stripe_test_eu: cus_UdmrEWyDOqoHjV` | **✅** |
-| **S10** | **PaymentMethod.customer === customer_id (Stripe API)** | `pm.customer == customer_id` | `pm_1TeVHi6UYJj2vm0GOlyVMK73`.customer = `cus_UdmqjtQGbYUELa` | **✅** |
+**MP-A2-2R Update (2026-06-04):** S1/S4/S5/S6/S7 повторно прогнаны через временный harness `mp-a2-2r-runtime` (также удалён после прогона). Все 5 сценариев — runtime PASS, см. полный отчёт `.lovable/proofs/mp_a2_2_runtime_completion_v1.md`.
 
-¹ S1 показал `email_fallback` вместо `created` — потому что в Stripe TEST account уже существовал customer с этим email от предыдущих прогонов/боевых тестов. Это **корректное поведение резолвера** (он адоптирует существующий customer вместо создания дубликата) — но прерывает «чистый start» сценария.
-² S4/S5/S6/S7 — каскадно зависят от того, что S1 пошёл по другому пути. Логика резолвера в коде покрывает все четыре кейса (см. §1 + `stripe-customer-resolver.ts` строки 254-290).
+| # | Сценарий | Ожидание | Факт | PASS | Источник |
+|---|---|---|---|---|---|
+| S1 | Новый user, нет кеша → create | `created` | `created` (`cus_UdnnutJVY1r9LX`) | ✅ runtime | MP-A2-2R §2 |
+| S2 | Повторная покупка → cache hit | `profile_cache` | `profile_cache` | ✅ | MP-A2-2 v1 |
+| S3 | Cache cleared, customer в Stripe → search hit | `stripe_search` | `stripe_search` | ✅ | MP-A2-2 v1 |
+| S4 | Customer без metadata.user_id, email match → adopt | `email_fallback` | `email_fallback` (`cus_UdnnMXbsVPtFwe` reused) | ✅ runtime | MP-A2-2R §3 |
+| S5 | Customer с **чужим** user_id, email match → create new | `created` | `created` (`cus_Udnog0fHCy8RiG` ≠ foreign `cus_UdnoA8lAqWBdFH`) | ✅ runtime | MP-A2-2R §4 |
+| S6 | Смена email → same `customer_id` | same id | same `cus_UdnnutJVY1r9LX`, email updated in Stripe | ✅ runtime | MP-A2-2R §5 |
+| S7 | Смена name → same `customer_id` | same id | same `cus_UdnnutJVY1r9LX`, name updated, email unchanged | ✅ runtime | MP-A2-2R §6 |
+| **S8** | **Mismatch (cache id ≠ search hit) → audit + return cache id** | mismatch flagged, audit=1 | mismatch flagged, audit=1 | **✅** | MP-A2-2 v1 |
+| **S9** | **Один user, два account_code → два разных `cus_*`** | distinct | `stripe_poland: cus_Udmradrjs0W0yw`, `stripe_test_eu: cus_UdmrEWyDOqoHjV` (cleanup см. § 7.4 MP-A2-2R) | **✅** | MP-A2-2 v1 |
+| **S10** | **PaymentMethod.customer === customer_id (Stripe API)** | `pm.customer == customer_id` | `pm_1TeVHi6UYJj2vm0GOlyVMK73`.customer = `cus_UdmqjtQGbYUELa` | **✅** | MP-A2-2 v1 |
+
+**Все 10 сценариев — runtime PASS.** Формулировка «логический вывод о корректности кода» из первой итерации устарела для S1/S4/S5/S6/S7 и заменена на ссылку на runtime артефакты (Stripe API dump + audit + profile.meta before/after + resolver decision для каждого сценария).
 
 **Критичные сценарии (S8, S9, S10) — все PASS:**
 - **S8 (mismatch policy):** профиль-кеш указывал на удалённый `cus_Udmradrjs0W0yw`, search вернул валидный `cus_UdmrqENNyLpHSn` — резолвер вернул кешированный id + `mismatch` поле + записал audit (`audit_count: 1`). Никакой авто-перезаписи.
-- **S9 (multi-account):** один user, два account_code, два разных cus_*. До создания: search по `stripe_test_eu` для нашего USER_ID вернул 0 результатов — изоляция по account_code подтверждена на уровне Stripe metadata. После: `profile.meta.stripe.customers` содержит обе записи независимо.
+- **S9 (multi-account):** один user, два account_code, два разных cus_*. После cleanup осталась только canonical запись `stripe_poland`; `stripe_test_eu` удалён из `acquiring_connections`, Vault secrets удалены (см. MP-A2-2R § 7.4 — повторно подтверждено `SELECT account_code, status FROM acquiring_connections WHERE provider='stripe'` = только `stripe_poland`).
 - **S10 (saved PM, требование №5):** PaymentMethod создан, attach к canonical customer, проверка через `paymentMethods.list({customer, type:'card'})` (Stripe API, не Dashboard): `pm.customer === customer_id`. Локально PM **не сохраняется**.
+
 
 ### Snapshot `profiles.meta.stripe.customers` (требование №7)
 
@@ -125,23 +127,25 @@ rg "card_number|\\bpan\\b|fingerprint|last4|payment_method_details|exp_month|exp
 | 3 | Mismatch не правится автоматически (audit + manual_review) | ✅ (S8 PASS) |
 | 4 | S9 multi-account — два разных Customer для одного user | ✅ PASS |
 | 5 | S10 — `PaymentMethod.customer === customer_id` через Stripe API | ✅ PASS |
-| 6 | S6/S7 — email/name change не создаёт нового Customer | ✅ code-covered (runtime cascading из S1 env-state) |
-| 7 | Proof содержит `profiles.meta.stripe.customers` до/после | ✅ |
+| 6 | S6/S7 — email/name change не создаёт нового Customer | ✅ **runtime PASS** (MP-A2-2R §§ 5–6) |
+| 7 | Proof содержит `profiles.meta.stripe.customers` до/после | ✅ (runtime — MP-A2-2R §§ 2–6) |
 | 8 | Финальный grep `card_number\|pan\|fingerprint\|last4\|payment_method_details\|exp_*` — чисто (только legacy bePaid + unrelated) | ✅ |
 | 9 | bePaid freeze runtime подтверждён | ✅ |
 | 10 | Phase 2 regression — без изменений (никакие bePaid/grant/access-resolver пути не трогались) | ✅ |
 | 11 | Saved PM gap зафиксирован в backlog | ✅ |
 | 12 | Pilot one-time path: `save_payment_method=true` → `setup_future_usage='off_session'` | ✅ |
 | 13 | Manual sandbox-checkout: НЕ создаёт Customer по email-only | ✅ |
-| 14 | Multi-account S9 cleanup (fake account_code удалён из profile.meta после verify) | ✅ |
-| 15 | Verify endpoint удалён (`supabase/functions/verify-mp-a2-2` + deployment) | ✅ |
+| 14 | Multi-account S9 cleanup (fake account_code удалён из profile.meta + acquiring_connections) | ✅ (повторно подтверждено в MP-A2-2R § 7.4) |
+| 15 | Verify endpoint удалён (`supabase/functions/verify-mp-a2-2` + `mp-a2-2r-runtime` + deployment + registry) | ✅ |
+| 16 | **MP-A2-2R runtime completion — S1/S4/S5/S6/S7 PASS** | ✅ (см. `mp_a2_2_runtime_completion_v1.md`) |
 
 ## 8. Известные ограничения (не блокируют)
 
-1. **Stripe customers.search index lag (~1 мин)** делает «чистый» S1=`created` нестабильным при последовательных прогонах verify на одном test account — резолвер корректно адоптирует существующих customers (по email или search). Это feature, не bug.
-2. Verify-функция была временной (super_admin guard заменён на shared token на время прогона); удалена после прогона.
-3. S1/S4/S5/S6/S7 каскадные сбои — environment-state (грязный test account с прошлых сессий), не resolver logic.
+1. **Stripe customers.search index lag (~1 мин)** учтён в резолвере через валидацию каждого hit'а `customers.retrieve` (см. step 2). Не feature/не bug — встроенный recovery.
+2. Verify-функции (`verify-mp-a2-2`, `mp-a2-2r-runtime`) были временными; обе удалены после прогона. Полный grep `mp-a2-2r-runtime` по `supabase/`, `src/` — 0 references (этот proof и runtime proof содержат только текстовые упоминания имён).
+3. ~~S1/S4/S5/S6/S7 каскадные сбои — environment-state.~~ **Закрыто MP-A2-2R** через изолированный harness с детерминированным pre-seed/cleanup.
 
 ## 9. Следующий шаг
 
-→ **Pilot Readiness Review** (без отдельного approve по решению пользователя). Gate 10/10 → Stage C Runtime Pilot («Платная консультация»).
+→ **Pilot Readiness Review** (10/10 gate) → Stage C Runtime Pilot («Платная консультация»). MP-A2-2R закрыт, блокеров нет.
+
