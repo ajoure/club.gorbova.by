@@ -67,19 +67,20 @@ Master Sprint статус (зафиксировано):
 - Использовать тестовую карту Stripe `4242 4242 4242 4242`.
 - Зафиксировать `cs_test_*` (Checkout Session id) и `pi_test_*` (PaymentIntent id) из ответа `stripe-create-checkout` и из Stripe Dashboard.
 
-### Шаг 2. Сбор F-PRR-09 evidence (metadata trace)
+### Шаг 2. Сбор F-PRR-09 evidence (metadata trace, 6 узлов)
 
-Для одного и того же заказа собрать **5 узлов одновременно**:
+Для одного и того же заказа собрать **6 узлов одновременно** (главный DoD мастер-спринта):
 
-| Узел | Источник | Обязательные поля |
-|---|---|---|
-| Stripe Checkout Session | Stripe API GET `/v1/checkout/sessions/{cs_test_*}` | `metadata.{order_id, account_code, business_stream, user_id, contact_id, product_id, tariff_id, provider=stripe}` |
-| Stripe PaymentIntent | Stripe API GET `/v1/payment_intents/{pi_test_*}` | то же metadata, наследованное |
-| `provider_events` | `SELECT payload, account_code FROM provider_events WHERE provider='stripe' AND idempotency_key LIKE '%pi_test_*%'` | `payload.data.object.metadata.*`, `account_code` колонка |
-| `payments_v2` | `SELECT id, order_id, meta FROM payments_v2 WHERE meta->>'stripe_payment_intent_id' = 'pi_test_*'` | top-level `meta.{order_id, account_code, business_stream, product_id, tariff_id}` |
-| `orders_v2` | `SELECT id, user_id, product_id, tariff_id, offer_id, meta FROM orders_v2 WHERE id = '<order_id>'` | колонки + top-level `meta.{account_code, business_stream}` |
+| # | Узел | Источник | Обязательные поля |
+|---|---|---|---|
+| 1 | Stripe Checkout Session | Stripe API GET `/v1/checkout/sessions/{cs_test_*}` | `metadata.{order_id, account_code, business_stream, user_id, contact_id, product_id, tariff_id, provider=stripe}` |
+| 2 | Stripe PaymentIntent | Stripe API GET `/v1/payment_intents/{pi_*}` | то же metadata, унаследованное |
+| 3 | `provider_events` | `SELECT id, payload, account_code FROM provider_events WHERE provider='stripe' AND payload->'data'->'object'->>'id' = '<pi_*>'` | `payload.data.object.metadata.*`, `account_code` колонка, реальный `evt_*` в `event_id` |
+| 4 | `payments_v2` | `SELECT id, order_id, meta FROM payments_v2 WHERE meta->>'stripe_payment_intent_id' = '<pi_*>'` | top-level `meta.{order_id, account_code, business_stream, product_id, tariff_id}` |
+| 5 | `orders_v2` | `SELECT id, user_id, product_id, tariff_id, offer_id, meta FROM orders_v2 WHERE id = '<order_id>'` | колонки + top-level `meta.{account_code, business_stream}` |
+| 6 | Access grant / entitlement | `SELECT id, user_id, product_id, tariff_id, expires_at, source, meta FROM entitlements WHERE meta->>'order_id' = '<order_id>'` + `SELECT * FROM access_rules WHERE meta->>'order_id' = '<order_id>'` + `SELECT * FROM access_grant_ledger WHERE order_id = '<order_id>'` | entitlement создан `grant-access-for-order`, `tariff_id` совпадает, ledger содержит запись о grant |
 
-Cross-check: значения `order_id, account_code, business_stream, product_id, tariff_id` **идентичны во всех 5 узлах**. Если хотя бы одно поле отсутствует или различается — finding.
+Cross-check: значения `order_id, account_code, business_stream, product_id, tariff_id, user_id` **идентичны во всех 6 узлах**. Если хотя бы одно поле отсутствует или различается — finding и FAIL.
 
 ### Шаг 3. Сбор F-PRR-11 evidence (полный CRM маршрут)
 
