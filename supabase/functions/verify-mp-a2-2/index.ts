@@ -107,8 +107,14 @@ Deno.serve(async (req) => {
     }
     const q = `metadata['user_id']:'${input.user_id}' AND metadata['account_code']:'${input.account_code}'`;
     const s = await sfetch<any>(SK, `/customers/search?query=${encodeURIComponent(q)}&limit=5`);
+    let hit: any = null;
     if (s.ok && s.data?.data?.length) {
-      const hit = s.data.data[0];
+      for (const cand of s.data.data) {
+        const v = await sfetch<any>(SK, `/customers/${cand.id}`);
+        if (v.ok && v.data && !v.data.deleted) { hit = v.data; break; }
+      }
+    }
+    if (hit) {
       if (cached && cached !== hit.id) {
         await logAudit('stripe_customer_mismatch', { user_id: input.user_id, account_code: input.account_code, profile_customer_id: cached, stripe_customer_id: hit.id, manual_review: true });
         return { customer_id: cached, source: 'profile_cache', mismatch: { profile_customer_id: cached, stripe_customer_id: hit.id } };
