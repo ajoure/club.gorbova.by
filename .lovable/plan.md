@@ -4,8 +4,8 @@
 2. ✅ Pending State Strategy
 3. ✅ Phase 3.1.0 — enum `pending`
 4. ✅ Phase 3.1.0-B — Pending Guard helper + manual cleanup (CR-2 helper closure)
-5. ⏳ **Phase 3.1.1 — Price Mapping STOP-GATE** — частично закрыт. GAP-A **PASS** (BYN recurring капабилен на stripe_poland, см. proof). Остаются открытыми GAP-B, GAP-C, GAP-D.
-6. ⛔ Phase 3.1 Infinite Subscription MVP — заблокирован до закрытия GAP-B/C/D.
+5. ⏳ **Phase 3.1.1 — Price Mapping STOP-GATE** — частично закрыт. GAP-A **PASS**, GAP-B **PASS (with backlog)**. Остаются GAP-C, GAP-D.
+6. ⛔ Phase 3.1 Infinite Subscription MVP — заблокирован до закрытия GAP-C/D.
 7. ⛔ Runtime Proof — заблокирован (GAP-D).
 8. ⛔ Phase 3.2+ (Customer Portal, Dunning, Reconcile) deferred.
 
@@ -15,13 +15,15 @@
 - **Validation Contract** (резолвер `resolveStripePriceForOffer`) — HTTP 422 на любой mismatch, обязательный audit, checkout не создаётся.
 - **Price Rotation Strategy** — supersede через append `price_id_history[]` + Stripe archive old; запрет изменения immutable Price; запрет нескольких активных Price per (offer, account_code).
 - **Multi-account future схема:** `meta.stripe.accounts[<account_code>]` с fallback на flat legacy. MVP читает только flat.
+- **SOT суммы/валюты для Stripe Price** = активная строка `tariff_prices` (`final_price`, `currency`). `tariff_offers.amount` = fallback/диагностика, в Stripe не уходит.
+- **Resolver `billing_period → Stripe recurring`** (GAP-B): см. proof v1, MVP принципиально `interval_count = 1`.
 - **bePaid не затронут.**
 
 ## Phase 3.1.1 — GAP List
 
-- **GAP-A — Currency Decision.** ✅ **verified_pass** (2026-06-04). Stripe API на test-аккаунте `acct_1Tc88d6UYJj2vm0G` (PL) создаёт recurring Price в BYN (month и year), HTTP 200, `livemode=false`. Гипотеза «BYN не поддерживается» опровергнута. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`. Subscription/Checkout capability в BYN — отдельно в GAP-D.
-- **GAP-B — Recurring Interval Mapping.** `billing_period_mode/days` → Stripe `recurring.interval/interval_count` resolver (без миграции). **NEXT.**
-- **GAP-C — Stripe Product+Price Provisioning.** Mini-plan `admin-provision-stripe-price` + запись в `tariff_offers.meta.stripe.*`.
+- **GAP-A — Currency Decision.** ✅ **verified_pass** (2026-06-04). Stripe API на test-аккаунте `acct_1Tc88d…` (PL) создаёт recurring Price в BYN (month и year), HTTP 200, `livemode=false`. Гипотеза «BYN не поддерживается» опровергнута. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_a_byn_capability_proof_v1.md`. Subscription/Checkout capability в BYN — отдельно в GAP-D.
+- **GAP-B — Recurring Interval Mapping.** ✅ **pass_with_backlog** (2026-06-04). Resolver contract зафиксирован: `mode=days/{7,30,365}` → `week/month/year` с `count=1`; `mode=month|year` без days → legacy-нормализация; `interval_count>1` принципиально unsupported в MVP. Пилот `6f306cbc…` → `month/1`, BYN 100.00 (SOT суммы — `tariff_prices`, не `offer.amount`). 5/5 active recurring offer'ов прогнаны. Backlog: нормализация `88c6f10d…` + отсутствующие `tariff_prices` для `d307b438…`/`88c6f10d…`. Proof: `.lovable/proofs/stripe_phase_3_1_1_gap_b_billing_period_resolver_v1.md`.
+- **GAP-C — Stripe Product+Price Provisioning.** Mini-plan `admin-provision-stripe-price` + запись в `tariff_offers.meta.stripe.*`. **NEXT.**
 - **GAP-D — Runtime Proof.** `prices.retrieve` + capability-проверка `subscription.create` и `checkout.session.create (mode=subscription)` в BYN на пилотном оффере.
 
 ## Источник Stripe-ключа (зафиксировано после Pre-check PATCH)
@@ -36,15 +38,18 @@ runtime call
   → fallback ENV STRIPE_SECRET_KEY_<ACCOUNT_CODE>/STRIPE_SECRET_KEY (dev only)
 ```
 
-Supabase Edge Function Secrets — НЕ источник истины для Stripe. Это объясняет, почему `fetch_secrets` не показывает `STRIPE_SECRET_KEY`, хотя интеграция работает.
+Supabase Edge Function Secrets — НЕ источник истины для Stripe.
 
 ## Pilot recommendation
-`Gorbova Club / CHAT` — offer `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e`, amount 100 BYN, `billing_period_mode=days, days=30` → Stripe `interval=day, interval_count=30` (требует GAP-B resolver).
+
+`Gorbova Club / CHAT` — offer `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e`, amount `BYN 100.00` (`tariff_prices` active row), `billing_period_mode=days, days=30` → Stripe `recurring.interval=month, interval_count=1` (через GAP-B resolver).
 
 ## Memory update
-**Candidate (требует approve):** `mem://architecture/payments/stripe-price-mapping-sot-v1`, `mem://architecture/payments/stripe-secret-resolver-sot`.
+
+**Candidate (требует approve):** `mem://architecture/payments/stripe-price-mapping-sot-v1`, `mem://architecture/payments/stripe-secret-resolver-sot`, `mem://architecture/payments/stripe-billing-period-resolver-v1`.
 
 ## Что заблокировано до полного PASS Phase 3.1.1
+
 - `stripe-create-subscription-checkout`;
 - subscription webhooks (`customer.subscription.*`, recurring `invoice.paid`);
 - `provider_subscriptions` Stripe wiring;
@@ -52,4 +57,5 @@ Supabase Edge Function Secrets — НЕ источник истины для Str
 - Phase 3.1 MVP Execution.
 
 ## Следующий шаг
-**GAP-B — Recurring Interval Mapping resolver** (как зафиксировано пользователем при approve plan GAP-A: после PASS GAP-A не переходить сразу к MVP, сначала GAP-B).
+
+**GAP-C — Stripe Product+Price Provisioning** (mini-plan `admin-provision-stripe-price`, реальное создание `prod_*`/`price_*` для пилота, запись `tariff_offers.meta.stripe.*`).
