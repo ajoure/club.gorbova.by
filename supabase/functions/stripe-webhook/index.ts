@@ -183,13 +183,23 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       }
     }
 
+    // PRR-FIX-02 (F4 + F2): sticky stripe meta + business_stream on order BEFORE grant.
+    const md_business_stream = (md.business_stream as string | undefined) ?? null;
+    const pi_id = (obj.payment_intent as string) ?? null;
+    const session_id = obj.id as string;
+    await mergeStripeMetaOnOrder(supabase, order_id_meta, {
+      checkout_session_id: session_id,
+      payment_intent_id: pi_id,
+      customer_id: session_customer,
+      account_code,
+      business_stream: md_business_stream,
+    });
+
     // Find order; call grant-access-for-order (existing, untouched).
     await supabase.functions.invoke('grant-access-for-order', {
       body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
     });
     // Insert payments_v2 if not exists
-    const pi_id = (obj.payment_intent as string) ?? null;
-    const session_id = obj.id as string;
     const amount_total_minor = Number(obj.amount_total ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
     const amount_major = toMajorUnits(amount_total_minor, currency);
@@ -211,7 +221,10 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             currency,
             status: 'succeeded',
             paid_at: new Date().toISOString(),
-            meta: { stripe: { checkout_session_id: session_id, account_code, customer: session_customer } },
+            meta: {
+              business_stream: md_business_stream,
+              stripe: { checkout_session_id: session_id, payment_intent_id: pi_id, account_code, customer: session_customer, business_stream: md_business_stream },
+            },
           })
           .select('id')
           .maybeSingle();
@@ -221,6 +234,8 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       }
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
+    // PRR-FIX-02 (F3): apply CRM stage_on_success.
+    await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.checkout.session.completed');
     return { order_id: order_id_meta, payment_id };
   }
 
