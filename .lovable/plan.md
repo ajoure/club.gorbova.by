@@ -74,6 +74,21 @@ GAP-C считается PASS только если дополнительно �
 
 И только после PASS GAP-D можно открывать **Phase 3.1 Infinite Subscription MVP Execution**.
 
+## Статус GAP-C.2–C.7: **PASS** (2026-06-04)
+
+- Edge function `admin-provision-stripe-price` задеплоена (verify_jwt=true, super_admin only).
+- Pilot offer `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e`: Stripe `prod_UdwjYeet4QFbtW` + `price_1Teeq26UYJj2vm0GPXHSLKlz` (test/`stripe_poland`, BYN 10000, month/1).
+- `tariff_offers.meta.stripe.schema_version=1` записан полностью по контракту §6.
+- Idempotent re-run → `idempotent_hit`, без новых Stripe объектов и без новых `*_created` audit-событий.
+- bePaid/`provider_subscriptions`/`subscriptions_v2`/`orders_v2` не затронуты.
+- Proof: `.lovable/proofs/stripe_phase_3_1_2_gap_c_provisioning_v1.md`.
+
+## Следующий этап: **GAP-D — Runtime Stripe Subscription Capability Proof** (NEXT)
+
+MVP Stripe Subscription Execution остаётся ЗАБЛОКИРОВАН до PASS GAP-D.
+
+---
+
 План: GAP-C.2–C.7 — admin-provision-stripe-price
 
 ## Цель
