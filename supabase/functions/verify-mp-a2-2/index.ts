@@ -194,14 +194,17 @@ Deno.serve(async (req) => {
     results.scenarios.S7 = { expect_same_id: canonical, got: r7.customer_id, name_on_stripe: c7.data?.name, pass: r7.customer_id === canonical && c7.data?.name === NEW_NAME };
     await sfetch(SK, `/customers/${r7.customer_id}`, { method: 'POST', form: { email: EMAIL } });
 
-    // S8: mismatch
-    const live_bogus = await sfetch<any>(SK, '/customers', { method: 'POST', form: { email: `livebogus+${VERIFY_TAG}@example.test`, 'metadata[verify_tag]': VERIFY_TAG } });
-    created.push(live_bogus.data.id);
-    await setCache(live_bogus.data.id);
-    await new Promise((r) => setTimeout(r, 2500));
-    // Need a search-hit for USER_ID + ACCOUNT_CODE; reset r1's metadata back to USER_ID
+    // S8: mismatch — cache id points to a Stripe Customer that was deleted (retrieve fails),
+    // search returns a DIFFERENT valid Customer for the same (user_id, account_code).
+    // Mismatch policy: do NOT auto-rewrite, return mismatch flag + audit.
+    // First, ensure canonical has correct USER_ID metadata so search finds it.
     await sfetch(SK, `/customers/${canonical}`, { method: 'POST', form: { 'metadata[user_id]': USER_ID, 'metadata[account_code]': ACCOUNT_CODE } });
-    await new Promise((r) => setTimeout(r, 2500));
+    // Create a sacrificial customer, set it as cache, then DELETE it in Stripe so retrieve fails.
+    const sac = await sfetch<any>(SK, '/customers', { method: 'POST', form: { email: `sac+${VERIFY_TAG}@example.test`, 'metadata[verify_tag]': VERIFY_TAG } });
+    created.push(sac.data.id);
+    await setCache(sac.data.id);
+    await sfetch(SK, `/customers/${sac.data.id}`, { method: 'DELETE' });
+    await new Promise((r) => setTimeout(r, 3000));
     const r8 = await resolve({ user_id: USER_ID, account_code: ACCOUNT_CODE, email: EMAIL });
     const { count: mismatchCount } = await sb.from('audit_logs').select('*', { count: 'exact', head: true }).eq('action', 'stripe_customer_mismatch').filter('meta->>verify_tag', 'eq', VERIFY_TAG);
     results.scenarios.S8 = { expect: 'profile_cache returned + mismatch flagged', got_source: r8.source, got_id: r8.customer_id, profile_cache_was: live_bogus.data.id, mismatch: r8.mismatch, audit_count: mismatchCount, pass: !!r8.mismatch && r8.customer_id === live_bogus.data.id && (mismatchCount ?? 0) > 0 };
