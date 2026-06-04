@@ -111,5 +111,3 @@ canonical-document-generate-strict
 document-field-resolver-v2
 document-field-resolver-v2-snapshot
 
-# MP-A2-2R — TEMPORARY runtime verification harness (DELETE after MP-A2-2R closes)
-mp-a2-2r-runtime
