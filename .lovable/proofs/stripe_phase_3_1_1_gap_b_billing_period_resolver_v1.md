@@ -149,17 +149,18 @@ function resolveStripeRecurring(input: Input): Output;
 
 ### 5.3 Interval count > 1 — фиксация политики (нет в текущей выборке)
 
-Чтобы исключить неоднозначность в GAP-C, фиксируем поведение для гипотетических кейсов:
+Чтобы исключить неоднозначность в GAP-C, фиксируем поведение для гипотетических кейсов. Все они в MVP **unsupported** и помечаются как **`future-rule` / `manual_review`** — резолвер обязан вернуть `billing_period_not_supported`, Stripe Price не создаётся, audit пишется с тегом `future-rule:interval_count_gt_1`.
 
-| Условие на вход            | Решение                                           |
-|----------------------------|---------------------------------------------------|
-| `mode=days, days=60`       | **unsupported MVP** → `billing_period_not_supported` (потенциальный `month/2` отложен в future-rule, требует отдельного approve) |
-| `mode=days, days=90`       | **unsupported MVP** → `billing_period_not_supported` (future-rule `month/3`) |
-| `mode=days, days=180`      | **unsupported MVP** → `billing_period_not_supported` (future-rule `month/6`) |
-| `mode=days, days=730`      | **unsupported MVP** → `billing_period_not_supported` (future-rule `year/2`) |
-| `mode=days, days ∉ {7,30,365}` | **unsupported MVP** → `billing_period_not_supported` |
+| Условие на вход            | MVP-решение                                     | Future-rule mapping (deferred, требует отдельного approve) |
+|----------------------------|-------------------------------------------------|------------------------------------------------------------|
+| `mode=days, days=60`       | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=2`                         |
+| `mode=days, days=90`       | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=3`                         |
+| `mode=days, days=180`      | `billing_period_not_supported` + `future-rule`  | `interval=month, interval_count=6`                         |
+| `mode=days, days=730`      | `billing_period_not_supported` + `future-rule`  | `interval=year, interval_count=2`                          |
+| `mode=days, days ∉ {7,30,365}` и не из таблицы выше | `billing_period_not_supported` + `manual_review` | нет mapping, требует discovery |
 
-**Решение MVP:** `interval_count` всегда `= 1`. Любые `count > 1` — backlog (`future-rule:interval_count_gt_1`), активируются только отдельным approve после прецедента в БД.
+**Решение MVP:** `interval_count` всегда `= 1`. Любые `count > 1` — backlog (`future-rule:interval_count_gt_1`), активируются только отдельным approve после прецедента в БД. Никакого автоматического сворачивания `60d→month/2` в MVP не происходит — это сознательный STOP.
+
 
 ---
 
