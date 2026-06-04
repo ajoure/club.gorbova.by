@@ -1,197 +1,188 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
 ```text
-План Stage C Runtime Pilot можно approve.
+Discovery Subscriptions Compatibility Map можно запускать.
 
 Правки перед execute:
 
-1. Не использовать слово “production-like” без уточнения.
-   Это test-mode pilot. Формулировать:
-   test-mode production-path proof.
+1. Добавить обязательный раздел:
+   "Subscription SOT Matrix"
 
-2. S2 Refund:
-   Если refund инициируется через Stripe Dashboard, обязательно проверить, что webhook refund-ветка сработала сама.
-   Нельзя закрывать refund через backfill/reconcile вместо webhook.
-   Reconcile допустим только как диагностика, но не как PASS.
+   Для каждой сущности указать SOT:
+   - subscriptions_v2
+   - provider_subscriptions
+   - Stripe Subscription
+   - Stripe Invoice
+   - Stripe PaymentIntent
+   - Entitlement
+   - Access window
+   - Customer
+   - PaymentMethod
 
-3. S2 Refund:
-   Не писать `record_refund_atomic`, если фактически используется `record_refund_atomic_multi`.
-   В proof указать точное имя RPC/функции.
+2. Добавить обязательный анализ:
+   "Stripe event → our action"
 
-4. S3/S4:
-   Если Stripe Checkout не показывает saved card picker, это не FAIL Stage C.
-   Тогда Stage C должен зафиксировать:
-   - Customer reuse PASS;
-   - PaymentMethod saved PASS;
-   - Saved card picker GAP, already backlog.
-   Нельзя блокировать Stage C из-за known Stripe Checkout limitation.
+   Таблица:
+   - checkout.session.completed
+   - customer.subscription.created
+   - customer.subscription.updated
+   - customer.subscription.deleted
+   - invoice.created
+   - invoice.finalized
+   - invoice.paid
+   - invoice.payment_failed
+   - invoice.payment_action_required
+   - charge.refunded
 
-5. S3/S4:
-   Не требовать от пользователя ручной оплаты, если browser automation доступен.
-   Подрядчик уже доказал, что browser automation работает.
-   Он должен сам открывать Hosted Page и платить картой 4242.
-   STOP “ждём пользователя” допустим только если browser automation реально недоступен и это подтверждено в proof.
+   Для каждого:
+   - что пишет в provider_events;
+   - что меняет в subscriptions_v2;
+   - что меняет в provider_subscriptions;
+   - создаёт ли orders_v2;
+   - вызывает ли grant-access-for-order;
+   - когда manual_review.
 
-6. S5 UI:
-   Обязательно проверить не только `/admin/payments`, но и:
-   - CRM pipeline карточку сделки;
-   - карточку заказа/оплаты, если есть detail drawer;
-   - кабинет пользователя.
-   Если какого-то UI нет — фиксировать как GAP, а не silently skip.
+3. Добавить обязательный анализ:
+   "First payment vs renewal"
 
-7. S6 Freeze:
-   `bepaid_sync_logs=0` за окно — не универсальный критерий.
-   Если в период теста пришёл органический bePaid webhook, это не FAIL.
-   Правильный критерий:
-   - Stripe pilot не создал/не изменил bePaid rows;
-   - bePaid code diff пустой;
-   - cross-provider contamination = 0.
+   Разделить:
+   - первая оплата subscription checkout;
+   - последующее автосписание invoice.paid;
+   - failed renewal;
+   - cancellation;
+   - resume.
 
-8. Acceptance gates:
-   C7 переписать:
-   - PaymentMethod saved = PASS;
-   - Customer reuse = PASS;
-   - saved card picker = PASS или GAP, но не блокер.
+4. Добавить обязательный анализ:
+   "Duplicate subscription guard"
 
-9. Добавить отдельный раздел:
-   Phase 3 Master Sprint Alignment
-   - Stage C закрывает one-time pilot.
-   - Subscriptions/Schedule всё ещё запрещены до отдельного approve.
-   - Phase 4 Public Links не начинались.
-   - Phase 5 Product Settings не начинались.
+   Проверить не только provider='stripe', но и cross-provider:
+   - bePaid active → Stripe запрещён;
+   - Stripe active → bePaid запрещён;
+   - Stripe account A active → Stripe account B запрещён для того же product_id.
 
-После этих правок можно запускать Stage C Runtime Pilot.
+5. Добавить анализ:
+   "Customer Portal subscription actions"
 
-План: Stage C Runtime Pilot — «Платная консультация»
+   Потому что MVP self-service = Stripe Customer Portal:
+   - отмена подписки через Portal;
+   - смена карты через Portal;
+   - как webhook отражает это в нашей БД;
+   - какие события Stripe должны быть обработаны.
+
+6. Добавить раздел:
+   "No schema change assumption"
+
+   Подтвердить, что Phase 3 можно сделать через `meta.*`.
+   Если discovery показывает необходимость новых колонок — STOP и отдельный schema mini-plan.
+
+7. Добавить раздел:
+   "Testing strategy"
+
+   Как в test-mode проверять:
+   - first payment;
+   - renewal;
+   - payment_failed;
+   - cancel_at_period_end;
+   - resume;
+   - finite cycles.
+
+   Обязательно указать:
+   - Stripe Test Clock или альтернативу;
+   - как не ждать реального месяца.
+
+8. Добавить раздел:
+   "bePaid recurring freeze check"
+
+   Подтвердить, какие файлы/пути нельзя трогать при будущей реализации:
+   - bepaid-webhook;
+   - bepaid-create-subscription;
+   - bepaid recurring jobs;
+   - existing provider_subscriptions rows provider='bepaid'.
+
+9. Добавить итоговую секцию:
+   "Implementation Recommendation"
+
+   Не код, а порядок будущей реализации:
+   1. Infinite Subscription MVP.
+   2. Runtime proof.
+   3. Customer Portal actions.
+   4. Failed payment / dunning.
+   5. Reconcile.
+   6. Только потом Subscription Schedule / finite installments.
+
+10. В отчёте обязательно указать статус:
+   - compatible as-is;
+   - compatible with add-only extension;
+   - requires mini-plan;
+   - blocked.
+
+После этих правок можно выполнять discovery.
 ```
 
-## Цель
+Сейчас это правильный следующий шаг по мастер-спринту: **Фаза 3 Subscriptions — сначала compatibility discovery, без кода**.
 
-Подтвердить полный production-like жизненный цикл Stripe one-time платежа на пилотном продукте «Платная консультация» (test-mode), включая refund, повторную покупку и saved PaymentMethod. Результат — единый proof-документ на русском.
+&nbsp;
 
-## Scope (жёсткие границы)
+Discovery Subscriptions Compatibility Map — Stripe Subscriptions (Фаза 3)
 
-- Только продукт «Платная консультация» (`product_id = 9d0d6de8-...`).
-- Только Stripe test-mode (`acquiring_connections.account_code = stripe_poland`, `test_mode = true`).
-- Только реальные Stripe test-объекты (карта `4242 4242 4242 4242`).
-- Freeze: bePaid, Subscriptions, Schedule, provider migration, live mode — не трогаем.
-- STOP-GATE: запрещены `sandbox-simulate`, `manual-sandbox-order`, `*_sim_*`, синтетические `provider_events`.
+### 1. Проблема
 
-## Структура пилота — 6 сценариев
+Сейчас подписочная инфраструктура работает только с bePaid (provider-managed). Stripe в проекте прошёл one-time pilot (Stage C, 10/10 PASS), но подписочный flow (Subscription -> Checkout -> Webhook -> Grant -> Recurring) через Stripe ещё не анализирован на совместимость с существующей архитектурой.
 
-### S1. Baseline one-time flow (re-confirmation на ORD-26-00150)
+### 2. Диагностика (актуальное состояние)
 
-Реальный заказ `ORD-26-00150` уже прошёл E2E в PRR-FIX-02. В Stage C — пере-верифицируем его как baseline без новой оплаты:
+- `subscriptions_v2` — поля: id, user_id, order_id, product_id, tariff_id, flow_id, status (USER-DEFINED), access_start_at, access_end_at, is_trial, trial_end_at, next_charge_at, charge_attempts, payment_token, canceled_at, cancel_reason, meta, created_at, updated_at, trial_canceled_at, trial_canceled_by, keep_access_until_trial_end, cancel_at, payment_method_id, auto_renew, profile_id, auto_renew_disabled_by, auto_renew_disabled_at, auto_renew_disabled_by_user_id, grace_period_started_at, grace_period_ends_at, grace_period_status, billing_type.
+- `provider_subscriptions` — поля: id, provider, provider_subscription_id, user_id, subscription_v2_id, profile_id, state, next_charge_at, last_charge_at, amount_cents, currency, interval_days, card_brand, card_last4, card_token, raw_data, created_at, updated_at, meta, order_id. Provider = 'bepaid' по умолчанию.
+- `grant-access-for-order` — решает recurring через `resolveRecurringFromOrderOrTariff` (SOT = `tariff_offers.meta.recurring.is_recurring`). Для recurring-заказа ищет активную подписку через `provider_linked_subscription_resolver.ts` и делает extend (при совпадении tariff_id) или создаёт новую.
+- `subscription-conflict.ts` (duplicate-subscription-prevention-guard) — проверяет конфликт по `user_id + product_id + status in [active, trial] + provider_subscriptions.provider='bepaid' + state in [active]`. Без provider-связи — зомби, не блокирует.
+- `subscription-actions` — cancel, check-resume, resume, change-payment-method. Resume: 3-level eligibility (local -> payment method -> provider bePaid state). Provider-dead = блок.
+- `access-rules-nightly-reconcile` — батчит active `subscriptions_v2`, прогоняет secondary product access grants.
+- `stripe-create-checkout` — только one-time (`is_one_time: true`), `save_payment_method` опционально.
+- `stripe-webhook` — checkout.session.completed -> `grant-access-for-order` (вызывает как есть, без модификаций).
 
-- 8-узловой trace: Checkout Session → PaymentIntent → Charge → `provider_events` → `payments_v2` → `orders_v2` → CRM (`crm_pipelines`/`crm_pipeline_stages`) → `entitlements`.
-- UI-проверка: `/admin/payments` показывает заказ как paid с правильным `business_stream=consultations`; кабинет клиента показывает активный entitlement.
-- Anti-orphan 6/6.
+### 3. Предлагаемое решение (Discovery-only)
 
-### S2. Refund (partial → full)
+Провести полный аудит каждого subscription-компонента на предмет совместимости с Stripe Subscription API (Checkout Session с `mode='subscription'`, Subscription object, Invoice, Invoice.payment_succeeded). Результат — markdown-отчёт `.lovable/proofs/stripe_phase_3_discovery_subscriptions_compatibility_v1.md` с матрицей совместимости.
 
-1. Через Stripe Dashboard (test-mode) сделать **частичный** refund на `pi_3TeYOs6UYJj2vm0G1KvZgN9E` (например, 200 из 800).
-2. Дождаться `charge.refunded` webhook → проверить:
-  - запись в `provider_events` (idempotent по `event_id`);
-  - вызов `record_refund_atomic` (canonical write-path);
-  - `payments_v2.refunded_amount = 200`, refund-row создан с `meta.parent_payment_id`;
-  - `orders_v2` — amber «Частичный возврат» (per partial-refund classifier v2, без double-count);
-  - entitlement **не отзывается** (partial refund);
-  - audit `record_refund_atomic` с `refund_uid`.
-3. Далее — **дорефанд** остатка (600 из 800) → full refund:
-  - `payments_v2.refunded_amount = 800`;
-  - `orders_v2` — red «Возврат»;
-  - решение по entitlement — зафиксировать фактическое поведение (по текущей политике entitlement остаётся, revoke не автоматичен — это документируем как наблюдаемое поведение, не как баг).
+### 4. Изменяемые компоненты
 
-### S3. Repeat purchase тем же Customer
+Нет. Discovery — read-only анализ, без изменений кода/таблиц/RPC.
 
-1. Создать новый Stripe Checkout Session через `stripe-create-checkout` для того же super_admin-профиля и того же тарифа «Срочная консультация — 800».
-2. Проверить: `stripe-create-checkout` переиспользует существующий `Customer.id` (`cus_UdpLfSk1drCfJ3`) из `profiles.meta.stripe.customers[stripe_poland].customer_id`, **не создаёт** дубль `Customer`.
-3. Оплатить картой `4242 4242 4242 4242`. Получить `ORD-26-00151`.
-4. Verify: новый отдельный `orders_v2` + `payments_v2` + новый `entitlement` (или extend — по политике `extend_tariff_match` для consultation тарифа). Зафиксировать фактический режим (extend vs new) и сверить с `extend-tariff-match-required` memory rule.
-5. CRM: новая сделка в pipeline `a0000001-...-013`, стадия «Успешно».
+### 5. Что не будет изменено (STOP-guards Discovery)
 
-### S4. Saved PaymentMethod
+- Не писать `stripe-create-subscription-checkout`
+- Не писать Subscription Schedule
+- Не расширять `reconcile` / `nightly-access-reconcile`
+- Не менять `subscription-actions`
+- Не менять `provider_subscriptions`
+- Не менять `grant-access-for-order`
+- Не менять `subscription-conflict.ts`
+- Не менять `subscriptions_v2` схему
+- Не включать live mode
+- Не трогать bePaid
 
-1. На третьей покупке проверить, что Stripe Checkout показывает сохранённую карту (`Customer` уже имеет PaymentMethod после S1/S3 — Stripe-side SOT).
-2. Оплатить выбором saved card (без ввода номера).
-3. Verify: оплата проходит, `payment_method` в `PaymentIntent` соответствует ранее сохранённому `pm_*`. Локально дополнительной таблицы PM не ведём (per saved-card-client-policy + stripe-saved-pm-followup backlog).
-4. Получить `ORD-26-00152`. Полный 8-node trace.
+### 6. Dry-run
 
-### S5. UI-верификация (admin + cabinet)
+Discovery не имеет side-effects. Read-only просмотр кода + схемы.
 
-По всем заказам S1–S4:
+### 7. Execute
 
-- `/admin/payments` — корректные суммы, статусы, refund badge, sticky Stripe meta видна в детальном просмотре.
-- `/admin/payments/links` — не появилось мусорных записей (Stage C идёт через `stripe-create-checkout`, не через payment_links).
-- Cabinet клиента — entitlements активны/refund-состояния отражены корректно.
-- CRM kanban (Pipeline «Платная консультация») — сделки в правильных стадиях.
-- Никаких raw edge-function errors в UI (normalizeEdgeFunctionError соблюдён).
+Не применимо. Discovery-задача.
 
-### S6. Freeze-инварианты + STOP-GATE
+### 8. DoD Discovery
 
-За окно пилота (час+):
+1. Карта полей `subscriptions_v2` -> какие поля нужны/не нужны для Stripe Subscription.
+2. Карта полей `provider_subscriptions` -> какие поля заполнятся из Stripe API (`sub_xxx`, `in_xxx`).
+3. Анализ `grant-access-for-order` — как recurring-flow будет работать со Stripe (pre-create subv2 -> checkout -> webhook -> extend vs new).
+4. Анализ `subscription-conflict.ts` — как добавить provider='stripe' в конфликт-гвард без поломки bePaid.
+5. Анализ `subscription-actions` — cancel/resume/change-payment-method через Stripe API (Cancellation behavior, Resume, PaymentMethod update).
+6. Анализ `access-rules-nightly-reconcile` — нарушит ли Stripe active-записи secondary grants.
+7. Анализ Extend<->Tariff Match SOT — как работает для bePaid, как должно для Stripe.
+8. Анализ `stripe-webhook` — какие Stripe events нужны для subscription lifecycle (`invoice.payment_succeeded`, `customer.subscription.updated`, `customer.subscription.deleted`).
+9. Анализ `stripe-create-checkout` — что нужно изменить для `mode='subscription'` (line_items с recurring price, subscription_data).
+10. Gap-список: что нужно создать/изменить в Phase 3 Execution (после отдельного approve).
 
-- `subscriptions_v2` — 0 новых записей;
-- `provider_subscriptions` — 0 новых;
-- `bepaid_sync_logs` — 0 новых;
-- `provider_events` — все с реальными Stripe `evt_*` id, ни одного `evt_sim_*`;
-- никаких вызовов `sandbox-simulate` / `manual-sandbox-order` в логах edge functions.
+### 9. Риски и зависимости
 
-## Acceptance gates (Stage C)
-
-
-| #   | Gate                                                                                  | Источник доказательства                                                |
-| --- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| C1  | S1 baseline 8-node trace consistent                                                   | DB-query + memory `unified-resolver-sot`                               |
-| C2  | S2 partial refund → amber, без double-count                                           | `payments_v2`, `orders_v2.meta`, partial-refund-classifier-v2 proof    |
-| C3  | S2 full refund → red                                                                  | `payments_v2.refunded_amount = paid_amount`                            |
-| C4  | S2 refund идёт через `record_refund_atomic` (idempotent by `refund_uid`)              | `audit_logs` + memory `refund-canonical-write-path`                    |
-| C5  | S3 repeat — переиспользован `Customer.id`, новый order/payment корректно создан       | Stripe + DB                                                            |
-| C6  | S3 решение extend-vs-new зафиксировано и соответствует `extend-tariff-match-required` | `subscriptions_v2`? (для one-time consultation — N/A) + `entitlements` |
-| C7  | S4 saved PM работает, локального PM-хранилища не создано                              | Stripe Checkout UI + DB (no new table)                                 |
-| C8  | S5 UI — admin + cabinet + CRM согласованы                                             | визуальная проверка + DB cross-check                                   |
-| C9  | S6 freeze — bePaid/subscriptions/schedule нетронуты                                   | DB-query за временное окно                                             |
-| C10 | STOP-GATE — нет sim/sandbox артефактов                                                | `provider_events` фильтр + edge logs                                   |
-
-
-**Green-light на завершение Stage C:** C1–C10 = PASS (10/10).
-
-## Deliverable
-
-`.lovable/proofs/stripe_phase_3_1_pilot_consultation_runtime_v1.md` (на русском):
-
-- Все 6 сценариев с реальными ID (cs_test_*, pi_*, ch_*, evt_*, ORD-*, refund-uid).
-- 8-node trace для каждого заказа.
-- Refund-таблица (partial → full) с суммами и таймстемпами.
-- Customer reuse доказательство (`cus_*` тот же).
-- Saved PM доказательство.
-- Freeze-блок и STOP-GATE-блок.
-- Итоговая таблица C1–C10.
-
-## Технические детали
-
-- Запуск checkout: вызов `stripe-create-checkout` (frontend через PaymentDialog либо direct curl с super_admin JWT). **Не** `sandbox-simulate`.
-- Refund: инициируется из Stripe Dashboard (test-mode) → принимается через уже задеплоенный `stripe-webhook` (имеет refund-ветку с `record_refund_atomic`).
-- Все DB-проверки — через `supabase--read_query` (read-only).
-- Если по ходу обнаружится дефект → останавливаемся, фиксируем как `PILOT-FIX-NN` в proof, не маскируем.
-
-## Что НЕ делаем
-
-- Не пишем код (если только не выявлен блокер — тогда отдельный mini-plan PILOT-FIX).
-- Не трогаем bePaid / Subscriptions / Schedule / live mode / provider migration.
-- Не создаём новых таблиц (saved PM остаётся Stripe-side per memory).
-- Не модифицируем `record_refund_atomic`, `grant-access-for-order`.
-
-## Очерёдность выполнения
-
-1. S1 re-verification (read-only DB) → ~5 мин.
-2. **STOP — ждём пользователя**: запросить выполнение partial refund в Stripe Dashboard на `pi_3TeYOs…` (S2 шаг 1).
-3. S2 partial verify → запросить full refund → S2 full verify.
-4. **STOP — ждём пользователя**: запросить оплату нового Checkout (S3) — выдадим URL.
-5. S3 verify.
-6. **STOP — ждём пользователя**: запросить оплату ещё одного Checkout с saved card (S4) — выдадим URL.
-7. S4 verify.
-8. S5 UI cross-check, S6 freeze + STOP-GATE.
-9. Сборка proof-документа → итоговый отчёт.
-
-После approve этого плана — переходим к S1 (read-only baseline).
+- Discovery-отчёт не должен содержать production-код (только анализ).
+- Нужно убедиться, что анализ не пропускает скрытые зависимости bePaid в subscription-actions (hardcoded provider='bepaid').
