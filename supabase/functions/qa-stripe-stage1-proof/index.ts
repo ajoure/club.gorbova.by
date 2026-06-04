@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
     };
 
     // ---- 0b) Idempotent pre-cleanup ----
-    await cleanupPendingForUser();
+    await cleanupAllForUser();
 
     // ---- 0c) Sign in qa.admin ----
     const signinRes = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
