@@ -517,7 +517,15 @@ async function onInvoicePaid(
 ): Promise<ResolveResult> {
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
-  const stripeSubId = (invoice.subscription as string | null) ?? null;
+  // Stripe API 2026-04+ moved `subscription` под `invoice.parent.subscription_details.subscription`.
+  // Дополнительно ищем в lines[0].parent.subscription_item_details.subscription как fallback.
+  const linesData0 = ((((invoice.lines as any) ?? {}).data ?? [])[0] ?? null) as any;
+  const parentSubDetails = ((invoice.parent as any)?.subscription_details ?? null) as any;
+  const stripeSubId =
+    ((invoice.subscription as string | null) ?? null)
+    ?? (parentSubDetails?.subscription as string | null)
+    ?? (linesData0?.parent?.subscription_item_details?.subscription as string | null)
+    ?? null;
   const pi_id = (invoice.payment_intent as string | null) ?? null;
   const amount_paid_minor = Number(invoice.amount_paid ?? 0);
   const currency = String(invoice.currency ?? 'usd').toUpperCase();
