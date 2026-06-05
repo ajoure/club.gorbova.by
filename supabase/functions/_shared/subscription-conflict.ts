@@ -88,17 +88,27 @@ function formatForDisplay(dateStr: string | null): string | null {
  *
  * fail-closed: при ошибке запроса возвращает `error` — caller обязан остановить flow.
  */
+export type ConflictProvider = 'bepaid' | 'stripe';
+const DEFAULT_PROVIDERS: readonly ConflictProvider[] = ['bepaid', 'stripe'];
+
 export async function checkSubscriptionConflict(
   supabase: SupabaseClient,
-  params: { user_id: string; product_id: string; tariff_id?: string },
+  params: {
+    user_id: string;
+    product_id: string;
+    tariff_id?: string;
+    providers?: readonly ConflictProvider[]; // default: оба
+  },
 ): Promise<ConflictCheckResult> {
   const { user_id, product_id } = params;
+  const providers = (params.providers && params.providers.length > 0)
+    ? params.providers
+    : DEFAULT_PROVIDERS;
 
   if (!user_id || !product_id) {
     return { status: 'error', error: 'Missing required fields for conflict check (user_id, product_id)' };
   }
 
-  // 1. Все potential conflict-кандидаты по user+product (без фильтра по tariff!).
   const { data: candidates, error: guardError } = await supabase
     .from('subscriptions_v2')
     .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id, created_at')
@@ -113,19 +123,16 @@ export async function checkSubscriptionConflict(
   }
 
   if (!candidates || candidates.length === 0) {
-    console.log('[subscription-conflict] no candidates (no active/trial/past_due for product)', {
-      user_id, product_id,
-    });
+    console.log('[subscription-conflict] no candidates', { user_id, product_id, providers });
     return { status: 'no_conflict' };
   }
 
-  // 2. Для каждой проверяем provider-связь — это и есть «настоящая» bePaid-подписка.
   for (const cand of (candidates as any[])) {
     const { data: provSubRaw, error: provErr } = await supabase
       .from('provider_subscriptions')
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
-      .eq('provider', 'bepaid')
+      .in('provider', providers as unknown as string[])
       .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
@@ -137,12 +144,10 @@ export async function checkSubscriptionConflict(
 
     const provSub = provSubRaw as any;
     if (provSub) {
-      // 3. Provider-managed подписка найдена — это блокирующий конфликт.
       console.log('[subscription-conflict] BLOCKING — provider-managed sub found', {
-        subscription_v2_id: cand.id,
-        product_id,
-        tariff_id: cand.tariff_id,
-        bepaid_id: provSub.provider_subscription_id,
+        subscription_v2_id: cand.id, product_id, tariff_id: cand.tariff_id,
+        provider: provSub.provider,
+        provider_subscription_id: provSub.provider_subscription_id,
         state: provSub.state,
       });
       return {
@@ -152,7 +157,9 @@ export async function checkSubscriptionConflict(
           status: cand.status as string,
           next_charge_at: (cand.next_charge_at as string | null) ?? null,
           access_end_at: (cand.access_end_at as string | null) ?? null,
-          bepaid_subscription_id: (provSub.provider_subscription_id as string | null) ?? null,
+          bepaid_subscription_id: provSub.provider === 'bepaid'
+            ? ((provSub.provider_subscription_id as string | null) ?? null)
+            : null,
           provider_subscription_id: (provSub.provider_subscription_id as string | null) ?? null,
           product_id: cand.product_id as string,
           tariff_id: cand.tariff_id as string,
@@ -164,10 +171,8 @@ export async function checkSubscriptionConflict(
     }
   }
 
-  // 4. Все кандидаты — зомби (без provider-связи). Не блокируем.
-  console.log('[subscription-conflict] no_conflict — only zombie rows (active without provider linkage)', {
-    user_id, product_id, zombie_count: candidates.length,
-    zombie_ids: candidates.map((c: any) => c.id),
+  console.log('[subscription-conflict] no_conflict — only zombie rows', {
+    user_id, product_id, providers, zombie_count: candidates.length,
   });
   return { status: 'no_conflict' };
 }
