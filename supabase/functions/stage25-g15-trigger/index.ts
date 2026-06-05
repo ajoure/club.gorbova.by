@@ -159,7 +159,7 @@ Deno.serve(async (req) => {
     // 6. Pay the invoice → triggers PaymentIntent confirm with the failing PM →
     //    Stripe emits invoice.payment_failed + payment_intent.payment_failed.
     const payResp = await stripe(secret, `invoices/${invoice_id}/pay`, {
-      payment_method: pm_id,
+      payment_method: fail_pm,
     });
     // Expected: 402 Payment Required (card_declined). Stripe still emits the events.
 
