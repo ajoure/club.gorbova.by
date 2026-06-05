@@ -526,7 +526,9 @@ async function onInvoicePaid(
     ?? (parentSubDetails?.subscription as string | null)
     ?? (linesData0?.parent?.subscription_item_details?.subscription as string | null)
     ?? null;
-  const pi_id = (invoice.payment_intent as string | null) ?? null;
+  // Stripe API 2026-04+ removed `invoice.payment_intent`/`charge`. Stays present only on older API versions.
+  let pi_id = (invoice.payment_intent as string | null) ?? null;
+  let charge_id_from_api: string | null = null;
   const amount_paid_minor = Number(invoice.amount_paid ?? 0);
   const currency = String(invoice.currency ?? 'usd').toUpperCase();
   const amount_major = toMajorUnits(amount_paid_minor, currency);
@@ -772,12 +774,42 @@ async function onInvoicePaid(
   const order_id = (orderCreated as any).id as string;
 
   // ---- payments_v2 ----
+  // Stripe API 2026-04+: invoice.payment_intent is null. Fall back to Stripe API GET /v1/invoices/{id}/payments.
+  if (!pi_id) {
+    try {
+      const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+      if (sk) {
+        const resp = await fetch(`https://api.stripe.com/v1/invoice_payments?invoice=${invoice_id}&limit=1`, {
+          headers: { Authorization: `Bearer ${sk}` },
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const ip = data?.data?.[0] ?? null;
+          // invoice_payments contains payment.payment_intent / payment.charge depending on collection.
+          pi_id = (ip?.payment?.payment_intent as string | null) ?? (ip?.payment_intent as string | null) ?? null;
+          charge_id_from_api = (ip?.payment?.charge as string | null) ?? (ip?.charge as string | null) ?? null;
+        } else {
+          await resp.text().catch(() => '');
+        }
+      }
+    } catch (e) {
+      await writeAudit(supabase, {
+        event, account_code,
+        action: 'stripe.invoice.paid.payments_api_lookup_failed',
+        result: 'logged',
+        subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+        extra: { invoice_id, error: e instanceof Error ? e.message : String(e) },
+      });
+    }
+  }
+
   let payment_id: string | undefined;
-  if (pi_id) {
+  const provider_payment_id = pi_id ?? charge_id_from_api ?? invoice_id; // last-resort: invoice_id keeps row 1:1 with invoice
+  {
     const { data: existingP } = await supabase
       .from('payments_v2')
       .select('id')
-      .eq('provider_payment_id', pi_id)
+      .eq('provider_payment_id', provider_payment_id)
       .maybeSingle();
     if (existingP) {
       payment_id = (existingP as any).id;
@@ -787,13 +819,13 @@ async function onInvoicePaid(
         .insert({
           order_id,
           provider: 'stripe',
-          provider_payment_id: pi_id,
+          provider_payment_id,
           amount: amount_major,
           currency,
           status: 'succeeded',
           paid_at: new Date().toISOString(),
           meta: {
-            stripe: { invoice_id, subscription_id: stripeSubId, payment_intent_id: pi_id, account_code, source: 'invoice.paid' },
+            stripe: { invoice_id, subscription_id: stripeSubId, payment_intent_id: pi_id, charge_id: charge_id_from_api, account_code, source: 'invoice.paid', api_2026_04_fallback: !pi_id },
           },
         })
         .select('id')
@@ -801,6 +833,7 @@ async function onInvoicePaid(
       payment_id = (pIns as any)?.id;
     }
   }
+
 
   // ---- Link order_id back to provider_subscriptions + promote state pending→active.
   // Stage 2 contract: invoice.paid — ЕДИНСТВЕННЫЙ путь активации provider_subscriptions.state.
