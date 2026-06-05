@@ -25,6 +25,10 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { verifyStripeSignature } from '../_shared/acquiring/stripe-signature.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
+import {
+  resolveStripeSubscriptionEvent,
+  STRIPE_SUBSCRIPTION_EVENT_TYPES,
+} from '../_shared/stripe-subscription-resolver.ts';
 
 function svc() {
   return createClient(
