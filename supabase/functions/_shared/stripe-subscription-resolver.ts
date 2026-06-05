@@ -853,7 +853,10 @@ async function onInvoicePaymentFailed(
 ): Promise<ResolveResult> {
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
-  const stripeSubId = (invoice.subscription as string | null) ?? null;
+  const stripeSubId =
+    ((invoice.subscription as string | null) ?? null)
+    ?? (((invoice.parent as any)?.subscription_details?.subscription as string | null) ?? null)
+    ?? null;
 
   if (!stripeSubId) {
     await writeAudit(supabase, {
