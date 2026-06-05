@@ -178,7 +178,7 @@ Deno.serve(async (req) => {
   // ── 6. Execute → Stripe API ─────────────────────────────────────────────
   let secret: string;
   try {
-    secret = await readAcquiringSecret(supabase as any, 'stripe', accountCode, 'secret_key');
+    secret = await readAcquiringSecret('stripe', accountCode, 'secret_key');
   } catch (e) {
     return json({ error: 'manual_review', detail: `stripe_secret_unavailable:${(e as Error).message}` }, 200);
   }
