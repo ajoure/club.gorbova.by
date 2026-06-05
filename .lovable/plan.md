@@ -1,322 +1,126 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Усилить G25 (PCI sweep)**
+1. **G19 уточнить:** dry-run audit допустим только если он уже предусмотрен кодом. Если dry-run не пишет audit — это не blocker, но нужно зафиксировать в proof: `dry_run_no_audit_by_design`.
+2. **G24 SQL уточнить:** если `subscriptions_v2` не имеет поля `provider`, проверять bePaid через `provider_subscriptions.provider='bepaid'` и join на `subscription_v2_id`.
+3. **Добавить G23.1:** после replay проверить не только `provider_events count = 1`, но и:
+  - `audit_logs` не продублирован;
+  - `subscriptions_v2.updated_at` не изменился повторно;
+  - `entitlements` Δ=0.
+4. **Добавить PCI proof:** подтвердить, что в G19–G24:
+  - raw PAN не использовался;
+  - новые helper edge functions не создавались;
+  - все действия шли через admin UI / canonical action / Stripe webhook.
 
-Недостаточно только:
-
-```bash
-rg -n "card_number|\"number\"\s*:|exp_month|exp_year|cvc"
-```
-
-Добавить поиск по:
-
-```bash
-rg -n "payment_methods.create"
-rg -n "tokens.create"
-rg -n "confirmCard"
-rg -n "card:"
-rg -n "number:"
-rg -n "payment_method_data"
-rg -n "pm_card_"
-```
-
-Цель — убедиться, что нигде не остался скрытый путь создания карт сервером.
-
----
-
-2. **PCI-gate сделать не только на zod**
-
-Сейчас указан только входной reject.
-
-Добавить DoD:
-
-- code-review всех Stripe-вызовов;
-- ни один вызов Stripe SDK не содержит:
-
-```ts
-card: { ... }
-```
-
-или
-
-```ts
-payment_method_data.card
-```
-
-или
-
-```ts
-payment_method_types + card payload
-```
-
-на стороне сервера.
-
-То есть проверяем не только вход, но и исходящие вызовы.
-
----
-
-3. **Добавить SYSTEM ACTOR proof**
-
-Для действий:
-
-```text
-cancel_at_period_end
-cancel_now
-```
-
-обязательно подтвердить:
-
-```text
-audit_logs.actor_type='system'
-actor_user_id IS NULL
-actor_label заполнен
-```
-
-если действие инициировано webhook либо системным процессом.
+После этих уточнений план можно запускать.
 
 &nbsp;
 
-Для admin-action:
+План: Phase 3.2 Runtime Proof G19–G24
 
-```text
-actor_type='user'
-```
+Цель
 
-Доказательство включить в G20/G22.
+Закрыть оставшиеся runtime-гейты G19–G24 через admin UI в Stripe test mode и зафиксировать proof. После PASS → Phase 3.2 = FULL PASS.
 
----
+Правила исполнения
 
-4. **Уточнить cancel_now**
-
-Сейчас есть риск двойной записи:
-
-```text
-admin action
-→ canceled
-
-subscription.deleted
-→ canceled
-```
-
-Добавить явно:
-
-```text
-customer.subscription.deleted
-должен быть idempotent
-```
-
-Если статус уже:
-
-```text
-canceled
-```
-
-то только audit/update meta.
-
-Без повторной бизнес-логики.
-
----
-
-5. **Усилить G22**
-
-Добавить отдельную проверку:
-
-
-| **Проверка**        | **Ожидание** |
-| ------------------- | ------------ |
-| Telegram membership | не изменён   |
-| access_rules        | Δ=0          |
-| entitlements rows   | Δ=0          |
-
-
-Сейчас это подразумевается, но лучше сделать явным proof.
-
----
-
-6. **PCI remediation**
-
-Добавить отдельный пункт:
-
-```text
-Подтвердить, что в git diff / deployed files
-отсутствуют любые новые helper-функции,
-принимающие payment_method, card_data,
-PAN или test-card параметры напрямую.
-```
-
-Это закрывает риск повторения `stage25-g15-trigger` под другим именем.
-
----
-
-7. **Следующий этап заранее зафиксировать в backlog**
-
-После закрытия Phase 3.2 сохранить как следующий блок:
-
-```text
-Phase 3.3
-Stripe Customer Portal + Self-Service Cancellation
-```
-
-Но не реализовывать в текущем спринте.
-
----
-
-После этих дополнений план выглядит готовым к реализации и соответствует мастер-спринту без выхода за scope.
-
-&nbsp;
-
-План: Phase 3.2 — Stripe Subscription Actions MVP (v2, с учётом Stripe PCI warning)
-
-## Контекст обновления
-
-Stripe прислал письмо (req_SR4WPqmV1IYvAc): на нашем test-аккаунте зафиксирована передача полного номера карты в API. Источник — одноразовый helper `stage25-g15-trigger` из G15-прогона, который вызывал `payment_intents/{id}/confirm` с raw PAN вместо `pm_card_*` test token. Функция уже удалена, но факт остался в Stripe Radar/compliance журнале.
-
-Этот план дополняет Phase 3.2 жёстким PCI-гейтом, чтобы исключить повторение, и фиксирует remediation по уже произошедшему инциденту.
-
-## Цель Phase 3.2 (без изменений)
-
-Cancel at period end + immediate cancel + sync + admin UI + audit + bePaid non-regression.
-НЕ входит: pause/resume/schedules/installments/Customer Portal/dunning/migration/live mode.
-
-## Жёсткие правила (дополнено)
-
-Прежние правила сохраняются + добавляются:
-
-- **PCI-гейт (новое, критично):** запрещено передавать в Stripe API любые «сырые» данные карт — PAN, CVC, exp — даже в test mode. Любые объекты `card: { number, cvc, exp_month, exp_year }` в payload запрещены. Допустимы только:
-  - `payment_method: 'pm_card_visa' | 'pm_card_chargeDeclined' | 'pm_card_*'` (test PaymentMethod tokens);
-  - `payment_method: 'pm_*'`, созданный через Stripe.js / Checkout / Elements;
-  - `setup_intent` / `payment_intent` confirm только по `pm_*` id, без `card` object.
-- **Запрет on-server card collection:** ни одна edge function, ни тест-помощник, ни helper-скрипт не имеют права принимать на вход номер карты. Сбор карты — только через Stripe-hosted Checkout, Payment Element или Stripe.js на клиенте.
-- **Запрет одноразовых helper-функций для прогона гейтов:** временные edge functions вида `stage25-*-trigger` создавать запрещено. Все runtime-прогоны (G19–G24 и будущие) идут через канонические пути: Hosted Checkout, admin UI, webhook replay через Stripe CLI / Dashboard.
-- Прежние правила: только русский, DIAGNOSE→PLAN→DRY RUN→EXECUTE→VERIFY, add-only, bePaid и `grant-access-for-order` не трогаем, прямой revoke доступа запрещён, `entitlements`/`access_rules` напрямую не меняем, связи только по UUID, test mode only.
-
----
-
-## Шаги Phase 3.2
-
-### A. Discovery (read-only, без изменений)
-
-Зафиксировать в proof:
-
-- существующие UI-элементы карточки подписки;
-- существующие cancel-actions (`subscription-actions`, `subscription-admin-actions`) и bePaid baseline;
-- актуальные поля `subscriptions_v2` и `provider_subscriptions` (cancel_*, meta);
-- где admin UI рендерит статус подписки Stripe.
-
-### B. Edge Function `stripe-subscription-action`
-
-Provider-aware endpoint (расширить существующий, без дублирования).
-
-**Input:**
-
-```json
-{ "subscription_v2_id": "uuid", "action": "cancel_at_period_end | cancel_now", "dry_run": true }
-```
-
-**Правила:**
-
-- Только `provider='stripe'`; bePaid → `not_supported` STOP.
-- Stripe sub находим строго через `provider_subscriptions.provider_subscription_id`, должен начинаться с `sub_`.
-- `dry_run=true` ничего не меняет, возвращает plan.
-- Auth: admin / super_admin через `getClaims` + role check.
-- **PCI-гейт в коде:** никаких параметров вида `card`, `number`, `cvc`, `exp_month`, `exp_year` во входе и в исходящих Stripe-вызовах. Schema-валидация zod должна отклонять такие поля HTTP 400.
-
-### C. cancel_at_period_end
-
-- **Stripe:** `subscription.update(cancel_at_period_end=true)`.
-- **БД:** `subscriptions_v2.meta` ← `cancel_at_period_end=true`, `cancel_requested_at`, `cancel_source='admin'`. `status` НЕ переводим в canceled. `ps.state` оставляем до webhook.
-- Доступ не трогаем.
-
-### D. cancel_now
-
-- **Stripe:** `subscription.cancel()`.
-- **БД:** `subscriptions_v2.status='canceled'`, `ps.state='canceled'`, `cancel_reason='admin_stripe_cancel_now'`, `canceled_at=now()`.
-- Доступ живёт до `entitlements.expires_at`, Telegram не кикаем.
-
-### E. Webhook compatibility
-
-Подтвердить, что `customer.subscription.deleted` и `customer.subscription.updated` корректно фиксируют результат и идемпотентность через `provider_events_idem_unique` сохраняется.
-
-### F. Admin UI
-
-Две кнопки в карточке Stripe-подписки: **«Отменить в конце периода»** и **«Отменить сейчас»**.
-
-- видимость только при `provider='stripe'`;
-- confirmation modal: «доступ не будет отозван немедленно», «Telegram revoke не выполняется», «действие будет отражено в Stripe».
-- для bePaid zero-diff.
-
-### G. Audit
-
-Поля: `actor_type`, `actor_user_id`, `actor_label`, `subscription_v2_id`, `provider_subscription_id`, `provider='stripe'`, `action`, `dry_run`, `result`, `stripe_subscription_id`, `before_state`, `after_state`.
-
-### Stop-gates
-
-subscription не найдена / не Stripe / sub_id не `sub_*` / account_code mismatch / уже canceled / нет прав / Stripe API error / **PCI-violation в payload** (новое).
-
----
-
-## NEW. Stripe PCI Compliance Remediation
-
-### H. Дисциплина PCI (одноразовое исправление прошлого инцидента)
-
-1. **Подтвердить удаление** edge function `stage25-g15-trigger` (уже удалена в Stage 2.5 cleanup) — проверить отсутствие в `functions.registry.txt` и в Supabase Functions list.
-2. **Code sweep (read-only):** `rg -n "card_number|\"number\"\s*:|exp_month|exp_year|cvc" supabase/functions/` — убедиться, что нигде в стрипо-вых функциях нет работы с raw PAN. Зафиксировать вывод в proof.
-3. **Документ-политика:** добавить в `.lovable/docs/edge-functions-standards.md` секцию «Stripe PCI rules» (запрет raw card data на сервере, разрешённые test tokens, запрет временных helper-функций).
-4. **Acknowledge письма Stripe:** зафиксировать в proof request_id `req_SR4WPqmV1IYvAc`, дату, описание корня причины и принятые меры. Это первое и (по политике) последнее уведомление — никаких настроек в Stripe Dashboard НЕ менять, флаг «разрешить raw PAN» НЕ включать.
-
-### I. Корректировка протокола runtime-проверок (G19–G24)
-
-- Все симуляции subscription-событий выполняются через канонические пути: Stripe Hosted Checkout, admin UI Phase 3.2, Stripe CLI `stripe trigger` / Dashboard «Send test webhook».
-- Test PaymentMethods — только готовые токены `pm_card_visa`, `pm_card_chargeDeclined`, `pm_card_authenticationRequired` и т.п.
-- Если для гейта нужен сценарий, не покрываемый Hosted Checkout (например, `customer.subscription.deleted` после `cancel_now`) — использовать Stripe CLI `stripe trigger customer.subscription.deleted` или вызвать наш собственный `stripe-subscription-action` (он уже идёт через Stripe API без PAN).
-
----
-
-## Runtime Proof — гейты G19–G25
-
-
-| Гейт            | Сценарий                                       | Метод                                          | Ожидание                                                                                                              |
-| --------------- | ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **G19**         | dry_run cancel_at_period_end                   | UI / direct curl                               | Stripe API не вызван, БД не меняется, возвращён plan                                                                  |
-| **G20**         | execute cancel_at_period_end                   | admin UI                                       | Stripe `cancel_at_period_end=true`; meta обновлена; status ≠ canceled; доступ не отозван                              |
-| **G21**         | webhook `customer.subscription.updated`        | Stripe doставка после G20                      | webhook processed; meta синхронизирована; дублей нет                                                                  |
-| **G22**         | execute cancel_now                             | admin UI                                       | Stripe canceled; `subscriptions_v2.status=canceled`; `ps.state=canceled`; entitlements не удалены; Telegram не кикнут |
-| **G23**         | webhook `customer.subscription.deleted` replay | Stripe CLI re-deliver                          | idempotent; replay не создаёт дублей; доступ не отзывается напрямую                                                   |
-| **G24**         | bePaid freeze                                  | SQL snapshot до/после                          | bePaid subscriptions/orders/payments/UI не изменились                                                                 |
-| **G25 (новый)** | PCI sweep                                      | `rg` по `supabase/functions/` + список деплоев | 0 совпадений по raw-card паттернам; `stage25-g15-trigger` отсутствует; политика добавлена в docs                      |
-
-
-## DoD
-
-- `stripe-subscription-action` реализована (dry-run + execute, с PCI-валидацией входа).
-- cancel_at_period_end и cancel_now работают.
-- Webhook compatibility подтверждена.
-- Admin UI actions добавлены только для Stripe, с confirmation modal.
-- Audit пишется со всеми полями.
-- G19–G25 = PASS.
-- bePaid не затронут.
-- `.lovable/docs/edge-functions-standards.md` дополнен секцией Stripe PCI.
-- Acknowledgement Stripe-письма (req_SR4WPqmV1IYvAc) зафиксирован в proof.
-- Proof: `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md`.
-- `.lovable/plan.md` обновлён.
-
-## Что НЕ делаем
-
-pause, resume, Subscription Schedule, installments, Customer Portal, dunning, migration bePaid→Stripe, live mode, изменения bePaid, изменения access revoke logic, **включение опции «разрешить raw PAN» в Stripe Dashboard**, **создание любых server-side card collection путей**.
----
-
-## Phase 3.2 — Stripe Subscription Actions MVP (implementation log, 2026-06-05)
-
-Status: code DONE; G19–G24 runtime gates pending (test mode).
-Proof: `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md`.
-
-Delivered:
-- edge function `stripe-subscription-action` (dry-run + execute, PCI входной guard, cancel_at_period_end и cancel_now);
-- UI блок `src/components/admin/StripeSubscriptionActionsBlock.tsx` + интеграция в `SubscriptionActionsSheet` (рендерится только при `provider='stripe'`);
-- `.lovable/docs/edge-functions-standards.md` секция 10 «Stripe PCI Rules» (запрет raw PAN, разрешённые test tokens, запрет одноразовых *-trigger функций);
-- acknowledge письма Stripe `req_SR4WPqmV1IYvAc` (raw PAN warning) — без изменений настроек в Stripe Dashboard;
-- G25 (PCI sweep) — PASS.
-
-bePaid не затронут; `grant-access-for-order` не трогался; access revoke logic не менялась.
-
-Next: прогон G19–G24 в test mode через admin UI после деплоя.
+- Только русский язык в proof и отчёте.
+- Порядок: Diagnose → Plan → Dry run → Execute → Verify.
+- Только Stripe test mode. bePaid не трогаем.
+- Никаких raw card данных нигде (PCI). Все карты — только `pm_card_*` test tokens.
+- Доступ (`entitlements.expires_at`) НЕ отзывается ни в одном из сценариев.
+- Telegram revoke НЕ выполняется.
+- Никаких новых edge functions / helper-триггеров (запрет п.10.3 docs).
+- Все действия идут через канонический путь: admin UI → `stripe-subscription-action` → Stripe API → `stripe-webhook` (replay через Stripe Dashboard «Send test webhook» или Stripe CLI).
+- Add-only: ничего не удаляем, только дописываем proof.
+
+Подготовка (fixture)
+
+1. Выбрать в test mode существующую Stripe subscription уже привязанную к `subscriptions_v2` (provider=stripe, status=active, `meta.stripe.subscription_id=sub_*`).
+  - Если такой нет — создать через канонический Stripe Hosted Checkout (`stripe-create-subscription-checkout`) с тест-картой `pm_card_visa` (Checkout сам соберёт карту на стороне Stripe, edge функции сырой PAN не видят).
+2. Зафиксировать в proof: `subscription_v2_id`, `sub_*`, `cus_*`, `account_code`, `entitlements.expires_at` ДО прогона.
+
+Сценарии runtime
+
+G19 — dry_run cancel_at_period_end
+
+- Из admin UI открыть `SubscriptionActionsSheet` для fixture.
+- Нажать «Отменить в конце периода», но в proof проверить отдельным `supabase--curl_edge_functions` POST с `{dry_run:true, action:'cancel_at_period_end'}`.
+- Ожидаем: HTTP 200, ответ содержит preview (что будет изменено), Stripe API НЕ вызван, `subscriptions_v2.meta.stripe.cancel_at_period_end` НЕ изменён, audit с пометкой dry-run.
+- Snapshot ответа + `SELECT meta FROM subscriptions_v2 WHERE id=...` ДО/ПОСЛЕ (без изменений).
+
+G20 — execute cancel_at_period_end
+
+- Через admin UI подтвердить действие.
+- Ожидаем:
+  - Stripe `subscription.update(cancel_at_period_end=true)` вызван (idempotency key).
+  - `subscriptions_v2.meta.stripe.cancel_at_period_end=true`, `cancel_requested_at` проставлен, `cancel_source='admin'`.
+  - `provider_subscriptions.state` остался `active`/`past_due` (НЕ canceled).
+  - `entitlements.expires_at` НЕ изменился.
+  - Запись в audit_logs с actor_type='user', actor=admin JWT.
+- Snapshot: Stripe response, БД до/после, audit row.
+
+G21 — webhook customer.subscription.updated
+
+- Stripe сам пришлёт `customer.subscription.updated` после G20. Дождаться или сделать replay через Stripe Dashboard.
+- Ожидаем: `stripe-webhook` идемпотентно обновил `meta.stripe.cancel_at_period_end`, `current_period_end`, `default_payment_method`. status sync без revoke. `provider_events` содержит запись.
+- Snapshot: webhook log + БД до/после.
+
+G22 — execute cancel_now (на отдельной fixture)
+
+- Подготовить вторую тест-подписку (не использовать ту же, что в G19–G21, чтобы не смешивать состояния).
+- Через admin UI → «Отменить сейчас».
+- Ожидаем:
+  - Stripe `subscription.cancel()` вызван.
+  - `subscriptions_v2.status='canceled'`, `cancel_reason='admin_stripe_cancel_now'`.
+  - `provider_subscriptions.state='canceled'`.
+  - `entitlements.expires_at` НЕ изменился (доступ живёт до даты).
+  - Audit с actor_type='user'.
+- Snapshot: Stripe response, БД до/после, audit.
+
+G23 — webhook customer.subscription.deleted replay
+
+- После G22 Stripe прилетит `customer.subscription.deleted`. Дополнительно — replay того же event через Stripe Dashboard для проверки идемпотентности.
+- Ожидаем:
+  - Первый раз — webhook применил `status=canceled` (уже canceled — no-op safe).
+  - Replay — `provider_events_idem_unique` блокирует, HTTP 200, без двойных audit.
+  - `entitlements.expires_at` НЕ тронут.
+- Snapshot: оба webhook лога + `SELECT count(*) FROM provider_events WHERE event_id=...` = 1.
+
+G24 — bePaid freeze (non-regression)
+
+- Параллельно убедиться: ни одна bePaid-подписка не была затронута за время G19–G23.
+- `SELECT count(*), max(updated_at) FROM subscriptions_v2 WHERE provider='bepaid' AND updated_at > <время начала G19>` → ожидаем 0 строк, изменённых руками Phase 3.2.
+- `git log` / `rg` подтверждение: за период работы Phase 3.2 не было изменений в `bepaid-*` функциях (sanity, не в рамках runtime, а как часть proof).
+- Snapshot: SQL результат + список изменённых файлов Phase 3.2 (все под `stripe-*` / `StripeSubscriptionActionsBlock`).
+
+Proof
+
+Дополнить `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md` секциями G19–G24 со следующей структурой для каждого гейта:
+
+- Что проверяли
+- Команда / UI-действие
+- Stripe API запрос (метод, endpoint, idempotency key) — без PII
+- БД snapshot ДО
+- БД snapshot ПОСЛЕ
+- audit_logs row
+- Вердикт PASS/FAIL
+
+Обновить `.lovable/plan.md`: пометить Phase 3.2 как FULL PASS после всех PASS.
+
+DoD
+
+- G19, G20, G21, G22, G23, G24 = PASS.
+- `entitlements.expires_at` не изменился ни в одной fixture.
+- Никаких bePaid-побочек.
+- Никаких новых edge functions / helper-триггеров не создано.
+- Никаких raw card данных в логах/audit/payloads.
+- Proof-файл обновлён, plan.md обновлён.
+
+Что НЕ делаем
+
+- Не запускаем pause/resume/schedules/installments.
+- Не трогаем live mode.
+- Не создаём одноразовые helper edge functions (`gXX-trigger`, `stripe-test-*` — запрещено п.10.3).
+- Не вызываем `grant-access-for-order` напрямую.
+- Не отзываем доступ и не кикаем из Telegram.
+- Не меняем bePaid код/конфиг.
