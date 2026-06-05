@@ -288,9 +288,17 @@ export type ClassifyResult =
 
 export async function classifySameProductState(
   supabase: SupabaseClient,
-  params: { user_id: string; product_id: string; tariff_id: string | null | undefined },
+  params: {
+    user_id: string;
+    product_id: string;
+    tariff_id: string | null | undefined;
+    providers?: readonly ConflictProvider[]; // default: оба
+  },
 ): Promise<ClassifyResult> {
   const { user_id, product_id, tariff_id } = params;
+  const providers = (params.providers && params.providers.length > 0)
+    ? params.providers
+    : DEFAULT_PROVIDERS;
 
   if (!user_id || !product_id) {
     return { status: 'error', error: 'Missing required fields (user_id, product_id)' };
@@ -313,7 +321,6 @@ export async function classifySameProductState(
     return { status: 'ok', decision: 'no_existing', existing: null };
   }
 
-  // Найти первый кандидат, у которого есть provider linkage.
   let sameTariff: ExistingProviderSub | null = null;
   let anyProviderSub: ExistingProviderSub | null = null;
 
@@ -322,7 +329,7 @@ export async function classifySameProductState(
       .from('provider_subscriptions')
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
-      .eq('provider', 'bepaid')
+      .in('provider', providers as unknown as string[])
       .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
@@ -359,7 +366,6 @@ export async function classifySameProductState(
   if (anyProviderSub) {
     return { status: 'ok', decision: 'replace_other_tariff', existing: anyProviderSub };
   }
-  // Только зомби-кандидаты без provider-связи — не блокируем.
   return { status: 'ok', decision: 'no_existing', existing: null };
 }
 
