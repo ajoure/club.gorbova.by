@@ -32,6 +32,7 @@
 //     orders_v2.meta->stripe.invoice_id (см. B-2, утверждённый default).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { readAcquiringSecret } from './acquiring/vault.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -264,10 +265,23 @@ async function onSubscriptionCreated(
     return { subscription_v2_id: subv2_id, note: 'no_pre_created_sub', manual_review: true, manual_review_reason: 'no_pre_created_sub' };
   }
 
-  // BIND
+  // BIND ONLY — Stage 2 contract: до первого успешного invoice.paid
+  // provider_subscriptions.state НИКОГДА не становится 'active'.
+  // Если subv2 ещё pending → принудительно держим pending (даже если Stripe sub.status='active'/'trialing').
+  // Терминальные стейты (canceled/past_due) синхронизируем как есть.
   const stripeStatus = String(sub.status ?? 'incomplete');
   const mapped = mapStripeSubStatus(stripeStatus);
-  const provState: ProvSubState = mapped.prov ?? 'pending';
+  let provState: ProvSubState;
+  if (subv2.status === 'pending') {
+    if (mapped.prov === 'canceled' || mapped.prov === 'past_due') {
+      provState = mapped.prov;
+    } else {
+      // 'active' / 'trialing' / 'pending' / null → bind-only pending.
+      provState = 'pending';
+    }
+  } else {
+    provState = mapped.prov ?? 'pending';
+  }
 
   await supabase
     .from('provider_subscriptions')
@@ -289,6 +303,7 @@ async function onSubscriptionCreated(
           status: stripeStatus,
         },
         stage: 'bound_lifecycle',
+        binding_only_no_activation: subv2.status === 'pending',
       },
     })
     .eq('id', pending.id);
@@ -541,8 +556,81 @@ async function onInvoicePaid(
     return { order_id: existingOrder.id, note: 'invoice_paid_duplicate' };
   }
 
-  // ---- Resolve subv2 ----
-  const ps = await findSubByStripeId(supabase, stripeSubId);
+  // ---- Resolve subv2 (order-independent: tolerate invoice.paid arriving BEFORE customer.subscription.created) ----
+  let ps = await findSubByStripeId(supabase, stripeSubId);
+  let rebound_from_pending = false;
+  if (!ps) {
+    // RACE: customer.subscription.created ещё не прилетел (или потерян). Резолвим subv2_id из:
+    //   1) invoice.subscription_details.metadata.subscription_v2_id (Stripe инжектит metadata подписки)
+    //   2) line.metadata.subscription_v2_id
+    //   3) Stripe API: GET /v1/subscriptions/{id} → metadata.subscription_v2_id
+    const linesPeek = (((invoice.lines as any) ?? {}).data ?? []) as Array<any>;
+    const subDetails = (invoice.subscription_details as any) ?? null;
+    let subv2_id_hint: string | null =
+      (subDetails?.metadata?.subscription_v2_id as string | null)
+      ?? (linesPeek[0]?.metadata?.subscription_v2_id as string | null)
+      ?? null;
+    let hint_source = subv2_id_hint ? 'invoice_metadata' : null;
+
+    if (!subv2_id_hint) {
+      try {
+        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+        if (sk) {
+          const resp = await fetch(`https://api.stripe.com/v1/subscriptions/${stripeSubId}`, {
+            headers: { Authorization: `Bearer ${sk}` },
+          });
+          if (resp.ok) {
+            const subObj = await resp.json();
+            subv2_id_hint = (subObj?.metadata?.subscription_v2_id as string | null) ?? null;
+            hint_source = subv2_id_hint ? 'stripe_api_subscription_metadata' : null;
+          } else {
+            await resp.text().catch(() => '');
+          }
+        }
+      } catch (e) {
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.invoice.paid.rebind_api_lookup_failed',
+          result: 'logged',
+          subscription_v2_id: null, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    }
+
+    if (subv2_id_hint) {
+      const pending = await findPendingSub(supabase, subv2_id_hint);
+      if (pending) {
+        // Rebind pending row IN PLACE. state остаётся 'pending' — активация ниже единым путём.
+        await supabase
+          .from('provider_subscriptions')
+          .update({
+            provider_subscription_id: stripeSubId,
+            meta: {
+              ...((pending.meta as any) ?? {}),
+              stripe: {
+                ...((((pending.meta as any)?.stripe) ?? {})),
+                subscription_id: stripeSubId,
+                customer_id: invoice.customer ?? null,
+              },
+              stage: 'bound_via_invoice_paid_race',
+              rebind_hint_source: hint_source,
+            },
+          })
+          .eq('id', pending.id);
+        ps = await findSubByStripeId(supabase, stripeSubId);
+        rebound_from_pending = true;
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.invoice.paid.rebound_pre_created_sub',
+          result: 'ok',
+          subscription_v2_id: subv2_id_hint, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, hint_source, race: 'invoice_paid_before_subscription_created' },
+        });
+      }
+    }
+  }
+
   if (!ps) {
     await writeAudit(supabase, {
       event, account_code,
@@ -680,15 +768,19 @@ async function onInvoicePaid(
     }
   }
 
-  // ---- Link order_id back to provider_subscriptions (для extend через provider-linked) ----
+  // ---- Link order_id back to provider_subscriptions + promote state pending→active.
+  // Stage 2 contract: invoice.paid — ЕДИНСТВЕННЫЙ путь активации provider_subscriptions.state.
+  const provStateNext: ProvSubState = (ps.state === 'pending' || ps.state === 'past_due') ? 'active' : (ps.state as ProvSubState);
   await supabase
     .from('provider_subscriptions')
     .update({
       order_id,
+      state: provStateNext,
       last_charge_at: new Date().toISOString(),
       meta: {
         ...((ps.meta as any) ?? {}),
         stripe: { ...((((ps.meta as any)?.stripe) ?? {})), last_invoice_id: invoice_id },
+        activated_by_invoice_paid: ps.state === 'pending' ? invoice_id : ((ps.meta as any)?.activated_by_invoice_paid ?? null),
       },
     })
     .eq('id', ps.id);
@@ -728,6 +820,8 @@ async function onInvoicePaid(
       invoice_id, order_id, payment_id,
       amount: amount_major, currency, price_id: linePriceId, offer_id,
       first_payment: subv2.status === 'pending',
+      rebound_from_pending,
+      prov_state_before: ps.state, prov_state_after: provStateNext,
     },
   });
 
