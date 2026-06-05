@@ -768,15 +768,19 @@ async function onInvoicePaid(
     }
   }
 
-  // ---- Link order_id back to provider_subscriptions (для extend через provider-linked) ----
+  // ---- Link order_id back to provider_subscriptions + promote state pending→active.
+  // Stage 2 contract: invoice.paid — ЕДИНСТВЕННЫЙ путь активации provider_subscriptions.state.
+  const provStateNext: ProvSubState = (ps.state === 'pending' || ps.state === 'past_due') ? 'active' : (ps.state as ProvSubState);
   await supabase
     .from('provider_subscriptions')
     .update({
       order_id,
+      state: provStateNext,
       last_charge_at: new Date().toISOString(),
       meta: {
         ...((ps.meta as any) ?? {}),
         stripe: { ...((((ps.meta as any)?.stripe) ?? {})), last_invoice_id: invoice_id },
+        activated_by_invoice_paid: ps.state === 'pending' ? invoice_id : ((ps.meta as any)?.activated_by_invoice_paid ?? null),
       },
     })
     .eq('id', ps.id);
