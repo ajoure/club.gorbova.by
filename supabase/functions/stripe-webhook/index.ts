@@ -538,10 +538,13 @@ Deno.serve(async (req) => {
 
   try {
     const out = await dispatch(event, verifiedAccount);
-    // MP-A2-2: a customer-mismatch in dispatch marks the event as manual_review,
-    // not "processed" — so admins can audit before any side-effects.
-    const status =
-      out.note === 'customer_mismatch_manual_review' ? 'manual_review' : 'processed';
+    // manual_review triggers:
+    //   - Phase 2: 'customer_mismatch_manual_review'
+    //   - Phase 3.1 Stage 2: 'manual_review:<reason>' (resolver-driven)
+    const isManual =
+      out.note === 'customer_mismatch_manual_review' ||
+      (typeof out.note === 'string' && out.note.startsWith('manual_review:'));
+    const status = isManual ? 'manual_review' : 'processed';
     await supabase
       .from('provider_events')
       .update({
