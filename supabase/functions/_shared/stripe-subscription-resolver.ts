@@ -574,8 +574,11 @@ async function onInvoicePaid(
     //   3) Stripe API: GET /v1/subscriptions/{id} → metadata.subscription_v2_id
     const linesPeek = (((invoice.lines as any) ?? {}).data ?? []) as Array<any>;
     const subDetails = (invoice.subscription_details as any) ?? null;
+    // Stripe API 2026-04+: metadata лежит в invoice.parent.subscription_details.metadata.
+    const parentSubDetails2 = ((invoice.parent as any)?.subscription_details ?? null) as any;
     let subv2_id_hint: string | null =
       (subDetails?.metadata?.subscription_v2_id as string | null)
+      ?? (parentSubDetails2?.metadata?.subscription_v2_id as string | null)
       ?? (linesPeek[0]?.metadata?.subscription_v2_id as string | null)
       ?? null;
     let hint_source = subv2_id_hint ? 'invoice_metadata' : null;
