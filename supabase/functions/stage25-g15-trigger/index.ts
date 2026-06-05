@@ -71,11 +71,22 @@ Deno.serve(async (req) => {
       const ev = await stripe(secret, 'events?limit=30', undefined, 'GET');
       return json(200, { ok: true, events: (ev.data?.data ?? []).map((e: any) => ({ id: e.id, type: e.type, created: e.created, object_id: e.data?.object?.id })) });
     }
-    if (mode === 'list_endpoints') {
+    if (mode === 'confirm_pi_fail') {
       const account_code = url.searchParams.get('account_code') ?? 'stripe_poland';
+      const pi_id = url.searchParams.get('pi_id')!;
       const secret = await readAcquiringSecret('stripe', account_code, 'secret_key');
-      const we = await stripe(secret, 'webhook_endpoints?limit=10', undefined, 'GET');
-      return json(200, { ok: true, endpoints: we.data });
+      const r = await stripe(secret, `payment_intents/${pi_id}/confirm`, {
+        payment_method: 'pm_card_chargeDeclined',
+        return_url: 'https://example.com/return',
+      });
+      return json(200, { ok: r.ok, status: r.status, data: r.data });
+    }
+    if (mode === 'get_invoice') {
+      const account_code = url.searchParams.get('account_code') ?? 'stripe_poland';
+      const invoice_id = url.searchParams.get('invoice_id')!;
+      const secret = await readAcquiringSecret('stripe', account_code, 'secret_key');
+      const r = await stripe(secret, `invoices/${invoice_id}?expand[0]=payments`, undefined, 'GET');
+      return json(200, { ok: r.ok, status: r.status, data: r.data });
     }
 
     const body = (await req.json()) as ReqBody;
