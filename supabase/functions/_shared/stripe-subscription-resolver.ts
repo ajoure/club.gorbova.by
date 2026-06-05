@@ -638,9 +638,31 @@ async function onInvoicePaid(
           subscription_v2_id: subv2_id_hint, provider_subscription_id: stripeSubId,
           extra: { invoice_id, hint_source, race: 'invoice_paid_before_subscription_created' },
         });
+      } else {
+        // Pending lookup miss — race may have resolved meanwhile via customer.subscription.created.
+        // Re-check by stripeSubId one more time (the bind may have just completed in parallel).
+        ps = await findSubByStripeId(supabase, stripeSubId);
+        if (!ps) {
+          await writeAudit(supabase, {
+            event, account_code,
+            action: 'stripe.invoice.paid.rebind_pending_miss',
+            result: 'manual_review',
+            subscription_v2_id: subv2_id_hint, provider_subscription_id: stripeSubId,
+            extra: { invoice_id, hint_source, pending_lookup_returned: 'null' },
+          });
+        } else {
+          await writeAudit(supabase, {
+            event, account_code,
+            action: 'stripe.invoice.paid.race_resolved_by_concurrent_bind',
+            result: 'ok',
+            subscription_v2_id: ps.subscription_v2_id, provider_subscription_id: stripeSubId,
+            extra: { invoice_id, hint_source },
+          });
+        }
       }
     }
   }
+
 
   if (!ps) {
     await writeAudit(supabase, {
