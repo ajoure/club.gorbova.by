@@ -728,6 +728,7 @@ async function onInvoicePaid(
     offer_id,
     order_number,
     status: 'paid',
+    base_price: amount_major,
     final_price: amount_major,
     paid_amount: amount_major,
     currency,
