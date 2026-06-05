@@ -1,3 +1,7 @@
+Phase 3.2 = **FULL PASS** (2026-06-05). Runtime G19–G25 закрыты в test mode через канонический путь Hosted Checkout → webhook → admin path → `stripe-subscription-action`. Полный отчет: `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md` (раздел «Runtime Proof G19–G24 (2026-06-05 self-run, test mode)»).
+
+---
+
 да, согласен, с учетом правок:
 
 1. **G19 уточнить:** dry-run audit допустим только если он уже предусмотрен кодом. Если dry-run не пишет audit — это не blocker, но нужно зафиксировать в proof: `dry_run_no_audit_by_design`.

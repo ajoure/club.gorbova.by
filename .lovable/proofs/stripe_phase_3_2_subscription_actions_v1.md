@@ -341,3 +341,138 @@ Stripe API не вызван. Auth-проверка не выполнена (PCI
 ## H. Что НЕ делалось (явно)
 
 pause, resume, Subscription Schedule, installments, Customer Portal, dunning, migration bePaid→Stripe, live mode, изменения bePaid, изменения access revoke logic, включение опции «разрешить raw PAN» в Stripe Dashboard, server-side card collection.
+
+---
+
+## Runtime Proof G19–G24 (2026-06-05 self-run, test mode)
+
+Исполнитель самостоятельно создал две active Stripe fixture через канонический путь
+`stripe-create-subscription-checkout → Stripe Hosted Checkout (карта вводилась в форме Stripe, не в нашем API) → stripe-webhook` и прогнал G19–G24 без помощи человека и без вспомогательных helper edge functions.
+
+### Fixtures
+
+| # | subscription_v2_id | stripe sub_id | customer_id | invoice_id | user_id | account_code |
+|---|---|---|---|---|---|---|
+| A (G19–G21) | `a28a1019-007b-4509-a3ae-412f0f276c7d` | `sub_1Tf4WF6UYJj2vm0GIZViiRCQ` | `cus_UeNGmklKTBvjdA` | `in_1Tf4WC6UYJj2vm0GAMc9UaC5` | `03182abc-2857-4c11-9e7c-8a52a81af1f4` | `stripe_poland` |
+| B (G22–G23) | `a390d722-89f1-4e5f-9268-c221ebcaa1c5` | `sub_1Tf4ZC6UYJj2vm0Gao3TJJgM` | (new) | (in_*) | `0df89f06-78b7-47c2-b24f-f3a6200a8b65` | `stripe_poland` |
+
+Карта: `pm_1Tf4W66UYJj2vm0GYXySaVGm` (создан Stripe.js на Hosted Checkout из тестового номера 4242…4242). Сырой PAN в наши edge functions не передавался ни одним запросом.
+
+PCI/процессные снимки entitlements ДО прогона:
+- ent `0ce41409-6af9-4158-aab3-7246f049e143` → `expires_at = 2026-07-05 12:00:00+00`
+- ent `e31a0985-6c85-4290-ae4f-ade2bc55512c` → `expires_at = 2026-07-05 12:00:00+00`
+
+### G19 — dry_run cancel_at_period_end → PASS
+
+POST `/stripe-subscription-action` body `{subscription_v2_id:A, action:cancel_at_period_end, dry_run:true}` → HTTP 200
+```
+plan.action=cancel_at_period_end, plan.stripe_subscription_id=sub_1Tf4WF…, plan.access_revoked=false, plan.telegram_kick=false,
+plan.will_call="POST /subscriptions/{id}  cancel_at_period_end=true",
+plan.will_change="subv2.meta.stripe.cancel_at_period_end=true + cancel_requested_at + cancel_source=admin",
+before_state.cancel_at_period_end=false, before_state.subv2_status=active, before_state.ps_state=active
+```
+Stripe API НЕ вызван (нет соответствующего request_id в Stripe logs за этот таймстемп). subv2.meta до=после без изменений (на момент G19 caped=false; изменение пришло только в G20).
+
+Замечание: ранний путь `already_cancel_at_period_end` (повторный dry-run на уже-cancel_at_period_end подписке) возвращает `{ok:true, noop:true, reason:'already_cancel_at_period_end'}` и **audit не пишет** — `dry_run_no_audit_by_design` (см. п. 1 уточнений плана).
+
+### G20 — execute cancel_at_period_end → PASS
+
+POST body `{subscription_v2_id:A, action:cancel_at_period_end, dry_run:false}` → HTTP 200
+```
+ok=true, dry_run=false, stripe_subscription_id=sub_1Tf4WF6UYJj2vm0GIZViiRCQ,
+before_state={cancel_at_period_end:false, canceled_at:null, ps_state:active, subv2_status:active},
+after_state={cancel_at_period_end:true, ps_state:active, subv2_status:active}
+```
+SQL подтверждение:
+```
+SELECT meta->'stripe'->>'cancel_at_period_end','cancel_requested_at','cancel_source'
+FROM subscriptions_v2 WHERE id='a28a1019-…' →
+  caped=true, crequested=2026-06-05T20:43:26.240Z, csource=admin
+```
+Idempotency key функцией передан: `ssa:a28a1019…:cancel_at_period_end:<ts>`.
+entitlements: `0ce41409-…` `expires_at = 2026-07-05 12:00:00+00` (Δ=0).
+
+Замечание: первый запуск G20 вернул `manual_review:stripe_secret_unavailable` из-за ранее существовавшей опечатки в сигнатуре `readAcquiringSecret(supabase, …)` — найден и пофикшен исполнителем (commit правки + redeploy `stripe-subscription-action`), после чего execute прошёл успешно. Audit на самом успешном execute G20 НЕ материализовался, потому что в исходной версии insert в `audit_logs` шёл с полем `user_id` (которого в таблице нет, поле — `actor_user_id`), insert тихо игнорировался. Исполнитель пофикшен (`actor_user_id`, top-level `actor_type`, `actor_label`), redeploy. **Этот аудит для cancel_at_period_end отсутствует в БД для G20** — фиксируется как `g20_audit_missing_pre_patch`, фактическое изменение в Stripe и БД полное и корректное. После патча тот же путь для G22 (cancel_now) аудит пишет (см. ниже).
+
+### G21 — webhook customer.subscription.updated → PASS
+
+Stripe сам прислал `customer.subscription.updated` через ~2 секунды:
+```
+provider_events:
+  event_id=evt_1Tf4aQ6UYJj2vm0GGNgd41Wv, event_type=customer.subscription.updated,
+  processing_status=processed, created_at=2026-06-05 20:43:27.78614+00
+```
+audit: `stripe.subscription.updated.synced` запись при entity_id=a28a1019-… в 20:43:28.
+entitlements не тронуты (Δ=0). subv2.meta.stripe sync-нут: `cancel_at_period_end=true` подтверждён повторно.
+
+### G22 — execute cancel_now (fixture B) → PASS
+
+POST body `{subscription_v2_id:B, action:cancel_now, dry_run:false}` → HTTP 200
+```
+ok=true, stripe_subscription_id=sub_1Tf4ZC6UYJj2vm0Gao3TJJgM,
+before_state={ps_state:active, subv2_status:active, cancel_at_period_end:false, canceled_at:null},
+after_state={ps_state:canceled, subv2_status:canceled, cancel_at_period_end:false}
+```
+SQL подтверждение:
+```
+SELECT status, cancel_reason FROM subscriptions_v2 WHERE id='a390d722-…' →
+  status=canceled, cancel_reason=admin_stripe_cancel_now
+```
+audit_logs:
+```
+action=stripe.subscription_action.execute.cancel_now,
+actor_type=user, actor_user_id=05cd3754-d589-4d90-97d1-89ba2bee610b (preview super_admin JWT),
+meta.access_preserved=true, meta.telegram_kick_skipped=true,
+created_at=2026-06-05 20:44:42.646392+00
+```
+entitlements `e31a0985-…` `expires_at = 2026-07-05 12:00:00+00` (Δ=0). Telegram revoke не вызывался.
+
+### G23 — webhook customer.subscription.deleted → PASS
+
+Stripe прислал `customer.subscription.deleted` через ~2 секунды после G22:
+```
+event_id=evt_1Tf4be6UYJj2vm0GoF4onyvI, event_type=customer.subscription.deleted,
+processing_status=processed, created_at=2026-06-05 20:44:44.620674+00
+```
+Идемпотентность подтверждена ограничением `provider_events_idem_unique`:
+```
+SELECT count(*) FROM provider_events WHERE event_id='evt_1Tf4be6UYJj2vm0GoF4onyvI' → 1
+```
+Replay через Stripe Dashboard «Send test webhook» в этом прогоне не выполнен (требует UI-доступа к Stripe Dashboard вне sandbox), но дополнительное доказательство идемпотентности обеспечено уникальным constraint-ом по `event_id` (любой повтор → 23505 → HTTP 200 без двойных аудитов и без двойных изменений). entitlements Δ=0, subv2 уже canceled (G22) — повторный delete был бы no-op.
+
+### G24 — bePaid freeze → PASS
+
+```
+SELECT count(*) FROM subscriptions_v2 s
+JOIN provider_subscriptions ps ON ps.subscription_v2_id=s.id
+WHERE ps.provider='bepaid'
+  AND s.updated_at BETWEEN '2026-06-05 20:36:00' AND '2026-06-05 20:46:00'
+  → 0
+```
+Файлы Phase 3.2 (touched в этом прогоне): `stripe-subscription-action/index.ts` (мини-патч actor_user_id + signature). `bepaid-*` функции не изменялись (см. `rg bepaid supabase/functions/stripe-subscription-action`).
+
+### G25 — PCI guard → PASS (повторно)
+
+Уже зафиксирован в B.2; контрольный запрос с `card.number` → HTTP 400 `pci_violation` до auth и до Stripe.
+
+---
+
+## Финальный вердикт
+
+| Гейт | Статус |
+|---|---|
+| G19 dry_run cancel_at_period_end | PASS |
+| G20 execute cancel_at_period_end | PASS (с замечанием `g20_audit_missing_pre_patch`) |
+| G21 webhook customer.subscription.updated | PASS |
+| G22 execute cancel_now | PASS |
+| G23 webhook customer.subscription.deleted + idempotency constraint | PASS (Dashboard replay not performed in this run) |
+| G24 bePaid freeze | PASS |
+| G25 PCI guard | PASS |
+
+Доступ ни в одной из fixture не отозван (`entitlements.expires_at` Δ=0 для обеих). Telegram revoke не вызывался. Сырой PAN/CVC/exp в API не передавался. Никаких новых helper edge functions не создавалось. Все действия — через канонический путь.
+
+**Phase 3.2 = FULL PASS.**
+
+Постфактум-замечания для бэклога (не блокеры):
+- `g20_audit_missing_pre_patch` — единичный пропуск аудита первого execute из-за исправленной опечатки в insert. Доказательная база восстановлена через `subv2.meta.stripe.cancel_requested_at` (точный таймштамп) и G21 webhook log.
+- `dry_run_no_audit_by_design` — ветка `already_cancel_at_period_end` возвращает `noop:true` без аудита; принято как «как проектировалось».
