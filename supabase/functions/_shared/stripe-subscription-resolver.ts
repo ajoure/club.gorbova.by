@@ -820,6 +820,8 @@ async function onInvoicePaid(
       invoice_id, order_id, payment_id,
       amount: amount_major, currency, price_id: linePriceId, offer_id,
       first_payment: subv2.status === 'pending',
+      rebound_from_pending,
+      prov_state_before: ps.state, prov_state_after: provStateNext,
     },
   });
 
