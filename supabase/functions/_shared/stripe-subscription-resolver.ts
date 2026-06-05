@@ -265,10 +265,23 @@ async function onSubscriptionCreated(
     return { subscription_v2_id: subv2_id, note: 'no_pre_created_sub', manual_review: true, manual_review_reason: 'no_pre_created_sub' };
   }
 
-  // BIND
+  // BIND ONLY — Stage 2 contract: до первого успешного invoice.paid
+  // provider_subscriptions.state НИКОГДА не становится 'active'.
+  // Если subv2 ещё pending → принудительно держим pending (даже если Stripe sub.status='active'/'trialing').
+  // Терминальные стейты (canceled/past_due) синхронизируем как есть.
   const stripeStatus = String(sub.status ?? 'incomplete');
   const mapped = mapStripeSubStatus(stripeStatus);
-  const provState: ProvSubState = mapped.prov ?? 'pending';
+  let provState: ProvSubState;
+  if (subv2.status === 'pending') {
+    if (mapped.prov === 'canceled' || mapped.prov === 'past_due') {
+      provState = mapped.prov;
+    } else {
+      // 'active' / 'trialing' / 'pending' / null → bind-only pending.
+      provState = 'pending';
+    }
+  } else {
+    provState = mapped.prov ?? (ps?.state as ProvSubState | undefined) ?? 'pending';
+  }
 
   await supabase
     .from('provider_subscriptions')
@@ -290,6 +303,7 @@ async function onSubscriptionCreated(
           status: stripeStatus,
         },
         stage: 'bound_lifecycle',
+        binding_only_no_activation: subv2.status === 'pending',
       },
     })
     .eq('id', pending.id);
