@@ -145,7 +145,9 @@ Deno.serve(async (req) => {
       action: `stripe.subscription_action.dry_run.${body.action}`,
       entity_type: 'subscriptions_v2',
       entity_id: subv2.id,
-      user_id: actor.user_id,
+      actor_user_id: actor.user_id,
+      actor_type: "user",
+      actor_label: actor.email,
       meta: {
         actor_type: 'user',
         actor_label: actor.email,
@@ -206,7 +208,9 @@ Deno.serve(async (req) => {
       action: `stripe.subscription_action.execute.${body.action}.stripe_error`,
       entity_type: 'subscriptions_v2',
       entity_id: subv2.id,
-      user_id: actor.user_id,
+      actor_user_id: actor.user_id,
+      actor_type: "user",
+      actor_label: actor.email,
       meta: {
         actor_type: 'user',
         actor_label: actor.email,
@@ -249,7 +253,9 @@ Deno.serve(async (req) => {
       action: `stripe.subscription_action.execute.${body.action}.local_sync_failed`,
       entity_type: 'subscriptions_v2',
       entity_id: subv2.id,
-      user_id: actor.user_id,
+      actor_user_id: actor.user_id,
+      actor_type: "user",
+      actor_label: actor.email,
       meta: {
         actor_type: 'user',
         actor_label: actor.email,
@@ -292,7 +298,9 @@ Deno.serve(async (req) => {
     action: `stripe.subscription_action.execute.${body.action}`,
     entity_type: 'subscriptions_v2',
     entity_id: subv2.id,
-    user_id: actor.user_id,
+    actor_user_id: actor.user_id,
+      actor_type: "user",
+      actor_label: actor.email,
     meta: {
       actor_type: 'user',
       actor_label: actor.email,
