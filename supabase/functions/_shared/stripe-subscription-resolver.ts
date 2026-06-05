@@ -517,7 +517,15 @@ async function onInvoicePaid(
 ): Promise<ResolveResult> {
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
-  const stripeSubId = (invoice.subscription as string | null) ?? null;
+  // Stripe API 2026-04+ moved `subscription` под `invoice.parent.subscription_details.subscription`.
+  // Дополнительно ищем в lines[0].parent.subscription_item_details.subscription как fallback.
+  const linesData0 = ((((invoice.lines as any) ?? {}).data ?? [])[0] ?? null) as any;
+  const parentSubDetails = ((invoice.parent as any)?.subscription_details ?? null) as any;
+  const stripeSubId =
+    ((invoice.subscription as string | null) ?? null)
+    ?? (parentSubDetails?.subscription as string | null)
+    ?? (linesData0?.parent?.subscription_item_details?.subscription as string | null)
+    ?? null;
   const pi_id = (invoice.payment_intent as string | null) ?? null;
   const amount_paid_minor = Number(invoice.amount_paid ?? 0);
   const currency = String(invoice.currency ?? 'usd').toUpperCase();
@@ -566,8 +574,11 @@ async function onInvoicePaid(
     //   3) Stripe API: GET /v1/subscriptions/{id} → metadata.subscription_v2_id
     const linesPeek = (((invoice.lines as any) ?? {}).data ?? []) as Array<any>;
     const subDetails = (invoice.subscription_details as any) ?? null;
+    // Stripe API 2026-04+: metadata лежит в invoice.parent.subscription_details.metadata.
+    const parentSubDetails2 = ((invoice.parent as any)?.subscription_details ?? null) as any;
     let subv2_id_hint: string | null =
       (subDetails?.metadata?.subscription_v2_id as string | null)
+      ?? (parentSubDetails2?.metadata?.subscription_v2_id as string | null)
       ?? (linesPeek[0]?.metadata?.subscription_v2_id as string | null)
       ?? null;
     let hint_source = subv2_id_hint ? 'invoice_metadata' : null;
@@ -842,7 +853,10 @@ async function onInvoicePaymentFailed(
 ): Promise<ResolveResult> {
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
-  const stripeSubId = (invoice.subscription as string | null) ?? null;
+  const stripeSubId =
+    ((invoice.subscription as string | null) ?? null)
+    ?? (((invoice.parent as any)?.subscription_details?.subscription as string | null) ?? null)
+    ?? null;
 
   if (!stripeSubId) {
     await writeAudit(supabase, {
