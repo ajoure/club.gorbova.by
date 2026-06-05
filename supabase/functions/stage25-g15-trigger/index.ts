@@ -61,6 +61,23 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     await requireSuperAdmin(req);
+    const url = new URL(req.url);
+    const mode = url.searchParams.get('mode');
+
+    if (mode === 'list_events') {
+      const account_code = url.searchParams.get('account_code') ?? 'stripe_poland';
+      const secret = await readAcquiringSecret('stripe', account_code, 'secret_key');
+      // List recent events
+      const ev = await stripe(secret, 'events?limit=30', undefined, 'GET');
+      return json(200, { ok: true, events: (ev.data?.data ?? []).map((e: any) => ({ id: e.id, type: e.type, created: e.created, object_id: e.data?.object?.id })) });
+    }
+    if (mode === 'list_endpoints') {
+      const account_code = url.searchParams.get('account_code') ?? 'stripe_poland';
+      const secret = await readAcquiringSecret('stripe', account_code, 'secret_key');
+      const we = await stripe(secret, 'webhook_endpoints?limit=10', undefined, 'GET');
+      return json(200, { ok: true, endpoints: we.data });
+    }
+
     const body = (await req.json()) as ReqBody;
     const pm_token = body.pm_token ?? 'pm_card_chargeDeclined';
 
