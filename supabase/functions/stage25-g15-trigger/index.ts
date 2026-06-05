@@ -28,7 +28,7 @@ interface ReqBody {
   price_id: string;        // Stripe price_id (must match offer)
   account_code: string;
   customer_email: string;
-  card_number?: string;    // default 4000 0000 0000 0341
+  pm_token?: string;       // default pm_card_chargeDeclined
 }
 
 function json(s: number, b: unknown) {
