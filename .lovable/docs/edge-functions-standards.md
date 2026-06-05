@@ -175,3 +175,55 @@ Available in `supabase/functions/_shared/`:
 - [ ] Added to deploy-functions.yml if Tier 1
 - [ ] Has auth guard if browser-called
 - [ ] Has RBAC check if admin function
+
+---
+
+## 10. Stripe PCI Rules (Phase 3.2, обязательно)
+
+Контекст: 2026-06-05 Stripe прислал warning (`req_SR4WPqmV1IYvAc`) — наш test-аккаунт зафиксировал передачу полного номера карты в API. Источник — одноразовый helper `stage25-g15-trigger` (уже удалён), который вызывал `payment_intents/{id}/confirm` с raw PAN вместо тестового PaymentMethod-токена.
+
+Чтобы такое не повторилось, действуют жёсткие правила. Они применяются ко **всем** edge functions, работающим со Stripe (как с test, так и с live).
+
+### 10.1. Запрещено передавать в Stripe API сырые данные карт
+
+Ни одна edge function не имеет права передавать в любой Stripe endpoint поля карты:
+
+```text
+card, card_number, number, cvc, cvv, exp_month, exp_year,
+expiry, expiration, payment_method_data, pan
+```
+
+Это запрещено даже в test mode. Запрет распространяется на:
+
+- request body наших edge functions (вход);
+- form-body / JSON, отправляемые в `api.stripe.com`;
+- любые сериализации, попадающие в логи / audit / DB.
+
+Допустимы только:
+
+- `payment_method: 'pm_card_visa' | 'pm_card_chargeDeclined' | 'pm_card_authenticationRequired' | ...` — готовые **test PaymentMethod tokens** Stripe;
+- `payment_method: 'pm_xxx'`, созданный **на клиенте** через Stripe.js / Checkout / Payment Element;
+- `setup_intent` / `payment_intent` confirm только по `pm_*` id, без поля `card`.
+
+### 10.2. Сбор данных карты — только на клиенте у Stripe
+
+Никакая edge function не имеет права принимать на вход номер карты. Сбор карты выполняется исключительно:
+
+- Stripe Hosted Checkout (`stripe-create-checkout`, `stripe-create-subscription-checkout`);
+- Stripe.js / Payment Element / Elements на фронтенде.
+
+### 10.3. Запрет одноразовых helper-функций для гейтов
+
+Временные edge functions вида `stage25-*-trigger`, `gXX-trigger`, `stripe-test-*` и т.п. **создавать запрещено**. Все runtime-гейты выполняются через канонические пути:
+
+- Stripe Hosted Checkout (реальный пользовательский путь);
+- admin UI (Phase 3.2 — `stripe-subscription-action`);
+- Stripe CLI (`stripe trigger ...`) или Dashboard «Send test webhook» — для replay событий.
+
+### 10.4. Реализация guard в коде
+
+Все новые Stripe-edge-функции, принимающие JSON-payload, должны включать PCI-сканер входа (см. `stripe-subscription-action/index.ts` → `pciScan`). Любое совпадение по запрещённым ключам → HTTP 400 `pci_violation` **до** обращения к Stripe API.
+
+### 10.5. Stripe Dashboard
+
+Опция «разрешить передачу raw PAN» в настройках Stripe-интеграции **никогда** не включается — даже на test-аккаунте. Acknowledgement письма Stripe от 2026-06-05 (`req_SR4WPqmV1IYvAc`) зафиксирован в `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md`.
