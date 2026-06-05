@@ -75,17 +75,15 @@ Deno.serve(async (req) => {
     if (!cust.ok) return json(500, { step: 'customer', error: cust.data });
     const customer_id = cust.data.id;
 
-    // 2. Use predefined test PM token (raw card data is blocked by Stripe).
-    //    pm_card_visa attaches OK; we'll pay invoice with pm_card_chargeDeclined directly.
-    const attach_pm = 'pm_card_visa';
-    const fail_pm = pm_token;
+    // 2. Attach pm_card_visa test token to customer; Stripe returns a real pm_*** id.
+    const attach_pm_token = 'pm_card_visa';
+    const fail_pm = pm_token; // pm_card_chargeDeclined — used directly in pay call
 
-    // 3. Attach successful PM to customer (required to create subscription)
-    const att = await stripe(secret, `payment_methods/${attach_pm}/attach`, {
+    const att = await stripe(secret, `payment_methods/${attach_pm_token}/attach`, {
       customer: customer_id,
     });
     if (!att.ok) return json(500, { step: 'pm_attach', error: att.data });
-    const pm_id = attach_pm;
+    const pm_id = att.data.id as string; // real pm_*** issued by Stripe
 
     // 4. Pre-create subscriptions_v2 + provider_subscriptions
     const admin = createClient(
