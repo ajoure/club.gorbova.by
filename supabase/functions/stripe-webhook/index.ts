@@ -121,6 +121,22 @@ async function mergeStripeMetaOnOrder(
 
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
   const supabase = svc();
+
+  // Phase 3.1 Stage 2 — subscription lifecycle (add-only).
+  // Routes through _shared/stripe-subscription-resolver.ts.
+  // НЕ требует order_id_meta (resolver сам резолвит subv2 через provider_subscriptions).
+  if (STRIPE_SUBSCRIPTION_EVENT_TYPES.has(event.type)) {
+    const out = await resolveStripeSubscriptionEvent(supabase, event, account_code);
+    if (out) {
+      // Map resolver result → webhook output shape.
+      // manual_review остаётся в note, чтобы processing_status выставился ниже.
+      const note = out.manual_review
+        ? `manual_review:${out.manual_review_reason ?? 'unknown'}`
+        : out.note;
+      return { order_id: out.order_id, payment_id: out.payment_id, note };
+    }
+  }
+
   const obj = event.data.object as Record<string, unknown>;
   const md = (obj.metadata ?? {}) as Record<string, string>;
   const meta_account_code = md.account_code;
