@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { InstallmentSchedule } from "./InstallmentSchedule";
 import { AdminChargeDialog } from "./AdminChargeDialog";
+import { StripeSubscriptionActionsBlock } from "./StripeSubscriptionActionsBlock";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface SubscriptionActionsSheetProps {
@@ -48,6 +49,7 @@ interface SubscriptionActionsSheetProps {
     next_charge_at: string | null;
     products_v2?: { name: string; code: string } | null;
     tariffs?: { name: string; code: string } | null;
+    provider?: string | null;
   } | null;
 }
 
@@ -306,10 +308,23 @@ export function SubscriptionActionsSheet({
             </div>
           </div>
 
+          {/* Stripe-only actions (Phase 3.2) */}
+          {subscription.provider === 'stripe' && (
+            <>
+              <Separator />
+              <StripeSubscriptionActionsBlock
+                subscriptionV2Id={subscription.id}
+                provider={subscription.provider}
+                onChanged={() => queryClient.invalidateQueries({ queryKey: ["subscriptions-v2"] })}
+              />
+            </>
+          )}
+
           {/* Installment Schedule */}
           <InstallmentSchedule subscriptionId={subscription.id} />
 
           <Separator />
+
 
           {/* Manual Charge */}
           <div className="space-y-3">
