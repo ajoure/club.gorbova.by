@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
   try {
     await requireSuperAdmin(req);
     const body = (await req.json()) as ReqBody;
-    const cardNumber = body.card_number ?? '4000000000000341';
+    const pm_token = body.pm_token ?? 'pm_card_chargeDeclined';
 
     const secret = await readAcquiringSecret('stripe', body.account_code, 'secret_key');
 
@@ -75,16 +75,9 @@ Deno.serve(async (req) => {
     if (!cust.ok) return json(500, { step: 'customer', error: cust.data });
     const customer_id = cust.data.id;
 
-    // 2. Create PaymentMethod (raw card — only works with test secret key)
-    const pm = await stripe(secret, 'payment_methods', {
-      type: 'card',
-      'card[number]': cardNumber,
-      'card[exp_month]': '12',
-      'card[exp_year]': '2034',
-      'card[cvc]': '123',
-    });
-    if (!pm.ok) return json(500, { step: 'pm_create', error: pm.data });
-    const pm_id = pm.data.id;
+    // 2. Use predefined test PM token (raw card data is blocked by Stripe).
+    //    pm_card_chargeDeclined attaches OK, charges always decline.
+    const pm_id = pm_token;
 
     // 3. Attach PM to customer
     const att = await stripe(secret, `payment_methods/${pm_id}/attach`, {
