@@ -249,6 +249,95 @@ actor_label=<email>
 
 ---
 
+## I. Runtime G19–G24 (2026-06-05, test mode)
+
+### I.0. Fixture inventory
+
+`SELECT ... FROM subscriptions_v2 WHERE meta ? 'stripe'` → 9 строк, ВСЕ в состоянии `canceled`/`pending`. Ни одной active Stripe-подписки в test mode на момент прогона нет. `provider_subscriptions` подтверждает: 7 канонических `sub_*` (все state=canceled), 2 `pending:<uuid>` (canceled/pending).
+
+Это означает: **G19/G20/G21/G22/G23 в полном объёме НЕ выполнимы без свежей active fixture**. Создание fixture требует прохождения Stripe Hosted Checkout (`stripe-create-subscription-checkout`) с реальным вводом тест-карты `4242 4242 4242 4242` на странице Stripe (PCI-compliant: карту собирает Stripe, наши edge functions PAN не видят). Это **не агентское действие** — нужен человек в браузере.
+
+### I.1. PCI guard runtime (часть G19, независимая)
+
+Запрос:
+```
+POST /functions/v1/stripe-subscription-action
+body: { subscription_v2_id, action:'cancel_at_period_end', dry_run:true,
+        card:{ number:'4242…', cvc:'123', exp_month:12, exp_year:2030 } }
+```
+Ответ: **HTTP 400** `{"error":"pci_violation","detail":"forbidden_card_field_in_payload:.card"}`.
+Stripe API не вызван. Auth-проверка не выполнена (PCI guard срабатывает раньше — by design). **PASS.**
+
+### I.2. Stop-gate runtime (sanity)
+
+- `subscription_v2_id=00000000-0000-0000-0000-000000000000` → HTTP 404 `subscription_not_found`. INSERT нет.
+- `subscription_v2_id=b6c41f50-…` (provider_subscription_id=`pending:…`) → HTTP 200 `{"error":"manual_review","detail":"stripe_subscription_id_missing_or_invalid"}`. INSERT нет.
+- `subscription_v2_id=2725681b-…` (status=canceled, `sub_1Teuu2…`) → HTTP 200 `{"error":"already_canceled"}`. Stripe API не вызван. INSERT нет.
+
+### I.3. G19 — dry_run cancel_at_period_end
+
+**Статус: BLOCKED — нет active fixture.** Частично покрыто: I.1 (PCI guard) + I.2 (stop-gates). Зафиксировано: dry-run audit НЕ пишется by design (`dry_run_no_audit_by_design`) — согласовано в правках плана п.1.
+
+### I.4. G20 — execute cancel_at_period_end
+
+**Статус: BLOCKED — нет active fixture.**
+
+### I.5. G21 — webhook customer.subscription.updated
+
+**Статус: BLOCKED — зависит от G20.** Кодовая часть подтверждена в `_shared/stripe-subscription-resolver.ts` (Phase 3.1 Stage 2 APPROVED).
+
+### I.6. G22 — execute cancel_now
+
+**Статус: BLOCKED — нет второй active fixture.**
+
+### I.7. G23 / G23.1 — webhook customer.subscription.deleted + replay
+
+**Статус: BLOCKED — зависит от G22.** Идемпотентность гарантируется существующим уникальным индексом `provider_events_idem_unique(provider, event_id)`. После replay должны быть `count=1` в `provider_events`, `audit_logs` не продублирован, `subscriptions_v2.updated_at` не меняется повторно, Δ `entitlements`=0.
+
+### I.8. G24 — bePaid freeze (non-regression) — PASS
+
+- `rg "bepaid" supabase/functions/stripe-subscription-action/ src/components/admin/StripeSubscriptionActionsBlock.tsx` → **0 совпадений**.
+- bePaid-функции в недавних коммитах Phase 3.2 не изменялись.
+- SQL уточнение к плану п.2: `subscriptions_v2` НЕ имеет колонки `provider`; провайдер живёт в `provider_subscriptions.provider`. Контрольный запрос:
+  ```sql
+  SELECT count(*) FILTER (WHERE provider='bepaid') = 716,
+         count(*) FILTER (WHERE provider='bepaid' AND updated_at > '2026-06-05') = 11
+  FROM provider_subscriptions;
+  ```
+  11 изменённых строк — штатные bePaid webhook-апдейты (период/renew), не вызванные кодом Phase 3.2 (наша функция bepaid-* не пишет, `grant-access-for-order` не зовёт).
+
+### I.9. PCI proof для I.1–I.8
+
+- Raw PAN в payloads — только в I.1 (целенаправленная попытка нарушения), отбит на guard, в Stripe не ушёл.
+- Новые helper edge functions НЕ создавались (нет `gXX-trigger`, нет `stripe-test-*`).
+- Все runtime-вызовы шли через канонический путь: `curl_edge_functions` → `stripe-subscription-action`.
+
+---
+
+## J. Вердикт runtime
+
+| Гейт | Статус |
+|---|---|
+| G19 (dry_run cancel_at_period_end) | BLOCKED — нужна active fixture |
+| G20 (execute cancel_at_period_end) | BLOCKED — нужна active fixture |
+| G21 (webhook customer.subscription.updated) | BLOCKED — зависит от G20 |
+| G22 (execute cancel_now) | BLOCKED — нужна вторая active fixture |
+| G23 / G23.1 (webhook deleted + replay) | BLOCKED — зависит от G22 |
+| G24 (bePaid freeze) | PASS |
+| G25 (PCI sweep + runtime guard) | PASS |
+
+**Phase 3.2 ≠ FULL PASS** пока не выполнены runtime G19–G23.
+
+### Что нужно от человека для разблокировки G19–G23
+
+1. Открыть admin UI → создать checkout-link на любой Stripe recurring offer в test mode (`stripe-create-subscription-checkout`).
+2. Оплатить тест-картой `4242 4242 4242 4242` на хостинговой странице Stripe.
+3. Дождаться `customer.subscription.created` → `subscriptions_v2.status='active'`.
+4. Повторить для второй fixture (под G22).
+5. Сообщить агенту `subscription_v2_id` обоих — агент прогонит G19→G23 через `stripe-subscription-action` и Stripe Dashboard «Send test webhook».
+
+---
+
 ## H. Что НЕ делалось (явно)
 
 pause, resume, Subscription Schedule, installments, Customer Portal, dunning, migration bePaid→Stripe, live mode, изменения bePaid, изменения access revoke logic, включение опции «разрешить raw PAN» в Stripe Dashboard, server-side card collection.
