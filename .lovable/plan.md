@@ -1,222 +1,319 @@
-# Stripe Subscription MVP — статус этапов
+да, согласен, с учетом правок:
 
-- GAP-A — BYN Price Capability: ✅ **PASS**
-- GAP-B — Billing Period Resolver: ✅ **PASS**
-- GAP-C — Product/Price Provisioning: ✅ **PASS** (pilot `prod_UdwjYeet4QFbtW` / `price_1Teeq26UYJj2vm0GPXHSLKlz`)
-- GAP-D — Runtime Stripe Subscription Capability Proof: ✅ **PASS** (executed 2026-06-04 18:00–18:04 UTC агентом через browser automation; proof: `.lovable/proofs/stripe_phase_3_1_3_gap_d_runtime_capability_v1.md`; sub `sub_1Tefbl6UYJj2vm0GRRkvZEBQ` canceled; isolation diff=0 во всех бизнес-таблицах)
-- Phase 3.1 Infinite Subscription MVP Execution: 🟡 IN PROGRESS
-  - Stage 0 — Pre-MVP Webhook Contract Discovery: ✅ **PASS** (2026-06-04; proof: `.lovable/proofs/stripe_phase_3_1_stage_0_webhook_contract_discovery_v1.md`)
-  - Stage 1 — Pre-create writer (`stripe-create-subscription-checkout`): ✅ **PASS** (runtime G1–G9 = 9/9; proof: `.lovable/proofs/stripe_phase_3_1_stage_1_precreate_writer_v1.md`)
-  - Stage 2 — Webhook 5 event-веток + shared resolver: ⏸ TODO (ждёт approve)
-  - Stage 3 — Runtime Proof G1–G10 + bePaid non-regression: ⏸ TODO
-  - Stage 4 — Lost Webhook Recovery (reconcile/replay): ⏸ TODO
+**1. Усилить защиту invoice.paid от повторной выдачи доступа**
 
----
+Сейчас в C.4 есть идемпотентность orders_v2, но отдельно зафиксировать:
 
-# Да, согласен, с учетом правок:
+- если order уже существует для данного [invoice.id](http://invoice.id), то:
+  - новый order не создаётся;
+  - новый payment не создаётся;
+  - grant-access-for-order повторно не вызывается;
+  - событие логируется как invoice_paid_duplicate.
 
-1. **Webhook формулировку лучше уточнить.**
-  &nbsp;
-  Сейчас написано:
-  stripe-webhook не должен получать события этого probe
-  Но если webhook endpoint уже зарегистрирован в Stripe test mode, Stripe может физически отправить события. Правильнее:
-2. **provider_events = 0 может быть слишком жёстким.**
-  &nbsp;
-  Если текущий `stripe-webhook` уже получает все test events и пишет их в `provider_events`, это не обязательно нарушение.
-  Исправить критерий:
-3. **Обязательная отмена subscription — правильно.**
-  &nbsp;
-  Добавить ещё контроль:
-4. **Events.list фильтр.**
-  &nbsp;
-  В `events.list` не все события имеют `metadata.purpose` на верхнем объекте.
-  Поэтому фильтровать не только по metadata, но и по ID-цепочке:
-5. **Browser automation**
-  &nbsp;
-  Согласен: сначала automation. Ручная оплата пользователем только если automation реально недоступна и это зафиксировано.
-6. **DoD дополнить**
-  &nbsp;
-  Добавить:
-7. **После PASS**
-  &nbsp;
-  Формулировка правильная:
-
-```text
-Следующий шаг — Phase 3.1 Infinite Subscription MVP Execution Plan.
-Не execute сразу.
-```
-
-С этими правками GAP-D можно approve к выполнению.
+Иначе есть риск двойного grant при сложном webhook replay.
 
 &nbsp;
 
-План: GAP-D — Runtime Stripe Subscription Capability Proof (v2, с правками)
+**2. Зафиксировать Source of Truth для activation**
 
-## Цель
+Добавить явно:
 
-Доказать, что `price_1Teeq26UYJj2vm0GPXHSLKlz` (BYN 100/month, account `stripe_poland`, test) реально работает в Stripe Subscription flow: Checkout Session → оплата test-картой `4242` → реальная `sub_*` → `invoice.paid` → `payment_intent.succeeded` → events. **Без записи в нашу БД, без участия нашего webhook, с обязательной отменой subscription после proof.**
+invoice.paid
 
-## Что GAP-D PASS доказывает (и что НЕ доказывает)
+=
 
-PASS GAP-D **доказывает**:
+единственный activation event
 
-- BYN recurring Price технически работает в Stripe Subscriptions.
-- Stripe Checkout `mode=subscription` принимает наш price_id.
-- Stripe создаёт связку `sub_* → in_* → pi_* → ch_* → evt_*`.
+&nbsp;
 
-PASS GAP-D **НЕ доказывает**:
+customer.subscription.created
 
-- наш webhook lifecycle (`stripe-webhook` НЕ участвует);
-- `grant-access-for-order` интеграцию;
-- pre-create `provider_subscriptions` / `subscriptions_v2`;
-- renewal/dunning logic.
+=
 
-Эти доказательства — отдельный этап **Phase 3.1 Infinite Subscription MVP Execution Plan**.
+bind lifecycle only
 
-## Scope (строго)
+&nbsp;
 
-- ТОЛЬКО offer `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e` / price `price_1Teeq26UYJj2vm0GPXHSLKlz`.
-- ТОЛЬКО account `stripe_poland`, ТОЛЬКО test mode (`livemode=false`).
-- Создаваемая subscription **обязательно отменяется** в том же proof-run.
+customer.subscription.updated
 
-## Out of scope (запрещено)
+=
 
-- INSERT/UPDATE в `subscriptions_v2`, `provider_subscriptions`, `orders_v2`, `payments_v2`, `entitlements`, `access_rules`, `telegram_*`, `provider_events`.
-- Регистрация Stripe webhook endpoint или любые изменения `supabase/functions/stripe-webhook` (он не должен получать события этого probe — endpoint для test-аккаунта в Stripe Dashboard не настраивается в рамках этого GAP; если он уже настроен исторически — отдельно зафиксировать в proof факт получения событий, но не их обработку).
-- Изменения bePaid pipeline / `bepaid-webhook`.
-- Live keys.
-- UI для конечных пользователей.
-- `grant-access-for-order` и любые fulfillment-цепочки.
-- Создание новых Stripe Products/Prices.
+sync lifecycle only
 
-## Discovery (read-only baseline)
+&nbsp;
 
-1. Подтвердить `tariff_offers.meta.stripe.price_id = price_1Teeq26UYJj2vm0GPXHSLKlz`, `schema_version=1`, `account_code=stripe_poland`.
-2. `stripe.prices.retrieve(...)` → drift-check (см. STOP-gates).
-3. Зафиксировать `baseline_time = now()` и сохранить в proof. Снять baseline-снимки (запросы выполняются повторно после cancel — diff должен быть пуст):
-  - `SELECT count(*), max(created_at) FROM provider_subscriptions WHERE created_at >= baseline_time;`
-  - `SELECT count(*), max(created_at) FROM subscriptions_v2 WHERE created_at >= baseline_time;`
-  - `SELECT count(*) FROM orders_v2 WHERE created_at >= baseline_time AND meta::text ILIKE '%gap_d%';`
-  - `SELECT count(*) FROM payments_v2 WHERE created_at >= baseline_time AND meta::text ILIKE '%gap_d%';`
-  - `SELECT count(*) FROM provider_events WHERE created_at >= baseline_time;` (для проверки, что наш webhook не пополнялся).
+customer.subscription.deleted
 
-## Реализация — одна edge function
+=
 
-### `admin-stripe-subscription-capability-probe`
+sync lifecycle only
 
-- `verify_jwt=true`, super_admin only, без UI.
-- Не регистрирует webhook, не вызывает наш webhook, не пишет в рантайм-таблицы.
-- Actions:
+&nbsp;
 
-#### `action=create` (с `execute: true|false`)
+invoice.payment_failed
 
-- Резолв ключа Stripe по `account_code=stripe_poland` (test) через `_shared/acquiring/vault.ts`.
-- STOP-валидация `price.retrieve`: `active && livemode===false && currency==='byn' && recurring.interval==='month' && recurring.interval_count===1`. При расхождении → 422 `price_drift_detected`, без Stripe write-calls.
-- Генерация **idempotency-key**: `gap-d-probe:{tariff_offer_id}:{YYYYMMDD}:{crypto.randomUUID().slice(0,8)}` — сохраняется в response и в proof. Часовой/предсказуемый ключ запрещён.
-- `stripe.checkout.sessions.create({ mode:'subscription', line_items:[{price, quantity:1}], success_url:'https://gorbova.by/admin/_gap-d/success?cs={CHECKOUT_SESSION_ID}', cancel_url:'https://gorbova.by/admin/_gap-d/cancel', metadata:{ purpose:'gap_d_capability_probe', tariff_offer_id, account_code, environment:'test', idempotency_key }, subscription_data:{ metadata:{ purpose:'gap_d_capability_probe', tariff_offer_id, idempotency_key } } })`.
-- Возврат: `{ checkout_session_id, url, idempotency_key, expires_at }`. **Нет** записей в нашу БД.
-- Audit (technical only, не business ledger): `stripe_capability_probe_dry_run` / `stripe_capability_probe_session_created` с пометкой `purpose=gap_d_capability_probe`.
+=
 
-#### `action=pay_via_browser`
+grace lifecycle only
 
-- Если browser automation доступен — вызвать `browser--navigate_to_url(url)`, заполнить card `4242 4242 4242 4242`, любой будущий exp, любой CVC, любой ZIP, submit, дождаться success page.
-- Если browser automation недоступен — отдать оператору URL.
+Чтобы подрядчик не начал в Stage 2 переносить activation в другие ветки.
 
-#### `action=inspect { checkout_session_id }`
+&nbsp;
 
-- `checkout.sessions.retrieve(id, { expand:['subscription','subscription.latest_invoice','subscription.latest_invoice.payment_intent','subscription.latest_invoice.charge','customer'] })`.
-- `events.list({ created.gte: session.created, limit: 100 })`, фильтр по `data.object.metadata.purpose='gap_d_capability_probe'` либо по `subscription/invoice/payment_intent/charge id`.
-- Снимок: `cs_*`, `sub_*`, `in_*`, `pi_*`, `ch_*`, `cus_*`, `evt_*[]`. **Read-only.**
+**3. Добавить обязательный audit trail**
 
-#### `action=cancel { subscription_id }` — обязательный шаг
+Для всех 5 новых веток добавить DoD:
 
-- Перед: `subscriptions.retrieve(sub_id)` → ожидаем `status=active|trialing`.
-- `stripe.subscriptions.cancel(sub_id, { invoice_now: false, prorate: false })`.
-- После: `subscriptions.retrieve(sub_id)` → ожидаем `status=canceled`, `canceled_at != null`, `cancel_at_period_end=false` (или эквивалент `ended_at` set).
-- `events.list` после cancel → зафиксировать `customer.subscription.deleted` / `customer.subscription.updated`.
-- Audit: `stripe_capability_probe_subscription_canceled`.
+- event_id
+- subscription_v2_id
+- provider_subscription_id
+- action
+- result
+- manual_review
+- account_code
 
-#### `action=verify_isolation { baseline_time }`
+должны попадать в audit/event log.
 
-- Повторить baseline-запросы. Должны вернуть **0 новых строк** в `provider_subscriptions`, `subscriptions_v2`, `orders_v2`, `payments_v2` (с фильтром `meta ILIKE '%gap_d%'` где применимо).
-- `provider_events` за окно: если наш Stripe webhook endpoint не зарегистрирован в test-аккаунте → 0; если зарегистрирован исторически — зафиксировать поступившие, но проверить, что обработчик не создал side-effects (`subscriptions_v2`/`orders_v2`/`payments_v2`/`entitlements`/`access_rules` baseline diff = 0). Любая нестыковка → FAIL.
+Без этого Stage 2.5 будет тяжело доказывать G10–G18.
 
-## Success / Cancel URLs
+&nbsp;
 
-- `success_url=https://gorbova.by/admin/_gap-d/success?cs={CHECKOUT_SESSION_ID}`
-- `cancel_url=https://gorbova.by/admin/_gap-d/cancel`
-- Запрещено: `*.lovableproject.com`, `*.lovable.app`, `*.supabase.co/functions/...`, `localhost`. Соответствует `isForbiddenRedirectUrl` контракту.
+**4. Добавить отдельную проверку zombie pending**
 
-## Proof artifact (PASS criteria)
+В C.1:
 
-Файл: `.lovable/proofs/stripe_phase_3_1_3_gap_d_runtime_capability_v1.md`
+если найдена запись
 
-Структура:
+provider='stripe'
 
-1. **Pre-conditions:** snapshot `tariff_offers.meta.stripe`, retrieve(price), `baseline_time`, baseline counts (5 запросов выше), сгенерированный `idempotency_key`.
-2. **Checkout Session:** `cs_test_*`, `mode=subscription`, `status=complete`, `payment_status=paid`, `currency=byn`, `amount_total=10000`, `livemode=false`, `metadata.purpose=gap_d_capability_probe`, `metadata.idempotency_key=...`.
-3. **Subscription (before cancel):** `id=sub_*`, `status ∈ {active, trialing}`, `items[0].price.id=price_1Teeq26UYJj2vm0GPXHSLKlz`, `currency=byn`, `collection_method=charge_automatically`, `current_period_start/end`, `livemode=false`, `metadata.purpose=gap_d_capability_probe`.
-4. **Invoice:** `id=in_*`, `status=paid`, `amount_paid=10000`, `currency=byn`, `billing_reason=subscription_create`.
-5. **PaymentIntent:** `id=pi_*`, `status=succeeded`, `amount=10000`, `currency=byn`.
-6. **Charge:** `id=ch_*`, `status=succeeded`, `paid=true`, `payment_method_details.card.brand=visa`, `last4=4242`.
-7. **Customer:** `id=cus_*`.
-8. **Events (`events.list`):** доказать наличие:
-  - `checkout.session.completed`
-  - `customer.subscription.created`
-  - `invoice.created`, `invoice.finalized`, `invoice.paid`
-  - `payment_intent.succeeded`
-  - `charge.succeeded`
-9. **BYN recurring confirmed:** валюта BYN на всех уровнях, без конвертации.
-10. **Cancel section (обязательно):**
-  - Snapshot subscription до cancel (status=active).
-    - Cancel API response.
-    - Snapshot subscription после cancel (status=canceled, canceled_at, ended_at).
-    - Events после cancel: `customer.subscription.updated`/`customer.subscription.deleted`.
-    - Подтверждение: дальнейших invoices Stripe не сгенерирует.
-11. **Cross-domain isolation (after cancel, повторно):**
-  - 5 baseline-запросов — diff = 0.
-    - Если `provider_events` пополнился — отдельно показать, что side-effects в `subscriptions_v2/orders_v2/payments_v2/entitlements/access_rules` отсутствуют.
-    - bePaid таблицы не затронуты.
-12. **Audit separation:**
-  - **Technical audit (GAP-D):** только `stripe_capability_probe_*` события, помечены `purpose=gap_d_capability_probe`, не выглядят как production payment/subscription.
-    - **Business ledger:** пуст. Перечислить запросы и показать 0 строк:
-      - `audit_logs WHERE action IN ('subscription_created','subscription_renewed','order_paid','grant_access_*') AND created_at >= baseline_time` → 0.
-      - `orders_v2`/`payments_v2`/`subscriptions_v2` diff = 0.
+state='pending'
 
-## STOP-gates
+provider_subscription_id='pending:*'
 
-- Price drift при retrieve → 422, без Stripe writes.
-- Checkout не достиг `payment_status=paid` → FAIL.
-- В нашей БД появилась хоть одна Stripe-строка (subscriptions_v2/provider_subscriptions/orders_v2/payments_v2) → FAIL + RCA.
-- Subscription не в BYN → FAIL.
-- Cancel вернул не `status=canceled` → FAIL, эскалация (оставлять активную тестовую подписку запрещено).
-- Webhook side-effects обнаружены → FAIL.
+но соответствующая subscriptions_v2 уже:
 
-## Файлы/изменения
+canceled
 
-- `supabase/functions/admin-stripe-subscription-capability-probe/index.ts` — new.
-- `supabase/config.toml` — `[functions.admin-stripe-subscription-capability-probe] verify_jwt = true`.
-- `.lovable/proofs/stripe_phase_3_1_3_gap_d_runtime_capability_v1.md` — new (заполняется по факту).
-- `.lovable/plan.md` — обновить статус (GAP-A/B/C = PASS; GAP-D = блок добавлен, verdict после прохождения).
+expired
 
-## DoD
+deleted
 
-- Edge function задеплоена. Dry-run возвращает план без Stripe API write-calls.
-- `create execute=true` создал `cs_test_*` URL и вернул `idempotency_key`.
-- Оплата картой `4242` выполнена (browser automation или fallback на оператора) — success page получен.
-- `inspect` вернул полный snapshot 7 объектов + ≥7 классов events.
-- `cancel` выполнен, post-snapshot `status=canceled`.
-- `verify_isolation` после cancel: 5 запросов diff = 0; business ledger пуст.
-- Proof-файл заполнен по 12 пунктам, помечен `Verdict: PASS`.
-- `.lovable/plan.md` обновлён.
+то:
 
-## После PASS GAP-D
+manual_review=true
 
-Следующий шаг — **не execute**, а отдельный план: **Phase 3.1 Infinite Subscription MVP Execution Plan**.
-В нём:
+reason=zombie_pending_subscription
 
-- pre-create `subscriptions_v2` (pending) + `provider_subscriptions` (pending) до Checkout;
-- регистрация и обработка Stripe webhook (`invoice.paid`, `customer.subscription.*`, `payment_intent.*`, `charge.*`);
-- маршрут `invoice.paid → grant-access-for-order`;
-- runtime proof G1–G10;
-- cancel/dunning/renewal lifecycle.
+без bind.
+
+&nbsp;
+
+**5. Уточнить B-1**
+
+Для Stage 1 фактически подтверждено:
+
+provider_subscription_id = pending:{subscription_v2_id}
+
+Из последнего PASS отчета:
+
+pending:d04fbfa2-55fb-411f-b9d7-4fc8884b87d3
+
+Поэтому в Stage 2 это должно быть зафиксировано как контракт.
+
+Не делать альтернативные форматы.
+
+Не использовать:
+
+stripe_sub:pending:...
+
+&nbsp;
+
+**6. Уточнить B-2**
+
+Согласен с вариантом (b):
+
+SELECT before INSERT
+
+Причины:
+
+- нет миграции;
+- нет нового индекса;
+- соответствует STOP-GATE;
+- достаточно для MVP.
+
+Вынести в план как утверждённое решение, а не открытый вопрос.
+
+&nbsp;
+
+**7. Уточнить C.5**
+
+Согласен с:
+
+invoice.payment_failed
+
+→ НЕ вызывать applyCrmStageOnTerminal('failed')
+
+до отдельного спринта Smart Retries / Dunning.
+
+Иначе CRM начнет показывать ложные потери клиентов после первой неудачной попытки Stripe.
+
+&nbsp;
+
+**8. Добавить явный запрет на работу с entitlements**
+
+В STOP-GATE добавить:
+
+Запрещено:
+
+- прямое изменение entitlements;
+
+- прямое изменение access_rules;
+
+- прямой revoke доступа.
+
+&nbsp;
+
+Все изменения доступа только через существующий
+
+grant-access-for-order.
+
+&nbsp;
+
+**Итог**
+
+План соответствует мастер-спринту v1.0.
+
+После внесения указанных уточнений можно запускать реализацию **Phase 3.1 Stage 2 — Webhook Lifecycle**.
+
+&nbsp;
+
+# План: Phase 3.1 Stage 2 — Webhook Lifecycle (Stripe Subscriptions)
+
+## Статус входа
+
+- Stage 0 = ✅ PASS (discovery контракта).
+- Stage 1 = ✅ PASS (pre-create writer + runtime G1–G9, super_admin откатан).
+- bePaid контур заморожен. Stripe webhook сейчас обрабатывает ТОЛЬКО 6 веток Phase 2: `checkout.session.completed`, `payment_intent.succeeded|payment_failed`, `charge.refunded`/`refund.*`, `checkout.session.expired`, `charge.dispute.created`. Подписочных веток нет.
+- D4/D5/D8 контракты заданы и являются SOT этапа.
+
+## Ключевое правило Stage 2 (зафиксировано пользователем)
+
+`**customer.subscription.created` НЕ выдаёт доступ.**
+**Единственный триггер активации (orders_v2 + payments_v2 + `grant-access-for-order`) — `invoice.paid`.**
+
+`customer.subscription.*` — это lifecycle подписки (статус, period, cancel_at_period_end, default_payment_method). `invoice.payment_failed` — grace, доступ не отзывается. `customer.subscription.deleted` — `status=canceled`, доступ живёт до `entitlements.expires_at` (GREATEST).
+
+## Scope Stage 2
+
+### A. Backlog B1 (перенесён из Stage 1) — provider-aware conflict helper
+
+`_shared/subscription-conflict.ts` сейчас захардкожен на `provider='bepaid'` в трёх местах: `checkSubscriptionConflict`, `classifySameProductState`, `BLOCKING_PROVIDER_STATES`. Унифицировать:
+
+1. Добавить опциональный параметр `providers?: ('bepaid'|'stripe')[]` (default = оба).
+2. Заменить `.eq('provider', 'bepaid')` → `.in('provider', providers)`.
+3. Inline-guard в `stripe-create-subscription-checkout` удалить, переключить на единый helper.
+4. bePaid-callers (`create-payment-checkout.ts`, `bepaid-create-subscription-checkout`) оставить без изменений сигнатур (default-параметр).
+5. Юнит-тест в `subscription-conflict_test.ts` на матрицу `(bepaid|stripe) × (conflict|no_conflict|zombie)`.
+
+### B. Новый `_shared/stripe-subscription-resolver.ts`
+
+Единая точка для **webhook + reconcile + replay** (D5 требование). Содержит чистые функции без HTTP:
+
+- `resolveStripeSubscriptionEvent(supabase, event, account_code)` → диспатч 5 веток.
+- Внутри — резолв `subscriptions_v2` по приоритету:
+  1. `provider_subscriptions.provider_subscription_id = sub_*` AND `provider='stripe'`;
+  2. Fallback на `pending` запись по `meta.tracking_id` (для bind `customer.subscription.created`);
+  3. Cross-account guard (event.account_code ≠ sub.meta.account_code → `manual_review`).
+- Хелперы: `findSubByStripeId`, `bindPendingProviderSub`, `materializeOrderFromInvoice`, `mergeStripeSubMeta`.
+
+### C. 5 новых веток в `stripe-webhook/index.ts`
+
+Добавляются в `dispatch()` add-only. Метаданные читаются из `event.data.object.metadata` + parent objects (subscription/invoice).
+
+#### C.1 `customer.subscription.created`
+
+- Найти `provider_subscriptions(state='pending', provider='stripe', provider_subscription_id='pending:<subv2>')` по `subscription.metadata.subscription_v2_id`.
+- **bind**: UPDATE `provider_subscriptions` → `provider_subscription_id=sub_*`, `state` ← маппинг из `subscription.status` (`incomplete|trialing|active|past_due|...`).
+- UPDATE `subscriptions_v2.meta.stripe.*` (sub_id, customer_id, price_id, current_period_*, cancel_at_period_end, default_payment_method).
+- `subscriptions_v2.status` НЕ переводим в `active` (это сделает `invoice.paid`). На `incomplete` оставляем `pending`.
+- Если pending не найден → `manual_review` (`no_pre_created_sub`). НИКАКИХ INSERT.
+
+#### C.2 `customer.subscription.updated`
+
+- Snapshot `meta.stripe.*` (period, cancel_at_period_end, default_payment_method).
+- Sync `subscriptions_v2.status` по таблице переходов D2 (`active`/`past_due`/`canceled`).
+- Sync `provider_subscriptions.state`.
+- Доступ не трогаем.
+
+#### C.3 `customer.subscription.deleted`
+
+- `subscriptions_v2.status='canceled'`, `cancel_reason='stripe_subscription_deleted'`.
+- `provider_subscriptions.state='canceled'`.
+- Доступ НЕ отзывается (живёт до `entitlements.expires_at`).
+
+#### C.4 `invoice.paid` — **единственный write-path активации**
+
+- Idempotent INSERT `orders_v2` по `meta.stripe.invoice_id=in_*` (guard через `SELECT … WHERE meta->>'stripe.invoice_id'=…` или unique index на meta-поле — выберется по результатам B-2 ниже).
+- `tracking_id = stripe_sub:<sub_id>:order:<order_id>`.
+- Amount/currency из `invoice.amount_paid` + `invoice.currency`.
+- Резолв `user_id`, `product_id`, `tariff_id`, `offer_id` из `subscription.metadata` (pre-create).
+- Вызов `grant-access-for-order` (existing, untouched) — он сам поймёт extend через `provider-linked-extend-priority` + `extend-tariff-match-required`.
+- INSERT `payments_v2` по `invoice.payment_intent` (Phase 2 паттерн).
+- Если на момент `invoice.paid` `subscriptions_v2.status='pending'` → перевести в `active` (первая оплата).
+- `applyCrmStageOnTerminal(order_id, 'success', 'stripe.invoice.paid')`.
+
+#### C.5 `invoice.payment_failed`
+
+- `subscriptions_v2.status='past_due'` (если был `active`).
+- `provider_subscriptions.state='past_due'`.
+- Audit без revoke (grace).
+- `applyCrmStageOnTerminal(..., 'failed', 'stripe.invoice.payment_failed')` — опционально, по согласованию с CRM правилами; **дефолт — НЕ применять**, чтобы не уводить deal с pipeline до Smart Retries.
+
+### D. Cross-account / conflict policy → HTTP 200 + manual_review
+
+Все 5 веток при следующих коллизиях возвращают **200 + audit с `manual_review=true**`, без INSERT/UPDATE:
+
+- `no_pre_created_sub` (только C.1)
+- `foreign_account` (event account_code ≠ sub.meta.account_code)
+- `tariff_mismatch` (C.4, после резолва offer)
+- `sbs_mismatch` (foreign customer_id на known sub)
+- `unknown_invoice_no_subscription` (C.4 для one-time invoice — пока не поддерживаем)
+
+### E. Idempotency
+
+Используется существующий `provider_events_idem_unique` на `(provider, event_id)` через `idempotency_key = stripe:{account_code}:{event.id}` — уже стоит в Phase 2. Никаких новых таблиц/индексов.
+
+## STOP-GATE для Stage 2
+
+Запрещено:
+
+- Менять `grant-access-for-order` (только вызывать).
+- Менять `bepaid-*` файлы.
+- Менять `stripe-create-subscription-checkout` (Stage 1 заморожен, кроме удаления inline-guard в пользу унифицированного helper из пункта A).
+- Создавать новые таблицы / RPC / cron.
+- Реализовывать reconcile / events-replay (это Stage 4).
+- Реализовывать Schedule (installment) ветки — D2 описывает, но MVP = infinite only.
+- Расширять `payment_method.*` / `customer.updated` ветки — это backlog `stripe_saved_pm_followup`.
+
+## Definition of Done Stage 2 (CODE) — статусы
+
+1. ✅ `_shared/subscription-conflict.ts` — provider-aware (B1 закрыт).
+2. ✅ `_shared/stripe-subscription-resolver.ts` создан.
+3. ✅ `stripe-webhook/index.ts` — 5 новых веток через резолвер, add-only.
+4. ✅ `stripe-create-subscription-checkout/index.ts` — inline-guard удалён, использует helper.
+5. ✅ `supabase/config.toml` — без изменений.
+6. ✅ Регрессия: 6 существующих Phase 2 веток в коде не модифицированы (только верхний add-only guard).
+7. ✅ Артефакт: `.lovable/proofs/stripe_phase_3_1_stage_2_webhook_lifecycle_v1.md`.
+8. ✅ Plan.md обновлён.
+
+**Status: ✅ CODE COMPLETE** — ожидает Stage 2.5 Runtime Proof (G10–G18).
+
+## Закрытые вопросы (зафиксировано пользователем при approve)
+
+- **B-1**: provider_subscription_id = `pending:{subscription_v2_id}` (Stage 1 факт-контракт; альтернативные форматы запрещены).
+- **B-2**: SELECT-before-INSERT по `orders_v2.meta->stripe->>invoice_id` (без миграций).
+- **C.5**: `applyCrmStageOnTerminal('failed')` НЕ вызывается на `invoice.payment_failed` (до отдельного Smart Retries / Dunning спринта).
+
+## Stage 2.5 Runtime Proof — TODO
+
+G10–G18 через Stripe CLI + test clock (см. раздел 9 в proof артефакте). После approve пользователем.
