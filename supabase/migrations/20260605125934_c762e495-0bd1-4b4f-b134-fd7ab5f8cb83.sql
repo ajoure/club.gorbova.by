@@ -1,0 +1,3 @@
+UPDATE public.subscriptions_v2 SET status='canceled', cancel_reason='stage25_v7_g15_checkout_rejected' WHERE id='85024339-899a-4bf6-87ee-a326907f5d93';
+UPDATE public.subscriptions_v2 SET status='canceled', cancel_reason='stage25_v9_g15_runtime_proof' WHERE id='0f91598f-890a-4349-9c96-2a7965ed7f35';
+UPDATE public.provider_subscriptions SET state='canceled' WHERE subscription_v2_id IN ('85024339-899a-4bf6-87ee-a326907f5d93','0f91598f-890a-4349-9c96-2a7965ed7f35');
