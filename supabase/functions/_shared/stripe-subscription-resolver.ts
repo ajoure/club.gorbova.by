@@ -556,8 +556,81 @@ async function onInvoicePaid(
     return { order_id: existingOrder.id, note: 'invoice_paid_duplicate' };
   }
 
-  // ---- Resolve subv2 ----
-  const ps = await findSubByStripeId(supabase, stripeSubId);
+  // ---- Resolve subv2 (order-independent: tolerate invoice.paid arriving BEFORE customer.subscription.created) ----
+  let ps = await findSubByStripeId(supabase, stripeSubId);
+  let rebound_from_pending = false;
+  if (!ps) {
+    // RACE: customer.subscription.created ещё не прилетел (или потерян). Резолвим subv2_id из:
+    //   1) invoice.subscription_details.metadata.subscription_v2_id (Stripe инжектит metadata подписки)
+    //   2) line.metadata.subscription_v2_id
+    //   3) Stripe API: GET /v1/subscriptions/{id} → metadata.subscription_v2_id
+    const linesPeek = (((invoice.lines as any) ?? {}).data ?? []) as Array<any>;
+    const subDetails = (invoice.subscription_details as any) ?? null;
+    let subv2_id_hint: string | null =
+      (subDetails?.metadata?.subscription_v2_id as string | null)
+      ?? (linesPeek[0]?.metadata?.subscription_v2_id as string | null)
+      ?? null;
+    let hint_source = subv2_id_hint ? 'invoice_metadata' : null;
+
+    if (!subv2_id_hint) {
+      try {
+        const sk = await readAcquiringSecret('stripe', account_code, 'secret_key');
+        if (sk) {
+          const resp = await fetch(`https://api.stripe.com/v1/subscriptions/${stripeSubId}`, {
+            headers: { Authorization: `Bearer ${sk}` },
+          });
+          if (resp.ok) {
+            const subObj = await resp.json();
+            subv2_id_hint = (subObj?.metadata?.subscription_v2_id as string | null) ?? null;
+            hint_source = subv2_id_hint ? 'stripe_api_subscription_metadata' : null;
+          } else {
+            await resp.text().catch(() => '');
+          }
+        }
+      } catch (e) {
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.invoice.paid.rebind_api_lookup_failed',
+          result: 'logged',
+          subscription_v2_id: null, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    }
+
+    if (subv2_id_hint) {
+      const pending = await findPendingSub(supabase, subv2_id_hint);
+      if (pending) {
+        // Rebind pending row IN PLACE. state остаётся 'pending' — активация ниже единым путём.
+        await supabase
+          .from('provider_subscriptions')
+          .update({
+            provider_subscription_id: stripeSubId,
+            meta: {
+              ...((pending.meta as any) ?? {}),
+              stripe: {
+                ...((((pending.meta as any)?.stripe) ?? {})),
+                subscription_id: stripeSubId,
+                customer_id: invoice.customer ?? null,
+              },
+              stage: 'bound_via_invoice_paid_race',
+              rebind_hint_source: hint_source,
+            },
+          })
+          .eq('id', pending.id);
+        ps = await findSubByStripeId(supabase, stripeSubId);
+        rebound_from_pending = true;
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.invoice.paid.rebound_pre_created_sub',
+          result: 'ok',
+          subscription_v2_id: subv2_id_hint, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, hint_source, race: 'invoice_paid_before_subscription_created' },
+        });
+      }
+    }
+  }
+
   if (!ps) {
     await writeAudit(supabase, {
       event, account_code,
