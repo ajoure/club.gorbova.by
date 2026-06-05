@@ -295,25 +295,25 @@ grant-access-for-order.
 - Реализовывать Schedule (installment) ветки — D2 описывает, но MVP = infinite only.
 - Расширять `payment_method.*` / `customer.updated` ветки — это backlog `stripe_saved_pm_followup`.
 
-## Definition of Done Stage 2 (CODE)
+## Definition of Done Stage 2 (CODE) — статусы
 
-1. `_shared/subscription-conflict.ts` — provider-aware (B1 закрыт), юнит-тест.
-2. `_shared/stripe-subscription-resolver.ts` создан.
-3. `stripe-webhook/index.ts` — 5 новых веток через резолвер, add-only.
-4. `stripe-create-subscription-checkout/index.ts` — inline-guard удалён, использует helper.
-5. `supabase/config.toml` — без изменений (webhook уже зарегистрирован).
-6. Регрессия: 6 существующих Phase 2 веток продолжают работать (юнит-snapshot не меняется).
-7. Артефакт: `.lovable/proofs/stripe_phase_3_1_stage_2_webhook_lifecycle_v1.md` с описанием каждой ветки + conflict matrix.
-8. `.lovable/plan.md` обновлён: Stage 2 = CODE COMPLETE, Stage 2.5 (Runtime Proof) = TODO.
+1. ✅ `_shared/subscription-conflict.ts` — provider-aware (B1 закрыт).
+2. ✅ `_shared/stripe-subscription-resolver.ts` создан.
+3. ✅ `stripe-webhook/index.ts` — 5 новых веток через резолвер, add-only.
+4. ✅ `stripe-create-subscription-checkout/index.ts` — inline-guard удалён, использует helper.
+5. ✅ `supabase/config.toml` — без изменений.
+6. ✅ Регрессия: 6 существующих Phase 2 веток в коде не модифицированы (только верхний add-only guard).
+7. ✅ Артефакт: `.lovable/proofs/stripe_phase_3_1_stage_2_webhook_lifecycle_v1.md`.
+8. ✅ Plan.md обновлён.
 
-## Runtime Proof Stage 2.5 (после CODE COMPLETE — отдельный шаг, не входит в этот план)
+**Status: ✅ CODE COMPLETE** — ожидает Stage 2.5 Runtime Proof (G10–G18).
 
-Будет описан отдельным under-plan: G10–G18 (live test через Stripe CLI / test clock), отдельный отчёт PASS/FAIL.
+## Закрытые вопросы (зафиксировано пользователем при approve)
 
-## Открытые вопросы (требуют решения до старта B / C.4)
+- **B-1**: provider_subscription_id = `pending:{subscription_v2_id}` (Stage 1 факт-контракт; альтернативные форматы запрещены).
+- **B-2**: SELECT-before-INSERT по `orders_v2.meta->stripe->>invoice_id` (без миграций).
+- **C.5**: `applyCrmStageOnTerminal('failed')` НЕ вызывается на `invoice.payment_failed` (до отдельного Smart Retries / Dunning спринта).
 
-- **B-1**: Какой формат `meta.tracking_id` для pre-create в `provider_subscriptions` сейчас (`pending:<subv2>` vs `stripe_sub:pending:order:<order_id>`)? Нужно сверить со Stage 1 фактически записанным значением и зафиксировать в резолвере.
-- **B-2**: Idempotency `orders_v2` по `invoice.id` — через (a) уникальный partial index на `(meta->>'stripe_invoice_id')` WHERE provider='stripe', (b) проверку SELECT перед INSERT, (c) использовать `provider_payment_id` на orders_v2. Подход (b) безопаснее и не требует миграции — **default = (b)**.
-- **C.5**: Применять ли `applyCrmStageOnTerminal('failed')` на `invoice.payment_failed`. **Default = НЕ применять** (Smart Retries grace).
+## Stage 2.5 Runtime Proof — TODO
 
-Прошу подтвердить план целиком ИЛИ указать правки (особенно по 3 открытым вопросам) до старта реализации Stage 2.
+G10–G18 через Stripe CLI + test clock (см. раздел 9 в proof артефакте). После approve пользователем.
