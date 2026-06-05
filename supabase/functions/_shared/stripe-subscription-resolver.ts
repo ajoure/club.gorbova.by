@@ -280,7 +280,7 @@ async function onSubscriptionCreated(
       provState = 'pending';
     }
   } else {
-    provState = mapped.prov ?? (ps?.state as ProvSubState | undefined) ?? 'pending';
+    provState = mapped.prov ?? 'pending';
   }
 
   await supabase
