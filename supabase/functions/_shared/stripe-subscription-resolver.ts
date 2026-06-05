@@ -32,6 +32,7 @@
 //     orders_v2.meta->stripe.invoice_id (см. B-2, утверждённый default).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { readAcquiringSecret } from './acquiring/vault.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
