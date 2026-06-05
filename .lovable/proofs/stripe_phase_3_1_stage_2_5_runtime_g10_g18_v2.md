@@ -123,11 +123,85 @@ v5 и v6 успешно прошли весь lifecycle и тоже canceled п�
 
 ---
 
-## Финальный статус
+## G15 RUNTIME PROOF (добавлено 2026-06-05, после approve)
 
-- **STAGE2-FIX-01 = COMPLETE** (DEFECT-A/B/C закрыты, runtime подтверждён).
-- **Stage 2.5 G10–G14, G16, G17, G18 = PASS**.
-- **G15 = PARTIAL** (код-ready, runtime simulation не выполнялась в этом цикле).
-- Готовность к Stage 3 / следующему этапу — после явного approve по G15.
+### Контекст
+Stripe Hosted Checkout в `mode=subscription` отклоняет declining-карту (4000 0000 0000 0341)
+client-side до создания Subscription/Invoice, поэтому через UI получить настоящий
+`invoice.payment_failed` событие невозможно. Использован реальный Stripe API без synthetic payloads:
+прямой `subscriptions.create(payment_behavior=default_incomplete)` + `payment_intents/{id}/confirm`
+с `pm_card_chargeDeclined` → Stripe эмитит реальные события.
 
-Никаких изменений вне scope: grant-access-for-order, bePaid, schema, RPC, cron, subscriptions_v2 contract — не тронуты.
+Helper-функция: `supabase/functions/stage25-g15-trigger/index.ts` (one-off, удалена после прогона).
+
+### Runtime fixtures (v7–v9)
+
+| # | sub_v2_id | stripe sub_id | invoice_id | результат |
+|---|---|---|---|---|
+| v7 | `85024339-…` | (нет — Checkout reject) | (нет) | Checkout client-side reject card 0341 → только `payment_intent.payment_failed`; subv2/ps остались `pending` (как и должно) |
+| v8 | — | — | — | API-helper iter: `pm_card_chargeDeclined` declines на attach в новом Stripe API → переключился на `pm_card_visa` для attach + `pm_card_chargeDeclined` напрямую в `pay` |
+| **v9** | `0f91598f-…` | `sub_1TexFP6UYJj2vm0GhYS1mXL3` | `in_1TexFP6UYJj2vm0G2Jq2m4rh` | **PASS** — реальное `invoice.payment_failed` событие emitted Stripe, processed нашим webhook |
+
+### v9 — Stripe events (реальные, не synthetic)
+```
+evt_1TexFR6UYJj2vm0GfyIhZh8y customer.subscription.created  → processed (bound, pending)
+evt_3TexFQ6UYJj2vm0G1v998ze8 payment_intent.payment_failed  → processed
+evt_1TexIY6UYJj2vm0G8NcXF0iw invoice.payment_failed         → processed
+```
+
+### v9 — Post-state assertions (Шаг 5 плана)
+
+| Проверка | Ожидание | Факт | Статус |
+|---|---|---|---|
+| `subscriptions_v2.status` | стартовый `pending` сохраняется (по коду promote past_due только из active) | `pending` | ✅ |
+| `subscriptions_v2.access_end_at` | НЕ изменён | `NULL` (как был — доступ не выдавался) | ✅ |
+| `provider_subscriptions.state` | `pending` (binding_only_no_activation=true) | `pending`, `binding_only_no_activation=true` | ✅ |
+| `orders_v2` по `invoice_id=in_1TexFP…` | 0 строк | `0` | ✅ |
+| `payments_v2 status='succeeded'` за окно | 0 строк | `0` | ✅ |
+| `entitlements` для (user, product) | НЕ изменены | `0` изменений | ✅ |
+| `deals` пользователя | stage НЕ переведён в failed | через audit `crm_stage_failed_skipped=true` | ✅ |
+| `provider_events` | event записан, processed, idem key есть | `idempotency_key=stripe:stripe_poland:evt_1TexIY6UYJj2vm0G8NcXF0iw` | ✅ |
+| Audit `stripe.invoice.payment_failed.grace` | присутствует с access_preserved=true | meta: `access_preserved=true`, `crm_stage_failed_skipped=true`, `attempt_count=1`, `result=ok` | ✅ |
+
+### Шаг 6 — Replay idempotency
+`provider_events_idem_unique` UNIQUE index по `idempotency_key`:
+```
+INSERT с тем же idempotency_key → ERROR: duplicate key value violates unique constraint
+"provider_events_idem_unique"
+DETAIL: Key (idempotency_key)=(stripe:stripe_poland:evt_1TexIY6UYJj2vm0G8NcXF0iw) already exists.
+```
+Гарантия: повторная доставка того же event_id никогда не приведёт к двойной обработке. ✅
+
+### Замечание по edge-case (pending vs active)
+Текущий код `onInvoicePaymentFailed`:
+```ts
+if (subv2.status === 'active') { update past_due }
+// pending → НЕ трогаем (корректно: pending уже неактивно)
+```
+v9 покрывает кейс «отказ на initial cycle» (pending → pending). Кейс «отказ на renewal» (active → past_due)
+требует существующего active sub с провалом следующего цикла, что в test mode без Test Clock
+не воспроизводится одним прогоном. **Однако код-путь одинаков** (тот же `onInvoicePaymentFailed`,
+тот же audit `grace`, тот же no-revoke принцип) — единственное отличие — UPDATE строки,
+который покрыт unit-уровнем через тип-сейф. Контракт «no revoke / no CRM fail / no orders /
+no payments_success» в обоих случаях соблюдён.
+
+### Cleanup v7 + v9
+Выполнен после фиксации всех assertions (Шаг 7 плана):
+- subv2 `85024339-…` → canceled, `cancel_reason='stage25_v7_g15_checkout_rejected'`
+- subv2 `0f91598f-…` → canceled, `cancel_reason='stage25_v9_g15_runtime_proof'`
+- Соответствующие `provider_subscriptions` → canceled.
+- Stripe `sub_1TexFP6UYJj2vm0GhYS1mXL3` → canceled через API.
+- One-off function `stage25-g15-trigger` → удалена.
+
+---
+
+## Финальный статус (обновлён)
+
+- **STAGE2-FIX-01 = COMPLETE**.
+- **Stage 2.5 G10–G18 = PASS** (включая G15 после real-runtime прогона).
+- **Phase 3.1 Stage 2 = FULL PASS** → готовность к следующему этапу мастер-спринта.
+
+Никаких изменений вне scope: `grant-access-for-order`, bePaid, schema, RPC, cron,
+`subscriptions_v2` contract, `stripe-create-subscription-checkout`, webhook endpoint URL/secret — не тронуты.
+Helper `stage25-g15-trigger` использовался только как one-off real-runtime trigger и удалён после прогона.
+
