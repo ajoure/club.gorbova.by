@@ -76,14 +76,16 @@ Deno.serve(async (req) => {
     const customer_id = cust.data.id;
 
     // 2. Use predefined test PM token (raw card data is blocked by Stripe).
-    //    pm_card_chargeDeclined attaches OK, charges always decline.
-    const pm_id = pm_token;
+    //    pm_card_visa attaches OK; we'll pay invoice with pm_card_chargeDeclined directly.
+    const attach_pm = 'pm_card_visa';
+    const fail_pm = pm_token;
 
-    // 3. Attach PM to customer
-    const att = await stripe(secret, `payment_methods/${pm_id}/attach`, {
+    // 3. Attach successful PM to customer (required to create subscription)
+    const att = await stripe(secret, `payment_methods/${attach_pm}/attach`, {
       customer: customer_id,
     });
     if (!att.ok) return json(500, { step: 'pm_attach', error: att.data });
+    const pm_id = attach_pm;
 
     // 4. Pre-create subscriptions_v2 + provider_subscriptions
     const admin = createClient(
