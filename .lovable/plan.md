@@ -303,3 +303,20 @@ subscription не найдена / не Stripe / sub_id не `sub_*` / account_c
 ## Что НЕ делаем
 
 pause, resume, Subscription Schedule, installments, Customer Portal, dunning, migration bePaid→Stripe, live mode, изменения bePaid, изменения access revoke logic, **включение опции «разрешить raw PAN» в Stripe Dashboard**, **создание любых server-side card collection путей**.
+---
+
+## Phase 3.2 — Stripe Subscription Actions MVP (implementation log, 2026-06-05)
+
+Status: code DONE; G19–G24 runtime gates pending (test mode).
+Proof: `.lovable/proofs/stripe_phase_3_2_subscription_actions_v1.md`.
+
+Delivered:
+- edge function `stripe-subscription-action` (dry-run + execute, PCI входной guard, cancel_at_period_end и cancel_now);
+- UI блок `src/components/admin/StripeSubscriptionActionsBlock.tsx` + интеграция в `SubscriptionActionsSheet` (рендерится только при `provider='stripe'`);
+- `.lovable/docs/edge-functions-standards.md` секция 10 «Stripe PCI Rules» (запрет raw PAN, разрешённые test tokens, запрет одноразовых *-trigger функций);
+- acknowledge письма Stripe `req_SR4WPqmV1IYvAc` (raw PAN warning) — без изменений настроек в Stripe Dashboard;
+- G25 (PCI sweep) — PASS.
+
+bePaid не затронут; `grant-access-for-order` не трогался; access revoke logic не менялась.
+
+Next: прогон G19–G24 в test mode через admin UI после деплоя.
