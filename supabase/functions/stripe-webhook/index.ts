@@ -552,7 +552,7 @@ Deno.serve(async (req) => {
         processing_status: status,
         related_order_id: out.order_id ?? null,
         related_payment_id: out.payment_id ?? null,
-        processing_error: status === 'manual_review' ? 'customer_mismatch' : null,
+        processing_error: status === 'manual_review' ? (out.note ?? 'manual_review') : null,
       })
       .eq('id', inserted.id);
     return new Response(JSON.stringify({ ok: true, status, ...out }), {
