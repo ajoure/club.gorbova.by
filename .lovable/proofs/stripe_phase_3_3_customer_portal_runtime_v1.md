@@ -80,4 +80,34 @@ Browser navigate → отрендерилась страница `billing.stripe
   ```
   effectiveCancelRequested = cancel_at_period_end || (cancel_at != null && cancel_at != 0)
   ```
-  
+  - Также сохраняем `cancel_at` в `subv2.meta.stripe.cancel_at` и `provider_subscriptions.meta.stripe.cancel_at`, чтобы prev-сравнение работало корректно на следующем webhook.
+- Audit `extra.signal` фиксирует, какой именно сигнал triggered delta.
+- Runtime-валидация фикса заблокирована D2.
+
+### D2 — stripe-webhook возвращает 401 после повторного deploy (BLOCKER для runtime-валидации D1)
+- Симптом: после второго deploy `stripe-webhook` (в рамках патча D1) все вызовы Stripe → нашему webhook'у получают HTTP 401. Подтверждено через `function_edge_logs` (2 события 11:36:44 и 11:40:52, оба `POST | 401`).
+- Анонимный smoke `curl POST /functions/v1/stripe-webhook` тоже = 401.
+- В `supabase/config.toml` явно `[functions.stripe-webhook] verify_jwt = false`. До первого deploy (10:43–11:33) Stripe-вебхуки шли успешно (3 события processed). После redeploy в ~11:35 платформа перестала пропускать unsigned POST.
+- Возможные причины: race между config.toml apply и function deploy; либо platform-level override JWT-required. Требует отдельной диагностики.
+- Бизнес-эффект сейчас: cancel/resume через Portal в Stripe выполнились, но в наш `provider_events`/audit не зафиксированы за окно после ~11:35. Доступ цел (entitlements Δ=0). Все «потерянные» события можно реплейнуть через `subscriptions-reconcile` после починки D2.
+- План фикса (отдельная задача):
+  1. Проверить `supabase functions config get stripe-webhook` против `config.toml`.
+  2. Если платформа держит `verify_jwt=true` поверх config.toml — добавить явный `--no-verify-jwt` в CI deploy script или зафиксировать через CLI/API.
+  3. После починки — реплейнуть `evt_*` из Stripe Dashboard за окно 11:35–12:00, проверить аудиты D1 на cancel/resume парах.
+
+## Что НЕ делалось (явно)
+helper edge functions не создавались. Raw card data в наши API не передавался ни одним запросом (PCI guard в `stripe-create-customer-portal-session` подтверждён в smoke-tests Phase 3.3 CODE COMPLETE). Live mode не трогался. bePaid функции и таблицы не изменялись. `entitlements` / `access_rules` / `telegram_access` напрямую не модифицировались.
+
+## Итоговый вердикт
+
+| Гейт | Статус | Комментарий |
+|---|---|---|
+| G26 | PASS | Portal session создаётся, audit пишется |
+| G27 | PASS | Portal открыт, подписка видна |
+| G28 | PARTIAL PASS | DPM-change detected & audited; финальная синхронизация на MC заблокирована D2 |
+| G29 | PASS (business) / DEFECT D1 (audit) → FIX SHIPPED | runtime-валидация фикса блокирована D2 |
+| G30 | PASS (business) / DEFECT D1 (audit) → FIX SHIPPED | runtime-валидация фикса блокирована D2 |
+| G31 | PASS | Invoice history виден в Portal |
+| G32 | PASS | bePaid Δ=0 (для нашего user), entitlements Δ=0, telegram_access Δ=0, access_rules Δ=0 |
+
+**Phase 3.3 ≠ FULL PASS** до устранения D2 и повторной runtime-валидации D1.
