@@ -950,6 +950,95 @@ ${amountLine}
                 </div>
               )}
 
+              {/* Phase 4.1 — Эквайер (provider) для публичной ссылки */}
+              {selectedTariffId && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <Label>Эквайер</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setProvider("bepaid")}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
+                        provider === "bepaid"
+                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      )}
+                    >
+                      <span>bePaid</span>
+                      <span className="text-xs font-normal text-muted-foreground">BYN, рассрочка</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProvider("stripe")}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
+                        provider === "stripe"
+                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      )}
+                    >
+                      <span>Stripe</span>
+                      <span className="text-xs font-normal text-muted-foreground">USD / EUR / PLN</span>
+                    </button>
+                  </div>
+
+                  {provider === "stripe" && (
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Stripe-подключение</Label>
+                          <Select value={stripeAccountCode} onValueChange={setStripeAccountCode}>
+                            <SelectTrigger><SelectValue placeholder="Выберите аккаунт" /></SelectTrigger>
+                            <SelectContent>
+                              {(stripeAccounts ?? []).map((a: any) => (
+                                <SelectItem key={a.account_code} value={a.account_code}>
+                                  {a.account_name ?? a.account_code}
+                                  {a.test_mode ? " (test)" : ""}
+                                  {a.is_default ? " · default" : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Валюта</Label>
+                          <Select value={stripeCurrency} onValueChange={setStripeCurrency}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="EUR">EUR</SelectItem>
+                              <SelectItem value="USD">USD</SelectItem>
+                              <SelectItem value="PLN">PLN</SelectItem>
+                              <SelectItem value="BYN">BYN</SelectItem>
+                              <SelectItem value="GBP">GBP</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      {stripeInstallmentBlocked && (
+                        <p className="text-xs text-destructive">
+                          Рассрочка доступна только для bePaid. Для Stripe выберите другой тариф/кнопку.
+                        </p>
+                      )}
+                      {stripeAccountMissing && (
+                        <p className="text-xs text-destructive">
+                          Нет активного Stripe-подключения. Добавьте его в Настройках эквайринга.
+                        </p>
+                      )}
+                      {stripeSubscriptionPriceMissing && (
+                        <p className="text-xs text-destructive">
+                          У выбранной кнопки нет привязанного Stripe Price ID (meta.stripe.price_id) — Stripe-подписка по этой ссылке не сможет оплатиться.
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Сумма ссылки указана в основной валюте; Stripe принимает её в minor units автоматически.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
               {/* Тип оплаты — крупные сегменты. Скрыто для installment-офферов
                   (срок рассрочки = свой селект ниже, payment_type форсится one_time). */}
               {selectedTariffId && !isInstallmentOffer && (
