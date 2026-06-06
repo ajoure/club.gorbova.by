@@ -35,9 +35,9 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
     queryKey: ["payment-issues-subscriptions", filter],
     queryFn: async () => {
       let q = supabase
-        .from("subscriptions_v2_safe")
+        .from("subscriptions_v2")
         .select(
-          "id, user_id, product_id, tariff_id, status, cancel_at, cancel_reason, updated_at, currency, meta"
+          "id, user_id, product_id, tariff_id, status, cancel_at, cancel_reason, updated_at, meta",
         )
         .eq("provider", "stripe")
         .not("meta->stripe->>dunning_status", "is", null)
@@ -51,30 +51,31 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
       const { data: subs, error } = await q;
       if (error || !subs) return [];
 
-      const userIds = Array.from(new Set(subs.map((s) => s.user_id).filter(Boolean))) as string[];
-      const productIds = Array.from(new Set(subs.map((s) => s.product_id).filter(Boolean))) as string[];
-      const tariffIds = Array.from(new Set(subs.map((s) => s.tariff_id).filter(Boolean))) as string[];
+      const subsArr = subs as any[];
+      const userIds = Array.from(new Set(subsArr.map((s) => s.user_id).filter(Boolean))) as string[];
+      const productIds = Array.from(new Set(subsArr.map((s) => s.product_id).filter(Boolean))) as string[];
+      const tariffIds = Array.from(new Set(subsArr.map((s) => s.tariff_id).filter(Boolean))) as string[];
 
       const [profilesRes, productsRes, tariffsRes] = await Promise.all([
         userIds.length
           ? supabase.from("profiles").select("user_id, first_name, last_name, email").in("user_id", userIds)
-          : Promise.resolve({ data: [], error: null } as any),
+          : Promise.resolve({ data: [] as any[], error: null }),
         productIds.length
           ? supabase.from("products_v2").select("id, name").in("id", productIds)
-          : Promise.resolve({ data: [], error: null } as any),
+          : Promise.resolve({ data: [] as any[], error: null }),
         tariffIds.length
           ? supabase.from("tariffs").select("id, title").in("id", tariffIds)
-          : Promise.resolve({ data: [], error: null } as any),
+          : Promise.resolve({ data: [] as any[], error: null }),
       ]);
 
       const profileMap = new Map<string, any>();
-      (profilesRes.data || []).forEach((p: any) => profileMap.set(p.user_id, p));
+      ((profilesRes.data as any[]) || []).forEach((p) => profileMap.set(p.user_id, p));
       const productMap = new Map<string, any>();
-      (productsRes.data || []).forEach((p: any) => productMap.set(p.id, p));
+      ((productsRes.data as any[]) || []).forEach((p) => productMap.set(p.id, p));
       const tariffMap = new Map<string, any>();
-      (tariffsRes.data || []).forEach((t: any) => tariffMap.set(t.id, t));
+      ((tariffsRes.data as any[]) || []).forEach((t) => tariffMap.set(t.id, t));
 
-      return subs.map((s): PaymentIssueRow => {
+      return subsArr.map((s): PaymentIssueRow => {
         const meta = (s.meta ?? {}) as Record<string, any>;
         const stripeMeta = (meta.stripe ?? {}) as Record<string, any>;
         const profile = s.user_id ? profileMap.get(s.user_id) : null;
@@ -94,7 +95,7 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
           cancel_at: s.cancel_at,
           cancel_reason: s.cancel_reason,
           updated_at: s.updated_at,
-          currency: s.currency,
+          currency: stripeMeta.currency ?? null,
           dunning_status: stripeMeta.dunning_status as PaymentIssueStatus,
           next_payment_attempt: stripeMeta.next_payment_attempt ?? null,
           last_failure_reason: stripeMeta.last_failure_reason ?? null,

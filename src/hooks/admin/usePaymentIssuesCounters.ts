@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 /**
  * Phase 3.6-B (UI-only, read-only).
  * Счётчики подписок с проблемами оплаты Stripe.
- * Источник: subscriptions_v2_safe.meta.stripe.dunning_status.
+ * Источник: subscriptions_v2.meta.stripe.dunning_status (read-only).
  * Никаких записей в БД.
  */
 export type PaymentIssueStatus =
@@ -14,10 +14,10 @@ export type PaymentIssueStatus =
   | "recovered";
 
 export interface PaymentIssuesCounters {
-  awaitingRetry: number; // past_due_grace
-  notRecovered: number; // final_failure + canceled_after_dunning
-  recoveredLast30d: number; // recovered за 30 дней
-  totalActiveProblems: number; // awaitingRetry + notRecovered
+  awaitingRetry: number;
+  notRecovered: number;
+  recoveredLast30d: number;
+  totalActiveProblems: number;
   earliestFinalFailureAt: string | null;
   hasProblems: boolean;
 }
@@ -27,7 +27,7 @@ export function usePaymentIssuesCounters() {
     queryKey: ["payment-issues-counters"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("subscriptions_v2_safe")
+        .from("subscriptions_v2")
         .select("id, meta, updated_at")
         .eq("provider", "stripe")
         .not("meta->stripe->>dunning_status", "is", null)
@@ -50,7 +50,7 @@ export function usePaymentIssuesCounters() {
       let recoveredLast30d = 0;
       let earliestFinal: number | null = null;
 
-      for (const row of data) {
+      for (const row of data as any[]) {
         const meta = (row.meta ?? {}) as Record<string, any>;
         const status = meta?.stripe?.dunning_status as PaymentIssueStatus | undefined;
         if (!status) continue;
