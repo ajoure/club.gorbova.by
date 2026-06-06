@@ -203,12 +203,13 @@ export function AdminPaymentLinkDialog({
   );
 
   // Phase 4.1 — список активных Stripe-подключений для селектора account_code.
+  // PATCH 4.1.1 — добавлен capabilities_snapshot для disabled-стейтов валют.
   const { data: stripeAccounts } = useQuery({
     queryKey: ["acquiring-connections-stripe-active"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, is_default")
+        .select("account_code, account_name, test_mode, is_default, capabilities_snapshot")
         .eq("provider", "stripe")
         .eq("status", "active")
         .order("is_default", { ascending: false });
@@ -225,6 +226,36 @@ export function AdminPaymentLinkDialog({
       setStripeAccountCode((def as any).account_code);
     }
   }, [provider, stripeAccounts, stripeAccountCode]);
+
+  // PATCH 4.1.1 — supported currencies выбранного Stripe-аккаунта (lowercase).
+  // Если snapshot пуст — UI не дизейблит ничего (бэкенд всё равно отвергнет в edge-case).
+  const stripeSupportedCurrencies = useMemo<Set<string>>(() => {
+    if (provider !== "stripe" || !stripeAccountCode) return new Set();
+    const acct = (stripeAccounts ?? []).find(
+      (a: any) => a.account_code === stripeAccountCode
+    ) as any;
+    const arr = acct?.capabilities_snapshot?.supported_currencies;
+    if (!Array.isArray(arr) || arr.length === 0) return new Set();
+    return new Set(arr.map((c: unknown) => String(c).toLowerCase()));
+  }, [provider, stripeAccountCode, stripeAccounts]);
+
+  const STRIPE_CURRENCY_OPTIONS = ["BYN", "EUR", "USD", "PLN"] as const;
+  const isStripeCurrencyDisabled = (code: string) => {
+    if (provider !== "stripe") return false;
+    if (stripeSupportedCurrencies.size === 0) return false;
+    return !stripeSupportedCurrencies.has(code.toLowerCase());
+  };
+
+  // Если текущая выбранная Stripe-валюта стала недоступной (смена account_code) —
+  // переключаемся на первую доступную из whitelist.
+  useEffect(() => {
+    if (provider !== "stripe") return;
+    if (stripeSupportedCurrencies.size === 0) return;
+    if (!isStripeCurrencyDisabled(stripeCurrency)) return;
+    const fallback = STRIPE_CURRENCY_OPTIONS.find((c) => !isStripeCurrencyDisabled(c));
+    if (fallback && fallback !== stripeCurrency) setStripeCurrency(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
 
   // Резолвер: работает на ВСЕХ offers (без предварительной фильтрации по типу).
   const resolved = useMemo(
