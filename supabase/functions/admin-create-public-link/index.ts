@@ -37,7 +37,13 @@ interface CreatePublicLinkRequest {
   // Stage L: installment
   installment_offer?: boolean;
   selected_installment_months?: number;
+  // Phase 4.1 — provider routing for public payment link
+  provider?: 'bepaid' | 'stripe';
+  account_code?: string | null;
 }
+
+// Phase 4.1 — Stripe currencies whitelist (single source of validation in writer).
+const STRIPE_ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN', 'GBP', 'CHF', 'CZK', 'RON']);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
