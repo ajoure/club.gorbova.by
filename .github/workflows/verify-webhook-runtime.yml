@@ -1,0 +1,111 @@
+name: Verify webhook functions are publicly reachable at runtime
+
+# D2-BIS runtime guard. Unlike verify-webhook-public.yml (which only checks
+# git state of supabase/config.toml), this workflow hits the *production URL*
+# of each webhook and asserts the response is NOT a platform-level 401
+# (Supabase Functions Gateway JWT wall). Application-level 401 with our own
+# body (invalid signature, missing instance_id, etc.) is acceptable.
+#
+# Triggers: after apply-migrations, after manual dispatch, on cron, and on
+# changes to webhook-related code. After each successful run there are three
+# probes per function: immediate, +30s, +2m — to catch short post-deploy
+# 401 windows.
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Supabase Migration & Deploy"]
+    types: [completed]
+  schedule:
+    - cron: '17 * * * *'   # hourly
+  push:
+    paths:
+      - 'supabase/config.toml'
+      - 'supabase/functions/**'
+      - '.github/workflows/verify-webhook-runtime.yml'
+
+env:
+  PROJECT_REF: hdjgkjceownmmnrqqtuz
+  BASE: https://hdjgkjceownmmnrqqtuz.functions.supabase.co
+
+jobs:
+  runtime-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe production URLs (immediate, +30s, +2m)
+        run: |
+          set -uo pipefail
+          FUNCS=(
+            stripe-webhook
+            bepaid-webhook
+            telegram-webhook
+            instagram-webhook
+            getcourse-webhook
+            amocrm-webhook
+            auth-email-hook
+            payment-methods-webhook
+          )
+
+          # A platform-level JWT 401 from Supabase Functions Gateway carries
+          # one of these markers in the body. Anything else (including our
+          # own application-level 401 with reason field) is acceptable.
+          PLATFORM_MARKERS='UNAUTHORIZED_NO_AUTH_HEADER|Missing authorization header|Invalid JWT|jwt expired|jwt malformed'
+
+          probe() {
+            local fn="$1"
+            local tag="$2"
+            local url="$BASE/$fn"
+            local opt_code
+            opt_code=$(curl -sk -o /dev/null -w "%{http_code}" -X OPTIONS "$url")
+            local body_file
+            body_file=$(mktemp)
+            local post_code
+            post_code=$(curl -sk -o "$body_file" -w "%{http_code}" \
+              -X POST -H 'content-type: application/json' -d '{}' "$url")
+            local body
+            body=$(head -c 400 "$body_file")
+            rm -f "$body_file"
+
+            local verdict="PASS"
+            local reason=""
+            if [ "$opt_code" != "200" ] && [ "$opt_code" != "204" ]; then
+              verdict="FAIL"; reason="OPTIONS=$opt_code"
+            fi
+            if [ "$post_code" = "401" ]; then
+              if echo "$body" | grep -Eq "$PLATFORM_MARKERS"; then
+                verdict="FAIL"; reason="platform JWT 401"
+              fi
+            fi
+
+            echo "[$tag] $fn OPTIONS=$opt_code POST=$post_code verdict=$verdict ${reason:+($reason)}"
+            echo "       body: $body"
+            [ "$verdict" = "PASS" ]
+          }
+
+          probe_all() {
+            local tag="$1"
+            local rc=0
+            for fn in "${FUNCS[@]}"; do
+              probe "$fn" "$tag" || rc=1
+            done
+            return $rc
+          }
+
+          echo "=== Immediate probe ==="
+          probe_all "t=0s"; r1=$?
+
+          echo "=== +30s probe ==="
+          sleep 30
+          probe_all "t=30s"; r2=$?
+
+          echo "=== +2m probe ==="
+          sleep 90
+          probe_all "t=2m"; r3=$?
+
+          if [ $r1 -ne 0 ] || [ $r2 -ne 0 ] || [ $r3 -ne 0 ]; then
+            echo ""
+            echo "FAIL: at least one webhook returned a platform-level 401."
+            echo "Recovery: re-run 'Supabase Migration & Deploy' with action=deploy-functions."
+            exit 1
+          fi
+          echo "OK: all webhook endpoints publicly reachable (no platform 401) across three probes."

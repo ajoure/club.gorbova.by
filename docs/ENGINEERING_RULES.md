@@ -279,6 +279,21 @@ Legacy migration: `legacy system → compatibility layer → canonical architect
 
 ---
 
-## 22. ОСНОВНАЯ ЦЕЛЬ
+## 22. POST-DEPLOY WEBHOOK SMOKE (D2-BIS)
+
+После любого передеплоя edge function через агентский `supabase--deploy_edge_functions` ОБЯЗАТЕЛЕН runtime smoke на production URL соответствующего webhook:
+
+1. Smoke сразу, через 30 секунд и через 2 минуты.
+2. Бить по `https://<project-ref>.functions.supabase.co/<function-name>`, не через `supabase.functions.invoke()`.
+3. PASS = НЕ platform-401 (маркеры: `UNAUTHORIZED_NO_AUTH_HEADER`, `Missing authorization header`, `Invalid JWT`). Application-level 401 с нашим `reason` в теле — допустим.
+4. Если хотя бы один probe = platform-401 → запустить GitHub workflow `Supabase Migration & Deploy` в режиме `deploy-functions` (он использует `supabase functions deploy --all` через CLI и применяет `config.toml`).
+5. CI guard `verify-webhook-runtime.yml` запускает эту же проверку автоматически (после `apply-migrations`, по cron, по push в webhook-функции).
+6. CI guard `verify-webhook-public.yml` остаётся как git-state проверка (что в `config.toml` для каждого webhook стоит `verify_jwt = false`).
+
+Этот раздел отражает корректирующее правило после повторной регрессии D2 (Phase 3.3) и Phase 3.4: агентский deploy НЕ синхронизирует `verify_jwt` из `config.toml`, и платформа сбрасывает функцию в дефолт `verify_jwt = true`.
+
+---
+
+## 23. ОСНОВНАЯ ЦЕЛЬ
 
 Все эти правила нужны для того, чтобы платформа могла: безопасно масштабироваться, не превращаться в архитектурный хаос, сохранять единый source of truth, поддерживать стабильные интеграции, быть полностью аудируемой, развиваться без каскадных отказов, выдерживать enterprise-нагрузку.
