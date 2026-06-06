@@ -282,3 +282,38 @@ Phase 3.4 = FULL PASS только если G33–G40 = PASS, failure snapshot �
 ## Что НЕ делаем
 
 Авто-revoke после failed; своя форма карты; ручное списание; пересоздание Portal; pause/resume; Subscription Schedule; installments; миграция bePaid→Stripe; live mode; изменения bePaid/access/Telegram revoke.
+---
+
+# PATCH-D2-BIS — Stripe Webhook 401 After Redeploy (исполнено 2026-06-06)
+
+## Результат
+
+**Discovery = PASS · Code = PASS · Runtime restore = BLOCKED (manual CI step)**
+
+Root cause воспроизведён детерминированно: агентский tool `supabase--deploy_edge_functions` не применяет `verify_jwt = false` из `supabase/config.toml`, и Supabase Functions Gateway сбрасывает webhook на дефолт `verify_jwt = true` → platform-401 `UNAUTHORIZED_NO_AUTH_HEADER`. Зафиксировано controlled redeploy `stripe-webhook` с smoke @0s/30s/2m — все три probe = 401. Повторный agent-redeploy не восстанавливает.
+
+Подробности и доказательная база:
+- `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md`
+- `.lovable/proofs/stripe_phase_3_4_d2_bis_webhook_runtime_v1.md`
+
+## Артефакты
+
+- **NEW** `.github/workflows/verify-webhook-runtime.yml` — runtime smoke по всем 8 webhook на production URL, 3 probe (immediate / +30s / +2m), FAIL только на platform-401 маркеры (`UNAUTHORIZED_NO_AUTH_HEADER`, `Missing authorization header`, `Invalid JWT`); триггер: `workflow_run` после `apply-migrations`, `workflow_dispatch`, cron `17 * * * *`, push в `supabase/functions/**` или `config.toml`.
+- **KEPT** `.github/workflows/verify-webhook-public.yml` — git-state проверка `verify_jwt = false` в `config.toml` (уже включает 8 webhook).
+- **UPDATED** `docs/ENGINEERING_RULES.md` §22 — обязательное правило post-deploy smoke + канонический путь восстановления.
+
+## Что НЕ делалось
+
+- Не созданы новые edge functions / smoke-клоны.
+- Не менялся код webhook-функций.
+- Не созданы новые alert-каналы.
+- Не выполнен Stripe replay (E3 / Phase 3.4 G33–G40) — заблокировано до stable PASS.
+- bePaid / access / entitlements / rules / Telegram revoke не затронуты.
+
+## Следующий шаг (вручную)
+
+1. GitHub Actions → **Supabase Migration & Deploy** → action `deploy-functions` (или `full-deploy`).
+2. Дождаться автозапуска `verify-webhook-runtime.yml` (или запустить вручную).
+3. При зелёном — Phase 3.4 runtime (G33–G40) → FULL PASS.
+
+До восстановления `stripe-webhook` Phase 3.4 остаётся в статусе **PARTIAL PASS (Code Complete / Runtime Pending)**.
