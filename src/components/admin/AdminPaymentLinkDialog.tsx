@@ -257,6 +257,11 @@ export function AdminPaymentLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
 
+  // PATCH 4.1.2 — единый derived-валютный токен для UI-меток/preview.
+  // Backend сам выбирает валюту корректно; здесь только отображение.
+  const previewCurrency: string = provider === "stripe" ? stripeCurrency : "BYN";
+
+
   // Список всех active pay_now offers (источник для override и резолвера).
   const activeOffers = useMemo(
     () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
