@@ -106,3 +106,22 @@ Email-шаблоны и admin past_due-вкладка не созданы (см.
 4. Replay `invoice.paid` → второй вызов короткозамыкает на `stripe.invoice.paid.duplicate` (существующий guard).
 5. Smoke webhook: `OPTIONS=200`, `POST` без подписи = `400 signature_verification_failed` (не 401).
 6. Зафиксировать в этом proof: SQL before/after, `event_id`, `invoice_id`, `subscription_v2_id`, ссылки на audit-rows; перевести Phase 3.4 в FULL PASS в `.lovable/plan.md`.
+
+## ⚠ D2 регрессия повторилась после деплоя
+
+После двух последовательных деплоев `stripe-webhook` (изменения резолвера Phase 3.4) endpoint снова отдаёт `401 Unauthorized` на `POST` без подписи, хотя `supabase/config.toml` содержит:
+```
+[functions.stripe-webhook]
+  verify_jwt = false
+```
+
+`edge_function_logs` для `stripe-webhook` с `search=401` — пусто, значит платформа отбрасывает запросы ДО входа в функцию (как в Phase 3.3 D2).
+
+CI guard (`.github/workflows/verify-webhook-public.yml`) подтверждает корректность config.toml — это не регрессия конфига в репозитории. Регрессия на стороне платформы (transient окно после redeploy → не стабилизировалось в течение нескольких минут поллинга).
+
+**Действия:**
+1. Подождать естественной стабилизации (Phase 3.3 D2 ушёл сам по себе).
+2. Если 401 сохранится — нужен PATCH-D2-bis: пересмотреть pinning `verify_jwt`, возможно явно объявить блок `[functions.stripe-webhook]` после всех остальных функций или поднять issue на стороне платформы.
+3. До закрытия 401 runtime G33–G40 невозможны (Stripe не сможет доставить webhook).
+
+Сами изменения кода Phase 3.4 уже задеплоены в составе функции — при стабилизации 401 они подхватятся первым же реальным `invoice.payment_failed` / `invoice.paid`.
