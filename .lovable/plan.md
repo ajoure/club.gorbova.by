@@ -1,276 +1,235 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **A4 linkage разрешаю**
+1. **Не выполнять полноценный рефактор** `stripe-create-subscription-checkout` **до runtime bePaid/Stripe smoke**
 
-Да, можно точечно править:
+Вынос shared helper допустим, но это риск для уже работающего admin subscription checkout.
 
-```text
-stripe-create-checkout
-stripe-create-subscription-checkout
-```
-
-только для проброса:
+Порядок:
 
 ```text
-payment_link_id
+1. Сначала добавить Stripe-ветку в public-link path.
+2. Потом минимально вынести helper.
+3. После этого обязательно проверить admin `stripe-create-subscription-checkout` smoke.
 ```
 
-в Stripe Session metadata.
+Не считать refactor безопасным без отдельного proof.
 
-Но:
-
-```text
-stripe-webhook не трогать
-```
-
-Если webhook уже читает `metadata.payment_link_id` — отлично.  
-Если не читает — фиксируем backlog:
-
-```text
-stripe_public_link_id_metadata_bridge
-```
-
-и не расширяем scope 4.1.
-
-2. **Installment + Stripe**
-
-Да, подтверждаю:
-
-```text
-Stripe installment в Phase 4.1 запрещён.
-```
-
-Поведение:
-
-- backend: HTTP 400;
-- UI: понятная подсказка «Рассрочка через Stripe пока не поддерживается»;
-- future backlog.
-
-3. **UI термины**
-
-Да, бренды не переводим:
-
-```text
-bePaid
-Stripe
-```
-
-UI на русском:
-
-```text
-Провайдер
-Счёт
-Тестовый режим
-Боевой режим
-Создать ссылку
-Рассрочка через Stripe пока не поддерживается
-```
-
-4. **Добавить обязательный bePaid smoke до и после**
-
-Перед изменениями и после runtime:
-
-- открыть существующую bePaid public link;
-- убедиться, что она ведёт в старый bePaid checkout;
-- создать новую bePaid public link без поля `provider`;
-- убедиться, что она создаётся как `provider='bepaid'`.
-
-Это критичный DoD.
-
-5. **Не делать fallback:true для Stripe ошибок**
+2. **One-time amount / minor units проверить отдельно**
 
 Фраза:
 
 ```text
-При ошибке Stripe: HTTP 200 + fallback:true
+не BYN ⇒ умножение на 100 не используется
 ```
 
-опасна.
+опасная.
 
-Для Stripe public links лучше:
+Stripe почти всегда принимает amount в minor units. Нужно не угадывать.
+
+Требую отдельный helper:
 
 ```text
-Stripe error → понятная controlled error response
+toStripeMinorUnits(amount, currency)
 ```
 
-без создания bePaid fallback и без скрытого переключения провайдера.
+с поддержкой:
 
-Никакого автоматического fallback Stripe → bePaid.
+- BYN
+- EUR
+- PLN
+- USD
+- RUB, если используется
 
-6. **Provider routing должен быть строгим**
+И proof, что сумма 5 EUR превращается в 500, 100 BYN — в 10000 и т.д.
 
-Если `payment_links.provider='stripe'`, то только Stripe.
+3. **Fallback при Stripe ошибке запрещён**
 
-Если Stripe checkout не создался — FAIL с ошибкой, а не попытка провести через bePaid.
-
-7. **Runtime G4.1-F**
-
-Если `payment_link_id` linkage не попадёт в `orders_v2`, но оплата, order, access проходят — ставить:
+Если Stripe public checkout не создался:
 
 ```text
-G4.1-F = PARTIAL
+FAIL controlled error
 ```
 
-и backlog.
+Никакого bePaid fallback.
 
-Не блокировать весь Phase 4.1, если бизнес-сценарий оплаты и доступа работает.
+4. **Старый bePaid путь должен быть byte-for-byte safe**
 
-После этих правок Phase 4.1 можно запускать.
+В proof обязательно:
 
-План: Phase 4.1 — Add Stripe Provider Routing to Public Links
+- existing bePaid public link до/после;
+- новая bePaid public link без `provider`;
+- `payment_links.provider='bepaid'`;
+- redirect остаётся bePaid.
 
-## Контекст
+5. **Stripe subscription public link не должен создавать order, если существующий admin flow этого не делает**
 
-Phase 4 Discovery зафиксировал единственную точку отказа: `admin-create-public-link` + `_shared/create-payment-checkout.ts` не поддерживают Stripe для публичных ссылок. Все 113 `payment_links` сейчас `provider='bepaid'`. Колонки `provider/account_code/profile_code/business_stream` в `payment_links` уже существуют, CHECK уже допускает `'stripe'`. Stripe direct admin checkout уже работает (5 orders, 5 subs, 21 session).
-
-## Цель
-
-Добавить provider-aware routing в публичные ссылки. Add-only. bePaid остаётся default и не ломается. Никаких миграций, никаких изменений webhooks / grant-access / Telegram / Phase 3.5-B.
-
-## Жёсткие границы (NOT TOUCHED)
-
-- `bepaid-webhook`, `stripe-webhook` — без изменений.
-- `grant-access-for-order`, `subscriptions-reconcile`, `telegram-access*` — без изменений.
-- `subscription-charge`, `direct-charge`, `payment-methods-webhook` — без изменений.
-- Phase 3.5-B Runtime остаётся `PENDING-BY-STRIPE-TIME`.
-- Никаких миграций (все колонки есть).
-- Никаких новых providers / write-paths.
-- Старые bePaid public links (113 шт.) должны работать байт-в-байт как раньше.
-- Installment offers через Stripe запрещены в этом patch (Stripe finite-sub вне scope).
-- GitHub / CI / infra не трогаем.
-
-## A. Backend изменения (additive)
-
-### A1. `supabase/functions/admin-create-public-link/index.ts`
+Ты написал:
 
 ```text
-Input (новые опциональные поля):
-  provider?: 'bepaid' | 'stripe'        // default 'bepaid'
-  account_code?: string                  // required if provider='stripe'
-
-Валидация:
-  - provider не в {'bepaid','stripe'} → 400
-  - provider='stripe' && !account_code → 400
-  - provider='stripe' && installment_offer=true → 400 (out of scope)
-  - account_code должен существовать в acquiring_connections
-    WHERE provider='stripe' AND status='active'
-  - currency должна быть в acquiring_connections.supported_currencies
-    выбранного account_code (для Stripe)
-
-Запись:
-  payment_links.provider       = <provider>
-  payment_links.account_code   = <account_code> | NULL
-  (profile_code, business_stream — наследуются из acquiring_connections, если есть; иначе NULL)
-
-Audit `payment_link.created` обогатить:
-  provider, account_code, account_test_mode
+Pre-create orders_v2 pending provider='stripe'
 ```
 
-Контракт обратной совместимости: вызов без `provider` ведёт себя ровно как сейчас (bepaid).
-
-### A2. `supabase/functions/public-checkout/index.ts`
+Но для subscription Stripe у нас ранее Stage 1 специально проверял:
 
 ```text
-1. SELECT payment_links по token (уже делается).
-2. Прочитать link.provider.
-3. if (provider === 'stripe'):
-     → delegate в новую ветку Stripe (см. A3);
-   else:
-     → существующий путь bePaid без изменений.
-4. Контракт ответа (redirect_url) сохраняется.
+orders_v2/payments_v2/entitlements/access_rules = 0 до invoice.paid
 ```
 
-Default-ветка остаётся текущей. Никаких изменений для bePaid-токенов.
+Нельзя нарушать это правило.
 
-### A3. `supabase/functions/_shared/create-payment-checkout.ts`
+Для subscription public link:
 
-Добавить Stripe branch (без изменения существующих bePaid helpers):
+- можно pre-create `subscriptions_v2 pending`;
+- можно pre-create `provider_subscriptions pending`;
+- **orders_v2 до invoice.paid не создавать**.
+
+`orders_v2` должен создаваться только по `invoice.paid`, как в Phase 3.1/3.2.
+
+6. **payment_link_id для subscription**
+
+Если order создаётся только на `invoice.paid`, то `payment_link_id` должен идти в Stripe metadata и потом попадать в order через webhook.
+
+Если webhook сейчас это не делает — фиксировать как backlog, но не создавать pending order заранее ради linkage.
+
+7. **UI: Stripe subscription link early validation**
+
+Если `tariff_offers.meta.stripe.price_id` отсутствует:
+
+- backend 400;
+- UI показывает понятную ошибку;
+- не создавать ссылку, которая потом не сможет оплатиться.
+
+8. **Runtime proof обязательный минимум**
+
+До PASS 4.1:
 
 ```text
-if (provider === 'stripe'):
-  payment_type === 'subscription' (или offer.is_recurring)
-    → invoke('stripe-create-subscription-checkout', {
-        payment_link_id, account_code, user_id, product_id, tariff_id, offer_id, currency, ...
-      })
-  else (one-time):
-    → invoke('stripe-create-checkout', { ...same... })
-
-  Возврат: { redirect_url: session.url }
-  При ошибке Stripe: HTTP 200 + fallback:true (стандарт payment-error-handling).
+- bePaid existing link PASS
+- bePaid new link PASS
+- Stripe one-time link creates checkout URL PASS
+- Stripe subscription link creates checkout URL + pending sub PASS
+- admin stripe subscription checkout still works PASS
 ```
 
-Stripe-ветка ни в одной строке не вызывает bePaid helpers (defence in depth, denylist verifier останется зелёным).
+Оплата Stripe public link может быть отдельным runtime gate, но создание ссылок и checkout URL должны быть PASS.
 
-Существующие `stripe-create-checkout` и `stripe-create-subscription-checkout` уже умеют материализовать заказы/подписки через `stripe-webhook`; их API не меняем, только пробрасываем `payment_link_id` в metadata (если поддерживается — проверить и при необходимости добавить).
+После этих правок можно выполнять.
 
-### A4. (опц.) `stripe-create-checkout` / `stripe-create-subscription-checkout`
+&nbsp;
 
-Минимальный additive: принять `payment_link_id?: string` и положить в Stripe Session `metadata.payment_link_id`. `stripe-webhook` затем при материализации `orders_v2` запишет `payment_link_id` (как это делает bePaid). Если webhook уже читает metadata.payment_link_id — изменений 0. Если нет — точечно добавить чтение в `stripe-webhook`? **НЕТ** — webhook трогать запрещено. Тогда: записываем `payment_link_id` в `provider_events.meta` через одноразовый upsert после создания session НЕ в webhook, а в самом `stripe-create-checkout` (через таблицу `payment_links.meta.last_session_id` ↔ обратный линк). Финальное решение по этому подпункту фиксируем после короткого read-only probe в A4-Discovery (см. ниже).
+План:
 
-## B. UI изменения (русский)
+# Phase 4.1 — Provider-aware Public Payment Links (Stripe), Variant A
 
-### B1. `CreatePublicLinkDialog`
+Цель: публичная ссылка `/pay/:token` должна уметь создавать Stripe Checkout (one-time + subscription), повторяя архитектуру bePaid public link. `requireSuperAdmin`-функции (`stripe-create-checkout`, `stripe-create-subscription-checkout`) НЕ открываем наружу. Webhook, `grant-access-for-order`, bePaid-ветка — не трогаем.
 
-Добавить:
+## Diagnose (выполнено)
 
-- Селектор «Провайдер»: `bePaid` (default) | `Stripe`.
-- При выборе Stripe:
-  - селектор «Счёт» (account_code из активных Stripe `acquiring_connections`);
-  - бейдж «Тестовый режим» / «Боевой режим» по `test_mode`;
-  - валидация currency против `supported_currencies` выбранного счёта;
-  - тултип: «Рассрочка через Stripe пока не поддерживается» при попытке выбрать installment.
-- Кнопка «Создать ссылку» передаёт `provider` + `account_code` в `admin-create-public-link`.
+- `payment_links` уже имеет колонки `provider`, `provider_mode`, `account_code`, `profile_code`, `business_stream`, `currency` (миграция не нужна).
+- Все 113 строк имеют `provider='bepaid'` (бэкфилл).
+- `admin-create-public-link` не пишет `provider/account_code/currency` (всё по умолчанию).
+- `public-checkout` передаёт всё в `_shared/create-payment-checkout.ts` без `provider`.
+- `_shared/create-payment-checkout.ts` — bePaid-only.
+- `stripe-create-subscription-checkout` содержит готовый блок pre-create (`subscriptions_v2 pending` + `provider_subscriptions pending:{uuid}` + Stripe Checkout `mode=subscription`) — выносим в shared helper без изменения поведения admin-функции.
+- `_shared/acquiring/stripe-adapter.ts.createCheckout` уже умеет one-time Stripe Checkout с `payment_link_id` в `metadata`.
+- `stripe-webhook` уже читает `Session.metadata` (включая `subscription_v2_id`, `provider_subscription_row_id`, `payment_link_id`) — не трогаем.
 
-### B2. Таблица «Ссылки» (`AdminPaymentsHub` → Links tab)
+## Изменения файлов
 
-Добавить колонку **«Провайдер»** с бейджем (bePaid / Stripe + Test/Live). Источник: `payment_links_enriched_v.provider`, `account_code`. UI на русском.
+### Backend
 
-Остальное (фильтры, действия) — без изменений.
+1. **NEW `supabase/functions/_shared/stripe-pre-create-subscription.ts**`
+  - Экспортирует `stripePreCreateSubscription({ supabase, user_id, product_id, tariff_id, tariff_offer_id, account_code, business_stream, customer_email, payment_link_id?, order_id?, lifecycle_created_by })`.
+  - Выполняет шаги 8–11 из `stripe-create-subscription-checkout` (sub insert → prov_sub insert → Stripe `checkout/sessions` `mode=subscription` → meta update). Без auth, без duplicate-guards (вызывающий уже их сделал).
+  - Возвращает `{ ok, subscription_v2_id, provider_subscription_row_id, checkout_session_id, url }` или `{ ok:false, error, rollback_done }`.
+  - При неудаче делает rollback pending-строк (как сейчас).
+  - Если передан `payment_link_id` — кладёт его в `metadata[payment_link_id]` и `subscription_data[metadata][payment_link_id]`.
+2. **REFAC `supabase/functions/stripe-create-subscription-checkout/index.ts**`
+  - Шаги 8–11 заменить на вызов `stripePreCreateSubscription` (поведение, audit, ответ — идентичны). Контракт ответа не меняется.
+3. **EDIT `supabase/functions/_shared/create-payment-checkout.ts**`
+  - Расширить `CreateCheckoutParams`: `provider?: 'bepaid'|'stripe'` (default 'bepaid'), `account_code?: string`, `currency?: string`.
+  - В начале: если `provider==='stripe'` → новая ветка:
+    - **one_time:**
+      - валидация: `currency` обязателен, не BYN ⇒ умножение на 100 не используется (Stripe minor units передаётся как есть = `amount`).
+      - INSERT `orders_v2 pending provider='stripe'` (currency = link.currency; `base_price/final_price` хранить в той же валюте; meta — `payment_link_id`, `payment_flow`, `account_code`, `business_stream`).
+      - `resolveDefaultStripeAccount(supabase, account_code)` + test_mode guard (как в admin).
+      - `crm-routing` snapshot (как в bePaid one_time).
+      - `resolveAdapter('stripe').createCheckout({ … metadata: { payment_link_id, product_id, tariff_id, offer_id, user_id }, context: { provider:'stripe', account_code, business_stream }, return_url, cancel_url })`.
+      - При ok → UPDATE order meta `{ stripe: { checkout_session_id, account_code }, business_stream }`; return `redirect_url`.
+      - При fail → order → `failed`, audit `stripe.checkout.declined`.
+    - **subscription:**
+      - Проверки: `offer_id` обязателен; читаем `tariff_offers` и проверяем `meta.stripe.price_id` (иначе `stripe_price_missing_in_offer_meta` → fallback error).
+      - Те же duplicate guards, что уже есть в bePaid-ветке (`checkPendingCheckoutConflict`, `classifySameProductState`/`checkSubscriptionConflict`) — переиспользуем `_shared/subscription-conflict.ts` (provider-aware).
+      - Pre-create `orders_v2 pending provider='stripe'` (как маркер заказа подписки; meta `payment_flow=admin_subscription/renewal_subscription`, `payment_link_id`).
+      - Вызвать `stripePreCreateSubscription` с `payment_link_id=link.id`, `order_id=order.id` (пробросим в metadata, не более).
+      - При ok → UPDATE order meta `{ stripe: { checkout_session_id, subscription_v2_id, provider_subscription_row_id, account_code }, business_stream }`; return `redirect_url`.
+      - При fail → rollback order → `failed`, helper делает rollback своих pending-строк.
+  - bePaid-ветка не трогается.
+4. **EDIT `supabase/functions/admin-create-public-link/index.ts**`
+  - Принимать `provider?: 'bepaid'|'stripe'` (default `bepaid`), `account_code?: string`, override `currency` (default `BYN` для bepaid).
+  - Если `provider==='stripe'`:
+    - блок installment → 400 `installment_not_supported_on_stripe`.
+    - проверить `acquiring_connections` (provider='stripe', account_code, status='active'); test_mode → ok.
+    - валидация `currency` ∈ supported (минимум `usd`,`eur`,`pln`,`byn`); по умолчанию использовать `acquiring_connections.default_currency` если есть, иначе требовать body.
+    - проверить `tariff_offers.meta.stripe.price_id` если payment_type='subscription' (early-fail).
+  - Записывать `provider`, `account_code`, `currency` в `payment_links`.
+  - В audit добавить эти поля.
+5. **EDIT `supabase/functions/public-checkout/index.ts**`
+  - Передавать в `createPaymentCheckout`: `provider: link.provider ?? 'bepaid'`, `account_code: link.account_code ?? undefined`, `currency: link.currency ?? 'BYN'`.
+  - GET-ответ: вернуть `provider` (UI-индикатор).
 
-## C. A4-Discovery (read-only, до начала кода)
+### Frontend
 
-Прочитать:
+6. **EDIT `src/components/admin/AdminPaymentLinkDialog.tsx**`
+  - Новый блок «Эквайер» (виден только при создании ссылки): селект `bePaid (BYN)` / `Stripe (карта)`.
+  - При выборе Stripe:
+    - селект `Stripe-подключение` — список `acquiring_connections WHERE provider='stripe' AND status='active'` (account_code → label).
+    - селект валюты (USD/EUR/PLN/BYN), default из подключения.
+    - installment-блок скрыт (с тултипом «Рассрочка доступна только для bePaid»).
+    - предупреждение «Stripe требует у оффера `meta.stripe.price_id` для подписки».
+  - Поля `provider`, `account_code`, `currency` уходят в body `admin-create-public-link`.
+7. **EDIT `src/components/admin/payments/links/LinksTabContent.tsx**` (и `LinkDetailsDrawer`)
+  - Колонка «Провайдер» с бейджем `bePaid` / `Stripe (account_code)`.
+  - Фильтр по провайдеру (опционально, если уже есть фильтр-механика — добавить пункт; иначе пропустить).
 
-- `stripe-create-checkout/index.ts` — принимает ли он `payment_link_id` и кладёт ли в `session.metadata`;
-- `stripe-create-subscription-checkout/index.ts` — то же;
-- `stripe-webhook/index.ts` — читает ли он `metadata.payment_link_id` при материализации `orders_v2`.
+## Dry run / гипотезы
 
-Результат фиксируется в discovery-артефакте. Если bridge уже есть — A4 = no-op. Если нет — план A4 ограничивается **только** правкой `stripe-create-*` функций (writers), webhook не трогаем; связка `payment_link_id ↔ order` восстанавливается на этапе webhook через metadata, которую он уже читает (если читает) или через `provider_events.meta` (read-only join на этапе reconcile UI — без правок webhook).
+- bePaid public links: тело запроса не меняется → `provider` по-прежнему default → существующие 113 ссылок и новые без `provider` идут в bepaid-ветку без regress.
+- Stripe one-time: `Session.metadata.payment_link_id` уже включается через `buildStripeMetadata` → webhook найдёт link и сможет инкрементировать `current_uses` через `_shared/consume-payment-link.ts` (если уже подключено в stripe-webhook — проверю в Verify; если нет — это известный gap, фиксируется отдельным патчем, не блокирует приём оплаты).
+- Stripe subscription: client_reference_id = subscription_v2_id; webhook lifecycle Stripe идентичен admin-flow.
 
-## D. Runtime Proof (gates Phase 4.1)
+## Verify (после Execute)
 
+- `bun run build` (lovable harness).
+- Edge logs: `admin-create-public-link` создаёт row с `provider`/`account_code`/`currency`.
+- Smoke (через `supabase--curl_edge_functions`):
+  - GET `/public-checkout?token=<existing bePaid token>` → `provider:'bepaid'`.
+  - POST `/public-checkout` для bePaid link → `redirect_url` checkout.bepaid.by (non-regression).
+  - Создать новый Stripe one-time link → POST `/public-checkout` → `redirect_url` checkout.stripe.com.
+  - Создать новый Stripe subscription link (на оффере с `meta.stripe.price_id`) → POST → Stripe subscription URL; subscriptions_v2 + provider_subscriptions pending созданы.
+- Proof: `.lovable/proofs/stripe_phase_4_1_provider_routing_v1.md` (счётчики до/после, payloads, edge function logs).
 
-| Gate   | Условие PASS                                                                                                                                                                                                                                     |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| G4.1-A | bePaid public link (существующая) → `/pay/:token` → bePaid checkout. Не изменилось.                                                                                                                                                              |
-| G4.1-B | Новая bePaid public link создаётся без поля `provider` в payload (backward-compat).                                                                                                                                                              |
-| G4.1-C | Новая Stripe one-time public link создаётся, `payment_links.provider='stripe'`, `account_code` записан.                                                                                                                                          |
-| G4.1-D | `/pay/:token` по Stripe-ссылке возвращает `redirect_url` начинающийся с `checkout.stripe.com`.                                                                                                                                                   |
-| G4.1-E | Новая Stripe subscription public link → Stripe Subscription Checkout (mode=subscription), pre-created `subscriptions_v2 pending` или эквивалент существующего контракта `stripe-create-subscription-checkout`.                                   |
-| G4.1-F | После тестовой Stripe-оплаты webhook материализует `orders_v2 paid` + `entitlements` (через существующий `grant-access-for-order`). Если `payment_link_id` linkage не работает — фиксируется как known gap → backlog, доступ всё равно выдаётся. |
-| G4.1-G | Cross-provider counters: `payment_links.provider='bepaid'` count не уменьшился; bePaid edge functions не получили Stripe-вызовов (denylist verifier).                                                                                            |
-| G4.1-H | UI: селектор провайдера виден, термины на русском, installment+Stripe заблокировано тултипом.                                                                                                                                                    |
+## Не в скоупе
 
+- `stripe-webhook` — не трогаем (использует существующую metadata).
+- `grant-access-for-order` — не трогаем.
+- Новые публичные Stripe endpoint'ы — не создаём.
+- BYOK Stripe / новые providers.
+- Миграции БД (все колонки уже есть).
 
-## E. Артефакты
+## Риски
 
-- `.lovable/proofs/stripe_phase_4_1_provider_routing_v1.md` — discovery A4 + runtime gates G4.1-A..H + counters до/после.
-- Обновление `.lovable/plan.md` со статусом Phase 4.1.
-- Если A4 выявит linkage gap — `.lovable/backlog/stripe_public_link_id_metadata_bridge.md` (read-only задача, без правки webhook).
+- R1: Если `stripe-webhook` сейчас не использует `payment_link_id` для increment `current_uses` — счётчик не вырастет после оплаты Stripe link. Mitigation: вынесено как known-gap, фиксируем отдельным микропатчем после Verify.
+- R2: Stripe one-time через `orders_v2 provider='stripe' status='pending'` — отличается от admin-флоу `stripe-create-checkout` (там order создаётся отдельно). У нас order создаётся внутри shared helper из payment_link → структурно ок, но нужно убедиться, что webhook ищет order по `client_reference_id`/`metadata.order_id` (он это делает).
+- R3: Если у `tariff_offers.meta.stripe.price_id` нет — Stripe subscription link невозможен; админ получит 400 при создании ссылки, не при оплате.
 
-## F. DoD Phase 4.1
+## DoD
 
-1. `admin-create-public-link` принимает `provider` + `account_code`, валидирует, пишет в `payment_links`. Backward-compat подтверждён.
-2. `public-checkout` маршрутизирует по `link.provider`. bePaid ветка не тронута.
-3. `_shared/create-payment-checkout.ts` имеет Stripe branch; 0 вызовов bePaid helpers внутри Stripe ветки.
-4. `CreatePublicLinkDialog` поддерживает выбор провайдера на русском; таблица «Ссылки» показывает провайдера.
-5. Runtime gates G4.1-A..H = PASS (или G4.1-F = PARTIAL + backlog с указанной причиной).
-6. bePaid non-regression: создание + оплата существующей bePaid ссылки → без изменений.
-7. Phase 3.5-B Runtime, webhooks, grant-access, telegram, miграции — не тронуты.
-8. Proof артефакт создан и зафиксирован.
-
-## Открытые вопросы (нужны ответы до Execute)
-
-1. **A4 linkage:** разрешить ли в рамках 4.1 точечную правку `stripe-create-checkout` / `stripe-create-subscription-checkout` для проброса `payment_link_id` в `Session.metadata`? (Webhook всё равно не трогаем.) Без этого Stripe public link и order будут связываться только через `provider_events` join, без `orders_v2.payment_link_id`.
-2. **Installment+Stripe:** подтверждаешь, что блокируем 400 + UI tooltip и выносим в отдельный будущий patch?
-3. **UI термины:** ОК использовать ярлыки «bePaid» / «Stripe» как имена провайдеров (бренды, не переводим), но «Тестовый режим» / «Боевой режим», «Счёт», «Провайдер» — на русском?
+- bePaid public link (существующая) работает без изменений (proof curl).
+- bePaid public link (новая, без provider в body) создаётся и оплачивается.
+- Stripe one-time public link создаётся (writer) и возвращает checkout.stripe.com URL.
+- Stripe subscription public link создаётся, возвращает Stripe subscription URL, pending sub+prov_sub видны в БД.
+- `admin-create-public-link` пишет `provider/account_code/currency` в `payment_links`.
+- UI селектор провайдера присутствует, installment+Stripe заблокирован.
+- `stripe-create-subscription-checkout` (admin) — поведение не изменилось (вызывает тот же shared helper).
+- Proof файл создан, plan.md обновлён.
