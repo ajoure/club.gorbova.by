@@ -82,6 +82,9 @@ Deno.serve(async (req) => {
         link_user_id: link.user_id,
         // Stage L: installment summary (read-only для UI, срок зафиксирован админом).
         installment,
+        // Phase 4.1 — provider indicator (UI badge / saved-card gating).
+        provider: (link as any).provider ?? 'bepaid',
+        account_code: (link as any).account_code ?? null,
       });
     }
 
