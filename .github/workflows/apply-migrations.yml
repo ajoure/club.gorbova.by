@@ -1,99 +1,30 @@
 name: Supabase Migration & Deploy
 
 # ============================================================
-# DISABLED FOR LOVABLE-MANAGED SUPABASE (Infrastructure Cleanup, Variant C)
-# Canonical migrate/deploy path = Lovable Cloud (agent).
-# This workflow stays manual-only and requires explicit confirmation.
+# DISABLED (no-op stub) — Lovable-only Supabase Deploy Model
+# ------------------------------------------------------------
+# This project is on Lovable-managed Supabase (project_ref =
+# hdjgkjceownmmnrqqtuz). The operator has no SUPABASE_ACCESS_TOKEN
+# or SUPABASE_DB_PASSWORD for this project, and never will:
+# Supabase is owned by Lovable Cloud, not by the operator.
+#
+# Canonical deploy path for edge functions / migrations:
+#   Lovable Cloud agent-deploy (internal).
+#
+# This workflow stays in the repo only for history. Running it
+# always fails immediately and does NOT touch any Supabase secret.
+# Do not re-enable. See .lovable/architecture/canonical_infrastructure_v1.md
 # ============================================================
 
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: 'Action to perform'
-        required: true
-        default: 'migrate'
-        type: choice
-        options:
-          - migrate
-          - deploy-functions
-          - full-deploy
-      i_understand_risks:
-        description: 'Type "yes" to confirm GitHub deploy is NOT canonical for Lovable-managed Supabase.'
-        required: true
-        default: 'no'
-        type: string
-
-env:
-  SUPABASE_PROJECT_REF: hdjgkjceownmmnrqqtuz
-
 
 jobs:
-  migrate:
+  disabled:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.action == 'migrate' || github.event.inputs.action == 'full-deploy' }}
-    
     steps:
-      - name: Confirmation gate (Variant C — non-canonical path)
+      - name: Disabled
         run: |
-          if [ "${{ github.event.inputs.i_understand_risks }}" != "yes" ]; then
-            echo "::error::GitHub Actions migrate/deploy is DISABLED as canonical path. Set input i_understand_risks=yes to override."
-            exit 1
-          fi
-          echo "::warning::Proceeding with non-canonical GitHub migrate/deploy by explicit operator confirmation."
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Apply Database Migrations
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
-          echo "Applying migrations to database..."
-          supabase db push
-          echo "Migrations applied successfully!"
-
-  deploy-functions:
-    runs-on: ubuntu-latest
-    needs: [migrate]
-    # Allow to run even if migrate was skipped
-    if: ${{ always() && (github.event.inputs.action == 'deploy-functions' || github.event.inputs.action == 'full-deploy') }}
-    
-    steps:
-      - name: Confirmation gate (Variant C — non-canonical path)
-        run: |
-          if [ "${{ github.event.inputs.i_understand_risks }}" != "yes" ]; then
-            echo "::error::GitHub Actions deploy-functions is DISABLED as canonical path. Set input i_understand_risks=yes to override."
-            exit 1
-          fi
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Setup Deno
-        uses: denoland/setup-deno@v1
-        with:
-          deno-version: v1.40.x
-
-      - name: Deploy Edge Functions
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: |
-          supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
-          echo "Deploying all edge functions..."
-          supabase functions deploy --all
-          echo "Edge functions deployed successfully!"
+          echo "::error::GitHub deploy disabled for Lovable-managed Supabase."
+          echo "::error::Use Lovable Cloud deploy only."
+          exit 1

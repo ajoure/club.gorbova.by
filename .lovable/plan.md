@@ -1,262 +1,205 @@
-да, согласен, с учетом правок:
 
-1. **Не делать V5 как acceptance**
+# План: Lovable-only Supabase Deploy Model (v2 — финальный)
 
-V5 сейчас опасный:
+## Контекст и позиция
 
-```text
-тестовый redeploy stripe-webhook через supabase--deploy_edge_functions
+Supabase-проект `hdjgkjceownmmnrqqtuz` управляется Lovable Cloud. У оператора нет и не будет `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` для этого проекта. GitHub Actions **не может и не должен** быть рабочим каналом деплоя Supabase. Все edge functions, миграции, `verify_jwt=false` обязаны корректно применяться через Lovable Cloud agent-deploy.
+
+GitHub остаётся **только** зеркалом кода + read-only проверки.
+
+Phase 3.4 Runtime G33–G40 остаётся **FROZEN**.
+
+## Главная цель плана
+
+GitHub Actions UI больше не должен содержать автоматически падающих deploy workflow, создающих ложное ощущение, что проект сломан. После плана статус инфраструктуры:
+
+```
+Infrastructure model     = CLEAN
+GitHub deploy            = DISABLED (no-op stub)
+Lovable webhook deploy   = BLOCKED-BY-PLATFORM
+Phase 3.4 Runtime        = FROZEN
 ```
 
-Именно agent-deploy ломает `verify_jwt=false`.
+---
 
-Заменить на:
+## D — Diagnose
 
-```text
-V5. Lovable agent-deploy для webhook-функций НЕ использовать до отдельного исправления deploy pipeline.
+**D1.** Перечислить все workflow в `.github/workflows/*.yml` и классифицировать:
+- группа A (write/deploy в Supabase): `apply-migrations.yml`, `deploy-functions.yml`, возможно `functions-full-audit.yml` → **no-op stub**
+- группа B (read-only): `verify-webhook-public.yml`, `verify-webhook-runtime.yml`, `verify-payment-methods.yml`, `verify-no-legacy-ref.yml` → **оставить**
+
+**D2.** `rg -n "apply-migrations|deploy-functions|SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD" .lovable/ docs/ .github/` — снять список упоминаний «recovery через apply-migrations» и старого канонического пути.
+
+**D3.** Зафиксировать, что `verify-webhook-runtime.yml` сейчас содержит recovery-инструкцию «re-run Supabase Migration & Deploy» — это утверждение больше неверно.
+
+**D4.** `supabase--project_info` + `supabase--cloud_status` — подтвердить, что ref `hdjgkjceownmmnrqqtuz` активен.
+
+**D5.** **НЕ воспроизводить регрессию verify_jwt.** Использовать существующий proof `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md` как доказательство. Никаких контролируемых redeploy webhook-функций.
+
+---
+
+## P — Plan действий
+
+### P1. Отключить GitHub Actions из deploy-пути Supabase
+
+**Решение оператора: Вариант 1 — no-op stub.** Файлы остаются для истории, но при запуске показывают явное сообщение и завершаются `exit 1`.
+
+Применить к `apply-migrations.yml` и `deploy-functions.yml`:
+- убрать `push`-триггеры (если ещё остались)
+- убрать `i_understand_risks` gate (он больше не имеет смысла — нет валидного пути)
+- убрать любые упоминания `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD`
+- оставить один job с одним шагом:
+  ```
+  echo "::error::GitHub deploy disabled for Lovable-managed Supabase."
+  echo "::error::Use Lovable Cloud deploy only."
+  exit 1
+  ```
+
+Проверить `functions-full-audit.yml` — если он требует Supabase secrets, привести к тому же стандарту; если он read-only — оставить.
+
+### P2. Привести read-only workflow в соответствие новой модели
+
+`verify-webhook-runtime.yml`: заменить recovery-инструкцию в логах. Новый текст:
+> Recovery: Lovable agent-deploy is currently BLOCKED-BY-PLATFORM for webhook functions (`verify_jwt=false` regression). Do NOT trigger agent-redeploy of webhook functions. Track Lovable platform issue; no operator action required.
+
+`verify-webhook-public.yml`, `verify-no-legacy-ref.yml`, `verify-payment-methods.yml`: подтвердить, что они не требуют Supabase secrets.
+
+### P3. Зафиксировать модель в документации
+
+Обновить `.lovable/architecture/canonical_infrastructure_v1.md`:
+- раздел «2.1 Edge functions» — единственный канал = Lovable Cloud agent-deploy; webhook-функции = **BLOCKED-BY-PLATFORM** (agent-deploy ломает `verify_jwt=false`); никаких redeploy webhook до ответа Lovable
+- раздел «2.2 Database migrations» — единственный канал = `supabase--migration`
+- раздел «3. Active workflows» — `apply-migrations.yml` и `deploy-functions.yml` помечены **DISABLED (no-op stub)**
+- новый раздел «7. GitHub secrets policy»:
+  - `SUPABASE_ACCESS_TOKEN` и `SUPABASE_DB_PASSWORD` в GitHub **не используются** ни одним workflow
+  - старые значения (от ранее существовавшего ref) считаются мёртвыми; ротация — на усмотрение оператора, не блокирует ничего
+- новый раздел «8. Webhook deploy moratorium»:
+  - до ответа Lovable platform на issue (см. P4) **запрещён** agent-redeploy любых webhook-функций (`stripe-webhook`, `bepaid-webhook`, `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`, `instagram-webhook`, `getcourse-webhook`, `amocrm-webhook`)
+  - статус `stripe-webhook`: **BLOCKED-BY-PLATFORM** (в текущем platform-401 после прошлой регрессии); не лечить
+  - статус остальных 7 webhook: PASS (snapshot из `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md` секция A); не трогать
+
+### P4. Lovable platform issue — готовый текст
+
+Создать `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` с:
+- статус: **ESCALATED, awaiting Lovable response**
+- готовый текст для копипаста оператором в Lovable support:
+
+```
+Title: agent-deploy ignores per-function `verify_jwt = false` in supabase/config.toml
+
+Project ref: hdjgkjceownmmnrqqtuz
+Lovable project ID: 796a93b9-74cc-403c-8ec5-cafdb2a5beaa
+Affected functions: all *-webhook (confirmed on stripe-webhook)
+
+Expected: after agent-deploy, POST without signature to
+  https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook
+returns application-level 400 with body `signature_verification_failed`.
+
+Observed: returns platform-level 401 with body
+  {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
+This is the Supabase Functions Gateway JWT wall, injected because the
+deploy did not apply per-function `verify_jwt = false` from
+supabase/config.toml.
+
+Reproduction (deterministic, 3 probes at t=0s/30s/2m all FAIL with the
+same platform-401):
+1. config.toml has `verify_jwt = false` for `stripe-webhook` (line 282)
+2. Trigger agent-deploy of `stripe-webhook` only
+3. POST without signature → platform-401
+
+Proof attached: .lovable/proofs/stripe_phase_3_4_d2_bis_webhook_runtime_v1.md
+Discovery:    .lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md
+
+Requested workaround (any one):
+(a) flag at agent-deploy time: "respect config.toml verify_jwt"
+(b) per-function verify_jwt setting in Lovable Cloud UI
+(c) gateway-level allowlist for webhook functions
+
+Impact: Stripe webhook (and any redeployed webhook) is unreachable by
+external providers until restored. We have no canonical recovery path
+without this fix — CLI-based recovery via `supabase functions deploy
+--all` is not available to us because the project is Lovable-managed
+and we have no SUPABASE_ACCESS_TOKEN.
+
+Phase 3.4 Runtime is FROZEN until Lovable responds.
 ```
 
-Если нужно проверить edge deploy — только на non-webhook функции или через безопасный канал, но не через `stripe-webhook`.
+- инструкция оператору: скопировать блок выше → отправить через Lovable support; исполнитель прямого канала не имеет.
 
-2. **P2 выбрать по умолчанию вариант C**
+### P5. Webhook deploy moratorium (вместо прежнего «попытка восстановления»)
 
-С учётом того, что GitHub Actions не имеет прав к Lovable Supabase, оптимальный default:
+**Не выполнять agent-redeploy webhook-функций.** Прежний P5 (попытка agent-redeploy `stripe-webhook` + smoke) **удалён из Execute** — он сам по себе является источником регрессии (доказано в `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md`).
 
-```text
-C — оставить только read-only guard/smoke workflows,
-а write/deploy workflows отключить или пометить как not available for Lovable-managed Supabase.
-```
+Действия:
+- зафиксировать `stripe-webhook` в текущем состоянии (platform-401) как **BLOCKED-BY-PLATFORM**
+- не вызывать `supabase--deploy_edge_functions` ни для одной webhook-функции до ответа Lovable
+- runtime-guard продолжает мониторить и алертить, но FAIL по `stripe-webhook` интерпретируется как known-blocked, а не как новая регрессия
+- никаких дополнительных действий от оператора с Supabase secrets не требовать
 
-Вариант A возможен только после подтверждения Lovable/Supabase credentials.
+---
 
-3. **GitHub Actions не считать каноническим deploy path**
+## DR — Dry run
 
-Канонический путь сейчас:
+- **DR1.** `rg -n "SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD" .github/` — список всех мест, где workflow упоминают secrets
+- **DR2.** `rg -n "apply-migrations|deploy-functions" .lovable/ docs/` — документы со ссылкой на старый recovery
+- **DR3.** `supabase--project_info` + `supabase--cloud_status` — подтвердить ref и lifecycle
+- **DR4.** **БЕЗ deploy** — только просмотр текущего состояния через существующий runtime guard (можно прочитать последний run `verify-webhook-runtime.yml`)
 
-```text
-Lovable Cloud
-```
+Результаты — в `.lovable/discovery/lovable_only_deploy_dry_run_v1.md`.
 
-Но с ограничением:
+---
 
-```text
-webhook-функции нельзя redeploy через agent-deploy без post-deploy smoke.
-```
+## E — Execute (после approve)
 
-GitHub Actions — не канонический путь, пока нет валидных прав.
+- **E1.** Применить P1 к `apply-migrations.yml`, `deploy-functions.yml` (и `functions-full-audit.yml` при необходимости) — no-op stub
+- **E2.** Обновить тексты в `verify-webhook-runtime.yml` (recovery hint → moratorium)
+- **E3.** Обновить `.lovable/architecture/canonical_infrastructure_v1.md` (разделы 2.1, 2.2, 3, новый 7, новый 8)
+- **E4.** Создать `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` с готовым текстом issue
+- **E5.** ~~Восстановление stripe-webhook~~ **УДАЛЕНО.** Заменено на: «Не выполнять agent-redeploy webhook-функций до ответа Lovable platform / появления безопасного deploy-механизма.»
+- **E6.** Записать proof: `.lovable/proofs/lovable_only_deploy_model_v1.md` со статусом инфраструктуры (4 строки из «Главной цели»)
 
-4. **Добавить пункт про эскалацию Lovable**
+Изменения — только в `.github/workflows/`, `.lovable/`. Никаких изменений в коде edge functions, миграций, RLS, бизнес-логике. **Никаких agent-deploy.**
 
-Нужен отдельный обязательный блок:
+---
 
-```text
-Открыть/зафиксировать Lovable platform issue:
-agent deploy ignores verify_jwt=false for webhook functions in managed Supabase.
-```
+## V — Verify (Definition of Done)
 
-DoD:
+- [ ] V1. В `.github/workflows/` ни один файл не использует `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` (`rg -n` пуст)
+- [ ] V2. Попытка manual dispatch `apply-migrations.yml` / `deploy-functions.yml` сразу даёт `::error::GitHub deploy disabled for Lovable-managed Supabase. Use Lovable Cloud deploy only.` и завершается failure без обращения к секретам
+- [ ] V3. **Actions UI больше не содержит автоматически падающих deploy workflow** (нет `push`-триггеров, нет `schedule`, нет `workflow_run` → нет фоновых красных запусков)
+- [ ] V4. `verify-no-legacy-ref.yml` зелёный
+- [ ] V5. `verify-webhook-public.yml` зелёный (git-state OK, `verify_jwt=false` сохранён)
+- [ ] V6. `verify-webhook-runtime.yml` — 7/8 webhook PASS; `stripe-webhook` в known-blocked-platform состоянии, прописанном в документации (не считается регрессией)
+- [ ] V7. `canonical_infrastructure_v1.md` обновлён: GitHub deploy = DISABLED, Lovable agent-deploy для webhook = BLOCKED-BY-PLATFORM, секреты не используются, moratorium зафиксирован
+- [ ] V8. `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` создан с готовым текстом для копипаста
+- [ ] V9. Proof `lovable_only_deploy_model_v1.md` зафиксирован с финальным статусом:
+  ```
+  Infrastructure model     = CLEAN
+  GitHub deploy            = DISABLED
+  Lovable webhook deploy   = BLOCKED-BY-PLATFORM
+  Phase 3.4 Runtime        = FROZEN
+  ```
+- [ ] V10. Phase 3.4 G33–G40 явно помечен **FROZEN** (не FULL PASS, не unblocked)
 
-- issue/сообщение в Lovable support;
-- приложены project_ref, function name, timestamps, proof 401;
-- ожидаемое поведение: deploy обязан применять config.toml.
-
-5. **Не добавлять memory URI вручную как обязательный артефакт**
-
-`mem://...` можно заменить на обычный файл:
-
-```text
-.lovable/architecture/canonical_infrastructure_v1.md
-```
-
-Именно его считать source of truth.
-
-6. **Stripe endpoints cleanup оставить как ручной контроль, но не блокировать code cleanup**
-
-V7 разделить:
-
-- V7a: список endpoint’ов получен;
-- V7b: лишние endpoint’ы удалены пользователем.
-
-Если пользователь пока не прислал Stripe Dashboard, не блокировать cleanup репозитория, но Phase 3.4 runtime не запускать до подтверждения webhook URL.
-
-7. **Добавить явное решение по старому Supabase**
-
-Если `ypwsuumurrtkxatoyqhk` — личный старый Supabase:
-
-```text
-не деплоить туда;
-не использовать в workflows;
-не использовать в env;
-не удалять проект физически без отдельного подтверждения пользователя.
-```
-
-После этих правок план можно принимать.
-
-&nbsp;
-
-План: Infrastructure Cleanup — удалить конфликт двух Supabase контуров
-
-Stripe Phase 3.4 Runtime G33–G40 — заморожен до завершения этого плана.
-
-## Цель
-
-Оставить единственным рабочим Supabase project_ref = `hdjgkjceownmmnrqqtuz` (Lovable Cloud). Полностью устранить любые следы старого ref `ypwsuumurrtkxatoyqhk` и зафиксировать единственный канонический путь деплоя edge functions.
-
-## Контекст (известное на сейчас)
-
-- Lovable Cloud project_ref: `hdjgkjceownmmnrqqtuz` — управляется Lovable, у пользователя нет прямого доступа к Supabase Dashboard.
-- В `.github/workflows/apply-migrations.yml` ref уже исправлен (предыдущий патч).
-- Grep по репозиторию: `ypwsuumurrtkxatoyqhk` не встречается (подтверждено в прошлой итерации).
-- Канонический путь деплоя в Lovable Cloud — внутренний agent-deploy (Lovable → Supabase). GitHub Actions → Supabase CLI — параллельный путь, который требует валидных `SUPABASE_ACCESS_TOKEN` + `SUPABASE_DB_PASSWORD` для целевого ref.
-
-## Diagnose (этап 1, read-only)
-
-D
-
-1. Полный аудит репозитория на старый ref.
-  - `rg -n 'ypwsuumurrtkxatoyqhk' -uu` по всему дереву (включая dot-файлы, скрипты, миграции, `.lovable/`, `docs/`, `supabase/`, `scripts/`).
-  - Аудит на «битые» project_ref паттерны: `rg -n 'project[-_ ]?ref' .github supabase scripts docs`.
-
-D
-
-2. Аудит всех workflow-файлов `.github/workflows/*.yml`:
-  - какой `PROJECT_REF` / `SUPABASE_PROJECT_REF` / URL используется;
-  - какие secrets читаются (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`);
-  - какие из них реально работали последние 30 дней (по run history в GitHub — потребует от пользователя).
-
-D
-
-3. Аудит frontend env:
-  - `.env` (autogen) — проверить `VITE_SUPABASE_URL`, `VITE_SUPABASE_PROJECT_ID`, `VITE_SUPABASE_PUBLISHABLE_KEY`.
-  - `src/integrations/supabase/client.ts` — read-only проверка, что использует только `import.meta.env.VITE_SUPABASE_*`.
-  - `supabase/config.toml` — `project_id`.
-
-D
-
-4. Аудит edge functions:
-  - `rg -n 'functions\.supabase\.co|supabase\.co' supabase/functions` — найти любые хардкод-URL.
-  - Особое внимание: `stripe-webhook`, `bepaid-webhook`, `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`, любые callback-URL.
-
-D
-
-5. Аудит Stripe webhook endpoints (требует ручной проверки в Stripe Dashboard пользователем):
-  - Список всех зарегистрированных endpoint URL.
-  - Ожидаемо допустимый: `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook`.
-  - Всё остальное — кандидат на удаление.
-
-D
-
-6. Lovable integrations / connectors:
-  - Cloud — единственный backend; подтвердить через `supabase--project_info` / `cloud_status`.
-  - Список connectors (если есть) — на предмет «второго» Supabase.
-
-## Plan (этап 2)
-
-P
-
-1. Зафиксировать канонический путь деплоя:
-  - Основной: Lovable → Supabase (agent-deploy через инструмент `supabase--deploy_edge_functions`). Автоматический, не требует GitHub.
-  - Вторичный (опциональный): GitHub Actions `apply-migrations.yml` — только если у пользователя есть `SUPABASE_ACCESS_TOKEN` и `SUPABASE_DB_PASSWORD` для Lovable-managed Supabase. Если нет — workflow отключается.
-
-P
-
-2. Решение по GitHub Actions deploy (требует решения пользователя):
-  - Вариант A — оставить как backup: проверить, что secrets валидны для `hdjgkjceownmmnrqqtuz`. Если валидны — оставить, добавить guard «hard-fail если project_ref ≠ hdjgkjceownmmnrqqtuz».
-  - Вариант B — отключить полностью: переименовать `apply-migrations.yml` → `apply-migrations.yml.disabled` (или удалить `workflow_dispatch`), чтобы он не появлялся в Actions UI и не давал ложных красных запусков.
-  - Вариант C — оставить только `verify-webhook-runtime.yml` (read-only smoke) и `verify-webhook-public.yml` (config guard). Они безопасны и не пишут.
-
-P
-
-3. Cleanup-патч (исполняется после выбора варианта):
-  - Удалить любые найденные на этапе D следы `ypwsuumurrtkxatoyqhk` (ожидаемо — 0).
-  - Добавить CI-guard `verify-no-legacy-ref.yml`: `rg -q 'ypwsuumurrtkxatoyqhk' && exit 1`.
-  - Зафиксировать в `mem://architecture/infrastructure/canonical-supabase-ref` правило: «единственный валидный project_ref = `hdjgkjceownmmnrqqtuz`; legacy `ypwsuumurrtkxatoyqhk` запрещён».
-
-P
-
-4. Stripe endpoints cleanup (пользователь):
-  - Удалить в Stripe Dashboard все webhook endpoints кроме `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook`.
-  - Прислать список оставшихся для фиксации в proof.
-
-## Dry run (этап 3)
-
-DR1. Прогнать grep'ы из D1, D2, D4 и приложить полный вывод в отчёт (ожидаемо: пусто по legacy ref).
-DR2. Прогнать `supabase--project_info` и `cloud_status` для подтверждения единственного backend.
-DR3. Сформировать proof-файл `.lovable/proofs/infrastructure_cleanup_dry_run.md` с таблицей: файл → найденный ref → действие.
-
-## Execute (этап 4)
-
-E
-
-1. Применить выбранный вариант P2 (A/B/C) одним коммитом.
-
-E
-
-2. Если есть реальные находки — отдельные коммиты per-file.
-
-E
-
-3. Добавить `.github/workflows/verify-no-legacy-ref.yml` (P3 guard).
-
-E
-
-4. Записать memory `mem://architecture/infrastructure/canonical-supabase-ref`.
-
-## Verify (этап 5, DoD)
-
-V
-
-1. `rg 'ypwsuumurrtkxatoyqhk' -uu` → 0 совпадений.
-
-V
-
-2. Все workflow'ы в `.github/workflows/*.yml` либо ссылаются на `hdjgkjceownmmnrqqtuz`, либо отключены.
-
-V
-
-3. `supabase/config.toml` → `project_id = "hdjgkjceownmmnrqqtuz"`.
-
-V
-
-4. `.env` → `VITE_SUPABASE_URL` указывает на `hdjgkjceownmmnrqqtuz.supabase.co`.
-
-V
-
-5. Edge functions деплоятся через Lovable agent-deploy без ошибок (тестовый redeploy `stripe-webhook` через `supabase--deploy_edge_functions`).
-
-V
-
-6. `verify-webhook-runtime.yml` проходит с PASS: POST на `stripe-webhook` без подписи → HTTP 400 `signature_verification_failed`, не 401.
-
-V
-
-7. Stripe Dashboard содержит только канонический webhook URL (подтверждение пользователя — скриншот/список).
-
-V
-
-8. Memory обновлена; proof-файл закоммичен.
-
-## Что требуется от пользователя
-
-U
-
-1. Решение по P2: вариант A, B или C.
-
-U
-
-2. Список текущих webhook endpoints в Stripe Dashboard (скриншот или текст) для V7.
-
-U
-
-3. Подтверждение, есть ли у GitHub workflow валидные `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` для Lovable Cloud — без них вариант A невозможен.
+---
 
 ## Что НЕ делается в этом плане
 
-- Никаких изменений в edge functions stripe-* / bepaid-* / telegram-*.
-- Никаких миграций БД.
-- Никакого запуска Phase 3.4 Runtime G33–G40 до полного PASS этого плана.
-- Никаких изменений в `src/integrations/supabase/client.ts` и `src/integrations/supabase/types.ts`.
+- **Не вызываем `supabase--deploy_edge_functions` ни для одной webhook-функции** (это и есть источник регрессии)
+- Не пытаемся «восстановить» `stripe-webhook` — он остаётся BLOCKED-BY-PLATFORM до ответа Lovable
+- Не трогаем код edge functions
+- Не запускаем миграции
+- Не меняем RLS, access, entitlements, telegram, live, dunning
+- Не запрашиваем у оператора Supabase secrets и не требуем от него запускать GitHub Actions
+- Не удаляем GitHub secrets — они просто становятся неиспользуемыми
+- Не удаляем физически workflow-файлы (Вариант 1: no-op stub)
+- Не удаляем старый Supabase project `ypwsuumurrtkxatoyqhk` (out of scope)
+- Не пытаемся ставить Phase 3.4 в FULL PASS
 
-## DoD
+---
 
-Все пункты V1–V8 — PASS. Отчёт о выполнении с приложенными grep-выводами, ссылками на коммиты и подтверждением Stripe endpoints.
+## Ответы оператора (зафиксированы)
+
+1. **P1 вариант:** Вариант 1 — no-op stub с сообщением «GitHub deploy disabled for Lovable-managed Supabase. Use Lovable Cloud deploy only.»
+2. **P5 политика:** `stripe-webhook` остаётся BLOCKED-BY-PLATFORM. Не лечить через agent-redeploy. Никаких действий от оператора с Supabase secrets.
+3. **Lovable platform issue:** исполнитель готовит полный текст + proof для копипаста; оператор отправляет через Lovable support.
