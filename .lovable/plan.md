@@ -1,205 +1,201 @@
+# Да, согласен.
 
-# План: Lovable-only Supabase Deploy Model (v2 — финальный)
+Этот план как раз возвращает вас к главному вопросу:
+
+Работает ли Stripe для клиента от начала до конца?
+
+После нескольких недель работы вы накопили много инфраструктурных гипотез, но пока не получили самый важный ответ:
+
+- создаётся ли Checkout;
+- проходит ли оплата;
+- приходит ли webhook;
+- создаётся ли подписка;
+- выдаётся ли доступ;
+- открывается ли Portal.
+
+Из того, что я вижу, сейчас нельзя делать новые планы по GitHub, Lovable Cloud, deploy-модели или support, пока не будет завершён этот аудит.
+
+Единственное дополнение к плану:
+
+### **Добавить D3.1 — последнюю успешную реальную Stripe-транзакцию**
+
+Перед S1–S7 подрядчик должен отдельно ответить:
+
+- какая последняя Stripe-оплата успешно прошла через систему;
+- дата/время;
+- `checkout.session.completed`;
+- `invoice.paid`;
+- создан ли `orders_v2`;
+- создан ли `payments_v2`;
+- выдан ли доступ.
+
+Если такая транзакция была уже после последних изменений Stripe Phase 3.2–3.3, то это очень сильное доказательство того, что система в целом жива и проблема может быть локальной.
+
+### **Добавить правило для итогового отчёта**
+
+В конце отчёта обязателен блок:
+
+```text
+Главный вывод
+
+Может ли новый клиент сегодня:
+
+1. открыть Stripe Checkout
+2. оплатить картой
+3. получить подписку
+4. получить доступ
+5. открыть Customer Portal
+
+Ответ: ДА / НЕТ
+
+Если НЕТ:
+точка отказа = Sx
+минимальный фикс = ...
+```
+
+Без этого блок считается незавершённым.
+
+Во всём остальном план правильный. Сейчас не нужно ничего деплоить, ничего переписывать и ничего отправлять в поддержку. Сначала нужно получить факт:
+
+**Stripe реально работает или не работает для клиента прямо сейчас.** Это и должен показать Phase 3.4-RT.
+
+&nbsp;
+
+План: Stripe End-to-End Runtime Audit (Phase 3.4-RT)
 
 ## Контекст и позиция
 
-Supabase-проект `hdjgkjceownmmnrqqtuz` управляется Lovable Cloud. У оператора нет и не будет `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` для этого проекта. GitHub Actions **не может и не должен** быть рабочим каналом деплоя Supabase. Все edge functions, миграции, `verify_jwt=false` обязаны корректно применяться через Lovable Cloud agent-deploy.
+Инфраструктурная ветка (GitHub workflows, Lovable deploy model, verify_jwt regression) **замораживается** на текущем состоянии:
 
-GitHub остаётся **только** зеркалом кода + read-only проверки.
+- `Infrastructure model = CLEAN`
+- `GitHub deploy = DISABLED`
+- `Lovable webhook deploy = BLOCKED-BY-PLATFORM` (issue составлен, ждёт оператора)
+- Stripe Phase 3.4 Runtime = **снимается с FROZEN и переводится в RT-AUDIT**
 
-Phase 3.4 Runtime G33–G40 остаётся **FROZEN**.
+Главный вопрос, на который план обязан ответить ровно одним словом PASS/FAIL по каждому шагу:
 
-## Главная цель плана
+> **Может ли клиент сейчас открыть Stripe checkout, оплатить тестовой картой, получить подписку, получить доступ и открыть Customer Portal?**
 
-GitHub Actions UI больше не должен содержать автоматически падающих deploy workflow, создающих ложное ощущение, что проект сломан. После плана статус инфраструктуры:
+Никаких новых deploy, никаких redeploy webhook, никакой работы по GitHub/CI до завершения этого аудита.
 
-```
-Infrastructure model     = CLEAN
-GitHub deploy            = DISABLED (no-op stub)
-Lovable webhook deploy   = BLOCKED-BY-PLATFORM
-Phase 3.4 Runtime        = FROZEN
-```
+## Запрещено в рамках этого плана
 
----
+- `supabase--deploy_edge_functions` для любых `*-webhook` (мораторий из §8 canonical_infrastructure_v1).
+- Любые правки `.github/workflows/*`.
+- Любые правки кода `stripe-webhook`, `bepaid-webhook`, `grant-access-for-order`, `subscriptions_v2`-резолверов.
+- Любые миграции, RLS, access_rules, entitlements.
+- Любые попытки «починить» `verify_jwt=false` руками агента.
+- Любые шаги Phase 3.4 G33–G40 (replay, dunning runtime) до зелёного RT-аудита.
 
-## D — Diagnose
+Разрешены только: чтение БД, чтение логов edge functions, `curl` на public endpoints, чтение исходников, документация результата.
 
-**D1.** Перечислить все workflow в `.github/workflows/*.yml` и классифицировать:
-- группа A (write/deploy в Supabase): `apply-migrations.yml`, `deploy-functions.yml`, возможно `functions-full-audit.yml` → **no-op stub**
-- группа B (read-only): `verify-webhook-public.yml`, `verify-webhook-runtime.yml`, `verify-payment-methods.yml`, `verify-no-legacy-ref.yml` → **оставить**
+## D — Diagnose (read-only inventory)
 
-**D2.** `rg -n "apply-migrations|deploy-functions|SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD" .lovable/ docs/ .github/` — снять список упоминаний «recovery через apply-migrations» и старого канонического пути.
+**D1. Карта Stripe-сценария в коде.** По репо собрать фактический список endpoints/функций, через которые проходит клиент Stripe:
 
-**D3.** Зафиксировать, что `verify-webhook-runtime.yml` сейчас содержит recovery-инструкцию «re-run Supabase Migration & Deploy» — это утверждение больше неверно.
+- создание checkout (frontend entry + edge function);
+- callback/return URL;
+- webhook endpoint(s) — public URL и имена функций;
+- материализация `orders_v2` + `subscriptions_v2`;
+- вызов `grant-access-for-order`;
+- открытие Customer Portal (`stripe-create-customer-portal-session`).
 
-**D4.** `supabase--project_info` + `supabase--cloud_status` — подтвердить, что ref `hdjgkjceownmmnrqqtuz` активен.
+Источник правды: `supabase/functions/`, `supabase/functions.registry.txt`, `src/` (Stripe вызовы), `.lovable/discovery/stripe_*`.
 
-**D5.** **НЕ воспроизводить регрессию verify_jwt.** Использовать существующий proof `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md` как доказательство. Никаких контролируемых redeploy webhook-функций.
+**D2. Текущее состояние webhook (runtime snapshot, без deploy).** Один проход `curl OPTIONS + POST(no sig)` по production URL каждого Stripe-relevant webhook. Фиксируем body. Маркер `UNAUTHORIZED_NO_AUTH_HEADER` ⇒ platform-401, иначе ⇒ долетает до бизнес-логики.
 
----
+**D3. Состояние SOT-таблиц по последним Stripe-операциям.** `read_query` по:
 
-## P — Plan действий
+- `provider_events` где provider='stripe' за последние 14 дней (счётчик по типам, последние 20 строк);
+- `orders_v2` с meta->>'provider'='stripe' за тот же период;
+- `subscriptions_v2` с meta->>'provider'='stripe' (status, period_end, last_event_at);
+- `entitlements` для тех же `user_id` (есть ли реально выданный доступ);
+- `audit_logs` с action ILIKE 'stripe%' или 'grant_access%' для тех же order_id.
 
-### P1. Отключить GitHub Actions из deploy-пути Supabase
+Нужен ответ: «последняя реально дошедшая до БД Stripe-оплата — когда, и был ли по ней выдан доступ».
 
-**Решение оператора: Вариант 1 — no-op stub.** Файлы остаются для истории, но при запуске показывают явное сообщение и завершаются `exit 1`.
+**D4. Логи edge functions за период.** `supabase--edge_function_logs` для: `stripe-webhook`, `grant-access-for-order`, `stripe-create-customer-portal-session`, `subscriptions-reconcile` (Stripe-ветки), `public-checkout` (если используется для Stripe). Ищем последние успешные и последние ошибочные вызовы, маркер регрессии.
 
-Применить к `apply-migrations.yml` и `deploy-functions.yml`:
-- убрать `push`-триггеры (если ещё остались)
-- убрать `i_understand_risks` gate (он больше не имеет смысла — нет валидного пути)
-- убрать любые упоминания `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD`
-- оставить один job с одним шагом:
-  ```
-  echo "::error::GitHub deploy disabled for Lovable-managed Supabase."
-  echo "::error::Use Lovable Cloud deploy only."
-  exit 1
-  ```
+**D5. Конфигурация Stripe account_code(s).** Через `read_query` подтянуть активные acquiring-аккаунты, наличие `STRIPE_SECRET_KEY*` и `STRIPE_WEBHOOK_SECRET*` в secrets (через `fetch_secrets`, только имена). Это нужно, чтобы знать, какой ключ использовать в E2E-тесте.
 
-Проверить `functions-full-audit.yml` — если он требует Supabase secrets, привести к тому же стандарту; если он read-only — оставить.
+## P — Plan E2E прохода
 
-### P2. Привести read-only workflow в соответствие новой модели
-
-`verify-webhook-runtime.yml`: заменить recovery-инструкцию в логах. Новый текст:
-> Recovery: Lovable agent-deploy is currently BLOCKED-BY-PLATFORM for webhook functions (`verify_jwt=false` regression). Do NOT trigger agent-redeploy of webhook functions. Track Lovable platform issue; no operator action required.
-
-`verify-webhook-public.yml`, `verify-no-legacy-ref.yml`, `verify-payment-methods.yml`: подтвердить, что они не требуют Supabase secrets.
-
-### P3. Зафиксировать модель в документации
-
-Обновить `.lovable/architecture/canonical_infrastructure_v1.md`:
-- раздел «2.1 Edge functions» — единственный канал = Lovable Cloud agent-deploy; webhook-функции = **BLOCKED-BY-PLATFORM** (agent-deploy ломает `verify_jwt=false`); никаких redeploy webhook до ответа Lovable
-- раздел «2.2 Database migrations» — единственный канал = `supabase--migration`
-- раздел «3. Active workflows» — `apply-migrations.yml` и `deploy-functions.yml` помечены **DISABLED (no-op stub)**
-- новый раздел «7. GitHub secrets policy»:
-  - `SUPABASE_ACCESS_TOKEN` и `SUPABASE_DB_PASSWORD` в GitHub **не используются** ни одним workflow
-  - старые значения (от ранее существовавшего ref) считаются мёртвыми; ротация — на усмотрение оператора, не блокирует ничего
-- новый раздел «8. Webhook deploy moratorium»:
-  - до ответа Lovable platform на issue (см. P4) **запрещён** agent-redeploy любых webhook-функций (`stripe-webhook`, `bepaid-webhook`, `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`, `instagram-webhook`, `getcourse-webhook`, `amocrm-webhook`)
-  - статус `stripe-webhook`: **BLOCKED-BY-PLATFORM** (в текущем platform-401 после прошлой регрессии); не лечить
-  - статус остальных 7 webhook: PASS (snapshot из `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md` секция A); не трогать
-
-### P4. Lovable platform issue — готовый текст
-
-Создать `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` с:
-- статус: **ESCALATED, awaiting Lovable response**
-- готовый текст для копипаста оператором в Lovable support:
+E2E делится на 7 шагов; каждый имеет явный PASS/FAIL critereon и артефакт-доказательство.
 
 ```
-Title: agent-deploy ignores per-function `verify_jwt = false` in supabase/config.toml
-
-Project ref: hdjgkjceownmmnrqqtuz
-Lovable project ID: 796a93b9-74cc-403c-8ec5-cafdb2a5beaa
-Affected functions: all *-webhook (confirmed on stripe-webhook)
-
-Expected: after agent-deploy, POST without signature to
-  https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook
-returns application-level 400 with body `signature_verification_failed`.
-
-Observed: returns platform-level 401 with body
-  {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
-This is the Supabase Functions Gateway JWT wall, injected because the
-deploy did not apply per-function `verify_jwt = false` from
-supabase/config.toml.
-
-Reproduction (deterministic, 3 probes at t=0s/30s/2m all FAIL with the
-same platform-401):
-1. config.toml has `verify_jwt = false` for `stripe-webhook` (line 282)
-2. Trigger agent-deploy of `stripe-webhook` only
-3. POST without signature → platform-401
-
-Proof attached: .lovable/proofs/stripe_phase_3_4_d2_bis_webhook_runtime_v1.md
-Discovery:    .lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md
-
-Requested workaround (any one):
-(a) flag at agent-deploy time: "respect config.toml verify_jwt"
-(b) per-function verify_jwt setting in Lovable Cloud UI
-(c) gateway-level allowlist for webhook functions
-
-Impact: Stripe webhook (and any redeployed webhook) is unreachable by
-external providers until restored. We have no canonical recovery path
-without this fix — CLI-based recovery via `supabase functions deploy
---all` is not available to us because the project is Lovable-managed
-and we have no SUPABASE_ACCESS_TOKEN.
-
-Phase 3.4 Runtime is FROZEN until Lovable responds.
+Step  Действие                                   PASS-критерий                         Артефакт
+S1    Создание Stripe Checkout Session            HTTP 200, url *.stripe.com/c/pay/    JSON ответа edge function
+S2    Frontend получает checkout url              UI редиректит/открывает url          network log / ручной checkout
+S3    Оплата тестовой картой 4242…                Stripe Dashboard: payment succeeded  Stripe test-mode event id
+S4    Webhook доставлен                           provider_events row с event_id       SQL snapshot
+S5    Материализация order/subscription           orders_v2 row + subscriptions_v2 row SQL snapshot + meta.stripe
+S6    Выдача доступа                              entitlements строка с корректным    SQL snapshot + audit_logs
+                                                  access_end_at; audit grant_access
+S7    Customer Portal session                     stripe-create-customer-portal-       JSON ответа edge function
+                                                  session возвращает url
 ```
 
-- инструкция оператору: скопировать блок выше → отправить через Lovable support; исполнитель прямого канала не имеет.
+Метод проведения:
 
-### P5. Webhook deploy moratorium (вместо прежнего «попытка восстановления»)
+- **S1, S7** — `supabase--curl_edge_functions` на соответствующие функции с тестовым `account_code`, реальным `tariff_id`/`customer_id` из D3 (берём подписку, которая уже существует, чтобы не плодить мусор).
+- **S2** — browser viewing preview (только если S1 PASS и URL получен).
+- **S3** — выполняет оператор в Stripe Checkout (тест-карта), агент только мониторит.
+- **S4–S6** — `read_query` после S3 (polling с интервалом 5s × 6 попыток).
+- **S7** — `supabase--curl_edge_functions` на существующего клиента из D3.
 
-**Не выполнять agent-redeploy webhook-функций.** Прежний P5 (попытка agent-redeploy `stripe-webhook` + smoke) **удалён из Execute** — он сам по себе является источником регрессии (доказано в `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md`).
-
-Действия:
-- зафиксировать `stripe-webhook` в текущем состоянии (platform-401) как **BLOCKED-BY-PLATFORM**
-- не вызывать `supabase--deploy_edge_functions` ни для одной webhook-функции до ответа Lovable
-- runtime-guard продолжает мониторить и алертить, но FAIL по `stripe-webhook` интерпретируется как known-blocked, а не как новая регрессия
-- никаких дополнительных действий от оператора с Supabase secrets не требовать
-
----
+Если S4 FAIL и body webhook = `UNAUTHORIZED_NO_AUTH_HEADER` ⇒ зафиксировать как уже известный платформенный блокер, **не пытаться лечить redeploy'ем**. Если body иной (например 500/400 на бизнес-логике) — это новая находка, идёт в FAIL-точку.
 
 ## DR — Dry run
 
-- **DR1.** `rg -n "SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD" .github/` — список всех мест, где workflow упоминают secrets
-- **DR2.** `rg -n "apply-migrations|deploy-functions" .lovable/ docs/` — документы со ссылкой на старый recovery
-- **DR3.** `supabase--project_info` + `supabase--cloud_status` — подтвердить ref и lifecycle
-- **DR4.** **БЕЗ deploy** — только просмотр текущего состояния через существующий runtime guard (можно прочитать последний run `verify-webhook-runtime.yml`)
+Перед E2E:
 
-Результаты — в `.lovable/discovery/lovable_only_deploy_dry_run_v1.md`.
+1. Подтвердить через `supabase--cloud_status` что backend `ACTIVE_HEALTHY`.
+2. Подтвердить через D2, что НИ ОДИН webhook не находится в неожиданном platform-401 (кроме уже известного `stripe-webhook`, если он там).
+3. Подтвердить через D5, что для выбранного `account_code` есть рабочий `STRIPE_SECRET_KEY` (по факту вызова `stripe-create-customer-portal-session` на известного клиента — он либо вернёт url, либо явную Stripe-ошибку).
+4. Выбрать конкретный `tariff_id` и `customer_id` (или email для нового клиента) для E2E. Зафиксировать в proof.
 
----
+## E — Execute
 
-## E — Execute (после approve)
+E
 
-- **E1.** Применить P1 к `apply-migrations.yml`, `deploy-functions.yml` (и `functions-full-audit.yml` при необходимости) — no-op stub
-- **E2.** Обновить тексты в `verify-webhook-runtime.yml` (recovery hint → moratorium)
-- **E3.** Обновить `.lovable/architecture/canonical_infrastructure_v1.md` (разделы 2.1, 2.2, 3, новый 7, новый 8)
-- **E4.** Создать `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` с готовым текстом issue
-- **E5.** ~~Восстановление stripe-webhook~~ **УДАЛЕНО.** Заменено на: «Не выполнять agent-redeploy webhook-функций до ответа Lovable platform / появления безопасного deploy-механизма.»
-- **E6.** Записать proof: `.lovable/proofs/lovable_only_deploy_model_v1.md` со статусом инфраструктуры (4 строки из «Главной цели»)
+1. Выполнить D1–D5, сохранить в `.lovable/discovery/stripe_runtime_audit_v1.md`.
 
-Изменения — только в `.github/workflows/`, `.lovable/`. Никаких изменений в коде edge functions, миграций, RLS, бизнес-логике. **Никаких agent-deploy.**
+E
 
----
+2. Выполнить DR, сохранить там же блоком «Dry run».
+
+E
+
+3. Выполнить S1.
+
+E
+
+4. Выполнить S7 (независимо от S1, проверяет существующую подписку).
+
+E
+
+5. Запросить у оператора реальный прогон S2–S3 (оплата тестовой картой), агент мониторит S4–S6 в реальном времени через `read_query` + `edge_function_logs`.
+
+E
+
+6. Свести результаты в `.lovable/proofs/stripe_runtime_audit_v1.md` в виде таблицы S1–S7 с PASS/FAIL и ссылками на артефакты.
+
+E
+
+7. Для каждого FAIL — отдельный раздел «Точка отказа + минимальный фикс» (без выполнения фикса в рамках этого плана; фикс уйдёт отдельным PATCH).
 
 ## V — Verify (Definition of Done)
 
-- [ ] V1. В `.github/workflows/` ни один файл не использует `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` (`rg -n` пуст)
-- [ ] V2. Попытка manual dispatch `apply-migrations.yml` / `deploy-functions.yml` сразу даёт `::error::GitHub deploy disabled for Lovable-managed Supabase. Use Lovable Cloud deploy only.` и завершается failure без обращения к секретам
-- [ ] V3. **Actions UI больше не содержит автоматически падающих deploy workflow** (нет `push`-триггеров, нет `schedule`, нет `workflow_run` → нет фоновых красных запусков)
-- [ ] V4. `verify-no-legacy-ref.yml` зелёный
-- [ ] V5. `verify-webhook-public.yml` зелёный (git-state OK, `verify_jwt=false` сохранён)
-- [ ] V6. `verify-webhook-runtime.yml` — 7/8 webhook PASS; `stripe-webhook` в known-blocked-platform состоянии, прописанном в документации (не считается регрессией)
-- [ ] V7. `canonical_infrastructure_v1.md` обновлён: GitHub deploy = DISABLED, Lovable agent-deploy для webhook = BLOCKED-BY-PLATFORM, секреты не используются, moratorium зафиксирован
-- [ ] V8. `.lovable/backlog/lovable_agent_deploy_verify_jwt_regression.md` создан с готовым текстом для копипаста
-- [ ] V9. Proof `lovable_only_deploy_model_v1.md` зафиксирован с финальным статусом:
-  ```
-  Infrastructure model     = CLEAN
-  GitHub deploy            = DISABLED
-  Lovable webhook deploy   = BLOCKED-BY-PLATFORM
-  Phase 3.4 Runtime        = FROZEN
-  ```
-- [ ] V10. Phase 3.4 G33–G40 явно помечен **FROZEN** (не FULL PASS, не unblocked)
+- `.lovable/discovery/stripe_runtime_audit_v1.md` существует, содержит D1–D5 + DR.
+- `.lovable/proofs/stripe_runtime_audit_v1.md` существует, содержит таблицу S1–S7 с PASS/FAIL и доказательствами.
+- На главный вопрос «может ли клиент оплатить Stripe и получить доступ» дан однозначный ответ ДА/НЕТ.
+- Если НЕТ — указана единственная точка отказа и предложен минимальный фикс (без его выполнения).
+- Никаких `supabase--deploy_edge_functions` вызовов в логе сессии.
+- Никаких правок `.github/workflows/*` и кода webhook-функций.
+- Phase 3.4 статус обновлён: либо `RUNTIME-PASS` (если S1–S7 = PASS), либо `BLOCKED-AT-<step>` с указанным шагом.
 
----
+## Открытые вопросы для оператора (нужны до E5)
 
-## Что НЕ делается в этом плане
-
-- **Не вызываем `supabase--deploy_edge_functions` ни для одной webhook-функции** (это и есть источник регрессии)
-- Не пытаемся «восстановить» `stripe-webhook` — он остаётся BLOCKED-BY-PLATFORM до ответа Lovable
-- Не трогаем код edge functions
-- Не запускаем миграции
-- Не меняем RLS, access, entitlements, telegram, live, dunning
-- Не запрашиваем у оператора Supabase secrets и не требуем от него запускать GitHub Actions
-- Не удаляем GitHub secrets — они просто становятся неиспользуемыми
-- Не удаляем физически workflow-файлы (Вариант 1: no-op stub)
-- Не удаляем старый Supabase project `ypwsuumurrtkxatoyqhk` (out of scope)
-- Не пытаемся ставить Phase 3.4 в FULL PASS
-
----
-
-## Ответы оператора (зафиксированы)
-
-1. **P1 вариант:** Вариант 1 — no-op stub с сообщением «GitHub deploy disabled for Lovable-managed Supabase. Use Lovable Cloud deploy only.»
-2. **P5 политика:** `stripe-webhook` остаётся BLOCKED-BY-PLATFORM. Не лечить через agent-redeploy. Никаких действий от оператора с Supabase secrets.
-3. **Lovable platform issue:** исполнитель готовит полный текст + proof для копипаста; оператор отправляет через Lovable support.
+1. **Stripe test-mode card flow:** готов ли оператор лично выполнить S2–S3 (открыть checkout url, оплатить картой 4242 4242 4242 4242), или нужен другой способ (например, использовать существующий test-mode subscription из истории и не платить заново)?
+2. **Account scope:** прогонять E2E на одном `account_code` (укажите каком) или на всех активных Stripe-аккаунтах?
+3. **Что считать «клиентом» для S7 (Portal):** реальный test-mode `customer_id` из БД, или агент должен сначала создать тестового customer через S1–S3?
