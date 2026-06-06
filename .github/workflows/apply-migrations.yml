@@ -1,5 +1,11 @@
 name: Supabase Migration & Deploy
 
+# ============================================================
+# DISABLED FOR LOVABLE-MANAGED SUPABASE (Infrastructure Cleanup, Variant C)
+# Canonical migrate/deploy path = Lovable Cloud (agent).
+# This workflow stays manual-only and requires explicit confirmation.
+# ============================================================
+
 on:
   workflow_dispatch:
     inputs:
@@ -12,9 +18,15 @@ on:
           - migrate
           - deploy-functions
           - full-deploy
+      i_understand_risks:
+        description: 'Type "yes" to confirm GitHub deploy is NOT canonical for Lovable-managed Supabase.'
+        required: true
+        default: 'no'
+        type: string
 
 env:
   SUPABASE_PROJECT_REF: hdjgkjceownmmnrqqtuz
+
 
 jobs:
   migrate:
