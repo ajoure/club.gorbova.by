@@ -1102,11 +1102,21 @@ ${amountLine}
                           <Select value={stripeCurrency} onValueChange={setStripeCurrency}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="EUR">EUR</SelectItem>
-                              <SelectItem value="USD">USD</SelectItem>
-                              <SelectItem value="PLN">PLN</SelectItem>
-                              <SelectItem value="BYN">BYN</SelectItem>
-                              <SelectItem value="GBP">GBP</SelectItem>
+                              {STRIPE_CURRENCY_OPTIONS.map((code) => {
+                                const disabled = isStripeCurrencyDisabled(code);
+                                return (
+                                  <SelectItem
+                                    key={code}
+                                    value={code}
+                                    disabled={disabled}
+                                  >
+                                    {code}
+                                    {disabled
+                                      ? ` · не поддерживается${stripeAccountCode ? ` (${stripeAccountCode})` : ""}`
+                                      : ""}
+                                  </SelectItem>
+                                );
+                              })}
                             </SelectContent>
                           </Select>
                         </div>
@@ -1121,9 +1131,14 @@ ${amountLine}
                           Нет активного Stripe-подключения. Добавьте его в Настройках эквайринга.
                         </p>
                       )}
-                      {stripeSubscriptionPriceMissing && (
+                      {stripeCurrencyUnsupported && (
                         <p className="text-xs text-destructive">
-                          У выбранной кнопки нет привязанного Stripe Price ID (meta.stripe.price_id) — Stripe-подписка по этой ссылке не сможет оплатиться.
+                          Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
+                        </p>
+                      )}
+                      {noStripeSubscriptionOffers && (
+                        <p className="text-xs text-destructive">
+                          У этого тарифа нет кнопки, настроенной для Stripe-подписки (нужен meta.stripe.price_id). Используйте bePaid или добавьте Stripe Price в настройках кнопки.
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground">
@@ -1133,6 +1148,7 @@ ${amountLine}
                   )}
                 </div>
               )}
+
 
 
               {/* Тип оплаты — крупные сегменты. Скрыто для installment-офферов
