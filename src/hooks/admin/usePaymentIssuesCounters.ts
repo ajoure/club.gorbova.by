@@ -26,12 +26,15 @@ export function usePaymentIssuesCounters() {
   return useQuery<PaymentIssuesCounters>({
     queryKey: ["payment-issues-counters"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const client = supabase as any;
+      const { data, error } = await client
         .from("subscriptions_v2")
         .select("id, meta, updated_at")
         .eq("provider", "stripe")
         .not("meta->stripe->>dunning_status", "is", null)
         .limit(1000);
+
+
 
       if (error || !data) {
         return {

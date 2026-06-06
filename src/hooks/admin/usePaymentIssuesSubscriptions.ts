@@ -34,7 +34,8 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
   return useQuery<PaymentIssueRow[]>({
     queryKey: ["payment-issues-subscriptions", filter],
     queryFn: async () => {
-      let q = supabase
+      const client = supabase as any;
+      let q = client
         .from("subscriptions_v2")
         .select(
           "id, user_id, product_id, tariff_id, status, cancel_at, cancel_reason, updated_at, meta",
@@ -47,6 +48,8 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
       if (filter !== "all") {
         q = q.eq("meta->stripe->>dunning_status", filter);
       }
+
+
 
       const { data: subs, error } = await q;
       if (error || !subs) return [];
