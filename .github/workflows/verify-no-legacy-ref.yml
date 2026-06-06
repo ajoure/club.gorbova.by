@@ -1,0 +1,36 @@
+name: Verify no legacy Supabase project_ref
+
+# Guard for Infrastructure Cleanup.
+# Single canonical Supabase project_ref = hdjgkjceownmmnrqqtuz.
+# Any reappearance of legacy ref ypwsuumurrtkxatoyqhk in the repo
+# (code, config, workflows, docs, migrations, scripts) is a hard fail.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert legacy ref absent
+        run: |
+          set -euo pipefail
+          LEGACY='ypwsuumurrtkxatoyqhk'
+          if grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.vite-cache-v2 --exclude-dir=.vite-cache-v3 --exclude-dir=.vite-cache-v4 --exclude-dir=.vite-cache-v5 -- "$LEGACY" . ; then
+            echo "::error::Legacy Supabase project_ref '$LEGACY' detected. Canonical ref is 'hdjgkjceownmmnrqqtuz'."
+            exit 1
+          fi
+          echo "OK: no legacy ref found."
+
+      - name: Assert canonical ref present in config.toml
+        run: |
+          set -euo pipefail
+          if ! grep -q 'project_id = "hdjgkjceownmmnrqqtuz"' supabase/config.toml; then
+            echo "::error::supabase/config.toml does not pin canonical project_id."
+            exit 1
+          fi
+          echo "OK: canonical project_id pinned."
