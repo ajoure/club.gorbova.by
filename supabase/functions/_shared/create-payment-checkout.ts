@@ -17,6 +17,7 @@ import {
   type SubscriptionConflict as SharedSubscriptionConflict,
   type ExistingProviderSub,
 } from './subscription-conflict.ts';
+import { createStripeCheckout } from './create-stripe-checkout.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,7 +25,10 @@ export interface CreateCheckoutParams {
   user_id: string;
   product_id: string;
   tariff_id: string;
-  amount: number; // kopecks
+  amount: number; // ВНИМАНИЕ:
+                  //   bepaid  → amount в копейках (kopecks), как было исторически.
+                  //   stripe  → amount в MAJOR units (BYN/EUR/PLN/USD), конвертация
+                  //             в minor units выполняется внутри Stripe-ветки.
   payment_type: 'one_time' | 'subscription';
   description?: string;
   offer_id?: string;
@@ -39,14 +43,30 @@ export interface CreateCheckoutParams {
    * Анти-кейс: ручной post-insert UPDATE из вызывающей функции.
    */
   meta_extra?: Record<string, any>;
+  /**
+   * Phase 4.1 — provider selector для public payment links.
+   * default 'bepaid' (полный бэк-компат: все существующие вызовы идут в bePaid-ветку).
+   */
+  provider?: 'bepaid' | 'stripe';
+  /** Phase 4.1 — Stripe account override (иначе берётся default из acquiring_connections). */
+  account_code?: string | null;
+  /** Phase 4.1 — валюта для Stripe-ветки (BYN/EUR/PLN/USD). bePaid игнорирует. */
+  currency?: string;
 }
 
 export interface CreateCheckoutSuccess {
   success: true;
   redirect_url: string;
-  order_id: string;
+  /** bepaid one_time/subscription и stripe one_time — UUID заказа. stripe subscription — null. */
+  order_id: string | null;
   order_number?: string;
   payment_type: 'one_time' | 'subscription';
+  /** Phase 4.1 */
+  provider?: 'bepaid' | 'stripe';
+  subscription_v2_id?: string;
+  provider_subscription_row_id?: string;
+  checkout_session_id?: string;
+  account_code?: string;
 }
 
 export interface SubscriptionConflict {
@@ -90,10 +110,54 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     });
     return { success: false, error: 'Missing required fields: user_id, product_id, tariff_id, amount' };
   }
+  // ============================================================
+  // Phase 4.1 — provider dispatch (default 'bepaid' = байт-в-байт legacy path).
+  // Stripe-ветка короткозамыкается ДО любых bePaid creds и DB-операций bepaid-flow.
+  // ============================================================
+  const providerSelector: 'bepaid' | 'stripe' =
+    params.provider === 'stripe' ? 'stripe' : 'bepaid';
+  if (providerSelector === 'stripe') {
+    // amount у public-checkout приходит в копейках (link.amount), для Stripe
+    // нам нужны MAJOR units. Конвертация amount/100 безопасна, потому что
+    // public-checkout всегда передаёт integer kopecks. Если когда-нибудь caller
+    // захочет миновать конвертацию — пусть передаст provider='stripe' + amount уже
+    // в major (но текущий public-checkout этого не делает).
+    const amountMajor = amount / 100;
+    const stripeRes = await createStripeCheckout({
+      supabase, user_id, product_id, tariff_id,
+      amount: amountMajor,
+      amount_major: amountMajor,
+      currency: params.currency ?? 'BYN',
+      payment_type, description, offer_id, origin,
+      actor_user_id: actor_user_id ?? null,
+      actor_type,
+      account_code: params.account_code ?? null,
+      payment_link_id: (extraMeta as any)?.payment_link_id ?? null,
+      replacement_of_subscription_v2_id,
+      meta_extra: extraMeta as Record<string, unknown>,
+    });
+    if (!stripeRes.success) {
+      return { success: false, error: stripeRes.error, ...(stripeRes.conflict ? { conflict: stripeRes.conflict } : {}) };
+    }
+    return {
+      success: true,
+      redirect_url: stripeRes.redirect_url,
+      order_id: stripeRes.order_id,
+      order_number: stripeRes.order_number,
+      payment_type: stripeRes.payment_type,
+      provider: 'stripe',
+      subscription_v2_id: stripeRes.subscription_v2_id,
+      provider_subscription_row_id: stripeRes.provider_subscription_row_id,
+      checkout_session_id: stripeRes.checkout_session_id,
+      account_code: stripeRes.account_code,
+    };
+  }
 
   if (amount < 100) {
     return { success: false, error: 'Minimum amount is 100 kopecks (1 BYN)' };
   }
+
+
 
   // === Get bePaid credentials ===
   const credsResult = await getBepaidCredsStrict(supabase);

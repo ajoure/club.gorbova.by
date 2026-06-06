@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
         .from('payment_links')
         .select(`
           id, url_token, user_id, amount, currency, payment_type, description, status,
-          max_uses, current_uses, expires_at, meta,
+          max_uses, current_uses, expires_at, meta, provider, account_code,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
         `)
@@ -82,6 +82,9 @@ Deno.serve(async (req) => {
         link_user_id: link.user_id,
         // Stage L: installment summary (read-only для UI, срок зафиксирован админом).
         installment,
+        // Phase 4.1 — provider indicator (UI badge / saved-card gating).
+        provider: (link as any).provider ?? 'bepaid',
+        account_code: (link as any).account_code ?? null,
       });
     }
 
@@ -220,6 +223,10 @@ Deno.serve(async (req) => {
       actor_type: 'system',
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
       meta_extra: { payment_link_id: link.id, ...installmentMetaExtra },
+      // Phase 4.1 — provider routing. default 'bepaid' (полный бэк-компат для 113 legacy ссылок).
+      provider: (link.provider as 'bepaid' | 'stripe' | null) ?? 'bepaid',
+      account_code: link.account_code ?? null,
+      currency: link.currency ?? 'BYN',
     });
 
     if (!result.success) {
