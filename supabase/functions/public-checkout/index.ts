@@ -220,6 +220,10 @@ Deno.serve(async (req) => {
       actor_type: 'system',
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
       meta_extra: { payment_link_id: link.id, ...installmentMetaExtra },
+      // Phase 4.1 — provider routing. default 'bepaid' (полный бэк-компат для 113 legacy ссылок).
+      provider: (link.provider as 'bepaid' | 'stripe' | null) ?? 'bepaid',
+      account_code: link.account_code ?? null,
+      currency: link.currency ?? 'BYN',
     });
 
     if (!result.success) {
