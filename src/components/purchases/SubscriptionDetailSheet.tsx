@@ -375,8 +375,29 @@ export function SubscriptionDetailSheet({
           {/* Канонические документы (если есть оплаченный order) */}
           <SubscriptionDocumentActions orderId={lastPaidOrderId} />
 
-          {/* Phase 3.3 — Stripe Customer Portal (self-service). Виден только для provider=stripe. */}
-          <StripePortalButton subscriptionV2Id={subscription.id} />
+          {/* Phase 3.4 — баннер «Платёж не прошёл» для подписок в grace по Stripe.
+              Доступ сохранён до следующей попытки; CTA ведёт в Stripe для обновления карты. */}
+          {dunning?.dunning_status === 'past_due_grace' && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-medium">Платёж не прошёл</div>
+                <div>Доступ пока сохранён. Чтобы продолжить подписку — обновите карту.</div>
+                {dunning.next_payment_attempt && (
+                  <div className="opacity-80">
+                    Следующая попытка оплаты:{' '}
+                    {formatShortDate(dunning.next_payment_attempt)}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Phase 3.3 / 3.4 — Customer Portal: режим recovery для grace, иначе «Управлять подпиской». */}
+          <StripePortalButton
+            subscriptionV2Id={subscription.id}
+            mode={dunning?.dunning_status === 'past_due_grace' ? 'recovery' : 'manage'}
+          />
 
           {receiptUrl && (
             <Button
