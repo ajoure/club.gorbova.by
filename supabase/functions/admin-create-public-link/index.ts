@@ -341,7 +341,7 @@ Deno.serve(async (req) => {
         // Phase 4.1 — provider routing fields
         provider,
         account_code: provider === 'stripe' ? resolvedAccountCode : null,
-        provider_mode: provider === 'stripe' ? 'test' : 'fixed',
+        provider_mode: 'fixed',
       })
       .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code')
       .single();
