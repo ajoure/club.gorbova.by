@@ -1,3 +1,16 @@
+# Phase 3.4 = PARTIAL PASS (код) / PENDING runtime (2026-06-06)
+
+Код Stage B/F/G/H в `_shared/stripe-subscription-resolver.ts` задеплоен. Cabinet recovery UI + UI language sweep сделаны.
+Email-инфра и admin past_due-вкладка → backlog (`.lovable/backlog/stripe_dunning_email_template.md`, `.lovable/backlog/stripe_dunning_admin_tab.md`).
+Runtime G33–G40 заблокирован повторной D2-регрессией: `POST /stripe-webhook` без подписи отдаёт 401 при корректном `verify_jwt = false`.
+Полный отчёт: `.lovable/proofs/stripe_phase_3_4_dunning_recovery_v1.md`.
+
+# Phase 3.3 = FULL PASS (2026-06-06)
+
+D2 закрыт, D1 runtime-подтверждён. Полный отчёт: `.lovable/proofs/stripe_phase_3_3_d2_webhook_runtime_v1.md`. CI guard: `.github/workflows/verify-webhook-public.yml`.
+
+---
+
 # да, согласен, с учетом правок:
 
 1. **Не использовать test clock как основной путь**
