@@ -1,0 +1,61 @@
+name: Verify webhook functions are public (verify_jwt=false)
+
+# Guard against D2-style regression: after a redeploy, webhook endpoints must
+# remain publicly reachable (the platform must NOT inject JWT verification).
+# We assert this by reading supabase/config.toml — every `*-webhook` function
+# block, plus stripe-* webhook endpoints, MUST have `verify_jwt = false`.
+
+on:
+  push:
+    paths:
+      - 'supabase/config.toml'
+      - 'supabase/functions/**'
+      - '.github/workflows/verify-webhook-public.yml'
+  pull_request:
+    paths:
+      - 'supabase/config.toml'
+      - 'supabase/functions/**'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert verify_jwt=false for webhook endpoints
+        run: |
+          set -euo pipefail
+          CONFIG=supabase/config.toml
+          # Functions that MUST be publicly reachable (no JWT)
+          REQUIRED=(
+            stripe-webhook
+            bepaid-webhook
+            telegram-webhook
+            instagram-webhook
+            getcourse-webhook
+            amocrm-webhook
+            auth-email-hook
+            payment-methods-webhook
+          )
+          FAIL=0
+          for fn in "${REQUIRED[@]}"; do
+            # Locate the block for this function and check verify_jwt value
+            block=$(awk -v fn="[functions.${fn}]" '
+              $0==fn {found=1; next}
+              found && /^  \[functions\./ {exit}
+              found {print}
+            ' "$CONFIG")
+            if [ -z "$block" ]; then
+              echo "FAIL: ${fn} has no [functions.${fn}] block in ${CONFIG}"
+              FAIL=1
+              continue
+            fi
+            if ! echo "$block" | grep -qE 'verify_jwt\s*=\s*false'; then
+              echo "FAIL: ${fn} must declare verify_jwt = false (D2 guard)"
+              echo "Block content:"
+              echo "$block"
+              FAIL=1
+            else
+              echo "OK: ${fn} verify_jwt=false"
+            fi
+          done
+          exit $FAIL
