@@ -52,8 +52,8 @@ export function StripeSubscriptionActionsBlock({ subscriptionV2Id, provider, onC
       await run.mutateAsync({ action, dry_run: false });
       toast.success(
         action === 'cancel_at_period_end'
-          ? 'Stripe: отмена в конце периода поставлена'
-          : 'Stripe: подписка отменена',
+          ? 'Подписка отменяется в конце периода'
+          : 'Подписка отменена',
       );
       queryClient.invalidateQueries({ queryKey: ['subscriptions-v2'] });
       onChanged?.();
@@ -68,7 +68,7 @@ export function StripeSubscriptionActionsBlock({ subscriptionV2Id, provider, onC
     <div className="space-y-3">
       <Label className="flex items-center gap-2">
         <CalendarX className="h-4 w-4" />
-        Stripe: управление подпиской
+        Управление подпиской
       </Label>
       <div className="grid grid-cols-2 gap-2">
         <Button
