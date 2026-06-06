@@ -1,201 +1,268 @@
-# Да, согласен.
+# да, согласен, с учетом правок:
 
-Этот план как раз возвращает вас к главному вопросу:
+1. **Не начинать с revoke. Сначала только Discovery.**
 
-Работает ли Stripe для клиента от начала до конца?
+Этот план слишком рискованный для немедленной реализации, потому что автоматический отзыв Telegram-доступа — критичная зона.
 
-После нескольких недель работы вы накопили много инфраструктурных гипотез, но пока не получили самый важный ответ:
-
-- создаётся ли Checkout;
-- проходит ли оплата;
-- приходит ли webhook;
-- создаётся ли подписка;
-- выдаётся ли доступ;
-- открывается ли Portal.
-
-Из того, что я вижу, сейчас нельзя делать новые планы по GitHub, Lovable Cloud, deploy-модели или support, пока не будет завершён этот аудит.
-
-Единственное дополнение к плану:
-
-### **Добавить D3.1 — последнюю успешную реальную Stripe-транзакцию**
-
-Перед S1–S7 подрядчик должен отдельно ответить:
-
-- какая последняя Stripe-оплата успешно прошла через систему;
-- дата/время;
-- `checkout.session.completed`;
-- `invoice.paid`;
-- создан ли `orders_v2`;
-- создан ли `payments_v2`;
-- выдан ли доступ.
-
-Если такая транзакция была уже после последних изменений Stripe Phase 3.2–3.3, то это очень сильное доказательство того, что система в целом жива и проблема может быть локальной.
-
-### **Добавить правило для итогового отчёта**
-
-В конце отчёта обязателен блок:
+Разделить на два этапа:
 
 ```text
-Главный вывод
-
-Может ли новый клиент сегодня:
-
-1. открыть Stripe Checkout
-2. оплатить картой
-3. получить подписку
-4. получить доступ
-5. открыть Customer Portal
-
-Ответ: ДА / НЕТ
-
-Если НЕТ:
-точка отказа = Sx
-минимальный фикс = ...
+Phase 3.5-A — Discovery only
+Phase 3.5-B — implementation after approve
 ```
 
-Без этого блок считается незавершённым.
+Сейчас разрешён только **Phase 3.5-A Discovery**.
 
-Во всём остальном план правильный. Сейчас не нужно ничего деплоить, ничего переписывать и ничего отправлять в поддержку. Сначала нужно получить факт:
+---
 
-**Stripe реально работает или не работает для клиента прямо сейчас.** Это и должен показать Phase 3.4-RT.
+2. **Не реализовывать автоматический revoke в этом шаге**
+
+В текущем спринте запретить:
+
+- закрывать entitlement;
+- вызывать `telegram-revoke-access`;
+- менять `telegram_access`;
+- менять `access_rules`;
+- добавлять новые revoke-ветки.
+
+До отдельного approve после discovery.
+
+---
+
+3. **Ответ на вопрос 1**
+
+Триггер финального revoke:
+
+```text
+пока не утверждаем
+```
+
+Нужно сначала discovery по текущим writers/reconcile/revoke-функциям.
+
+Предварительная позиция:
+
+- webhook может только маркировать final_failure;
+- фактический revoke лучше делать через существующий reconcile/safety net;
+- но окончательно — после discovery.
+
+---
+
+4. **Ответ на вопрос 2**
+
+Да, cross-provider guard обязателен:
+
+```text
+если bePaid или другая активная подписка даёт доступ к тому же продукту/клубу,
+Stripe revoke не должен снимать Telegram-доступ.
+```
+
+Это должно быть отдельным обязательным guard в будущей реализации.
+
+---
+
+5. **Ответ на вопрос 3**
+
+Окно grace:
+
+```text
+используем Stripe Smart Retries как SOT
+```
+
+Не вводить свой hard cutoff 14 дней в этом этапе.
+
+Любой hard cutoff — отдельный future PATCH.
+
+---
+
+6. **Ответ на вопрос 4**
+
+Для тестов:
+
+```text
+основной путь — реальные Stripe test-mode события через Hosted Checkout / Portal / Dashboard
+```
+
+`stripe trigger` использовать только как fallback для replay/idempotency, не как основной proof бизнес-сценария.
+
+---
+
+7. **Добавить обязательный safety блок**
+
+В Discovery требовать отдельную матрицу:
+
+```text
+Кто имеет право отзывать доступ:
+- subscriptions-reconcile
+- telegram-check-expired
+- telegram-revoke-access
+- manual admin action
+- webhook
+```
+
+И для каждого:
+
+- когда вызывается;
+- какие guards;
+- учитывает ли другие активные entitlements;
+- учитывает ли bePaid;
+- можно ли безопасно использовать для Stripe.
+
+---
+
+8. **Изменить финальный результат Phase 3.5-A**
+
+DoD Discovery должен быть:
+
+```text
+1. Полная карта текущего revoke/access pipeline.
+2. Матрица рисков.
+3. Предложение безопасной реализации Phase 3.5-B.
+4. Runtime test plan G41–G48.
+5. Отдельный approve перед любыми изменениями доступа.
+```
+
+---
+
+Итог: **Phase 3.5-A Discovery можно запускать. Phase 3.5-B Implementation пока нельзя запускать.**
 
 &nbsp;
 
-План: Stripe End-to-End Runtime Audit (Phase 3.4-RT)
+План: Phase 3.5 — Stripe Access Lifecycle (Suspend / Revoke / Restore)
 
-## Контекст и позиция
+## Контекст
 
-Инфраструктурная ветка (GitHub workflows, Lovable deploy model, verify_jwt regression) **замораживается** на текущем состоянии:
+Платёжный контур Stripe подтверждён runtime-проверкой (Checkout, Subscription Checkout, Portal, rebill, grant-access — PASS). Phase 3.4 (Dunning) технически открыта, но базовая работоспособность доказана. Переходим к следующему незакрытому блоку — автоматическому управлению доступом на стыке Stripe lifecycle ↔ entitlements ↔ Telegram.
 
-- `Infrastructure model = CLEAN`
-- `GitHub deploy = DISABLED`
-- `Lovable webhook deploy = BLOCKED-BY-PLATFORM` (issue составлен, ждёт оператора)
-- Stripe Phase 3.4 Runtime = **снимается с FROZEN и переводится в RT-AUDIT**
+## Цель
 
-Главный вопрос, на который план обязан ответить ровно одним словом PASS/FAIL по каждому шагу:
+Полностью автоматический жизненный цикл доступа:
 
-> **Может ли клиент сейчас открыть Stripe checkout, оплатить тестовой картой, получить подписку, получить доступ и открыть Customer Portal?**
+- `active` → доступ есть
+- `past_due` → доступ сохраняется (grace)
+- recovery (`invoice.paid` после failure) → доступ остаётся
+- `unpaid` / `canceled_after_dunning` → доступ автоматически отзывается (entitlement + Telegram)
+- новая успешная оплата → доступ возвращается через канонический `grant-access-for-order`
 
-Никаких новых deploy, никаких redeploy webhook, никакой работы по GitHub/CI до завершения этого аудита.
+## Жёсткие правила (немутабельные)
 
-## Запрещено в рамках этого плана
+- bePaid не трогаем (никаких изменений в `bepaid-webhook`, `subscription-charge`, `direct-charge`, `payment-methods-webhook`).
+- `grant-access-for-order` не модифицируется — используется как есть (canonical write-path).
+- Никакой отдельной access-логики «только для Stripe» — переиспользуем `entitlements`, `access_rules`, `access_grant_ledger`, `telegram-revoke-access`, `telegram-grant-access`, `subscriptions-reconcile`.
+- SOT: `subscriptions_v2` (статус подписки) + `entitlements` (фактический доступ).
+- Никаких ручных `UPDATE entitlements` / `UPDATE telegram_access` в новом коде. Все мутации — через существующие edge functions / RPC.
+- Add-only по `meta.stripe.dunning_status` (уже зарезервировано в Phase 3.4 discovery) и audit-actions.
+- Webhook moratorium соблюдается: правки только в `_shared/stripe-subscription-resolver.ts` и (по необходимости) в `subscriptions-reconcile`; сам endpoint `stripe-webhook` не переразворачиваем без причины.
 
-- `supabase--deploy_edge_functions` для любых `*-webhook` (мораторий из §8 canonical_infrastructure_v1).
-- Любые правки `.github/workflows/*`.
-- Любые правки кода `stripe-webhook`, `bepaid-webhook`, `grant-access-for-order`, `subscriptions_v2`-резолверов.
-- Любые миграции, RLS, access_rules, entitlements.
-- Любые попытки «починить» `verify_jwt=false` руками агента.
-- Любые шаги Phase 3.4 G33–G40 (replay, dunning runtime) до зелёного RT-аудита.
+## Этап A. Discovery (read-only)
 
-Разрешены только: чтение БД, чтение логов edge functions, `curl` на public endpoints, чтение исходников, документация результата.
+Зафиксировать текущее поведение по 4 статусам и составить карту участников:
 
-## D — Diagnose (read-only inventory)
+1. Прочитать и описать:
+  - `supabase/functions/_shared/stripe-subscription-resolver.ts` (handlers `onSubscriptionUpdated`, `onSubscriptionDeleted`, `onInvoicePaymentFailed`, `onInvoicePaid`)
+  - `supabase/functions/subscriptions-reconcile/`
+  - `supabase/functions/telegram-revoke-access/` (контракт вызова, args, idempotency)
+  - `supabase/functions/telegram-grant-access/`
+  - `entitlements` lifecycle (как закрывается: `status='expired'` vs `expires_at`)
+  - `access_rules` для `grant_target_type='club'` (Telegram)
+  - Существующие cron: `telegram-check-expired`, `access-rules-nightly-reconcile`, `subscription-grace-reminders`
+2. Ответить письменно для каждого Stripe-статуса (`active`/`past_due`/`unpaid`/`canceled`):
+  - что меняется в `subscriptions_v2`
+  - что происходит с `entitlements`
+  - что происходит с `telegram_access`
+  - какой audit пишется
+3. Найти gap'ы между «как должно быть по цели» и «как сейчас».
 
-**D1. Карта Stripe-сценария в коде.** По репо собрать фактический список endpoints/функций, через которые проходит клиент Stripe:
+Артефакт: `.lovable/discovery/stripe_access_lifecycle_inventory_v1.md`.
 
-- создание checkout (frontend entry + edge function);
-- callback/return URL;
-- webhook endpoint(s) — public URL и имена функций;
-- материализация `orders_v2` + `subscriptions_v2`;
-- вызов `grant-access-for-order`;
-- открытие Customer Portal (`stripe-create-customer-portal-session`).
+## Этап B. Grace Period (past_due)
 
-Источник правды: `supabase/functions/`, `supabase/functions.registry.txt`, `src/` (Stripe вызовы), `.lovable/discovery/stripe_*`.
+Подтвердить и явно задокументировать инвариант: `past_due` НЕ отзывает доступ.
 
-**D2. Текущее состояние webhook (runtime snapshot, без deploy).** Один проход `curl OPTIONS + POST(no sig)` по production URL каждого Stripe-relevant webhook. Фиксируем body. Маркер `UNAUTHORIZED_NO_AUTH_HEADER` ⇒ platform-401, иначе ⇒ долетает до бизнес-логики.
+Изменения:
 
-**D3. Состояние SOT-таблиц по последним Stripe-операциям.** `read_query` по:
+- В `onInvoicePaymentFailed`: при первом переходе `active → past_due` писать `meta.stripe.dunning_status='past_due_grace'`, `grace_started_at=now()` (add-only в `subv2.meta.stripe`).
+- Audit: `stripe.access.grace_started` (один раз per `invoice_id`, idempotent через проверку существующего marker).
+- В `onInvoicePaid` (recovery branch): при наличии `dunning_status='past_due_grace'` → `dunning_status='recovered'`, `grace_finished_at=now()`, audit `stripe.access.grace_finished` + `stripe.dunning.recovered`.
+- Никаких revoke-вызовов в grace.
 
-- `provider_events` где provider='stripe' за последние 14 дней (счётчик по типам, последние 20 строк);
-- `orders_v2` с meta->>'provider'='stripe' за тот же период;
-- `subscriptions_v2` с meta->>'provider'='stripe' (status, period_end, last_event_at);
-- `entitlements` для тех же `user_id` (есть ли реально выданный доступ);
-- `audit_logs` с action ILIKE 'stripe%' или 'grant_access%' для тех же order_id.
+## Этап C. Final Revoke
 
-Нужен ответ: «последняя реально дошедшая до БД Stripe-оплата — когда, и был ли по ней выдан доступ».
+Триггер: `customer.subscription.updated` со статусом `unpaid` ИЛИ `customer.subscription.deleted` с предыдущим `dunning_status ∈ {past_due_grace, ...}`.
 
-**D4. Логи edge functions за период.** `supabase--edge_function_logs` для: `stripe-webhook`, `grant-access-for-order`, `stripe-create-customer-portal-session`, `subscriptions-reconcile` (Stripe-ветки), `public-checkout` (если используется для Stripe). Ищем последние успешные и последние ошибочные вызовы, маркер регрессии.
+Действия (все через канонические writers, idempotent):
 
-**D5. Конфигурация Stripe account_code(s).** Через `read_query` подтянуть активные acquiring-аккаунты, наличие `STRIPE_SECRET_KEY*` и `STRIPE_WEBHOOK_SECRET*` в secrets (через `fetch_secrets`, только имена). Это нужно, чтобы знать, какой ключ использовать в E2E-тесте.
+1. `subscriptions_v2.status` → `canceled` (для `unpaid` после Smart Retries — также `canceled` с `cancel_reason='stripe_dunning_final_failure'`).
+2. Закрыть связанный `entitlement`: вызов существующего пути закрытия (через `subscriptions-reconcile` ветку «провайдер dead» или существующий RPC; точный путь определяется в Discovery A — НЕ создаём новый прямой UPDATE).
+3. Telegram: вызов `telegram-revoke-access` с явным `club_id` (по `telegram-revoke-safety` memory) для всех `access_rules` подписки.
+4. Audit: `stripe.access.revoked`, `stripe.access.revoked.entitlement`, `stripe.access.revoked.telegram`, с `revoke_reason ∈ {unpaid_after_dunning, canceled_after_dunning}`.
+5. `meta.stripe.dunning_status='final_failure'` или `'canceled_after_dunning'` + `revoked_at`.
 
-## P — Plan E2E прохода
+Guards:
 
-E2E делится на 7 шагов; каждый имеет явный PASS/FAIL critereon и артефакт-доказательство.
+- Idempotency по `subscription_id` + `dunning_status` (не отзываем дважды).
+- Если у пользователя есть другая активная подписка на тот же `product_id` / `club_id` — Telegram revoke пропускаем (audit `stripe.access.revoked.telegram_skipped_other_active`).
+- Cross-provider safety: если access выдан bePaid-подпиской — Stripe revoke не трогает её (проверка по `entitlement.source_subscription_id`).
 
-```
-Step  Действие                                   PASS-критерий                         Артефакт
-S1    Создание Stripe Checkout Session            HTTP 200, url *.stripe.com/c/pay/    JSON ответа edge function
-S2    Frontend получает checkout url              UI редиректит/открывает url          network log / ручной checkout
-S3    Оплата тестовой картой 4242…                Stripe Dashboard: payment succeeded  Stripe test-mode event id
-S4    Webhook доставлен                           provider_events row с event_id       SQL snapshot
-S5    Материализация order/subscription           orders_v2 row + subscriptions_v2 row SQL snapshot + meta.stripe
-S6    Выдача доступа                              entitlements строка с корректным    SQL snapshot + audit_logs
-                                                  access_end_at; audit grant_access
-S7    Customer Portal session                     stripe-create-customer-portal-       JSON ответа edge function
-                                                  session возвращает url
-```
+## Этап D. Restore
 
-Метод проведения:
+Никакой новой логики — переиспользуем существующий путь:
 
-- **S1, S7** — `supabase--curl_edge_functions` на соответствующие функции с тестовым `account_code`, реальным `tariff_id`/`customer_id` из D3 (берём подписку, которая уже существует, чтобы не плодить мусор).
-- **S2** — browser viewing preview (только если S1 PASS и URL получен).
-- **S3** — выполняет оператор в Stripe Checkout (тест-карта), агент только мониторит.
-- **S4–S6** — `read_query` после S3 (polling с интервалом 5s × 6 попыток).
-- **S7** — `supabase--curl_edge_functions` на существующего клиента из D3.
+- `invoice.paid` (recovery после revoke) → `orders_v2` (paid) → `grant-access-for-order` → entitlement (re)open + Telegram grant через `telegram-grant-access` (стандартный auto-grant single path).
+- Новая подписка после revoke → стандартный Subscription Checkout flow.
 
-Если S4 FAIL и body webhook = `UNAUTHORIZED_NO_AUTH_HEADER` ⇒ зафиксировать как уже известный платформенный блокер, **не пытаться лечить redeploy'ем**. Если body иной (например 500/400 на бизнес-логике) — это новая находка, идёт в FAIL-точку.
+Добавляем только audit-маркер:
 
-## DR — Dry run
+- `stripe.access.restored` пишется в `onInvoicePaid`, если предыдущий `dunning_status ∈ {final_failure, canceled_after_dunning}` и текущий вызов привёл к успешному grant.
 
-Перед E2E:
+## Этап E. Runtime Proof (G41–G48)
 
-1. Подтвердить через `supabase--cloud_status` что backend `ACTIVE_HEALTHY`.
-2. Подтвердить через D2, что НИ ОДИН webhook не находится в неожиданном platform-401 (кроме уже известного `stripe-webhook`, если он там).
-3. Подтвердить через D5, что для выбранного `account_code` есть рабочий `STRIPE_SECRET_KEY` (по факту вызова `stripe-create-customer-portal-session` на известного клиента — он либо вернёт url, либо явную Stripe-ошибку).
-4. Выбрать конкретный `tariff_id` и `customer_id` (или email для нового клиента) для E2E. Зафиксировать в proof.
+Test-mode сценарии в Stripe (без правок кода после фиксации фаз B/C/D):
 
-## E — Execute
 
-E
+| Gate | Сценарий                                         | Ожидание                                                    |
+| ---- | ------------------------------------------------ | ----------------------------------------------------------- |
+| G41  | Активная подписка                                | `entitlement active`, Telegram `member`                     |
+| G42  | `invoice.payment_failed` (1×)                    | `subv2.status=past_due`, доступ есть, audit `grace_started` |
+| G43  | `invoice.payment_failed` (повторно)              | доступ есть, отдельный audit `retry_failed`                 |
+| G44  | `subscription.status=unpaid` после Smart Retries | `subv2.canceled`, entitlement закрыт, audit `revoked`       |
+| G45  | После G44                                        | `telegram_access` не `member`, audit `revoked.telegram`     |
+| G46  | Новый успешный `invoice.paid` после revoke       | entitlement восстановлен, audit `restored`                  |
+| G47  | После G46                                        | Telegram `member` восстановлен                              |
+| G48  | bePaid за весь Phase 3.5                         | 0 регрессий: счётчик rebill / webhook errors не изменился   |
 
-1. Выполнить D1–D5, сохранить в `.lovable/discovery/stripe_runtime_audit_v1.md`.
 
-E
+Доказательства: `provider_events`, `audit_logs`, `subscriptions_v2`, `entitlements`, `telegram_access` snapshots до/после, edge function logs.
 
-2. Выполнить DR, сохранить там же блоком «Dry run».
+Артефакт: `.lovable/proofs/stripe_phase_3_5_runtime_proof_v1.md`.
 
-E
+## Definition of Done
 
-3. Выполнить S1.
+- `past_due` подтверждённо не отзывает доступ (G42, G43 PASS).
+- `unpaid` / `canceled_after_dunning` автоматически отзывает entitlement + Telegram (G44, G45 PASS).
+- Recovery через канонический `grant-access-for-order` восстанавливает доступ (G46, G47 PASS).
+- bePaid pipeline без регрессий (G48 PASS).
+- `grant-access-for-order` не модифицирован (diff = 0).
+- Все мутации доступа идут через существующие writers (grep подтверждает отсутствие новых прямых `UPDATE entitlements` / `UPDATE telegram_access` в новом коде).
+- Discovery + Runtime Proof артефакты созданы.
 
-E
+## Вопросы оператору перед стартом (Этап A)
 
-4. Выполнить S7 (независимо от S1, проверяет существующую подписку).
+1. **Триггер финального revoke**: ориентируемся ТОЛЬКО на webhook `customer.subscription.{updated:unpaid, deleted}` или подключаем также `subscriptions-reconcile` как safety net (для случаев пропущенных webhook)?
+2. **Cross-provider conflict**: если у пользователя одновременно активна Stripe-подписка (которая уходит в `unpaid`) И bePaid-подписка на тот же продукт — подтверждаем, что bePaid сохраняет Telegram-доступ, Stripe-revoke его не трогает?
+3. **Окно grace**: оставляем grace по Stripe Smart Retries (Stripe сам решает когда `unpaid`), или хотим явный max-grace в днях с нашей стороны (например, hard cutoff через 14 дней даже если Stripe ещё retry'ит)?
+4. **Test-mode payment_failed**: для G42–G44 используем Stripe test cards (`4000 0000 0000 0341` — fail на attach, и т.д.) на реальной test-mode подписке, или строим сценарии через CLI `stripe trigger`?
+---
 
-E
+# Отчет о выполнении: Phase 3.5-A Discovery
 
-5. Запросить у оператора реальный прогон S2–S3 (оплата тестовой картой), агент мониторит S4–S6 в реальном времени через `read_query` + `edge_function_logs`.
+Артефакт: `.lovable/discovery/stripe_access_lifecycle_inventory_v1.md`.
 
-E
+Ключевые выводы:
+- Сегодня **ни одна Stripe-ветка резолвера не отзывает доступ** (ни entitlement, ни Telegram). Phase 3.4 пишет только маркеры (`past_due_grace`, `recovered`, `final_failure`, `canceled_after_dunning`) в `subscriptions_v2.meta.stripe.*`.
+- Канонический revoke-primitive `executeRevoke` (`_shared/access-revoker.ts`) уже встроен в 10 writers (`subscriptions-reconcile`, `telegram-check-expired`, `telegram-revoke-access`, `subscription-admin-actions`, и др.), сразу учитывает cross-provider (`hasCommercialAccess`) и пишет skip-ledger.
+- Безопасная реализация 3.5-B возможна **без новых writers**: достаточно в webhook H-ветке выставлять `subscriptions_v2.cancel_at = now()` при переходе `past_due_grace → unpaid/canceled` — далее cron `subscriptions-reconcile` сам отрабатывает через канонический путь.
+- Self-cancel через Portal (`cancel_at_period_end`) НЕ задевается — естественное истечение по `entitlements.expires_at` сохраняется.
 
-6. Свести результаты в `.lovable/proofs/stripe_runtime_audit_v1.md` в виде таблицы S1–S7 с PASS/FAIL и ссылками на артефакты.
+Никаких изменений кода, БД, edge functions, конфига, GitHub workflows не выполнено.
 
-E
-
-7. Для каждого FAIL — отдельный раздел «Точка отказа + минимальный фикс» (без выполнения фикса в рамках этого плана; фикс уйдёт отдельным PATCH).
-
-## V — Verify (Definition of Done)
-
-- `.lovable/discovery/stripe_runtime_audit_v1.md` существует, содержит D1–D5 + DR.
-- `.lovable/proofs/stripe_runtime_audit_v1.md` существует, содержит таблицу S1–S7 с PASS/FAIL и доказательствами.
-- На главный вопрос «может ли клиент оплатить Stripe и получить доступ» дан однозначный ответ ДА/НЕТ.
-- Если НЕТ — указана единственная точка отказа и предложен минимальный фикс (без его выполнения).
-- Никаких `supabase--deploy_edge_functions` вызовов в логе сессии.
-- Никаких правок `.github/workflows/*` и кода webhook-функций.
-- Phase 3.4 статус обновлён: либо `RUNTIME-PASS` (если S1–S7 = PASS), либо `BLOCKED-AT-<step>` с указанным шагом.
-
-## Открытые вопросы для оператора (нужны до E5)
-
-1. **Stripe test-mode card flow:** готов ли оператор лично выполнить S2–S3 (открыть checkout url, оплатить картой 4242 4242 4242 4242), или нужен другой способ (например, использовать существующий test-mode subscription из истории и не платить заново)?
-2. **Account scope:** прогонять E2E на одном `account_code` (укажите каком) или на всех активных Stripe-аккаунтах?
-3. **Что считать «клиентом» для S7 (Portal):** реальный test-mode `customer_id` из БД, или агент должен сначала создать тестового customer через S1–S3?
+**Status:** Phase 3.5-A Discovery — DONE. Phase 3.5-B Implementation — ожидает отдельного approve оператора.
