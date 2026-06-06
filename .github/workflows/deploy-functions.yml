@@ -1,28 +1,51 @@
 name: Deploy Supabase Edge Functions
 
-on:
-  push:
-    branches:
-      - main
-    # REMOVED: paths restriction - deploy functions on EVERY push to main
-    # This ensures functions are always deployed after publish
-  workflow_dispatch:
+# ============================================================
+# DISABLED FOR LOVABLE-MANAGED SUPABASE (Infrastructure Cleanup, Variant C)
+# ------------------------------------------------------------
+# Canonical deploy path = Lovable Cloud (agent-deploy).
+# GitHub Actions is NOT a canonical deploy path until:
+#   1) SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD are confirmed valid
+#      for project_ref = hdjgkjceownmmnrqqtuz, AND
+#   2) Lovable platform issue "agent deploy ignores verify_jwt=false
+#      for webhook functions" is resolved.
+# The `push: main` trigger was removed to stop the second deploy
+# pipeline from racing Lovable agent-deploy.
+# Manual dispatch is preserved but gated by an explicit confirmation
+# input — it will hard-fail otherwise.
+# ============================================================
 
-# PATCH: Queue deploys, never cancel (prevents 404 during deploy window)
+on:
+  workflow_dispatch:
+    inputs:
+      i_understand_risks:
+        description: 'Type "yes" to confirm GitHub deploy is NOT canonical and may break webhook verify_jwt=false.'
+        required: true
+        default: 'no'
+        type: string
+
 concurrency:
   group: edge-functions-deploy-${{ github.ref }}
-  cancel-in-progress: false  # CRITICAL: false to avoid leaving functions 404
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    
+
     steps:
+      - name: Confirmation gate (Variant C — non-canonical path)
+        run: |
+          if [ "${{ github.event.inputs.i_understand_risks }}" != "yes" ]; then
+            echo "::error::GitHub Actions deploy is DISABLED as canonical path. Set input i_understand_risks=yes to override."
+            exit 1
+          fi
+          echo "::warning::Proceeding with non-canonical GitHub deploy by explicit operator confirmation."
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for diff comparison
+          fetch-depth: 0
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
