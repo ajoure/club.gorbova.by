@@ -385,6 +385,33 @@ async function onSubscriptionUpdated(
   const stripeStatus = String(sub.status ?? 'active');
   const mapped = mapStripeSubStatus(stripeStatus);
 
+  // Phase 3.3 — Portal-derived deltas (resume / cancel-enable / payment-method change).
+  // Add-only: рассчитываем по diff'у previous (subv2.meta.stripe.*) vs incoming.
+  const prevStripe = ((subv2.meta as any)?.stripe ?? {}) as Record<string, unknown>;
+  const prevCancelAtEnd = !!prevStripe.cancel_at_period_end;
+  const nextCancelAtEnd = !!sub.cancel_at_period_end;
+  const prevDefaultPm = (prevStripe.default_payment_method as string | null) ?? null;
+  const nextDefaultPm = (sub.default_payment_method as string | null) ?? null;
+  const portalDeltas: Array<{ action: string; extra: Record<string, unknown> }> = [];
+  if (!prevCancelAtEnd && nextCancelAtEnd) {
+    portalDeltas.push({
+      action: 'stripe.portal.cancel_at_period_end_enabled',
+      extra: { current_period_end: sub.current_period_end ?? null },
+    });
+  }
+  if (prevCancelAtEnd && !nextCancelAtEnd) {
+    portalDeltas.push({
+      action: 'stripe.portal.cancel_at_period_end_disabled',
+      extra: { current_period_end: sub.current_period_end ?? null, resumed: true },
+    });
+  }
+  if (prevDefaultPm !== nextDefaultPm) {
+    portalDeltas.push({
+      action: 'stripe.portal.payment_method_updated',
+      extra: { from: prevDefaultPm, to: nextDefaultPm },
+    });
+  }
+
   // Update provider_subscriptions snapshot
   await supabase
     .from('provider_subscriptions')
@@ -432,6 +459,18 @@ async function onSubscriptionUpdated(
     subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
     extra: { stripe_status: stripeStatus, prov_state: mapped.prov, subv2_status_after: subUpdate.status ?? subv2.status },
   });
+
+  // Phase 3.3 — emit Portal-derived deltas (add-only, не влияют на access).
+  for (const delta of portalDeltas) {
+    await writeAudit(supabase, {
+      event, account_code,
+      action: delta.action,
+      result: 'ok',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      extra: { ...delta.extra, source: 'customer_portal_or_admin' },
+    });
+  }
+
   return { subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId, note: 'synced' };
 }
 

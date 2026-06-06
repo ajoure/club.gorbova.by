@@ -16,6 +16,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { SubscriptionDocumentActions } from "./SubscriptionDocumentActions";
+import { StripePortalButton } from "./StripePortalButton";
 
 
 interface Payment {
@@ -346,6 +347,9 @@ export function SubscriptionDetailSheet({
         <div className="border-t border-border/50 bg-background/95 backdrop-blur px-5 sm:px-6 py-4 space-y-2">
           {/* Канонические документы (если есть оплаченный order) */}
           <SubscriptionDocumentActions orderId={lastPaidOrderId} />
+
+          {/* Phase 3.3 — Stripe Customer Portal (self-service). Виден только для provider=stripe. */}
+          <StripePortalButton subscriptionV2Id={subscription.id} />
 
           {receiptUrl && (
             <Button
