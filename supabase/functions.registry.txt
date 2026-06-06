@@ -47,6 +47,7 @@ getcourse-sync
 import-contacts-gc
 amocrm-sync
 subscription-actions
+stripe-create-customer-portal-session
 subscriptions-reconcile
 subscription-admin-actions
 subscription-grace-reminders
