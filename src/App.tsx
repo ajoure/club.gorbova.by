@@ -316,6 +316,7 @@ const App = () => {
               <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/links" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/payment-issues" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/bepaid-subscriptions" element={<Navigate to="/admin/payments/bepaid-subscriptions" replace />} />
               {/* Forms Hub */}
               <Route path="/admin/forms" element={<ProtectedRoute><LazyRoute><AdminFormsHub /></LazyRoute></ProtectedRoute>} />
