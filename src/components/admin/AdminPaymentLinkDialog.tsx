@@ -793,6 +793,17 @@ ${amountLine}
       selectedInstallmentMonths < 2 ||
       selectedInstallmentMonths > installmentMaxMonths);
 
+  // Phase 4.1 — Stripe-specific guards (UI level, backend validates повторно).
+  const stripeInstallmentBlocked = provider === "stripe" && isInstallmentOffer;
+  const stripeAccountMissing = provider === "stripe" && !stripeAccountCode;
+  const stripeSubscriptionPriceMissing =
+    provider === "stripe" &&
+    paymentType === "subscription" &&
+    !!effectiveOffer &&
+    !(effectiveOffer as any)?.meta?.stripe?.price_id;
+  const stripeBlocked =
+    stripeInstallmentBlocked || stripeAccountMissing || stripeSubscriptionPriceMissing;
+
   const isCreateDisabled =
     createLinkMutation.isPending ||
     createPublicLinkMutation.isPending ||
@@ -801,7 +812,8 @@ ${amountLine}
     !effectiveOffer ||
     amount <= 0 ||
     isCurrentConflict ||
-    installmentInvalid;
+    installmentInvalid ||
+    stripeBlocked;
 
   return (
     <>
