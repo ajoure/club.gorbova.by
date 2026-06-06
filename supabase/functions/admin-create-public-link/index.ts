@@ -42,8 +42,10 @@ interface CreatePublicLinkRequest {
   account_code?: string | null;
 }
 
-// Phase 4.1 — Stripe currencies whitelist (single source of validation in writer).
-const STRIPE_ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN', 'GBP', 'CHF', 'CZK', 'RON']);
+// PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
+// Сужено до 4 валют по бизнес-требованию: BYN, EUR, USD, PLN. GBP/CHF/CZK/RON удалены.
+// Defence-in-depth: backend отвергнет любой иной код даже если фронт когда-нибудь его подаст.
+const STRIPE_ALLOWED_CURRENCIES = new Set(['BYN', 'EUR', 'USD', 'PLN']);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
