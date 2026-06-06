@@ -25,7 +25,10 @@ export interface CreateCheckoutParams {
   user_id: string;
   product_id: string;
   tariff_id: string;
-  amount: number; // kopecks
+  amount: number; // ВНИМАНИЕ:
+                  //   bepaid  → amount в копейках (kopecks), как было исторически.
+                  //   stripe  → amount в MAJOR units (BYN/EUR/PLN/USD), конвертация
+                  //             в minor units выполняется внутри Stripe-ветки.
   payment_type: 'one_time' | 'subscription';
   description?: string;
   offer_id?: string;
@@ -40,14 +43,30 @@ export interface CreateCheckoutParams {
    * Анти-кейс: ручной post-insert UPDATE из вызывающей функции.
    */
   meta_extra?: Record<string, any>;
+  /**
+   * Phase 4.1 — provider selector для public payment links.
+   * default 'bepaid' (полный бэк-компат: все существующие вызовы идут в bePaid-ветку).
+   */
+  provider?: 'bepaid' | 'stripe';
+  /** Phase 4.1 — Stripe account override (иначе берётся default из acquiring_connections). */
+  account_code?: string | null;
+  /** Phase 4.1 — валюта для Stripe-ветки (BYN/EUR/PLN/USD). bePaid игнорирует. */
+  currency?: string;
 }
 
 export interface CreateCheckoutSuccess {
   success: true;
   redirect_url: string;
-  order_id: string;
+  /** bepaid one_time/subscription и stripe one_time — UUID заказа. stripe subscription — null. */
+  order_id: string | null;
   order_number?: string;
   payment_type: 'one_time' | 'subscription';
+  /** Phase 4.1 */
+  provider?: 'bepaid' | 'stripe';
+  subscription_v2_id?: string;
+  provider_subscription_row_id?: string;
+  checkout_session_id?: string;
+  account_code?: string;
 }
 
 export interface SubscriptionConflict {
