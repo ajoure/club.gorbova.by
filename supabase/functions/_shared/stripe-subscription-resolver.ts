@@ -455,6 +455,7 @@ async function onSubscriptionUpdated(
     current_period_start: sub.current_period_start ?? null,
     current_period_end: sub.current_period_end ?? null,
     cancel_at_period_end: sub.cancel_at_period_end ?? false,
+    cancel_at: sub.cancel_at ?? null,
     default_payment_method: sub.default_payment_method ?? null,
     status: stripeStatus,
   });
