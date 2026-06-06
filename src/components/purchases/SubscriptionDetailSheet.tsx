@@ -107,8 +107,16 @@ export function SubscriptionDetailSheet({
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
 
+  // Phase 3.4 — снапшот dunning из subscriptions_v2.meta.stripe для UI «Платёж не прошёл».
+  type DunningSnapshot = {
+    dunning_status: string | null;
+    next_payment_attempt: string | null;
+    attempt_count: number | null;
+  };
+  const [dunning, setDunning] = useState<DunningSnapshot | null>(null);
+
   useEffect(() => {
-    if (!subId) { setEligibility(null); return; }
+    if (!subId) { setEligibility(null); setDunning(null); return; }
     let cancelled = false;
     setEligibilityLoading(true);
     (async () => {
@@ -133,6 +141,25 @@ export function SubscriptionDetailSheet({
         if (!cancelled) setEligibility(null);
       } finally {
         if (!cancelled) setEligibilityLoading(false);
+      }
+    })();
+    // Параллельно подтягиваем dunning-snapshot из meta.stripe
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('subscriptions_v2')
+          .select('meta')
+          .eq('id', subId)
+          .maybeSingle();
+        if (cancelled) return;
+        const st = ((data as any)?.meta?.stripe ?? {}) as any;
+        setDunning({
+          dunning_status: st.dunning_status ?? null,
+          next_payment_attempt: st.next_payment_attempt ?? null,
+          attempt_count: typeof st.attempt_count === 'number' ? st.attempt_count : null,
+        });
+      } catch {
+        if (!cancelled) setDunning(null);
       }
     })();
     return () => { cancelled = true; };
