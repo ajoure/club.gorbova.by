@@ -355,6 +355,9 @@ Deno.serve(async (req) => {
         public_url,
         origin_source: originSource,
         primary_domain: primaryDomainValid ? primaryDomain : null,
+        // Phase 4.1 — provider routing proof
+        provider,
+        account_code: provider === 'stripe' ? resolvedAccountCode : null,
         // Stage L: installment proof
         installment: installmentBlock
           ? {
