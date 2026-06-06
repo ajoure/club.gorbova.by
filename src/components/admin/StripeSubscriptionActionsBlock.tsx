@@ -101,14 +101,14 @@ export function StripeSubscriptionActionsBlock({ subscriptionV2Id, provider, onC
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm">
-                <p>Действие будет отражено в Stripe.</p>
+                <p>Действие будет отражено у платёжного провайдера.</p>
                 <ul className="list-disc pl-5 space-y-1">
                   <li>Доступ <b>не будет отозван немедленно</b> — он действует до даты окончания.</li>
-                  <li>Telegram revoke <b>не выполняется</b>.</li>
+                  <li>Telegram-доступ <b>не отзывается</b>.</li>
                   <li>
                     {pending === 'cancel_at_period_end'
-                      ? 'Stripe пометит подписку cancel_at_period_end=true; финальное событие придёт по webhook.'
-                      : 'Stripe сразу закроет подписку; локально status=canceled.'}
+                      ? 'Подписка будет отменена в конце текущего периода; финальное подтверждение придёт автоматически.'
+                      : 'Подписка будет закрыта сразу; локальный статус — «Отменена».'}
                   </li>
                 </ul>
               </div>
