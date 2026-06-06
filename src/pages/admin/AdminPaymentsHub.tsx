@@ -1,8 +1,9 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2 } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
+import { usePaymentIssuesCounters } from "@/hooks/admin/usePaymentIssuesCounters";
 
 // Tab content components
 import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabContent";
@@ -11,12 +12,14 @@ import { AutoRenewalsTabContent } from "@/components/admin/payments/AutoRenewals
 import { BepaidStatementTabContent } from "@/components/admin/payments/BepaidStatementTabContent";
 import { BepaidSubscriptionsTabContent } from "@/components/admin/payments/BepaidSubscriptionsTabContent";
 import { LinksTabContent } from "@/components/admin/payments/links/LinksTabContent";
+import { PaymentIssuesTabContent } from "@/components/admin/payments/PaymentIssuesTabContent";
 
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", label: "Подписки BePaid", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
+  { id: "payment-issues", label: "Проблемы с оплатой", icon: AlertCircle, path: "/admin/payments/payment-issues" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
   { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
 ];
@@ -25,6 +28,7 @@ export default function AdminPaymentsHub() {
   const location = useLocation();
   const navigate = useNavigate();
   const { data: renewalAlerts } = useAutoRenewalAlerts();
+  const { data: paymentIssues } = usePaymentIssuesCounters();
   
   // Determine active tab from path
   const getActiveTab = () => {
