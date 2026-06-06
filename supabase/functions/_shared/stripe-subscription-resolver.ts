@@ -490,8 +490,11 @@ async function onSubscriptionUpdated(
     });
   }
 
-  // Phase 3.4 H — final-failure marker (когда выходим из past_due_grace в терминальный статус).
-  // Access НЕ отзываем (revoke policy — Phase 3.5). Только snapshot + audit.
+  // Phase 3.5-B — final-failure marker + cancel_at scheduling for reconcile revoke.
+  // Webhook ТОЛЬКО маркирует subv2 (status/cancel_at/cancel_reason/auto_renew + meta.stripe.dunning_status).
+  // Фактический revoke выполняет subscriptions-reconcile через executeRevoke + hasCommercialAccess
+  // (canonical write-path, cross-provider safe). Никаких прямых вызовов telegram-revoke-access /
+  // UPDATE entitlements / access_rules из webhook не делаем.
   const prevDunningStatusH = (prevStripe.dunning_status as string | null) ?? null;
   const wasInGrace = prevDunningStatusH === 'past_due_grace';
   if (wasInGrace && (stripeStatus === 'unpaid' || stripeStatus === 'canceled')) {
@@ -499,32 +502,60 @@ async function onSubscriptionUpdated(
     const finalAction = stripeStatus === 'canceled'
       ? 'stripe.dunning.canceled_after_dunning'
       : 'stripe.dunning.final_failure';
-    const finalPatch = { dunning_status: finalMarker, dunning_final_at: new Date().toISOString() };
-    // re-read subv2 чтобы не затереть только что записанный subv2 status/meta выше.
+    const finalCancelReason = stripeStatus === 'canceled'
+      ? 'stripe_dunning_canceled_after_dunning'
+      : 'stripe_dunning_final_failure';
+    const nowIso = new Date().toISOString();
+    const finalPatch = { dunning_status: finalMarker, dunning_final_at: nowIso };
+    // re-read subv2 чтобы не затереть только что записанный subv2 status/meta выше
+    // и принять idempotency-решение по текущему состоянию.
     const { data: subv2NowF } = await supabase
       .from('subscriptions_v2')
-      .select('meta')
+      .select('meta, status, cancel_at, cancel_reason, canceled_at, auto_renew')
       .eq('id', subv2.id)
       .maybeSingle();
-    const subMetaNowF = (subv2NowF as any)?.meta ?? subv2.meta;
+    const subv2Now = (subv2NowF as any) ?? null;
+    const subMetaNowF = subv2Now?.meta ?? subv2.meta;
+
+    // Idempotency: если subv2 уже canceled с cancel_at — UPDATE статусных полей пропускаем,
+    // маркер dunning_status всё равно мержим (как и раньше).
+    const alreadyFinal = subv2Now?.status === 'canceled' && !!subv2Now?.cancel_at;
+
+    const updatePatch: Record<string, unknown> = {
+      meta: mergeSubMetaStripe(subMetaNowF, finalPatch),
+    };
+    if (!alreadyFinal) {
+      updatePatch.status = 'canceled';
+      updatePatch.cancel_at = nowIso;
+      updatePatch.cancel_reason = finalCancelReason;
+      updatePatch.canceled_at = subv2Now?.canceled_at ?? nowIso;
+      updatePatch.auto_renew = false;
+    }
+
     await supabase
       .from('subscriptions_v2')
-      .update({ meta: mergeSubMetaStripe(subMetaNowF, finalPatch) })
+      .update(updatePatch)
       .eq('id', subv2.id);
+
     await writeAudit(supabase, {
       event, account_code,
       action: finalAction,
-      result: 'manual_review',
+      result: 'ok',
       subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
-      manual_review: true,
-      manual_review_reason: finalMarker,
       extra: {
         stripe_status: stripeStatus,
         prev_dunning_status: prevDunningStatusH,
-        access_revoke_deferred_to_phase_3_5: true,
+        dunning_marker: finalMarker,
+        cancel_at: alreadyFinal ? (subv2Now?.cancel_at ?? null) : nowIso,
+        cancel_reason: alreadyFinal ? (subv2Now?.cancel_reason ?? null) : finalCancelReason,
+        revoke_scheduled_via_reconcile: !alreadyFinal,
+        access_revoke_path: 'subscriptions_reconcile.executeRevoke',
+        idempotent_skip_status_update: alreadyFinal,
       },
     });
   }
+
+
 
   return { subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId, note: 'synced' };
 }
