@@ -16,15 +16,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assert legacy ref absent
+      - name: Assert legacy ref absent (excluding documentation)
         run: |
           set -euo pipefail
           LEGACY='ypwsuumurrtkxatoyqhk'
-          if grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.vite-cache-v2 --exclude-dir=.vite-cache-v3 --exclude-dir=.vite-cache-v4 --exclude-dir=.vite-cache-v5 -- "$LEGACY" . ; then
-            echo "::error::Legacy Supabase project_ref '$LEGACY' detected. Canonical ref is 'hdjgkjceownmmnrqqtuz'."
+          # Allowed mentions: documentation/proof/plan/memory and this guard itself.
+          # Forbidden: code, configs, workflows (except this one), migrations, scripts, env.
+          MATCHES=$(grep -RIn \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=.vite-cache-v2 \
+            --exclude-dir=.vite-cache-v3 \
+            --exclude-dir=.vite-cache-v4 \
+            --exclude-dir=.vite-cache-v5 \
+            --exclude-dir=.lovable \
+            --exclude-dir=docs \
+            --exclude='*.md' \
+            --exclude='verify-no-legacy-ref.yml' \
+            -- "$LEGACY" . || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Legacy Supabase project_ref '$LEGACY' detected in code/config. Canonical ref is 'hdjgkjceownmmnrqqtuz'."
+            echo "$MATCHES"
             exit 1
           fi
-          echo "OK: no legacy ref found."
+          echo "OK: no legacy ref found in code/config."
+
 
       - name: Assert canonical ref present in config.toml
         run: |
