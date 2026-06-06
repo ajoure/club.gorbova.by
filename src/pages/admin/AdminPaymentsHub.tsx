@@ -73,6 +73,13 @@ export default function AdminPaymentsHub() {
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive" />
                     </span>
                   )}
+                  {/* Phase 3.6-B: Alert dot for payment-issues tab */}
+                  {tab.id === 'payment-issues' && paymentIssues?.hasProblems && !isActive && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive" />
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -89,6 +96,7 @@ export default function AdminPaymentsHub() {
           {activeTab === "links" && <LinksTabContent />}
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "bepaid-subs" && <BepaidSubscriptionsTabContent />}
+          {activeTab === "payment-issues" && <PaymentIssuesTabContent />}
           {activeTab === "diagnostics" && <DiagnosticsTabContent />}
           {activeTab === "statement" && <BepaidStatementTabContent />}
         </div>
