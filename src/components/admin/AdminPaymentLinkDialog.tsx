@@ -191,12 +191,40 @@ export function AdminPaymentLinkDialog({
   const [combinedPending, setCombinedPending] = useState(false);
   // Stage L: выбранный срок рассрочки (только для installment-офферов)
   const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
+  // Phase 4.1 — provider routing UI state
+  const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
+  const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
+  const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
   const { data: allOffers, isLoading: offersLoading } = useTariffOffers(
     selectedTariffId || undefined
   );
+
+  // Phase 4.1 — список активных Stripe-подключений для селектора account_code.
+  const { data: stripeAccounts } = useQuery({
+    queryKey: ["acquiring-connections-stripe-active"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("acquiring_connections")
+        .select("account_code, account_name, test_mode, is_default")
+        .eq("provider", "stripe")
+        .eq("status", "active")
+        .order("is_default", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: open,
+  });
+
+  // Авто-выбор первого/default-аккаунта при переключении провайдера.
+  useEffect(() => {
+    if (provider === "stripe" && !stripeAccountCode && stripeAccounts?.length) {
+      const def = stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0];
+      setStripeAccountCode((def as any).account_code);
+    }
+  }, [provider, stripeAccounts, stripeAccountCode]);
 
   // Резолвер: работает на ВСЕХ offers (без предварительной фильтрации по типу).
   const resolved = useMemo(
