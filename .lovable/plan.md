@@ -1,306 +1,147 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Не создавать Billing Portal Configuration лениво внутри runtime-запроса**
+1. **CI-guard сделать обязательным, если root cause не доказан**
 
-Пункт C сейчас содержит риск:
-
-```text
-при первом запуске создать configuration
-```
-
-Лучше разделить:
-
-- Discovery фиксирует существующую configuration.
-- Если configuration отсутствует — отдельный PATCH внутри Phase 3.3.
-- `stripe-create-customer-portal-session` не должен менять конфигурацию Stripe во время пользовательского запроса.
-
-Иначе обычный пользовательский вызов начинает выполнять административную настройку.
-
----
-
-2. **Усилить ownership-проверку**
-
-В B добавить:
-
-Проверять не только:
+Если по логам нельзя на 100% доказать транзитность 401, добавить обязательный CI/deploy guard:
 
 ```text
-subscriptions_v2.user_id = auth.uid()
+stripe-webhook must have verify_jwt=false before deploy is accepted
 ```
 
-но и:
+Иначе есть риск повторения после следующего redeploy.
+
+2. **Уточнить provider_events при replay**
+
+Если `provider_events_idem_unique` не позволяет создать новый ряд с тем же `event_id`, это нормально.
+
+Тогда proof должен фиксировать:
 
 ```text
-profiles.id = auth.uid()
+existing provider_events row reused / duplicate ignored
 ```
 
-через актуальную модель профиля проекта.
+а не требовать именно «два новых ряда».
 
-Цель — исключить старые подписки с неконсистентным user_id.
+3. **D1 runtime confirmation**
 
----
-
-3. **Уточнить G28**
-
-Сейчас:
+Проверять не только `meta.stripe.cancel_at`, но и:
 
 ```text
-customer.subscription.updated
+meta.stripe.cancel_at_period_end
 ```
 
-не всегда приходит при смене карты.
+Ожидание:
+
+- G29: `cancel_at` заполнен, effective cancel=true;
+- G30: `cancel_at` cleared/null, effective cancel=false.
+
+4. **Audit naming не привязывать жестко**
+
+Допустить фактические названия audit actions, если они эквивалентны:
+
+```text
+stripe.portal.cancel_at_period_end.set
+stripe.portal.cancel_at_period_end.enabled
+stripe.subscription.updated.synced with source=customer_portal
+```
+
+Главное — доказать portal-derived cancel/resume.
+
+5. **Добавить smoke после replay**
+
+После replay G29/G30 выполнить новый POST без подписи:
+
+```text
+ожидаем 400 signature_verification_failed, не 401
+```
+
+Это подтвердит, что endpoint не вернулся в закрытое состояние.
+
+После этих уточнений план можно запускать.
 
 &nbsp;
 
-Добавить:
+План: PATCH D2 — Stripe Webhook 401 After Redeploy
 
-```text
-payment_method.attached
-customer.updated
-```
+## Контекст
 
-как допустимые подтверждающие события.
+Phase 3.3 = PARTIAL PASS. Бизнес-логика Customer Portal подтверждена (G26–G32). Блокер — D2: после redeploy `stripe-webhook` отдавал HTTP 401, из-за чего runtime-доказательство D1 (фикс `cancel_at` vs `cancel_at_period_end`) неполное.
 
-DoD:
+Предварительная проверка сейчас:
 
-Подтверждаем обновление `default_payment_method`, а не конкретный тип webhook.
+- `OPTIONS /functions/v1/stripe-webhook` → **200**
+- `POST` без подписи → **400 `signature_verification_failed**`
+- `supabase/config.toml` содержит `[functions.stripe-webhook] verify_jwt = false`
 
----
+То есть на текущий момент 401 не воспроизводится — endpoint публичный и доходит до проверки подписи. Это означает, что 401 был транзитным состоянием (вероятно, окно между redeploy и применением `verify_jwt=false` платформой) либо вызов шёл через `supabase.functions.invoke` с анонимным JWT по другому пути. План должен это зафиксировать, а затем выполнить runtime-доказательство D1.
 
-4. **Не хранить last4/brand как Source of Truth**
+## Цели
 
-В E изменить формулировку:
+1. Точно установить причину 401 (root cause), а не просто "уже не воспроизводится".
+2. Подтвердить, что контур webhook стабильно принимает события от Stripe.
+3. Replay событий G29 (cancel at period end через Portal) и G30 (resume через Portal) против текущего кода с фиксом D1.
+4. Подтвердить, что фикс D1 фактически отрабатывает в runtime (delta пишется, `meta.stripe.cancel_at` материализуется, audit-записи Portal появляются).
+5. Перевести Phase 3.3 в FULL PASS.
 
-Показывать:
+## Этапы (Diagnose → Plan → Dry run → Execute → Verify)
 
-```text
-meta.stripe.default_payment_method snapshot
-```
+### 1. Diagnose — root cause D2
 
-только как кэш.
+- Снять `edge_function_logs` для `stripe-webhook` за окно redeploy → искать 401 / `Missing authorization header` / `Invalid JWT`.
+- Сверить historical `provider_events` за то же окно: были ли реальные Stripe-доставки, помеченные как failed/неполученные.
+- Проверить `supabase/config.toml` в git-истории на предмет того, был ли момент, когда `verify_jwt` отсутствовал/был `true` для `stripe-webhook`.
+- Зафиксировать гипотезу: транзитное окно после redeploy vs реальная регрессия конфига.
 
-&nbsp;
+### 2. Verify контура (без вызова Stripe)
 
-Источник истины:
+- `OPTIONS` и `POST` без подписи на боевой URL — ожидаем `200` и `400 signature_verification_failed`.
+- `POST` с фейковой `stripe-signature` — ожидаем `400 signature_verification_failed` (а не 401).
+- Снять `curl -i` и приложить к proof.
 
-```text
-Stripe Customer Portal
-```
+### 3. Replay G29 / G30 — runtime D1
 
-Если snapshot отсутствует — UI не должен падать.
+Без helper-функций, только канонические пути:
 
----
+- Stripe Dashboard → Developers → Events → найти исходные события G29 (`customer.subscription.updated` с `cancel_at` set) и G30 (`customer.subscription.updated` с `cancel_at` cleared / `resume`).
+- Для каждого нажать **Resend** на наш endpoint `stripe-webhook`.
+- Альтернатива (если Resend недоступен): Stripe CLI `stripe events resend evt_***` против того же endpoint.
 
-5. **Добавить G32.1**
+### 4. Verify D1 в runtime
 
-Отдельная проверка после всех тестов:
+Для `subscription_v2_id = 465ba5c1-626f-4cd0-986b-2a03a791c5cc`:
 
+- `provider_events`: два новых ряда с теми же `event_id`, статус `processed`, `processing_status` ok.
+- `subscriptions_v2.meta.stripe.cancel_at` материализован после G29 и снят/обновлён после G30.
+- `audit_logs`: `stripe.portal.cancel_at_period_end.set` (G29) и `.cleared` / `subscription.resumed` (G30) — то, чего не хватало в первичном прогоне.
+- `subscriptions_v2.status` и `cancel_reason` соответствуют ожиданиям (active + scheduled cancel → active без cancel).
+- Δ=0 по `entitlements`, `access_rules`, `telegram_access`, `bepaid_*` (повторно зафиксировать).
 
-| **Проверка**    | **Ожидание** |
-| --------------- | ------------ |
-| entitlements    | Δ = 0        |
-| access_rules    | Δ = 0        |
-| Telegram access | Δ = 0        |
+### 5. Зафиксировать результат
 
+- Обновить `.lovable/proofs/stripe_phase_3_3_customer_portal_runtime_v1.md`: добавить раздел "D2 root cause", раздел "D1 runtime confirmation", before/after SQL, event_id, ссылки на provider_events / audit_logs.
+- Перевести Phase 3.3 → **FULL PASS** в `.lovable/plan.md`.
 
-Это критично, потому что весь смысл Portal — управление биллингом без вмешательства в доступы.
+## Технические детали
 
----
+- Никаких новых edge functions. Только диагностика + replay через Stripe Dashboard/CLI.
+- Никаких изменений в `_shared/stripe-subscription-resolver.ts` сверх уже задеплоенного фикса D1.
+- Никаких прямых UPDATE в `subscriptions_v2` / `entitlements` — только через канонический webhook-путь.
+- Если diagnose покажет, что `verify_jwt` действительно отсутствовал для `stripe-webhook` в `config.toml` в момент redeploy, добавить CI-guard: проверка, что для всех `stripe-*` и `*-webhook` функций явно стоит `verify_jwt = false`.
 
-6. **Добавить audit для открытия Portal**
+## Definition of Done
 
-Сейчас есть:
+- Root cause 401 задокументирован (транзитный либо конфиг — с доказательством из логов/истории).
+- `OPTIONS=200`, `POST без подписи=400`, `POST с фейковой подписью=400` зафиксированы в proof.
+- G29 и G30 события успешно replayed, `provider_events.processing_status='processed'`.
+- `meta.stripe.cancel_at` для тестовой подписки корректно меняется по G29/G30.
+- Audit Portal-операций (`stripe.portal.cancel_at_period_end.set` / `.cleared`) присутствует.
+- Δ=0 по bePaid, entitlements, access_rules, telegram_access.
+- `.lovable/proofs/stripe_phase_3_3_customer_portal_runtime_v1.md` обновлён.
+- Phase 3.3 переведена в FULL PASS. Phase 3.4 НЕ стартует до этой галочки.
 
-```text
-stripe.portal.session_created
-```
+## Что НЕ делаем
 
-Добавить отдельно:
-
-```text
-stripe.portal.session_opened
-```
-
-если событие можно подтвердить через return flow или webhook-косвенно.
-
-Если нельзя достоверно определить открытие — зафиксировать в discovery и оставить только `session_created`.
-
----
-
-7. **Backlog после Phase 3.3**
-
-Сразу сохранить в backlog:
-
-```text
-Phase 3.4
-Stripe Dunning + Smart Retries + Failed Payment Recovery
-```
-
-Но не включать в текущий scope.
-
----
-
-После этих дополнений план соответствует мастер-спринту, не нарушает add-only и не создаёт скрытых побочных эффектов через Customer Portal.
-
-&nbsp;
-
-План: Phase 3.3 — Stripe Customer Portal + Self-Service Subscription Management
-
-## Цель
-
-Дать клиенту самообслуживание по Stripe-подписке через нативный Stripe Customer Portal. Свой billing UI не строим — Portal является SOT для карты/инвойсов/cancel.
-
-## Жёсткие границы (add-only)
-
-- bePaid не трогаем. PaymentDialog/Checkout/webhook lifecycle/grant-access-for-order не меняем.
-- PCI guard в силе: никаких raw card данных, никаких helper edge functions.
-- Live mode выключен. Только test.
-- Никаких новых таблиц/колонок. Все ссылки через `meta`.
-
-## Этап A. Discovery (read-only)
-
-Подтвердить и зафиксировать в `.lovable/discovery/stripe_customer_portal_inventory_v1.md`:
-
-- `customer_id` хранится в `profiles.meta.stripe.customers[<account_code>].customer_id` (подтверждено `stripe-webhook/index.ts` стр. 166–195).
-- `subscription_id` и `account_code` — в `subscriptions_v2.meta.stripe.{subscription_id, account_code}` + `provider_subscriptions.{provider_subscription_id, meta.account_code}`.
-- Текущих обращений к Billing Portal в коде нет (grep по `customer_portal/billing_portal/portal-session` пуст).
-- Карта (customer → subscription → account_code → portal session) фиксируется в файле discovery.
-DoD: документ создан, код не менялся.
-
-## Этап B. Edge function `stripe-create-customer-portal-session`
-
-Канонический и единственный путь открытия Portal.
-
-Контракт:
-
-```
-POST /stripe-create-customer-portal-session
-Auth: JWT обязателен
-Body: { "subscription_v2_id": "uuid", "return_url"?: "string" }
-200:  { "url": "https://billing.stripe.com/..." }
-4xx:  { "error": "<code>", "message": "..." }
-```
-
-Поведение:
-
-1. Достаём `auth.uid()` из JWT. Без JWT → 401.
-2. Читаем `subscriptions_v2` по id. Проверяем `user_id = auth.uid()` (владелец). Иначе 403 `not_subscription_owner`.
-3. Проверяем `provider_subscriptions.provider = 'stripe'`. Иначе 400 `provider_not_stripe`.
-4. Достаём `account_code` из `provider_subscriptions.meta.account_code` (fallback на `subscriptions_v2.meta.stripe.account_code`). Если нет → 400 `account_code_missing`.
-5. Достаём `customer_id` из `profiles.meta.stripe.customers[account_code].customer_id`. Fallback — `subscriptions_v2.meta.stripe.customer_id`. Если нет → 400 `customer_id_missing`.
-6. Получаем Stripe secret через `readAcquiringSecret('stripe', account_code, 'secret_key')` (как в `stripe-subscription-action`).
-7. `POST https://api.stripe.com/v1/billing_portal/sessions` с `customer=<cus_*>` и `return_url=<return_url ∥ default>`.
-8. Default `return_url` = `${PUBLIC_APP_URL}/account/subscription?sub=<subscription_v2_id>`.
-9. Логирование audit (см. этап F). При Stripe error → 502 `stripe_api_error` + audit `portal_session_failed`.
-
-PCI guard входа (как в 3.2): scan body на запрещённые ключи → 400 `pci_violation`. Никаких полей карты в input/output.
-
-Stop-gates (HTTP 4xx + audit `portal_session_blocked_<reason>`):
-
-- provider != stripe
-- customer_id отсутствует
-- subscription_id отсутствует
-- account_code отсутствует
-- пользователь не владелец
-- portal configuration mismatch (Stripe вернул `configuration_invalid`)
-
-## Этап C. Self-Service Access Rules (Stripe Portal configuration)
-
-Через Stripe API сконфигурировать default Billing Portal Configuration на каждом test-аккаунте:
-
-Разрешено:
-
-- `payment_method_update.enabled = true`
-- `invoice_history.enabled = true`
-- `subscription_cancel.enabled = true`, `mode = at_period_end`, `proration_behavior = none`
-- `subscription_cancel.cancellation_reason.enabled = true` (опц.)
-- Resume отменённой подписки (Portal делает это автоматически, пока not yet ended).
-
-Запрещено:
-
-- `subscription_update.enabled = false` (нет смены продукта/тарифа/цены)
-- `subscription_pause.enabled = false`
-- Никаких promotion codes/coupons.
-
-Реализация — одноразовый admin-CLI-style вызов в edge `stripe-create-customer-portal-session` при первом запуске на аккаунте (lazy create) ИЛИ через discovery-скрипт в B. Конфиг писать через `billing_portal/configurations` API. Configuration id кэшировать в `acquiring_connections.meta.stripe.portal_configuration_id` (add-only в meta).
-
-## Этап D. Resume Cancellation
-
-Webhook `customer.subscription.updated` уже обрабатывается (Phase 3.2 G21). Проверить и при необходимости расширить (add-only):
-
-- Если приходит `cancel_at_period_end=false` после ранее `true` → снимаем `meta.stripe.cancel_at_period_end`, чистим `meta.stripe.cancel_requested_at`, добавляем `meta.stripe.cancel_resumed_at`.
-- `subscriptions_v2.status` остаётся `active`, `entitlements` не трогаем, `access_grant_ledger` не пишем.
-- Audit: `stripe.subscription.cancel_resumed_via_portal`.
-
-## Этап E. Return Flow
-
-- Default `return_url` → `/account/subscription?sub=<id>`.
-- На странице `/account/subscription` (если её нет — план только в части кнопки, без редизайна) добавить read-only блок состояния подписки: статус, `current_period_end`, last4/brand карты из `meta.stripe.default_payment_method` snapshot, бейдж `cancel_at_period_end`.
-- Кнопка «Управлять в Stripe» → вызывает `stripe-create-customer-portal-session` и `window.location = url`.
-
-Если страницы `/account/subscription` нет — план Phase 3.3 ограничивается кнопкой в существующем кабинете подписок (точное место уточнить в discovery A). Никакого нового билинг-кабинета не строим.
-
-## Этап F. Audit (через `audit_logs`, схема как в 3.2)
-
-Actions:
-
-- `stripe.portal.session_created`
-- `stripe.portal.session_blocked_<reason>`
-- `stripe.portal.payment_method_updated` (из webhook `customer.subscription.updated` при изменении `default_payment_method`)
-- `stripe.portal.cancel_at_period_end_enabled`
-- `stripe.portal.cancel_at_period_end_disabled`
-Поля meta: `subscription_v2_id, stripe_customer_id, stripe_subscription_id, account_code, action, result, source: 'customer_portal'`.
-Actor: `actor_type='user'`, `actor_user_id=auth.uid()` для session_created; `actor_type='system'` для webhook-производных.
-
-## Этап G. Configuration verification
-
-Edge function вернёт audit `portal_configuration_snapshot` с id конфигурации и discovery-документ зафиксирует разрешённый/запрещённый набор.
-
-## Runtime Proof G26–G32
-
-Прогон самостоятельно через browser automation + Stripe Hosted Portal (карта вводится только в Stripe UI). Фикстуры — две новые active Stripe-подписки по канону Phase 3.2 (Hosted Checkout → webhook → active).
-
-- G26 Portal Session Create: вызов edge → URL начинается с `https://billing.stripe.com/`.
-- G27 Portal Open: navigate, скриншот, подписка отображается, видны её current period и карта.
-- G28 Payment Method Update: добавить новую test-карту `4242…` в Portal → webhook `customer.subscription.updated` пришёл → `meta.stripe.default_payment_method` обновился → audit `payment_method_updated`.
-- G29 Enable cancel_at_period_end через Portal → webhook → `meta.stripe.cancel_at_period_end=true`, `entitlements.expires_at` НЕ изменён.
-- G30 Disable (resume) → webhook → флаг снят, `status=active`, доступы целы.
-- G31 Invoice History: страница инвойсов в Portal открывается, видим минимум 1 invoice (от активации).
-- G32 bePaid Freeze: SQL diff по `subscriptions_v2 where provider='bepaid' updated_at > test_start` = 0.
-
-Отчёт `.lovable/proofs/stripe_phase_3_3_customer_portal_v1.md` с `subscription_v2_id`, `cus_*`, `sub_*`, event_id, SQL before/after, скриншотами Portal.
-
-## Файлы
-
-- Создать: `supabase/functions/stripe-create-customer-portal-session/index.ts`
-- Создать: `.lovable/discovery/stripe_customer_portal_inventory_v1.md`
-- Создать: `.lovable/proofs/stripe_phase_3_3_customer_portal_v1.md`
-- Изменить (add-only): `supabase/functions/stripe-webhook/index.ts` — обработка resume и payment_method updated в рамках уже существующей ветки `customer.subscription.updated`.
-- Изменить: `supabase/functions.registry.txt` — регистрация новой функции (P1).
-- Изменить: `.lovable/plan.md` — отметка Phase 3.3.
-- Изменить: страница подписки в кабинете — кнопка «Управлять в Stripe» (точный файл подтвердить в A).
-
-## Stop-Gates / Что НЕ делаем
-
-- Свой billing UI, pause/resume schedules, dunning, reconcile, миграция bePaid→Stripe, live mode, multi-account UI, изменения access logic.
-
-## DoD
-
-- Customer Portal открывается, карта меняется, cancel/resume работают, инвойсы доступны, webhook lifecycle совместим, G26–G32 PASS, bePaid не затронут.
----
-
-## Phase 3.3 — STATUS: CODE COMPLETE (runtime G26–G32 ожидает прогона)
-
-Реализовано:
-- Edge `stripe-create-customer-portal-session` (JWT + owner-check `subv2.user_id = auth.uid()` ∧ `profiles.id = auth.uid()`, PCI guard, без service_role bypass, без write Portal Configuration).
-- Resolver `_shared/stripe-subscription-resolver.ts` → `onSubscriptionUpdated` add-only: эмит `stripe.portal.cancel_at_period_end_{enabled,disabled}` и `stripe.portal.payment_method_updated` по diff'у prev/next в `subv2.meta.stripe.*`.
-- UI: `StripePortalButton` подключена в `SubscriptionDetailSheet` (виден только при `provider='stripe'`); return_url → `/purchases?sub={id}`.
-- Discovery: `.lovable/discovery/stripe_customer_portal_inventory_v1.md`.
-- Proof skeleton: `.lovable/proofs/stripe_phase_3_3_customer_portal_v1.md` (заполнить после G26–G32).
-- Registry: `supabase/functions.registry.txt` (P1).
-
-bePaid не затронут. grant-access-for-order не тронут. Webhook lifecycle не сломан (изменения внутри уже существующей ветки `customer.subscription.updated`, post-update, в виде дополнительных audit-записей).
-
-Portal Configuration настраивается отдельным admin-инструментом (НЕ во время пользовательского запроса) — задача отдельного PATCH в рамках 3.3, не реализуется внутри runtime функции.
-
-Backlog: Phase 3.4 — Stripe Dunning + Smart Retries + Failed Payment Recovery.
+- Не создаём helper edge functions для триггера событий (нарушение PCI-стандарта §10.3).
+- Не трогаем `bepaid-*`, `grant-access-for-order`, `telegram-*`.
+- Не делаем ручных INSERT/UPDATE в `subscriptions_v2` / `entitlements` / `access_rules`.
+- Не переходим к Phase 3.4 до FULL PASS Phase 3.3.
