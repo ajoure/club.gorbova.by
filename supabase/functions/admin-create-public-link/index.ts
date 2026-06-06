@@ -193,6 +193,56 @@ Deno.serve(async (req) => {
       payment_type = 'subscription';
     }
 
+    // ── Phase 4.1 — Stripe validations ──
+    // 1) installment + Stripe — запрещено (рассрочка реализована только через bePaid finite subscription).
+    // 2) валюта — whitelist.
+    // 3) acquiring_connections должен иметь активный Stripe-аккаунт указанного account_code.
+    // 4) subscription Stripe требует tariff_offers.meta.stripe.price_id на выбранном оффере
+    //    (раннее 400, чтобы админ не создал «мёртвую» ссылку).
+    let resolvedAccountCode: string | null = null;
+    if (provider === 'stripe') {
+      if (installmentBlock) {
+        return errorResponse('installment_not_supported_on_stripe', 400);
+      }
+      if (!STRIPE_ALLOWED_CURRENCIES.has(currency)) {
+        return errorResponse(`Stripe: unsupported currency ${currency}`, 400);
+      }
+      const accountQuery = supabase
+        .from('acquiring_connections')
+        .select('account_code, status, test_mode, is_default')
+        .eq('provider', 'stripe')
+        .eq('status', 'active');
+      const { data: acctRows, error: acctErr } = rawAccountCode
+        ? await accountQuery.eq('account_code', rawAccountCode).limit(1)
+        : await accountQuery.eq('is_default', true).limit(1);
+      if (acctErr) {
+        return errorResponse(`Stripe account lookup failed: ${acctErr.message}`, 500);
+      }
+      const acct = (acctRows ?? [])[0];
+      if (!acct) {
+        return errorResponse(rawAccountCode
+          ? `Stripe account not found or inactive: ${rawAccountCode}`
+          : 'no_active_default_stripe_account', 400);
+      }
+      resolvedAccountCode = (acct as any).account_code as string;
+
+      if (payment_type === 'subscription') {
+        if (!offer_id) {
+          return errorResponse('Stripe subscription requires offer_id', 400);
+        }
+        const { data: offerStripe } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', offer_id)
+          .maybeSingle();
+        const priceId = (offerStripe as any)?.meta?.stripe?.price_id;
+        if (!priceId) {
+          return errorResponse('stripe_price_missing_in_offer_meta', 400);
+        }
+      }
+    }
+
+
     // Финальная нормализация audit-полей.
     const auditRequestedType = requested_payment_type || payment_type;
     const auditMode: 'canonical' | 'override' =
