@@ -34,8 +34,17 @@ jobs:
     if: ${{ github.event.inputs.action == 'migrate' || github.event.inputs.action == 'full-deploy' }}
     
     steps:
+      - name: Confirmation gate (Variant C — non-canonical path)
+        run: |
+          if [ "${{ github.event.inputs.i_understand_risks }}" != "yes" ]; then
+            echo "::error::GitHub Actions migrate/deploy is DISABLED as canonical path. Set input i_understand_risks=yes to override."
+            exit 1
+          fi
+          echo "::warning::Proceeding with non-canonical GitHub migrate/deploy by explicit operator confirmation."
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
