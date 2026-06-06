@@ -1,268 +1,172 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Не начинать с revoke. Сначала только Discovery.**
+1. **audit result выбрать** `ok`**, не** `manual_review`
 
-Этот план слишком рискованный для немедленной реализации, потому что автоматический отзыв Telegram-доступа — критичная зона.
-
-Разделить на два этапа:
+Для final-failure это уже не ручная проверка, а штатное действие:
 
 ```text
-Phase 3.5-A — Discovery only
-Phase 3.5-B — implementation after approve
+result='ok'
+revoke_scheduled_via_reconcile=true
+access_revoke_path='subscriptions_reconcile.executeRevoke'
 ```
 
-Сейчас разрешён только **Phase 3.5-A Discovery**.
+`manual_review` использовать только если:
 
----
+- не найден `subscription_v2`;
+- нет связи с `provider_subscriptions`;
+- конфликт данных;
+- невозможно определить продукт/доступ.
 
-2. **Не реализовывать автоматический revoke в этом шаге**
+2. **cancel_reason оставить отдельный**
 
-В текущем спринте запретить:
-
-- закрывать entitlement;
-- вызывать `telegram-revoke-access`;
-- менять `telegram_access`;
-- менять `access_rules`;
-- добавлять новые revoke-ветки.
-
-До отдельного approve после discovery.
-
----
-
-3. **Ответ на вопрос 1**
-
-Триггер финального revoke:
+Использовать разные причины:
 
 ```text
-пока не утверждаем
+stripe_dunning_final_failure
+stripe_dunning_canceled_after_dunning
 ```
 
-Нужно сначала discovery по текущим writers/reconcile/revoke-функциям.
+Не унифицировать с `stripe_subscription_deleted`, чтобы в отчётах было понятно, что это именно финальный dunning.
 
-Предварительная позиция:
+3. **Reconcile не вызывать из webhook**
 
-- webhook может только маркировать final_failure;
-- фактический revoke лучше делать через существующий reconcile/safety net;
-- но окончательно — после discovery.
+Оставить только cron / существующий reconcile.
 
----
-
-4. **Ответ на вопрос 2**
-
-Да, cross-provider guard обязателен:
+Webhook только маркирует:
 
 ```text
-если bePaid или другая активная подписка даёт доступ к тому же продукту/клубу,
-Stripe revoke не должен снимать Telegram-доступ.
+status='canceled'
+cancel_at=now()
+cancel_reason=...
+auto_renew=false
+meta.stripe.dunning_status=...
 ```
 
-Это должно быть отдельным обязательным guard в будущей реализации.
+Фактический revoke делает `subscriptions-reconcile`.
 
----
+4. **Уточнить scope по canceled**
 
-5. **Ответ на вопрос 3**
+Не трогать обычный пользовательский self-cancel / cancel at period end.
 
-Окно grace:
+Новая логика должна срабатывать только если:
 
 ```text
-используем Stripe Smart Retries как SOT
+wasInGrace = true
+AND stripeStatus IN ('unpaid', 'canceled')
 ```
 
-Не вводить свой hard cutoff 14 дней в этом этапе.
+То есть отмена подписки через Portal без failed-payment grace не должна запускать dunning final failure.
 
-Любой hard cutoff — отдельный future PATCH.
+5. **Runtime G44b сделать optional**
 
----
+Stripe test-mode не всегда удобно довести до `canceled_after_dunning`.
 
-6. **Ответ на вопрос 4**
-
-Для тестов:
+Обязательный runtime:
 
 ```text
-основной путь — реальные Stripe test-mode события через Hosted Checkout / Portal / Dashboard
+G44a unpaid → marker/cancel_at
+G45 reconcile revoke
+G48 bePaid freeze
 ```
 
-`stripe trigger` использовать только как fallback для replay/idempotency, не как основной proof бизнес-сценария.
+G44b можно оставить как optional, если Stripe Dashboard/test mode позволяет.
 
----
+6. **Cross-provider proof обязателен**
 
-7. **Добавить обязательный safety блок**
-
-В Discovery требовать отдельную матрицу:
+Обязательно доказать:
 
 ```text
-Кто имеет право отзывать доступ:
-- subscriptions-reconcile
-- telegram-check-expired
-- telegram-revoke-access
-- manual admin action
-- webhook
+Stripe canceled/unpaid не снимает доступ,
+если у пользователя есть другой активный коммерческий доступ через bePaid.
 ```
 
-И для каждого:
+Это главный safety guard.
 
-- когда вызывается;
-- какие guards;
-- учитывает ли другие активные entitlements;
-- учитывает ли bePaid;
-- можно ли безопасно использовать для Stripe.
-
----
-
-8. **Изменить финальный результат Phase 3.5-A**
-
-DoD Discovery должен быть:
-
-```text
-1. Полная карта текущего revoke/access pipeline.
-2. Матрица рисков.
-3. Предложение безопасной реализации Phase 3.5-B.
-4. Runtime test plan G41–G48.
-5. Отдельный approve перед любыми изменениями доступа.
-```
-
----
-
-Итог: **Phase 3.5-A Discovery можно запускать. Phase 3.5-B Implementation пока нельзя запускать.**
+После этих правок Phase 3.5-B можно запускать.
 
 &nbsp;
 
-План: Phase 3.5 — Stripe Access Lifecycle (Suspend / Revoke / Restore)
+План: Phase 3.5-B — Stripe Final Failure Marker for Reconcile Revoke
 
 ## Контекст
 
-Платёжный контур Stripe подтверждён runtime-проверкой (Checkout, Subscription Checkout, Portal, rebill, grant-access — PASS). Phase 3.4 (Dunning) технически открыта, но базовая работоспособность доказана. Переходим к следующему незакрытому блоку — автоматическому управлению доступом на стыке Stripe lifecycle ↔ entitlements ↔ Telegram.
+Phase 3.5-A Discovery подтвердил:
 
-## Цель
+- `stripe-subscription-resolver.ts` (H-блок, строки 493–527) уже маркирует `meta.stripe.dunning_status = 'final_failure' | 'canceled_after_dunning'` при переходе `past_due_grace → unpaid/canceled`, но `subv2.status`/`cancel_at` НЕ трогает и доступ НЕ отзывает (комментарий: `access_revoke_deferred_to_phase_3_5: true`).
+- `subscriptions-reconcile/index.ts` (строки 48–80) уже сам закрывает доступ через канонический `executeRevoke` для всех подписок, у которых `cancel_at < now()`, провайдер-агностично.
+- Все остальные операции с `entitlements`, `telegram_access`, `access_rules` остаются за reconcile и существующими writers.
 
-Полностью автоматический жизненный цикл доступа:
+Значит самый безопасный способ закрыть Phase 3.5 — НЕ писать новый revoke-writer в Stripe-webhook, а в том же H-блоке дополнительно выставить `subscriptions_v2.cancel_at = now()` + `cancel_reason`. Существующий cron `subscriptions-reconcile` сам подхватит и отзовёт доступ + Telegram через канонический путь.
 
-- `active` → доступ есть
-- `past_due` → доступ сохраняется (grace)
-- recovery (`invoice.paid` после failure) → доступ остаётся
-- `unpaid` / `canceled_after_dunning` → доступ автоматически отзывается (entitlement + Telegram)
-- новая успешная оплата → доступ возвращается через канонический `grant-access-for-order`
+## Иммутабельные правила (фиксируем перед implementation)
 
-## Жёсткие правила (немутабельные)
+1. Stripe webhook НЕ вызывает `telegram-revoke-access` напрямую.
+2. Stripe webhook НЕ делает UPDATE/DELETE по `entitlements`, `access_rules`, `telegram_access`, `access_grant_ledger`.
+3. Stripe webhook только: ставит `cancel_at`, `status`, `cancel_reason`, `auto_renew=false`, мержит `meta.stripe.*`, пишет `audit_logs`.
+4. Фактический revoke выполняет `subscriptions-reconcile` через `executeRevoke` + `hasCommercialAccess`.
+5. `grant-access-for-order` НЕ меняется (restore — отдельная задача через стандартный invoice.paid).
+6. bePaid (`bepaid-webhook`, `subscription-charge`, `subscriptions-reconcile` bePaid-ветка) НЕ затронут.
+7. Add-only: миграций нет, новых таблиц/RPC/cron нет, существующее поведение `past_due_grace` (grace без revoke) сохраняется.
 
-- bePaid не трогаем (никаких изменений в `bepaid-webhook`, `subscription-charge`, `direct-charge`, `payment-methods-webhook`).
-- `grant-access-for-order` не модифицируется — используется как есть (canonical write-path).
-- Никакой отдельной access-логики «только для Stripe» — переиспользуем `entitlements`, `access_rules`, `access_grant_ledger`, `telegram-revoke-access`, `telegram-grant-access`, `subscriptions-reconcile`.
-- SOT: `subscriptions_v2` (статус подписки) + `entitlements` (фактический доступ).
-- Никаких ручных `UPDATE entitlements` / `UPDATE telegram_access` в новом коде. Все мутации — через существующие edge functions / RPC.
-- Add-only по `meta.stripe.dunning_status` (уже зарезервировано в Phase 3.4 discovery) и audit-actions.
-- Webhook moratorium соблюдается: правки только в `_shared/stripe-subscription-resolver.ts` и (по необходимости) в `subscriptions-reconcile`; сам endpoint `stripe-webhook` не переразворачиваем без причины.
+## Scope (add-only, один файл)
 
-## Этап A. Discovery (read-only)
+Файл: `supabase/functions/_shared/stripe-subscription-resolver.ts`, H-блок `onSubscriptionUpdated` (строки 493–527).
 
-Зафиксировать текущее поведение по 4 статусам и составить карту участников:
+Сейчас при `wasInGrace && (stripeStatus === 'unpaid' || stripeStatus === 'canceled')`:
 
-1. Прочитать и описать:
-  - `supabase/functions/_shared/stripe-subscription-resolver.ts` (handlers `onSubscriptionUpdated`, `onSubscriptionDeleted`, `onInvoicePaymentFailed`, `onInvoicePaid`)
-  - `supabase/functions/subscriptions-reconcile/`
-  - `supabase/functions/telegram-revoke-access/` (контракт вызова, args, idempotency)
-  - `supabase/functions/telegram-grant-access/`
-  - `entitlements` lifecycle (как закрывается: `status='expired'` vs `expires_at`)
-  - `access_rules` для `grant_target_type='club'` (Telegram)
-  - Существующие cron: `telegram-check-expired`, `access-rules-nightly-reconcile`, `subscription-grace-reminders`
-2. Ответить письменно для каждого Stripe-статуса (`active`/`past_due`/`unpaid`/`canceled`):
-  - что меняется в `subscriptions_v2`
-  - что происходит с `entitlements`
-  - что происходит с `telegram_access`
-  - какой audit пишется
-3. Найти gap'ы между «как должно быть по цели» и «как сейчас».
+- merge `meta.stripe.dunning_status = final_failure | canceled_after_dunning`
+- merge `meta.stripe.dunning_final_at = now()`
+- audit `stripe.dunning.final_failure` / `stripe.dunning.canceled_after_dunning` с `result=manual_review`
 
-Артефакт: `.lovable/discovery/stripe_access_lifecycle_inventory_v1.md`.
+Изменения (только внутри этой же if-ветки, без новых функций/импортов/таблиц):
 
-## Этап B. Grace Period (past_due)
+1. К существующему UPDATE `subscriptions_v2.meta` добавить поля:
+  - `status = 'canceled'` (если ещё не canceled — гард по текущему значению)
+  - `cancel_at = now().toISOString()` (если ещё NULL или > now)
+  - `cancel_reason = 'stripe_dunning_final_failure'` (для unpaid) или `'stripe_dunning_canceled_after_dunning'` (для canceled)
+  - `canceled_at = now().toISOString()` (если NULL)
+  - `auto_renew = false`
+2. `result` audit-записи: оставить `manual_review` (уже соответствует semantics финального состояния dunning) ИЛИ заменить на `ok` с явным флагом `revoke_scheduled_via_reconcile=true` в `extra`. Решаем при approve.
+3. В `extra` audit-записи добавить:
+  - `revoke_scheduled_via_reconcile: true`
+  - `cancel_at: <iso>`
+  - `cancel_reason: <string>`
+  - убрать/заменить `access_revoke_deferred_to_phase_3_5: true` на `access_revoke_path: 'subscriptions_reconcile.executeRevoke'`
+4. Idempotency: гард `if (subv2.status === 'canceled' && subv2.cancel_at)` — пропускаем UPDATE статуса/cancel_at, маркер dunning_status всё равно мержим (как сейчас).
+5. Cross-provider safety: текущий блок уже выполняется только если найден `provider_subscriptions` row со stripe-account_code (проверяется выше в `onSubscriptionUpdated`). Дополнительной проверки не нужно — bePaid-подписка того же продукта живёт в отдельном `subscriptions_v2` row и не затрагивается.
 
-Подтвердить и явно задокументировать инвариант: `past_due` НЕ отзывает доступ.
+## Что НЕ делаем
 
-Изменения:
+- НЕ трогаем `onSubscriptionDeleted` (C.3, строки 535–602): он уже ставит `status=canceled`, `cancel_reason='stripe_subscription_deleted'`, `auto_renew=false`, но БЕЗ `cancel_at`. В отдельной итерации можно добавить туда такой же `cancel_at=now()`, но это вне scope 3.5-B и требует отдельного обоснования (риск: ломает natural-expiration сценарий self-cancel через Portal `cancel_at_period_end`, где `subscription.deleted` приходит в конце периода). На текущем шаге не трогаем.
+- НЕ добавляем revoke-вызовы в `onInvoicePaymentFailed` (grace-блок).
+- НЕ трогаем восстановление доступа (restore) — оно уже работает через стандартный `invoice.paid → grant-access-for-order` (Phase 3.5-A зафиксировал, что отдельный код не нужен).
 
-- В `onInvoicePaymentFailed`: при первом переходе `active → past_due` писать `meta.stripe.dunning_status='past_due_grace'`, `grace_started_at=now()` (add-only в `subv2.meta.stripe`).
-- Audit: `stripe.access.grace_started` (один раз per `invoice_id`, idempotent через проверку существующего marker).
-- В `onInvoicePaid` (recovery branch): при наличии `dunning_status='past_due_grace'` → `dunning_status='recovered'`, `grace_finished_at=now()`, audit `stripe.access.grace_finished` + `stripe.dunning.recovered`.
-- Никаких revoke-вызовов в grace.
+## Stage E — Runtime Proof (read-only после деплоя)
 
-## Этап C. Final Revoke
+Артефакт: `.lovable/proofs/stripe_final_failure_marker_v1.md`.
 
-Триггер: `customer.subscription.updated` со статусом `unpaid` ИЛИ `customer.subscription.deleted` с предыдущим `dunning_status ∈ {past_due_grace, ...}`.
+Сценарии (Stripe test mode, без изменений кода после деплоя 3.5-B):
 
-Действия (все через канонические writers, idempotent):
-
-1. `subscriptions_v2.status` → `canceled` (для `unpaid` после Smart Retries — также `canceled` с `cancel_reason='stripe_dunning_final_failure'`).
-2. Закрыть связанный `entitlement`: вызов существующего пути закрытия (через `subscriptions-reconcile` ветку «провайдер dead» или существующий RPC; точный путь определяется в Discovery A — НЕ создаём новый прямой UPDATE).
-3. Telegram: вызов `telegram-revoke-access` с явным `club_id` (по `telegram-revoke-safety` memory) для всех `access_rules` подписки.
-4. Audit: `stripe.access.revoked`, `stripe.access.revoked.entitlement`, `stripe.access.revoked.telegram`, с `revoke_reason ∈ {unpaid_after_dunning, canceled_after_dunning}`.
-5. `meta.stripe.dunning_status='final_failure'` или `'canceled_after_dunning'` + `revoked_at`.
-
-Guards:
-
-- Idempotency по `subscription_id` + `dunning_status` (не отзываем дважды).
-- Если у пользователя есть другая активная подписка на тот же `product_id` / `club_id` — Telegram revoke пропускаем (audit `stripe.access.revoked.telegram_skipped_other_active`).
-- Cross-provider safety: если access выдан bePaid-подпиской — Stripe revoke не трогает её (проверка по `entitlement.source_subscription_id`).
-
-## Этап D. Restore
-
-Никакой новой логики — переиспользуем существующий путь:
-
-- `invoice.paid` (recovery после revoke) → `orders_v2` (paid) → `grant-access-for-order` → entitlement (re)open + Telegram grant через `telegram-grant-access` (стандартный auto-grant single path).
-- Новая подписка после revoke → стандартный Subscription Checkout flow.
-
-Добавляем только audit-маркер:
-
-- `stripe.access.restored` пишется в `onInvoicePaid`, если предыдущий `dunning_status ∈ {final_failure, canceled_after_dunning}` и текущий вызов привёл к успешному grant.
-
-## Этап E. Runtime Proof (G41–G48)
-
-Test-mode сценарии в Stripe (без правок кода после фиксации фаз B/C/D):
-
-
-| Gate | Сценарий                                         | Ожидание                                                    |
-| ---- | ------------------------------------------------ | ----------------------------------------------------------- |
-| G41  | Активная подписка                                | `entitlement active`, Telegram `member`                     |
-| G42  | `invoice.payment_failed` (1×)                    | `subv2.status=past_due`, доступ есть, audit `grace_started` |
-| G43  | `invoice.payment_failed` (повторно)              | доступ есть, отдельный audit `retry_failed`                 |
-| G44  | `subscription.status=unpaid` после Smart Retries | `subv2.canceled`, entitlement закрыт, audit `revoked`       |
-| G45  | После G44                                        | `telegram_access` не `member`, audit `revoked.telegram`     |
-| G46  | Новый успешный `invoice.paid` после revoke       | entitlement восстановлен, audit `restored`                  |
-| G47  | После G46                                        | Telegram `member` восстановлен                              |
-| G48  | bePaid за весь Phase 3.5                         | 0 регрессий: счётчик rebill / webhook errors не изменился   |
-
-
-Доказательства: `provider_events`, `audit_logs`, `subscriptions_v2`, `entitlements`, `telegram_access` snapshots до/после, edge function logs.
-
-Артефакт: `.lovable/proofs/stripe_phase_3_5_runtime_proof_v1.md`.
+- **G44a (unpaid после Smart Retries)**: subscription с тестовой картой `4000 0000 0000 0341`; дождаться окончания Smart Retries → Stripe переводит в `unpaid` → webhook ставит `subv2.status=canceled`, `cancel_at=now()`, `cancel_reason='stripe_dunning_final_failure'`, `meta.stripe.dunning_status='final_failure'`; audit `stripe.dunning.final_failure` с `revoke_scheduled_via_reconcile=true`.
+- **G44b (canceled после Smart Retries)**: при настройке Stripe «cancel after retries» → `subscription.deleted` со статусом `canceled` приходит в `past_due_grace` → marker `canceled_after_dunning`.
+- **G45 (reconcile отзывает)**: следующий запуск `subscriptions-reconcile` (или ручной вызов) находит запись с `cancel_at < now()` → `executeRevoke` закрывает `entitlements`, `access_rules`, дергает `telegram-revoke-access` через стандартный путь; ledger пишет `reconcileBasis='cancel_at_passed'`.
+- **G46 (restore через invoice.paid)**: новый успешный `invoice.paid` после revoke → стандартная активация через `grant-access-for-order`, доступ возвращается, audit `stripe.invoice.paid.activated`.
+- **G47 (Telegram возвращается)**: после G46 — стандартный `grant-access-for-order → telegram-grant-access` (канонический write-path).
+- **G48 (bePaid не затронут)**: за тестовое окно проверить `bepaid_sync_logs` + `subscriptions_v2 where provider='bepaid'` → 0 изменений в `cancel_at`/`status`/`meta.stripe` из-за Stripe events; счётчик успешных bePaid rebill orders не падает.
+- **Cross-provider G**: пользователь с двумя активными подписками (Stripe unpaid + bePaid active) на одном продукте → после G44a Stripe-subv2 закрыт, bePaid-subv2 жив, `entitlement` остаётся открытым за счёт `hasCommercialAccess` guard в `executeRevoke`, Telegram не отзывается.
+- **Idempotency G**: повторный `customer.subscription.updated unpaid` после уже выставленного `cancel_at` → UPDATE статуса skip-ается, dunning_status мержится без изменений, новый audit пишется (или дедуплицируется по `provider_events_idem_unique` — фиксируем в proof).
 
 ## Definition of Done
 
-- `past_due` подтверждённо не отзывает доступ (G42, G43 PASS).
-- `unpaid` / `canceled_after_dunning` автоматически отзывает entitlement + Telegram (G44, G45 PASS).
-- Recovery через канонический `grant-access-for-order` восстанавливает доступ (G46, G47 PASS).
-- bePaid pipeline без регрессий (G48 PASS).
-- `grant-access-for-order` не модифицирован (diff = 0).
-- Все мутации доступа идут через существующие writers (grep подтверждает отсутствие новых прямых `UPDATE entitlements` / `UPDATE telegram_access` в новом коде).
-- Discovery + Runtime Proof артефакты созданы.
+- В H-блоке `onSubscriptionUpdated` при `past_due_grace → unpaid/canceled` ставится `cancel_at=now()`, `status=canceled`, `cancel_reason`, `auto_renew=false`.
+- `meta.stripe.dunning_status` маркер сохраняется (`final_failure` / `canceled_after_dunning`).
+- `subscriptions-reconcile` сам отзывает доступ + Telegram через `executeRevoke` — без новых вызовов из webhook.
+- `grant-access-for-order`, `entitlements`, `access_rules`, `telegram-*` функции, bePaid-контур — не меняются.
+- Runtime proof (`G44a/b`, `G45`, `G46`, `G47`, `G48`, cross-provider, idempotency) выполнен в test-mode и зафиксирован в `.lovable/proofs/stripe_final_failure_marker_v1.md`.
+- Никаких миграций, новых RPC, новых cron, новых таблиц.
 
-## Вопросы оператору перед стартом (Этап A)
+## Открытые вопросы оператору (решаем до execute)
 
-1. **Триггер финального revoke**: ориентируемся ТОЛЬКО на webhook `customer.subscription.{updated:unpaid, deleted}` или подключаем также `subscriptions-reconcile` как safety net (для случаев пропущенных webhook)?
-2. **Cross-provider conflict**: если у пользователя одновременно активна Stripe-подписка (которая уходит в `unpaid`) И bePaid-подписка на тот же продукт — подтверждаем, что bePaid сохраняет Telegram-доступ, Stripe-revoke его не трогает?
-3. **Окно grace**: оставляем grace по Stripe Smart Retries (Stripe сам решает когда `unpaid`), или хотим явный max-grace в днях с нашей стороны (например, hard cutoff через 14 дней даже если Stripe ещё retry'ит)?
-4. **Test-mode payment_failed**: для G42–G44 используем Stripe test cards (`4000 0000 0000 0341` — fail на attach, и т.д.) на реальной test-mode подписке, или строим сценарии через CLI `stripe trigger`?
----
-
-# Отчет о выполнении: Phase 3.5-A Discovery
-
-Артефакт: `.lovable/discovery/stripe_access_lifecycle_inventory_v1.md`.
-
-Ключевые выводы:
-- Сегодня **ни одна Stripe-ветка резолвера не отзывает доступ** (ни entitlement, ни Telegram). Phase 3.4 пишет только маркеры (`past_due_grace`, `recovered`, `final_failure`, `canceled_after_dunning`) в `subscriptions_v2.meta.stripe.*`.
-- Канонический revoke-primitive `executeRevoke` (`_shared/access-revoker.ts`) уже встроен в 10 writers (`subscriptions-reconcile`, `telegram-check-expired`, `telegram-revoke-access`, `subscription-admin-actions`, и др.), сразу учитывает cross-provider (`hasCommercialAccess`) и пишет skip-ledger.
-- Безопасная реализация 3.5-B возможна **без новых writers**: достаточно в webhook H-ветке выставлять `subscriptions_v2.cancel_at = now()` при переходе `past_due_grace → unpaid/canceled` — далее cron `subscriptions-reconcile` сам отрабатывает через канонический путь.
-- Self-cancel через Portal (`cancel_at_period_end`) НЕ задевается — естественное истечение по `entitlements.expires_at` сохраняется.
-
-Никаких изменений кода, БД, edge functions, конфига, GitHub workflows не выполнено.
-
-**Status:** Phase 3.5-A Discovery — DONE. Phase 3.5-B Implementation — ожидает отдельного approve оператора.
+1. `audit_logs.result` для final-failure: оставить `manual_review` (как сейчас) или поменять на `ok` с явным `revoke_scheduled_via_reconcile=true`? Влияет только на фильтры в admin UI.
+2. `cancel_reason` для unpaid: `stripe_dunning_final_failure` или унифицировать со строкой, которую уже использует reconcile (`stripe_subscription_deleted`)? Разные строки облегчают разбор причин в репортах.
+3. `subscriptions-reconcile` timing: текущий интервал крона достаточен (revoke может произойти с задержкой до интервала). Принимаем как есть или вызываем reconcile прямо из webhook после маркировки? Рекомендация: оставить cron — это и есть смысл "single write-path".
