@@ -387,22 +387,39 @@ async function onSubscriptionUpdated(
 
   // Phase 3.3 — Portal-derived deltas (resume / cancel-enable / payment-method change).
   // Add-only: рассчитываем по diff'у previous (subv2.meta.stripe.*) vs incoming.
+  // Stripe Customer Portal сигнализирует "cancel at period end" через `cancel_at` timestamp,
+  // а admin path (stripe-subscription-action) — через `cancel_at_period_end=true` boolean.
+  // Считаем оба сигнала эквивалентными: effective = cancel_at_period_end || cancel_at != null.
   const prevStripe = ((subv2.meta as any)?.stripe ?? {}) as Record<string, unknown>;
-  const prevCancelAtEnd = !!prevStripe.cancel_at_period_end;
-  const nextCancelAtEnd = !!sub.cancel_at_period_end;
+  const prevCancelAtEndFlag = !!prevStripe.cancel_at_period_end;
+  const prevCancelAtTs = (prevStripe.cancel_at as number | null | undefined) ?? null;
+  const prevCancelEffective = prevCancelAtEndFlag || (prevCancelAtTs != null && prevCancelAtTs !== 0);
+  const nextCancelAtEndFlag = !!sub.cancel_at_period_end;
+  const nextCancelAtTs = (sub.cancel_at as number | null | undefined) ?? null;
+  const nextCancelEffective = nextCancelAtEndFlag || (nextCancelAtTs != null && nextCancelAtTs !== 0);
   const prevDefaultPm = (prevStripe.default_payment_method as string | null) ?? null;
   const nextDefaultPm = (sub.default_payment_method as string | null) ?? null;
   const portalDeltas: Array<{ action: string; extra: Record<string, unknown> }> = [];
-  if (!prevCancelAtEnd && nextCancelAtEnd) {
+  if (!prevCancelEffective && nextCancelEffective) {
     portalDeltas.push({
       action: 'stripe.portal.cancel_at_period_end_enabled',
-      extra: { current_period_end: sub.current_period_end ?? null },
+      extra: {
+        current_period_end: sub.current_period_end ?? null,
+        cancel_at: nextCancelAtTs,
+        cancel_at_period_end: nextCancelAtEndFlag,
+        signal: nextCancelAtEndFlag ? 'cancel_at_period_end_flag' : 'cancel_at_timestamp',
+      },
     });
   }
-  if (prevCancelAtEnd && !nextCancelAtEnd) {
+  if (prevCancelEffective && !nextCancelEffective) {
     portalDeltas.push({
       action: 'stripe.portal.cancel_at_period_end_disabled',
-      extra: { current_period_end: sub.current_period_end ?? null, resumed: true },
+      extra: {
+        current_period_end: sub.current_period_end ?? null,
+        resumed: true,
+        prev_cancel_at: prevCancelAtTs,
+        prev_cancel_at_period_end: prevCancelAtEndFlag,
+      },
     });
   }
   if (prevDefaultPm !== nextDefaultPm) {
