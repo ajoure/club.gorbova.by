@@ -936,6 +936,75 @@ async function onInvoicePaid(
     // Не throw — order уже создан, grant ретраится через nightly reconcile.
   }
 
+  // ---- Phase 3.4 F: recovery snapshot (если выходим из dunning grace) ----
+  const prevDunningStatus = (subMetaStripe.dunning_status as string | null) ?? null;
+  const wasInDunning = prevDunningStatus === 'past_due_grace';
+  if (wasInDunning) {
+    const recoveredAt = new Date().toISOString();
+    const previousFailureSnapshot = {
+      last_payment_failed_at: subMetaStripe.last_payment_failed_at ?? null,
+      last_failed_invoice_id: subMetaStripe.last_failed_invoice_id ?? null,
+      last_failed_payment_intent_id: subMetaStripe.last_failed_payment_intent_id ?? null,
+      last_failure_reason: subMetaStripe.last_failure_reason ?? null,
+      attempt_count: subMetaStripe.attempt_count ?? null,
+      next_payment_attempt: subMetaStripe.next_payment_attempt ?? null,
+    };
+    const recoveryPatch: Record<string, unknown> = {
+      dunning_status: 'recovered',
+      recovered_at: recoveredAt,
+      recovered_invoice_id: invoice_id,
+      // Очищаем активные failure-поля, snapshot уезжает в previous_failure.
+      last_payment_failed_at: null,
+      last_failed_invoice_id: null,
+      last_failed_payment_intent_id: null,
+      last_failure_reason: null,
+      attempt_count: null,
+      next_payment_attempt: null,
+      previous_failure: previousFailureSnapshot,
+    };
+    // Re-read subv2.meta после возможных обновлений выше (status pending→active).
+    const { data: subv2Now } = await supabase
+      .from('subscriptions_v2')
+      .select('meta')
+      .eq('id', subv2.id)
+      .maybeSingle();
+    const subMetaNow = (subv2Now as any)?.meta ?? subv2.meta;
+    await supabase
+      .from('subscriptions_v2')
+      .update({ meta: mergeSubMetaStripe(subMetaNow, recoveryPatch) })
+      .eq('id', subv2.id);
+
+    // provider_subscriptions snapshot
+    const { data: psNow } = await supabase
+      .from('provider_subscriptions')
+      .select('meta')
+      .eq('id', ps.id)
+      .maybeSingle();
+    const psMetaNow = (psNow as any)?.meta ?? ps.meta;
+    await supabase
+      .from('provider_subscriptions')
+      .update({
+        meta: {
+          ...((psMetaNow as any) ?? {}),
+          stripe: { ...((((psMetaNow as any)?.stripe) ?? {})), ...recoveryPatch },
+        },
+      })
+      .eq('id', ps.id);
+
+    await writeAudit(supabase, {
+      event, account_code,
+      action: 'stripe.dunning.recovered',
+      result: 'ok',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      extra: {
+        invoice_id,
+        order_id,
+        recovered_at: recoveredAt,
+        previous_failure: previousFailureSnapshot,
+      },
+    });
+  }
+
   await writeAudit(supabase, {
     event, account_code,
     action: 'stripe.invoice.paid.activated',
@@ -947,6 +1016,7 @@ async function onInvoicePaid(
       first_payment: subv2.status === 'pending',
       rebound_from_pending,
       prov_state_before: ps.state, prov_state_after: provStateNext,
+      recovered_from_dunning: wasInDunning,
     },
   });
 
