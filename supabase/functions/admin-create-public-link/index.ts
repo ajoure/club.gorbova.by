@@ -70,13 +70,17 @@ Deno.serve(async (req) => {
     const body: CreatePublicLinkRequest = await req.json();
     const {
       product_id, tariff_id, offer_id, amount,
-      currency = 'BYN',
+      currency: rawCurrency,
       payment_type: rawPaymentType = 'one_time',
       description = null, max_uses = null, expires_at = null, user_id = null,
       requested_payment_type, resolved_mode, cta_source, cta_contract_version,
       installment_offer = false, selected_installment_months,
+      provider: rawProvider,
+      account_code: rawAccountCode = null,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
+    const provider: 'bepaid' | 'stripe' = rawProvider === 'stripe' ? 'stripe' : 'bepaid';
+    const currency = (rawCurrency ?? (provider === 'stripe' ? 'EUR' : 'BYN')).toUpperCase();
 
     // ── Validate required ──
     if (!product_id || !tariff_id || !amount) {
