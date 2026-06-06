@@ -257,11 +257,43 @@ export function AdminPaymentLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
 
+  // Список всех active pay_now offers (источник для override и резолвера).
+  const activeOffers = useMemo(
+    () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
+    [allOffers]
+  );
+
+  // PATCH 4.1.1 — Stripe-eligible offers (только для provider='stripe' + subscription).
+  // Фильтрация: offer должен иметь meta.stripe.price_id, иначе Stripe-подписка не сможет оплатиться.
+  const stripeEligibleOffers = useMemo(
+    () => activeOffers.filter((o) => !!(o as any).meta?.stripe?.price_id),
+    [activeOffers]
+  );
+
+  // Видимый набор кнопок в селекторе зависит от выбранного провайдера и типа оплаты.
+  const visibleOffers = useMemo(() => {
+    if (provider === "stripe" && paymentType === "subscription") {
+      return stripeEligibleOffers;
+    }
+    return activeOffers;
+  }, [provider, paymentType, activeOffers, stripeEligibleOffers]);
+
+  const noStripeSubscriptionOffers =
+    provider === "stripe" && paymentType === "subscription" && stripeEligibleOffers.length === 0;
+
+  // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
+  useEffect(() => {
+    if (!selectedOfferId) return;
+    if (visibleOffers.some((o) => o.id === selectedOfferId)) return;
+    setSelectedOfferId("");
+  }, [visibleOffers, selectedOfferId]);
+
   // Резолвер: работает на ВСЕХ offers (без предварительной фильтрации по типу).
   const resolved = useMemo(
     () => resolveCanonicalOffer(allOffers, paymentType),
     [allOffers, paymentType]
   );
+
 
   // Effective offer: пользовательский override (если выбран и валиден) > resolver
   // PATCH 4.1.1 — для Stripe+subscription отбираем ТОЛЬКО офферы с meta.stripe.price_id.
