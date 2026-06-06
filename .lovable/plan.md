@@ -1,319 +1,262 @@
-# Phase 3.4 = PARTIAL PASS (код) / PENDING runtime (2026-06-06)
+да, согласен, с учетом правок:
 
-Код Stage B/F/G/H в `_shared/stripe-subscription-resolver.ts` задеплоен. Cabinet recovery UI + UI language sweep сделаны.
-Email-инфра и admin past_due-вкладка → backlog (`.lovable/backlog/stripe_dunning_email_template.md`, `.lovable/backlog/stripe_dunning_admin_tab.md`).
-Runtime G33–G40 заблокирован повторной D2-регрессией: `POST /stripe-webhook` без подписи отдаёт 401 при корректном `verify_jwt = false`.
-Полный отчёт: `.lovable/proofs/stripe_phase_3_4_dunning_recovery_v1.md`.
+1. **Не делать V5 как acceptance**
 
-# Phase 3.3 = FULL PASS (2026-06-06)
-
-D2 закрыт, D1 runtime-подтверждён. Полный отчёт: `.lovable/proofs/stripe_phase_3_3_d2_webhook_runtime_v1.md`. CI guard: `.github/workflows/verify-webhook-public.yml`.
-
----
-
-# да, согласен, с учетом правок:
-
-1. **Не использовать test clock как основной путь**
-
-Для runtime G33–G40 основной путь:
+V5 сейчас опасный:
 
 ```text
-Hosted Checkout / Portal / Stripe Dashboard retry
+тестовый redeploy stripe-webhook через supabase--deploy_edge_functions
 ```
 
-`test clock` — только fallback, если Dashboard retry недоступен. Иначе можно получить сценарий, который отличается от реального lifecycle.
+Именно agent-deploy ломает `verify_jwt=false`.
 
-2. **Portal link для клиента в админке**
-
-Кнопку «Создать Portal link для клиента» делать только если это уже безопасно поддержано текущей функцией.
-
-Если `stripe-create-customer-portal-session` строго проверяет `subscription.user_id = auth.uid()`, то админ не сможет создать portal link от имени клиента. Тогда:
+Заменить на:
 
 ```text
-не обходить ownership guard
+V5. Lovable agent-deploy для webhook-функций НЕ использовать до отдельного исправления deploy pipeline.
 ```
 
-а вынести admin-generated portal link в backlog / отдельный PATCH.
+Если нужно проверить edge deploy — только на non-webhook функции или через безопасный канал, но не через `stripe-webhook`.
 
-3. **Notification не должен блокировать webhook**
+2. **P2 выбрать по умолчанию вариант C**
 
-Если `send-transactional-email` падает:
+С учётом того, что GitHub Actions не имеет прав к Lovable Supabase, оптимальный default:
 
 ```text
-invoice.payment_failed webhook всё равно processed
+C — оставить только read-only guard/smoke workflows,
+а write/deploy workflows отключить или пометить как not available for Lovable-managed Supabase.
 ```
 
-Email failure пишется в audit/manual_review, но не переводит provider_event в failed.
+Вариант A возможен только после подтверждения Lovable/Supabase credentials.
 
-4. **G37 уточнить**
+3. **GitHub Actions не считать каноническим deploy path**
 
-При recovery через `invoice.paid`:
+Канонический путь сейчас:
 
-- если это уже существующий invoice после failed, order/payment/grant должны создаться один раз;
-- если order уже был создан ранее — повторно не создавать;
-- proof должен показать idempotency по `invoice_id`.
+```text
+Lovable Cloud
+```
 
-5. **G34 уточнить**
+Но с ограничением:
 
-Если email отправляется через `send-transactional-email`, proof должен показать:
+```text
+webhook-функции нельзя redeploy через agent-deploy без post-deploy smoke.
+```
 
-- `idempotencyKey`;
-- отсутствие дубля при replay;
-- что текст письма содержит ссылку только на Stripe Portal, а не на свою форму карты.
+GitHub Actions — не канонический путь, пока нет валидных прав.
 
-6. **H Final Failure**
+4. **Добавить пункт про эскалацию Lovable**
 
-Оставить только audit/manual_review.
+Нужен отдельный обязательный блок:
 
-Не менять status в `canceled/unpaid` вручную, если это не пришло из Stripe webhook status. Source of Truth — Stripe webhook.
-
-После этих правок план можно запускать.
-
-Уточнение к Phase 3.4.
-
-Никаких англоязычных технических названий в UI быть не должно.
-
-Термины Portal Link, Customer Portal, Dunning, Smart Retry, Recovery, Failed Payment, Past Due, Retry Payment допустимы только в коде, логах, proof и audit action.
-
-В клиентском и админском UI все названия должны быть на русском языке и понятны пользователю.
-
-Использовать такие UI-названия:
-
-Клиентский UI:
-
-- Управлять подпиской
-
-- Обновить карту
-
-- Обновить карту для оплаты
-
-- Платёж не прошёл
-
-- Доступ пока сохранён
-
-- Следующая попытка оплаты
-
-- Подписка активна
-
-- Подписка отменяется в конце периода
-
-- Подписка восстановлена
-
-Админский UI:
-
-- Проблема с оплатой
-
-- Ожидает повторной оплаты
-
-- Подписка требует внимания
-
-- Открыть подписку
-
-- Открыть управление подпиской
-
-- Отправить клиенту письмо для обновления карты
-
-- Повторная оплата прошла
-
-- Оплата восстановлена
-
-Перед дальнейшей реализацией Phase 3.4 сделать UI language sweep по уже созданным Stripe-разделам:
-
-- админка подписок;
-
-- клиентский кабинет подписки;
-
-- кнопки управления Stripe;
-
-- Customer Portal CTA;
-
-- cancel/cancel_now/cancel_at_period_end UI;
-
-- past_due/recovery/dunning UI;
-
-- email-шаблоны;
-
-- toast-сообщения;
-
-- empty states;
-
-- error messages.
+```text
+Открыть/зафиксировать Lovable platform issue:
+agent deploy ignores verify_jwt=false for webhook functions in managed Supabase.
+```
 
 DoD:
 
-- все видимые пользователю строки на русском языке;
+- issue/сообщение в Lovable support;
+- приложены project_ref, function name, timestamps, proof 401;
+- ожидаемое поведение: deploy обязан применять config.toml.
 
-- никаких Portal Link / Customer Portal / Dunning / Recovery / Past Due в UI;
+5. **Не добавлять memory URI вручную как обязательный артефакт**
 
-- proof содержит список найденных и исправленных строк;
+`mem://...` можно заменить на обычный файл:
 
-- если строка остаётся на английском, объяснить почему и где она находится.
+```text
+.lovable/architecture/canonical_infrastructure_v1.md
+```
+
+Именно его считать source of truth.
+
+6. **Stripe endpoints cleanup оставить как ручной контроль, но не блокировать code cleanup**
+
+V7 разделить:
+
+- V7a: список endpoint’ов получен;
+- V7b: лишние endpoint’ы удалены пользователем.
+
+Если пользователь пока не прислал Stripe Dashboard, не блокировать cleanup репозитория, но Phase 3.4 runtime не запускать до подтверждения webhook URL.
+
+7. **Добавить явное решение по старому Supabase**
+
+Если `ypwsuumurrtkxatoyqhk` — личный старый Supabase:
+
+```text
+не деплоить туда;
+не использовать в workflows;
+не использовать в env;
+не удалять проект физически без отдельного подтверждения пользователя.
+```
+
+После этих правок план можно принимать.
 
 &nbsp;
 
-&nbsp;
+План: Infrastructure Cleanup — удалить конфликт двух Supabase контуров
 
-План: Phase 3.4 — Stripe Dunning + Smart Retries + Failed Payment Recovery
+Stripe Phase 3.4 Runtime G33–G40 — заморожен до завершения этого плана.
 
-## Контекст
+## Цель
 
-Phase 3.3 = FULL PASS. Customer Portal работает, `invoice.payment_failed` уже маркирует подписку `past_due`, доступ не отзывается. Сейчас не хватает управляемого recovery-контура: фиксации failure-снапшота, нотификации клиенту, recovery CTA в Portal, админской видимости past_due и корректного выхода через `invoice.paid`.
+Оставить единственным рабочим Supabase project_ref = `hdjgkjceownmmnrqqtuz` (Lovable Cloud). Полностью устранить любые следы старого ref `ypwsuumurrtkxatoyqhk` и зафиксировать единственный канонический путь деплоя edge functions.
 
-## Жёсткие правила
+## Контекст (известное на сейчас)
 
-- Только русский язык, add-only.
-- bePaid не трогаем (`bepaid-*`, статусы, синки).
-- `grant-access-for-order` не меняем.
-- `stripe-webhook` расширяем add-only, без переписывания.
-- Доступ (`entitlements`, `access_rules`, `telegram_access`) напрямую не трогаем.
-- Никакого raw card data, своих форм карт, ручных списаний.
-- Никаких helper edge functions для триггера событий (PCI §10.3).
-- Только Stripe test mode, Smart Retries — настройка в Stripe, не дублируем.
-- Никаких новых таблиц без отдельного approve.
+- Lovable Cloud project_ref: `hdjgkjceownmmnrqqtuz` — управляется Lovable, у пользователя нет прямого доступа к Supabase Dashboard.
+- В `.github/workflows/apply-migrations.yml` ref уже исправлен (предыдущий патч).
+- Grep по репозиторию: `ypwsuumurrtkxatoyqhk` не встречается (подтверждено в прошлой итерации).
+- Канонический путь деплоя в Lovable Cloud — внутренний agent-deploy (Lovable → Supabase). GitHub Actions → Supabase CLI — параллельный путь, который требует валидных `SUPABASE_ACCESS_TOKEN` + `SUPABASE_DB_PASSWORD` для целевого ref.
 
-## Этапы (Diagnose → Plan → Dry run → Execute → Verify)
+## Diagnose (этап 1, read-only)
 
-### A. Discovery (read-only)
+D
 
-Зафиксировать в `.lovable/discovery/stripe_dunning_inventory_v1.md`:
+1. Полный аудит репозитория на старый ref.
+  - `rg -n 'ypwsuumurrtkxatoyqhk' -uu` по всему дереву (включая dot-файлы, скрипты, миграции, `.lovable/`, `docs/`, `supabase/`, `scripts/`).
+  - Аудит на «битые» project_ref паттерны: `rg -n 'project[-_ ]?ref' .github supabase scripts docs`.
 
-- текущие ветки `invoice.payment_failed` и `invoice.paid` в `stripe-webhook` и `_shared/stripe-subscription-resolver.ts`;
-- где и как сейчас выставляется `subscriptions_v2.status='past_due'` и `provider_subscriptions.state`;
-- текущая форма `subscriptions_v2.meta.stripe` и `provider_subscriptions.meta.stripe`;
-- существующая email/notification инфраструктура (`send-transactional-email`, шаблоны, очередь, suppression);
-- админский UI подписок (фильтры, бейджи, страница деталей);
-- наличие/отсутствие CRM stage-механики для failed payment;
-- зафиксировать, какие audit-actions уже используются для Stripe portal/subscription.
+D
 
-**DoD:** discovery-файл создан, код не менялся.
+2. Аудит всех workflow-файлов `.github/workflows/*.yml`:
+  - какой `PROJECT_REF` / `SUPABASE_PROJECT_REF` / URL используется;
+  - какие secrets читаются (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`);
+  - какие из них реально работали последние 30 дней (по run history в GitHub — потребует от пользователя).
 
-### B. Failed Payment State (add-only в резолвере)
+D
 
-В `_shared/stripe-subscription-resolver.ts` расширить обработчик `invoice.payment_failed`:
+3. Аудит frontend env:
+  - `.env` (autogen) — проверить `VITE_SUPABASE_URL`, `VITE_SUPABASE_PROJECT_ID`, `VITE_SUPABASE_PUBLISHABLE_KEY`.
+  - `src/integrations/supabase/client.ts` — read-only проверка, что использует только `import.meta.env.VITE_SUPABASE_*`.
+  - `supabase/config.toml` — `project_id`.
 
-- merge в `subscriptions_v2.meta.stripe` и `provider_subscriptions.meta.stripe`:
-  ```
-  last_payment_failed_at, last_failed_invoice_id,
-  last_failed_payment_intent_id, last_failure_reason,
-  attempt_count, next_payment_attempt,
-  dunning_status: "past_due_grace"
-  ```
-- `subscriptions_v2.status='past_due'`, `provider_subscriptions.state='past_due'` (как сейчас);
-- НЕ создаём `orders_v2`, `payments_v2`, не вызываем `grant-access-for-order`, не трогаем entitlements/rules/telegram;
-- audit: `stripe.dunning.payment_failed` с `invoice_id`, `attempt_count`, `reason`.
+D
 
-### C. Customer Recovery Link
+4. Аудит edge functions:
+  - `rg -n 'functions\.supabase\.co|supabase\.co' supabase/functions` — найти любые хардкод-URL.
+  - Особое внимание: `stripe-webhook`, `bepaid-webhook`, `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`, любые callback-URL.
 
-- Использовать существующий `stripe-create-customer-portal-session` без изменений API.
-- В кабинете пользователя (`SubscriptionDetailSheet` / Purchases) для подписки в `past_due` показать CTA «Обновить карту через Stripe Portal», открывающий существующий portal-flow.
-- Никакого нового card UI, никакого SetupIntent на нашей стороне.
+D
 
-### D. Notification (один раз на invoice)
+5. Аудит Stripe webhook endpoints (требует ручной проверки в Stripe Dashboard пользователем):
+  - Список всех зарегистрированных endpoint URL.
+  - Ожидаемо допустимый: `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook`.
+  - Всё остальное — кандидат на удаление.
 
-- Если `send-transactional-email` готов и есть email домен — создать app-template `stripe-payment-failed` (React Email, бренд-стиль), отправлять при первом `invoice.payment_failed` per `invoice_id` через `supabase.functions.invoke('send-transactional-email', { idempotencyKey: 'stripe-dunning-<invoice_id>' })`.
-- Тело: «Платёж по подписке не прошёл. Доступ пока сохранён. Обновите карту в Stripe Portal.» + CTA на Portal + `next_payment_attempt`, если есть.
-- Если email-инфраструктура не готова — audit-only `stripe.dunning.notification_skipped_no_email` + backlog-запись; не падать.
-- Cooldown: `idempotencyKey` на `invoice_id` + `template_name` гарантирует отсутствие дублей при replay.
+D
 
-### E. Admin UI: Past Due Subscriptions (read-only расширение)
+6. Lovable integrations / connectors:
+  - Cloud — единственный backend; подтвердить через `supabase--project_info` / `cloud_status`.
+  - Список connectors (если есть) — на предмет «второго» Supabase.
 
-- В существующем админ-списке подписок добавить фильтр/бейдж «Stripe past_due» (по `provider='stripe'` + `subscriptions_v2.status='past_due'`).
-- В строке/деталях показать: клиент, продукт, тариф, сумма, валюта, `invoice_id`, `attempt_count`, `next_payment_attempt`, `last_failure_reason`.
-- Кнопки: «Открыть подписку» (существующий sheet), «Создать Portal link для клиента» (вызов существующего `stripe-create-customer-portal-session` от имени клиента, с audit).
-- Никакого ручного списания, никакого нового write-path.
+## Plan (этап 2)
 
-### F. Successful Recovery (`invoice.paid` после failed)
+P
 
-В существующей ветке `invoice.paid` (add-only):
+1. Зафиксировать канонический путь деплоя:
+  - Основной: Lovable → Supabase (agent-deploy через инструмент `supabase--deploy_edge_functions`). Автоматический, не требует GitHub.
+  - Вторичный (опциональный): GitHub Actions `apply-migrations.yml` — только если у пользователя есть `SUPABASE_ACCESS_TOKEN` и `SUPABASE_DB_PASSWORD` для Lovable-managed Supabase. Если нет — workflow отключается.
 
-- если `meta.stripe.dunning_status` ∈ {`past_due_grace`}, после успешной материализации заказа через канонический `grant-access-for-order`:
-  - `subscriptions_v2.status='active'`, `provider_subscriptions.state='active'`;
-  - merge `meta.stripe`: `dunning_status='recovered'`, `recovered_at`, `recovered_invoice_id`, очистить `last_failure_reason`/`attempt_count` (snapshot в `meta.stripe.previous_failure`);
-  - audit `stripe.dunning.recovered`.
-- Идемпотентность по `provider_events_idem_unique` (event_id) — никаких дублей order/payment/grant.
+P
 
-### G. Repeated Failure
+2. Решение по GitHub Actions deploy (требует решения пользователя):
+  - Вариант A — оставить как backup: проверить, что secrets валидны для `hdjgkjceownmmnrqqtuz`. Если валидны — оставить, добавить guard «hard-fail если project_ref ≠ hdjgkjceownmmnrqqtuz».
+  - Вариант B — отключить полностью: переименовать `apply-migrations.yml` → `apply-migrations.yml.disabled` (или удалить `workflow_dispatch`), чтобы он не появлялся в Actions UI и не давал ложных красных запусков.
+  - Вариант C — оставить только `verify-webhook-runtime.yml` (read-only smoke) и `verify-webhook-public.yml` (config guard). Они безопасны и не пишут.
 
-- Повторный `invoice.payment_failed` по тому же `invoice_id` или новой попытке: инкремент `attempt_count`, обновление `next_payment_attempt`, audit `stripe.dunning.retry_failed`.
-- Уведомление НЕ дублируется (cooldown по `idempotencyKey=stripe-dunning-<invoice_id>`).
+P
 
-### H. Final Failure / Unpaid / Canceled
+3. Cleanup-патч (исполняется после выбора варианта):
+  - Удалить любые найденные на этапе D следы `ypwsuumurrtkxatoyqhk` (ожидаемо — 0).
+  - Добавить CI-guard `verify-no-legacy-ref.yml`: `rg -q 'ypwsuumurrtkxatoyqhk' && exit 1`.
+  - Зафиксировать в `mem://architecture/infrastructure/canonical-supabase-ref` правило: «единственный валидный project_ref = `hdjgkjceownmmnrqqtuz`; legacy `ypwsuumurrtkxatoyqhk` запрещён».
 
-- При `customer.subscription.updated` со `status ∈ {unpaid, canceled}` после dunning:
-  - merge `meta.stripe.dunning_status='final_failure'` / `canceled_after_dunning`;
-  - audit `stripe.dunning.final_failure` / `stripe.dunning.canceled_after_dunning`;
-  - доступ НЕ отзываем — revoke policy вынесен в отдельный Phase 3.5;
-  - запись `manual_review` HTTP 200.
+P
 
-## Runtime Proof G33–G40 (Stripe test mode)
+4. Stripe endpoints cleanup (пользователь):
+  - Удалить в Stripe Dashboard все webhook endpoints кроме `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook`.
+  - Прислать список оставшихся для фиксации в proof.
 
-Все гейты прогоняются на тестовой подписке в `stripe_poland`. В Stripe Dashboard симулируем failed retry через test clock или `4000000000000341` (failed on auth), затем recovery через смену PM на `4242` и `Retry payment`.
+## Dry run (этап 3)
 
-- **G33** `invoice.payment_failed` → `subscriptions_v2.status=past_due`, `provider_subscriptions.state=past_due`, `meta.stripe.last_failed_invoice_id/attempt_count/next_payment_attempt/dunning_status='past_due_grace'`, Δ=0 по entitlements/rules/telegram.
-- **G34** Уведомление: запись в `email_send_log` с `template='stripe-payment-failed'` или audit `stripe.dunning.notification_skipped_no_email`; replay того же event_id → дубля нет.
-- **G35** Customer Portal recovery link создаётся (`bps_*`), ведёт в Stripe Portal; no raw card data в логах.
-- **G36** Подписка видна в админ-фильтре «Stripe past_due» с корректными полями.
-- **G37** После `invoice.paid` → `status='active'`, `dunning_status='recovered'`, один `orders_v2`/`payments_v2`, entitlements продлены через канонический grant.
-- **G38** Replay G33 и G37 событий через Stripe Dashboard → `provider_events` reuse (idem unique), без дублей order/payment/notification.
-- **G39** На всём окне past_due: Δ=0 по `entitlements`, `access_rules`, `telegram_access`; revoke не вызывался.
-- **G40** bePaid: `bepaid_*`, bePaid subscriptions/orders/payments — Δ=0; функции `bepaid-*` не редактировались.
+DR1. Прогнать grep'ы из D1, D2, D4 и приложить полный вывод в отчёт (ожидаемо: пусто по legacy ref).
+DR2. Прогнать `supabase--project_info` и `cloud_status` для подтверждения единственного backend.
+DR3. Сформировать proof-файл `.lovable/proofs/infrastructure_cleanup_dry_run.md` с таблицей: файл → найденный ref → действие.
 
-## Stop-gates
+## Execute (этап 4)
 
-Останавливаемся и логируем `manual_review` HTTP 200, если: provider ≠ stripe; нет `subscription_v2_id`/`customer_id`/`invoice_id`; signature invalid; Stripe API error; попытка править bePaid/access/Telegram напрямую; попытка card UI или raw card data.
+E
 
-## Файлы (ожидаемые изменения)
+1. Применить выбранный вариант P2 (A/B/C) одним коммитом.
 
-- `supabase/functions/_shared/stripe-subscription-resolver.ts` (add-only ветки failure/recovery snapshot)
-- `supabase/functions/stripe-webhook/index.ts` (add-only маршрутизация audit/notification, без переписывания)
-- `supabase/functions/_shared/transactional-email-templates/stripe-payment-failed.tsx` + регистрация в `registry.ts` (если email готов)
-- Админ UI подписок: фильтр/бейдж past_due + кнопка Portal link (frontend only)
-- Кабинет подписки: recovery CTA в `SubscriptionDetailSheet` (frontend only)
-- `.lovable/discovery/stripe_dunning_inventory_v1.md`
-- `.lovable/proofs/stripe_phase_3_4_dunning_recovery_v1.md`
-- `.lovable/plan.md` (отметка Phase 3.4 = FULL PASS после прогона)
+E
 
-Новых таблиц не создаём.
+2. Если есть реальные находки — отдельные коммиты per-file.
+
+E
+
+3. Добавить `.github/workflows/verify-no-legacy-ref.yml` (P3 guard).
+
+E
+
+4. Записать memory `mem://architecture/infrastructure/canonical-supabase-ref`.
+
+## Verify (этап 5, DoD)
+
+V
+
+1. `rg 'ypwsuumurrtkxatoyqhk' -uu` → 0 совпадений.
+
+V
+
+2. Все workflow'ы в `.github/workflows/*.yml` либо ссылаются на `hdjgkjceownmmnrqqtuz`, либо отключены.
+
+V
+
+3. `supabase/config.toml` → `project_id = "hdjgkjceownmmnrqqtuz"`.
+
+V
+
+4. `.env` → `VITE_SUPABASE_URL` указывает на `hdjgkjceownmmnrqqtuz.supabase.co`.
+
+V
+
+5. Edge functions деплоятся через Lovable agent-deploy без ошибок (тестовый redeploy `stripe-webhook` через `supabase--deploy_edge_functions`).
+
+V
+
+6. `verify-webhook-runtime.yml` проходит с PASS: POST на `stripe-webhook` без подписи → HTTP 400 `signature_verification_failed`, не 401.
+
+V
+
+7. Stripe Dashboard содержит только канонический webhook URL (подтверждение пользователя — скриншот/список).
+
+V
+
+8. Memory обновлена; proof-файл закоммичен.
+
+## Что требуется от пользователя
+
+U
+
+1. Решение по P2: вариант A, B или C.
+
+U
+
+2. Список текущих webhook endpoints в Stripe Dashboard (скриншот или текст) для V7.
+
+U
+
+3. Подтверждение, есть ли у GitHub workflow валидные `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` для Lovable Cloud — без них вариант A невозможен.
+
+## Что НЕ делается в этом плане
+
+- Никаких изменений в edge functions stripe-* / bepaid-* / telegram-*.
+- Никаких миграций БД.
+- Никакого запуска Phase 3.4 Runtime G33–G40 до полного PASS этого плана.
+- Никаких изменений в `src/integrations/supabase/client.ts` и `src/integrations/supabase/types.ts`.
 
 ## DoD
 
-Phase 3.4 = FULL PASS только если G33–G40 = PASS, failure snapshot материализован, клиент имеет recovery-путь через существующий Stripe Portal, админ видит past_due, успешный retry возвращает `active` + `dunning_status='recovered'`, replay/идемпотентность подтверждены, Δ=0 по доступу и bePaid в течение grace, PCI guard соблюдён, proof содержит SQL before/after, `event_id`, `invoice_id`, `subscription_id`, audit rows.
-
-## Что НЕ делаем
-
-Авто-revoke после failed; своя форма карты; ручное списание; пересоздание Portal; pause/resume; Subscription Schedule; installments; миграция bePaid→Stripe; live mode; изменения bePaid/access/Telegram revoke.
----
-
-# PATCH-D2-BIS — Stripe Webhook 401 After Redeploy (исполнено 2026-06-06)
-
-## Результат
-
-**Discovery = PASS · Code = PASS · Runtime restore = BLOCKED (manual CI step)**
-
-Root cause воспроизведён детерминированно: агентский tool `supabase--deploy_edge_functions` не применяет `verify_jwt = false` из `supabase/config.toml`, и Supabase Functions Gateway сбрасывает webhook на дефолт `verify_jwt = true` → platform-401 `UNAUTHORIZED_NO_AUTH_HEADER`. Зафиксировано controlled redeploy `stripe-webhook` с smoke @0s/30s/2m — все три probe = 401. Повторный agent-redeploy не восстанавливает.
-
-Подробности и доказательная база:
-- `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md`
-- `.lovable/proofs/stripe_phase_3_4_d2_bis_webhook_runtime_v1.md`
-
-## Артефакты
-
-- **NEW** `.github/workflows/verify-webhook-runtime.yml` — runtime smoke по всем 8 webhook на production URL, 3 probe (immediate / +30s / +2m), FAIL только на platform-401 маркеры (`UNAUTHORIZED_NO_AUTH_HEADER`, `Missing authorization header`, `Invalid JWT`); триггер: `workflow_run` после `apply-migrations`, `workflow_dispatch`, cron `17 * * * *`, push в `supabase/functions/**` или `config.toml`.
-- **KEPT** `.github/workflows/verify-webhook-public.yml` — git-state проверка `verify_jwt = false` в `config.toml` (уже включает 8 webhook).
-- **UPDATED** `docs/ENGINEERING_RULES.md` §22 — обязательное правило post-deploy smoke + канонический путь восстановления.
-
-## Что НЕ делалось
-
-- Не созданы новые edge functions / smoke-клоны.
-- Не менялся код webhook-функций.
-- Не созданы новые alert-каналы.
-- Не выполнен Stripe replay (E3 / Phase 3.4 G33–G40) — заблокировано до stable PASS.
-- bePaid / access / entitlements / rules / Telegram revoke не затронуты.
-
-## Следующий шаг (вручную)
-
-1. GitHub Actions → **Supabase Migration & Deploy** → action `deploy-functions` (или `full-deploy`).
-2. Дождаться автозапуска `verify-webhook-runtime.yml` (или запустить вручную).
-3. При зелёном — Phase 3.4 runtime (G33–G40) → FULL PASS.
-
-До восстановления `stripe-webhook` Phase 3.4 остаётся в статусе **PARTIAL PASS (Code Complete / Runtime Pending)**.
+Все пункты V1–V8 — PASS. Отчёт о выполнении с приложенными grep-выводами, ссылками на коммиты и подтверждением Stripe endpoints.
