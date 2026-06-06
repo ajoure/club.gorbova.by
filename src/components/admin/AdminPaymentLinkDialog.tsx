@@ -639,6 +639,11 @@ ${amountLine}
                   selected_installment_months: selectedInstallmentMonths,
                 }
               : {}),
+            // Phase 4.1 — provider routing
+            provider,
+            ...(provider === "stripe"
+              ? { account_code: stripeAccountCode, currency: stripeCurrency }
+              : {}),
           },
         }
       );
