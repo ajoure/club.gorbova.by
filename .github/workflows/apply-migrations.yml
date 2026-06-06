@@ -14,7 +14,7 @@ on:
           - full-deploy
 
 env:
-  SUPABASE_PROJECT_REF: ypwsuumurrtkxatoyqhk
+  SUPABASE_PROJECT_REF: hdjgkjceownmmnrqqtuz
 
 jobs:
   migrate:
