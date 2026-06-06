@@ -1,8 +1,10 @@
-// Phase 3.3 — Кнопка «Управлять в Stripe» (Customer Portal).
+// Phase 3.3 — Кнопка управления подпиской через Stripe Customer Portal.
+// Phase 3.4 — режим recovery для подписок с проблемой оплаты.
 // Видна только если у подписки provider='stripe'. Открывает Stripe Hosted Portal.
+// На UI английских терминов (Portal / Customer Portal / Dunning / Recovery) нет.
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { CreditCard, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -10,9 +12,14 @@ import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface StripePortalButtonProps {
   subscriptionV2Id: string;
+  /**
+   * 'manage' — обычное «Управлять подпиской» (по умолчанию).
+   * 'recovery' — «Обновить карту для оплаты» (для past_due / проблема с оплатой).
+   */
+  mode?: "manage" | "recovery";
 }
 
-export function StripePortalButton({ subscriptionV2Id }: StripePortalButtonProps) {
+export function StripePortalButton({ subscriptionV2Id, mode = "manage" }: StripePortalButtonProps) {
   const [isStripe, setIsStripe] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -47,7 +54,7 @@ export function StripePortalButton({ subscriptionV2Id }: StripePortalButtonProps
       }
       const url = (data as any)?.url as string | undefined;
       if (!url) {
-        toast.error("Не удалось получить ссылку на Stripe Portal");
+        toast.error("Не удалось открыть управление подпиской");
         return;
       }
       window.location.href = url;
@@ -58,15 +65,19 @@ export function StripePortalButton({ subscriptionV2Id }: StripePortalButtonProps
     }
   };
 
+  const isRecovery = mode === "recovery";
+  const Icon = loading ? Loader2 : isRecovery ? CreditCard : ExternalLink;
+  const label = isRecovery ? "Обновить карту для оплаты" : "Управлять подпиской";
+
   return (
     <Button
-      variant="outline"
+      variant={isRecovery ? "default" : "outline"}
       className="w-full gap-2"
       onClick={handleOpen}
       disabled={loading}
     >
-      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-      Управлять в Stripe
+      <Icon className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+      {label}
     </Button>
   );
 }
