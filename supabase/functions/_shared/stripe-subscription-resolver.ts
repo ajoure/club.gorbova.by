@@ -490,6 +490,42 @@ async function onSubscriptionUpdated(
     });
   }
 
+  // Phase 3.4 H — final-failure marker (когда выходим из past_due_grace в терминальный статус).
+  // Access НЕ отзываем (revoke policy — Phase 3.5). Только snapshot + audit.
+  const prevDunningStatusH = (prevStripe.dunning_status as string | null) ?? null;
+  const wasInGrace = prevDunningStatusH === 'past_due_grace';
+  if (wasInGrace && (stripeStatus === 'unpaid' || stripeStatus === 'canceled')) {
+    const finalMarker = stripeStatus === 'canceled' ? 'canceled_after_dunning' : 'final_failure';
+    const finalAction = stripeStatus === 'canceled'
+      ? 'stripe.dunning.canceled_after_dunning'
+      : 'stripe.dunning.final_failure';
+    const finalPatch = { dunning_status: finalMarker, dunning_final_at: new Date().toISOString() };
+    // re-read subv2 чтобы не затереть только что записанный subv2 status/meta выше.
+    const { data: subv2NowF } = await supabase
+      .from('subscriptions_v2')
+      .select('meta')
+      .eq('id', subv2.id)
+      .maybeSingle();
+    const subMetaNowF = (subv2NowF as any)?.meta ?? subv2.meta;
+    await supabase
+      .from('subscriptions_v2')
+      .update({ meta: mergeSubMetaStripe(subMetaNowF, finalPatch) })
+      .eq('id', subv2.id);
+    await writeAudit(supabase, {
+      event, account_code,
+      action: finalAction,
+      result: 'manual_review',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      manual_review: true,
+      manual_review_reason: finalMarker,
+      extra: {
+        stripe_status: stripeStatus,
+        prev_dunning_status: prevDunningStatusH,
+        access_revoke_deferred_to_phase_3_5: true,
+      },
+    });
+  }
+
   return { subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId, note: 'synced' };
 }
 
