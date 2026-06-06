@@ -317,8 +317,12 @@ Deno.serve(async (req) => {
         url_token,
         public_url,
         meta: linkMeta,
+        // Phase 4.1 — provider routing fields
+        provider,
+        account_code: provider === 'stripe' ? resolvedAccountCode : null,
+        provider_mode: provider === 'stripe' ? 'test' : null,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code')
       .single();
 
     if (insertErr || !link) {
