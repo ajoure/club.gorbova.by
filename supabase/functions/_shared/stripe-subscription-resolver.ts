@@ -959,6 +959,7 @@ async function onInvoicePaid(
 
 // =====================================================================
 // C.5 — invoice.payment_failed  (grace; no revoke; no CRM fail)
+// Phase 3.4 add-only: dunning snapshot (B/G) + audit-only notification gate (D).
 // =====================================================================
 async function onInvoicePaymentFailed(
   supabase: SupabaseClient,
@@ -1008,6 +1009,105 @@ async function onInvoicePaymentFailed(
     await supabase.from('provider_subscriptions').update({ state: 'past_due' }).eq('id', ps.id);
   }
 
+  // ---- Phase 3.4 B: dunning snapshot ----------------------------------------
+  // Извлекаем сигналы failure из invoice.
+  const pi_id_failed =
+    ((invoice.payment_intent as string | null) ?? null)
+    ?? null;
+  const last_failure_reason =
+    ((((invoice as any).last_finalization_error?.message) as string | null) ?? null)
+    ?? (((((invoice as any).charge_attempts ?? [])[0]?.failure_message) as string | null) ?? null)
+    ?? ((((invoice as any).payment_settings?.payment_method_options) as unknown)
+      ? null
+      : null)
+    ?? null;
+  const attempt_count_raw = (invoice.attempt_count as number | null) ?? null;
+  const next_payment_attempt_raw = (invoice.next_payment_attempt as number | null) ?? null;
+  const next_payment_attempt_iso = (typeof next_payment_attempt_raw === 'number' && next_payment_attempt_raw > 0)
+    ? new Date(next_payment_attempt_raw * 1000).toISOString()
+    : null;
+  const failed_at_iso = new Date().toISOString();
+
+  // Различаем первую неудачу по invoice_id vs повторный ретрай по тому же invoice_id.
+  const prevStripeSub = ((subv2.meta as any)?.stripe ?? {}) as Record<string, unknown>;
+  const prev_last_failed_invoice_id = (prevStripeSub.last_failed_invoice_id as string | null) ?? null;
+  const isFirstFailureForInvoice = prev_last_failed_invoice_id !== invoice_id;
+
+  const dunningPatch: Record<string, unknown> = {
+    last_payment_failed_at: failed_at_iso,
+    last_failed_invoice_id: invoice_id,
+    last_failed_payment_intent_id: pi_id_failed,
+    last_failure_reason,
+    attempt_count: attempt_count_raw,
+    next_payment_attempt: next_payment_attempt_iso,
+    dunning_status: 'past_due_grace',
+  };
+
+  await supabase
+    .from('subscriptions_v2')
+    .update({ meta: mergeSubMetaStripe(subv2.meta, dunningPatch) })
+    .eq('id', subv2.id);
+
+  await supabase
+    .from('provider_subscriptions')
+    .update({
+      meta: {
+        ...((ps.meta as any) ?? {}),
+        stripe: { ...((((ps.meta as any)?.stripe) ?? {})), ...dunningPatch },
+      },
+    })
+    .eq('id', ps.id);
+
+  // ---- Phase 3.4 D (audit-only fallback) ------------------------------------
+  // Канонической Lovable email-инфраструктуры (send-transactional-email) в проекте нет
+  // → нотификация уходит в backlog (.lovable/backlog/stripe_dunning_email_template.md).
+  // Phase 3.4 фиксирует audit с idempotency-cooldown по invoice_id.
+  if (isFirstFailureForInvoice) {
+    await writeAudit(supabase, {
+      event, account_code,
+      action: 'stripe.dunning.payment_failed',
+      result: 'ok',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      extra: {
+        invoice_id,
+        attempt_count: attempt_count_raw,
+        next_payment_attempt: next_payment_attempt_iso,
+        reason: last_failure_reason,
+        payment_intent_id: pi_id_failed,
+        dunning_status: 'past_due_grace',
+        access_preserved: true,
+        crm_stage_failed_skipped: true,
+      },
+    });
+    await writeAudit(supabase, {
+      event, account_code,
+      action: 'stripe.dunning.notification_skipped_no_email',
+      result: 'logged',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      extra: {
+        invoice_id,
+        reason: 'transactional_email_infra_not_configured',
+        idempotency_key: `stripe-dunning-${invoice_id}`,
+        backlog_ref: '.lovable/backlog/stripe_dunning_email_template.md',
+      },
+    });
+  } else {
+    await writeAudit(supabase, {
+      event, account_code,
+      action: 'stripe.dunning.retry_failed',
+      result: 'ok',
+      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+      extra: {
+        invoice_id,
+        attempt_count: attempt_count_raw,
+        next_payment_attempt: next_payment_attempt_iso,
+        reason: last_failure_reason,
+        notification_skipped_cooldown_invoice_id: invoice_id,
+      },
+    });
+  }
+
+  // Legacy audit оставлен для обратной совместимости read-side инструментов.
   await writeAudit(supabase, {
     event, account_code,
     action: 'stripe.invoice.payment_failed.grace',
@@ -1015,10 +1115,11 @@ async function onInvoicePaymentFailed(
     subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
     extra: {
       invoice_id,
-      attempt_count: invoice.attempt_count ?? null,
-      next_payment_attempt: invoice.next_payment_attempt ?? null,
+      attempt_count: attempt_count_raw,
+      next_payment_attempt: next_payment_attempt_raw,
       access_preserved: true,
       crm_stage_failed_skipped: true,
+      first_failure_for_invoice: isFirstFailureForInvoice,
     },
   });
   return { subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId, note: 'grace_no_revoke' };
