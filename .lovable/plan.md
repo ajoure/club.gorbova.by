@@ -251,3 +251,18 @@ Test-mode сценарии в Stripe (без правок кода после ф
 2. **Cross-provider conflict**: если у пользователя одновременно активна Stripe-подписка (которая уходит в `unpaid`) И bePaid-подписка на тот же продукт — подтверждаем, что bePaid сохраняет Telegram-доступ, Stripe-revoke его не трогает?
 3. **Окно grace**: оставляем grace по Stripe Smart Retries (Stripe сам решает когда `unpaid`), или хотим явный max-grace в днях с нашей стороны (например, hard cutoff через 14 дней даже если Stripe ещё retry'ит)?
 4. **Test-mode payment_failed**: для G42–G44 используем Stripe test cards (`4000 0000 0000 0341` — fail на attach, и т.д.) на реальной test-mode подписке, или строим сценарии через CLI `stripe trigger`?
+---
+
+# Отчет о выполнении: Phase 3.5-A Discovery
+
+Артефакт: `.lovable/discovery/stripe_access_lifecycle_inventory_v1.md`.
+
+Ключевые выводы:
+- Сегодня **ни одна Stripe-ветка резолвера не отзывает доступ** (ни entitlement, ни Telegram). Phase 3.4 пишет только маркеры (`past_due_grace`, `recovered`, `final_failure`, `canceled_after_dunning`) в `subscriptions_v2.meta.stripe.*`.
+- Канонический revoke-primitive `executeRevoke` (`_shared/access-revoker.ts`) уже встроен в 10 writers (`subscriptions-reconcile`, `telegram-check-expired`, `telegram-revoke-access`, `subscription-admin-actions`, и др.), сразу учитывает cross-provider (`hasCommercialAccess`) и пишет skip-ledger.
+- Безопасная реализация 3.5-B возможна **без новых writers**: достаточно в webhook H-ветке выставлять `subscriptions_v2.cancel_at = now()` при переходе `past_due_grace → unpaid/canceled` — далее cron `subscriptions-reconcile` сам отрабатывает через канонический путь.
+- Self-cancel через Portal (`cancel_at_period_end`) НЕ задевается — естественное истечение по `entitlements.expires_at` сохраняется.
+
+Никаких изменений кода, БД, edge functions, конфига, GitHub workflows не выполнено.
+
+**Status:** Phase 3.5-A Discovery — DONE. Phase 3.5-B Implementation — ожидает отдельного approve оператора.
