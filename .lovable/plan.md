@@ -233,3 +233,15 @@ orders_v2/payments_v2/entitlements/access_rules = 0 до invoice.paid
 - UI селектор провайдера присутствует, installment+Stripe заблокирован.
 - `stripe-create-subscription-checkout` (admin) — поведение не изменилось (вызывает тот же shared helper).
 - Proof файл создан, plan.md обновлён.
+---
+
+## Phase 4.1 — статус по итогам исполнения (CODE PASS, RUNTIME PENDING)
+
+- Backend (writer/dispatcher/Stripe-ветка/helper'ы) реализованы.
+- UI селектор «Эквайер» добавлен в AdminPaymentLinkDialog с гардами.
+- `stripe-create-subscription-checkout` (admin) НЕ рефакторился — отложено до runtime smoke.
+- bePaid path не изменён ни на байт.
+- Type-check фронта — OK.
+- Proof: `.lovable/proofs/stripe_phase_4_1_provider_routing_v1.md`.
+
+Runtime gates G4.1-A..E — PENDING-BY-STRIPE-TIME / RUNTIME.
