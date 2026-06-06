@@ -257,6 +257,11 @@ export function AdminPaymentLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
 
+  // PATCH 4.1.2 — единый derived-валютный токен для UI-меток/preview.
+  // Backend сам выбирает валюту корректно; здесь только отображение.
+  const previewCurrency: string = provider === "stripe" ? stripeCurrency : "BYN";
+
+
   // Список всех active pay_now offers (источник для override и резолвера).
   const activeOffers = useMemo(
     () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
@@ -399,8 +404,8 @@ export function AdminPaymentLinkDialog({
     const perPayment = amount;
     const totalAmount = perPayment * (selectedInstallmentMonths || 1);
     const amountLine = isInstallmentMsg
-      ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
-      : `💰 Стоимость: ${amount} BYN`;
+      ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} ${previewCurrency} (итого ${totalAmount} ${previewCurrency})`
+      : `💰 Стоимость: ${amount} ${previewCurrency}`;
 
     return `💳 <b>Оплата ${headerKind}</b>
 
@@ -937,7 +942,7 @@ ${amountLine}
                   <p className="font-medium">Ссылка создана</p>
                 </div>
                 <p className="text-sm text-muted-foreground mb-2 break-words">
-                  {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
+                  {selectedProduct?.name} — {selectedTariff?.name} · {amount} {previewCurrency}
                   {effectivePaymentType === "subscription" ? " (подписка)" : " (разовая)"}
                 </p>
                 <div className="rounded-md border bg-background p-2 font-mono text-xs break-all select-all">
@@ -1248,7 +1253,7 @@ ${amountLine}
                             const hasStripePrice = !!(o as any).meta?.stripe?.price_id;
                             return (
                               <SelectItem key={o.id} value={o.id}>
-                                {o.button_label} — {Number(o.amount)} BYN
+                                {o.button_label} — {Number(o.amount)} {previewCurrency}
                                 {isSub ? " · подписка" : " · разовая"}
                                 {o.is_primary ? " · основная" : ""}
                                 {provider === "stripe" && hasStripePrice ? " · Stripe price ✓" : ""}
@@ -1314,7 +1319,7 @@ ${amountLine}
               {/* Сумма */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-2">
-                  <Label htmlFor="link-amount">Сумма (BYN)</Label>
+                  <Label htmlFor="link-amount">Сумма ({previewCurrency})</Label>
                   <Input
                     id="link-amount"
                     type="number"
@@ -1327,7 +1332,7 @@ ${amountLine}
                   />
                   {!effectiveOffer && tariffPrices?.price && (
                     <p className="text-xs text-muted-foreground">
-                      Цена тарифа: {tariffPrices.price} BYN
+                      Цена тарифа: {tariffPrices.price} {previewCurrency}
                     </p>
                   )}
                   {isInstallmentOffer && (
@@ -1369,11 +1374,11 @@ ${amountLine}
                     return (
                       <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
                         <p className="text-base font-semibold">
-                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} BYN = ИТОГО {totalInstallment} BYN
+                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} {previewCurrency} = ИТОГО {totalInstallment} {previewCurrency}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Сумма платежа округлена до целых BYN. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} BYN
-                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} BYN` : ""}).
+                          Сумма платежа округлена до целых {previewCurrency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} {previewCurrency}
+                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} ${previewCurrency}` : ""}).
                           Списание происходит каждые 30 дней. Первый платёж — сегодня.
                         </p>
                       </div>
@@ -1472,13 +1477,13 @@ ${amountLine}
                   {isInstallmentOffer && selectedInstallmentMonths ? (
                     <>
                       <p className="text-lg font-bold">
-                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} BYN = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} BYN
+                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
                       </p>
                       <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
                     </>
                   ) : (
                     <>
-                      <p className="text-lg font-bold">{amount} BYN</p>
+                      <p className="text-lg font-bold">{amount} {previewCurrency}</p>
                       <p className="text-xs text-muted-foreground">
                         {effectivePaymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
                       </p>
