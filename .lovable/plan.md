@@ -1,3 +1,9 @@
+# Phase 3.3 = FULL PASS (2026-06-06)
+
+D2 закрыт, D1 runtime-подтверждён. Полный отчёт: `.lovable/proofs/stripe_phase_3_3_d2_webhook_runtime_v1.md`. CI guard: `.github/workflows/verify-webhook-public.yml`.
+
+---
+
 # да, согласен, с учетом правок:
 
 1. **CI-guard сделать обязательным, если root cause не доказан**
