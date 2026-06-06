@@ -1,172 +1,303 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **audit result выбрать** `ok`**, не** `manual_review`
+1. **Строго убрать английские термины не только из UI, но и из видимых tooltip/empty/error states**
 
-Для final-failure это уже не ручная проверка, а штатное действие:
-
-```text
-result='ok'
-revoke_scheduled_via_reconcile=true
-access_revoke_path='subscriptions_reconcile.executeRevoke'
-```
-
-`manual_review` использовать только если:
-
-- не найден `subscription_v2`;
-- нет связи с `provider_subscriptions`;
-- конфликт данных;
-- невозможно определить продукт/доступ.
-
-2. **cancel_reason оставить отдельный**
-
-Использовать разные причины:
+Проверить новые файлы на видимые строки:
 
 ```text
-stripe_dunning_final_failure
-stripe_dunning_canceled_after_dunning
+Dunning
+Recovery
+Final failure
+Past due
+Smart Retry
+Grace
 ```
 
-Не унифицировать с `stripe_subscription_deleted`, чтобы в отчётах было понятно, что это именно финальный dunning.
+Допустимо только в SQL snippets внутри modal, если это технический `meta.stripe.dunning_status`, но рядом должен быть русский комментарий.
 
-3. **Reconcile не вызывать из webhook**
+2. **Detector-карточку на dashboard не делать, если место не очевидно**
 
-Оставить только cron / существующий reconcile.
+Не тратить время на поиск/перестройку dashboard.
 
-Webhook только маркирует:
+Приоритет:
 
 ```text
-status='canceled'
-cancel_at=now()
-cancel_reason=...
-auto_renew=false
-meta.stripe.dunning_status=...
+/admin/payments/payment-issues
 ```
 
-Фактический revoke делает `subscriptions-reconcile`.
+Detector-карточка — только если существующее место очевидно и без риска.
 
-4. **Уточнить scope по canceled**
+3. **Action «Открыть подписку» сделать безопасным**
 
-Не трогать обычный пользовательский self-cancel / cancel at period end.
+Если универсального detail-view для Stripe нет, не придумывать новый.
 
-Новая логика должна срабатывать только если:
+Тогда действие:
 
 ```text
-wasInGrace = true
-AND stripeStatus IN ('unpaid', 'canceled')
+Открыть клиента
 ```
 
-То есть отмена подписки через Portal без failed-payment grace не должна запускать dunning final failure.
-
-5. **Runtime G44b сделать optional**
-
-Stripe test-mode не всегда удобно довести до `canceled_after_dunning`.
-
-Обязательный runtime:
+или
 
 ```text
-G44a unpaid → marker/cancel_at
-G45 reconcile revoke
-G48 bePaid freeze
+Открыть карточку клиента
 ```
 
-G44b можно оставить как optional, если Stripe Dashboard/test mode позволяет.
+Если карточка клиента тоже неочевидна — оставить read-only строку без действия и зафиксировать detail-view в backlog.
 
-6. **Cross-provider proof обязателен**
+4. **Source table**
 
-Обязательно доказать:
+Использовать:
 
 ```text
-Stripe canceled/unpaid не снимает доступ,
-если у пользователя есть другой активный коммерческий доступ через bePaid.
+subscriptions_v2_safe
 ```
 
-Это главный safety guard.
+если она уже используется в аналогичных админских хуках.
 
-После этих правок Phase 3.5-B можно запускать.
+Если не хватает полей — не переходить сразу на сырую `subscriptions_v2`, а сначала проверить существующий RLS-safe паттерн в админке.
+
+5. **Добавить empty state**
+
+Если проблем с оплатой сейчас нет, вкладка должна показывать понятный текст:
+
+```text
+Проблем с оплатой сейчас нет.
+Подписки с неуспешной повторной оплатой появятся здесь автоматически.
+```
+
+6. **Добавить proof по нулевой когорте**
+
+Если сейчас нет записей с `dunning_status`, это не ошибка.
+
+В proof указать:
+
+```text
+Текущая когорта = 0
+UI корректно показывает empty state
+```
+
+7. **Не закрывать email backlog**
+
+Подтвердить отдельно:
+
+```text
+.lovable/backlog/stripe_dunning_email_template.md = остается open
+```
+
+После этих правок Phase 3.6-B можно запускать.
 
 &nbsp;
 
-План: Phase 3.5-B — Stripe Final Failure Marker for Reconcile Revoke
+План: Phase 3.6-B — UI Implementation: Проблемы с оплатой
 
 ## Контекст
 
-Phase 3.5-A Discovery подтвердил:
+```
+Phase 3.5-B Code     = PASS
+Phase 3.5-B Runtime  = PENDING-BY-STRIPE-TIME   ← не закрывается этим спринтом
+Phase 3.6-A Discovery = APPROVED
+```
 
-- `stripe-subscription-resolver.ts` (H-блок, строки 493–527) уже маркирует `meta.stripe.dunning_status = 'final_failure' | 'canceled_after_dunning'` при переходе `past_due_grace → unpaid/canceled`, но `subv2.status`/`cancel_at` НЕ трогает и доступ НЕ отзывает (комментарий: `access_revoke_deferred_to_phase_3_5: true`).
-- `subscriptions-reconcile/index.ts` (строки 48–80) уже сам закрывает доступ через канонический `executeRevoke` для всех подписок, у которых `cancel_at < now()`, провайдер-агностично.
-- Все остальные операции с `entitlements`, `telegram_access`, `access_rules` остаются за reconcile и существующими writers.
+UI делает существующий маркер `subscriptions_v2.meta.stripe.dunning_status` видимым в админке. Никакой записи в БД, никаких новых backend-процессов.
 
-Значит самый безопасный способ закрыть Phase 3.5 — НЕ писать новый revoke-writer в Stripe-webhook, а в том же H-блоке дополнительно выставить `subscriptions_v2.cancel_at = now()` + `cancel_reason`. Существующий cron `subscriptions-reconcile` сам подхватит и отзовёт доступ + Telegram через канонический путь.
+---
 
-## Иммутабельные правила (фиксируем перед implementation)
+## Объём (UI-only, read-only)
 
-1. Stripe webhook НЕ вызывает `telegram-revoke-access` напрямую.
-2. Stripe webhook НЕ делает UPDATE/DELETE по `entitlements`, `access_rules`, `telegram_access`, `access_grant_ledger`.
-3. Stripe webhook только: ставит `cancel_at`, `status`, `cancel_reason`, `auto_renew=false`, мержит `meta.stripe.*`, пишет `audit_logs`.
-4. Фактический revoke выполняет `subscriptions-reconcile` через `executeRevoke` + `hasCommercialAccess`.
-5. `grant-access-for-order` НЕ меняется (restore — отдельная задача через стандартный invoice.paid).
-6. bePaid (`bepaid-webhook`, `subscription-charge`, `subscriptions-reconcile` bePaid-ветка) НЕ затронут.
-7. Add-only: миграций нет, новых таблиц/RPC/cron нет, существующее поведение `past_due_grace` (grace без revoke) сохраняется.
+### 1. Новая вкладка «Проблемы с оплатой» в `/admin/payments`
 
-## Scope (add-only, один файл)
+Регистрация в `src/pages/admin/AdminPaymentsHub.tsx` рядом с существующими табами (`Автопродления`, `Подписки BePaid`):
 
-Файл: `supabase/functions/_shared/stripe-subscription-resolver.ts`, H-блок `onSubscriptionUpdated` (строки 493–527).
+- id: `payment-issues`
+- label: **«Проблемы с оплатой»**
+- path: `/admin/payments/payment-issues`
+- icon: `AlertCircle` (lucide)
+- маршрут регистрируется в `src/App.tsx` как `<Route path="/admin/payments/payment-issues" element={<AdminPaymentsHub />} />`
 
-Сейчас при `wasInGrace && (stripeStatus === 'unpaid' || stripeStatus === 'canceled')`:
+### 2. Индикатор-точка на табе
 
-- merge `meta.stripe.dunning_status = final_failure | canceled_after_dunning`
-- merge `meta.stripe.dunning_final_at = now()`
-- audit `stripe.dunning.final_failure` / `stripe.dunning.canceled_after_dunning` с `result=manual_review`
+Аналогично существующему `renewalAlerts?.hasProblems` для `auto-renewals`: красная пульсирующая точка, если есть подписки с `dunning_status` IN (`past_due_grace`, `final_failure`, `canceled_after_dunning`).
 
-Изменения (только внутри этой же if-ветки, без новых функций/импортов/таблиц):
+### 3. Контент вкладки: `PaymentIssuesTabContent`
 
-1. К существующему UPDATE `subscriptions_v2.meta` добавить поля:
-  - `status = 'canceled'` (если ещё не canceled — гард по текущему значению)
-  - `cancel_at = now().toISOString()` (если ещё NULL или > now)
-  - `cancel_reason = 'stripe_dunning_final_failure'` (для unpaid) или `'stripe_dunning_canceled_after_dunning'` (для canceled)
-  - `canceled_at = now().toISOString()` (если NULL)
-  - `auto_renew = false`
-2. `result` audit-записи: оставить `manual_review` (уже соответствует semantics финального состояния dunning) ИЛИ заменить на `ok` с явным флагом `revoke_scheduled_via_reconcile=true` в `extra`. Решаем при approve.
-3. В `extra` audit-записи добавить:
-  - `revoke_scheduled_via_reconcile: true`
-  - `cancel_at: <iso>`
-  - `cancel_reason: <string>`
-  - убрать/заменить `access_revoke_deferred_to_phase_3_5: true` на `access_revoke_path: 'subscriptions_reconcile.executeRevoke'`
-4. Idempotency: гард `if (subv2.status === 'canceled' && subv2.cancel_at)` — пропускаем UPDATE статуса/cancel_at, маркер dunning_status всё равно мержим (как сейчас).
-5. Cross-provider safety: текущий блок уже выполняется только если найден `provider_subscriptions` row со stripe-account_code (проверяется выше в `onSubscriptionUpdated`). Дополнительной проверки не нужно — bePaid-подписка того же продукта живёт в отдельном `subscriptions_v2` row и не затрагивается.
+Расположение: `src/components/admin/payments/PaymentIssuesTabContent.tsx`.
 
-## Что НЕ делаем
+Структура (сверху вниз):
 
-- НЕ трогаем `onSubscriptionDeleted` (C.3, строки 535–602): он уже ставит `status=canceled`, `cancel_reason='stripe_subscription_deleted'`, `auto_renew=false`, но БЕЗ `cancel_at`. В отдельной итерации можно добавить туда такой же `cancel_at=now()`, но это вне scope 3.5-B и требует отдельного обоснования (риск: ломает natural-expiration сценарий self-cancel через Portal `cancel_at_period_end`, где `subscription.deleted` приходит в конце периода). На текущем шаге не трогаем.
-- НЕ добавляем revoke-вызовы в `onInvoicePaymentFailed` (grace-блок).
-- НЕ трогаем восстановление доступа (restore) — оно уже работает через стандартный `invoice.paid → grant-access-for-order` (Phase 3.5-A зафиксировал, что отдельный код не нужен).
+1. **Стат-карточки** (read-only, аналог `GlassStatCard`):
+  - «Ожидает повторной оплаты» — count `past_due_grace`
+  - «Оплата не восстановлена» — count `final_failure` + `canceled_after_dunning`
+  - «Повторная оплата прошла (за 30 дней)» — count `recovered` за окно
+2. **Фильтр-чипы по статусу** (single-select): Все / Ожидает повторной оплаты / Оплата не восстановлена / Повторная оплата прошла.
+3. **Таблица подписок** (read-only):
+  - Колонки: Клиент (имя + email из `profiles`), Продукт, Тариф, Статус (русский бейдж), «Следующая попытка / Отзыв» (`next_payment_attempt` или `cancel_at`), Причина (читабельный перевод `last_failure_reason`), Сумма + валюта, Действие.
+  - Действие: **«Открыть подписку»** → переход в существующий detail (используется тот же путь, что для `BepaidSubscriptionsList`, если применимо для `provider='stripe'`); запрещено любое write-действие.
+4. **Секция «Runtime proof 3.5-B»** (внизу, свёрнутая по умолчанию):
+  - Текущие счётчики `final_failure` / `canceled_after_dunning` + самая ранняя дата появления.
+  - Кнопка **«Проверить proof вручную»** → открывает `PaymentIssuesProofModal` (см. ниже).
 
-## Stage E — Runtime Proof (read-only после деплоя)
+### 4. Detector-карточка на дашборде
 
-Артефакт: `.lovable/proofs/stripe_final_failure_marker_v1.md`.
+Расположение: `src/components/admin/dashboard/PaymentIssuesDetectorCard.tsx`.
 
-Сценарии (Stripe test mode, без изменений кода после деплоя 3.5-B):
+- Использует тот же hook, что и таб (`usePaymentIssuesCounters`).
+- Отображает: «Подписка требует внимания: N» с разбивкой по статусам.
+- Клик → `navigate('/admin/payments/payment-issues')`.
+- Встраивается в существующий admin-дашборд (точное место — найти при имплементации; если общего «AdminDashboard» нет, временно ограничиться вкладкой и заметкой в proof).
 
-- **G44a (unpaid после Smart Retries)**: subscription с тестовой картой `4000 0000 0000 0341`; дождаться окончания Smart Retries → Stripe переводит в `unpaid` → webhook ставит `subv2.status=canceled`, `cancel_at=now()`, `cancel_reason='stripe_dunning_final_failure'`, `meta.stripe.dunning_status='final_failure'`; audit `stripe.dunning.final_failure` с `revoke_scheduled_via_reconcile=true`.
-- **G44b (canceled после Smart Retries)**: при настройке Stripe «cancel after retries» → `subscription.deleted` со статусом `canceled` приходит в `past_due_grace` → marker `canceled_after_dunning`.
-- **G45 (reconcile отзывает)**: следующий запуск `subscriptions-reconcile` (или ручной вызов) находит запись с `cancel_at < now()` → `executeRevoke` закрывает `entitlements`, `access_rules`, дергает `telegram-revoke-access` через стандартный путь; ledger пишет `reconcileBasis='cancel_at_passed'`.
-- **G46 (restore через invoice.paid)**: новый успешный `invoice.paid` после revoke → стандартная активация через `grant-access-for-order`, доступ возвращается, audit `stripe.invoice.paid.activated`.
-- **G47 (Telegram возвращается)**: после G46 — стандартный `grant-access-for-order → telegram-grant-access` (канонический write-path).
-- **G48 (bePaid не затронут)**: за тестовое окно проверить `bepaid_sync_logs` + `subscriptions_v2 where provider='bepaid'` → 0 изменений в `cancel_at`/`status`/`meta.stripe` из-за Stripe events; счётчик успешных bePaid rebill orders не падает.
-- **Cross-provider G**: пользователь с двумя активными подписками (Stripe unpaid + bePaid active) на одном продукте → после G44a Stripe-subv2 закрыт, bePaid-subv2 жив, `entitlement` остаётся открытым за счёт `hasCommercialAccess` guard в `executeRevoke`, Telegram не отзывается.
-- **Idempotency G**: повторный `customer.subscription.updated unpaid` после уже выставленного `cancel_at` → UPDATE статуса skip-ается, dunning_status мержится без изменений, новый audit пишется (или дедуплицируется по `provider_events_idem_unique` — фиксируем в proof).
+### 5. Modal `PaymentIssuesProofModal`
 
-## Definition of Done
+Расположение: `src/components/admin/payments/PaymentIssuesProofModal.tsx`.
 
-- В H-блоке `onSubscriptionUpdated` при `past_due_grace → unpaid/canceled` ставится `cancel_at=now()`, `status=canceled`, `cancel_reason`, `auto_renew=false`.
-- `meta.stripe.dunning_status` маркер сохраняется (`final_failure` / `canceled_after_dunning`).
-- `subscriptions-reconcile` сам отзывает доступ + Telegram через `executeRevoke` — без новых вызовов из webhook.
-- `grant-access-for-order`, `entitlements`, `access_rules`, `telegram-*` функции, bePaid-контур — не меняются.
-- Runtime proof (`G44a/b`, `G45`, `G46`, `G47`, `G48`, cross-provider, idempotency) выполнен в test-mode и зафиксирован в `.lovable/proofs/stripe_final_failure_marker_v1.md`.
-- Никаких миграций, новых RPC, новых cron, новых таблиц.
+Использует стандартный `<Dialog>` (по правилу UI). Содержит **только текст** — 5 готовых SQL SELECT-снippetов с copy-кнопкой для каждого, без выполнения:
 
-## Открытые вопросы оператору (решаем до execute)
+- G44a — состояние `subscriptions_v2` и `audit_logs` для `stripe_dunning_final_failure`.
+- G45 — записи `access_grant_ledger` с `meta->>'reconcileBasis'='cancel_at_passed'`.
+- Cross-provider safety — поиск активного коммерческого доступа по тому же `user_id` + `product_id` с `provider='bepaid'`.
+- G48 — bePaid freeze: count/max(updated_at) `subscriptions_v2` provider=bepaid после триггерного окна.
+- Idempotency — поиск дубликатов revoke по `subscription_v2_id`.
 
-1. `audit_logs.result` для final-failure: оставить `manual_review` (как сейчас) или поменять на `ok` с явным `revoke_scheduled_via_reconcile=true`? Влияет только на фильтры в admin UI.
-2. `cancel_reason` для unpaid: `stripe_dunning_final_failure` или унифицировать со строкой, которую уже использует reconcile (`stripe_subscription_deleted`)? Разные строки облегчают разбор причин в репортах.
-3. `subscriptions-reconcile` timing: текущий интервал крона достаточен (revoke может произойти с задержкой до интервала). Принимаем как есть или вызываем reconcile прямо из webhook после маркировки? Рекомендация: оставить cron — это и есть смысл "single write-path".
+Шапка modal: «Эти запросы выполняются вручную в БД-инструменте. UI ничего не пишет и не запускает edge-функции.»
+
+### 6. Hooks (read-only react-query)
+
+Расположение: `src/hooks/admin/`.
+
+- `usePaymentIssuesCounters.ts` — один лёгкий запрос → counts по статусам + earliest_at для `final_failure`. staleTime 60s.
+- `usePaymentIssuesSubscriptions.ts` — список подписок с фильтром по статусу. Только `.select(...)`. Лимит 500, deterministic sort по `updated_at desc`.
+- Источник: `subscriptions_v2` (или `subscriptions_v2_safe` если RLS-friendly), join по `profiles` и `products_v2` через client-side enrich (как в существующих компонентах).
+
+---
+
+## Словарь UI (обязателен)
+
+Запрещены в коде/UI: `Dunning`, `Recovery`, `Final failure`, `Past due`, `Smart Retry`, `Grace`.
+
+
+| `meta.stripe.dunning_status` | UI-формулировка          | Цвет бейджа (semantic token) |
+| ---------------------------- | ------------------------ | ---------------------------- |
+| `past_due_grace`             | Ожидает повторной оплаты | warning / amber              |
+| `final_failure`              | Оплата не восстановлена  | destructive                  |
+| `canceled_after_dunning`     | Доступ будет отозван     | destructive                  |
+| `recovered`                  | Повторная оплата прошла  | success                      |
+
+
+Доп. подписи:
+
+- «Доступ пока сохранён» (для `past_due_grace`).
+- «Доступ будет отозван автоматически» (для `final_failure`/`canceled_after_dunning`).
+- «Подписка требует внимания» — заголовок detector-карточки на дашборде.
+
+Все бейджи — через semantic tokens (`bg-warning/15 text-warning`, `bg-destructive/15 text-destructive`, `bg-success/15 text-success`), не hardcoded цвета.
+
+---
+
+## Архитектура
+
+```text
+/admin/payments
+       │
+       └── Tab "Проблемы с оплатой" (новый)
+              │
+              ├── PaymentIssuesTabContent
+              │     ├── usePaymentIssuesCounters  ──SELECT──→ subscriptions_v2
+              │     ├── usePaymentIssuesSubscriptions ──SELECT──→ subscriptions_v2 + profiles + products_v2
+              │     └── PaymentIssuesProofModal (готовые SQL-снippet'ы, copy only)
+              │
+              └── Indicator dot (использует usePaymentIssuesCounters)
+
+[Admin Dashboard]
+       └── PaymentIssuesDetectorCard ──SELECT──→ usePaymentIssuesCounters
+                                                    │
+                                                    └── click → navigate('/admin/payments/payment-issues')
+```
+
+Никаких новых:
+
+- edge functions,
+- миграций,
+- RPC,
+- cron / GitHub Actions,
+- INSERT/UPDATE/DELETE из UI-кода (grep на новых файлах: только `.select(`).
+
+---
+
+## Запреты (жёстко)
+
+- ❌ Любые мутации БД из нового кода.
+- ❌ Любые новые edge-функции / cron / workers.
+- ❌ Любые изменения в `stripe-webhook`, `subscriptions-reconcile`, `_shared/stripe-subscription-resolver.ts`, `_shared/access-engine/*`.
+- ❌ Любые изменения bePaid-кода.
+- ❌ Авто-обновление proof-файлов или `system_health_runs`.
+- ❌ Использование запрещённого UI-вокабуляра (см. таблицу выше).
+- ❌ Закрытие/изменение статуса Runtime 3.5-B этим спринтом.
+
+---
+
+## Список файлов
+
+**Создаются:**
+
+- `src/components/admin/payments/PaymentIssuesTabContent.tsx`
+- `src/components/admin/payments/PaymentIssuesProofModal.tsx`
+- `src/components/admin/payments/PaymentIssueStatusBadge.tsx` (общий бейдж со словарём)
+- `src/components/admin/dashboard/PaymentIssuesDetectorCard.tsx`
+- `src/hooks/admin/usePaymentIssuesCounters.ts`
+- `src/hooks/admin/usePaymentIssuesSubscriptions.ts`
+
+**Точечно правятся:**
+
+- `src/pages/admin/AdminPaymentsHub.tsx` — добавить таб + рендер контента + индикатор-точку.
+- `src/App.tsx` — добавить маршрут `/admin/payments/payment-issues`.
+- (опционально, если admin dashboard существует и тривиально находится) — встроить `PaymentIssuesDetectorCard`. Если место не очевидно — оформить как backlog-сноска в proof.
+
+**НЕ трогаются:**
+
+- Любой код в `supabase/functions/**`.
+- Любые миграции, типы из `src/integrations/supabase/types.ts`.
+- `useAutoRenewalAlerts.ts`, `AutoRenewalsTabContent.tsx`, `BepaidSubscriptionsTabContent.tsx` (только пример для стиля).
+
+---
+
+## Acceptance Criteria (Definition of Done)
+
+- Таб «Проблемы с оплатой» доступен по `/admin/payments/payment-issues` и виден в pills-навигации.
+- Стат-карточки и таблица отображают подписки с непустым `meta.stripe.dunning_status`.
+- Все статусы и подписи на русском; запрещённые термины отсутствуют (grep по новым файлам).
+- Бейджи используют semantic tokens из `index.css`, без hardcoded цветов.
+- Modal «Проверить proof вручную» открывается, показывает 5 SQL-снippetов с copy-кнопками; ничего не выполняет.
+- Indicator-точка на табе появляется только когда `count(past_due_grace + final_failure + canceled_after_dunning) > 0`.
+- Detector-карточка на дашборде (если место встраивания подтверждено) ведёт на новую вкладку.
+- grep по новым файлам: `.insert(|.update(|.delete(|.upsert(` = 0 совпадений.
+- grep по новым файлам: `supabase.functions.invoke(` = 0 совпадений.
+- Нет новых файлов в `supabase/functions/**` и `supabase/migrations/**`.
+- `Phase 3.5-B Runtime` остаётся `PENDING-BY-STRIPE-TIME` (явно зафиксировано в proof).
+- Proof-документ `.lovable/proofs/payment_issues_admin_ui_v1.md` создан вручную с перечнем добавленных строк/файлов и результатами grep-проверок.
+
+---
+
+## Proof (формат)
+
+После имплементации создаётся `.lovable/proofs/payment_issues_admin_ui_v1.md` со следующими разделами:
+
+1. Список добавленных/изменённых файлов.
+2. Результаты grep: запрещённые термины = 0, mutation-методы = 0, `functions.invoke` = 0.
+3. Скриншоты вкладки / detector-карточки / modal (опционально, словесное описание допустимо).
+4. Текущая фотография когорты: `SELECT count(*) GROUP BY meta->stripe->>'dunning_status'`.
+5. Явное подтверждение: «Phase 3.5-B Runtime остаётся PENDING-BY-STRIPE-TIME, UI-спринт его не закрывает».
+6. Closes backlog: `.lovable/backlog/stripe_dunning_admin_tab.md` (полностью); `stripe_dunning_email_template.md` — НЕ закрывается (email вне scope).
+
+---
+
+## Открытые вопросы (нужно подтвердить до старта или решить во время имплементации)
+
+1. **Встраивание detector-карточки**: если выделенного «AdminDashboard» в проекте нет — ограничиться вкладкой и зафиксировать как backlog. Подтвердить ОК.
+2. **Action «Открыть подписку» для Stripe**: использовать существующий sheet/detail или открыть admin-страницу подписки. Уточнить, если в проекте нет универсального детального view для `provider='stripe'` — тогда action ведёт на отфильтрованный список и проставить «детальный view — backlog».
+3. **Source table**: `subscriptions_v2` напрямую или `subscriptions_v2_safe` view (как в `useAutoRenewalAlerts`). По умолчанию — `subscriptions_v2_safe` для единообразия RLS.
+
+Если вопросы блокирующие — отвечаю до старта; иначе фиксирую решения в proof.
+
+---
+
+Ожидаю approve Phase 3.6-B Implementation.
