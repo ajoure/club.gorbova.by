@@ -203,12 +203,13 @@ export function AdminPaymentLinkDialog({
   );
 
   // Phase 4.1 — список активных Stripe-подключений для селектора account_code.
+  // PATCH 4.1.1 — добавлен capabilities_snapshot для disabled-стейтов валют.
   const { data: stripeAccounts } = useQuery({
     queryKey: ["acquiring-connections-stripe-active"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, is_default")
+        .select("account_code, account_name, test_mode, is_default, capabilities_snapshot")
         .eq("provider", "stripe")
         .eq("status", "active")
         .order("is_default", { ascending: false });
@@ -226,14 +227,90 @@ export function AdminPaymentLinkDialog({
     }
   }, [provider, stripeAccounts, stripeAccountCode]);
 
+  // PATCH 4.1.1 — supported currencies выбранного Stripe-аккаунта (lowercase).
+  // Если snapshot пуст — UI не дизейблит ничего (бэкенд всё равно отвергнет в edge-case).
+  const stripeSupportedCurrencies = useMemo<Set<string>>(() => {
+    if (provider !== "stripe" || !stripeAccountCode) return new Set();
+    const acct = (stripeAccounts ?? []).find(
+      (a: any) => a.account_code === stripeAccountCode
+    ) as any;
+    const arr = acct?.capabilities_snapshot?.supported_currencies;
+    if (!Array.isArray(arr) || arr.length === 0) return new Set();
+    return new Set(arr.map((c: unknown) => String(c).toLowerCase()));
+  }, [provider, stripeAccountCode, stripeAccounts]);
+
+  const STRIPE_CURRENCY_OPTIONS = ["BYN", "EUR", "USD", "PLN"] as const;
+  const isStripeCurrencyDisabled = (code: string) => {
+    if (provider !== "stripe") return false;
+    if (stripeSupportedCurrencies.size === 0) return false;
+    return !stripeSupportedCurrencies.has(code.toLowerCase());
+  };
+
+  // Если текущая выбранная Stripe-валюта стала недоступной (смена account_code) —
+  // переключаемся на первую доступную из whitelist.
+  useEffect(() => {
+    if (provider !== "stripe") return;
+    if (stripeSupportedCurrencies.size === 0) return;
+    if (!isStripeCurrencyDisabled(stripeCurrency)) return;
+    const fallback = STRIPE_CURRENCY_OPTIONS.find((c) => !isStripeCurrencyDisabled(c));
+    if (fallback && fallback !== stripeCurrency) setStripeCurrency(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
+
+  // Список всех active pay_now offers (источник для override и резолвера).
+  const activeOffers = useMemo(
+    () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
+    [allOffers]
+  );
+
+  // PATCH 4.1.1 — Stripe-eligible offers (только для provider='stripe' + subscription).
+  // Фильтрация: offer должен иметь meta.stripe.price_id, иначе Stripe-подписка не сможет оплатиться.
+  const stripeEligibleOffers = useMemo(
+    () => activeOffers.filter((o) => !!(o as any).meta?.stripe?.price_id),
+    [activeOffers]
+  );
+
+  // Видимый набор кнопок в селекторе зависит от выбранного провайдера и типа оплаты.
+  const visibleOffers = useMemo(() => {
+    if (provider === "stripe" && paymentType === "subscription") {
+      return stripeEligibleOffers;
+    }
+    return activeOffers;
+  }, [provider, paymentType, activeOffers, stripeEligibleOffers]);
+
+  const noStripeSubscriptionOffers =
+    provider === "stripe" && paymentType === "subscription" && stripeEligibleOffers.length === 0;
+
+  // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
+  useEffect(() => {
+    if (!selectedOfferId) return;
+    if (visibleOffers.some((o) => o.id === selectedOfferId)) return;
+    setSelectedOfferId("");
+  }, [visibleOffers, selectedOfferId]);
+
   // Резолвер: работает на ВСЕХ offers (без предварительной фильтрации по типу).
   const resolved = useMemo(
     () => resolveCanonicalOffer(allOffers, paymentType),
     [allOffers, paymentType]
   );
 
+
   // Effective offer: пользовательский override (если выбран и валиден) > resolver
+  // PATCH 4.1.1 — для Stripe+subscription отбираем ТОЛЬКО офферы с meta.stripe.price_id.
   const effectiveOffer: TariffOffer | null = useMemo(() => {
+    const isStripeSub = provider === "stripe" && paymentType === "subscription";
+    if (isStripeSub) {
+      // user override должен быть в eligible-сете; иначе берём первый primary/первый из set.
+      if (selectedOfferId) {
+        const pick = stripeEligibleOffers.find((o) => o.id === selectedOfferId);
+        if (pick) return pick;
+      }
+      if (stripeEligibleOffers.length === 0) return null;
+      return (
+        stripeEligibleOffers.find((o) => (o as any).is_primary) ??
+        stripeEligibleOffers[0]
+      );
+    }
     if (!resolved.ok) return null;
     if (selectedOfferId) {
       const userPick = (allOffers || []).find(
@@ -242,7 +319,8 @@ export function AdminPaymentLinkDialog({
       if (userPick) return userPick;
     }
     return resolved.offer;
-  }, [resolved, selectedOfferId, allOffers]);
+  }, [resolved, selectedOfferId, allOffers, provider, paymentType, stripeEligibleOffers]);
+
 
   // КОНТРАКТ: payment_type ссылки = ВСЕГДА выбор админа (ToggleGroup).
   // Offer используется только как источник параметров (цена/описание/продукт).
@@ -332,11 +410,9 @@ ${amountLine}
 📅 Тип: ${typeLabel}`;
   };
 
-  // Список всех active pay_now offers (для select override) — без фильтрации по типу
-  const activeOffers = useMemo(
-    () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
-    [allOffers]
-  );
+
+
+
 
   // Tariff price fallback (если у тарифа нет ни одного offer)
   const { data: tariffPrices } = useQuery({
@@ -806,13 +882,22 @@ ${amountLine}
   // Phase 4.1 — Stripe-specific guards (UI level, backend validates повторно).
   const stripeInstallmentBlocked = provider === "stripe" && isInstallmentOffer;
   const stripeAccountMissing = provider === "stripe" && !stripeAccountCode;
+  // PATCH 4.1.1 — отдельный guard: для Stripe+subscription нет ни одного eligible offer'а.
+  // UI больше не даёт выбрать невалидную кнопку (см. visibleOffers), но defence-in-depth.
   const stripeSubscriptionPriceMissing =
     provider === "stripe" &&
     paymentType === "subscription" &&
     !!effectiveOffer &&
     !(effectiveOffer as any)?.meta?.stripe?.price_id;
+  // PATCH 4.1.1 — currency не должна быть disabled в supported_currencies аккаунта.
+  const stripeCurrencyUnsupported =
+    provider === "stripe" && isStripeCurrencyDisabled(stripeCurrency);
   const stripeBlocked =
-    stripeInstallmentBlocked || stripeAccountMissing || stripeSubscriptionPriceMissing;
+    stripeInstallmentBlocked ||
+    stripeAccountMissing ||
+    stripeSubscriptionPriceMissing ||
+    stripeCurrencyUnsupported ||
+    noStripeSubscriptionOffers;
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
@@ -824,6 +909,7 @@ ${amountLine}
     isCurrentConflict ||
     installmentInvalid ||
     stripeBlocked;
+
 
   return (
     <>
@@ -1016,11 +1102,21 @@ ${amountLine}
                           <Select value={stripeCurrency} onValueChange={setStripeCurrency}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="EUR">EUR</SelectItem>
-                              <SelectItem value="USD">USD</SelectItem>
-                              <SelectItem value="PLN">PLN</SelectItem>
-                              <SelectItem value="BYN">BYN</SelectItem>
-                              <SelectItem value="GBP">GBP</SelectItem>
+                              {STRIPE_CURRENCY_OPTIONS.map((code) => {
+                                const disabled = isStripeCurrencyDisabled(code);
+                                return (
+                                  <SelectItem
+                                    key={code}
+                                    value={code}
+                                    disabled={disabled}
+                                  >
+                                    {code}
+                                    {disabled
+                                      ? ` · не поддерживается${stripeAccountCode ? ` (${stripeAccountCode})` : ""}`
+                                      : ""}
+                                  </SelectItem>
+                                );
+                              })}
                             </SelectContent>
                           </Select>
                         </div>
@@ -1035,9 +1131,14 @@ ${amountLine}
                           Нет активного Stripe-подключения. Добавьте его в Настройках эквайринга.
                         </p>
                       )}
-                      {stripeSubscriptionPriceMissing && (
+                      {stripeCurrencyUnsupported && (
                         <p className="text-xs text-destructive">
-                          У выбранной кнопки нет привязанного Stripe Price ID (meta.stripe.price_id) — Stripe-подписка по этой ссылке не сможет оплатиться.
+                          Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
+                        </p>
+                      )}
+                      {noStripeSubscriptionOffers && (
+                        <p className="text-xs text-destructive">
+                          У этого тарифа нет кнопки, настроенной для Stripe-подписки (нужен meta.stripe.price_id). Используйте bePaid или добавьте Stripe Price в настройках кнопки.
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground">
@@ -1047,6 +1148,7 @@ ${amountLine}
                   )}
                 </div>
               )}
+
 
 
               {/* Тип оплаты — крупные сегменты. Скрыто для installment-офферов
@@ -1117,6 +1219,15 @@ ${amountLine}
 
                   {offersLoading ? (
                     <Skeleton className="h-10 w-full" />
+                  ) : noStripeSubscriptionOffers ? (
+                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                      <p>
+                        У этого тарифа нет кнопки, настроенной для Stripe-подписки
+                        (нужно meta.stripe.price_id в настройках кнопки). Используйте bePaid
+                        или добавьте Stripe Price.
+                      </p>
+                    </div>
                   ) : resolved.ok === false ? (
                     <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -1132,18 +1243,21 @@ ${amountLine}
                           <SelectValue placeholder="Выберите кнопку…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {activeOffers.map((o) => {
+                          {visibleOffers.map((o) => {
                             const isSub = !!o.meta?.recurring?.is_recurring;
+                            const hasStripePrice = !!(o as any).meta?.stripe?.price_id;
                             return (
                               <SelectItem key={o.id} value={o.id}>
                                 {o.button_label} — {Number(o.amount)} BYN
                                 {isSub ? " · подписка" : " · разовая"}
                                 {o.is_primary ? " · основная" : ""}
+                                {provider === "stripe" && hasStripePrice ? " · Stripe price ✓" : ""}
                               </SelectItem>
                             );
                           })}
                         </SelectContent>
                       </Select>
+
 
                       {/* Audit-бейдж режима резолва */}
                       <div className="flex flex-wrap items-center gap-2 text-xs">

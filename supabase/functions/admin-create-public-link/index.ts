@@ -42,8 +42,10 @@ interface CreatePublicLinkRequest {
   account_code?: string | null;
 }
 
-// Phase 4.1 — Stripe currencies whitelist (single source of validation in writer).
-const STRIPE_ALLOWED_CURRENCIES = new Set(['USD', 'EUR', 'PLN', 'BYN', 'GBP', 'CHF', 'CZK', 'RON']);
+// PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
+// Сужено до 4 валют по бизнес-требованию: BYN, EUR, USD, PLN. GBP/CHF/CZK/RON удалены.
+// Defence-in-depth: backend отвергнет любой иной код даже если фронт когда-нибудь его подаст.
+const STRIPE_ALLOWED_CURRENCIES = new Set(['BYN', 'EUR', 'USD', 'PLN']);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
@@ -209,7 +211,7 @@ Deno.serve(async (req) => {
       }
       const accountQuery = supabase
         .from('acquiring_connections')
-        .select('account_code, status, test_mode, is_default')
+        .select('account_code, status, test_mode, is_default, capabilities_snapshot')
         .eq('provider', 'stripe')
         .eq('status', 'active');
       const { data: acctRows, error: acctErr } = rawAccountCode
@@ -225,6 +227,25 @@ Deno.serve(async (req) => {
           : 'no_active_default_stripe_account', 400);
       }
       resolvedAccountCode = (acct as any).account_code as string;
+
+      // PATCH 4.1.1 — capability check против фактических supported_currencies аккаунта.
+      // Источник: acquiring_connections.capabilities_snapshot.supported_currencies (array of lowercase ISO).
+      // Если snapshot отсутствует/пустой — продолжаем по статическому whitelist (R1 fallback в плане).
+      const capSnapshot = (acct as any).capabilities_snapshot as Record<string, unknown> | null;
+      const supportedCurrenciesRaw = Array.isArray((capSnapshot as any)?.supported_currencies)
+        ? ((capSnapshot as any).supported_currencies as unknown[])
+        : null;
+      if (supportedCurrenciesRaw && supportedCurrenciesRaw.length > 0) {
+        const supportedSet = new Set(
+          supportedCurrenciesRaw.map((c) => String(c).toLowerCase())
+        );
+        if (!supportedSet.has(currency.toLowerCase())) {
+          return errorResponse(
+            `stripe_currency_not_supported_by_account:${currency}:${resolvedAccountCode}`,
+            400,
+          );
+        }
+      }
 
       if (payment_type === 'subscription') {
         if (!offer_id) {
@@ -320,7 +341,7 @@ Deno.serve(async (req) => {
         // Phase 4.1 — provider routing fields
         provider,
         account_code: provider === 'stripe' ? resolvedAccountCode : null,
-        provider_mode: provider === 'stripe' ? 'test' : null,
+        provider_mode: 'fixed',
       })
       .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code')
       .single();
