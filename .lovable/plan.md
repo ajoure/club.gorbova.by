@@ -287,3 +287,20 @@ Edge function вернёт audit `portal_configuration_snapshot` с id конф�
 ## DoD
 
 - Customer Portal открывается, карта меняется, cancel/resume работают, инвойсы доступны, webhook lifecycle совместим, G26–G32 PASS, bePaid не затронут.
+---
+
+## Phase 3.3 — STATUS: CODE COMPLETE (runtime G26–G32 ожидает прогона)
+
+Реализовано:
+- Edge `stripe-create-customer-portal-session` (JWT + owner-check `subv2.user_id = auth.uid()` ∧ `profiles.id = auth.uid()`, PCI guard, без service_role bypass, без write Portal Configuration).
+- Resolver `_shared/stripe-subscription-resolver.ts` → `onSubscriptionUpdated` add-only: эмит `stripe.portal.cancel_at_period_end_{enabled,disabled}` и `stripe.portal.payment_method_updated` по diff'у prev/next в `subv2.meta.stripe.*`.
+- UI: `StripePortalButton` подключена в `SubscriptionDetailSheet` (виден только при `provider='stripe'`); return_url → `/purchases?sub={id}`.
+- Discovery: `.lovable/discovery/stripe_customer_portal_inventory_v1.md`.
+- Proof skeleton: `.lovable/proofs/stripe_phase_3_3_customer_portal_v1.md` (заполнить после G26–G32).
+- Registry: `supabase/functions.registry.txt` (P1).
+
+bePaid не затронут. grant-access-for-order не тронут. Webhook lifecycle не сломан (изменения внутри уже существующей ветки `customer.subscription.updated`, post-update, в виде дополнительных audit-записей).
+
+Portal Configuration настраивается отдельным admin-инструментом (НЕ во время пользовательского запроса) — задача отдельного PATCH в рамках 3.3, не реализуется внутри runtime функции.
+
+Backlog: Phase 3.4 — Stripe Dunning + Smart Retries + Failed Payment Recovery.
