@@ -86,61 +86,17 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
   const hasBepaid = acq.allowed_payment_providers.includes("bepaid");
   const hasStripe = acq.allowed_payment_providers.includes("stripe");
 
-  const [bepaidConnections, setBepaidConnections] = useState<ConnectionRow[]>([]);
-  const [stripeConnections, setStripeConnections] = useState<ConnectionRow[]>([]);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
+  const { data: profiles, isLoading: profilesLoading } = useAcquiringProfiles();
+  const connectionsLoaded = !profilesLoading;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // bePaid — SOT: integration_instances
-      const bepaidQ = supabase
-        .from("integration_instances")
-        .select("config, status")
-        .eq("provider", "bepaid")
-        .in("status", ["active", "connected"]);
-
-      // Stripe — SOT: acquiring_connections
-      const stripeQ = supabase
-        .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, status, is_default")
-        .eq("provider", "stripe")
-        .eq("status", "active")
-        .order("is_default", { ascending: false })
-        .order("account_name");
-
-      const [{ data: bepaidRows }, { data: stripeRows }] = await Promise.all([bepaidQ, stripeQ]);
-      if (cancelled) return;
-
-      const bepaidList: ConnectionRow[] = (bepaidRows ?? []).map((r: any) => {
-        const cfg = r.config ?? {};
-        const shopId = cfg.shop_id ? String(cfg.shop_id) : null;
-        const isTest = cfg.test_mode === true || cfg.test_mode === "true";
-        return {
-          account_code: shopId ? `bepaid_${shopId}` : "bepaid_main",
-          account_name: cfg.account_name?.trim()
-            || (shopId ? `bePaid — Shop ID ${shopId}` : "bePaid (основное подключение)"),
-          test_mode: isTest,
-          is_default: true,
-          shop_id: shopId,
-        };
-      });
-
-      const stripeList: ConnectionRow[] = (stripeRows ?? []).map((r: any) => ({
-        account_code: r.account_code,
-        account_name: (r.account_name && r.account_name.trim()) || `Stripe — ${r.account_code}`,
-        test_mode: !!r.test_mode,
-        is_default: !!r.is_default,
-      }));
-
-      setBepaidConnections(bepaidList);
-      setStripeConnections(stripeList);
-      setConnectionsLoaded(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const bepaidConnections = useMemo<AcquiringProfile[]>(
+    () => filterByProvider(profiles, "bepaid"),
+    [profiles],
+  );
+  const stripeConnections = useMemo<AcquiringProfile[]>(
+    () => filterByProvider(profiles, "stripe"),
+    [profiles],
+  );
 
   // Auto-populate bepaid.account_code
   useEffect(() => {
