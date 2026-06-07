@@ -196,7 +196,12 @@ export function AdminPaymentLinkDialog({
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
-  const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
+  // Hotfix-1 (Phase 8 plan §HOTFIX-1):
+  //   Default Stripe-валюты = валюта выбранного offer (offer.currency || offer.meta.currency || 'BYN').
+  //   Никакого hardcoded "EUR". Если админ вручную меняет валюту — флаг
+  //   `stripeCurrencyManuallySet` блокирует авто-перезапись при смене оффера.
+  const [stripeCurrency, setStripeCurrency] = useState<string>("BYN");
+  const [stripeCurrencyManuallySet, setStripeCurrencyManuallySet] = useState(false);
   // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
   // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
   // 'customer_choice' = override: клиент выбирает из всех технически доступных provider'ов,
