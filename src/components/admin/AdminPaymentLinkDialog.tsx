@@ -1129,7 +1129,8 @@ ${amountLine}
                         icon: <CreditCard className="h-4 w-4 text-indigo-500" />,
                         disabled: (!isSuperAdmin && !offerAllowedProviders.includes("stripe")) || isInstallmentOffer,
                       },
-                    ]).map((opt) => {
+                    ];
+                    })().map((opt) => {
                       const selected = providerModeChoice === opt.key;
                       return (
                         <button
