@@ -47,6 +47,9 @@ interface ProvisionRequest {
   account_code: string;
   business_stream: string;
   execute?: boolean;
+  // Hotfix-1: используется только когда tariff_prices не содержит активной строки.
+  // Whitelist валют тот же, что и для tariff_prices пути.
+  requested_currency?: string;
 }
 
 interface StripeProduct {
