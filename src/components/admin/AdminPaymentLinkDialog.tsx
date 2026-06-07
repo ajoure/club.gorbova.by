@@ -1094,11 +1094,24 @@ ${amountLine}
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Способ оплаты для этой ссылки</Label>
                   <div className="flex flex-col gap-2">
-                    {([
+                    {(() => {
+                      // Phase 6-G: динамический hint «По настройке кнопки» в зависимости от
+                      // allowed_payment_providers оффера.
+                      const hasBp = offerAllowedProviders.includes("bepaid");
+                      const hasSt = offerAllowedProviders.includes("stripe");
+                      const autoHint =
+                        hasBp && hasSt
+                          ? "Клиент сможет выбрать белорусскую или иностранную карту"
+                          : hasBp
+                            ? "Будет использована белорусская карта (bePaid)"
+                            : hasSt
+                              ? "Будет использована иностранная карта (Stripe)"
+                              : "Будут использованы настройки оплаты этой кнопки";
+                      return [
                       {
                         key: "auto" as const,
                         title: "По настройке кнопки",
-                        hint: "Используется основной способ оплаты тарифа",
+                        hint: autoHint,
                         icon: <MousePointerClick className="h-4 w-4 text-muted-foreground" />,
                         disabled: false,
                       },
