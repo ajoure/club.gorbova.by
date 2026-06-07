@@ -289,14 +289,15 @@ Deno.serve(async (req) => {
       payment_type = 'subscription';
     }
 
-    // ── Phase 4.1 — Stripe validations ──
-    // 1) installment + Stripe — запрещено (рассрочка реализована только через bePaid finite subscription).
-    // 2) валюта — whitelist.
-    // 3) acquiring_connections должен иметь активный Stripe-аккаунт указанного account_code.
-    // 4) subscription Stripe требует tariff_offers.meta.stripe.price_id на выбранном оффере
-    //    (раннее 400, чтобы админ не создал «мёртвую» ссылку).
+    // ── Phase 7-EXEC — Canonical currency × provider validation ──
+    // Источник истины: _shared/acquiring/currency-provider-resolver.ts.
+    // STOP-логика: silent fallback BYN/EUR запрещён; несовместимые комбинации
+    // currency × provider возвращают controlled 400 с reason_code,
+    // payment_link при этом НЕ создаётся.
+    //
+    // Phase 4.1 inline-проверки (STRIPE_ALLOWED_CURRENCIES + capability snapshot)
+    // унифицированы внутри resolver'а.
     let resolvedAccountCode: string | null = null;
-    // Stripe-валидации запускаются и для fixed=stripe, и для customer_choice со stripe в allowed.
     const stripePathActive =
       provider === 'stripe' ||
       (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
@@ -306,13 +307,31 @@ Deno.serve(async (req) => {
         ? (rawStripeCurrency || 'EUR')
         : currency
     ).toUpperCase();
+
+    // ── Step 1: bePaid currency guard (P7-3) ──
+    // Применяется к fixed=bepaid и к customer_choice со bePaid в allowed.
+    const bepaidPathActive =
+      provider === 'bepaid' ||
+      (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('bepaid'));
+    if (bepaidPathActive) {
+      const r = resolveAvailableProviders({
+        currency,
+        payment_type,
+        candidate_providers: ['bepaid'],
+        bepaid_shop_resolved: true,
+      });
+      if (!r.availableProviders.includes('bepaid')) {
+        const reason = r.disabledProviders[0];
+        return errorResponse(
+          `bepaid_currency_unsupported:${currency}:${reason?.reason_code ?? 'unknown'}`,
+          400,
+        );
+      }
+    }
+
+    // ── Step 2: Stripe path — account lookup + capability snapshot ──
+    let stripeAccountSupportedCurrencies: string[] | null = null;
     if (stripePathActive) {
-      if (installmentBlock) {
-        return errorResponse('installment_not_supported_on_stripe', 400);
-      }
-      if (!STRIPE_ALLOWED_CURRENCIES.has(stripeValidationCurrency)) {
-        return errorResponse(`Stripe: unsupported currency ${stripeValidationCurrency}`, 400);
-      }
       const accountQuery = supabase
         .from('acquiring_connections')
         .select('account_code, status, test_mode, is_default, capabilities_snapshot')
@@ -332,24 +351,31 @@ Deno.serve(async (req) => {
       }
       resolvedAccountCode = (acct as any).account_code as string;
 
-      // PATCH 4.1.1 — capability check против фактических supported_currencies аккаунта.
-      // Источник: acquiring_connections.capabilities_snapshot.supported_currencies (array of lowercase ISO).
-      // Если snapshot отсутствует/пустой — продолжаем по статическому whitelist (R1 fallback в плане).
       const capSnapshot = (acct as any).capabilities_snapshot as Record<string, unknown> | null;
       const supportedCurrenciesRaw = Array.isArray((capSnapshot as any)?.supported_currencies)
         ? ((capSnapshot as any).supported_currencies as unknown[])
         : null;
-      if (supportedCurrenciesRaw && supportedCurrenciesRaw.length > 0) {
-        const supportedSet = new Set(
-          supportedCurrenciesRaw.map((c) => String(c).toLowerCase())
+      stripeAccountSupportedCurrencies = supportedCurrenciesRaw
+        ? supportedCurrenciesRaw.map((c) => String(c).toLowerCase())
+        : null;
+
+      // Canonical resolver — business whitelist ∩ account capabilities ∩ installment guard.
+      const r = resolveAvailableProviders({
+        currency: stripeValidationCurrency,
+        payment_type,
+        candidate_providers: ['stripe'],
+        stripe_account_supported_currencies: stripeAccountSupportedCurrencies,
+        stripe_account_resolved: true,
+        is_installment: !!installmentBlock,
+      });
+      if (!r.availableProviders.includes('stripe')) {
+        const reason = r.disabledProviders[0];
+        return errorResponse(
+          `stripe_currency_unsupported:${stripeValidationCurrency}:${resolvedAccountCode}:${reason?.reason_code ?? 'unknown'}`,
+          400,
         );
-        if (!supportedSet.has(stripeValidationCurrency.toLowerCase())) {
-          return errorResponse(
-            `stripe_currency_not_supported_by_account:${stripeValidationCurrency}:${resolvedAccountCode}`,
-            400,
-          );
-        }
       }
+
 
       if (payment_type === 'subscription') {
         if (!offer_id) {
