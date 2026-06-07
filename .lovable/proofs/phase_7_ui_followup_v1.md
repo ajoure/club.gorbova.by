@@ -83,10 +83,6 @@ SELECT pg_get_functiondef('public.tariff_offers_acquiring_validate()'::regproced
 
 ## 3. AdminPaymentLinkDialog.tsx — что сделано (контекст, не входит в этот hotfix-коммит)
 
-`src/utils/currencyProviderResolver.ts` — **не тронут** (out of scope).
-Backend / edge functions / миграции — **не тронуты**.
-
-## 3. AdminPaymentLinkDialog.tsx — что сделано
 
 1. Импорт `resolveAvailableProviders` из `@/utils/currencyProviderResolver`.
 2. `stripeSupportedCurrencies: Set<string>` (локальная эвристика) → удалён.
