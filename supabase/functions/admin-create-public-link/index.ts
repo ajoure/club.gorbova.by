@@ -47,6 +47,10 @@ interface CreatePublicLinkRequest {
   // Phase 5-D — был ли provider выбран админом явно ('explicit') или взят из настроек кнопки ('auto').
   // Используется только для audit: 'explicit' → пишем admin.payment_provider.override.
   provider_choice_source?: 'auto' | 'explicit';
+  // «Клиент выбирает» override (Phase 6-G/H boundary): explicit override allowed_payment_providers
+  // поверх offer.meta.acquiring.allowed_payment_providers. Применяется ТОЛЬКО для
+  // provider_mode='customer_choice' + provider_choice_source='explicit'. Не изменяет offer.
+  allowed_payment_providers?: ('bepaid' | 'stripe')[];
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
