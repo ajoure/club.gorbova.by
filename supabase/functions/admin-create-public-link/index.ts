@@ -594,8 +594,17 @@ Deno.serve(async (req) => {
         provider: linkProviderColumn,
         account_code: linkAccountCodeColumn,
         provider_mode: providerMode,
-        allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
-        stripe_account_code_snapshot: providerMode === 'customer_choice' ? offerStripeAccountCode : null,
+        allowed_payment_providers: providerMode === 'customer_choice' ? effectiveAllowedProviders : [provider],
+        allowed_providers_override: allowedProvidersOverride
+          ? {
+              offer_allowed_payment_providers: offerAllowedProviders,
+              effective_allowed_payment_providers: effectiveAllowedProviders,
+            }
+          : null,
+        stripe_account_code_snapshot:
+          providerMode === 'customer_choice'
+            ? (resolvedAccountCode || offerStripeAccountCode || null)
+            : null,
         // Stage L: installment proof
         installment: installmentBlock
           ? {
