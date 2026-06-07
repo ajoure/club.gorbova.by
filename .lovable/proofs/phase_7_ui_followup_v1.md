@@ -172,7 +172,7 @@ src/components/admin/products/OfferAcquiringSettings.tsx
 
 | Gate | Проверка | Result |
 |---|---|---|
-| P7-7-final | Admin UI показывает disabled/reason для несовместимых currency/provider в AdminPaymentLinkDialog и OfferAcquiringSettings | ⏳ ждёт скрины §8 (S1–S8) |
+| P7-7-final | Admin UI показывает disabled/reason для несовместимых currency/provider в AdminPaymentLinkDialog и OfferAcquiringSettings | ✅ PASS (§8: S1–S6 resolver matrix, S7/S8 runtime PATCH 200 + DB snapshot) |
 | P7-UI-1 | Mirror резолвер импортирован в оба UI-файла | ✅ |
 | P7-UI-2 | Удалён auto-fallback валюты | ✅ (см. §3.6) |
 | P7-UI-3 | Mirror резолвер не правился | ✅ (§1) |
