@@ -509,9 +509,28 @@ export default function PublicPayPage() {
               </Alert>
             )}
 
+            {/* Phase 5-C — выбор способа оплаты (карта белорусского / иностранного банка).
+                Показывается только для customer_choice ссылок с multi-provider оффером. */}
+            {!needsIdentity && needsProviderChoice && (
+              <div className="mb-4">
+                <CustomerProviderChoice
+                  onSelect={(p) => {
+                    setChosenProvider(p);
+                    if (linkInfo.has_target_user) {
+                      handlePayWithTarget(p);
+                    } else {
+                      handlePayWithSession(p);
+                    }
+                  }}
+                  loadingProvider={isProcessing ? chosenProvider : null}
+                  disabled={isProcessing}
+                />
+              </div>
+            )}
+
             {/* PAY-D: Unified payment method selector (one_time + auth + cards),
                 otherwise single CTA. Subscription always goes through standard bePaid checkout. */}
-            {!needsIdentity && showSavedCardSelector && (
+            {!needsIdentity && !needsProviderChoice && showSavedCardSelector && (
               <div className="mb-4">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
                   Способ оплаты
