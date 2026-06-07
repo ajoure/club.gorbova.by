@@ -386,6 +386,36 @@ export function AdminPaymentLinkDialog({
   }, [isInstallmentOffer, effectiveOffer]);
   // per_payment для installment считается inline в JSX (там, где amount уже доступен).
 
+  // ── «Клиент выбирает» — override allowed_payment_providers ──
+  // Собирает все технически доступные provider'ы независимо от offer.allowed_payment_providers.
+  // STOP-guards:
+  //   • bepaid: считаем доступным (нет лёгкого client-side disable-signal; backend валидирует);
+  //   • stripe: нужен хотя бы один active acquiring_connection, не installment, валюта в whitelist.
+  const stripeAvailableForCustomerChoice = useMemo(() => {
+    if (isInstallmentOffer) return false;
+    if (!stripeAccounts || stripeAccounts.length === 0) return false;
+    // Если у выбранного/дефолтного аккаунта snapshot пуст — считаем доступным; иначе валюта в whitelist.
+    const acct = (stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0]) as any;
+    const cap = acct?.capabilities_snapshot?.supported_currencies;
+    if (!Array.isArray(cap) || cap.length === 0) return true;
+    const set = new Set((cap as unknown[]).map((c) => String(c).toLowerCase()));
+    return set.has(stripeCurrency.toLowerCase());
+  }, [stripeAccounts, isInstallmentOffer, stripeCurrency]);
+
+  const customerChoiceAllowed = useMemo<("bepaid" | "stripe")[]>(() => {
+    const list: ("bepaid" | "stripe")[] = ["bepaid"];
+    if (stripeAvailableForCustomerChoice) list.push("stripe");
+    return list;
+  }, [stripeAvailableForCustomerChoice]);
+
+  // Авто-переключение с customer_choice, если ни один provider не доступен (теоретически невозможно,
+  // т.к. bepaid считаем всегда доступным; на случай будущих изменений).
+  useEffect(() => {
+    if (providerModeChoice !== "customer_choice") return;
+    if (customerChoiceAllowed.length === 0) setProviderModeChoice("auto");
+  }, [providerModeChoice, customerChoiceAllowed]);
+
+
   // ── Унифицированный билдер Telegram-сообщения ──
   // Корректно различает три случая: рассрочка / подписка с автосписанием / разовая оплата.
   // Источники истины: isInstallmentOffer (payment_method='internal_installment'),
