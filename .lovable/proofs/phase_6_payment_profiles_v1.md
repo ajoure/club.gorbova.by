@@ -323,10 +323,63 @@ WHERE id = '<offer_id>';
    - `subscriptions_v2` (active, auto_renew=true),
    - `entitlements` (visible),
    - **`provider_events`** (`stripe.invoice.payment_succeeded` / `checkout.session.completed` получено, нормализовано, без дублей).
-8. bePaid sanity: тот же продукт через bePaid (BYN) — без регрессии (one-time + subscription).
+
+### S9.8a — bePaid one-time regression
+- Проверить отдельно:
+  - bePaid разовая оплата;
+  - public/admin link;
+  - `orders_v2`;
+  - `payments_v2`;
+  - access/grant, если применимо.
+
+### S9.8b — bePaid subscription regression
+- Проверить отдельно:
+  - bePaid подписка;
+  - `subscriptions_v2`;
+  - первый payment/order;
+  - entitlement/access;
+  - отсутствие регрессии после Stripe Price provisioning.
+
+### S9.9 — Customer choice public checkout
+- Проверить:
+  - offer/button с включёнными bePaid + Stripe;
+  - режим «По настройке кнопки» / `provider_mode='customer_choice'`;
+  - `/pay/:token` показывает клиенту выбор:
+    - белорусская карта / bePaid;
+    - иностранная карта / Stripe;
+  - выбор bePaid ведёт в bePaid checkout;
+  - выбор Stripe ведёт в Stripe checkout;
+  - для subscription-offer оба варианта идут как subscription flow.
+
+### S9.10 — Admin provider override
+- Проверить:
+  - из карточки контакта создать public link;
+  - выбрать override `Белорусская карта`;
+  - клиент видит только bePaid;
+  - настройки исходной кнопки не меняются;
+  - создать второй link с override `Иностранная карта`;
+  - клиент видит только Stripe;
+  - настройки исходной кнопки не меняются;
+  - создать третий link «По настройке кнопки»;
+  - клиент снова видит customer choice, если в кнопке включены оба provider.
+
+### Таблица покрытия §S9
+| Проверка | Пункт | Статус |
+|---|---|---|
+| Stripe subscription checkout (offer + автопродление + Stripe вкл) | 1, 6, 10 | DEFERRED |
+| price_id до / после | 2, 4, 8 | DEFERRED |
+| Повторный save без нового Stripe Price | 5, 9 | DEFERRED |
+| Stripe webhook → provider_events | 7, 11 | DEFERRED |
+| orders_v2 / payments_v2 / subscriptions_v2 / entitlements | 7, 11 | DEFERRED |
+| bePaid one-time regression | S9.8a | DEFERRED |
+| bePaid subscription regression | S9.8b | DEFERRED |
+| Customer choice (bePaid + Stripe в public checkout) | S9.9 | DEFERRED |
+| Admin override provider на конкретную ссылку | S9.10 | DEFERRED |
 
 ### Итог Phase 6-G.2
 - STATIC PROOF = PASS
 - SIMULATION PROOF = PASS
-- RUNTIME E2E PROOF = DEFERRED (final regression)
+- RUNTIME E2E PROOF = DEFERRED to Final Regression (§S9 checklist готов)
 - **Phase 6-G.2 = CODE COMPLETE / WAITING FOR RUNTIME PROOF**
+
+> Phase 6 proof считается структурно полным для Final Regression. Новые пункты S9.8a/S9.8b/S9.9/S9.10 — checklist для будущего runtime, не фактический PASS сейчас.
