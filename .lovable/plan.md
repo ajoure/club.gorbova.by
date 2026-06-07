@@ -430,3 +430,21 @@ export function resolveProviderChoice(meta?: AcquiringMeta): {
 - `stripe-pre-create-subscription`, `create-stripe-checkout`, `stripe-create-subscription-checkout`
 - `telegram-grant-access`, subscriptions-reconcile cron
 - DB схема / триггеры `tariff_offers_acquiring_*` (PATCH 5-B.1 — чисто UI)
+---
+
+## Phase 5-C + PATCH 5-B.1 — Status: **DONE / PASS** (2026-06-07)
+
+- PATCH 5-B.1 (UX cleanup) ✅
+- Customer provider selection ✅ — runtime smoke G81–G87 PASS на deployed edge functions.
+- Zero-diff freeze ✅ (webhooks / grant-access / telegram / subscriptions-reconcile / stripe-shared).
+- `PublicPayPage.tsx` — пользовательский экран выбора без упоминаний bePaid/Stripe.
+- `admin-create-public-link` принимает `provider_mode`, snapshot allowed_providers + stripe_account_code.
+- `public-checkout` принимает `provider_choice`, валидирует против allowed; 400-коды: `provider_choice_required` / `invalid_provider_choice` / `provider_choice_not_allowed`.
+- Proof: `.lovable/proofs/phase_5_c_customer_provider_choice_v1.md`.
+- `PaymentDialog.tsx` НЕ трогали (по правкам пользователя — это Phase 5-D).
+
+## Phase 5-D — Status: **READY** (pending approve)
+
+- Discovery: `.lovable/discovery/phase_5_d_admin_override_inventory_v1.md`.
+- Скоуп: admin override провайдера в `PaymentDialog` (internal checkout) + audit `admin.payment_provider.override`.
+- Код не пишется до отдельного approve.
