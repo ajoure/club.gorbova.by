@@ -419,15 +419,25 @@ export function AdminPaymentLinkDialog({
   //   • bepaid: считаем доступным (нет лёгкого client-side disable-signal; backend валидирует);
   //   • stripe: нужен хотя бы один active acquiring_connection, не installment, валюта в whitelist.
   const stripeAvailableForCustomerChoice = useMemo(() => {
-    if (isInstallmentOffer) return false;
     if (!stripeAccounts || stripeAccounts.length === 0) return false;
-    // Если у выбранного/дефолтного аккаунта snapshot пуст — считаем доступным; иначе валюта в whitelist.
+    // Phase 7-UI follow-up — используем shared mirror резолвер.
+    // Берём дефолтный/первый Stripe-аккаунт (как и раньше),
+    // currency = текущий выбор админа (stripeCurrency).
     const acct = (stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0]) as any;
     const cap = acct?.capabilities_snapshot?.supported_currencies;
-    if (!Array.isArray(cap) || cap.length === 0) return true;
-    const set = new Set((cap as unknown[]).map((c) => String(c).toLowerCase()));
-    return set.has(stripeCurrency.toLowerCase());
-  }, [stripeAccounts, isInstallmentOffer, stripeCurrency]);
+    const supported = Array.isArray(cap) && cap.length > 0
+      ? cap.map((c: unknown) => String(c))
+      : null;
+    const r = resolveAvailableProviders({
+      currency: stripeCurrency,
+      payment_type: paymentType,
+      candidate_providers: ["stripe"],
+      stripe_account_supported_currencies: supported,
+      stripe_account_resolved: true,
+      is_installment: isInstallmentOffer,
+    });
+    return r.availableProviders.includes("stripe");
+  }, [stripeAccounts, isInstallmentOffer, stripeCurrency, paymentType]);
 
   const customerChoiceAllowed = useMemo<("bepaid" | "stripe")[]>(() => {
     const list: ("bepaid" | "stripe")[] = ["bepaid"];
