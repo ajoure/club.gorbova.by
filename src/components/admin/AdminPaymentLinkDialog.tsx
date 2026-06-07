@@ -198,7 +198,11 @@ export function AdminPaymentLinkDialog({
   const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
   // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
   // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
-  const [providerModeChoice, setProviderModeChoice] = useState<"auto" | "bepaid" | "stripe">("auto");
+  // 'customer_choice' = override: клиент выбирает из всех технически доступных provider'ов,
+  //                     независимо от offer.allowed_payment_providers. Override живёт только в payment_links.
+  const [providerModeChoice, setProviderModeChoice] = useState<
+    "auto" | "customer_choice" | "bepaid" | "stripe"
+  >("auto");
   // Phase 5-D — super_admin может выбрать provider, даже если он не в offer.allowed_payment_providers.
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
 
