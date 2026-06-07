@@ -288,12 +288,22 @@ Deno.serve(async (req) => {
     // 4) subscription Stripe требует tariff_offers.meta.stripe.price_id на выбранном оффере
     //    (раннее 400, чтобы админ не создал «мёртвую» ссылку).
     let resolvedAccountCode: string | null = null;
-    if (provider === 'stripe') {
+    // Stripe-валидации запускаются и для fixed=stripe, и для customer_choice со stripe в allowed.
+    const stripePathActive =
+      provider === 'stripe' ||
+      (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
+    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся BYN).
+    const stripeValidationCurrency = (
+      providerMode === 'customer_choice'
+        ? (rawStripeCurrency || 'EUR')
+        : currency
+    ).toUpperCase();
+    if (stripePathActive) {
       if (installmentBlock) {
         return errorResponse('installment_not_supported_on_stripe', 400);
       }
-      if (!STRIPE_ALLOWED_CURRENCIES.has(currency)) {
-        return errorResponse(`Stripe: unsupported currency ${currency}`, 400);
+      if (!STRIPE_ALLOWED_CURRENCIES.has(stripeValidationCurrency)) {
+        return errorResponse(`Stripe: unsupported currency ${stripeValidationCurrency}`, 400);
       }
       const accountQuery = supabase
         .from('acquiring_connections')
