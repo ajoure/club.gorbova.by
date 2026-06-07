@@ -55,14 +55,6 @@ export interface OfferAcquiring {
   stripe?: OfferAcquiringStripe;
 }
 
-interface ConnectionRow {
-  account_code: string;
-  account_name: string;
-  test_mode: boolean;
-  is_default: boolean;
-  shop_id?: string | null;
-}
-
 interface Props {
   value: OfferAcquiring | undefined;
   onChange: (next: OfferAcquiring) => void;
@@ -229,7 +221,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                     <SelectContent>
                       {bepaidConnections.map((c) => (
                         <SelectItem key={c.account_code} value={c.account_code}>
-                          {c.account_name}
+                          {c.display_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -288,7 +280,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                     <SelectContent>
                       {stripeConnections.map((c) => (
                         <SelectItem key={c.account_code} value={c.account_code}>
-                          {c.account_name}
+                          {c.display_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
