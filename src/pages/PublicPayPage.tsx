@@ -595,15 +595,15 @@ export default function PublicPayPage() {
               </Button>
             )}
 
-            {!needsIdentity && showSavedCardSelector && selectedMethod !== 'new_card' && (
+            {!needsIdentity && !needsProviderChoice && showSavedCardSelector && selectedMethod !== 'new_card' && (
               <p className="mt-2 text-[11px] text-center text-muted-foreground">
                 Подтверждение банка может потребоваться при первой оплате этой картой.
               </p>
             )}
 
             {/* PAY-E-LITE: для subscription показываем сохранённые карты disabled + уведомление.
-                Логика checkout не меняется — CTA уходит в стандартный bePaid subscription flow. */}
-            {!needsIdentity && showSubscriptionDisabledCards && (
+                Логика checkout не меняется — CTA уходит в стандартный subscription flow. */}
+            {!needsIdentity && !needsProviderChoice && showSubscriptionDisabledCards && (
               <div className="mt-4 mb-2">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
                   Сохранённые карты
@@ -629,11 +629,11 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {!needsIdentity && showSubscriptionFallbackHint && (
+            {!needsIdentity && !needsProviderChoice && showSubscriptionFallbackHint && (
               <p className="mt-3 text-xs text-center text-muted-foreground leading-relaxed">
-                Эта ссылка оформляет подписку bePaid. Сохранённые карты нельзя выбрать для оформления
-                подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет ввести карту
-                для подписки.
+                Эта ссылка оформляет подписку. Сохранённые карты нельзя выбрать для оформления
+                подписки. Вас перенаправит на защищённую страницу платёжного провайдера, где
+                нужно будет ввести карту для подписки.
               </p>
             )}
 
