@@ -274,23 +274,12 @@ export function AdminPaymentLinkDialog({
     [allOffers]
   );
 
-  // PATCH 4.1.1 — Stripe-eligible offers (только для provider='stripe' + subscription).
-  // Фильтрация: offer должен иметь meta.stripe.price_id, иначе Stripe-подписка не сможет оплатиться.
-  const stripeEligibleOffers = useMemo(
-    () => activeOffers.filter((o) => !!(o as any).meta?.stripe?.price_id),
-    [activeOffers]
-  );
-
-  // Видимый набор кнопок в селекторе зависит от выбранного провайдера и типа оплаты.
-  const visibleOffers = useMemo(() => {
-    if (provider === "stripe" && paymentType === "subscription") {
-      return stripeEligibleOffers;
-    }
-    return activeOffers;
-  }, [provider, paymentType, activeOffers, stripeEligibleOffers]);
-
-  const noStripeSubscriptionOffers =
-    provider === "stripe" && paymentType === "subscription" && stripeEligibleOffers.length === 0;
+  // BLOCKER FIX (Phase 6-G/7 boundary): отсутствие meta.stripe.price_id больше
+  // НЕ блокирует создание Stripe-подписочной ссылки. Backend (admin-create-public-link)
+  // сам вызовет admin-provision-stripe-price при необходимости и идемпотентно создаст/найдёт
+  // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
+  const visibleOffers = activeOffers;
+  const noStripeSubscriptionOffers = false;
 
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
