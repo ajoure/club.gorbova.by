@@ -142,7 +142,9 @@ export async function cancelOldSubscriptionForReplacement(
       product_id: conflict.product_id,
       tariff_id: conflict.tariff_id,
       old_bepaid_subscription_id: conflict.bepaid_subscription_id,
-      replacement_mode: mode,
+      replacement_mode: remoteMissingTreatedAsCanceled
+        ? 'provider_managed_remote_missing'
+        : mode,
       cancel_result: cancelResult as never,
       source,
     },
