@@ -101,8 +101,25 @@ EUR, PLN, USD, BYN, RUB.
 ## DoD Phase 7 Discovery
 - [x] SQL inventory по 5 таблицам.
 - [x] Карта полей `currency`.
-- [x] Hardcoded литералы с file:line.
+- [x] Hardcoded литералы с file:line и классификацией (UI default / business rule / provider constraint / legacy fallback).
+- [x] Расхождение Stripe business whitelist (4 vs 7 валют) задокументировано.
 - [x] UI логика описана.
 - [x] Open questions сформулированы.
-- [ ] Stripe Poland capabilities (см. `stripe_currency_support_v1.md` §2 — заполняется отдельным шагом или в Phase 7-EXEC).
+- [ ] Stripe Poland capabilities (см. `stripe_currency_support_v1.md` §2 — заполняется в Phase 7-EXEC).
 - [x] Никаких миграций / UI / runtime изменений.
+
+### Machine-check (manual)
+Ожидаемый `git diff --name-only` после Phase 7 Discovery:
+```
+.lovable/discovery/phase_7_currencies_inventory_v1.md
+.lovable/discovery/phase_7_currency_provider_resolver_v1.md
+.lovable/discovery/stripe_currency_support_v1.md
+.lovable/plan.md
+```
+Любые другие файлы в diff — нарушение spec-only контракта.
+
+## Запреты Phase 7 Discovery
+- Миграции, UI-изменения, checkout/webhook изменения.
+- Новые Edge Functions, новые Stripe/bePaid helpers, новые provider profiles.
+- Currency conversion, FX rates, авто-конвертация валют.
+- **Запрещено добавлять или сохранять fallback-логику вида: если currency unsupported → использовать BYN/EUR по умолчанию.**
