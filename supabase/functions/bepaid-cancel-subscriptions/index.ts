@@ -188,6 +188,7 @@ Deno.serve(async (req) => {
     const result: CancelResult = {
       canceled: [],
       failed: [],
+      remote_missing: [],
       total_requested: subscriptionIds.length,
     };
 
