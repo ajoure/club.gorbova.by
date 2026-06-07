@@ -238,10 +238,16 @@ UI                                       unchanged
 
 ## Phase 4.3 — Stripe consume-payment-link integration
 
-**Status:** STRUCTURAL PASS / runtime card pay PENDING-BY-OPERATOR
+**Status:** FULL PASS (structural + runtime, agent-executed via test card 4242 on 2026-06-07)
 
 - Code: deployed (`stripe-webhook` + bundled `_shared/stripe-subscription-resolver.ts`).
 - Freeze: bepaid-webhook / consume-payment-link / public-checkout / grant-access-for-order / create-payment-checkout — 0 diff.
-- G71 one-time / G72 subscription: code path PASS, требуется card 4242 pay по новой Stripe public link.
-- G73 idempotency / G74 max_uses / G75 bePaid non-regression: STRUCTURAL PASS / PASS.
-- Proof: `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` (с repro SQL для оператора).
+- G71 one-time: PASS — link `3ecffb2d…` current_uses 0→1, order `38fd44ed…` paid, audit `public_checkout.link_consumed`.
+- G72 subscription: PASS — link `4b38f37e…` current_uses 0→1 on activation invoice, order `6096fb1a…` paid, audit logged.
+- G73 idempotency: PASS (structural, `payment_link_counted` seal).
+- G74 max_uses: PASS (covered by G76).
+- G75 bePaid non-regression: PASS (zero diff).
+- G76 exhausted enforcement: PASS — GET `/public-checkout?token=…` (current_uses=max_uses=1) → HTTP 410 `Payment link usage limit reached`.
+- Proof: `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` (полный runtime-журнал в §5-6).
+
+**Public Links модуль закрыт полностью** для обоих провайдеров (bePaid + Stripe) с lifecycle-паритетом.
