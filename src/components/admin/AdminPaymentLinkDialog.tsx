@@ -279,7 +279,6 @@ export function AdminPaymentLinkDialog({
   // сам вызовет admin-provision-stripe-price при необходимости и идемпотентно создаст/найдёт
   // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
   const visibleOffers = activeOffers;
-  const noStripeSubscriptionOffers = false;
 
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
