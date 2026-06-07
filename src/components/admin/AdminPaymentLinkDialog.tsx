@@ -1294,15 +1294,6 @@ ${amountLine}
 
                   {offersLoading ? (
                     <Skeleton className="h-10 w-full" />
-                  ) : noStripeSubscriptionOffers ? (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                      <p>
-                        У этого тарифа нет кнопки, настроенной для Stripe-подписки
-                        (нужно meta.stripe.price_id в настройках кнопки). Используйте bePaid
-                        или добавьте Stripe Price.
-                      </p>
-                    </div>
                   ) : resolved.ok === false ? (
                     <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -1320,18 +1311,17 @@ ${amountLine}
                         <SelectContent>
                           {visibleOffers.map((o) => {
                             const isSub = !!o.meta?.recurring?.is_recurring;
-                            const hasStripePrice = !!(o as any).meta?.stripe?.price_id;
                             return (
                               <SelectItem key={o.id} value={o.id}>
                                 {o.button_label} — {Number(o.amount)} {previewCurrency}
                                 {isSub ? " · подписка" : " · разовая"}
                                 {o.is_primary ? " · основная" : ""}
-                                {provider === "stripe" && hasStripePrice ? " · Stripe price ✓" : ""}
                               </SelectItem>
                             );
                           })}
                         </SelectContent>
                       </Select>
+
 
 
                       {/* Audit-бейдж режима резолва */}
