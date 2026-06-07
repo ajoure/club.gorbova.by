@@ -1,7 +1,8 @@
 # Phase 7-EXEC — Currency Provider Resolver: Proof
 
 Дата: 2026-06-07.
-Статус: **PASS**.
+Статус backend: **PASS**.
+Статус UI integration (P7-7): **PARTIAL → закрыт в follow-up** — см. `.lovable/proofs/phase_7_ui_followup_v1.md` (UI переведён на shared mirror, auto-fallback валюты удалён, без изменений backend).
 
 ## 0. Summary
 Реализован canonical shared резолвер `currency × provider × account capabilities × payment_type × installment`. Подключён в `admin-create-public-link` как единственный источник истины для проверки совместимости валюты и провайдера. Старые inline-whitelists (`STRIPE_ALLOWED_CURRENCIES` + ручной capability check) удалены. Добавлен ранее отсутствовавший bePaid currency guard.
