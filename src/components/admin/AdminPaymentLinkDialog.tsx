@@ -1103,9 +1103,7 @@ ${amountLine}
                       {
                         key: "auto" as const,
                         title: "По настройке кнопки",
-                        hint: offerSupportsCustomerChoice
-                          ? "Покупатель сам выберет карту на странице оплаты"
-                          : `Будет использован способ из настроек кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}`,
+                        hint: "Используется основной способ оплаты тарифа",
                         icon: <MousePointerClick className="h-4 w-4 text-muted-foreground" />,
                         disabled: false,
                       },
