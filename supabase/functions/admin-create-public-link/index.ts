@@ -649,6 +649,32 @@ Deno.serve(async (req) => {
       });
     }
 
+    // «Клиент выбирает» — отдельный audit override allowed_payment_providers.
+    if (allowedProvidersOverride) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'admin.payment_provider.customer_choice_override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          offer_allowed_payment_providers: offerAllowedProviders,
+          effective_allowed_payment_providers: effectiveAllowedProviders,
+          stripe_account_code: effectiveAllowedProviders.includes('stripe')
+            ? (resolvedAccountCode || offerStripeAccountCode || null)
+            : null,
+          stripe_currency: effectiveAllowedProviders.includes('stripe')
+            ? stripeValidationCurrency
+            : null,
+          reason: 'admin_customer_choice_override',
+        },
+      });
+    }
+
 
     return jsonResponse({
       success: true,
@@ -666,7 +692,7 @@ Deno.serve(async (req) => {
       provider: linkProviderColumn,
       account_code: linkAccountCodeColumn,
       provider_mode: providerMode,
-      allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
+      allowed_payment_providers: providerMode === 'customer_choice' ? effectiveAllowedProviders : [provider],
       currency,
       row: link,
     });
