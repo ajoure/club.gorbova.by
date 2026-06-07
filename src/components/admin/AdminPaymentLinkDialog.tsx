@@ -783,6 +783,15 @@ ${amountLine}
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
+            // «Клиент выбирает» — override allowed_payment_providers поверх offer.meta.
+            ...(providerModeChoice === "customer_choice"
+              ? {
+                  allowed_payment_providers: customerChoiceAllowed,
+                  ...(customerChoiceAllowed.includes("stripe")
+                    ? { account_code: stripeAccountCode || undefined, currency: stripeCurrency }
+                    : {}),
+                }
+              : {}),
           },
         }
       );
