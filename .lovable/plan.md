@@ -1,422 +1,450 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Не делать бэкфилл до появления UI**
+1. **Не трогать** `PaymentDialog.tsx` **в 5-C**
 
-Сейчас в базе:
+В плане указано:
 
 ```text
-38 offers
-1 offer со Stripe
-0 meta.acquiring
+PaymentDialog.tsx (integration)
 ```
 
-Если сначала сделать массовый бэкфилл, а потом UI, то при ошибке UI придется чинить уже измененные данные.
+Но это уже ближе к admin/internal checkout и Phase 5-D.
 
-Порядок лучше такой:
+В 5-C ограничиться:
 
 ```text
-5-B.1 UI
-5-B.2 Verify UI
-5-B.3 Dry-run backfill
-5-B.4 Execute backfill
-5-B.5 Verify
+/pay/:token
+Pay.tsx
+public-checkout
+admin-create-public-link
+```
+
+`PaymentDialog.tsx` оставить для Phase 5-D.
+
+---
+
+2. **Phase 5-C не должен менять admin checkout**
+
+В 5-C делаем только:
+
+```text
+customer provider selection
+public links provider_mode
+public-checkout provider_choice
+```
+
+Admin override и внутренний PaymentDialog — только discovery.
+
+---
+
+3. **PATCH 5-B.1 выполнить первым и отдельно в proof**
+
+В proof должен быть отдельный раздел:
+
+```text
+PATCH 5-B.1 UX Cleanup
+```
+
+Проверить:
+
+- Product ID скрыт;
+- account slug скрыт;
+- `test/live` заменены на `Тестовый режим / Боевой режим`;
+- «Код тарифа Stripe» вместо `Stripe Price ID`;
+- «Приём оплаты иностранными картами» вместо «Настройки Stripe».
+
+---
+
+4. `admin-create-public-link` **с customer_choice должен учитывать CHECK**
+
+Так как `payment_links.provider` NOT NULL и CHECK ограничен, нельзя ставить `provider=null`.
+
+Для `customer_choice` использовать:
+
+```text
+payment_links.provider = default_provider
+payment_links.provider_mode = 'customer_choice'
+payment_links.meta.allowed_payment_providers = [...]
+```
+
+Например:
+
+```text
+provider='bepaid'
+provider_mode='customer_choice'
+meta.allowed_payment_providers=['bepaid','stripe']
 ```
 
 ---
 
-2. **Не хранить product_id вручную**
+5. **Public link forced provider**
 
-Поле:
-
-```json
-"product_id": "prod_xxx"
-```
-
-я бы не редактировал руками.
-
-Показывать:
+Если админ создаёт forced link:
 
 ```text
-Stripe Product ID
+provider_mode='fixed'
+provider='bepaid' | 'stripe'
 ```
 
-можно.
+И provider должен входить в `allowed_payment_providers`.
 
-Но редактировать вручную нельзя.
+---
 
-Источник должен быть:
+6. **Single provider auto**
+
+Если offer:
 
 ```text
-Stripe Price ID
-↓
-Stripe API
-↓
-Stripe Product ID
+allowed_payment_providers=['stripe']
 ```
 
-Иначе через месяц получим:
+то auto-link должен стать:
 
 ```text
-price_1
-product_2
+provider='stripe'
+provider_mode='fixed'
 ```
 
-и рассинхрон.
+Если:
 
-Для 5-B достаточно:
+```text
+allowed_payment_providers=['bepaid']
+```
 
-```json
-{
-  "price_id": "...",
-  "account_code": "...",
-  "currency": "...",
-  "mode": "..."
-}
+то:
+
+```text
+provider='bepaid'
+provider_mode='fixed'
 ```
 
 ---
 
-3. **Currency не должна редактироваться отдельно**
+7. **Multi provider auto**
 
-Сейчас уже есть риск появления:
-
-```text
-Price ID = EUR
-Currency = USD
-```
-
-Для Stripe это ошибка данных.
-
-Поэтому Discovery уже показал:
+Если:
 
 ```text
-price_id = главный идентификатор
+allowed_payment_providers=['bepaid','stripe']
 ```
 
-В 5-B:
+то:
 
 ```text
-Price ID
-```
-
-обязателен.
-
-А валюта:
-
-```text
-read-only
-```
-
-подтягивается автоматически.
-
----
-
-4. **default_provider**
-
-В плане написано:
-
-```text
-default_provider = bepaid
-```
-
-Нужно добавить правило:
-
-```text
-если allowed=["stripe"]
-то default_provider="stripe"
-```
-
-автоматически.
-
-Не хранить неконсистентные данные.
-
----
-
-5. **Stripe-only офферы разрешить**
-
-Сейчас план не запрещает, но явно не описывает.
-
-Добавить:
-
-```text
-☐ bePaid
-☑ Stripe
-```
-
-валидный сценарий.
-
-Тогда:
-
-```json
-{
-  "allowed_payment_providers": ["stripe"],
-  "default_provider": "stripe"
-}
+provider=default_provider
+provider_mode='customer_choice'
 ```
 
 ---
 
-6. **Installment guard усилить**
-
-Не только disabled checkbox.
-
-Еще и серверная защита при сохранении:
-
-```text
-installment + stripe
-=
-400 stripe_installment_not_supported
-```
-
-Даже если кто-то обойдет UI.
-
----
-
-7. **Audit по изменениям оффера**
-
-Кроме массового backfill нужен обычный аудит.
-
-При изменении настроек оффера:
-
-```text
-offer.acquiring.updated
-```
-
-с записью:
-
-```json
-{
-  "offer_id": "...",
-  "old_providers": [...],
-  "new_providers": [...],
-  "old_price_id": "...",
-  "new_price_id": "...",
-  "actor_id": "..."
-}
-```
-
-Иначе потом невозможно будет понять, кто отключил Stripe.
-
----
-
-8. **Добавить Verify для сохранения**
-
-После UI save проверить:
-
-```text
-offer A
-  bePaid only
-
-offer B
-  bePaid + Stripe
-
-offer C
-  Stripe only
-```
-
-и подтвердить фактический JSON в БД.
-
-Не только визуальный скриншот.
-
----
-
-9. **Proof дополнить**
-
-Добавить отдельный раздел:
-
-```text
-JSON before
-JSON after
-```
-
-для трех сценариев:
-
-```text
-bePaid only
-bePaid + Stripe
-Stripe only
-```
-
-Это пригодится перед Phase 5-C.
-
-После этих правок Phase 5-B выглядит безопасной и может идти в реализацию.
-
-&nbsp;
-
-План: Phase 5-B — Offer Acquiring Settings UI + Backfill
-
-## Цель
-
-Добавить в карточку оффера (вкладка «Оплата») управление эквайрингом и сделать идемпотентный бэкфилл `tariff_offers.meta.acquiring` для 38 офферов.
-
-**Никаких runtime-изменений:** public-checkout, admin override, webhooks, grant-access, bePaid/Stripe lifecycle — не трогаем. Только запись настроек + UI редактор.
-
----
-
-## Scope 5-B
-
-### 1. Контракт `meta.acquiring`
-
-```json
-{
-  "allowed_payment_providers": ["bepaid"] | ["bepaid","stripe"] | ["stripe"],
-  "default_provider": "bepaid" | "stripe",
-  "customer_choice_enabled": false,
-  "stripe": {
-    "account_code": "stripe_poland",
-    "product_id": "prod_...",
-    "price_id": "price_...",
-    "currency": "EUR" | "USD" | ...,
-    "mode": "test" | "live"
-  }
-}
-```
-
-`stripe`-блок присутствует только если `stripe ∈ allowed_payment_providers`.
-
-### 2. Бэкфилл (Diagnose → Dry-run → Execute → Verify)
-
-**Источник правды:** `tariff_offers` (38 строк, 26 active).
-
-**Diagnose (read-only SQL):**
-
-```sql
-SELECT id, name, is_active,
-       meta->'stripe'->>'price_id'   AS stripe_price_id,
-       meta->'stripe'->>'product_id' AS stripe_product_id,
-       meta->'acquiring'             AS existing_acquiring
-FROM tariff_offers
-ORDER BY is_active DESC, name;
-```
-
-Ожидание (по Discovery 5-A): 1 оффер с `stripe.price_id`, 0 уже с `meta.acquiring`.
-
-**Dry-run выборка:**
-
-```sql
-SELECT id, name,
-  CASE WHEN meta->'stripe'->>'price_id' IS NOT NULL
-       THEN '["bepaid","stripe"]' ELSE '["bepaid"]' END AS would_set_providers
-FROM tariff_offers
-WHERE meta->'acquiring' IS NULL;
-```
-
-**Execute (idempotent UPDATE через supabase--insert, single transaction):**
+8. `public-checkout` **validation**
 
 Правила:
 
-- `meta.stripe.price_id IS NOT NULL` → `allowed_payment_providers=["bepaid","stripe"]`, перенести существующие `meta.stripe.{account_code,product_id,price_id,currency,mode}` в `meta.acquiring.stripe` (если поля пустые — `account_code='stripe_poland'`, `mode='test'`, `currency` из `tariff_prices`/`'EUR'` fallback).
-- иначе → `allowed_payment_providers=["bepaid"]`, без `stripe`-блока.
-- всегда: `default_provider="bepaid"`, `customer_choice_enabled=false`.
-- guard: `WHERE meta->'acquiring' IS NULL` — идемпотентно.
-- `meta.stripe` **оставляем как есть** (backward-compat для `stripe-subscription-resolver`).
+```text
+provider_mode='fixed'
+→ provider_choice игнорируется или rejected как not_allowed
+→ используется payment_links.provider
 
-**Audit:** одна запись в `audit_logs` с `action='phase5_b_acquiring_backfill_v1'`, `meta.affected_count`, `meta.affected_ids[]`, `meta.dry_run_snapshot`.
-
-**Verify:**
-
-```sql
-SELECT COUNT(*) FILTER (WHERE meta->'acquiring' IS NOT NULL) AS filled,
-       COUNT(*) AS total,
-       COUNT(*) FILTER (WHERE (meta->'acquiring'->'allowed_payment_providers') @> '["stripe"]') AS with_stripe
-FROM tariff_offers;
+provider_mode='customer_choice'
+→ provider_choice обязателен
+→ provider_choice должен входить в meta.allowed_payment_providers
 ```
 
-Ожидание: `filled=total=38`, `with_stripe=1`.
+Я бы выбрал:
 
-**Rollback (если нужно):** `UPDATE tariff_offers SET meta = meta - 'acquiring' WHERE meta->'acquiring'->>'__backfill_marker__' = 'phase5_b_v1'`. Для этого в backfill добавим `meta.acquiring.__backfill_marker__='phase5_b_v1'`.
-
-### 3. UI — вкладка «Оплата» в карточке оффера
-
-**Файл:** `src/pages/admin/AdminProductDetailV2.tsx` (район строк 1729-1733, существующая вкладка «Оплата» в Offer dialog). Извлечь блок в новый компонент `src/components/admin/products/OfferAcquiringSettings.tsx`.
-
-**Раскладка:**
-
-```
-Способы приёма оплаты
-┌────────────────────────────────────────────────┐
-│ ☑ bePaid — карты банков Беларуси               │
-│ ☐ Stripe — карты иностранных банков            │
-└────────────────────────────────────────────────┘
-
-[если Stripe ☑]
-Настройки Stripe
-┌────────────────────────────────────────────────┐
-│ Аккаунт:     [stripe_poland ▾]                 │  (из acquiring_connections WHERE provider='stripe' AND is_active)
-│ Product ID:  [prod_...                       ] │
-│ Price ID:    [price_...                      ] │  *required
-│ Валюта:      [EUR ▾]                           │
-│ Режим:       (○) test  ( ) live                │
-└────────────────────────────────────────────────┘
+```text
+fixed + provider_choice present and != link.provider
+→ 400 provider_choice_not_allowed
 ```
 
-**Валидация (frontend + backend mirror в save-handler):**
-
-1. Минимум один провайдер включён → иначе toast «Выберите хотя бы один способ оплаты», кнопка «Сохранить» disabled.
-2. Если Stripe включён → `price_id` обязателен → иначе «Укажите Stripe Price ID», disabled.
-3. **Installment guard:** если в оффере `meta.installment.enabled === true` → чекбокс Stripe **disabled** + подпись «Stripe пока не поддерживает рассрочку». Сохранять Stripe для installment-офферов запрещено (если флаг включён программно — strip + warn).
-4. `default_provider` в 5-B не редактируется в UI, фиксируется `"bepaid"` (при single-provider Stripe-only сценарии — авто `"stripe"`; такие офферы в текущем датасете отсутствуют).
-5. `customer_choice_enabled=false` (UI 5-C добавит тумблер).
-
-**Save:** запись в `tariff_offers.meta.acquiring` через существующий update-handler оффера (один PATCH, никакой новой edge function). `meta.stripe` не удаляем (legacy read-path).
-
-**Что НЕ делаем в 5-B:**
-
-- никакой user-facing UI (карта-селектор на сайте) — Phase 5-C;
-- никакой admin override в checkout-форме — Phase 5-D;
-- никакого изменения `payment_links_enriched_v` — Phase 5-C/D;
-- никаких правок `create-stripe-checkout`, `stripe-pre-create-subscription`, `public-checkout`, `admin-create-public-link`, `create-payment-checkout`, `bepaid-webhook`, `stripe-webhook`, `stripe-subscription-resolver`, `grant-access-for-order`.
+чтобы не было скрытого поведения.
 
 ---
 
-## Технические детали
+9. **Frontend copy**
 
-**Изменяемые файлы:**
+В клиентском UI использовать:
 
-- `src/components/admin/products/OfferAcquiringSettings.tsx` (новый, ~180 строк)
-- `src/pages/admin/AdminProductDetailV2.tsx` (вставка компонента во вкладку «Оплата», ~5 строк diff)
-- `.lovable/proofs/phase_5_b_offer_acquiring_settings_v1.md` (новый proof)
+```text
+Карта белорусского банка
+Для карт банков Беларуси
 
-**Migration:** не требуется (только JSONB-апдейт через `supabase--insert`).
+Карта иностранного банка
+Для карт банков Европы, США и других стран
+```
 
-**Тип контракта:** добавить локальный TS-тип `OfferAcquiring` в `OfferAcquiringSettings.tsx` (без правки `src/integrations/supabase/types.ts`).
-
----
-
-## Proof (`.lovable/proofs/phase_5_b_offer_acquiring_settings_v1.md`)
-
-Структура:
-
-1. Discovery snapshot (38 offers, 1 с stripe.price_id).
-2. Dry-run SQL + результат.
-3. Execute SQL + audit row.
-4. Verify SQL + результат (filled=38, with_stripe=1).
-5. Скриншоты UI: bePaid only, bePaid+Stripe, валидация «оба выключены», installment guard.
-6. Grep-проверки (zero-diff):
-  - `git diff --stat supabase/functions/bepaid-webhook supabase/functions/stripe-webhook supabase/functions/grant-access-for-order supabase/functions/_shared/stripe-subscription-resolver.ts supabase/functions/public-checkout supabase/functions/create-stripe-checkout.ts supabase/functions/stripe-pre-create-subscription.ts supabase/functions/admin-create-public-link supabase/functions/create-payment-checkout.ts` → 0.
-7. Rollback команда.
+Не писать названия банков типа Беларусбанк/Приорбанк — лучше не перечислять конкретные банки.
 
 ---
 
-## Runtime gates 5-B
+10. **Runtime gates заменить с code-trace на browser/runtime smoke**
 
-- **G81-B** UI «Способы приёма оплаты» отображается во вкладке «Оплата» оффера.
-- **G82-B** Save заблокирован, если оба провайдера выключены.
-- **G83-B** Save заблокирован, если Stripe включён без `price_id`.
-- **G84-B** Installment-оффер → Stripe checkbox disabled + подпись.
-- **G85-B** Бэкфилл идемпотентен: повторный запуск `affected_count=0`.
-- **G86-B** Zero-diff на runtime-файлах (grep §6 proof).
+Не принимать только code-trace.
+
+Минимум:
+
+```text
+G81: link [bepaid] → без выбора → bePaid checkout
+G82: link [stripe] → без выбора → Stripe checkout
+G83: multi link → экран выбора
+G84: выбор белорусская карта → bePaid checkout
+G85: выбор иностранная карта → Stripe checkout
+G86: provider_choice invalid → 400
+G87: freeze grep
+```
 
 ---
 
-## DoD — статус 2026-06-07
+11. **Discovery 5-D оставить, но без изменения кода**
 
-- ✅ `meta.acquiring` заполнен 38/38 (37 bePaid-only, 1 bePaid+Stripe).
-- ✅ UI компонент `OfferAcquiringSettings` встроен, валидации A–F работают (code-trace verify).
-- ✅ Audit `phase5_b_acquiring_backfill_v1` = 38 строк; триггер `offer.acquiring.updated` активен.
-- ✅ Idempotency: повторный UPDATE с фильтром `meta->'acquiring' IS NULL` = 0 affected.
-- ✅ Zero-diff на webhook/grant-access/checkout (см. proof §6).
-- ✅ G81-B…G87-B = PASS.
-- ✅ Proof: `.lovable/proofs/phase_5_b_offer_acquiring_settings_v1.md`.
+Да, подготовить:
 
-**Phase 5-B = DONE / PASS.** 5-C (user-facing card selector) и 5-D (admin override + customer_choice_enabled) = PENDING.
+```text
+.lovable/discovery/phase_5_d_admin_override_inventory_v1.md
+```
+
+Но никаких правок `PaymentDialog.tsx`.
+
+---
+
+После этих правок Phase 5-C можно запускать.
+
+&nbsp;
+
+Phase 5-C + PATCH 5-B.1 — Customer Provider Selection + UX Cleanup
+
+Один спринт. PATCH 5-B.1 (UX-чистка Stripe) выполняется первым, затем основная Phase 5-C (выбор провайдера пользователем).
+
+Все runtime-файлы (`bepaid-webhook`, `stripe-webhook`, `grant-access-for-order`, `subscriptions-reconcile`, telegram lifecycle) остаются нетронутыми.
+
+---
+
+### Step 1 — PATCH 5-B.1: UX-чистка `OfferAcquiringSettings.tsx`
+
+Только UI, БД и meta-схема не меняются.
+
+**Убрать из UI:**
+
+- поле `Stripe Product ID`
+- селект `Stripe Account` (`stripe_poland`)
+- toggle `test` / `live` в текущем виде
+
+**Переименовать лейблы:**
+
+- секция «Настройки Stripe» → **«Приём оплаты иностранными картами»**
+- чекбокс «Stripe (зарубежные карты)» → **«Принимать иностранные карты»**
+- поле `Stripe Price ID` → **«Код тарифа Stripe»**
+- режим `test` → **«Тестовый режим»**, `live` → **«Боевой режим»** (radio/toggle с человеческими надписями)
+
+**Скрыть от пользователя:**
+
+- `product_id`, `account_code`, slug «stripe_poland», слово «Stripe» в служебных подписях (кроме «Код тарифа Stripe» и заголовка «Tariff Stripe подключён»).
+
+**Показывать в форме:**
+
+- Код тарифа Stripe (input)
+- Валюта оплаты (read-only после lookup)
+- Режим: Тестовый / Боевой (radio)
+- Кнопка «Подтвердить» (вызывает `admin-stripe-price-lookup`)
+
+**После успешного lookup — статус-блок:**
+
+```
+✓ Тариф Stripe подключён
+   Валюта оплаты: EUR
+   Режим: Тестовый режим
+```
+
+**Технические поля (`product_id`, `account_code`, `mode`, `currency`) сохраняются в `meta.acquiring.stripe**` через скрытое state и lookup-результат. Никаких миграций, никаких изменений валидатора БД.
+
+Чекбокс bePaid остаётся как есть («Карта белорусского банка (bePaid)» → переименовать в **«Принимать белорусские карты»**, без слова bePaid в подписи).
+
+---
+
+### Step 2 — Phase 5-C.1: Provider Resolution helper
+
+Новый shared-модуль `src/utils/resolveCustomerProviderChoice.ts`:
+
+```ts
+type AcquiringMeta = { allowed_payment_providers: string[]; default_provider: string };
+export function resolveProviderChoice(meta?: AcquiringMeta): {
+  mode: 'single' | 'choice';
+  providers: ('bepaid' | 'stripe')[];
+  defaultProvider: 'bepaid' | 'stripe';
+};
+```
+
+Правила:
+
+- `["bepaid"]` → `single`, провайдер bepaid
+- `["stripe"]` → `single`, провайдер stripe
+- `["bepaid","stripe"]` → `choice`
+
+Зеркальный helper в edge `supabase/functions/_shared/resolve-provider-choice.ts` для серверной валидации.
+
+---
+
+### Step 3 — Phase 5-C.2: UI компонент выбора оплаты
+
+Новый компонент `src/components/payments/CustomerProviderChoice.tsx` (~120 строк).
+
+Используется в двух местах:
+
+1. `PaymentDialog.tsx` (admin/internal checkout flow)
+2. `src/pages/Pay.tsx` (public link `/pay/:token`)
+
+**Структура:**
+
+- Заголовок: «Выберите способ оплаты»
+- Две карточки (адаптивная сетка, `h-full`, identical height — см. memory tariff-card-rendering-standard):
+
+**Карточка 1 — Карта белорусского банка**
+
+- Иконка карты
+- Подзаголовок: «Visa / Mastercard банков Беларуси»
+- Описание: «Подходит для карт Беларусбанка, Приорбанка, Белгазпромбанка и др.»
+- CTA: «Оплатить»
+
+**Карточка 2 — Карта иностранного банка**
+
+- Иконка глобуса/карты
+- Подзаголовок: «Visa / Mastercard банков Европы, США и других стран»
+- CTA: «Оплатить»
+
+**Запреты в копирайте:** ни «bePaid», ни «Stripe», ни «stripe_poland», ни «provider», ни «account_code». Только нейтральные пользовательские формулировки.
+
+Если `mode === 'single'` — компонент не рендерится, родитель сразу вызывает соответствующий checkout.
+
+---
+
+### Step 4 — Phase 5-C.3: расширение `public-checkout`
+
+В `supabase/functions/public-checkout/index.ts`:
+
+- Принять опциональное `provider_choice: 'bepaid' | 'stripe'` в body.
+- Резолв оффера → `meta.acquiring.allowed_payment_providers`.
+- Если `length > 1` и `provider_choice` отсутствует → 400 `provider_choice_required`.
+- Если `provider_choice ∉ allowed_payment_providers` → 400 `invalid_provider_choice`.
+- Если `length === 1` → `provider_choice` игнорируется, используется единственный.
+- Дальше существующий роутинг: `bepaid` → текущая ветка, `stripe` → `create-stripe-checkout`.
+
+Никаких изменений в webhook/grant-access.
+
+---
+
+### Step 5 — Phase 5-C.4: Payment Links + provider_mode
+
+В таблице `payment_links` уже есть `provider`, `provider_mode` (см. `PaymentLinkRow`). Дополнить:
+
+- `provider_mode = 'fixed'` — текущее поведение (привязка к конкретному провайдеру).
+- `provider_mode = 'customer_choice'` — новое: при открытии `/pay/:token` фронт показывает `CustomerProviderChoice`, если оффер действительно `[bepaid, stripe]`.
+
+**UI в `admin-create-public-link` форме:** добавить radio «Способ оплаты» с тремя опциями:
+
+- «По настройке кнопки» (`customer_choice` если оффер multi, иначе fixed=default)
+- «Только белорусская карта» (`fixed` + bepaid)
+- «Только иностранная карта» (`fixed` + stripe, disabled если оффер не поддерживает Stripe или installment)
+
+`admin-create-public-link` edge function — добавить валидацию: `fixed` + provider должен входить в `allowed_payment_providers` оффера. Никаких изменений в bePaid-ветке создания заказа.
+
+`Pay.tsx` загружает link → если `provider_mode = 'customer_choice'` и оффер multi → рендерит `CustomerProviderChoice` → при выборе вызывает `public-checkout` с `provider_choice`.
+
+---
+
+### Step 6 — Runtime Gates G81–G87 (code-trace)
+
+
+| Gate | Сценарий                                                  | Ожидание                                                                                                                                         |
+| ---- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| G81  | offer=`[bepaid]`                                          | choice не рендерится, сразу bePaid                                                                                                               |
+| G82  | offer=`[stripe]`                                          | choice не рендерится, сразу Stripe                                                                                                               |
+| G83  | offer=`[bepaid,stripe]`                                   | рендерится `CustomerProviderChoice`                                                                                                              |
+| G84  | choice → «белорусская карта»                              | `public-checkout` с `provider_choice=bepaid` → bePaid flow                                                                                       |
+| G85  | choice → «иностранная карта»                              | `public-checkout` с `provider_choice=stripe` → Stripe flow                                                                                       |
+| G86  | public link `provider_mode=customer_choice` + multi offer | `/pay/:token` показывает choice                                                                                                                  |
+| G87  | Zero-diff freeze                                          | grep подтверждает: `bepaid-webhook`, `stripe-webhook`, `grant-access-for-order`, subscriptions-reconcile cron, telegram-grant-access не изменены |
+
+
+---
+
+### Step 7 — Discovery для Phase 5-D (Admin Override)
+
+Только разведка, без кода:
+
+Файл `.lovable/discovery/phase_5_d_admin_override_inventory_v1.md`:
+
+- Где в `PaymentDialog.tsx` admin/super_admin триггерит checkout → точки для override-селектора.
+- Что нужно расширить в `create-payment-checkout` для приёма `admin_provider_override` + audit-лог.
+- RBAC: только admin/super_admin (через `has_role_v2`).
+- Список радио для override:
+  - «По настройке кнопки» (default)
+  - «Белорусская карта (bePaid)» — admin видит технические имена, в отличие от клиента
+  - «Международная карта (Stripe)»
+- Audit-action: `admin.payment_provider.override`.
+
+Документ закрывается выводом «READY for Phase 5-D implementation» — но код 5-D не пишется до отдельного approve.
+
+---
+
+### DoD
+
+- PATCH 5-B.1: лейблы и поля очищены, технические идентификаторы скрыты в UI, сохраняются в meta.
+- `resolveProviderChoice` (фронт + edge mirror).
+- `CustomerProviderChoice` компонент без упоминаний bePaid/Stripe в копирайте.
+- `public-checkout` принимает `provider_choice` + валидация (400 `invalid_provider_choice` / `provider_choice_required`).
+- `admin-create-public-link` поддерживает `provider_mode in {fixed, customer_choice}` + валидация.
+- `Pay.tsx` рендерит choice при `customer_choice` + multi.
+- G81–G87 = PASS (code-trace + grep zero-diff).
+- Proof `.lovable/proofs/phase_5_c_customer_provider_choice_v1.md` (UI скриншоты code-trace, grep, before/after лейблы PATCH 5-B.1).
+- Discovery `.lovable/discovery/phase_5_d_admin_override_inventory_v1.md` подготовлен.
+- `.lovable/plan.md`: Phase 5-C = DONE/PASS, Phase 5-D = READY (pending approve).
+
+---
+
+### Файлы (предварительно)
+
+**Новые:**
+
+- `src/utils/resolveCustomerProviderChoice.ts`
+- `supabase/functions/_shared/resolve-provider-choice.ts`
+- `src/components/payments/CustomerProviderChoice.tsx`
+- `.lovable/proofs/phase_5_c_customer_provider_choice_v1.md`
+- `.lovable/discovery/phase_5_d_admin_override_inventory_v1.md`
+
+**Изменяются:**
+
+- `src/components/admin/products/OfferAcquiringSettings.tsx` (PATCH 5-B.1)
+- `src/components/payments/PaymentDialog.tsx` (integration)
+- `src/pages/Pay.tsx` (integration)
+- `supabase/functions/public-checkout/index.ts` (provider_choice param)
+- `supabase/functions/admin-create-public-link/index.ts` (provider_mode validation)
+- UI создания public link (admin форма)
+- `.lovable/plan.md`
+
+**Не трогаем (freeze, проверяется grep):**
+
+- `bepaid-webhook`, `stripe-webhook`
+- `grant-access-for-order`
+- `_shared/stripe-subscription-resolver.ts`
+- `stripe-pre-create-subscription`, `create-stripe-checkout`, `stripe-create-subscription-checkout`
+- `telegram-grant-access`, subscriptions-reconcile cron
+- DB схема / триггеры `tariff_offers_acquiring_*` (PATCH 5-B.1 — чисто UI)
+---
+
+## Phase 5-C + PATCH 5-B.1 — Status: **DONE / PASS** (2026-06-07)
+
+- PATCH 5-B.1 (UX cleanup) ✅
+- Customer provider selection ✅ — runtime smoke G81–G87 PASS на deployed edge functions.
+- Zero-diff freeze ✅ (webhooks / grant-access / telegram / subscriptions-reconcile / stripe-shared).
+- `PublicPayPage.tsx` — пользовательский экран выбора без упоминаний bePaid/Stripe.
+- `admin-create-public-link` принимает `provider_mode`, snapshot allowed_providers + stripe_account_code.
+- `public-checkout` принимает `provider_choice`, валидирует против allowed; 400-коды: `provider_choice_required` / `invalid_provider_choice` / `provider_choice_not_allowed`.
+- Proof: `.lovable/proofs/phase_5_c_customer_provider_choice_v1.md`.
+- `PaymentDialog.tsx` НЕ трогали (по правкам пользователя — это Phase 5-D).
+
+## Phase 5-D — Status: **READY** (pending approve)
+
+- Discovery: `.lovable/discovery/phase_5_d_admin_override_inventory_v1.md`.
+- Скоуп: admin override провайдера в `PaymentDialog` (internal checkout) + audit `admin.payment_provider.override`.
+- Код не пишется до отдельного approve.

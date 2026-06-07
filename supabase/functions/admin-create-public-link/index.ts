@@ -40,6 +40,10 @@ interface CreatePublicLinkRequest {
   // Phase 4.1 — provider routing for public payment link
   provider?: 'bepaid' | 'stripe';
   account_code?: string | null;
+  // Phase 5-C — provider_mode для пользовательского выбора.
+  // 'fixed' (default, backward-compat) — ссылка жёстко привязана к provider.
+  // 'customer_choice' — на /pay/:token покупатель выбирает между bepaid и stripe.
+  provider_mode?: 'fixed' | 'customer_choice';
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
@@ -79,8 +83,11 @@ Deno.serve(async (req) => {
       installment_offer = false, selected_installment_months,
       provider: rawProvider,
       account_code: rawAccountCode = null,
+      provider_mode: rawProviderMode,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
+    const providerMode: 'fixed' | 'customer_choice' =
+      rawProviderMode === 'customer_choice' ? 'customer_choice' : 'fixed';
     const provider: 'bepaid' | 'stripe' = rawProvider === 'stripe' ? 'stripe' : 'bepaid';
     const currency = (rawCurrency ?? (provider === 'stripe' ? 'EUR' : 'BYN')).toUpperCase();
 
@@ -127,6 +134,9 @@ Deno.serve(async (req) => {
     let offerPaymentMethod: string | null = null;
     let offerInstallmentMaxMonths: number | null = null;
     let offerInstallmentCountLegacy: number | null = null;
+    // Phase 5-C — snapshot acquiring из оффера для customer_choice ссылок.
+    let offerAllowedProviders: ('bepaid' | 'stripe')[] = [];
+    let offerStripeAccountCode: string | null = null;
     if (offer_id) {
       const { data: offer } = await supabase
         .from('tariff_offers')
@@ -142,6 +152,32 @@ Deno.serve(async (req) => {
       const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
         metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+      const acq = (offer as any).meta?.acquiring;
+      if (Array.isArray(acq?.allowed_payment_providers)) {
+        offerAllowedProviders = acq.allowed_payment_providers.filter(
+          (p: any) => p === 'bepaid' || p === 'stripe'
+        );
+      }
+      if (acq?.stripe?.account_code) offerStripeAccountCode = String(acq.stripe.account_code);
+    }
+    if (offerAllowedProviders.length === 0) {
+      // Legacy / offer без acquiring meta → backward-compat: только bepaid.
+      offerAllowedProviders = ['bepaid'];
+    }
+
+    // ── Phase 5-C: validation per provider_mode ──
+    if (providerMode === 'fixed') {
+      if (!offerAllowedProviders.includes(provider)) {
+        return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+      }
+    } else {
+      // customer_choice
+      if (offerAllowedProviders.length < 2) {
+        return errorResponse('customer_choice_requires_multi_provider_offer', 400);
+      }
+      if (offerAllowedProviders.includes('stripe') && (installment_offer || offerPaymentMethod === 'internal_installment')) {
+        return errorResponse('customer_choice_not_supported_for_installment', 400);
+      }
     }
 
     // ── Stage L: installment validation + расчёт сумм ──
@@ -320,6 +356,22 @@ Deno.serve(async (req) => {
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {};
     if (installmentBlock) linkMeta.installment = installmentBlock;
+    // Phase 5-C — snapshot allowed providers + stripe account для рантайма customer_choice.
+    if (providerMode === 'customer_choice') {
+      linkMeta.allowed_payment_providers = offerAllowedProviders;
+      if (offerStripeAccountCode) linkMeta.stripe_account_code = offerStripeAccountCode;
+    }
+
+    // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
+    // (DB CHECK + NOT NULL). Используем default_provider оффера = 'bepaid' как fallback,
+    // фактический выбор делается в public-checkout по provider_choice от покупателя.
+    const linkProviderForFixed = provider;
+    const linkProviderColumn: 'bepaid' | 'stripe' =
+      providerMode === 'customer_choice' ? 'bepaid' : linkProviderForFixed;
+    const linkAccountCodeColumn: string | null =
+      providerMode === 'customer_choice'
+        ? null
+        : (provider === 'stripe' ? resolvedAccountCode : null);
 
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
@@ -338,12 +390,12 @@ Deno.serve(async (req) => {
         url_token,
         public_url,
         meta: linkMeta,
-        // Phase 4.1 — provider routing fields
-        provider,
-        account_code: provider === 'stripe' ? resolvedAccountCode : null,
-        provider_mode: 'fixed',
+        // Phase 4.1 + 5-C — provider routing fields
+        provider: linkProviderColumn,
+        account_code: linkAccountCodeColumn,
+        provider_mode: providerMode,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code, provider_mode')
       .single();
 
     if (insertErr || !link) {
@@ -376,9 +428,12 @@ Deno.serve(async (req) => {
         public_url,
         origin_source: originSource,
         primary_domain: primaryDomainValid ? primaryDomain : null,
-        // Phase 4.1 — provider routing proof
-        provider,
-        account_code: provider === 'stripe' ? resolvedAccountCode : null,
+        // Phase 4.1 + 5-C — provider routing proof
+        provider: linkProviderColumn,
+        account_code: linkAccountCodeColumn,
+        provider_mode: providerMode,
+        allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
+        stripe_account_code_snapshot: providerMode === 'customer_choice' ? offerStripeAccountCode : null,
         // Stage L: installment proof
         installment: installmentBlock
           ? {
@@ -406,9 +461,11 @@ Deno.serve(async (req) => {
       tariff_id: link.tariff_id,
       cta_source: auditCtaSource,
       installment: installmentBlock,
-      // Phase 4.1 — provider routing fields в ответе
-      provider,
-      account_code: provider === 'stripe' ? resolvedAccountCode : null,
+      // Phase 4.1 + 5-C — provider routing fields в ответе
+      provider: linkProviderColumn,
+      account_code: linkAccountCodeColumn,
+      provider_mode: providerMode,
+      allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
       currency,
       row: link,
     });

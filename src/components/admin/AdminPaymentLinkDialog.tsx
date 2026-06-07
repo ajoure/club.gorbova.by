@@ -195,6 +195,9 @@ export function AdminPaymentLinkDialog({
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
   const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
+  // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
+  // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
+  const [providerModeChoice, setProviderModeChoice] = useState<"auto" | "bepaid" | "stripe">("auto");
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
@@ -325,6 +328,37 @@ export function AdminPaymentLinkDialog({
     }
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers, provider, paymentType, stripeEligibleOffers]);
+
+  // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
+  const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
+    const list = (effectiveOffer as any)?.meta?.acquiring?.allowed_payment_providers;
+    if (!Array.isArray(list)) return ["bepaid"];
+    return list.filter((p: any) => p === "bepaid" || p === "stripe");
+  }, [effectiveOffer]);
+  const offerSupportsCustomerChoice = offerAllowedProviders.length >= 2;
+
+  // Эффективный provider/provider_mode для отправки в admin-create-public-link.
+  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default. Иначе fixed=пользовательский выбор.
+  const effectiveProviderMode: "fixed" | "customer_choice" = useMemo(() => {
+    if (providerModeChoice === "auto") {
+      return offerSupportsCustomerChoice ? "customer_choice" : "fixed";
+    }
+    return "fixed";
+  }, [providerModeChoice, offerSupportsCustomerChoice]);
+  const effectiveProvider: "bepaid" | "stripe" = useMemo(() => {
+    if (providerModeChoice === "auto") {
+      // single-provider offer → используем единственный allowed; multi → bepaid (default).
+      return offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : "bepaid";
+    }
+    return providerModeChoice;
+  }, [providerModeChoice, offerAllowedProviders]);
+
+  // Синхронизируем legacy state `provider` для существующих Stripe-валидаций.
+  useEffect(() => {
+    if (provider !== effectiveProvider) setProvider(effectiveProvider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProvider]);
+
 
 
   // КОНТРАКТ: payment_type ссылки = ВСЕГДА выбор админа (ToggleGroup).
@@ -721,8 +755,9 @@ ${amountLine}
                 }
               : {}),
             // Phase 4.1 — provider routing
-            provider,
-            ...(provider === "stripe"
+            provider: effectiveProvider,
+            provider_mode: effectiveProviderMode,
+            ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
           },
@@ -815,8 +850,9 @@ ${amountLine}
                 }
               : {}),
             // Phase 4.1 — provider routing (telegram_combined path)
-            provider,
-            ...(provider === "stripe"
+            provider: effectiveProvider,
+            provider_mode: effectiveProviderMode,
+            ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
           },
@@ -1051,39 +1087,49 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Phase 4.1 — Эквайер (provider) для публичной ссылки */}
+              {/* Phase 5-C — Способ оплаты (provider_mode) */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
-                  <Label>Эквайер</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setProvider("bepaid")}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
-                        provider === "bepaid"
-                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                      )}
-                    >
-                      <span>bePaid</span>
-                      <span className="text-xs font-normal text-muted-foreground">BYN, рассрочка</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setProvider("stripe")}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
-                        provider === "stripe"
-                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                      )}
-                    >
-                      <span>Stripe</span>
-                      <span className="text-xs font-normal text-muted-foreground">USD / EUR / PLN</span>
-                    </button>
+                  <Label>Способ оплаты</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {([
+                      { key: "auto" as const, title: "По настройке кнопки", hint: offerSupportsCustomerChoice ? "Покупатель выберет карту" : "Единственный способ оффера" },
+                      { key: "bepaid" as const, title: "Только белорусская карта", hint: "BYN, локальная карта", disabled: !offerAllowedProviders.includes("bepaid") },
+                      { key: "stripe" as const, title: "Только иностранная карта", hint: "EUR / USD / PLN", disabled: !offerAllowedProviders.includes("stripe") || isInstallmentOffer },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => !opt.disabled && setProviderModeChoice(opt.key)}
+                        disabled={opt.disabled}
+                        className={cn(
+                          "flex flex-col items-start gap-1 rounded-lg border-2 p-3 text-left text-sm font-medium transition-all",
+                          providerModeChoice === opt.key
+                            ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                            : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                          opt.disabled && "opacity-50 cursor-not-allowed",
+                        )}
+                      >
+                        <span>{opt.title}</span>
+                        <span className="text-xs font-normal text-muted-foreground">{opt.hint}</span>
+                      </button>
+                    ))}
                   </div>
+                  {providerModeChoice === "auto" && (
+                    <p className="text-xs text-muted-foreground">
+                      {offerSupportsCustomerChoice
+                        ? "На странице оплаты покупатель сам выберет карту белорусского или иностранного банка."
+                        : `Будет использован единственный способ оплаты, разрешённый в настройках кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}.`}
+                    </p>
+                  )}
+                </div>
+              )}
 
+              {/* Phase 4.1 — Технические настройки Stripe (показываем только для fixed=stripe) */}
+              {selectedTariffId && providerModeChoice === "stripe" && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <Label>Настройки иностранного эквайринга</Label>
+                  {/* Технические бутоны bePaid/Stripe удалены — выбор делает блок «Способ оплаты» выше. */}
                   {provider === "stripe" && (
                     <div className="space-y-2 pt-2 border-t">
                       <div className="grid grid-cols-2 gap-3">

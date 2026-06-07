@@ -1,34 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, CheckCircle2, AlertCircle, Globe2, Wallet } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 /**
- * Phase 5-B — Offer Acquiring Settings
+ * Phase 5-B + PATCH 5-B.1 — Offer Acquiring Settings (UX cleanup).
  *
- * Read/writes `tariff_offers.meta.acquiring`:
- *  {
- *    allowed_payment_providers: ('bepaid'|'stripe')[],
- *    default_provider: 'bepaid'|'stripe',
- *    customer_choice_enabled: false,
- *    stripe?: { account_code, price_id, product_id, currency, mode }
- *  }
+ * UI скрывает технические идентификаторы Stripe (product_id, account_code, slug).
+ * Лейблы переведены на пользовательский язык; в meta.acquiring сохраняются те же
+ * технические поля, что и раньше (account_code, product_id, currency, mode).
  *
- * Не управляет runtime checkout. Phase 5-C добавит user-facing выбор провайдера,
- * Phase 5-D — admin override и customer_choice_enabled.
+ * Не управляет runtime checkout. Phase 5-C добавит user-facing выбор провайдера.
  */
 
 export type AcquiringProvider = "bepaid" | "stripe";
@@ -52,6 +41,7 @@ interface StripeAccount {
   account_code: string;
   account_name: string;
   test_mode: boolean;
+  is_default?: boolean;
 }
 
 interface Props {
@@ -68,43 +58,49 @@ function defaultAcquiring(): OfferAcquiring {
   };
 }
 
+function modeLabel(mode?: string | null) {
+  if (mode === "test") return "Тестовый режим";
+  if (mode === "live") return "Боевой режим";
+  return null;
+}
+
 export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props) {
   const acq = value ?? defaultAcquiring();
   const hasBepaid = acq.allowed_payment_providers.includes("bepaid");
   const hasStripe = acq.allowed_payment_providers.includes("stripe");
 
   const [accounts, setAccounts] = useState<StripeAccount[]>([]);
-  const [loadingAcc, setLoadingAcc] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoadingAcc(true);
       const { data } = await supabase
         .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, status, provider")
+        .select("account_code, account_name, test_mode, status, provider, is_default")
         .eq("provider", "stripe")
         .eq("status", "active")
+        .order("is_default", { ascending: false })
         .order("account_code");
-      if (!cancelled) {
-        setAccounts((data ?? []) as StripeAccount[]);
-        setLoadingAcc(false);
-      }
+      if (!cancelled) setAccounts((data ?? []) as StripeAccount[]);
     })();
     return () => { cancelled = true; };
   }, []);
 
+  function defaultAccountCode(): string {
+    return accounts.find((a) => a.is_default)?.account_code
+      ?? accounts[0]?.account_code
+      ?? "stripe_poland";
+  }
+
   function update(next: Partial<OfferAcquiring>) {
     const merged: OfferAcquiring = { ...acq, ...next };
-    // Auto-derive default_provider
     if (merged.allowed_payment_providers.length === 1) {
       merged.default_provider = merged.allowed_payment_providers[0];
     } else if (!merged.allowed_payment_providers.includes(merged.default_provider)) {
       merged.default_provider = "bepaid";
     }
-    // Strip stripe block if Stripe disabled
     if (!merged.allowed_payment_providers.includes("stripe")) {
       delete merged.stripe;
     }
@@ -113,7 +109,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
 
   function toggleProvider(p: AcquiringProvider, on: boolean) {
     if (p === "stripe" && on && isInstallment) {
-      toast.error("Stripe пока не поддерживает рассрочку");
+      toast.error("Иностранные карты пока не поддерживают рассрочку");
       return;
     }
     const set = new Set(acq.allowed_payment_providers);
@@ -126,49 +122,62 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
     update({
       allowed_payment_providers: next,
       stripe: p === "stripe" && on
-        ? (acq.stripe ?? { account_code: accounts[0]?.account_code ?? "stripe_poland", price_id: "" })
+        ? (acq.stripe ?? { account_code: defaultAccountCode(), price_id: "" })
         : acq.stripe,
     });
   }
 
   function updateStripe(patch: Partial<OfferAcquiringStripe>) {
-    const stripe = { ...(acq.stripe ?? { account_code: "stripe_poland", price_id: "" }), ...patch };
+    const stripe: OfferAcquiringStripe = {
+      ...(acq.stripe ?? { account_code: defaultAccountCode(), price_id: "" }),
+      ...patch,
+    };
     update({ stripe });
+  }
+
+  function updateMode(mode: "test" | "live") {
+    // Режим выбирается администратором — соответствующий аккаунт acquiring_connections
+    // подбираем автоматически по test_mode. Если подходящего нет — оставляем текущий.
+    const target = accounts.find((a) => (mode === "test" ? a.test_mode : !a.test_mode));
+    updateStripe({
+      mode,
+      account_code: target?.account_code ?? acq.stripe?.account_code ?? defaultAccountCode(),
+      // При смене режима lookup должен быть повторён.
+      product_id: null,
+    });
   }
 
   async function handleLookup() {
     if (!acq.stripe?.price_id) {
-      toast.error("Введите Stripe Price ID");
+      toast.error("Введите код тарифа Stripe");
       return;
     }
     setLookupLoading(true);
     setLookupError(null);
     try {
+      const accountCode = acq.stripe.account_code || defaultAccountCode();
       const { data, error } = await supabase.functions.invoke("admin-stripe-price-lookup", {
-        body: {
-          price_id: acq.stripe.price_id.trim(),
-          account_code: acq.stripe.account_code,
-        },
+        body: { price_id: acq.stripe.price_id.trim(), account_code: accountCode },
       });
       if (error) throw error;
       if (!data?.ok) {
         const msg = data?.error || "lookup_failed";
         setLookupError(msg);
-        toast.error(`Stripe: ${msg}`);
-        // Clear derived fields on failure
+        toast.error(`Не удалось подтвердить код тарифа: ${msg}`);
         updateStripe({ product_id: null, currency: null, mode: null });
         return;
       }
       updateStripe({
+        account_code: accountCode,
         product_id: data.product_id,
         currency: data.currency,
         mode: data.mode,
       });
-      toast.success(`Stripe Price подтверждён · ${data.currency} · ${data.mode}`);
+      toast.success("Тариф Stripe подключён");
     } catch (e: any) {
       const msg = e?.message || String(e);
       setLookupError(msg);
-      toast.error(`Stripe: ${msg}`);
+      toast.error(`Не удалось подтвердить код тарифа: ${msg}`);
     } finally {
       setLookupLoading(false);
     }
@@ -193,10 +202,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             <div className="flex-1">
               <div className="font-medium flex items-center gap-2">
                 <Wallet className="h-4 w-4 text-emerald-600" />
-                bePaid — карты банков Беларуси
+                Принимать белорусские карты
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
-                BYN, локальный эквайринг. Подписки, рассрочка, ЕРИП.
+                Visa / Mastercard банков Беларуси. BYN, подписки, рассрочка, ЕРИП.
               </div>
             </div>
           </label>
@@ -211,12 +220,12 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             <div className="flex-1">
               <div className="font-medium flex items-center gap-2">
                 <Globe2 className="h-4 w-4 text-indigo-500" />
-                Stripe — карты иностранных банков
+                Принимать иностранные карты
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
                 {isInstallment
-                  ? "Stripe пока не поддерживает рассрочку"
-                  : "EUR/USD/PLN и др. Подписки, одноразовые платежи."}
+                  ? "Иностранные карты пока не поддерживают рассрочку"
+                  : "Visa / Mastercard банков Европы, США и других стран."}
               </div>
             </div>
           </label>
@@ -225,11 +234,11 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
         {hasStripe && (
           <div className="border rounded-lg p-4 bg-muted/20 space-y-4">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-medium">Настройки Stripe</div>
+              <div className="text-sm font-medium">Приём оплаты иностранными картами</div>
               {stripeReady && (
                 <Badge variant="outline" className="text-emerald-700 border-emerald-300">
                   <CheckCircle2 className="h-3 w-3 mr-1" />
-                  подтверждено
+                  подключено
                 </Badge>
               )}
               {stripeDirty && (
@@ -241,27 +250,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             </div>
 
             <div className="space-y-2">
-              <Label>Stripe аккаунт</Label>
-              <Select
-                value={acq.stripe?.account_code ?? ""}
-                onValueChange={(v) => updateStripe({ account_code: v, product_id: null, currency: null, mode: null })}
-                disabled={loadingAcc || accounts.length === 0}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={loadingAcc ? "Загрузка…" : "Выберите аккаунт"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts.map((a) => (
-                    <SelectItem key={a.account_code} value={a.account_code}>
-                      {a.account_name} ({a.account_code}) · {a.test_mode ? "test" : "live"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Stripe Price ID *</Label>
+              <Label>Код тарифа Stripe *</Label>
               <div className="flex gap-2">
                 <Input
                   placeholder="price_..."
@@ -280,13 +269,13 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
                   type="button"
                   variant="secondary"
                   onClick={handleLookup}
-                  disabled={lookupLoading || !acq.stripe?.price_id || !acq.stripe?.account_code}
+                  disabled={lookupLoading || !acq.stripe?.price_id}
                 >
                   {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Подтвердить"}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Product ID и валюту мы получим автоматически из Stripe по этому Price ID.
+                Валюту и режим работы мы определим автоматически по коду тарифа.
               </p>
               {lookupError && (
                 <p className="text-xs text-destructive">
@@ -295,33 +284,53 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-3 pt-2 border-t">
-              <ReadField label="Stripe Product ID" value={acq.stripe?.product_id} />
-              <ReadField label="Валюта" value={acq.stripe?.currency} />
-              <ReadField label="Режим" value={acq.stripe?.mode} />
+            {stripeReady && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 space-y-1.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Тариф Stripe подключён
+                </div>
+                <div className="text-xs text-emerald-900/80 dark:text-emerald-100/80 grid grid-cols-2 gap-x-4 gap-y-0.5 pl-6">
+                  <div>Валюта оплаты:</div>
+                  <div className="font-medium">{acq.stripe?.currency?.toUpperCase() || "—"}</div>
+                  <div>Режим:</div>
+                  <div className="font-medium">{modeLabel(acq.stripe?.mode) || "—"}</div>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2 pt-2 border-t">
+              <Label className="text-xs">Режим работы</Label>
+              <RadioGroup
+                value={acq.stripe?.mode ?? ""}
+                onValueChange={(v) => updateMode(v as "test" | "live")}
+                className="flex gap-4"
+              >
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="test" id="stripe-mode-test" />
+                  Тестовый режим
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="live" id="stripe-mode-live" />
+                  Боевой режим
+                </label>
+              </RadioGroup>
+              <p className="text-xs text-muted-foreground">
+                Режим подставится автоматически после проверки кода тарифа. Можно изменить вручную.
+              </p>
             </div>
           </div>
         )}
 
         <div className="text-xs text-muted-foreground border-t pt-3">
-          В Phase 5-B пользовательский выбор провайдера на сайте недоступен.
           {hasBepaid && hasStripe
-            ? " По умолчанию используется bePaid."
-            : ` Применяется единственный включённый провайдер: ${acq.allowed_payment_providers[0] === "bepaid" ? "bePaid" : "Stripe"}.`}
+            ? "Покупатель сможет выбрать карту белорусского или иностранного банка."
+            : hasBepaid
+              ? "Оплата принимается только белорусскими картами."
+              : "Оплата принимается только иностранными картами."}
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function ReadField({ label, value }: { label: string; value: string | null | undefined }) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-sm font-mono mt-0.5 ${value ? "" : "text-muted-foreground/50"}`}>
-        {value || "—"}
-      </div>
-    </div>
   );
 }
 
@@ -332,13 +341,15 @@ export function validateOfferAcquiring(acq: OfferAcquiring | undefined, isInstal
   if (!acq) return null;
   const list = acq.allowed_payment_providers ?? [];
   if (list.length === 0) return "Выберите хотя бы один способ оплаты";
-  if (isInstallment && list.includes("stripe")) return "Stripe пока не поддерживает рассрочку";
+  if (isInstallment && list.includes("stripe")) return "Иностранные карты пока не поддерживают рассрочку";
   if (list.includes("stripe")) {
     if (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0) {
-      return "Укажите Stripe Price ID";
+      return "Укажите код тарифа Stripe";
     }
     if (!acq.stripe?.account_code) {
-      return "Выберите Stripe аккаунт";
+      // Внутреннее требование — заполняем при первом включении Stripe автоматически,
+      // но валидация остаётся как safety-net.
+      return "Не удалось определить Stripe-подключение";
     }
   }
   return null;

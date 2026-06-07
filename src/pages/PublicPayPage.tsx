@@ -40,6 +40,8 @@ import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } fr
 import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { CustomerProviderChoice } from '@/components/payments/CustomerProviderChoice';
+import { resolveProviderChoice, type CustomerProvider } from '@/utils/resolveCustomerProviderChoice';
 
 interface InstallmentInfo {
   payment_method?: string;
@@ -67,6 +69,10 @@ interface PaymentLinkInfo {
   requires_identity_input: boolean;
   link_user_id: string | null;
   installment?: InstallmentInfo | null;
+  // Phase 5-C — provider routing surface
+  provider?: 'bepaid' | 'stripe' | null;
+  provider_mode?: 'fixed' | 'customer_choice' | null;
+  allowed_payment_providers?: ('bepaid' | 'stripe')[] | null;
 }
 
 interface SavedCard {
@@ -160,7 +166,11 @@ export default function PublicPayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_showSavedCardSelectorEarly, savedCards]);
 
-  const initiatePayment = async (payerEmail?: string, replacementId?: string) => {
+  const initiatePayment = async (
+    payerEmail?: string,
+    replacementId?: string,
+    providerChoice?: CustomerProvider,
+  ) => {
     if (!token) return;
     setIsProcessing(true);
     setError(null);
@@ -170,6 +180,7 @@ export default function PublicPayPage() {
       const body: Record<string, unknown> = { url_token: token };
       if (payerEmail) body.email = payerEmail;
       if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
+      if (providerChoice) body.provider_choice = providerChoice;
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
       const { data: { session } } = await supabase.auth.getSession();
@@ -206,11 +217,16 @@ export default function PublicPayPage() {
     }
   };
 
+  // Phase 5-C — состояние выбора провайдера для customer_choice ссылок.
+  const [chosenProvider, setChosenProvider] = useState<CustomerProvider | null>(null);
+
   // Branch A: target user pre-bound — no email, server uses link.user_id only
-  const handlePayWithTarget = () => initiatePayment(undefined);
+  const handlePayWithTarget = (providerChoice?: CustomerProvider) =>
+    initiatePayment(undefined, undefined, providerChoice);
 
   // Branch B: no target user, but session — Bearer token will be picked up live
-  const handlePayWithSession = () => initiatePayment(user?.email || undefined);
+  const handlePayWithSession = (providerChoice?: CustomerProvider) =>
+    initiatePayment(user?.email || undefined, undefined, providerChoice);
 
   const handleReplaceSubscription = async () => {
     if (!conflictData) return;
@@ -388,6 +404,15 @@ export default function PublicPayPage() {
     savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
+  // Phase 5-C — customer provider choice gating.
+  const providerResolution = resolveProviderChoice({
+    allowed_payment_providers: linkInfo.allowed_payment_providers ?? undefined,
+    default_provider: (linkInfo.provider as CustomerProvider | null) ?? undefined,
+  });
+  const isCustomerChoiceMode =
+    linkInfo.provider_mode === 'customer_choice' && providerResolution.mode === 'choice';
+  const needsProviderChoice = isCustomerChoiceMode && !chosenProvider;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
       <LandingHeader />
@@ -424,7 +449,7 @@ export default function PublicPayPage() {
               )}
               <div className="flex items-center gap-3 text-sm">
                 <Shield className="h-5 w-5 text-primary shrink-0" />
-                <span>Безопасная оплата через bePaid</span>
+                <span>Безопасная оплата по защищённому соединению</span>
               </div>
             </div>
 
@@ -484,9 +509,28 @@ export default function PublicPayPage() {
               </Alert>
             )}
 
+            {/* Phase 5-C — выбор способа оплаты (карта белорусского / иностранного банка).
+                Показывается только для customer_choice ссылок с multi-provider оффером. */}
+            {!needsIdentity && needsProviderChoice && (
+              <div className="mb-4">
+                <CustomerProviderChoice
+                  onSelect={(p) => {
+                    setChosenProvider(p);
+                    if (linkInfo.has_target_user) {
+                      handlePayWithTarget(p);
+                    } else {
+                      handlePayWithSession(p);
+                    }
+                  }}
+                  loadingProvider={isProcessing ? chosenProvider : null}
+                  disabled={isProcessing}
+                />
+              </div>
+            )}
+
             {/* PAY-D: Unified payment method selector (one_time + auth + cards),
                 otherwise single CTA. Subscription always goes through standard bePaid checkout. */}
-            {!needsIdentity && showSavedCardSelector && (
+            {!needsIdentity && !needsProviderChoice && showSavedCardSelector && (
               <div className="mb-4">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
                   Способ оплаты
@@ -527,17 +571,18 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {!needsIdentity && (
+            {!needsIdentity && !needsProviderChoice && (
               <Button
                 size="lg"
                 className="w-full"
                 onClick={() => {
+                  const choice = isCustomerChoiceMode ? (chosenProvider ?? undefined) : undefined;
                   if (showSavedCardSelector && selectedMethod !== 'new_card') {
                     handlePayWithSavedCard(selectedMethod);
                   } else if (linkInfo.has_target_user) {
-                    handlePayWithTarget();
+                    handlePayWithTarget(choice);
                   } else {
-                    handlePayWithSession();
+                    handlePayWithSession(choice);
                   }
                 }}
                 disabled={isProcessing || savedCardProcessing}
@@ -550,15 +595,15 @@ export default function PublicPayPage() {
               </Button>
             )}
 
-            {!needsIdentity && showSavedCardSelector && selectedMethod !== 'new_card' && (
+            {!needsIdentity && !needsProviderChoice && showSavedCardSelector && selectedMethod !== 'new_card' && (
               <p className="mt-2 text-[11px] text-center text-muted-foreground">
                 Подтверждение банка может потребоваться при первой оплате этой картой.
               </p>
             )}
 
             {/* PAY-E-LITE: для subscription показываем сохранённые карты disabled + уведомление.
-                Логика checkout не меняется — CTA уходит в стандартный bePaid subscription flow. */}
-            {!needsIdentity && showSubscriptionDisabledCards && (
+                Логика checkout не меняется — CTA уходит в стандартный subscription flow. */}
+            {!needsIdentity && !needsProviderChoice && showSubscriptionDisabledCards && (
               <div className="mt-4 mb-2">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
                   Сохранённые карты
@@ -584,11 +629,11 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {!needsIdentity && showSubscriptionFallbackHint && (
+            {!needsIdentity && !needsProviderChoice && showSubscriptionFallbackHint && (
               <p className="mt-3 text-xs text-center text-muted-foreground leading-relaxed">
-                Эта ссылка оформляет подписку bePaid. Сохранённые карты нельзя выбрать для оформления
-                подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет ввести карту
-                для подписки.
+                Эта ссылка оформляет подписку. Сохранённые карты нельзя выбрать для оформления
+                подписки. Вас перенаправит на защищённую страницу платёжного провайдера, где
+                нужно будет ввести карту для подписки.
               </p>
             )}
 

@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } from '../_shared/resolve-provider-choice.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -30,7 +31,7 @@ Deno.serve(async (req) => {
         .from('payment_links')
         .select(`
           id, url_token, user_id, amount, currency, payment_type, description, status,
-          max_uses, current_uses, expires_at, meta, provider, account_code,
+          max_uses, current_uses, expires_at, meta, provider, provider_mode, account_code, offer_id,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
         `)
@@ -60,7 +61,27 @@ Deno.serve(async (req) => {
 
       const product = (link as any).products_v2;
       const tariff = (link as any).tariffs;
-      const installment = (link as any).meta?.installment ?? null;
+      const linkMetaGet = (link as any).meta || {};
+      const installment = linkMetaGet.installment ?? null;
+
+      // Phase 5-C: surface allowed providers + provider_mode для UI выбора.
+      // Источник истины: payment_links.meta.allowed_payment_providers (зеркалит offer.meta.acquiring
+      // на момент создания ссылки). Если отсутствует — берём из offer.meta.acquiring как fallback.
+      let allowedPaymentProviders: ('bepaid' | 'stripe')[] | null =
+        Array.isArray(linkMetaGet.allowed_payment_providers)
+          ? linkMetaGet.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+          : null;
+      if ((!allowedPaymentProviders || allowedPaymentProviders.length === 0) && (link as any).offer_id) {
+        const { data: offerRow } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', (link as any).offer_id)
+          .maybeSingle();
+        const fromOffer = (offerRow as any)?.meta?.acquiring?.allowed_payment_providers;
+        if (Array.isArray(fromOffer)) {
+          allowedPaymentProviders = fromOffer.filter((p: any) => p === 'bepaid' || p === 'stripe');
+        }
+      }
 
       return jsonResponse({
         product_name: product?.name || 'Продукт',
@@ -85,6 +106,9 @@ Deno.serve(async (req) => {
         // Phase 4.1 — provider indicator (UI badge / saved-card gating).
         provider: (link as any).provider ?? 'bepaid',
         account_code: (link as any).account_code ?? null,
+        // Phase 5-C — provider_mode + allowed_payment_providers для пользовательского выбора.
+        provider_mode: (link as any).provider_mode ?? 'fixed',
+        allowed_payment_providers: allowedPaymentProviders ?? null,
       });
     }
 
@@ -94,7 +118,12 @@ Deno.serve(async (req) => {
 
     // POST — create checkout
     const body = await req.json();
-    const { url_token, email, replacement_of_subscription_v2_id } = body;
+    const { url_token, email, replacement_of_subscription_v2_id, provider_choice } = body as {
+      url_token?: string;
+      email?: string;
+      replacement_of_subscription_v2_id?: string;
+      provider_choice?: 'bepaid' | 'stripe';
+    };
 
     if (!url_token) {
       return errorResponse('Missing url_token', 400);
@@ -121,6 +150,82 @@ Deno.serve(async (req) => {
 
     if (link.max_uses && link.current_uses >= link.max_uses) {
       return errorResponse('Payment link usage limit reached', 410);
+    }
+
+    // ── Phase 5-C — Provider choice resolution ──
+    // Source of truth:
+    //   1) payment_links.meta.allowed_payment_providers (snapshot taken at link creation)
+    //   2) fallback → tariff_offers.meta.acquiring.allowed_payment_providers
+    // provider_mode='fixed'           → ignore provider_choice; if provided and != link.provider
+    //                                   → 400 provider_choice_not_allowed (no silent behaviour)
+    // provider_mode='customer_choice' → require provider_choice; must be in allowed list
+    const linkMetaPre = (link.meta || {}) as Record<string, any>;
+    let allowedProvidersPre: CustomerProvider[] = Array.isArray(linkMetaPre.allowed_payment_providers)
+      ? linkMetaPre.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+      : [];
+    let stripeAccountFromMeta: string | null = linkMetaPre.stripe_account_code ?? null;
+    if (allowedProvidersPre.length === 0 && link.offer_id) {
+      const { data: offerRow } = await supabase
+        .from('tariff_offers')
+        .select('meta')
+        .eq('id', link.offer_id)
+        .maybeSingle();
+      const acq = (offerRow as any)?.meta?.acquiring;
+      if (Array.isArray(acq?.allowed_payment_providers)) {
+        allowedProvidersPre = acq.allowed_payment_providers.filter(
+          (p: any) => p === 'bepaid' || p === 'stripe'
+        );
+      }
+      if (!stripeAccountFromMeta && acq?.stripe?.account_code) {
+        stripeAccountFromMeta = String(acq.stripe.account_code);
+      }
+    }
+
+    const providerMode: 'fixed' | 'customer_choice' =
+      link.provider_mode === 'customer_choice' ? 'customer_choice' : 'fixed';
+
+    const resolution = resolveProviderChoice({
+      allowed_payment_providers: allowedProvidersPre.length > 0 ? allowedProvidersPre : undefined,
+      default_provider: (link.provider as CustomerProvider | null) ?? undefined,
+    });
+
+    let effectiveProvider: CustomerProvider =
+      (link.provider as CustomerProvider | null) ?? 'bepaid';
+    let effectiveAccountCode: string | null = link.account_code ?? null;
+
+    if (providerMode === 'fixed') {
+      if (provider_choice && provider_choice !== effectiveProvider) {
+        return errorResponse('provider_choice_not_allowed', 400);
+      }
+    } else {
+      // customer_choice
+      if (!provider_choice) {
+        return errorResponse('provider_choice_required', 400);
+      }
+      if (!isValidProviderChoice(provider_choice, resolution)) {
+        return errorResponse('invalid_provider_choice', 400);
+      }
+      effectiveProvider = provider_choice;
+      // Resolve Stripe account on the fly when customer chose stripe.
+      if (effectiveProvider === 'stripe') {
+        effectiveAccountCode = stripeAccountFromMeta || effectiveAccountCode;
+        if (!effectiveAccountCode) {
+          const { data: defAcct } = await supabase
+            .from('acquiring_connections')
+            .select('account_code')
+            .eq('provider', 'stripe')
+            .eq('status', 'active')
+            .eq('is_default', true)
+            .maybeSingle();
+          effectiveAccountCode = (defAcct as any)?.account_code ?? null;
+          if (!effectiveAccountCode) {
+            return errorResponse('no_active_default_stripe_account', 400);
+          }
+        }
+      } else {
+        // bepaid: account_code irrelevant
+        effectiveAccountCode = null;
+      }
     }
 
     // Canonical target-user resolution for public payment links (CONTRACT):
@@ -222,11 +327,21 @@ Deno.serve(async (req) => {
       origin,
       actor_type: 'system',
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
-      meta_extra: { payment_link_id: link.id, ...installmentMetaExtra },
-      // Phase 4.1 — provider routing. default 'bepaid' (полный бэк-компат для 113 legacy ссылок).
-      provider: (link.provider as 'bepaid' | 'stripe' | null) ?? 'bepaid',
-      account_code: link.account_code ?? null,
-      currency: link.currency ?? 'BYN',
+      meta_extra: {
+        payment_link_id: link.id,
+        ...installmentMetaExtra,
+        // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
+        provider_choice_resolution: {
+          mode: providerMode,
+          chosen: effectiveProvider,
+          provider_choice_param: provider_choice ?? null,
+          allowed_payment_providers: allowedProvidersPre.length > 0 ? allowedProvidersPre : null,
+        },
+      },
+      // Phase 5-C — effective provider после customer_choice / fixed.
+      provider: effectiveProvider,
+      account_code: effectiveAccountCode,
+      currency: link.currency ?? (effectiveProvider === 'stripe' ? 'EUR' : 'BYN'),
     });
 
     if (!result.success) {
