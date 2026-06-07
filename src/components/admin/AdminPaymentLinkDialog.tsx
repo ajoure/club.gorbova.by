@@ -895,11 +895,15 @@ ${amountLine}
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
             // «Клиент выбирает» — override allowed_payment_providers поверх offer.meta.
+            // Не передаём `currency` (link.currency остаётся BYN); Stripe-валюта — отдельным полем.
             ...(providerModeChoice === "customer_choice"
               ? {
                   allowed_payment_providers: customerChoiceAllowed,
                   ...(customerChoiceAllowed.includes("stripe")
-                    ? { account_code: stripeAccountCode || undefined, currency: stripeCurrency }
+                    ? {
+                        account_code: stripeAccountCode || undefined,
+                        stripe_currency: stripeCurrency,
+                      }
                     : {}),
                 }
               : {}),
