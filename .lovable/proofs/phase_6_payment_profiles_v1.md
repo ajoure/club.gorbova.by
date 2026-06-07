@@ -86,3 +86,41 @@ Stripe `account_code` (`stripe_poland`) сохраняется в `meta.acquirin
 
 ## Итог
 **Phase 6 = PASS.** Все 10 gates (G91–G100) закрыты. Runtime 0-diff подтверждён.
+
+---
+
+## Phase 6-F — UI polish AdminPaymentLinkDialog (2026-06-07)
+
+### Контекст
+Скриншот из production (`gorbova.by/admin/contacts`) показал старую версию блока «Способ оплаты для этой ссылки»: 3 карточки в ряд, бейдж `SUPER_ADM` на карточке Stripe, перенос текста в столбик. Это pre-Phase-6 build.
+
+### DIAGNOSE
+- `rg "SUPER_ADM" src/` → **0 совпадений** в текущем коде. Бейдж уже удалён в рамках Phase 6.
+- Блок выбора provider уже переведён на вертикальный full-width стек (`flex flex-col gap-2`) с иконкой/title/hint и `CheckCircle` для selected.
+- Disabled-опции: `opacity-50 cursor-not-allowed`, layout сохраняется.
+- В видимом UI отсутствуют: `stripe_poland`, `bepaid_main`, `account_code`, `provider_choice_source`, `super_admin`.
+
+### EXECUTE (минимальный UI-полиш текста)
+`src/components/admin/AdminPaymentLinkDialog.tsx`:
+- Hint опции `auto` упрощён до канонического текста «Используется основной способ оплаты тарифа» (раньше зависел от `offerSupportsCustomerChoice` и подставлял провайдера в текст — это создавало переменную длину и могло выводить технический контекст).
+
+### VERIFY
+- `rg "SUPER_ADM|super_admin" src/components/admin/AdminPaymentLinkDialog.tsx` → только внутренние RBAC-обращения (`useHasRoleV2("super_admin")`), нет видимого UI-текста.
+- `rg "stripe_poland|bepaid_main|provider_choice_source|account_code" src/components/admin/AdminPaymentLinkDialog.tsx` (видимый текст) → 0 в JSX-литералах. `provider_choice_source` присутствует только в payload edge function (line 764, 861).
+- Карточки используют `w-full`, `min-w-0`, `break-words` / `truncate` — горизонтального overflow нет.
+- Текст карточек соответствует спецификации: «По настройке кнопки» / «Белорусская карта» / «Иностранная карта» с описаниями «bePaid · BYN · локальные карты» / «Stripe · EUR / USD / PLN».
+
+### Gates
+- **G100 PASS** — блок выбора способа оплаты визуально корректен: нет `SUPER_ADMIN`, нет overflow, layout вертикальный full-width, тексты человекочитаемые.
+- **G101 PASS** — runtime files 0-diff: `admin-create-public-link`, `bepaid-webhook`, `stripe-webhook`, `public-checkout`, `grant-access-for-order`, `telegram-grant-access` не трогались.
+- **G102 PASS** — RBAC super_admin override сохранён: `isSuperAdmin` снимает `disabled` у Stripe/bePaid карточек, payload `provider_choice_source: 'explicit'` передаётся как раньше, видимой role-метки в UI нет.
+
+### Изменённые файлы (Phase 6-F)
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — упрощён hint опции `auto` (3 строки → 1 строка).
+- `.lovable/proofs/phase_6_payment_profiles_v1.md` — добавлен этот раздел.
+
+### Freeze-check
+Runtime файлы вне UI-слоя не изменены. Phase 5-D контракт (`provider_choice_source: 'auto' | 'explicit'`) сохранён.
+
+**Phase 6-F = PASS.**
+
