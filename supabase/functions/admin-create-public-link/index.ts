@@ -428,9 +428,12 @@ Deno.serve(async (req) => {
         public_url,
         origin_source: originSource,
         primary_domain: primaryDomainValid ? primaryDomain : null,
-        // Phase 4.1 — provider routing proof
-        provider,
-        account_code: provider === 'stripe' ? resolvedAccountCode : null,
+        // Phase 4.1 + 5-C — provider routing proof
+        provider: linkProviderColumn,
+        account_code: linkAccountCodeColumn,
+        provider_mode: providerMode,
+        allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
+        stripe_account_code_snapshot: providerMode === 'customer_choice' ? offerStripeAccountCode : null,
         // Stage L: installment proof
         installment: installmentBlock
           ? {
