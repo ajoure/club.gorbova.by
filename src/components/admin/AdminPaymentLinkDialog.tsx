@@ -1290,16 +1290,17 @@ ${amountLine}
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {
-                                const disabled = isStripeCurrencyDisabled(code);
+                                const check = isStripeCurrencyDisabled(code);
                                 return (
                                   <SelectItem
                                     key={code}
                                     value={code}
-                                    disabled={disabled}
+                                    disabled={check.disabled}
+                                    title={check.message ?? undefined}
                                   >
                                     {code}
-                                    {disabled
-                                      ? ` · не поддерживается${stripeAccountCode ? ` (${stripeAccountCode})` : ""}`
+                                    {check.disabled
+                                      ? ` · ${check.message ?? "недоступно"}`
                                       : ""}
                                   </SelectItem>
                                 );
@@ -1320,7 +1321,9 @@ ${amountLine}
                       )}
                       {stripeCurrencyUnsupported && (
                         <p className="text-xs text-destructive">
-                          Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
+                          {stripeCurrencyUnsupportedMessage ??
+                            `Валюта ${stripeCurrency} не поддерживается выбранным Stripe-аккаунтом.`}
+                          {" "}Выберите другую валюту или другое подключение.
                         </p>
                       )}
                       {provider === "stripe" && paymentType === "subscription" && (
