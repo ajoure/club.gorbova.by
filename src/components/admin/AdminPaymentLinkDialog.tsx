@@ -1005,9 +1005,10 @@ ${amountLine}
   // Phase 6-G: stripeSubscriptionPriceMissing убран — Stripe price автопровижнится по
   // настройкам кнопки. Submit больше не блокируется отсутствием price_id; backend
   // вернёт понятную ошибку, если provisioning не сработает.
-  // PATCH 4.1.1 — currency не должна быть disabled в supported_currencies аккаунта.
-  const stripeCurrencyUnsupported =
-    provider === "stripe" && isStripeCurrencyDisabled(stripeCurrency);
+  // Phase 7-UI follow-up — currency-check через shared mirror резолвер.
+  const stripeCurrencyCheck = isStripeCurrencyDisabled(stripeCurrency);
+  const stripeCurrencyUnsupported = provider === "stripe" && stripeCurrencyCheck.disabled;
+  const stripeCurrencyUnsupportedMessage = stripeCurrencyCheck.message;
   const stripeBlocked =
     stripeInstallmentBlocked ||
     stripeAccountMissing ||
