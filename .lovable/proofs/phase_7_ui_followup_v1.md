@@ -1,7 +1,25 @@
-# Phase 7-UI follow-up — currency/provider mirror в админ UI
+# Phase 7-UI follow-up — DB hotfix `acquiring_stripe_missing_price_id` + screenshot smoke S1–S8
 
 Дата: 2026-06-07
-Статус: **PASS (code-level)** — функциональные скрины собираются админом в превью по сценариям §6.
+Статус: **DB hotfix = APPLIED**, UI code = PASS, screenshot smoke S1–S8 — pending ручной фиксации админом в §8.
+
+> Заголовок умышленно расширен: это уже не UI-only follow-up. В Phase 7-UI follow-up добавлен фокусный DB hotfix
+> на функцию триггера `tariff_offers_acquiring_validate`, который убирает обязательность `meta.acquiring.stripe.price_id`
+> при сохранении оффера. Backend canon Phase 6-G давно эту обязательность снял (lazy provisioning через
+> `admin-provision-stripe-price` + `admin-create-public-link`), UI-валидатор `validateOfferAcquiring` тоже её снял,
+> а DB-триггер продолжал её требовать — и блокировал сохранение Stripe-only офферов.
+
+## −1. Root cause DB hotfix
+
+`tariff_offers_acquiring_validate` падал при сохранении любого оффера со `stripe` в `allowed_payment_providers`
+и пустым `meta.acquiring.stripe.price_id`. Это противоречит **двум** актуальным канонам, не одному:
+
+1. **UI**: `OfferAcquiringSettings.validateOfferAcquiring` не требует `price_id` — UI считает оффер валидным.
+2. **Backend canon Phase 6-G**: `price_id` — это технический provider mapping Stripe, который создаётся/реюзается
+   в момент выпуска `payment_link` / запуска Stripe subscription flow (`admin-provision-stripe-price` идемпотентен,
+   `admin-create-public-link` делает lazy provisioning). На уровне сохранения оффера `price_id` не нужен.
+
+Триггер был исторически унаследован от Phase 5-B и не обновлён в boundary Phase 6-G.
 
 ## 0. Контекст
 
