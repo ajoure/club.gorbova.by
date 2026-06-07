@@ -1,275 +1,155 @@
 # да, согласен, с учетом правок:
 
-Добавь в план отдельный обязательный блок **Phase 6-F — UI polish для выбора способа оплаты в** `AdminPaymentLinkDialog`.
+1. В начало плана добавь явную маркировку:
 
 ```md
-## Phase 6-F — UI polish: выбор способа оплаты в AdminPaymentLinkDialog
-
-Цель: исправить визуальную проблему блока «Способ оплаты для этой ссылки» при создании ссылки на оплату из карточки контакта. Сейчас кнопки выбора provider выглядят перегруженно, не помещаются красиво в модальное окно, а технический бейдж `SUPER_ADMIN` визуально ломает интерфейс.
-
-### Что исправить
-
-1. Убрать из пользовательского UI техническую надпись / бейдж:
-   - `SUPER_ADMIN`
-   - `super_admin`
-   - любые debug/role labels рядом с кнопками выбора способа оплаты.
-
-2. Если super_admin имеет расширенные права выбора provider, это должно оставаться внутренней логикой, но не отображаться как техническая метка в UI.
-
-3. Переработать блок выбора способа оплаты:
-   - карточки должны полностью помещаться внутри модального окна;
-   - текст не должен вылезать за границы;
-   - кнопки не должны налезать друг на друга;
-   - не должно быть горизонтального overflow;
-   - layout должен быть адаптивным.
-
-4. Разрешенный вариант layout:
-   - на широком экране: 2–3 карточки в ряд, если реально помещаются;
-   - если не помещаются — автоматически переходить на вертикальный список;
-   - на узкой ширине модального окна — только вертикальный список.
-
-5. Рекомендуемый UI:
-   - каждая опция оплаты как отдельная аккуратная карточка на всю ширину блока;
-   - слева иконка / маркер provider;
-   - справа название и краткое описание;
-   - выбранная карточка выделяется border/background;
-   - disabled option визуально приглушается, но без поломки layout.
-
-### Тексты карточек
-
-Использовать человекочитаемые названия:
-
-- `По настройке кнопки`
-  - описание: `Используется основной способ оплаты тарифа`
-
-- `Белорусская карта`
-  - описание: `bePaid · BYN · локальные карты`
-
-- `Иностранная карта`
-  - описание: `Stripe · EUR / USD / PLN`
-
-Не показывать в UI:
-- `stripe_poland`
-- `bepaid_main`
-- `account_code`
-- `provider_choice_source`
-- `super_admin`
-- технические slug / debug labels.
-
-### Acceptance criteria
-
-- В модальном окне создания ссылки на оплату все карточки provider выглядят аккуратно и полностью помещаются.
-- Бейдж `SUPER_ADMIN` полностью удалён из видимой части UI.
-- Layout не ломается при 3 вариантах оплаты.
-- При уменьшении ширины окна карточки переходят в вертикальное расположение.
-- Смысл выбора provider понятен без технических терминов.
-- Runtime logic не меняется.
-- Изменения только в UI-слое `AdminPaymentLinkDialog.tsx` и при необходимости CSS/className.
-- `admin-create-public-link` не менять, если не требуется для runtime bug.
-- Добавить screenshot proof до/после в `.lovable/proofs/phase_6_payment_profiles_v1.md`.
-
-### Дополнительный gate
-
-| Gate | Проверка |
-|------|----------|
-| G100 | В `AdminPaymentLinkDialog` блок выбора способа оплаты визуально исправлен: нет `SUPER_ADMIN`, нет overflow, все варианты оплаты помещаются красиво |
+План: Phase 6-F — UI polish выбора способа оплаты в AdminPaymentLinkDialog
 ```
 
-Также в **DoD** добавь:
+2. В `VERIFY` добавь проверку не только по файлу, но и по DOM/preview:
 
 ```md
-- UI блока «Способ оплаты для этой ссылки» в `AdminPaymentLinkDialog` приведён в нормальный вид.
-- Технический бейдж `SUPER_ADMIN` не отображается пользователю.
-- Карточки способов оплаты адаптивные: не вылезают за модальное окно и корректно переходят в вертикальный layout.
-- В proof добавлен скриншот исправленного модального окна.
+- Проверить в preview/DOM модалки отсутствие видимых строк: `SUPER_ADMIN`, `SUPER_ADM`, `super_admin`, `stripe_poland`, `bepaid_main`, `provider_choice_source`, `account_code`.
+- Допустимо наличие `provider_choice_source` только во внутреннем payload/логике, но не в видимом UI.
 ```
 
-И в **Файлы / Изменить** добавь:
+3. В `G102` уточни, как именно проверить non-regression super_admin override:
 
 ```md
-- `src/components/admin/AdminPaymentLinkDialog.tsx` — дополнительно UI polish блока выбора способа оплаты.
+G102: Под super_admin выбрать Stripe для offer, где Stripe формально не разрешён; убедиться, что UI позволяет выбор, runtime payload остается прежним, а видимого role/debug label нет.
 ```
 
-Ключевое: это должен быть **UI-only fix**, без изменения checkout/webhook/grant-access/Telegram/runtime. Это соответствует safe workflow и запрету ломать production-логику: изменения должны проходить через DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY, без скрытых побочных эффектов.  
+4. В proof добавь обязательный diff-check:
+
+```md
+- `git diff --name-only` подтверждает, что изменены только:
+  - `src/components/admin/AdminPaymentLinkDialog.tsx`
+  - `.lovable/proofs/phase_6_payment_profiles_v1.md`
+  - `.lovable/plan.md`
+- Runtime freeze-файлы отсутствуют в diff.
+```
+
+5. В UI-требования добавь:
+
+```md
+- Не использовать absolute-position бейджи/лейблы внутри provider-карточек.
+- Не использовать фиксированную ширину карточек.
+- Карточки должны иметь `w-full`, `min-w-0`, корректный перенос текста и не создавать `overflow-x`.
+```
+
+Остальное корректно. План безопасный: UI-only, без runtime-изменений, с freeze-листом, proof и gates. Это соответствует safe workflow: DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY и запрету скрытых побочных эффектов.  
 
 &nbsp;
 
-Phase 6 — Payment Profiles / Acquiring Profiles
+План: Phase 6-F — UI polish выбора способа оплаты в AdminPaymentLinkDialog
 
-Цель: привести bePaid и Stripe к единой модели «Подключение эквайринга» в админке. Никаких изменений runtime (checkout / webhook / grant-access / Telegram).
+## Контекст
 
-## Статус перед стартом
+В модальном окне «Ссылка на оплату» (карточка контакта → создать ссылку на оплату) блок «Способ оплаты для этой ссылки» сейчас визуально ломается:
 
-- Phase 4 Public Links — PASS
-- Phase 5-B Offer Settings — PASS
-- Phase 5-C Customer Choice — PASS
-- Phase 5-D Admin Override — PASS
+- три карточки provider в горизонтальном ряду не помещаются в ширину модалки;
+- текст в карточках переносится вертикально, карточки разной высоты;
+- технический бейдж `SUPER_ADM` (super_admin) отображается поверх карточки Stripe и обрезается границей модального окна;
+- описания используют технические токены (`stripe_poland`, `bepaid_main`, account_code).
 
-Текущая боль: Stripe живёт в `acquiring_connections`, bePaid — в `integration_instances`. UI вынужден читать из двух источников и кое-где показывает технические slug'и (`stripe_poland`, `bepaid_main`).
+Это UI-only проблема. Runtime (`admin-create-public-link`, checkout, webhooks, grant-access, Telegram) не затрагивается.
 
----
+## Цель
 
-## Phase 6-A — Discovery (read-only)
+Привести блок выбора способа оплаты к чистому адаптивному виду: понятные названия, аккуратные карточки, корректный layout на любой ширине, без технических меток в пользовательском UI.
 
-Цель — зафиксировать фактические источники до любого кода.
+## Изменения
 
-Проверить:
+### Файлы
 
-1. **Stripe source** — `acquiring_connections WHERE provider='stripe'`. Снять: `account_code`, `account_name`, `status`, `test_mode`, `capabilities_snapshot`, `is_default`, поддерживаемые валюты.
-2. **bePaid source** — `integration_instances WHERE provider='bepaid'` и параллельно `acquiring_connections WHERE provider='bepaid'` (если есть). Где реально живёт `shop_id`, display name, test/live, какие поля читает checkout.
-3. **Все call-sites** провайдеров/account_code/shop_id/test_mode:
-  - `src/components/admin/products/OfferAcquiringSettings.tsx`
-  - `src/components/admin/AdminPaymentLinkDialog.tsx`
-  - `src/components/payment/PaymentDialog.tsx`
-  - `supabase/functions/admin-create-public-link/index.ts`
-  - `supabase/functions/public-checkout/*`, `_shared/create-payment-checkout.ts`
-  - bePaid/Stripe checkout helpers (`_shared/acquiring/*`, `bepaid-credentials.ts`)
-4. Зафиксировать список runtime-файлов, которые **нельзя** трогать в Phase 6.
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — UI-only:
+  - удалить визуальный бейдж `SUPER_ADMIN` / `SUPER_ADM` рядом с карточкой provider (RBAC-логика super_admin сохраняется как было — она остаётся внутренней);
+  - перевести список provider-карточек на вертикальный список full-width внутри блока (`flex flex-col gap-2`), вместо текущего ряда из 3 «квадратных» карточек;
+  - каждая карточка: иконка provider слева (compact), название и описание справа, состояние selected = border/background через дизайн-токены (`border-primary`, `bg-primary/5`), disabled = `opacity-60`, `cursor-not-allowed`, без поломки геометрии;
+  - тексты карточек:
+    - «По настройке кнопки» — «Используется основной способ оплаты тарифа»;
+    - «Белорусская карта» — «bePaid · BYN · локальные карты»;
+    - «Иностранная карта» — «Stripe · EUR / USD / PLN»;
+  - убрать из видимого UI: `stripe_poland`, `bepaid_main`, `account_code`, `provider_choice_source`, `super_admin`, любые slug/debug labels;
+  - сохранить подсказку «Изменение применяется только к этой оплате. Настройки кнопки не меняются.».
+- `.lovable/proofs/phase_6_payment_profiles_v1.md` — дополнить раздел Phase 6-F:
+  - скриншот «до» (текущий из аттача пользователя как baseline);
+  - скриншот «после» из preview после фикса;
+  - проверка отсутствия `SUPER_ADMIN` в DOM модалки;
+  - проверка отсутствия горизонтального overflow.
+- `.lovable/plan.md` — добавить раздел Phase 6-F с DoD и gate G100.
 
-Deliverable: `.lovable/discovery/phase_6_payment_profiles_inventory_v1.md` с картой источников, дублей, UI-мест с slug'ами, обязательных полей и freeze-листа.
+### Что НЕ трогаем (runtime freeze)
 
-Если Discovery покажет, что bePaid нельзя безопасно представить через read-layer без миграции — Phase 6 разбивается, делаем только 6-A, остальное переезжает в Phase 6.1.
+- `supabase/functions/admin-create-public-link/index.ts` — без изменений;
+- `supabase/functions/public-checkout/*`, `bepaid-webhook`, `stripe-webhook`, `grant-access-for-order`, `telegram-grant-access` — 0-diff;
+- `src/hooks/admin/useAcquiringProfiles.ts` — без изменений (read-layer уже унифицирован в Phase 6);
+- `OfferAcquiringSettings.tsx` — без изменений;
+- API-контракт `provider_choice_source: 'auto' | 'explicit'` сохраняется как есть.
 
----
+## Технические детали
 
-## Phase 6-B — Unified Read Model
+Текущий layout (упрощённо):
 
-Создать read-only hook без миграций и без изменения checkout.
-
-`src/hooks/admin/useAcquiringProfiles.ts`:
-
-```ts
-type AcquiringProfile = {
-  provider: 'bepaid' | 'stripe';
-  account_code: string;
-  display_name: string;
-  technical_label?: string;
-  shop_id?: string;
-  test_mode: boolean;
-  status: 'active' | 'inactive';
-  supported_currencies?: string[];
-  is_default?: boolean;
-};
+```text
+[ По настройке ] [ Белорусская карта ] [ Иностранная карта  SUPER_ADM ]
 ```
 
-Источники (финально подтверждаются Discovery):
+Новый layout — вертикальный full-width стек:
 
-- Stripe → `acquiring_connections` (provider='stripe')
-- bePaid → `integration_instances` (provider='bepaid'), либо `acquiring_connections`, если Discovery подтвердит
+```text
+┌──────────────────────────────────────────────────────────┐
+│ [icon]  По настройке кнопки                              │
+│         Используется основной способ оплаты тарифа       │
+├──────────────────────────────────────────────────────────┤
+│ [BY]    Белорусская карта                                │
+│         bePaid · BYN · локальные карты                   │
+├──────────────────────────────────────────────────────────┤
+│ [EU] ✓  Иностранная карта                                │
+│         Stripe · EUR / USD / PLN                         │
+└──────────────────────────────────────────────────────────┘
+Изменение применяется только к этой оплате…
+```
 
-Никаких write-операций, миграций, переноса данных.
+- Контейнер: `flex flex-col gap-2 w-full`;
+- Карточка: `flex items-start gap-3 rounded-lg border p-3 w-full text-left`;
+- Selected: `border-primary bg-primary/5`;
+- Disabled (provider не разрешён оффером и пользователь не super_admin): `opacity-60 cursor-not-allowed`;
+- Иконка provider: `lucide` (`Settings2` для «По настройке», `CreditCard` для bePaid, `Globe` для Stripe) в `h-5 w-5 shrink-0`;
+- Текст: `min-w-0` + `truncate` где нужно, чтобы не было горизонтального overflow.
 
----
+RBAC super_admin: оставляем как было — super_admin может выбрать provider, который офер формально не разрешает (logic как в Phase 5-D), но никакой видимой метки `SUPER_ADMIN` рядом с карточкой не показываем. Если нужно — показывать рядом нейтральный текст-предупреждение под карточкой («Подключение не настроено в оффере — будет создан override.»), без role label.
 
-## Phase 6-C — UI Normalization
+## Acceptance criteria (DoD)
 
-Заменить разрозненное чтение на `useAcquiringProfiles` в:
+- Бейдж `SUPER_ADMIN` / `SUPER_ADM` полностью удалён из видимой части UI.
+- Все 3 карточки provider визуально умещаются в модальное окно без горизонтального overflow.
+- На узкой ширине карточки автоматически в вертикальном стеке (по плану — всегда вертикальный стек full-width, что покрывает все ширины).
+- Названия и описания — человекочитаемые, без `stripe_poland` / `bepaid_main` / `account_code` / `super_admin` / `provider_choice_source` в видимом UI.
+- Disabled option визуально приглушается, но layout не ломается.
+- Подсказка «Изменение применяется только к этой оплате…» сохранена.
+- Runtime files (`admin-create-public-link`, webhooks, checkout, grant-access, telegram) = 0-diff.
+- Phase 5-D RBAC-логика super_admin override сохранена.
+- Proof обновлён скриншотами до/после.
 
-- `OfferAcquiringSettings.tsx`
-- `AdminPaymentLinkDialog.tsx`
-- (другие места — только если найдены в Discovery и зафиксированы в proof)
-
-Правила отображения в админке:
-
-- `Stripe — Gorbova.pl`
-- `bePaid — основной магазин BYN`
-
-Запрещено показывать: `stripe_poland`, `bepaid_main`, `account_code`, provider slug.
-
-Fallback при отсутствии нормального имени:
-
-- `bePaid — Shop ID 33524`
-- `Stripe — подключение без названия`
-
----
-
-## Phase 6-D — Default Connections
-
-Резолвер default per-provider:
-
-1. Если есть `is_default=true` → берём его.
-2. Иначе — первый `active`.
-3. Если несколько `active` и нет default → admin warning в UI.
-
-UI:
-
-- Если подключение одно — выбрано автоматически.
-- Если несколько — селект «Подключение: …».
-
----
-
-## Phase 6-E — Runtime Non-regression
-
-UI/read-layer sprint, runtime обязан остаться 0-diff.
-
-Freeze (не редактировать):
-
-- `bepaid-webhook`, `stripe-webhook`
-- `public-checkout`, `_shared/create-payment-checkout.ts`
-- `grant-access-for-order`
-- `subscriptions-reconcile`
-- `telegram-grant-access`
-- `admin-create-public-link` (логика выбора провайдера — без изменений)
-
-### Runtime Gates
+## Gates
 
 
-| Gate | Проверка                                             |
-| ---- | ---------------------------------------------------- |
-| G91  | Discovery-док создан                                 |
-| G92  | Unified profile list возвращает bePaid + Stripe      |
-| G93  | `OfferAcquiringSettings` использует unified profiles |
-| G94  | `AdminPaymentLinkDialog` использует unified profiles |
-| G95  | slug/account_code не видны в UI                      |
-| G96  | default connection выбирается автоматически          |
-| G97  | bePaid public link smoke PASS                        |
-| G98  | Stripe public link smoke PASS                        |
-| G99  | webhooks / grant-access / Telegram diff = 0          |
+| Gate | Проверка                                                                                                                                             |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G100 | В AdminPaymentLinkDialog блок выбора способа оплаты визуально исправлен: нет `SUPER_ADMIN`, нет overflow, все варианты оплаты помещаются и читаются. |
+| G101 | Runtime files 0-diff (admin-create-public-link, webhooks, checkout, grant-access, telegram).                                                         |
+| G102 | RBAC super_admin override продолжает работать (Phase 5-D non-regression).                                                                            |
 
 
----
+## Порядок (safe workflow)
 
-## Что НЕ делать
+1. DIAGNOSE — прочитать текущий блок выбора provider в `AdminPaymentLinkDialog.tsx` и зафиксировать baseline.
+2. PLAN — этот документ.
+3. DRY RUN — собрать список конкретных JSX/className изменений, подтвердить 0-diff в runtime файлах.
+4. EXECUTE — UI-правки только в `AdminPaymentLinkDialog.tsx`.
+5. VERIFY — скриншот preview модалки (3 варианта provider), grep на `SUPER_ADM` и технические токены в файле, обновление proof.
 
-- Не переносить bePaid из `integration_instances` в `acquiring_connections`.
-- Не менять Stripe/bePaid lifecycle, webhooks, grant-access, subscriptions-reconcile, Telegram, public checkout routing.
-- Не добавлять новых providers.
-- Никаких live switch / миграций / write-операций над подключениями.
+## Итоговый статус
 
----
-
-## Файлы
-
-Создать:
-
-- `.lovable/discovery/phase_6_payment_profiles_inventory_v1.md`
-- `.lovable/proofs/phase_6_payment_profiles_v1.md`
-- `src/hooks/admin/useAcquiringProfiles.ts`
-
-Изменить:
-
-- `src/components/admin/products/OfferAcquiringSettings.tsx`
-- `src/components/admin/AdminPaymentLinkDialog.tsx`
-- `.lovable/plan.md`
-
-Дополнительные UI call-sites добавляются только после фиксации в proof.
-
----
-
-## DoD
-
-- Discovery выполнен и подтверждает безопасность read-layer без миграции.
-- `useAcquiringProfiles` создан и покрывает bePaid + Stripe.
-- bePaid и Stripe отображаются как нормальные подключения с человекочитаемыми именами.
-- Slug/account_code не видны в UI.
-- Offer settings и public link dialog читают из одного источника.
-- Default connection выбирается корректно (1 — авто, несколько — селект, конфликт — warning).
-- Runtime-файлы из freeze-листа имеют diff=0.
-- bePaid и Stripe public link smoke PASS.
-- Proof `.lovable/proofs/phase_6_payment_profiles_v1.md` создан со всеми G91–G99.
-
-## Порядок исполнения
-
-6-A (Discovery) → 6-B (Read Model) → 6-C (UI Normalization) → 6-D (Default) → 6-E (Non-regression + Proof).
-
-Если 6-A покажет блокирующие проблемы — остановка после Discovery, Phase 6 = SPLIT REQUIRED, остальное в Phase 6.1.
+После выполнения: **Phase 6-F = PASS**, общий Phase 6 остаётся PASS с дополнительным UI-polish gate G100.
