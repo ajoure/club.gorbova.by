@@ -42,6 +42,7 @@ import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
+import { resolveAvailableProviders } from "@/utils/currencyProviderResolver";
 
 /**
  * mode:
