@@ -44,6 +44,9 @@ interface CreatePublicLinkRequest {
   // 'fixed' (default, backward-compat) — ссылка жёстко привязана к provider.
   // 'customer_choice' — на /pay/:token покупатель выбирает между bepaid и stripe.
   provider_mode?: 'fixed' | 'customer_choice';
+  // Phase 5-D — был ли provider выбран админом явно ('explicit') или взят из настроек кнопки ('auto').
+  // Используется только для audit: 'explicit' → пишем admin.payment_provider.override.
+  provider_choice_source?: 'auto' | 'explicit';
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
@@ -84,11 +87,14 @@ Deno.serve(async (req) => {
       provider: rawProvider,
       account_code: rawAccountCode = null,
       provider_mode: rawProviderMode,
+      provider_choice_source: rawProviderChoiceSource,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
       rawProviderMode === 'customer_choice' ? 'customer_choice' : 'fixed';
     const provider: 'bepaid' | 'stripe' = rawProvider === 'stripe' ? 'stripe' : 'bepaid';
+    const providerChoiceSource: 'auto' | 'explicit' =
+      rawProviderChoiceSource === 'explicit' ? 'explicit' : 'auto';
     const currency = (rawCurrency ?? (provider === 'stripe' ? 'EUR' : 'BYN')).toUpperCase();
 
     // ── Validate required ──
@@ -165,10 +171,17 @@ Deno.serve(async (req) => {
       offerAllowedProviders = ['bepaid'];
     }
 
-    // ── Phase 5-C: validation per provider_mode ──
+    // ── Phase 5-C / 5-D: validation per provider_mode ──
+    // Phase 5-D: super_admin может оверрайдить provider, не входящий в offer.allowed_payment_providers.
+    // Для всех остальных admin'ов — провайдер обязан быть в allowed_payment_providers.
+    let superAdminBypass = false;
     if (providerMode === 'fixed') {
       if (!offerAllowedProviders.includes(provider)) {
-        return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+        if (isSuper) {
+          superAdminBypass = true;
+        } else {
+          return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+        }
       }
     } else {
       // customer_choice
