@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
+import { OfferAcquiringSettings, validateOfferAcquiring, type OfferAcquiring } from "@/components/admin/products/OfferAcquiringSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -569,6 +570,14 @@ export default function AdminProductDetailV2() {
     }
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
+
+    // Phase 5-B — acquiring validation (UI mirrors DB trigger)
+    const acqError = validateOfferAcquiring((offerForm.meta as any)?.acquiring as OfferAcquiring | undefined, isInstallment);
+    if (acqError) {
+      toast.error(acqError);
+      return;
+    }
+
     
     // Build meta object with preregistration and recurring settings if applicable
     let metaToSave: OfferMetaConfig = { ...offerForm.meta };
@@ -1963,7 +1972,15 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+
+            {/* Phase 5-B — Offer Acquiring Settings (bePaid / Stripe) */}
+            <OfferAcquiringSettings
+              value={(offerForm.meta as any)?.acquiring}
+              onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
+              isInstallment={offerForm.payment_method === "internal_installment"}
+            />
             </TabsContent>
+
 
             <TabsContent value="renewal" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
