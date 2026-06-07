@@ -322,17 +322,24 @@ export function AdminPaymentLinkDialog({
   const offerSupportsCustomerChoice = offerAllowedProviders.length >= 2;
 
   // Эффективный provider/provider_mode для отправки в admin-create-public-link.
-  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default. Иначе fixed=пользовательский выбор.
+  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default.
+  // 'customer_choice' → customer_choice override (allowed_payment_providers вычисляется отдельно).
+  // 'bepaid' / 'stripe' → fixed=пользовательский выбор.
   const effectiveProviderMode: "fixed" | "customer_choice" = useMemo(() => {
     if (providerModeChoice === "auto") {
       return offerSupportsCustomerChoice ? "customer_choice" : "fixed";
     }
+    if (providerModeChoice === "customer_choice") return "customer_choice";
     return "fixed";
   }, [providerModeChoice, offerSupportsCustomerChoice]);
   const effectiveProvider: "bepaid" | "stripe" = useMemo(() => {
     if (providerModeChoice === "auto") {
       // single-provider offer → используем единственный allowed; multi → bepaid (default).
       return offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : "bepaid";
+    }
+    if (providerModeChoice === "customer_choice") {
+      // payment_links.provider — backward-compat колонка. SOT для customer_choice = meta.allowed_payment_providers.
+      return "bepaid";
     }
     return providerModeChoice;
   }, [providerModeChoice, offerAllowedProviders]);
