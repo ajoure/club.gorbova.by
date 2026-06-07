@@ -36,14 +36,52 @@ Diagnose подтвердил противоречие: оба UI-файла н�
 `currency`, `payment_type`, `candidate_providers`, `stripe_account_supported_currencies`,
 `stripe_account_resolved`, `bepaid_shop_resolved`, `is_installment` — править mirror **не понадобилось**.
 
-## 2. Изменённые файлы
+## 2. Изменённые файлы (ожидаемый `git diff --name-only`)
 
 ```text
-src/components/admin/AdminPaymentLinkDialog.tsx
-src/components/admin/products/OfferAcquiringSettings.tsx
+supabase/migrations/20260607191757_5ffea93f-3a53-4a85-9524-647d2e9af3a8.sql   # DB hotfix
 .lovable/proofs/phase_7_ui_followup_v1.md
 .lovable/proofs/phase_7_currency_provider_resolver_v1.md
 ```
+
+UI-файлы (`AdminPaymentLinkDialog.tsx`, `OfferAcquiringSettings.tsx`) уже были закоммичены в предыдущем
+шаге Phase 7-UI follow-up и в этот hotfix-коммит **не входят**. `currencyProviderResolver.ts`,
+shared edge helper, webhook/grant/Telegram/reconcile — **не тронуты**.
+
+## 2.1. DB hotfix — содержимое миграции (ключевые изменения)
+
+`supabase/migrations/20260607191757_5ffea93f-3a53-4a85-9524-647d2e9af3a8.sql`:
+
+- `CREATE OR REPLACE FUNCTION public.tariff_offers_acquiring_validate()` — удалён блок
+  `IF v_has_stripe THEN ... RAISE EXCEPTION 'acquiring_stripe_missing_price_id' ...`.
+- Удалена локальная переменная `v_price_id` (больше не используется).
+- Все остальные проверки сохранены **дословно**: `acquiring_no_providers`,
+  `acquiring_unknown_provider`, `stripe_installment_not_supported`,
+  auto-derive `default_provider`, defaulting `customer_choice_enabled`.
+- Триггер `trg_tariff_offers_acquiring_validate` пересоздавать не нужно — `CREATE OR REPLACE FUNCTION`
+  достаточно, биндинг триггера сохранён.
+- Audit-функция `tariff_offers_acquiring_audit` **не тронута**: `old_price_id` / `new_price_id`
+  по-прежнему логируются — это полезная история, не валидация.
+- **Rollback SQL** включён в миграцию как закомментированный блок «ROLLBACK (manual)» — полностью
+  восстанавливает прежний валидатор с `acquiring_stripe_missing_price_id`. Применять только по явному approve.
+
+### Machine-check после миграции (выполнено локально)
+
+```sql
+SELECT pg_get_functiondef('public.tariff_offers_acquiring_validate()'::regprocedure);
+```
+
+Проверено:
+- ✅ блок `acquiring_stripe_missing_price_id` отсутствует;
+- ✅ `acquiring_no_providers` присутствует;
+- ✅ `acquiring_unknown_provider` присутствует;
+- ✅ `stripe_installment_not_supported` присутствует;
+- ✅ `default_provider` auto-derive присутствует;
+- ✅ `customer_choice_enabled` defaulting присутствует;
+- ✅ комментарий «acquiring_stripe_missing_price_id check intentionally removed (Phase 7-UI hotfix)»
+  оставлен для последующих ревьюверов.
+
+## 3. AdminPaymentLinkDialog.tsx — что сделано (контекст, не входит в этот hotfix-коммит)
 
 `src/utils/currencyProviderResolver.ts` — **не тронут** (out of scope).
 Backend / edge functions / миграции — **не тронуты**.
