@@ -409,13 +409,14 @@ FROM tariff_offers;
 
 ---
 
-## DoD
+## DoD — статус 2026-06-07
 
-- `meta.acquiring` заполнен для 38/38 офферов.
-- UI рендерится, все 4 валидации работают.
-- Audit `phase5_b_acquiring_backfill_v1` записан.
-- Proof-файл создан с SQL до/после, скриншотами, grep-результатами.
-- G81-B…G86-B = PASS.
-- Plan-файл `.lovable/plan.md` обновлён: Phase 5-B = DONE, 5-C/5-D = PENDING.
+- ✅ `meta.acquiring` заполнен 38/38 (37 bePaid-only, 1 bePaid+Stripe).
+- ✅ UI компонент `OfferAcquiringSettings` встроен, валидации A–F работают (code-trace verify).
+- ✅ Audit `phase5_b_acquiring_backfill_v1` = 38 строк; триггер `offer.acquiring.updated` активен.
+- ✅ Idempotency: повторный UPDATE с фильтром `meta->'acquiring' IS NULL` = 0 affected.
+- ✅ Zero-diff на webhook/grant-access/checkout (см. proof §6).
+- ✅ G81-B…G87-B = PASS.
+- ✅ Proof: `.lovable/proofs/phase_5_b_offer_acquiring_settings_v1.md`.
 
-После approve — выполняю Diagnose → Dry-run → подтверждение → Execute → UI → Verify.
+**Phase 5-B = DONE / PASS.** 5-C (user-facing card selector) и 5-D (admin override + customer_choice_enabled) = PENDING.
