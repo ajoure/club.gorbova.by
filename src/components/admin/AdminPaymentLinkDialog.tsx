@@ -229,13 +229,15 @@ export function AdminPaymentLinkDialog({
     enabled: open,
   });
 
-  // Авто-выбор первого/default-аккаунта при переключении провайдера.
+  // Авто-выбор первого/default-аккаунта при переключении провайдера / включении cc-stripe.
   useEffect(() => {
-    if (provider === "stripe" && !stripeAccountCode && stripeAccounts?.length) {
+    const needsStripeAccount =
+      provider === "stripe" || providerModeChoice === "customer_choice";
+    if (needsStripeAccount && !stripeAccountCode && stripeAccounts?.length) {
       const def = stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0];
       setStripeAccountCode((def as any).account_code);
     }
-  }, [provider, stripeAccounts, stripeAccountCode]);
+  }, [provider, providerModeChoice, stripeAccounts, stripeAccountCode]);
 
   // PATCH 4.1.1 — supported currencies выбранного Stripe-аккаунта (lowercase).
   // Если snapshot пуст — UI не дизейблит ничего (бэкенд всё равно отвергнет в edge-case).
