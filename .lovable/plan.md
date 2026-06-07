@@ -1,253 +1,390 @@
 да, согласен, с учетом правок:
 
-1. **G75 bePaid оплату не запускать**
+1. **Phase 5 сразу не делать целиком**
 
-Не делать новую реальную bePaid оплату.
+План правильный по направлению, но слишком большой для одного execute.
 
-Для G75 достаточно:
+Разделить:
 
-- grep/diff: bepaid-webhook unchanged
-
-- historical proof: bePaid consume path работал до патча
-
-- новая bePaid public link открывается
-
-- existing bePaid public link открывается
-
-bePaid payment runtime — не нужен в этом патче.
-
-2. **G73 replay не требовать через Stripe CLI**
-
-Если нет доступа к Stripe CLI, idempotency проверять так:
-
-- повторный вызов существующего reconcile/replay-инструмента, если он уже есть;
-
-или
-
-- SQL proof: orders_v2.meta.payment_link_counted=true + helper guard;
-
-или
-
-- provider_events idempotency уже блокирует duplicate event.
-
-Не возвращать задачу оператору.
-
-3. **G72 subscription payment можно делать только если доступно через штатный test checkout**
-
-Если нельзя быстро оплатить subscription public link через test checkout, ставить:
-
-G72 = PENDING
-
-Но code path должен быть доказан:
-
-- payment_link_id есть в Session metadata
-
-- payment_link_id есть в subscription_data.metadata
-
-- invoice.paid resolver добавляет payment_link_id в orderInsert.meta
-
-- consume вызывается только на activation invoice
-
-4. **Для one-time G71 нужен полный runtime**
-
-G71 обязателен:
-
-Stripe one-time public link
-
-→ test card 4242
-
-→ checkout.session.completed
-
-→ order paid
-
-→ current_uses 0→1
-
-Это главный proof.
-
-5. **Не шуметь audit при admin/direct Stripe**
-
-Для one-time:
-
-если payment_link_id отсутствует — skip silently
-
-без audit, чтобы admin checkout не засорял логи.
-
-6. **Формат итогового статуса**
-
-Если G71 PASS, G74 PASS, bePaid freeze PASS, но G72 не оплачен:
-
-Phase 4.3 = PARTIAL PASS
-
-Open: G72 subscription runtime pending
-
-Если G71 FAIL:
-
-Phase 4.3 = FAIL
-
-7. **Сделать отдельный grep freeze**
-
-В proof обязательно:
-
-bepaid-webhook unchanged
-
-consume-payment-link unchanged
-
-public-checkout unchanged
-
-grant-access-for-order unchanged
-
-После этих правок план можно запускать.
-
-&nbsp;
-
-&nbsp;
-
-## План: Phase 4.3 — Stripe consume-payment-link integration
-
-**Цель:** после успешной Stripe-оплаты по public link инкрементировать `payment_links.current_uses` через существующий helper `consumePaymentLinkForOrder`, паритет с bePaid. Никаких новых таблиц, миграций, writer'ов; только два call-site существующего helper.
-
----
-
-### Discovery (read-only, уже выполнен)
-
-
-| Факт                                                                                         | Источник                                                                                                                                                                                                                                                                                                                                   |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `consumePaymentLinkForOrder(supabase, orderId, callerLabel)` — единственный canonical writer | `_shared/consume-payment-link.ts` (133 строки, идемпотентен через `orders_v2.meta.payment_link_counted`, защита от race через optimistic `current_uses` guard)                                                                                                                                                                             |
-| One-time Stripe webhook путь                                                                 | `stripe-webhook/index.ts:154-260`, ветка `checkout.session.completed`. `transitionOrderPaid` уже вызывается; `mergeStripeMetaOnOrder` уже мерджит в `orders_v2.meta`. `payment_link_id` ДОСТУПЕН в `md.payment_link_id` (см. `create-stripe-checkout.ts:205`).                                                                             |
-| Subscription Stripe activation путь                                                          | `_shared/stripe-subscription-resolver.ts:849-994`, обработчик `invoice.paid`. Создаёт `orders_v2.insert(orderInsert)`, затем `grant-access-for-order`. `payment_link_id` доступен в `invoice.parent.subscription_details.metadata.payment_link_id` (см. `stripe-pre-create-subscription.ts:267-268`) и/или в `subv2.meta.payment_link_id`. |
-| Renewal-инвойсы                                                                              | Stripe прокидывает `subscription_data.metadata` в КАЖДЫЙ renewal invoice. Чтобы НЕ инкрементить counter повторно при renewal, ограничиваем consume первым активационным invoice'ом (`billing_reason='subscription_create'` ИЛИ `ps.state==='pending'` до апдейта).                                                                         |
-| Freeze                                                                                       | `bepaid-webhook`, `_shared/create-payment-checkout.ts`, `public-checkout`, `grant-access-for-order`, `payment_links` схема — не трогаем.                                                                                                                                                                                                   |
-
-
----
-
-### PATCH 4.3.1 — one-time Stripe consume
-
-Файл: `supabase/functions/stripe-webhook/index.ts`
-
-1. Импорт в шапке:
-  ```ts
-   import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
-  ```
-2. В ветке `checkout.session.completed`, ПОСЛЕ `transitionOrderPaid` и `applyCrmStageOnTerminal`, ДО `return`:
-  - Извлечь `const md_payment_link_id = md.payment_link_id ?? null;`
-  - Если `null` → audit `stripe.payment_link.consume_skipped_no_payment_link_id` (только если запись имеет смысл — т.е. для public-link сценариев; admin sandbox такого md не имеет, и для них skip без аудита, чтобы не шуметь). Решение: если `!md_payment_link_id` — просто continue без аудита (как и bePaid).
-  - Если есть — гарантировать, что `orders_v2.meta.payment_link_id` присутствует:
-    - Уже мерджим `mergeStripeMetaOnOrder`; добавить параллельный merge `payment_link_id` (минимальное расширение helper'а или прямой UPDATE с COALESCE-merge, не затрагивая существующие поля).
-  - Обернуть в try/catch:
-    ```ts
-    try {
-      const res = await consumePaymentLinkForOrder(supabase, order_id_meta, 'stripe-webhook[checkout.session.completed]');
-      // helper сам пишет audit_logs на success/limit_reached/race
-    } catch (e) {
-      await supabase.from('audit_logs').insert({
-        action: 'stripe.payment_link.consume_failed',
-        entity_type: 'orders_v2', entity_id: order_id_meta,
-        meta: { error: e instanceof Error ? e.message : String(e), account_code, source: 'checkout.session.completed' },
-      });
-    }
-    ```
-  - Никогда не throw — flow продолжается.
-
-### PATCH 4.3.2 — subscription Stripe consume (первый invoice)
-
-Файл: `supabase/functions/_shared/stripe-subscription-resolver.ts` (обработчик `invoice.paid`, lines 849-1004).
-
-1. Импорт `consumePaymentLinkForOrder` из `./consume-payment-link.ts`.
-2. Резолв `payment_link_id` (приоритеты):
-  ```ts
-   const md_pli =
-     (parentSubDetails2?.metadata?.payment_link_id as string | null) ??
-     ((invoice.subscription_details as any)?.metadata?.payment_link_id as string | null) ??
-     ((subv2.meta as any)?.payment_link_id as string | null) ??
-     null;
-  ```
-3. В `orderInsert.meta` добавить `payment_link_id: md_pli ?? undefined` — чтобы helper смог его прочитать.
-4. После `grant-access-for-order` (после блока 991-1004) и ТОЛЬКО для активационного invoice:
-  - Условие активации: `billing_reason === 'subscription_create'` ИЛИ `ps.state === 'pending'` до апдейта (захватить в локальную переменную ДО строки 965).
-  - Если активационный invoice **и** `md_pli`:
-    ```ts
-    try {
-      await consumePaymentLinkForOrder(supabase, order_id, 'stripe-webhook[invoice.paid]');
-    } catch (e) {
-      await writeAudit(supabase, {
-        event, account_code,
-        action: 'stripe.payment_link.consume_failed',
-        result: 'logged',
-        subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
-        extra: { invoice_id, order_id, error: e instanceof Error ? e.message : String(e) },
-      });
-    }
-    ```
-  - Если НЕ активационный (renewal) — skip без аудита (это норма, не должен инкрементить).
-  - Если `md_pli` отсутствует на активационном invoice — audit `stripe.payment_link.consume_skipped_no_payment_link_id`.
-
-### Идемпотентность (G73)
-
-Достигается без новой логики: helper уже guard'ит через `orders_v2.meta.payment_link_counted === true`. Replay того же `checkout.session.completed` или `invoice.paid` → найдёт тот же `order_id` (через session_id/invoice_id idempotency на уровне `provider_events` и SELECT-before-INSERT) → helper вернёт `already_counted`.
-
-### Freeze-зоны (zero-diff verifier)
-
+```text
+Phase 5-A — Discovery + Contract
+Phase 5-B — Offer Settings UI + Backfill
+Phase 5-C — Runtime Provider Selection
+Phase 5-D — Admin Override
 ```
-bepaid-webhook/                          unchanged
-_shared/create-payment-checkout.ts       unchanged
-_shared/consume-payment-link.ts          unchanged
-public-checkout/                         unchanged
-grant-access-for-order/                  unchanged
-payment_links table schema               unchanged
-UI                                       unchanged
+
+Сейчас можно запускать только:
+
+```text
+Phase 5-A Discovery
 ```
 
 ---
 
-### Runtime smoke (на `7500084@gmail.com`)
+2. **Не делать миграцию до Discovery**
 
+Бэкфилл `tariff_offers.meta.acquiring` пока не выполнять.
 
-| Gate | Сценарий                                                                                                        | Ожидание                                                                                                                                              |
-| ---- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| G71  | Stripe one-time public link (Gorbova Club CHAT BYN 10, max_uses=null) → оплатить 4242                           | `current_uses: 0 → 1`, audit `public_checkout.link_consumed`, `orders_v2.meta.payment_link_counted=true`                                              |
-| G72  | Stripe subscription public link (recurring offer `6f306cbc…`) → оплатить 4242, дождаться первого `invoice.paid` | `current_uses: 0 → 1`, `subscriptions_v2.meta.payment_link_id` linked, активационный order имеет `meta.payment_link_id` + `payment_link_counted=true` |
-| G73  | Re-trigger одного и того же webhook event через `stripe-reconcile-session` / Stripe CLI replay                  | `current_uses` не меняется; helper возвращает `already_counted` (или SELECT-before-INSERT находит существующий order)                                 |
-| G74  | Создать Stripe link с `max_uses=1`, оплатить → попытаться повторный GET/POST `/pay/:token`                      | 410 `Payment link usage limit reached` (enforcement уже есть в `public-checkout`, теперь подкреплён реальным инкрементом)                             |
-| G75  | bePaid one-time public link оплата                                                                              | `current_uses: 0 → 1`, поведение и audit идентичны до патча; путь `bepaid-webhook → consumePaymentLinkForOrder` не изменён                            |
+Сначала discovery должен ответить:
 
-
-Если на момент прогона нет реальной карты для Stripe subscription — G72 можно подтвердить через Stripe Dashboard test mode + `stripe-reconcile-session` (если он покрывает invoice.paid replay) ИЛИ marker'ом «PENDING-BY-STRIPE-TIME» с фиксацией structural readiness (impon code path + dry-run проверка резолва `md_pli`).
+- сколько offer’ов;
+- сколько имеют `meta.stripe.price_id`;
+- сколько имеют `payment_type=installment`;
+- какие offer’ы сейчас реально используются;
+- есть ли существующие `meta.acquiring`;
+- нет ли конфликтов в `meta`.
 
 ---
 
-### Артефакты
+3. **Уточнить структуру** `meta.acquiring`
 
-- edit `supabase/functions/stripe-webhook/index.ts` (импорт + consume call в checkout.session.completed + payment_link_id merge)
-- edit `supabase/functions/_shared/stripe-subscription-resolver.ts` (импорт + payment_link_id в orderInsert.meta + consume call на активационном invoice.paid)
-- create `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` — proof с 5 gates (G71-G75), SQL-снимками до/после, list audit_logs, freeze-grep
-- update `.lovable/plan.md` — статус 4.3
+Добавить в Discovery финальный контракт:
 
-### DoD
+```json
+{
+  "allowed_payment_providers": ["bepaid", "stripe"],
+  "default_provider": "bepaid",
+  "customer_choice_enabled": true,
+  "stripe": {
+    "account_code": "stripe_poland",
+    "product_id": "prod_...",
+    "price_id": "price_...",
+    "currency": "EUR",
+    "mode": "test"
+  }
+}
+```
 
-- Импорт `consumePaymentLinkForOrder` в обеих точках.
-- One-time: после оплаты `payment_links.current_uses` инкрементирован, `orders_v2.meta.payment_link_counted=true`, audit `public_checkout.link_consumed`.
-- Subscription (первый invoice): то же поведение; renewal invoices НЕ инкрементят.
-- Отсутствие `payment_link_id` → audit `consume_skipped_no_payment_link_id`, flow не падает.
-- Ошибка helper'а → audit `consume_failed`, flow не падает.
-- Replay webhook → counter не растёт повторно.
-- bePaid поведение не изменилось (G75 PASS, grep по `bepaid-webhook` / `_shared/create-payment-checkout.ts` = 0 diff).
-- Proof-файл и итоговый отчёт с G71-G75.
+Почему добавить `default_provider`:
+
+- если включены оба провайдера, админ должен понимать, какой способ будет выбран по умолчанию;
+- admin checkout должен стартовать с default;
+- customer choice может быть включён/выключен отдельно.
+
 ---
 
-## Phase 4.3 — Stripe consume-payment-link integration
+4. **Не использовать** `payment_links.provider = null` **без проверки CHECK**
 
-**Status:** FULL PASS (structural + runtime, agent-executed via test card 4242 on 2026-06-07)
+В плане есть:
 
-- Code: deployed (`stripe-webhook` + bundled `_shared/stripe-subscription-resolver.ts`).
-- Freeze: bepaid-webhook / consume-payment-link / public-checkout / grant-access-for-order / create-payment-checkout — 0 diff.
-- G71 one-time: PASS — link `3ecffb2d…` current_uses 0→1, order `38fd44ed…` paid, audit `public_checkout.link_consumed`.
-- G72 subscription: PASS — link `4b38f37e…` current_uses 0→1 on activation invoice, order `6096fb1a…` paid, audit logged.
-- G73 idempotency: PASS (structural, `payment_link_counted` seal).
-- G74 max_uses: PASS (covered by G76).
-- G75 bePaid non-regression: PASS (zero diff).
-- G76 exhausted enforcement: PASS — GET `/public-checkout?token=…` (current_uses=max_uses=1) → HTTP 410 `Payment link usage limit reached`.
-- Proof: `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` (полный runtime-журнал в §5-6).
+```text
+payment_links.provider = null или multi
+```
 
-**Public Links модуль закрыт полностью** для обоих провайдеров (bePaid + Stripe) с lifecycle-паритетом.
+Перед этим нужно проверить DB CHECK.
+
+До discovery не утверждать.
+
+Предварительно лучше:
+
+```text
+payment_links.provider = 'bepaid' | 'stripe'
+payment_links.meta.provider_mode = 'auto' | 'forced'
+payment_links.meta.allowed_payment_providers = [...]
+```
+
+Но финально — после discovery.
+
+---
+
+5. **Публичный UX: названия доработать**
+
+Для клиента лучше использовать:
+
+```text
+Карта белорусского банка
+Карта иностранного банка
+```
+
+Подписи:
+
+```text
+Карта белорусского банка
+Для карт банков Республики Беларусь
+
+Карта иностранного банка
+Для карт банков Европы, США и других стран
+```
+
+Не писать «международная карта», потому что белорусская Visa/Mastercard тоже формально международная карта.
+
+---
+
+6. **Admin UI может показывать бренды**
+
+В админке можно писать:
+
+```text
+bePaid
+Stripe
+```
+
+Но рядом должна быть бизнес-расшифровка:
+
+```text
+bePaid — карты банков Беларуси
+Stripe — карты иностранных банков
+```
+
+---
+
+7. **Admin override должен быть отдельно подтверждён**
+
+Фраза:
+
+```text
+override provider не обязан входить в allowed_payment_providers
+```
+
+опасная.
+
+Это разрешить можно, но только для `super_admin`.
+
+Для обычного `admin`:
+
+```text
+override только среди allowed_payment_providers
+```
+
+Для `super_admin`:
+
+```text
+override любой активный provider
+```
+
+И обязательно audit.
+
+---
+
+8. **Stripe settings должны быть на уровне offer, не продукта**
+
+В рамках этой фазы не добавлять настройки Stripe на продукт/тариф глобально.
+
+Только:
+
+```text
+tariff_offers.meta.acquiring.stripe
+```
+
+Product/Tariff defaults — future phase.
+
+---
+
+9. **Добавить install­ment guard**
+
+Если offer = рассрочка:
+
+```text
+Stripe disabled
+```
+
+UI:
+
+```text
+Stripe пока не поддерживает рассрочку
+```
+
+Backend:
+
+```text
+400 stripe_installment_not_supported
+```
+
+---
+
+10. **DoD Phase 5-A**
+
+Discovery должен вернуть:
+
+```text
+1. Текущая карта tariff_offers.
+2. Контракт meta.acquiring.
+3. Матрица provider selection.
+4. Где будет UI в существующей вкладке "Оплата".
+5. Какие DB CHECK есть у payment_links.provider.
+6. Безопасный план backfill.
+7. Runtime gates для 5-B/5-C/5-D.
+```
+
+После этого — отдельный approve на реализацию.
+
+&nbsp;
+
+План: Phase 5 — Product Acquiring Settings & Provider Selection
+
+## Цель
+
+Перенести управление эквайрингом (bePaid / Stripe) с уровня ручных meta-полей на уровень UI кнопки оплаты (Offer). Поддержать мульти-provider режим, пользовательский выбор «Белорусская / Международная карта» и админский override. bePaid, Stripe, grant-access, webhook, lifecycle — НЕ трогаем.
+
+## Принципы (жёстко)
+
+- Никаких новых webhook, никаких изменений в grant-access-for-order, stripe-webhook, bepaid-webhook, subscriptions-reconcile, Telegram lifecycle.
+- Никаких новых providers сверх bepaid+stripe.
+- Пользователь НЕ видит слов «bePaid» / «Stripe» — только «Белорусская карта» / «Международная карта».
+- SOT эквайринга кнопки = `tariff_offers.meta.acquiring` (расширение существующего meta, без новых таблиц).
+
+---
+
+## Этап 5.0 — Discovery (read-only)
+
+Артефакт: `.lovable/discovery/product_acquiring_settings_inventory_v1.md`
+
+Зафиксировать:
+
+- Структура `products_v2`, `tariffs`, `tariff_offers`, `payment_links`, `acquiring_connections`.
+- Все точки чтения `meta.stripe.price_id`, `meta.stripe.product_id`, `provider`, `account_code`, `currency` (rg по фронту и edge functions).
+- Текущие call-sites: `public-checkout`, `admin-create-public-link`, `createPaymentCheckout`, `stripe-subscription-resolver`, `CreatePublicLinkDialog`, форма редактирования Offer (вкладка «Оплата»).
+- Карта «Продукт → Тариф → Offer → (Stripe Price | bePaid)».
+
+DoD: список call-sites + контракт нового `meta.acquiring`.
+
+---
+
+## Этап 5.1 — Offer Acquiring Settings (UI вкладки «Оплата»)
+
+Без новой вкладки. Дописываем в существующую `Кнопка оплаты → Редактировать → Оплата`.
+
+Под блоком «Способ оплаты (100% / Рассрочка)» добавить:
+
+**Доступные способы приёма оплаты**
+
+- ☑ Белорусские карты (bePaid)
+- ☑ Международные карты (Stripe)
+
+Хранение:
+
+```json
+tariff_offers.meta.acquiring = {
+  "allowed_payment_providers": ["bepaid", "stripe"],
+  "stripe": {
+    "account_code": "...",
+    "product_id": "prod_...",
+    "price_id": "price_...",
+    "currency": "EUR",
+    "mode": "test" | "live"
+  }
+}
+```
+
+PATCH 5.1-A: блок «Настройки Stripe» (account / product_id / price_id / валюта / test|live) показывается только если включён чекбокс «Международные карты». Подтягивается список Stripe accounts из `acquiring_connections`.
+
+Валидация на save:
+
+- `allowed_payment_providers.length >= 1` (нельзя выключить оба).
+- Если включён `stripe` → `stripe.price_id` обязателен.
+- bePaid не требует доп. полей (используется существующая глобальная конфигурация).
+
+---
+
+## Этап 5.2 — Provider Policy (без отдельного поля)
+
+Политика выводится из длины массива `allowed_payment_providers` — отдельный `provider_policy` НЕ заводим:
+
+- length=1 → жёсткий provider, без выбора.
+- length>1 → пользовательский выбор на фронте.
+
+---
+
+## Этап 5.3 — Frontend Checkout Selection (`/pay/:token` и PaymentDialog)
+
+Новый shared helper `resolveOfferProviders(offer)` → `{ providers, requiresUserChoice }`.
+
+UI:
+
+- `providers.length === 1` → редирект/инициализация checkout соответствующего provider без UI выбора.
+- `providers.length > 1` → экран «Выберите карту для оплаты»:
+  - ○ Белорусская банковская карта — Visa / Mastercard банков Беларуси
+  - ○ Международная банковская карта — Visa / Mastercard банков Европы, США и других стран
+- Слова «bePaid» / «Stripe» на фронте запрещены (вводим линтер-rg в CI как backlog).
+
+Поведение в `public-checkout`: принимает опциональный `provider_choice` (`bepaid|stripe`), валидирует, что он входит в `allowed_payment_providers` offer’а, иначе 400.
+
+---
+
+## Этап 5.4 — Admin Checkout Override
+
+В админской форме создания оплаты:
+
+Блок «Способ оплаты»:
+
+- ○ По настройке кнопки (default, подпись: «Белорусская карта» / «Международная карта»)
+- ○ Белорусская карта (bePaid)
+- ○ Международная карта (Stripe)
+
+Условия:
+
+- Override доступен только `admin` / `super_admin` (через `useRbac`).
+- При override провайдер не обязан входить в `allowed_payment_providers` offer’а — это легитимный admin-bypass; пишем `audit_logs.admin_provider_override` с `{ offer_id, offer_providers, chosen_provider, actor_id }`.
+- Если выбран Stripe, но в offer нет `stripe.price_id` → блокируем с понятной ошибкой (нечем оплатить).
+
+---
+
+## Этап 5.5 — Public Links (`CreatePublicLinkDialog` + `admin-create-public-link`)
+
+Заменить ручной select провайдера на:
+
+**Провайдер ссылки**
+
+- ○ Авто из настроек кнопки (default)
+- ○ Принудительно: Белорусская карта (bePaid) — только admin
+- ○ Принудительно: Международная карта (Stripe) — только admin
+
+Логика:
+
+- `auto` + offer single-provider → `payment_links.provider` фиксируется в этот provider.
+- `auto` + offer multi-provider → `payment_links.provider = null` (или `multi`), резолв при клике через `resolveOfferProviders`.
+- Override доступен только admin; при попытке Stripe без `stripe.price_id` → 400.
+
+`payment_links_enriched_v` дополняется полем «эффективные провайдеры» для админского журнала.
+
+---
+
+## Этап 5.6 — Runtime Gates
+
+
+| Gate | Сценарий                                                 | Expected                      |
+| ---- | -------------------------------------------------------- | ----------------------------- |
+| G81  | offer=[bepaid], `/pay/:token`                            | сразу bePaid checkout         |
+| G82  | offer=[stripe], `/pay/:token`                            | сразу Stripe checkout         |
+| G83  | offer=[bepaid,stripe], `/pay/:token`                     | экран выбора карты            |
+| G84  | admin checkout, offer=[bepaid], override=stripe          | Stripe сессия, audit override |
+| G85  | admin checkout, offer=[stripe], override=bepaid          | bePaid сессия, audit override |
+| G86  | public link auto + offer multi                           | пользователь видит выбор      |
+| G87  | webhook parity (bepaid-webhook, stripe-webhook diff = 0) | PASS                          |
+
+
+Proof: `.lovable/proofs/phase_5_offer_acquiring_v1.md`.
+
+---
+
+## Технические детали
+
+**Миграция:** только бэкфилл `tariff_offers.meta.acquiring.allowed_payment_providers` из текущего состояния:
+
+- если есть `meta.stripe.price_id` → `["bepaid","stripe"]` (или `["stripe"]` если bePaid отключён глобально).
+- иначе → `["bepaid"]`.
+Идемпотентно, audit `phase5_acquiring_backfill_v1`. Никаких новых таблиц.
+
+**Shared helper:** `src/utils/resolveOfferProviders.ts` + зеркало `supabase/functions/_shared/resolve-offer-providers.ts`. Единственный SOT интерпретации `meta.acquiring`.
+
+**Edge functions затрагиваемые (только read + branch, без новых writer’ов):**
+
+- `public-checkout` — принимает `provider_choice`, валидирует.
+- `admin-create-public-link` — провайдер из auto/override.
+- `createPaymentCheckout` (admin path) — override branch.
+
+**Запрещено в Phase 5:**
+
+- любые правки `grant-access-for-order`, `bepaid-webhook`, `stripe-webhook`, `stripe-subscription-resolver` (consume path), `subscriptions-reconcile`, Telegram lifecycle.
+- новые таблицы, новые providers, новые webhook.
+
+## Definition of Done
+
+- Вкладка «Оплата» offer’а содержит блок «Доступные способы приёма оплаты» + условный блок Stripe.
+- Bэкфилл `meta.acquiring` выполнен.
+- `/pay/:token` и PaymentDialog показывают выбор «Белорусская/Международная карта» при multi-provider.
+- Слова bePaid/Stripe не показываются конечному пользователю.
+- Admin override работает с audit.
+- Public Link: auto / forced bepaid / forced stripe (последние два — admin only).
+- G81–G87 = PASS, proof-файл создан.
+- bePaid и Stripe webhook diff = 0.
