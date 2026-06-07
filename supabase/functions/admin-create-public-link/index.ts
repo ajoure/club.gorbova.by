@@ -40,6 +40,10 @@ interface CreatePublicLinkRequest {
   // Phase 4.1 — provider routing for public payment link
   provider?: 'bepaid' | 'stripe';
   account_code?: string | null;
+  // Phase 5-C — provider_mode для пользовательского выбора.
+  // 'fixed' (default, backward-compat) — ссылка жёстко привязана к provider.
+  // 'customer_choice' — на /pay/:token покупатель выбирает между bepaid и stripe.
+  provider_mode?: 'fixed' | 'customer_choice';
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
