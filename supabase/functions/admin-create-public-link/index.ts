@@ -101,6 +101,7 @@ Deno.serve(async (req) => {
       provider_choice_source: rawProviderChoiceSource,
       allowed_payment_providers: rawAllowedProvidersExplicit,
       stripe_currency: rawStripeCurrency,
+      business_stream: rawBusinessStream = null,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
