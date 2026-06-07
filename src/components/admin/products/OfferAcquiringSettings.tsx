@@ -345,8 +345,9 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                 <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200 border border-amber-300/60 rounded p-2 bg-amber-50/60 dark:bg-amber-950/20">
                   <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>
-                    Для подписки через Stripe не настроен тариф. Обратитесь к интегратору —
-                    сохранение со Stripe для подписки сейчас недоступно.
+                    Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe
+                    будет доступна в разделе «Интеграции → Stripe → Тарифы». Сохранение этого
+                    способа оплаты сейчас недоступно — снимите галочку или отключите подписку.
                   </span>
                 </div>
               )}
@@ -390,7 +391,7 @@ export function validateOfferAcquiring(
       return "Выберите подключение для приёма иностранных карт";
     }
     if (isSubscription && (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0)) {
-      return "Для подписки через Stripe не настроен тариф. Обратитесь к интегратору.";
+      return "Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe будет доступна в разделе «Интеграции → Stripe → Тарифы».";
     }
   }
   return null;
