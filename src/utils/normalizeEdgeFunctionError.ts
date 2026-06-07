@@ -200,6 +200,18 @@ function mapKnown(raw: string): string | null {
   if (s.includes("identity_required") || s.includes("not authenticated")) {
     return "Не удалось подтвердить аккаунт. Войдите или укажите email.";
   }
+  if (s.includes("provider_choice_required")) {
+    return "Выберите способ оплаты, чтобы продолжить.";
+  }
+  if (s.includes("provider_choice_not_allowed") || s.includes("invalid_provider_choice")) {
+    return "Выбранный способ оплаты недоступен для этой ссылки. Обновите страницу и попробуйте снова.";
+  }
+  if (s.includes("no_allowed_payment_providers")) {
+    return "Для этой ссылки не настроены доступные способы оплаты. Обратитесь к администратору.";
+  }
+  if (s.includes("no_active_default_stripe_account")) {
+    return "Оплата иностранной картой временно недоступна. Попробуйте позже или выберите другой способ.";
+  }
   if (s.includes("could not determine subscription amount")) {
     return "Не удалось определить сумму подписки. Свяжитесь с поддержкой.";
   }
