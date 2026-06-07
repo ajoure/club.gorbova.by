@@ -323,15 +323,6 @@ WHERE id = '<offer_id>';
    - `subscriptions_v2` (active, auto_renew=true),
    - `entitlements` (visible),
    - **`provider_events`** (`stripe.invoice.payment_succeeded` / `checkout.session.completed` получено, нормализовано, без дублей).
-8. SQL-after: `meta->'acquiring'->'stripe'` содержит `price_id` и `product_id`; иные ключи `meta` без изменений.
-9. Повторный save без изменений — diff `meta->'acquiring'->'stripe'` пустой; в Stripe нет нового Price (lookup в Stripe Dashboard).
-10. Публичный checkout по этому offer → Stripe subscription mode.
-11. Webhook → проверить записи:
-    - `orders_v2` (paid),
-    - `payments_v2` (succeeded),
-    - `subscriptions_v2` (active, auto_renew=true),
-    - `entitlements` (visible),
-    - **`provider_events`** (`stripe.invoice.payment_succeeded` / `checkout.session.completed` получено, нормализовано, без дублей).
 
 ### S9.8a — bePaid one-time regression
 - Проверить отдельно:
