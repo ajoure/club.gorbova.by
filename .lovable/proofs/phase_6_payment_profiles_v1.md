@@ -383,3 +383,94 @@ WHERE id = '<offer_id>';
 - **Phase 6-G.2 = CODE COMPLETE / WAITING FOR RUNTIME PROOF**
 
 > Phase 6 proof считается структурно полным для Final Regression. Новые пункты S9.8a/S9.8b/S9.9/S9.10 — checklist для будущего runtime, не фактический PASS сейчас.
+
+---
+
+## Customer Choice Runtime Smoke — PARTIAL PASS / BLOCKED (2026-06-07)
+
+### Контекст
+Runtime smoke по 4 сценариям customer_choice override после CODE COMPLETE Phase 6-G/H boundary.
+
+### Тестовый контакт (smoke, не реальная продажа)
+- `qa.user@gorbova.test`
+- profile_id `3bdd6b71-80e4-439e-9b83-3a952698dd5a`
+- user_id `638a13ec-62a8-47b3-90d9-bc3a4e22c174`
+- Существующий QA-контакт, не реальный клиент.
+- Orphan smoke artifact: profile `7a942227-e274-4e3f-8ed0-08195fc11542` (`7500084+stripe-smoke@gmail.com`) — создан до approve, не удалён (permission denied на DELETE). Зафиксирован для будущей миграционной очистки, не в этом hot-patch.
+
+### Целевой оффер
+- product `Gorbova Club` (`11c9f1b8-0355-4753-bd74-40b42aa53616`)
+- tariff `BUSINESS` (`7c748940-…622d3`)
+- primary offer `bc0f7a90-df41-4a86-b2ea-2a1234d0d534`
+- amount 25 000 коп., recurring=true
+- baseline acquiring: bepaid only, `meta.acquiring.stripe.price_id = NULL`, `meta.business_stream = NULL`
+- product.meta.business_stream = NULL
+
+### Сценарий 1 — По настройке кнопки (fixed bepaid) — PASS
+- payment_link.id = `9a0bc346-0549-48e3-af3e-32be47259c35`
+- token = `1bccd0accad8b71a8c706255121f3668`
+- provider=`bepaid`, provider_mode=`fixed`, currency=`BYN`, amount=25000
+- description начинается с `SMOKE TEST —`
+- public_url = `https://club.gorbova.by/pay/1bccd0accad8b71a8c706255121f3668`
+- Не оплачена.
+
+### Сценарий 2 — Клиент выбирает (customer_choice + bepaid+stripe) — FAIL
+Запрос:
+```json
+POST /functions/v1/admin-create-public-link
+{
+  "product_id": "11c9f1b8-0355-4753-bd74-40b42aa53616",
+  "tariff_id": "7c748940-…622d3",
+  "offer_id": "bc0f7a90-df41-4a86-b2ea-2a1234d0d534",
+  "amount": 25000, "currency": "BYN", "payment_type": "subscription",
+  "provider_mode": "customer_choice",
+  "provider_choice_source": "explicit",
+  "allowed_payment_providers": ["bepaid","stripe"],
+  "account_code": "stripe_poland",
+  "stripe_currency": "EUR",
+  "user_id": "638a13ec-62a8-47b3-90d9-bc3a4e22c174",
+  "description": "SMOKE TEST — Scenario 2 customer_choice"
+}
+```
+Ответ:
+```
+HTTP 422
+{"error":"stripe_price_provision_failed:business_stream_not_resolved"}
+```
+Audit:
+```
+action = admin_create_public_link.stripe_price_provision_failed
+entity_id = bc0f7a90-…d534
+meta.reason = inline_business_stream_resolver_no_match
+```
+Root cause: inline резолвер в `admin-create-public-link/index.ts` (lines 364–384) проверяет только `tariff_offers.meta.business_stream` и `products_v2.meta.business_stream`. Для Gorbova Club оба пустые → 422 до eager Stripe Price provisioning. Stripe Product/Price НЕ создан.
+
+### Сценарии 3 (Белорусская карта) и 4 (Иностранная карта) — NOT EXECUTED
+Сценарий 4 заведомо упрётся в тот же `business_stream_not_resolved` (общий code path с S2 через `stripePathActive`). Сценарий 3 (fixed bepaid) эквивалентен S1 и blocker'ом не затронут — отложен до retry.
+
+### Runtime freeze (до hot-patch)
+SQL snapshot `tariff_offers.meta.acquiring` для всех 7 офферов Gorbova Club: без изменений.
+- `meta.acquiring.stripe.price_id` НЕ создан ни для одного оффера (provisioning упал до записи).
+- `meta.acquiring.allowed_payment_providers`: bepaid only, не тронуто.
+- Downstream (webhook/grant/telegram/reconcile): не вызывались.
+
+### Артефакты smoke в БД
+- 1 строка в `payment_links` (S1, bepaid, не оплачена).
+- 1 строка в `audit_logs` (S2 failed).
+- 0 строк в `orders_v2`/`payments_v2`/`subscriptions_v2`/`entitlements`.
+- 0 изменений в `tariff_offers.meta`.
+
+### Гейты до hot-patch
+| Gate | Описание | Результат |
+|---|---|---|
+| C1 | 4-я карточка «Клиент выбирает» в UI | ✅ |
+| C2 | Сценарий 1 (button mode) PASS | ✅ |
+| C3 | UI render всех 4 карточек | ✅ |
+| C4 | Сценарий 2 (customer_choice) PASS | ❌ business_stream_not_resolved |
+| C5 | Сценарий 3 (bepaid forced) | ⏸ NOT EXECUTED |
+| C6 | Сценарий 4 (stripe forced) | ⏸ NOT EXECUTED |
+| C7 | Runtime freeze | ✅ для button mode, ⏸ для остальных |
+| C8 | SQL proof | ⏸ частично |
+| C9 | Audit logs | ✅ failed audit записан |
+| C10 | Итоговый статус | PARTIAL PASS / BLOCKED |
+
