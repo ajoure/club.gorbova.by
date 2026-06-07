@@ -474,3 +474,94 @@ SQL snapshot `tariff_offers.meta.acquiring` для всех 7 офферов Gor
 | C9 | Audit logs | ✅ failed audit записан |
 | C10 | Итоговый статус | PARTIAL PASS / BLOCKED |
 
+
+---
+
+## Customer Choice Runtime Smoke v2 — POST HOT-PATCH (2026-06-07 17:27 UTC)
+
+### Hot-patch summary
+- **Файлы изменены:**
+  - `supabase/functions/admin-create-public-link/index.ts` — заменил inline-резолвер business_stream на shared `resolveBusinessStream` из `_shared/acquiring/business-stream-resolver.ts`. Добавил body-параметр `business_stream` как 3-й fallback (link override) поверх offer.meta → product.meta. Failed-path теперь пишет audit `admin_create_public_link.stripe_price_provision_failed` с reason=`business_stream_not_resolved`.
+- **Migration:** `products_v2.meta.business_stream='club'` для Gorbova Club (product_id `11c9f1b8-0355-4753-bd74-40b42aa53616`). Источник: `discovery/business_stream_classification_v1.md §3`. Это data backfill, не хардкод в коде.
+- **Edge deploy:** `admin-create-public-link` deployed successfully (1 function).
+- **НЕ изменены:** bePaid webhook, Stripe webhook, grant-access-for-order, telegram-*, subscriptions-reconcile, _shared/create-payment-checkout.ts, frontend (AdminPaymentLinkDialog, CustomerProviderChoice).
+
+### Retry scenarios (admin JWT, qa.user@gorbova.test recipient)
+
+| # | Сценарий | Result | payment_link_id | token |
+|---|---|---|---|---|
+| 2 | Клиент выбирает (cc + [bepaid,stripe]) | ✅ PASS | `5f9bf278-a82b-4827-ae4e-9843eadde2b1` | `46ffd6420097020a9c74222e2b9575bf` |
+| 3 | Белорусская карта (fixed bepaid) | ✅ PASS | `c5a35b2a-1024-4603-8cca-3672b0627fcc` | `8572953899b5936373d63efef7e3ab1d` |
+| 4 | Иностранная карта (cc + [stripe]) | ✅ PASS | `1fe7611c-b406-4888-89f4-8f6b7192d071` | `477a40a435086080ce2b8610d54793e0` |
+
+Public URLs:
+- S2: `https://club.gorbova.by/pay/46ffd6420097020a9c74222e2b9575bf`
+- S3: `https://club.gorbova.by/pay/8572953899b5936373d63efef7e3ab1d`
+- S4: `https://club.gorbova.by/pay/477a40a435086080ce2b8610d54793e0`
+
+### SQL proof — payment_links (4 rows, all SMOKE TEST)
+```
+S1 (regression, pre-patch):  9a0bc346 │ bepaid │ fixed           │ BYN │ meta: {} (button mode)
+S2 (post-patch):             5f9bf278 │ bepaid │ customer_choice │ BYN │ meta.allowed=[bepaid,stripe] │ stripe_account=stripe_poland │ stripe_currency=EUR
+S3 (post-patch):             c5a35b2a │ bepaid │ fixed           │ BYN │ meta: {} (forced bepaid)
+S4 (post-patch):             1fe7611c │ bepaid │ customer_choice │ BYN │ meta.allowed=[stripe] │ stripe_account=stripe_poland │ stripe_currency=EUR
+```
+Контракт `provider='bepaid'` для customer_choice — by design (Phase 5-C): фактический provider выбирается покупателем на `/pay/:token` через CustomerProviderChoice; колонка хранит безопасный default. SOT — `meta.allowed_payment_providers`.
+
+### SQL proof — tariff_offers.meta.acquiring.stripe (offer bc0f7a90)
+```
+До hot-patch:  meta.acquiring.stripe.price_id  = NULL
+               meta.acquiring.allowed_payment_providers = ['bepaid']
+После S2:      meta.stripe.price_id            = "price_1TfkTX6UYJj2vm0Gb3LDyBTl"  (NEW — eager provisioning)
+               meta.stripe.product_id          = "prod_Uf4cCqlMGtIv8G"             (NEW — eager provisioning)
+               meta.acquiring.allowed_payment_providers = ['bepaid']               (UNCHANGED)
+```
+Stripe Price был provisioned один раз на S2, переиспользован для S4 (no duplicate price_id).
+
+### Runtime freeze diff
+**Допустимое техническое изменение:**
+- `tariff_offers.meta.stripe.price_id` + `meta.stripe.product_id` для BUSINESS offer (eager Stripe Price provisioning, идемпотентно).
+- `products_v2.meta.business_stream='club'` для Gorbova Club (migration, разовая нормализация данных из discovery doc).
+
+**Что НЕ изменилось (offer settings preserved):**
+- `tariff_offers.meta.acquiring.allowed_payment_providers` для всех 7 офферов Gorbova Club: bepaid only (без изменений).
+- `tariff_offers.meta.recurring`, `meta.document_scenarios`, `meta.installment`: без изменений.
+- `tariff_offers.access_days`, `price`, `currency`, `is_active`: без изменений.
+- Other Gorbova Club offers (FULL, CHAT, ИДЕОЛОГИЯ): без изменений вообще.
+
+**Downstream untouched:**
+- 0 строк в `orders_v2` / `payments_v2` / `subscriptions_v2` / `entitlements` / `provider_events` / `provider_subscriptions` от smoke (ссылки не оплачены).
+- 0 вызовов bePaid checkout, 0 вызовов Stripe Checkout Session.
+- 0 grant/revoke/Telegram операций.
+
+### Audit logs (за окно smoke)
+```
+17:27:44 admin.payment_provider.customer_choice_override   (S4 — cc[stripe])
+17:27:13 admin.payment_provider.override                   (S3 — admin_explicit fixed bepaid)
+17:27:07 admin.payment_provider.customer_choice_override   (S2 — cc[bepaid,stripe])
+17:25:24 products_v2.business_stream_backfill              (migration — Gorbova Club → 'club')
+```
+Failed-path audit (`admin_create_public_link.stripe_price_provision_failed`) после hot-patch не сработал ни разу — резолвер успешно нашёл `business_stream='club'` через product.meta.
+
+### Final Gate Checklist
+| Gate | Описание | Результат |
+|---|---|---|
+| C1 | 4-я карточка «Клиент выбирает» в UI | ✅ PASS (pre-patch) |
+| C2 | Сценарий 1 — fixed bepaid (button mode) | ✅ PASS |
+| C3 | UI render 4 карточек | ✅ PASS |
+| C4 | Сценарий 2 — customer_choice [bepaid,stripe] | ✅ PASS (post-patch) |
+| C5 | Сценарий 3 — fixed bepaid (forced) | ✅ PASS |
+| C6 | Сценарий 4 — customer_choice [stripe] | ✅ PASS (post-patch) |
+| C7 | Runtime freeze | ✅ PASS (только technical stripe price_id/product_id + 1 data backfill) |
+| C8 | SQL proof по payment_links + tariff_offers.meta | ✅ PASS |
+| C9 | Audit logs (override + backfill) | ✅ PASS |
+| C10 | Hot-patch DoD: business_stream_not_resolved больше не возникает | ✅ PASS |
+
+### Итог
+**PASS.** Hot-patch закрыт. Регрессии bePaid/offer settings нет. Customer choice override = PASS. Blocker fix Stripe subscription link = PASS. Phase 6-G/H boundary полностью закрыт по runtime smoke.
+
+### Notes / Backlog
+- Smoke артефакты в `payment_links` (4 строки) помечены `SMOKE TEST —` в description; не оплачены, можно деактивировать UI-кнопкой «Отозвать» по необходимости.
+- Orphan profile `7500084+stripe-smoke@gmail.com` (`7a942227-…`) — не удалён, backlog для отдельной cleanup-миграции.
+- Backfill `products_v2.meta.business_stream` для оставшихся 17 продуктов из discovery doc — backlog (не блокирует никакие runtime пути, кроме customer_choice+Stripe subscription для тех продуктов).
+- Возвращаемся к Phase 7-EXEC Currency Provider Resolver (Phase 6 закрыт).
