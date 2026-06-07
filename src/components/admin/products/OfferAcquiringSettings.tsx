@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import {
   useAcquiringProfiles,
   filterByProvider,
+  type AcquiringProfile,
 } from "@/hooks/admin/useAcquiringProfiles";
 
 /**
