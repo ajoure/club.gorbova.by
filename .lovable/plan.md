@@ -1,3 +1,14 @@
+## Phase 4.2 — Public Link Lifecycle Integrity = **FAIL**
+
+- Discovery: `.lovable/discovery/stripe_public_links_lifecycle_v1.md`
+- Proof: `.lovable/proofs/stripe_phase_4_2_lifecycle_audit_v1.md`
+- Root cause: `stripe-webhook` НЕ вызывает `consume-payment-link` после terminal paid.
+- Next: **Phase 4.3 — Stripe consume-payment-link integration** (точка вставки: handlers `checkout.session.completed` + `invoice.paid` в `supabase/functions/stripe-webhook/index.ts`).
+
+Gate-результаты: G61 FAIL · G62 PARTIAL/BLOCKED-BY-G61 · G63 PASS · G64 PASS · G65 FAIL · G66a PASS create / FAIL consume · G66b PENDING (нет subscription stripe-eligible offer) · G67 NO.
+
+---
+
 да, согласен, с учетом правок:
 
 1. **Не выполнять реальные bePaid оплаты в 4.2**
