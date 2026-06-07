@@ -85,11 +85,15 @@ export interface OfferMetaConfig {
   // Sprint 12 — массив сценариев документа (см. mem://architecture/documents/document-scenarios-sot).
   // Канон: payment_channels. Legacy: payment_methods (read-only, не пишется UI).
   document_scenarios?: OfferDocumentScenario[];
-  // Phase 5-B — Offer acquiring settings (bePaid / Stripe)
+  // Phase 5-B + PATCH 5-B.2 — Offer acquiring settings (bePaid / Stripe)
   acquiring?: {
     allowed_payment_providers: ('bepaid' | 'stripe')[];
     default_provider: 'bepaid' | 'stripe';
     customer_choice_enabled: boolean;
+    bepaid?: {
+      account_code: string;
+      shop_id?: string | null;
+    };
     stripe?: {
       account_code: string;
       price_id: string;
