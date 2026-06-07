@@ -69,6 +69,10 @@ interface PaymentLinkInfo {
   requires_identity_input: boolean;
   link_user_id: string | null;
   installment?: InstallmentInfo | null;
+  // Phase 5-C — provider routing surface
+  provider?: 'bepaid' | 'stripe' | null;
+  provider_mode?: 'fixed' | 'customer_choice' | null;
+  allowed_payment_providers?: ('bepaid' | 'stripe')[] | null;
 }
 
 interface SavedCard {
