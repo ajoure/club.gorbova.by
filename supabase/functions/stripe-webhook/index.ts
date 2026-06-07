@@ -92,6 +92,7 @@ async function mergeStripeMetaOnOrder(
     customer_id?: string | null;
     account_code?: string | null;
     business_stream?: string | null;
+    payment_link_id?: string | null;
   },
 ) {
   const { data: ord } = await supabase
@@ -115,6 +116,11 @@ async function mergeStripeMetaOnOrder(
   const nextMeta: Record<string, unknown> = { ...curMeta, stripe: nextStripe };
   if (patch.business_stream && !curMeta.business_stream) {
     nextMeta.business_stream = patch.business_stream;
+  }
+  // Phase 4.3: set-if-absent payment_link_id (top-level) so consumePaymentLinkForOrder
+  // can resolve it. Never overwrite an existing value (sticky, immutable).
+  if (patch.payment_link_id && !curMeta.payment_link_id) {
+    nextMeta.payment_link_id = patch.payment_link_id;
   }
   await supabase.from('orders_v2').update({ meta: nextMeta }).eq('id', order_id);
 }
