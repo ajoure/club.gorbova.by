@@ -166,7 +166,11 @@ export default function PublicPayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_showSavedCardSelectorEarly, savedCards]);
 
-  const initiatePayment = async (payerEmail?: string, replacementId?: string) => {
+  const initiatePayment = async (
+    payerEmail?: string,
+    replacementId?: string,
+    providerChoice?: CustomerProvider,
+  ) => {
     if (!token) return;
     setIsProcessing(true);
     setError(null);
@@ -176,6 +180,7 @@ export default function PublicPayPage() {
       const body: Record<string, unknown> = { url_token: token };
       if (payerEmail) body.email = payerEmail;
       if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
+      if (providerChoice) body.provider_choice = providerChoice;
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
       const { data: { session } } = await supabase.auth.getSession();
@@ -212,11 +217,16 @@ export default function PublicPayPage() {
     }
   };
 
+  // Phase 5-C — состояние выбора провайдера для customer_choice ссылок.
+  const [chosenProvider, setChosenProvider] = useState<CustomerProvider | null>(null);
+
   // Branch A: target user pre-bound — no email, server uses link.user_id only
-  const handlePayWithTarget = () => initiatePayment(undefined);
+  const handlePayWithTarget = (providerChoice?: CustomerProvider) =>
+    initiatePayment(undefined, undefined, providerChoice);
 
   // Branch B: no target user, but session — Bearer token will be picked up live
-  const handlePayWithSession = () => initiatePayment(user?.email || undefined);
+  const handlePayWithSession = (providerChoice?: CustomerProvider) =>
+    initiatePayment(user?.email || undefined, undefined, providerChoice);
 
   const handleReplaceSubscription = async () => {
     if (!conflictData) return;
