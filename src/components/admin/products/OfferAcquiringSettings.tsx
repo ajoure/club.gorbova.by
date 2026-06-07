@@ -343,9 +343,11 @@ export function validateOfferAcquiring(
     if (!acq.stripe?.account_code) {
       return "Выберите подключение для приёма иностранных карт";
     }
-    if (isSubscription && (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0)) {
-      return "Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe будет доступна в разделе «Интеграции → Stripe → Тарифы».";
-    }
+    // Phase 6-G: для Stripe-подписки больше не требуем заранее заполненный price_id.
+    // Stripe-тариф будет автопровижнен по настройкам кнопки. Проверяем только обязательные
+    // данные для будущего provisioning: подключение выбрано (выше) + recurring-настройки
+    // валидируются на уровне самой кнопки (handleSaveOffer).
+    void isSubscription;
   }
   return null;
 }
