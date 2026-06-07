@@ -40,6 +40,8 @@ import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } fr
 import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { CustomerProviderChoice } from '@/components/payments/CustomerProviderChoice';
+import { resolveProviderChoice, type CustomerProvider } from '@/utils/resolveCustomerProviderChoice';
 
 interface InstallmentInfo {
   payment_method?: string;
