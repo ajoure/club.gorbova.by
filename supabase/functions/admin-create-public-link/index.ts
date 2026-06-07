@@ -461,9 +461,11 @@ Deno.serve(async (req) => {
       tariff_id: link.tariff_id,
       cta_source: auditCtaSource,
       installment: installmentBlock,
-      // Phase 4.1 — provider routing fields в ответе
-      provider,
-      account_code: provider === 'stripe' ? resolvedAccountCode : null,
+      // Phase 4.1 + 5-C — provider routing fields в ответе
+      provider: linkProviderColumn,
+      account_code: linkAccountCodeColumn,
+      provider_mode: providerMode,
+      allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
       currency,
       row: link,
     });
