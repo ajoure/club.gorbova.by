@@ -755,8 +755,9 @@ ${amountLine}
                 }
               : {}),
             // Phase 4.1 — provider routing
-            provider,
-            ...(provider === "stripe"
+            provider: effectiveProvider,
+            provider_mode: effectiveProviderMode,
+            ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
           },
