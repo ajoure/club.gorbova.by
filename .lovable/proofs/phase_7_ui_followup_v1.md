@@ -1,7 +1,8 @@
 # Phase 7-UI follow-up — DB hotfix `acquiring_stripe_missing_price_id` + screenshot smoke S1–S8
 
 Дата: 2026-06-07
-Статус: **DB hotfix = APPLIED**, UI code = PASS, screenshot smoke S1–S8 — pending ручной фиксации админом в §8.
+Статус: **DB hotfix = APPLIED**, UI code = PASS, runtime smoke S1–S8 = **PASS** (S3 — SIMULATED, см. §8).
+**P7-7-final = PASS · Phase 7-EXEC = PASS · Phase 8 разблокирована.**
 
 > Заголовок умышленно расширен: это уже не UI-only follow-up. В Phase 7-UI follow-up добавлен фокусный DB hotfix
 > на функцию триггера `tariff_offers_acquiring_validate`, который убирает обязательность `meta.acquiring.stripe.price_id`
