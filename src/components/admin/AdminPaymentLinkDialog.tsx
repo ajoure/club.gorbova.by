@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/select";
 import {
   Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send,
-  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info
+  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
