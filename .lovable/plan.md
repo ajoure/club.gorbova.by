@@ -234,3 +234,14 @@ UI                                       unchanged
 - Replay webhook → counter не растёт повторно.
 - bePaid поведение не изменилось (G75 PASS, grep по `bepaid-webhook` / `_shared/create-payment-checkout.ts` = 0 diff).
 - Proof-файл и итоговый отчёт с G71-G75.
+---
+
+## Phase 4.3 — Stripe consume-payment-link integration
+
+**Status:** STRUCTURAL PASS / runtime card pay PENDING-BY-OPERATOR
+
+- Code: deployed (`stripe-webhook` + bundled `_shared/stripe-subscription-resolver.ts`).
+- Freeze: bepaid-webhook / consume-payment-link / public-checkout / grant-access-for-order / create-payment-checkout — 0 diff.
+- G71 one-time / G72 subscription: code path PASS, требуется card 4242 pay по новой Stripe public link.
+- G73 idempotency / G74 max_uses / G75 bePaid non-regression: STRUCTURAL PASS / PASS.
+- Proof: `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` (с repro SQL для оператора).
