@@ -195,6 +195,9 @@ export function AdminPaymentLinkDialog({
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
   const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
+  // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
+  // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
+  const [providerModeChoice, setProviderModeChoice] = useState<"auto" | "bepaid" | "stripe">("auto");
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
