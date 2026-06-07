@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, Globe2, Wallet } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  useAcquiringProfiles,
+  filterByProvider,
+  type AcquiringProfile,
+} from "@/hooks/admin/useAcquiringProfiles";
 
 /**
  * PATCH 5-B.3 — UI-only: только бизнес-настройки кнопки оплаты.
@@ -51,14 +55,6 @@ export interface OfferAcquiring {
   stripe?: OfferAcquiringStripe;
 }
 
-interface ConnectionRow {
-  account_code: string;
-  account_name: string;
-  test_mode: boolean;
-  is_default: boolean;
-  shop_id?: string | null;
-}
-
 interface Props {
   value: OfferAcquiring | undefined;
   onChange: (next: OfferAcquiring) => void;
@@ -83,61 +79,17 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
   const hasBepaid = acq.allowed_payment_providers.includes("bepaid");
   const hasStripe = acq.allowed_payment_providers.includes("stripe");
 
-  const [bepaidConnections, setBepaidConnections] = useState<ConnectionRow[]>([]);
-  const [stripeConnections, setStripeConnections] = useState<ConnectionRow[]>([]);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
+  const { data: profiles, isLoading: profilesLoading } = useAcquiringProfiles();
+  const connectionsLoaded = !profilesLoading;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // bePaid — SOT: integration_instances
-      const bepaidQ = supabase
-        .from("integration_instances")
-        .select("config, status")
-        .eq("provider", "bepaid")
-        .in("status", ["active", "connected"]);
-
-      // Stripe — SOT: acquiring_connections
-      const stripeQ = supabase
-        .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, status, is_default")
-        .eq("provider", "stripe")
-        .eq("status", "active")
-        .order("is_default", { ascending: false })
-        .order("account_name");
-
-      const [{ data: bepaidRows }, { data: stripeRows }] = await Promise.all([bepaidQ, stripeQ]);
-      if (cancelled) return;
-
-      const bepaidList: ConnectionRow[] = (bepaidRows ?? []).map((r: any) => {
-        const cfg = r.config ?? {};
-        const shopId = cfg.shop_id ? String(cfg.shop_id) : null;
-        const isTest = cfg.test_mode === true || cfg.test_mode === "true";
-        return {
-          account_code: shopId ? `bepaid_${shopId}` : "bepaid_main",
-          account_name: cfg.account_name?.trim()
-            || (shopId ? `bePaid — Shop ID ${shopId}` : "bePaid (основное подключение)"),
-          test_mode: isTest,
-          is_default: true,
-          shop_id: shopId,
-        };
-      });
-
-      const stripeList: ConnectionRow[] = (stripeRows ?? []).map((r: any) => ({
-        account_code: r.account_code,
-        account_name: (r.account_name && r.account_name.trim()) || `Stripe — ${r.account_code}`,
-        test_mode: !!r.test_mode,
-        is_default: !!r.is_default,
-      }));
-
-      setBepaidConnections(bepaidList);
-      setStripeConnections(stripeList);
-      setConnectionsLoaded(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const bepaidConnections = useMemo<AcquiringProfile[]>(
+    () => filterByProvider(profiles, "bepaid"),
+    [profiles],
+  );
+  const stripeConnections = useMemo<AcquiringProfile[]>(
+    () => filterByProvider(profiles, "stripe"),
+    [profiles],
+  );
 
   // Auto-populate bepaid.account_code
   useEffect(() => {
@@ -269,7 +221,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                     <SelectContent>
                       {bepaidConnections.map((c) => (
                         <SelectItem key={c.account_code} value={c.account_code}>
-                          {c.account_name}
+                          {c.display_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -328,7 +280,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                     <SelectContent>
                       {stripeConnections.map((c) => (
                         <SelectItem key={c.account_code} value={c.account_code}>
-                          {c.account_name}
+                          {c.display_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
