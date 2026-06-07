@@ -1129,35 +1129,7 @@ ${amountLine}
               {selectedTariffId && providerModeChoice === "stripe" && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Настройки иностранного эквайринга</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setProvider("bepaid")}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
-                        provider === "bepaid"
-                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                      )}
-                    >
-                      <span>bePaid</span>
-                      <span className="text-xs font-normal text-muted-foreground">BYN, рассрочка</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setProvider("stripe")}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 text-sm font-medium transition-all",
-                        provider === "stripe"
-                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                      )}
-                    >
-                      <span>Stripe</span>
-                      <span className="text-xs font-normal text-muted-foreground">USD / EUR / PLN</span>
-                    </button>
-                  </div>
-
+                  {/* Технические бутоны bePaid/Stripe удалены — выбор делает блок «Способ оплаты» выше. */}
                   {provider === "stripe" && (
                     <div className="space-y-2 pt-2 border-t">
                       <div className="grid grid-cols-2 gap-3">
