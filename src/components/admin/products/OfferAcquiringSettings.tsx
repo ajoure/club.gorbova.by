@@ -172,8 +172,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
     });
   }
 
-  const subscriptionStripeNotConfigured =
-    hasStripe && isSubscription && !acq.stripe?.price_id;
+  // Phase 6-G: Stripe price_id больше не редактируется вручную и не блокирует save.
+  // Под Stripe-блоком показываем нейтральный info при subscription, если подключение выбрано.
+  const showStripeSubscriptionInfo =
+    hasStripe && isSubscription && Boolean(acq.stripe?.account_code);
 
   return (
     <Card>
@@ -293,13 +295,12 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                 </div>
               )}
 
-              {subscriptionStripeNotConfigured && (
-                <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200 border border-amber-300/60 rounded p-2 bg-amber-50/60 dark:bg-amber-950/20">
+              {showStripeSubscriptionInfo && (
+                <div className="flex items-start gap-2 text-xs text-muted-foreground border rounded p-2 bg-muted/40">
                   <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>
-                    Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe
-                    будет доступна в разделе «Интеграции → Stripe → Тарифы». Сохранение этого
-                    способа оплаты сейчас недоступно — снимите галочку или отключите подписку.
+                    Stripe-подписка использует выбранное подключение. Тариф Stripe будет создан
+                    и привязан автоматически — при сохранении кнопки или при первой оплате.
                   </span>
                 </div>
               )}
@@ -342,9 +343,11 @@ export function validateOfferAcquiring(
     if (!acq.stripe?.account_code) {
       return "Выберите подключение для приёма иностранных карт";
     }
-    if (isSubscription && (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0)) {
-      return "Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe будет доступна в разделе «Интеграции → Stripe → Тарифы».";
-    }
+    // Phase 6-G: для Stripe-подписки больше не требуем заранее заполненный price_id.
+    // Stripe-тариф будет автопровижнен по настройкам кнопки. Проверяем только обязательные
+    // данные для будущего provisioning: подключение выбрано (выше) + recurring-настройки
+    // валидируются на уровне самой кнопки (handleSaveOffer).
+    void isSubscription;
   }
   return null;
 }
