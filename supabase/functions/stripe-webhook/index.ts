@@ -29,6 +29,7 @@ import {
   resolveStripeSubscriptionEvent,
   STRIPE_SUBSCRIPTION_EVENT_TYPES,
 } from '../_shared/stripe-subscription-resolver.ts';
+import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 
 function svc() {
   return createClient(
@@ -91,6 +92,7 @@ async function mergeStripeMetaOnOrder(
     customer_id?: string | null;
     account_code?: string | null;
     business_stream?: string | null;
+    payment_link_id?: string | null;
   },
 ) {
   const { data: ord } = await supabase
@@ -114,6 +116,11 @@ async function mergeStripeMetaOnOrder(
   const nextMeta: Record<string, unknown> = { ...curMeta, stripe: nextStripe };
   if (patch.business_stream && !curMeta.business_stream) {
     nextMeta.business_stream = patch.business_stream;
+  }
+  // Phase 4.3: set-if-absent payment_link_id (top-level) so consumePaymentLinkForOrder
+  // can resolve it. Never overwrite an existing value (sticky, immutable).
+  if (patch.payment_link_id && !curMeta.payment_link_id) {
+    nextMeta.payment_link_id = patch.payment_link_id;
   }
   await supabase.from('orders_v2').update({ meta: nextMeta }).eq('id', order_id);
 }
@@ -207,12 +214,14 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     const md_business_stream = (md.business_stream as string | undefined) ?? null;
     const pi_id = (obj.payment_intent as string) ?? null;
     const session_id = obj.id as string;
+    const md_payment_link_id = (md.payment_link_id as string | undefined) ?? null;
     await mergeStripeMetaOnOrder(supabase, order_id_meta, {
       checkout_session_id: session_id,
       payment_intent_id: pi_id,
       customer_id: session_customer,
       account_code,
       business_stream: md_business_stream,
+      payment_link_id: md_payment_link_id,
     });
 
     // Find order; call grant-access-for-order (existing, untouched).
@@ -256,6 +265,30 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success.
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.checkout.session.completed');
+
+    // Phase 4.3: consume public payment_link slot (idempotent via helper).
+    // Skip silently if metadata.payment_link_id is absent (admin sandbox, direct checkout).
+    if (md_payment_link_id) {
+      try {
+        await consumePaymentLinkForOrder(
+          supabase,
+          order_id_meta,
+          'stripe-webhook[checkout.session.completed]',
+        );
+      } catch (e) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe.payment_link.consume_failed',
+          entity_type: 'orders_v2',
+          entity_id: order_id_meta,
+          meta: {
+            error: e instanceof Error ? e.message : String(e),
+            account_code,
+            payment_link_id: md_payment_link_id,
+            source: 'checkout.session.completed',
+          },
+        });
+      }
+    }
     return { order_id: order_id_meta, payment_id };
   }
 

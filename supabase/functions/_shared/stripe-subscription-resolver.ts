@@ -33,6 +33,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
+import { consumePaymentLinkForOrder } from './consume-payment-link.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -846,6 +847,20 @@ async function onInvoicePaid(
     offer_id = (offerRow as any)?.id ?? null;
   }
 
+  // Phase 4.3: resolve payment_link_id (public link consume linkage).
+  // Priority: invoice.parent.subscription_details.metadata → invoice.subscription_details.metadata → subv2.meta.payment_link_id.
+  const md_pli: string | null =
+    ((parentSubDetails as any)?.metadata?.payment_link_id as string | null | undefined) ??
+    (((invoice as any).subscription_details as any)?.metadata?.payment_link_id as string | null | undefined) ??
+    (((subv2 as any).meta as any)?.payment_link_id as string | null | undefined) ??
+    null;
+
+  // Phase 4.3: capture activation flag BEFORE ps.state is mutated below.
+  // First successful invoice of a subscription = consume the public-link slot once.
+  const wasPendingBeforeActivation = ps.state === 'pending' || ps.state === 'past_due';
+  const isSubscriptionCreate = (invoice.billing_reason ?? null) === 'subscription_create';
+  const isActivationInvoice = wasPendingBeforeActivation || isSubscriptionCreate;
+
   // ---- Materialize orders_v2 (activation write-path) ----
   const order_number = `STRIPE-${invoice_id}`.slice(0, 64);
   const orderInsert = {
@@ -878,6 +893,9 @@ async function onInvoicePaid(
       subscription_v2_id: subv2.id,
       provider_subscription_row_id: ps.id,
       source: 'stripe.invoice.paid',
+      // Phase 4.3: top-level payment_link_id so consumePaymentLinkForOrder can resolve it.
+      // Only on activation invoice — renewals must NOT re-link to the same public link.
+      ...(md_pli && isActivationInvoice ? { payment_link_id: md_pli } : {}),
     },
   };
 
@@ -1002,6 +1020,39 @@ async function onInvoicePaid(
     });
     // Не throw — order уже создан, grant ретраится через nightly reconcile.
   }
+
+  // ---- Phase 4.3: consume public payment_link slot (only on activation invoice). ----
+  if (isActivationInvoice) {
+    if (md_pli) {
+      try {
+        await consumePaymentLinkForOrder(
+          supabase,
+          order_id,
+          'stripe-webhook[invoice.paid]',
+        );
+        // helper itself writes audit_logs on consumed / already_counted / limit_reached.
+      } catch (e) {
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.payment_link.consume_failed',
+          result: 'logged',
+          subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, order_id, payment_link_id: md_pli, error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    } else {
+      // Activation invoice arrived but no payment_link_id was propagated by Stripe.
+      // Audit once so we can detect metadata-propagation regressions.
+      await writeAudit(supabase, {
+        event, account_code,
+        action: 'stripe.payment_link.consume_skipped_no_payment_link_id',
+        result: 'logged',
+        subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+        extra: { invoice_id, order_id, billing_reason: invoice.billing_reason ?? null },
+      });
+    }
+  }
+
 
   // ---- Phase 3.4 F: recovery snapshot (если выходим из dunning grace) ----
   const prevDunningStatus = (subMetaStripe.dunning_status as string | null) ?? null;
