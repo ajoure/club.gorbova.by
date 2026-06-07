@@ -172,8 +172,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
     });
   }
 
-  const subscriptionStripeNotConfigured =
-    hasStripe && isSubscription && !acq.stripe?.price_id;
+  // Phase 6-G: Stripe price_id больше не редактируется вручную и не блокирует save.
+  // Под Stripe-блоком показываем нейтральный info при subscription, если подключение выбрано.
+  const showStripeSubscriptionInfo =
+    hasStripe && isSubscription && Boolean(acq.stripe?.account_code);
 
   return (
     <Card>
