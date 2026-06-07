@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/select";
 import {
   Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send,
-  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info
+  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
@@ -198,7 +198,11 @@ export function AdminPaymentLinkDialog({
   const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
   // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
   // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
-  const [providerModeChoice, setProviderModeChoice] = useState<"auto" | "bepaid" | "stripe">("auto");
+  // 'customer_choice' = override: клиент выбирает из всех технически доступных provider'ов,
+  //                     независимо от offer.allowed_payment_providers. Override живёт только в payment_links.
+  const [providerModeChoice, setProviderModeChoice] = useState<
+    "auto" | "customer_choice" | "bepaid" | "stripe"
+  >("auto");
   // Phase 5-D — super_admin может выбрать provider, даже если он не в offer.allowed_payment_providers.
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
 
@@ -225,13 +229,15 @@ export function AdminPaymentLinkDialog({
     enabled: open,
   });
 
-  // Авто-выбор первого/default-аккаунта при переключении провайдера.
+  // Авто-выбор первого/default-аккаунта при переключении провайдера / включении cc-stripe.
   useEffect(() => {
-    if (provider === "stripe" && !stripeAccountCode && stripeAccounts?.length) {
+    const needsStripeAccount =
+      provider === "stripe" || providerModeChoice === "customer_choice";
+    if (needsStripeAccount && !stripeAccountCode && stripeAccounts?.length) {
       const def = stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0];
       setStripeAccountCode((def as any).account_code);
     }
-  }, [provider, stripeAccounts, stripeAccountCode]);
+  }, [provider, providerModeChoice, stripeAccounts, stripeAccountCode]);
 
   // PATCH 4.1.1 — supported currencies выбранного Stripe-аккаунта (lowercase).
   // Если snapshot пуст — UI не дизейблит ничего (бэкенд всё равно отвергнет в edge-case).
@@ -318,17 +324,24 @@ export function AdminPaymentLinkDialog({
   const offerSupportsCustomerChoice = offerAllowedProviders.length >= 2;
 
   // Эффективный provider/provider_mode для отправки в admin-create-public-link.
-  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default. Иначе fixed=пользовательский выбор.
+  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default.
+  // 'customer_choice' → customer_choice override (allowed_payment_providers вычисляется отдельно).
+  // 'bepaid' / 'stripe' → fixed=пользовательский выбор.
   const effectiveProviderMode: "fixed" | "customer_choice" = useMemo(() => {
     if (providerModeChoice === "auto") {
       return offerSupportsCustomerChoice ? "customer_choice" : "fixed";
     }
+    if (providerModeChoice === "customer_choice") return "customer_choice";
     return "fixed";
   }, [providerModeChoice, offerSupportsCustomerChoice]);
   const effectiveProvider: "bepaid" | "stripe" = useMemo(() => {
     if (providerModeChoice === "auto") {
       // single-provider offer → используем единственный allowed; multi → bepaid (default).
       return offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : "bepaid";
+    }
+    if (providerModeChoice === "customer_choice") {
+      // payment_links.provider — backward-compat колонка. SOT для customer_choice = meta.allowed_payment_providers.
+      return "bepaid";
     }
     return providerModeChoice;
   }, [providerModeChoice, offerAllowedProviders]);
@@ -374,6 +387,36 @@ export function AdminPaymentLinkDialog({
     return null;
   }, [isInstallmentOffer, effectiveOffer]);
   // per_payment для installment считается inline в JSX (там, где amount уже доступен).
+
+  // ── «Клиент выбирает» — override allowed_payment_providers ──
+  // Собирает все технически доступные provider'ы независимо от offer.allowed_payment_providers.
+  // STOP-guards:
+  //   • bepaid: считаем доступным (нет лёгкого client-side disable-signal; backend валидирует);
+  //   • stripe: нужен хотя бы один active acquiring_connection, не installment, валюта в whitelist.
+  const stripeAvailableForCustomerChoice = useMemo(() => {
+    if (isInstallmentOffer) return false;
+    if (!stripeAccounts || stripeAccounts.length === 0) return false;
+    // Если у выбранного/дефолтного аккаунта snapshot пуст — считаем доступным; иначе валюта в whitelist.
+    const acct = (stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0]) as any;
+    const cap = acct?.capabilities_snapshot?.supported_currencies;
+    if (!Array.isArray(cap) || cap.length === 0) return true;
+    const set = new Set((cap as unknown[]).map((c) => String(c).toLowerCase()));
+    return set.has(stripeCurrency.toLowerCase());
+  }, [stripeAccounts, isInstallmentOffer, stripeCurrency]);
+
+  const customerChoiceAllowed = useMemo<("bepaid" | "stripe")[]>(() => {
+    const list: ("bepaid" | "stripe")[] = ["bepaid"];
+    if (stripeAvailableForCustomerChoice) list.push("stripe");
+    return list;
+  }, [stripeAvailableForCustomerChoice]);
+
+  // Авто-переключение с customer_choice, если ни один provider не доступен (теоретически невозможно,
+  // т.к. bepaid считаем всегда доступным; на случай будущих изменений).
+  useEffect(() => {
+    if (providerModeChoice !== "customer_choice") return;
+    if (customerChoiceAllowed.length === 0) setProviderModeChoice("auto");
+  }, [providerModeChoice, customerChoiceAllowed]);
+
 
   // ── Унифицированный билдер Telegram-сообщения ──
   // Корректно различает три случая: рассрочка / подписка с автосписанием / разовая оплата.
@@ -742,6 +785,20 @@ ${amountLine}
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
+            // «Клиент выбирает» — override allowed_payment_providers поверх offer.meta.
+            // Не передаём `currency`: link.currency остаётся в bepaid-домене (BYN);
+            // Stripe-валюта для price provisioning идёт отдельным полем `stripe_currency`.
+            ...(providerModeChoice === "customer_choice"
+              ? {
+                  allowed_payment_providers: customerChoiceAllowed,
+                  ...(customerChoiceAllowed.includes("stripe")
+                    ? {
+                        account_code: stripeAccountCode || undefined,
+                        stripe_currency: stripeCurrency,
+                      }
+                    : {}),
+                }
+              : {}),
           },
         }
       );
@@ -838,6 +895,19 @@ ${amountLine}
             provider_choice_source: providerModeChoice === "auto" ? "auto" : "explicit",
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
+              : {}),
+            // «Клиент выбирает» — override allowed_payment_providers поверх offer.meta.
+            // Не передаём `currency` (link.currency остаётся BYN); Stripe-валюта — отдельным полем.
+            ...(providerModeChoice === "customer_choice"
+              ? {
+                  allowed_payment_providers: customerChoiceAllowed,
+                  ...(customerChoiceAllowed.includes("stripe")
+                    ? {
+                        account_code: stripeAccountCode || undefined,
+                        stripe_currency: stripeCurrency,
+                      }
+                    : {}),
+                }
               : {}),
           },
         }
@@ -1083,6 +1153,16 @@ ${amountLine}
                             : hasSt
                               ? "Будет использована иностранная карта (Stripe)"
                               : "Будут использованы настройки оплаты этой кнопки";
+                      const ccHasBp = customerChoiceAllowed.includes("bepaid");
+                      const ccHasSt = customerChoiceAllowed.includes("stripe");
+                      const customerChoiceHint =
+                        ccHasBp && ccHasSt
+                          ? "Клиент сам выберет белорусскую или иностранную карту"
+                          : ccHasBp
+                            ? "Сейчас доступен только один способ оплаты: bePaid"
+                            : ccHasSt
+                              ? "Сейчас доступен только один способ оплаты: Stripe"
+                              : "Нет доступных способов оплаты";
                       return [
                       {
                         key: "auto" as const,
@@ -1090,6 +1170,13 @@ ${amountLine}
                         hint: autoHint,
                         icon: <MousePointerClick className="h-4 w-4 text-muted-foreground" />,
                         disabled: false,
+                      },
+                      {
+                        key: "customer_choice" as const,
+                        title: "Клиент выбирает",
+                        hint: customerChoiceHint,
+                        icon: <Users className="h-4 w-4 text-blue-500" />,
+                        disabled: customerChoiceAllowed.length === 0,
                       },
                       {
                         key: "bepaid" as const,

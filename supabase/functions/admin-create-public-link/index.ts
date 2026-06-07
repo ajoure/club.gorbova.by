@@ -47,6 +47,13 @@ interface CreatePublicLinkRequest {
   // Phase 5-D — был ли provider выбран админом явно ('explicit') или взят из настроек кнопки ('auto').
   // Используется только для audit: 'explicit' → пишем admin.payment_provider.override.
   provider_choice_source?: 'auto' | 'explicit';
+  // «Клиент выбирает» override (Phase 6-G/H boundary): explicit override allowed_payment_providers
+  // поверх offer.meta.acquiring.allowed_payment_providers. Применяется ТОЛЬКО для
+  // provider_mode='customer_choice' + provider_choice_source='explicit'. Не изменяет offer.
+  allowed_payment_providers?: ('bepaid' | 'stripe')[];
+  // Stripe-валюта для price provisioning, когда provider_mode='customer_choice' и stripe в list.
+  // link.currency при этом остаётся BYN (bepaid-домен).
+  stripe_currency?: string;
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
@@ -88,6 +95,8 @@ Deno.serve(async (req) => {
       account_code: rawAccountCode = null,
       provider_mode: rawProviderMode,
       provider_choice_source: rawProviderChoiceSource,
+      allowed_payment_providers: rawAllowedProvidersExplicit,
+      stripe_currency: rawStripeCurrency,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
@@ -171,6 +180,31 @@ Deno.serve(async (req) => {
       offerAllowedProviders = ['bepaid'];
     }
 
+    // «Клиент выбирает» override (Phase 6-G/H boundary).
+    // Если admin прислал explicit allowed_payment_providers вместе с provider_mode='customer_choice'
+    // и provider_choice_source='explicit' — применяем override поверх offer.allowed_payment_providers.
+    // Override живёт ТОЛЬКО в payment_links; offer/tariff не модифицируется.
+    let effectiveAllowedProviders: ('bepaid' | 'stripe')[] = offerAllowedProviders;
+    let allowedProvidersOverride = false;
+    const explicitAllowedList = Array.isArray(rawAllowedProvidersExplicit)
+      ? Array.from(
+          new Set(
+            rawAllowedProvidersExplicit.filter(
+              (p: any) => p === 'bepaid' || p === 'stripe',
+            ),
+          ),
+        )
+      : null;
+    if (
+      providerMode === 'customer_choice' &&
+      providerChoiceSource === 'explicit' &&
+      explicitAllowedList &&
+      explicitAllowedList.length > 0
+    ) {
+      effectiveAllowedProviders = explicitAllowedList as ('bepaid' | 'stripe')[];
+      allowedProvidersOverride = true;
+    }
+
     // ── Phase 5-C / 5-D: validation per provider_mode ──
     // Phase 5-D: super_admin может оверрайдить provider, не входящий в offer.allowed_payment_providers.
     // Для всех остальных admin'ов — провайдер обязан быть в allowed_payment_providers.
@@ -185,10 +219,13 @@ Deno.serve(async (req) => {
       }
     } else {
       // customer_choice
-      if (offerAllowedProviders.length < 2) {
-        return errorResponse('customer_choice_requires_multi_provider_offer', 400);
+      if (effectiveAllowedProviders.length < 1) {
+        return errorResponse('customer_choice_requires_at_least_one_provider', 400);
       }
-      if (offerAllowedProviders.includes('stripe') && (installment_offer || offerPaymentMethod === 'internal_installment')) {
+      if (
+        effectiveAllowedProviders.includes('stripe') &&
+        (installment_offer || offerPaymentMethod === 'internal_installment')
+      ) {
         return errorResponse('customer_choice_not_supported_for_installment', 400);
       }
     }
@@ -251,12 +288,22 @@ Deno.serve(async (req) => {
     // 4) subscription Stripe требует tariff_offers.meta.stripe.price_id на выбранном оффере
     //    (раннее 400, чтобы админ не создал «мёртвую» ссылку).
     let resolvedAccountCode: string | null = null;
-    if (provider === 'stripe') {
+    // Stripe-валидации запускаются и для fixed=stripe, и для customer_choice со stripe в allowed.
+    const stripePathActive =
+      provider === 'stripe' ||
+      (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
+    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся BYN).
+    const stripeValidationCurrency = (
+      providerMode === 'customer_choice'
+        ? (rawStripeCurrency || 'EUR')
+        : currency
+    ).toUpperCase();
+    if (stripePathActive) {
       if (installmentBlock) {
         return errorResponse('installment_not_supported_on_stripe', 400);
       }
-      if (!STRIPE_ALLOWED_CURRENCIES.has(currency)) {
-        return errorResponse(`Stripe: unsupported currency ${currency}`, 400);
+      if (!STRIPE_ALLOWED_CURRENCIES.has(stripeValidationCurrency)) {
+        return errorResponse(`Stripe: unsupported currency ${stripeValidationCurrency}`, 400);
       }
       const accountQuery = supabase
         .from('acquiring_connections')
@@ -288,9 +335,9 @@ Deno.serve(async (req) => {
         const supportedSet = new Set(
           supportedCurrenciesRaw.map((c) => String(c).toLowerCase())
         );
-        if (!supportedSet.has(currency.toLowerCase())) {
+        if (!supportedSet.has(stripeValidationCurrency.toLowerCase())) {
           return errorResponse(
-            `stripe_currency_not_supported_by_account:${currency}:${resolvedAccountCode}`,
+            `stripe_currency_not_supported_by_account:${stripeValidationCurrency}:${resolvedAccountCode}`,
             400,
           );
         }
@@ -460,8 +507,21 @@ Deno.serve(async (req) => {
     if (installmentBlock) linkMeta.installment = installmentBlock;
     // Phase 5-C — snapshot allowed providers + stripe account для рантайма customer_choice.
     if (providerMode === 'customer_choice') {
-      linkMeta.allowed_payment_providers = offerAllowedProviders;
-      if (offerStripeAccountCode) linkMeta.stripe_account_code = offerStripeAccountCode;
+      linkMeta.allowed_payment_providers = effectiveAllowedProviders;
+      // Stripe account snapshot: при cc override приоритет — resolvedAccountCode (использовался для
+      // price provisioning); иначе — account_code из offer.meta.
+      const ccStripeAccount = resolvedAccountCode || offerStripeAccountCode;
+      if (ccStripeAccount) linkMeta.stripe_account_code = ccStripeAccount;
+      if (effectiveAllowedProviders.includes('stripe')) {
+        linkMeta.stripe_currency = stripeValidationCurrency;
+      }
+      if (allowedProvidersOverride) {
+        linkMeta.allowed_providers_override = {
+          source: 'admin_explicit',
+          offer_allowed_payment_providers: offerAllowedProviders,
+          effective_allowed_payment_providers: effectiveAllowedProviders,
+        };
+      }
     }
 
     // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
@@ -534,8 +594,17 @@ Deno.serve(async (req) => {
         provider: linkProviderColumn,
         account_code: linkAccountCodeColumn,
         provider_mode: providerMode,
-        allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
-        stripe_account_code_snapshot: providerMode === 'customer_choice' ? offerStripeAccountCode : null,
+        allowed_payment_providers: providerMode === 'customer_choice' ? effectiveAllowedProviders : [provider],
+        allowed_providers_override: allowedProvidersOverride
+          ? {
+              offer_allowed_payment_providers: offerAllowedProviders,
+              effective_allowed_payment_providers: effectiveAllowedProviders,
+            }
+          : null,
+        stripe_account_code_snapshot:
+          providerMode === 'customer_choice'
+            ? (resolvedAccountCode || offerStripeAccountCode || null)
+            : null,
         // Stage L: installment proof
         installment: installmentBlock
           ? {
@@ -580,6 +649,32 @@ Deno.serve(async (req) => {
       });
     }
 
+    // «Клиент выбирает» — отдельный audit override allowed_payment_providers.
+    if (allowedProvidersOverride) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'admin.payment_provider.customer_choice_override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          offer_allowed_payment_providers: offerAllowedProviders,
+          effective_allowed_payment_providers: effectiveAllowedProviders,
+          stripe_account_code: effectiveAllowedProviders.includes('stripe')
+            ? (resolvedAccountCode || offerStripeAccountCode || null)
+            : null,
+          stripe_currency: effectiveAllowedProviders.includes('stripe')
+            ? stripeValidationCurrency
+            : null,
+          reason: 'admin_customer_choice_override',
+        },
+      });
+    }
+
 
     return jsonResponse({
       success: true,
@@ -597,7 +692,7 @@ Deno.serve(async (req) => {
       provider: linkProviderColumn,
       account_code: linkAccountCodeColumn,
       provider_mode: providerMode,
-      allowed_payment_providers: providerMode === 'customer_choice' ? offerAllowedProviders : [provider],
+      allowed_payment_providers: providerMode === 'customer_choice' ? effectiveAllowedProviders : [provider],
       currency,
       row: link,
     });
