@@ -405,6 +405,10 @@ export default function PublicPayPage() {
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
   // Phase 5-C — customer provider choice gating.
+  // HOTFIX provider_choice_required: согласовано с backend.
+  //   • customer_choice + allowed.length===0 → конфиг-ошибка, оплата заблокирована;
+  //   • customer_choice + allowed.length===1 → авто-выбор (backend подхватит);
+  //   • customer_choice + allowed.length >1 → показываем CustomerProviderChoice.
   const providerResolution = resolveProviderChoice({
     allowed_payment_providers: linkInfo.allowed_payment_providers ?? undefined,
     default_provider: (linkInfo.provider as CustomerProvider | null) ?? undefined,
@@ -412,6 +416,10 @@ export default function PublicPayPage() {
   const isCustomerChoiceMode =
     linkInfo.provider_mode === 'customer_choice' && providerResolution.mode === 'choice';
   const needsProviderChoice = isCustomerChoiceMode && !chosenProvider;
+  const isProviderMisconfigured =
+    linkInfo.provider_mode === 'customer_choice' &&
+    Array.isArray(linkInfo.allowed_payment_providers) &&
+    linkInfo.allowed_payment_providers.length === 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
