@@ -404,6 +404,15 @@ export default function PublicPayPage() {
     savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
+  // Phase 5-C — customer provider choice gating.
+  const providerResolution = resolveProviderChoice({
+    allowed_payment_providers: linkInfo.allowed_payment_providers ?? undefined,
+    default_provider: (linkInfo.provider as CustomerProvider | null) ?? undefined,
+  });
+  const isCustomerChoiceMode =
+    linkInfo.provider_mode === 'customer_choice' && providerResolution.mode === 'choice';
+  const needsProviderChoice = isCustomerChoiceMode && !chosenProvider;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
       <LandingHeader />
