@@ -295,22 +295,11 @@ export function AdminPaymentLinkDialog({
   );
 
 
-  // Effective offer: пользовательский override (если выбран и валиден) > resolver
-  // PATCH 4.1.1 — для Stripe+subscription отбираем ТОЛЬКО офферы с meta.stripe.price_id.
+  // Effective offer: пользовательский override (если выбран и валиден) > resolver.
+  // BLOCKER FIX: Stripe+subscription больше не требует meta.stripe.price_id во фронте —
+  // оффер выбирается так же, как для bePaid, а технический provider mapping (Stripe Price)
+  // обеспечивает backend через admin-provision-stripe-price.
   const effectiveOffer: TariffOffer | null = useMemo(() => {
-    const isStripeSub = provider === "stripe" && paymentType === "subscription";
-    if (isStripeSub) {
-      // user override должен быть в eligible-сете; иначе берём первый primary/первый из set.
-      if (selectedOfferId) {
-        const pick = stripeEligibleOffers.find((o) => o.id === selectedOfferId);
-        if (pick) return pick;
-      }
-      if (stripeEligibleOffers.length === 0) return null;
-      return (
-        stripeEligibleOffers.find((o) => (o as any).is_primary) ??
-        stripeEligibleOffers[0]
-      );
-    }
     if (!resolved.ok) return null;
     if (selectedOfferId) {
       const userPick = (allOffers || []).find(
@@ -319,7 +308,7 @@ export function AdminPaymentLinkDialog({
       if (userPick) return userPick;
     }
     return resolved.offer;
-  }, [resolved, selectedOfferId, allOffers, provider, paymentType, stripeEligibleOffers]);
+  }, [resolved, selectedOfferId, allOffers]);
 
   // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
   const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
