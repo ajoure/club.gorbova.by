@@ -163,6 +163,7 @@ Deno.serve(async (req) => {
     const account_code = body.account_code;
     const business_stream = body.business_stream;
     const execute = body.execute === true;
+    const requested_currency_raw = (body.requested_currency || '').toString().toUpperCase().trim();
 
     if (!tariff_offer_id || !account_code || !business_stream) {
       return json(400, {
@@ -201,13 +202,51 @@ Deno.serve(async (req) => {
       .eq('tariff_id', (tariff as any).id)
       .eq('is_active', true)
       .maybeSingle();
-    if (!price) {
-      await audit('manual_review', actor_user_id, tariff_offer_id, { reason: 'no_active_tariff_price' });
-      return json(422, { status: 'manual_review', error: 'no_active_tariff_price' });
-    }
 
-    const currency = String((price as any).currency).toUpperCase();
-    const amountDecimal = Number((price as any).final_price);
+    // Hotfix-1: amount/currency SOT с fallback.
+    //   1) Active tariff_prices row → исторический канон.
+    //   2) Иначе → offer.amount + requested_currency из body (no FX, no conversion).
+    let currency: string;
+    let amountDecimal: number;
+    let amount_source: 'tariff_prices.final_price' | 'offer.amount' = 'tariff_prices.final_price';
+    let currency_source: 'tariff_prices.currency' | 'request.requested_currency' = 'tariff_prices.currency';
+    let tariff_price_id: string | null = null;
+
+    if (price) {
+      currency = String((price as any).currency).toUpperCase();
+      amountDecimal = Number((price as any).final_price);
+      tariff_price_id = (price as any).id;
+    } else {
+      if (!requested_currency_raw) {
+        await audit('manual_review', actor_user_id, tariff_offer_id, {
+          reason: 'no_active_tariff_price_and_no_requested_currency',
+        });
+        return json(422, {
+          status: 'manual_review',
+          error: 'no_active_tariff_price:requested_currency_required',
+        });
+      }
+      const offerAmount = Number((offer as any).amount);
+      if (!Number.isFinite(offerAmount) || offerAmount <= 0) {
+        await audit('manual_review', actor_user_id, tariff_offer_id, {
+          reason: 'offer_amount_invalid_for_fallback',
+          offer_amount: (offer as any).amount,
+        });
+        return json(422, { status: 'manual_review', error: 'offer_amount_invalid' });
+      }
+      currency = requested_currency_raw;
+      amountDecimal = offerAmount;
+      amount_source = 'offer.amount';
+      currency_source = 'request.requested_currency';
+      await audit('offer_amount_fallback', actor_user_id, tariff_offer_id, {
+        reason: 'no_active_tariff_price',
+        currency,
+        amount: amountDecimal,
+        offer_id: tariff_offer_id,
+        tariff_id: (tariff as any).id,
+        source: 'offer_meta',
+      });
+    }
     const unit_amount = Math.round(amountDecimal * 100);
 
     if (!CURRENCY_WHITELIST.includes(currency)) {
