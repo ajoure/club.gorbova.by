@@ -297,9 +297,9 @@ Deno.serve(async (req) => {
         idempotency_key: `stripe-price:${tariff_offer_id}:${currency}:${unit_amount}:${period.interval}:${period.interval_count}`,
       },
       sot: {
-        amount_source: 'tariff_prices.final_price',
-        currency_source: 'tariff_prices.currency',
-        tariff_price_id: (price as any).id,
+        amount_source,
+        currency_source,
+        tariff_price_id,
         offer_amount_legacy_diagnostic: (offer as any).amount,
       },
       foreign_mappings_detected: foreign,
