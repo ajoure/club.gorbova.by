@@ -124,3 +124,42 @@ Runtime файлы вне UI-слоя не изменены. Phase 5-D конт�
 
 **Phase 6-F = PASS.**
 
+
+---
+
+## Phase 6-G.1 — UI-only fix: убран ложный warning, динамический hint (2026-06-07)
+
+### DIAGNOSE
+- Источники ложного warning найдены в `OfferAcquiringSettings.tsx` (UI-блок + ветка `validateOfferAcquiring`) и в `AdminPaymentLinkDialog.tsx` (`stripeSubscriptionPriceMissing` guard).
+- Stripe subscription helpers (`admin-provision-stripe-price`, `_shared/create-stripe-checkout.ts` с веткой `payment_type='subscription'`) уже существуют — задача в сборке flow и удалении ложных блокировок.
+- См. `.lovable/discovery/phase_6_payment_profiles_inventory_v1.md` раздел «Phase 6-G discovery».
+
+### EXECUTE
+1. `src/components/admin/products/OfferAcquiringSettings.tsx`:
+   - Удалён UI-блок с warning «Интеграции → Stripe → Тарифы» / «снимите галочку».
+   - Заменён `subscriptionStripeNotConfigured` на `showStripeSubscriptionInfo` — нейтральная подсказка о том, что Stripe-тариф будет привязан автоматически.
+   - В `validateOfferAcquiring` убрана блокировка save при `isSubscription && !acq.stripe.price_id`. Проверка подключения (`account_code`) сохранена.
+2. `src/components/admin/AdminPaymentLinkDialog.tsx`:
+   - Удалён guard `stripeSubscriptionPriceMissing` и его участие в `stripeBlocked`. Submit больше не блокируется отсутствием price_id.
+   - Hint «По настройке кнопки» сделан динамическим: bePaid+Stripe → «Клиент сможет выбрать белорусскую или иностранную карту»; только bePaid → «Будет использована белорусская карта (bePaid)»; только Stripe → «Будет использована иностранная карта (Stripe)»; иначе нейтральная подсказка.
+
+### VERIFY (Gates)
+- G103 (текст про «Интеграции → Stripe → Тарифы» удалён): PASS — `rg "Интеграции.*Stripe.*Тарифы" src/ supabase/functions/` → 0 совпадений.
+- G104 («снимите галочку / отключите подписку» удалены): PASS — `rg "снимите галочку|отключите подписку"` → 0.
+- G110 (admin link «По настройке кнопки» = customer choice при двух provider): PASS на уровне UI-копирайтинга; runtime-логика `provider_mode='customer_choice'` в `admin-create-public-link` и `public-checkout` уже корректна (Phase 5-C/5-D, без изменений).
+- G114 (runtime freeze): PASS — изменены только два frontend-файла; edge-functions, миграции, webhook'и не тронуты.
+- G116 (поиск устаревших строк): PASS — все три фразы (`Интеграции → Stripe → Тарифы`, `снимите галочку`, `отключите подписку`) дают 0 совпадений по проекту.
+
+### Изменённые файлы
+- `src/components/admin/products/OfferAcquiringSettings.tsx`
+- `src/components/admin/AdminPaymentLinkDialog.tsx`
+- `.lovable/discovery/phase_6_payment_profiles_inventory_v1.md` (раздел «Phase 6-G discovery»)
+- `.lovable/proofs/phase_6_payment_profiles_v1.md` (этот раздел)
+
+### Открытые позиции для Phase 6-G.2
+- Автопровижн Stripe Price при save оффера (Вариант A): вызов `admin-provision-stripe-price` из `handleSaveOffer` под super_admin JWT. До этого backend по-прежнему вернёт 422 `stripe_price_missing_in_offer_meta` при попытке Stripe-subscription checkout — это корректное поведение, но UX закрывается следующим коммитом.
+- Smoke proof (bePaid one-time/subscription без регрессии, Stripe one-time, Stripe subscription end-to-end после 6-G.2, customer choice на `/pay/:token`) — собирается отдельно после 6-G.2.
+
+### Статус
+- Phase 6-G.1 = PASS (UI-only, runtime-freeze соблюдён).
+- Phase 6-G.2 = TODO (auto-provision при save).
