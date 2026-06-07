@@ -449,7 +449,7 @@ export default function PublicPayPage() {
               )}
               <div className="flex items-center gap-3 text-sm">
                 <Shield className="h-5 w-5 text-primary shrink-0" />
-                <span>Безопасная оплата через bePaid</span>
+                <span>Безопасная оплата по защищённому соединению</span>
               </div>
             </div>
 
