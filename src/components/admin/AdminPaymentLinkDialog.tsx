@@ -1316,7 +1316,14 @@ ${amountLine}
                         </div>
                         <div>
                           <Label className="text-xs">Валюта</Label>
-                          <Select value={stripeCurrency} onValueChange={setStripeCurrency}>
+                          <Select
+                            value={stripeCurrency}
+                            onValueChange={(v) => {
+                              setStripeCurrency(v);
+                              setStripeCurrencyManuallySet(true);
+                            }}
+                          >
+
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {
