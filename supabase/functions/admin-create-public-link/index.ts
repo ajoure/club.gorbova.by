@@ -176,6 +176,31 @@ Deno.serve(async (req) => {
       offerAllowedProviders = ['bepaid'];
     }
 
+    // «Клиент выбирает» override (Phase 6-G/H boundary).
+    // Если admin прислал explicit allowed_payment_providers вместе с provider_mode='customer_choice'
+    // и provider_choice_source='explicit' — применяем override поверх offer.allowed_payment_providers.
+    // Override живёт ТОЛЬКО в payment_links; offer/tariff не модифицируется.
+    let effectiveAllowedProviders: ('bepaid' | 'stripe')[] = offerAllowedProviders;
+    let allowedProvidersOverride = false;
+    const explicitAllowedList = Array.isArray(rawAllowedProvidersExplicit)
+      ? Array.from(
+          new Set(
+            rawAllowedProvidersExplicit.filter(
+              (p: any) => p === 'bepaid' || p === 'stripe',
+            ),
+          ),
+        )
+      : null;
+    if (
+      providerMode === 'customer_choice' &&
+      providerChoiceSource === 'explicit' &&
+      explicitAllowedList &&
+      explicitAllowedList.length > 0
+    ) {
+      effectiveAllowedProviders = explicitAllowedList as ('bepaid' | 'stripe')[];
+      allowedProvidersOverride = true;
+    }
+
     // ── Phase 5-C / 5-D: validation per provider_mode ──
     // Phase 5-D: super_admin может оверрайдить provider, не входящий в offer.allowed_payment_providers.
     // Для всех остальных admin'ов — провайдер обязан быть в allowed_payment_providers.
@@ -190,10 +215,13 @@ Deno.serve(async (req) => {
       }
     } else {
       // customer_choice
-      if (offerAllowedProviders.length < 2) {
-        return errorResponse('customer_choice_requires_multi_provider_offer', 400);
+      if (effectiveAllowedProviders.length < 1) {
+        return errorResponse('customer_choice_requires_at_least_one_provider', 400);
       }
-      if (offerAllowedProviders.includes('stripe') && (installment_offer || offerPaymentMethod === 'internal_installment')) {
+      if (
+        effectiveAllowedProviders.includes('stripe') &&
+        (installment_offer || offerPaymentMethod === 'internal_installment')
+      ) {
         return errorResponse('customer_choice_not_supported_for_installment', 400);
       }
     }
