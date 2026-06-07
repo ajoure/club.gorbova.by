@@ -571,8 +571,18 @@ export default function AdminProductDetailV2() {
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
 
-    // Phase 5-B — acquiring validation (UI mirrors DB trigger)
-    const acqError = validateOfferAcquiring((offerForm.meta as any)?.acquiring as OfferAcquiring | undefined, isInstallment);
+    // Phase 5-B + PATCH 5-B.2 — acquiring validation (UI mirrors DB trigger)
+    const isSubscriptionForAcq = !isInstallment && (
+      offerForm.offer_type === "trial" ||
+      isPreregistration ||
+      offerForm.requires_card_tokenization ||
+      Boolean((offerForm.meta as any)?.recurring?.is_recurring)
+    );
+    const acqError = validateOfferAcquiring(
+      (offerForm.meta as any)?.acquiring as OfferAcquiring | undefined,
+      isInstallment,
+      isSubscriptionForAcq,
+    );
     if (acqError) {
       toast.error(acqError);
       return;
@@ -1973,11 +1983,19 @@ export default function AdminProductDetailV2() {
               </Card>
             )}
 
-            {/* Phase 5-B — Offer Acquiring Settings (bePaid / Stripe) */}
+            {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe) */}
             <OfferAcquiringSettings
               value={(offerForm.meta as any)?.acquiring}
               onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
               isInstallment={offerForm.payment_method === "internal_installment"}
+              isSubscription={
+                offerForm.payment_method !== "internal_installment" && (
+                  offerForm.offer_type === "trial" ||
+                  offerForm.offer_type === "preregistration" ||
+                  offerForm.requires_card_tokenization ||
+                  Boolean((offerForm.meta as any)?.recurring?.is_recurring)
+                )
+              }
             />
             </TabsContent>
 

@@ -1,23 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, CheckCircle2, AlertCircle, Globe2, Wallet } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Globe2,
+  Wallet,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 /**
- * Phase 5-B + PATCH 5-B.1 — Offer Acquiring Settings (UX cleanup).
+ * PATCH 5-B.2 — Acquiring connection selectors + collapsed Stripe advanced.
  *
- * UI скрывает технические идентификаторы Stripe (product_id, account_code, slug).
- * Лейблы переведены на пользовательский язык; в meta.acquiring сохраняются те же
- * технические поля, что и раньше (account_code, product_id, currency, mode).
+ * UI:
+ *  - bePaid checkbox + select подключения (acquiring_connections WHERE provider='bepaid' AND status='active').
+ *  - Stripe checkbox + select подключения (acquiring_connections WHERE provider='stripe' AND status='active').
+ *  - test/live режим — read-only бейдж из выбранного подключения.
+ *  - Stripe Price ID — внутри свёрнутого блока «Дополнительные настройки Stripe».
+ *  - Для one-time оффера price_id не обязателен; для subscription — обязателен.
  *
- * Не управляет runtime checkout. Phase 5-C добавит user-facing выбор провайдера.
+ * Без изменений runtime (public-checkout, webhooks, grant-access, Phase 5-C).
  */
 
 export type AcquiringProvider = "bepaid" | "stripe";
@@ -30,24 +42,32 @@ export interface OfferAcquiringStripe {
   mode?: "test" | "live" | null;
 }
 
+export interface OfferAcquiringBepaid {
+  account_code: string;
+  shop_id?: string | null;
+}
+
 export interface OfferAcquiring {
   allowed_payment_providers: AcquiringProvider[];
   default_provider: AcquiringProvider;
   customer_choice_enabled: boolean;
+  bepaid?: OfferAcquiringBepaid;
   stripe?: OfferAcquiringStripe;
 }
 
-interface StripeAccount {
+interface ConnectionRow {
   account_code: string;
-  account_name: string;
+  account_name: string | null;
   test_mode: boolean;
-  is_default?: boolean;
+  is_default: boolean | null;
+  capabilities_snapshot: Record<string, any> | null;
 }
 
 interface Props {
   value: OfferAcquiring | undefined;
   onChange: (next: OfferAcquiring) => void;
   isInstallment: boolean;
+  isSubscription: boolean;
 }
 
 function defaultAcquiring(): OfferAcquiring {
@@ -58,41 +78,101 @@ function defaultAcquiring(): OfferAcquiring {
   };
 }
 
-function modeLabel(mode?: string | null) {
-  if (mode === "test") return "Тестовый режим";
-  if (mode === "live") return "Боевой режим";
-  return null;
+function extractShopId(snap: Record<string, any> | null | undefined): string | null {
+  if (!snap || typeof snap !== "object") return null;
+  const direct = (snap as any).shop_id ?? (snap as any).shopId;
+  if (direct) return String(direct);
+  const nested = (snap as any).bepaid?.shop_id ?? (snap as any).account?.shop_id;
+  return nested ? String(nested) : null;
 }
 
-export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props) {
+function bepaidLabel(c: ConnectionRow): string {
+  if (c.account_name && c.account_name.trim()) return c.account_name;
+  const shopId = extractShopId(c.capabilities_snapshot);
+  if (shopId) return `bePaid — Shop ID ${shopId}`;
+  return c.account_code;
+}
+
+function stripeLabel(c: ConnectionRow): string {
+  if (c.account_name && c.account_name.trim()) return c.account_name;
+  // Technical fallback — proof фиксирует, что show slug допустимо только при отсутствии account_name.
+  return `Stripe — ${c.account_code}`;
+}
+
+function modeBadge(testMode: boolean) {
+  return testMode ? "Тестовое подключение" : "Боевое подключение";
+}
+
+export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubscription }: Props) {
   const acq = value ?? defaultAcquiring();
   const hasBepaid = acq.allowed_payment_providers.includes("bepaid");
   const hasStripe = acq.allowed_payment_providers.includes("stripe");
 
-  const [accounts, setAccounts] = useState<StripeAccount[]>([]);
+  const [bepaidConnections, setBepaidConnections] = useState<ConnectionRow[]>([]);
+  const [stripeConnections, setStripeConnections] = useState<ConnectionRow[]>([]);
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from("acquiring_connections")
-        .select("account_code, account_name, test_mode, status, provider, is_default")
-        .eq("provider", "stripe")
+        .select("provider, account_code, account_name, test_mode, status, is_default, capabilities_snapshot")
         .eq("status", "active")
         .order("is_default", { ascending: false })
-        .order("account_code");
-      if (!cancelled) setAccounts((data ?? []) as StripeAccount[]);
+        .order("account_name");
+      if (cancelled) return;
+      const rows = (data ?? []) as Array<ConnectionRow & { provider: string }>;
+      setBepaidConnections(rows.filter((r) => r.provider === "bepaid"));
+      setStripeConnections(rows.filter((r) => r.provider === "stripe"));
+      setConnectionsLoaded(true);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function defaultAccountCode(): string {
-    return accounts.find((a) => a.is_default)?.account_code
-      ?? accounts[0]?.account_code
-      ?? "stripe_poland";
-  }
+  // Auto-open advanced если subscription + Stripe и нет price_id
+  useEffect(() => {
+    if (hasStripe && isSubscription && !acq.stripe?.price_id) {
+      setAdvancedOpen(true);
+    }
+  }, [hasStripe, isSubscription, acq.stripe?.price_id]);
+
+  // Auto-populate bepaid.account_code когда bePaid включён, но в meta пусто
+  useEffect(() => {
+    if (!connectionsLoaded || !hasBepaid || acq.bepaid?.account_code) return;
+    if (bepaidConnections.length === 0) return;
+    const def = bepaidConnections.find((c) => c.is_default) ?? bepaidConnections[0];
+    update({
+      bepaid: {
+        account_code: def.account_code,
+        shop_id: extractShopId(def.capabilities_snapshot),
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionsLoaded, hasBepaid]);
+
+  // Auto-populate stripe.account_code когда Stripe включён, но в meta пусто
+  useEffect(() => {
+    if (!connectionsLoaded || !hasStripe || acq.stripe?.account_code) return;
+    if (stripeConnections.length === 0) return;
+    const def = stripeConnections.find((c) => c.is_default) ?? stripeConnections[0];
+    updateStripe({ account_code: def.account_code, mode: def.test_mode ? "test" : "live" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionsLoaded, hasStripe]);
+
+  const selectedBepaid = useMemo(
+    () => bepaidConnections.find((c) => c.account_code === acq.bepaid?.account_code),
+    [bepaidConnections, acq.bepaid?.account_code],
+  );
+  const selectedStripe = useMemo(
+    () => stripeConnections.find((c) => c.account_code === acq.stripe?.account_code),
+    [stripeConnections, acq.stripe?.account_code],
+  );
 
   function update(next: Partial<OfferAcquiring>) {
     const merged: OfferAcquiring = { ...acq, ...next };
@@ -103,6 +183,9 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
     }
     if (!merged.allowed_payment_providers.includes("stripe")) {
       delete merged.stripe;
+    }
+    if (!merged.allowed_payment_providers.includes("bepaid")) {
+      delete merged.bepaid;
     }
     onChange(merged);
   }
@@ -119,31 +202,33 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
       toast.error("Выберите хотя бы один способ оплаты");
       return;
     }
-    update({
-      allowed_payment_providers: next,
-      stripe: p === "stripe" && on
-        ? (acq.stripe ?? { account_code: defaultAccountCode(), price_id: "" })
-        : acq.stripe,
-    });
+    update({ allowed_payment_providers: next });
   }
 
   function updateStripe(patch: Partial<OfferAcquiringStripe>) {
-    const stripe: OfferAcquiringStripe = {
-      ...(acq.stripe ?? { account_code: defaultAccountCode(), price_id: "" }),
-      ...patch,
-    };
-    update({ stripe });
+    const base: OfferAcquiringStripe = acq.stripe ?? { account_code: "", price_id: "" };
+    update({ stripe: { ...base, ...patch } });
   }
 
-  function updateMode(mode: "test" | "live") {
-    // Режим выбирается администратором — соответствующий аккаунт acquiring_connections
-    // подбираем автоматически по test_mode. Если подходящего нет — оставляем текущий.
-    const target = accounts.find((a) => (mode === "test" ? a.test_mode : !a.test_mode));
+  function changeStripeConnection(accountCode: string) {
+    const conn = stripeConnections.find((c) => c.account_code === accountCode);
+    // При смене подключения инвалидируем product_id/currency, т.к. price_id привязан к конкретному аккаунту.
     updateStripe({
-      mode,
-      account_code: target?.account_code ?? acq.stripe?.account_code ?? defaultAccountCode(),
-      // При смене режима lookup должен быть повторён.
+      account_code: accountCode,
       product_id: null,
+      currency: null,
+      mode: conn ? (conn.test_mode ? "test" : "live") : null,
+    });
+    setLookupError(null);
+  }
+
+  function changeBepaidConnection(accountCode: string) {
+    const conn = bepaidConnections.find((c) => c.account_code === accountCode);
+    update({
+      bepaid: {
+        account_code: accountCode,
+        shop_id: conn ? extractShopId(conn.capabilities_snapshot) : null,
+      },
     });
   }
 
@@ -152,23 +237,25 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
       toast.error("Введите код тарифа Stripe");
       return;
     }
+    if (!acq.stripe.account_code) {
+      toast.error("Выберите подключение Stripe");
+      return;
+    }
     setLookupLoading(true);
     setLookupError(null);
     try {
-      const accountCode = acq.stripe.account_code || defaultAccountCode();
       const { data, error } = await supabase.functions.invoke("admin-stripe-price-lookup", {
-        body: { price_id: acq.stripe.price_id.trim(), account_code: accountCode },
+        body: { price_id: acq.stripe.price_id.trim(), account_code: acq.stripe.account_code },
       });
       if (error) throw error;
       if (!data?.ok) {
         const msg = data?.error || "lookup_failed";
         setLookupError(msg);
         toast.error(`Не удалось подтвердить код тарифа: ${msg}`);
-        updateStripe({ product_id: null, currency: null, mode: null });
+        updateStripe({ product_id: null, currency: null });
         return;
       }
       updateStripe({
-        account_code: accountCode,
         product_id: data.product_id,
         currency: data.currency,
         mode: data.mode,
@@ -184,7 +271,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
   }
 
   const stripeReady = Boolean(acq.stripe?.product_id && acq.stripe?.currency);
-  const stripeDirty = Boolean(acq.stripe?.price_id) && !stripeReady;
+  const subscriptionPriceMissing = hasStripe && isSubscription && !acq.stripe?.price_id;
+  const shortProductId = acq.stripe?.product_id
+    ? `prod_…${acq.stripe.product_id.slice(-4)}`
+    : null;
 
   return (
     <Card>
@@ -192,8 +282,9 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
         <CardTitle className="text-sm text-muted-foreground">Способы приёма оплаты</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-3">
-          <label className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer">
+        {/* === bePaid === */}
+        <div className="rounded-lg border p-3 space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
             <Checkbox
               checked={hasBepaid}
               onCheckedChange={(v) => toggleProvider("bepaid", Boolean(v))}
@@ -202,7 +293,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             <div className="flex-1">
               <div className="font-medium flex items-center gap-2">
                 <Wallet className="h-4 w-4 text-emerald-600" />
-                Принимать белорусские карты
+                Принимать белорусские карты <span className="text-xs text-muted-foreground">(bePaid)</span>
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
                 Visa / Mastercard банков Беларуси. BYN, подписки, рассрочка, ЕРИП.
@@ -210,7 +301,47 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             </div>
           </label>
 
-          <label className={`flex items-start gap-3 p-3 rounded-lg border ${isInstallment ? "opacity-60 cursor-not-allowed" : "hover:bg-muted/50 cursor-pointer"}`}>
+          {hasBepaid && (
+            <div className="pl-7 space-y-2">
+              {!connectionsLoaded ? (
+                <div className="text-xs text-muted-foreground">Загрузка подключений…</div>
+              ) : bepaidConnections.length === 0 ? (
+                <div className="text-xs text-destructive border border-destructive/40 rounded p-2 bg-destructive/5">
+                  Нет активного подключения bePaid. Добавьте подключение в настройках эквайринга,
+                  иначе сохранение будет невозможно.
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Label className="text-xs whitespace-nowrap">Подключение:</Label>
+                  <Select
+                    value={acq.bepaid?.account_code ?? ""}
+                    onValueChange={changeBepaidConnection}
+                  >
+                    <SelectTrigger className="flex-1 min-w-[220px]">
+                      <SelectValue placeholder="Выбрать подключение" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bepaidConnections.map((c) => (
+                        <SelectItem key={c.account_code} value={c.account_code}>
+                          {bepaidLabel(c)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedBepaid && (
+                    <Badge variant="outline" className="text-xs">
+                      {modeBadge(selectedBepaid.test_mode)}
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* === Stripe === */}
+        <div className={`rounded-lg border p-3 space-y-3 ${isInstallment ? "opacity-60" : ""}`}>
+          <label className={`flex items-start gap-3 ${isInstallment ? "cursor-not-allowed" : "cursor-pointer"}`}>
             <Checkbox
               checked={hasStripe}
               disabled={isInstallment}
@@ -220,7 +351,7 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
             <div className="flex-1">
               <div className="font-medium flex items-center gap-2">
                 <Globe2 className="h-4 w-4 text-indigo-500" />
-                Принимать иностранные карты
+                Принимать иностранные карты <span className="text-xs text-muted-foreground">(Stripe)</span>
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
                 {isInstallment
@@ -229,98 +360,131 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
               </div>
             </div>
           </label>
+
+          {hasStripe && !isInstallment && (
+            <div className="pl-7 space-y-3">
+              {!connectionsLoaded ? (
+                <div className="text-xs text-muted-foreground">Загрузка подключений…</div>
+              ) : stripeConnections.length === 0 ? (
+                <div className="text-xs text-destructive border border-destructive/40 rounded p-2 bg-destructive/5">
+                  Нет активного подключения Stripe. Добавьте подключение в настройках эквайринга,
+                  иначе сохранение будет невозможно.
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Label className="text-xs whitespace-nowrap">Подключение:</Label>
+                  <Select
+                    value={acq.stripe?.account_code ?? ""}
+                    onValueChange={changeStripeConnection}
+                  >
+                    <SelectTrigger className="flex-1 min-w-[220px]">
+                      <SelectValue placeholder="Выбрать подключение" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stripeConnections.map((c) => (
+                        <SelectItem key={c.account_code} value={c.account_code}>
+                          {stripeLabel(c)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedStripe && (
+                    <Badge variant="outline" className="text-xs">
+                      {modeBadge(selectedStripe.test_mode)}
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {subscriptionPriceMissing && (
+                <div className="text-xs text-destructive border border-destructive/40 rounded p-2 bg-destructive/5">
+                  Для подписочного оффера требуется код тарифа Stripe. Заполните его в блоке
+                  «Дополнительные настройки Stripe» ниже.
+                </div>
+              )}
+
+              {/* Advanced collapsible */}
+              <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {advancedOpen ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                    Дополнительные настройки Stripe
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3 space-y-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      Код тарифа Stripe{isSubscription ? " *" : ""}
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="price_..."
+                        value={acq.stripe?.price_id ?? ""}
+                        onChange={(e) =>
+                          updateStripe({
+                            price_id: e.target.value,
+                            product_id: null,
+                            currency: null,
+                          })
+                        }
+                        className="font-mono text-sm"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleLookup}
+                        disabled={lookupLoading || !acq.stripe?.price_id || !acq.stripe?.account_code}
+                      >
+                        {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Проверить"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Используется только для подписок Stripe. Обычно заполняется интегратором.
+                      Для разовой оплаты заполнять не обязательно.
+                    </p>
+                    {lookupError && (
+                      <p className="text-xs text-destructive">
+                        Не удалось подтвердить: {lookupError}
+                      </p>
+                    )}
+                  </div>
+
+                  {stripeReady && (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 p-2 space-y-0.5">
+                      <div className="flex items-center gap-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Тариф подтверждён
+                      </div>
+                      <div className="text-xs text-emerald-900/80 dark:text-emerald-100/80 pl-5">
+                        Валюта: <span className="font-medium">{acq.stripe?.currency?.toUpperCase()}</span>
+                      </div>
+                      {shortProductId && (
+                        <div className="text-[10px] text-muted-foreground pl-5">
+                          Служебный ID продукта: {shortProductId}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!stripeReady && acq.stripe?.price_id && (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      Код тарифа не подтверждён
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          )}
         </div>
-
-        {hasStripe && (
-          <div className="border rounded-lg p-4 bg-muted/20 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-medium">Приём оплаты иностранными картами</div>
-              {stripeReady && (
-                <Badge variant="outline" className="text-emerald-700 border-emerald-300">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                  подключено
-                </Badge>
-              )}
-              {stripeDirty && (
-                <Badge variant="outline" className="text-amber-700 border-amber-300">
-                  <AlertCircle className="h-3 w-3 mr-1" />
-                  не подтверждено
-                </Badge>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Код тарифа Stripe *</Label>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="price_..."
-                  value={acq.stripe?.price_id ?? ""}
-                  onChange={(e) =>
-                    updateStripe({
-                      price_id: e.target.value,
-                      product_id: null,
-                      currency: null,
-                      mode: null,
-                    })
-                  }
-                  className="font-mono text-sm"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleLookup}
-                  disabled={lookupLoading || !acq.stripe?.price_id}
-                >
-                  {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Подтвердить"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Валюту и режим работы мы определим автоматически по коду тарифа.
-              </p>
-              {lookupError && (
-                <p className="text-xs text-destructive">
-                  Не удалось подтвердить: {lookupError}
-                </p>
-              )}
-            </div>
-
-            {stripeReady && (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 space-y-1.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-emerald-800 dark:text-emerald-200">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Тариф Stripe подключён
-                </div>
-                <div className="text-xs text-emerald-900/80 dark:text-emerald-100/80 grid grid-cols-2 gap-x-4 gap-y-0.5 pl-6">
-                  <div>Валюта оплаты:</div>
-                  <div className="font-medium">{acq.stripe?.currency?.toUpperCase() || "—"}</div>
-                  <div>Режим:</div>
-                  <div className="font-medium">{modeLabel(acq.stripe?.mode) || "—"}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-2 pt-2 border-t">
-              <Label className="text-xs">Режим работы</Label>
-              <RadioGroup
-                value={acq.stripe?.mode ?? ""}
-                onValueChange={(v) => updateMode(v as "test" | "live")}
-                className="flex gap-4"
-              >
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <RadioGroupItem value="test" id="stripe-mode-test" />
-                  Тестовый режим
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <RadioGroupItem value="live" id="stripe-mode-live" />
-                  Боевой режим
-                </label>
-              </RadioGroup>
-              <p className="text-xs text-muted-foreground">
-                Режим подставится автоматически после проверки кода тарифа. Можно изменить вручную.
-              </p>
-            </div>
-          </div>
-        )}
 
         <div className="text-xs text-muted-foreground border-t pt-3">
           {hasBepaid && hasStripe
@@ -337,19 +501,28 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment }: Props
 /**
  * Save-time validator. Returns error string or null.
  */
-export function validateOfferAcquiring(acq: OfferAcquiring | undefined, isInstallment: boolean): string | null {
+export function validateOfferAcquiring(
+  acq: OfferAcquiring | undefined,
+  isInstallment: boolean,
+  isSubscription: boolean = false,
+): string | null {
   if (!acq) return null;
   const list = acq.allowed_payment_providers ?? [];
   if (list.length === 0) return "Выберите хотя бы один способ оплаты";
-  if (isInstallment && list.includes("stripe")) return "Иностранные карты пока не поддерживают рассрочку";
-  if (list.includes("stripe")) {
-    if (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0) {
-      return "Укажите код тарифа Stripe";
+  if (isInstallment && list.includes("stripe")) {
+    return "Иностранные карты пока не поддерживают рассрочку";
+  }
+  if (list.includes("bepaid")) {
+    if (!acq.bepaid?.account_code) {
+      return "Выберите подключение для приёма белорусских карт";
     }
+  }
+  if (list.includes("stripe")) {
     if (!acq.stripe?.account_code) {
-      // Внутреннее требование — заполняем при первом включении Stripe автоматически,
-      // но валидация остаётся как safety-net.
-      return "Не удалось определить Stripe-подключение";
+      return "Выберите подключение для приёма иностранных карт";
+    }
+    if (isSubscription && (!acq.stripe?.price_id || acq.stripe.price_id.trim().length === 0)) {
+      return "Для подписки укажите код тарифа Stripe";
     }
   }
   return null;
