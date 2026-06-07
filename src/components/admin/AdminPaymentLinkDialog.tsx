@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
+import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
@@ -198,6 +199,8 @@ export function AdminPaymentLinkDialog({
   // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
   // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
   const [providerModeChoice, setProviderModeChoice] = useState<"auto" | "bepaid" | "stripe">("auto");
+  // Phase 5-D — super_admin может выбрать provider, даже если он не в offer.allowed_payment_providers.
+  const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
@@ -757,6 +760,8 @@ ${amountLine}
             // Phase 4.1 — provider routing
             provider: effectiveProvider,
             provider_mode: effectiveProviderMode,
+            // Phase 5-D — explicit admin override marker (для audit на сервере)
+            provider_choice_source: providerModeChoice === "auto" ? "auto" : "explicit",
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
@@ -852,6 +857,8 @@ ${amountLine}
             // Phase 4.1 — provider routing (telegram_combined path)
             provider: effectiveProvider,
             provider_mode: effectiveProviderMode,
+            // Phase 5-D — explicit admin override marker
+            provider_choice_source: providerModeChoice === "auto" ? "auto" : "explicit",
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
@@ -1087,15 +1094,27 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Phase 5-C — Способ оплаты (provider_mode) */}
+              {/* Phase 5-C/5-D — Способ оплаты для этой ссылки */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
-                  <Label>Способ оплаты</Label>
+                  <Label>Способ оплаты для этой ссылки</Label>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {([
                       { key: "auto" as const, title: "По настройке кнопки", hint: offerSupportsCustomerChoice ? "Покупатель выберет карту" : "Единственный способ оффера" },
-                      { key: "bepaid" as const, title: "Только белорусская карта", hint: "BYN, локальная карта", disabled: !offerAllowedProviders.includes("bepaid") },
-                      { key: "stripe" as const, title: "Только иностранная карта", hint: "EUR / USD / PLN", disabled: !offerAllowedProviders.includes("stripe") || isInstallmentOffer },
+                      {
+                        key: "bepaid" as const,
+                        title: "Белорусская карта (bePaid)",
+                        hint: "BYN, локальная карта",
+                        disabled: !isSuperAdmin && !offerAllowedProviders.includes("bepaid"),
+                        bypass: isSuperAdmin && !offerAllowedProviders.includes("bepaid"),
+                      },
+                      {
+                        key: "stripe" as const,
+                        title: "Иностранная карта (Stripe)",
+                        hint: "EUR / USD / PLN",
+                        disabled: (!isSuperAdmin && !offerAllowedProviders.includes("stripe")) || isInstallmentOffer,
+                        bypass: isSuperAdmin && !offerAllowedProviders.includes("stripe") && !isInstallmentOffer,
+                      },
                     ]).map((opt) => (
                       <button
                         key={opt.key}
@@ -1110,16 +1129,27 @@ ${amountLine}
                           opt.disabled && "opacity-50 cursor-not-allowed",
                         )}
                       >
-                        <span>{opt.title}</span>
+                        <span className="flex items-center gap-2">
+                          {opt.title}
+                          {opt.bypass && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                              super_admin
+                            </span>
+                          )}
+                        </span>
                         <span className="text-xs font-normal text-muted-foreground">{opt.hint}</span>
                       </button>
                     ))}
                   </div>
-                  {providerModeChoice === "auto" && (
+                  {providerModeChoice === "auto" ? (
                     <p className="text-xs text-muted-foreground">
                       {offerSupportsCustomerChoice
                         ? "На странице оплаты покупатель сам выберет карту белорусского или иностранного банка."
                         : `Будет использован единственный способ оплаты, разрешённый в настройках кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}.`}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Изменение применяется только к этой оплате. Настройки кнопки оплаты не меняются.
                     </p>
                   )}
                 </div>

@@ -44,6 +44,9 @@ interface CreatePublicLinkRequest {
   // 'fixed' (default, backward-compat) — ссылка жёстко привязана к provider.
   // 'customer_choice' — на /pay/:token покупатель выбирает между bepaid и stripe.
   provider_mode?: 'fixed' | 'customer_choice';
+  // Phase 5-D — был ли provider выбран админом явно ('explicit') или взят из настроек кнопки ('auto').
+  // Используется только для audit: 'explicit' → пишем admin.payment_provider.override.
+  provider_choice_source?: 'auto' | 'explicit';
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
@@ -84,11 +87,14 @@ Deno.serve(async (req) => {
       provider: rawProvider,
       account_code: rawAccountCode = null,
       provider_mode: rawProviderMode,
+      provider_choice_source: rawProviderChoiceSource,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
       rawProviderMode === 'customer_choice' ? 'customer_choice' : 'fixed';
     const provider: 'bepaid' | 'stripe' = rawProvider === 'stripe' ? 'stripe' : 'bepaid';
+    const providerChoiceSource: 'auto' | 'explicit' =
+      rawProviderChoiceSource === 'explicit' ? 'explicit' : 'auto';
     const currency = (rawCurrency ?? (provider === 'stripe' ? 'EUR' : 'BYN')).toUpperCase();
 
     // ── Validate required ──
@@ -165,10 +171,17 @@ Deno.serve(async (req) => {
       offerAllowedProviders = ['bepaid'];
     }
 
-    // ── Phase 5-C: validation per provider_mode ──
+    // ── Phase 5-C / 5-D: validation per provider_mode ──
+    // Phase 5-D: super_admin может оверрайдить provider, не входящий в offer.allowed_payment_providers.
+    // Для всех остальных admin'ов — провайдер обязан быть в allowed_payment_providers.
+    let superAdminBypass = false;
     if (providerMode === 'fixed') {
       if (!offerAllowedProviders.includes(provider)) {
-        return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+        if (isSuper) {
+          superAdminBypass = true;
+        } else {
+          return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+        }
       }
     } else {
       // customer_choice
@@ -448,6 +461,36 @@ Deno.serve(async (req) => {
           : null,
       },
     });
+
+    // ── Phase 5-D: admin.payment_provider.override audit ──
+    // Пишем только когда админ ЯВНО выбрал provider (provider_choice_source='explicit'),
+    // даже если выбранный provider совпал с default оффера. Auto-выбор не аудируем.
+    // actor_user_id — ТОЛЬКО из JWT, никогда из body.
+    if (providerChoiceSource === 'explicit' && providerMode === 'fixed') {
+      const defaultOfferProvider: 'bepaid' | 'stripe' =
+        offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : 'bepaid';
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'admin.payment_provider.override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          default_provider: defaultOfferProvider,
+          chosen_provider: provider,
+          allowed_payment_providers: offerAllowedProviders,
+          super_admin_bypass: superAdminBypass,
+          stripe_account_code: provider === 'stripe' ? resolvedAccountCode : null,
+          currency: provider === 'stripe' ? currency : null,
+          reason: 'admin_explicit_override',
+        },
+      });
+    }
+
 
     return jsonResponse({
       success: true,
