@@ -507,8 +507,21 @@ Deno.serve(async (req) => {
     if (installmentBlock) linkMeta.installment = installmentBlock;
     // Phase 5-C — snapshot allowed providers + stripe account для рантайма customer_choice.
     if (providerMode === 'customer_choice') {
-      linkMeta.allowed_payment_providers = offerAllowedProviders;
-      if (offerStripeAccountCode) linkMeta.stripe_account_code = offerStripeAccountCode;
+      linkMeta.allowed_payment_providers = effectiveAllowedProviders;
+      // Stripe account snapshot: при cc override приоритет — resolvedAccountCode (использовался для
+      // price provisioning); иначе — account_code из offer.meta.
+      const ccStripeAccount = resolvedAccountCode || offerStripeAccountCode;
+      if (ccStripeAccount) linkMeta.stripe_account_code = ccStripeAccount;
+      if (effectiveAllowedProviders.includes('stripe')) {
+        linkMeta.stripe_currency = stripeValidationCurrency;
+      }
+      if (allowedProvidersOverride) {
+        linkMeta.allowed_providers_override = {
+          source: 'admin_explicit',
+          offer_allowed_payment_providers: offerAllowedProviders,
+          effective_allowed_payment_providers: effectiveAllowedProviders,
+        };
+      }
     }
 
     // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
