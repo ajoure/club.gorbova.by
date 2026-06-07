@@ -329,6 +329,29 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                       {modeBadge(selectedStripe.test_mode)}
                     </Badge>
                   )}
+                  {/* Phase 7-UI follow-up — список совместимых валют этого Stripe-аккаунта. */}
+                  {acq.stripe?.account_code && stripeUsableCurrencies.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      Принимает: {stripeUsableCurrencies.join(" · ")}
+                    </Badge>
+                  )}
+                  {acq.stripe?.account_code && !stripeSupportedByAccount && (
+                    <Badge variant="outline" className="text-xs text-muted-foreground">
+                      Список валют будет уточнён автоматически
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 7-UI follow-up — предупреждение при полной несовместимости (без блокировки save). */}
+              {stripeHasNoUsableCurrency && (
+                <div className="flex items-start gap-2 text-xs text-destructive border border-destructive/40 rounded p-2 bg-destructive/5">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    Выбранное подключение Stripe не поддерживает ни одну из доступных валют (BYN, EUR, USD, PLN).
+                    Сохранение возможно, но создание ссылки на оплату будет отклонено: выберите другое подключение
+                    или оставьте только белорусские карты.
+                  </span>
                 </div>
               )}
 
