@@ -1021,6 +1021,39 @@ async function onInvoicePaid(
     // Не throw — order уже создан, grant ретраится через nightly reconcile.
   }
 
+  // ---- Phase 4.3: consume public payment_link slot (only on activation invoice). ----
+  if (isActivationInvoice) {
+    if (md_pli) {
+      try {
+        await consumePaymentLinkForOrder(
+          supabase,
+          order_id,
+          'stripe-webhook[invoice.paid]',
+        );
+        // helper itself writes audit_logs on consumed / already_counted / limit_reached.
+      } catch (e) {
+        await writeAudit(supabase, {
+          event, account_code,
+          action: 'stripe.payment_link.consume_failed',
+          result: 'logged',
+          subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+          extra: { invoice_id, order_id, payment_link_id: md_pli, error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    } else {
+      // Activation invoice arrived but no payment_link_id was propagated by Stripe.
+      // Audit once so we can detect metadata-propagation regressions.
+      await writeAudit(supabase, {
+        event, account_code,
+        action: 'stripe.payment_link.consume_skipped_no_payment_link_id',
+        result: 'logged',
+        subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+        extra: { invoice_id, order_id, billing_reason: invoice.billing_reason ?? null },
+      });
+    }
+  }
+
+
   // ---- Phase 3.4 F: recovery snapshot (если выходим из dunning grace) ----
   const prevDunningStatus = (subMetaStripe.dunning_status as string | null) ?? null;
   const wasInDunning = prevDunningStatus === 'past_due_grace';
