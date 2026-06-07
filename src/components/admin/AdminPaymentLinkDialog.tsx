@@ -329,6 +329,37 @@ export function AdminPaymentLinkDialog({
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers, provider, paymentType, stripeEligibleOffers]);
 
+  // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
+  const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
+    const list = (effectiveOffer as any)?.meta?.acquiring?.allowed_payment_providers;
+    if (!Array.isArray(list)) return ["bepaid"];
+    return list.filter((p: any) => p === "bepaid" || p === "stripe");
+  }, [effectiveOffer]);
+  const offerSupportsCustomerChoice = offerAllowedProviders.length >= 2;
+
+  // Эффективный provider/provider_mode для отправки в admin-create-public-link.
+  // 'auto' + multi → customer_choice. 'auto' + single → fixed=default. Иначе fixed=пользовательский выбор.
+  const effectiveProviderMode: "fixed" | "customer_choice" = useMemo(() => {
+    if (providerModeChoice === "auto") {
+      return offerSupportsCustomerChoice ? "customer_choice" : "fixed";
+    }
+    return "fixed";
+  }, [providerModeChoice, offerSupportsCustomerChoice]);
+  const effectiveProvider: "bepaid" | "stripe" = useMemo(() => {
+    if (providerModeChoice === "auto") {
+      // single-provider offer → используем единственный allowed; multi → bepaid (default).
+      return offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : "bepaid";
+    }
+    return providerModeChoice;
+  }, [providerModeChoice, offerAllowedProviders]);
+
+  // Синхронизируем legacy state `provider` для существующих Stripe-валидаций.
+  useEffect(() => {
+    if (provider !== effectiveProvider) setProvider(effectiveProvider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProvider]);
+
+
 
   // КОНТРАКТ: payment_type ссылки = ВСЕГДА выбор админа (ToggleGroup).
   // Offer используется только как источник параметров (цена/описание/продукт).
