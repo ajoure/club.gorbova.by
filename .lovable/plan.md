@@ -296,3 +296,14 @@ src/utils/resolveCustomerProviderChoice.ts
 1. **Источник `shop_id` для bePaid:** в `acquiring_connections` нет колонки `shop_id`; предполагаю хранение в `capabilities_snapshot` или `metadata`-подобном jsonb. Подтверди ключ (например `capabilities_snapshot.shop_id` или отдельная колонка) — иначе оставлю fallback на `account_code`.
 2. **Источник `account_name` bePaid-подключений:** сейчас в БД для bePaid записей в `acquiring_connections` они есть? Если таблица пуста для provider='bepaid' → нужен ли seed-миграция (out-of-scope PATCH 5-B.2) или OK показать пустой селектор с подсказкой «Добавьте подключение bePaid в настройках эквайринга»?
 3. **Поле `isSubscription` в форме оффера:** подтверди, что у нас есть надёжный признак (`offer.kind === 'subscription'` или `meta.recurring.is_recurring`) — он будет источником для условной валидации price_id.
+
+---
+
+## PATCH 5-B.2 — DONE / PASS (2026-06-07)
+
+- UI оффера: селекторы конкретных acquiring_connections для bePaid и Stripe.
+- Stripe Price ID + technical fields → свёрнутый advanced-блок.
+- test/live = read-only badge из выбранного подключения.
+- Slug stripe_poland не виден в UI.
+- Runtime (public-checkout, webhooks, grant-access, Phase 5-C) не тронут.
+- Proof: .lovable/proofs/phase_5_b_2_acquiring_connection_selector_v1.md
