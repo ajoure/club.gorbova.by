@@ -363,6 +363,9 @@ Deno.serve(async (req) => {
         failed: result.failed.length,
         canceled_ids: result.canceled,
         failed_details: result.failed,
+        // Hotfix-2: явная трассировка remote_missing для diagnostics.
+        remote_missing_count: result.remote_missing.length,
+        remote_missing: result.remote_missing,
         source,
         initiator_user_id: user.id,
         is_admin: hasAdminRole,
