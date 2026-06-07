@@ -9,24 +9,70 @@
 ```ts
 type Provider = 'bepaid' | 'stripe';
 
+type ReasonCode =
+  | 'currency_not_supported_by_provider'   // (1) provider technically does not support currency
+  | 'currency_not_supported_by_account'    // (2) Stripe account capability missing
+  | 'currency_not_allowed_by_business'     // (3) business whitelist forbids
+  | 'provider_not_configured'              // нет acquiring_connection
+  | 'provider_disabled'                    // connection.is_active=false
+  | 'missing_shop_id'                      // bePaid: нет shop_id для валюты
+  | 'missing_account_code';                // Stripe: не определён account
+
+type DisabledProvider = {
+  provider: Provider;
+  reason_code: ReasonCode;
+  message: string;
+  source: 'provider_static' | 'stripe_account_capabilities' | 'business_whitelist' | 'acquiring_connections';
+};
+
 resolveAvailableProviders(input: {
   currency: string;          // ISO-4217: 'BYN' | 'EUR' | 'PLN' | 'USD' | 'RUB'
-  tariff?: TariffOffer;      // для будущих per-tariff ограничений
-  account?: AcquiringConnection;  // { code, capabilities? }
-}): Provider[]
+  offer_id?: string;
+  account_code?: string;
+  payment_type?: 'one_time' | 'subscription';
+}): {
+  availableProviders: Provider[];
+  disabledProviders: DisabledProvider[];
+  warnings: string[];
+}
 ```
 
 ## 3. Псевдокод
 ```ts
-function resolveAvailableProviders({ currency, tariff, account }) {
-  const providers: Provider[] = [];
-  if (bepaidSupports(currency)) providers.push('bepaid');
-  if (stripeAccountSupports(currency, account?.code ?? 'stripe_poland')) {
-    providers.push('stripe');
+function resolveAvailableProviders({ currency, offer_id, account_code, payment_type }) {
+  const available: Provider[] = [];
+  const disabled: DisabledProvider[] = [];
+
+  for (const p of ['bepaid', 'stripe'] as Provider[]) {
+    const provider_supported = providerStaticSupports(p, currency);
+    const account_enabled    = accountSupports(p, currency, account_code);
+    const business_allowed   = businessWhitelist(p, currency);
+    const final_allowed      = provider_supported && account_enabled && business_allowed;
+
+    if (final_allowed) {
+      available.push(p);
+    } else {
+      disabled.push({
+        provider: p,
+        reason_code: !business_allowed ? 'currency_not_allowed_by_business'
+          : !provider_supported ? 'currency_not_supported_by_provider'
+          : 'currency_not_supported_by_account',
+        message: `Currency ${currency} unavailable for ${p}`,
+        source: !business_allowed ? 'business_whitelist'
+          : !provider_supported ? 'provider_static'
+          : 'stripe_account_capabilities',
+      });
+    }
   }
-  return providers;
+  return { availableProviders: available, disabledProviders: disabled, warnings: [] };
 }
 ```
+
+Разделение источников:
+- **provider_supported** — технически поддерживается провайдером (Stripe Poland / bePaid).
+- **account_enabled** — доступно конкретному акквайринговому аккаунту (Stripe `capabilities`, bePaid `shop_id`).
+- **business_allowed** — разрешено бизнес-логикой проекта (whitelist).
+- **final_allowed = provider_supported && account_enabled && business_allowed**.
 
 ## 4. Три уровня источника истины для Stripe
 Финальный резолвер — пересечение:
@@ -67,15 +113,17 @@ function resolveAvailableProviders({ currency, tariff, account }) {
 
 Результат → `.lovable/discovery/stripe_currency_support_v1.md` §2.
 
-## 9. Точки внедрения (для EXEC)
+## 9. Точки внедрения (UI impact map, для EXEC)
 | Слой | Файл | Изменение |
 |---|---|---|
 | Shared (edge) | `supabase/functions/_shared/acquiring/currency-provider-resolver.ts` | новый модуль (псевдокод §3) |
 | Shared (frontend) | `src/utils/currencyProviderResolver.ts` | зеркало для UI |
-| UI offer | `OfferAcquiringSettings.tsx` | селектор валюты с disabled+tooltip |
-| UI admin link | `AdminPaymentLinkDialog.tsx` | резолвер вместо `STRIPE_CURRENCY_OPTIONS` |
-| UI public | `src/components/payments/PaymentDialog.tsx` | набор provider под `link.currency` |
+| **Product/Offer editor** | `OfferAcquiringSettings.tsx` / Product editor | селектор валюты оффера: сразу показывать какие provider будут available/disabled с reason |
+| UI admin link | `AdminPaymentLinkDialog.tsx` | резолвер вместо `STRIPE_CURRENCY_OPTIONS`; авто-фильтр provider по currency; override валидируется |
+| UI public | `src/components/payments/PaymentDialog.tsx` / `PublicPayPage` | customer choice только из совместимых; если 1 provider — без выбора |
 | Edge | `public-checkout/index.ts` | заменить fallback `EUR/BYN` на STOP-логику §6 |
+| Edge | `stripe-create-subscription-checkout` | pre-check currency × Stripe account |
+| Edge | bePaid checkout helper | pre-check currency × shop_id |
 
 ## 10. Не входит в Phase 7-EXEC
 - Adaptive Pricing Stripe.
