@@ -83,8 +83,11 @@ Deno.serve(async (req) => {
       installment_offer = false, selected_installment_months,
       provider: rawProvider,
       account_code: rawAccountCode = null,
+      provider_mode: rawProviderMode,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
+    const providerMode: 'fixed' | 'customer_choice' =
+      rawProviderMode === 'customer_choice' ? 'customer_choice' : 'fixed';
     const provider: 'bepaid' | 'stripe' = rawProvider === 'stripe' ? 'stripe' : 'bepaid';
     const currency = (rawCurrency ?? (provider === 'stripe' ? 'EUR' : 'BYN')).toUpperCase();
 
