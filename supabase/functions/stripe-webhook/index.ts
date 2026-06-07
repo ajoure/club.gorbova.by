@@ -265,6 +265,30 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success.
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.checkout.session.completed');
+
+    // Phase 4.3: consume public payment_link slot (idempotent via helper).
+    // Skip silently if metadata.payment_link_id is absent (admin sandbox, direct checkout).
+    if (md_payment_link_id) {
+      try {
+        await consumePaymentLinkForOrder(
+          supabase,
+          order_id_meta,
+          'stripe-webhook[checkout.session.completed]',
+        );
+      } catch (e) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe.payment_link.consume_failed',
+          entity_type: 'orders_v2',
+          entity_id: order_id_meta,
+          meta: {
+            error: e instanceof Error ? e.message : String(e),
+            account_code,
+            payment_link_id: md_payment_link_id,
+            source: 'checkout.session.completed',
+          },
+        });
+      }
+    }
     return { order_id: order_id_meta, payment_id };
   }
 
