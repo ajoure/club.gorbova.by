@@ -118,7 +118,12 @@ Deno.serve(async (req) => {
 
     // POST — create checkout
     const body = await req.json();
-    const { url_token, email, replacement_of_subscription_v2_id } = body;
+    const { url_token, email, replacement_of_subscription_v2_id, provider_choice } = body as {
+      url_token?: string;
+      email?: string;
+      replacement_of_subscription_v2_id?: string;
+      provider_choice?: 'bepaid' | 'stripe';
+    };
 
     if (!url_token) {
       return errorResponse('Missing url_token', 400);
@@ -145,6 +150,82 @@ Deno.serve(async (req) => {
 
     if (link.max_uses && link.current_uses >= link.max_uses) {
       return errorResponse('Payment link usage limit reached', 410);
+    }
+
+    // ── Phase 5-C — Provider choice resolution ──
+    // Source of truth:
+    //   1) payment_links.meta.allowed_payment_providers (snapshot taken at link creation)
+    //   2) fallback → tariff_offers.meta.acquiring.allowed_payment_providers
+    // provider_mode='fixed'           → ignore provider_choice; if provided and != link.provider
+    //                                   → 400 provider_choice_not_allowed (no silent behaviour)
+    // provider_mode='customer_choice' → require provider_choice; must be in allowed list
+    const linkMetaPre = (link.meta || {}) as Record<string, any>;
+    let allowedProvidersPre: CustomerProvider[] = Array.isArray(linkMetaPre.allowed_payment_providers)
+      ? linkMetaPre.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+      : [];
+    let stripeAccountFromMeta: string | null = linkMetaPre.stripe_account_code ?? null;
+    if (allowedProvidersPre.length === 0 && link.offer_id) {
+      const { data: offerRow } = await supabase
+        .from('tariff_offers')
+        .select('meta')
+        .eq('id', link.offer_id)
+        .maybeSingle();
+      const acq = (offerRow as any)?.meta?.acquiring;
+      if (Array.isArray(acq?.allowed_payment_providers)) {
+        allowedProvidersPre = acq.allowed_payment_providers.filter(
+          (p: any) => p === 'bepaid' || p === 'stripe'
+        );
+      }
+      if (!stripeAccountFromMeta && acq?.stripe?.account_code) {
+        stripeAccountFromMeta = String(acq.stripe.account_code);
+      }
+    }
+
+    const providerMode: 'fixed' | 'customer_choice' =
+      link.provider_mode === 'customer_choice' ? 'customer_choice' : 'fixed';
+
+    const resolution = resolveProviderChoice({
+      allowed_payment_providers: allowedProvidersPre.length > 0 ? allowedProvidersPre : undefined,
+      default_provider: (link.provider as CustomerProvider | null) ?? undefined,
+    });
+
+    let effectiveProvider: CustomerProvider =
+      (link.provider as CustomerProvider | null) ?? 'bepaid';
+    let effectiveAccountCode: string | null = link.account_code ?? null;
+
+    if (providerMode === 'fixed') {
+      if (provider_choice && provider_choice !== effectiveProvider) {
+        return errorResponse('provider_choice_not_allowed', 400);
+      }
+    } else {
+      // customer_choice
+      if (!provider_choice) {
+        return errorResponse('provider_choice_required', 400);
+      }
+      if (!isValidProviderChoice(provider_choice, resolution)) {
+        return errorResponse('invalid_provider_choice', 400);
+      }
+      effectiveProvider = provider_choice;
+      // Resolve Stripe account on the fly when customer chose stripe.
+      if (effectiveProvider === 'stripe') {
+        effectiveAccountCode = stripeAccountFromMeta || effectiveAccountCode;
+        if (!effectiveAccountCode) {
+          const { data: defAcct } = await supabase
+            .from('acquiring_connections')
+            .select('account_code')
+            .eq('provider', 'stripe')
+            .eq('status', 'active')
+            .eq('is_default', true)
+            .maybeSingle();
+          effectiveAccountCode = (defAcct as any)?.account_code ?? null;
+          if (!effectiveAccountCode) {
+            return errorResponse('no_active_default_stripe_account', 400);
+          }
+        }
+      } else {
+        // bepaid: account_code irrelevant
+        effectiveAccountCode = null;
+      }
     }
 
     // Canonical target-user resolution for public payment links (CONTRACT):
