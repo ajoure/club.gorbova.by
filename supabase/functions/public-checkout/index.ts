@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } from '../_shared/resolve-provider-choice.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
