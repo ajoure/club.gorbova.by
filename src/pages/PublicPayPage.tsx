@@ -579,7 +579,17 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {!needsIdentity && !needsProviderChoice && (
+            {!needsIdentity && !needsProviderChoice && isProviderMisconfigured && (
+              <Alert className="mb-4 border-destructive/50 bg-destructive/10">
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <AlertTitle>Оплата временно недоступна</AlertTitle>
+                <AlertDescription>
+                  Для этой ссылки не настроены доступные способы оплаты. Свяжитесь с менеджером.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!needsIdentity && !needsProviderChoice && !isProviderMisconfigured && (
               <Button
                 size="lg"
                 className="w-full"
