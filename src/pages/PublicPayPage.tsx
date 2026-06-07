@@ -571,17 +571,18 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {!needsIdentity && (
+            {!needsIdentity && !needsProviderChoice && (
               <Button
                 size="lg"
                 className="w-full"
                 onClick={() => {
+                  const choice = isCustomerChoiceMode ? (chosenProvider ?? undefined) : undefined;
                   if (showSavedCardSelector && selectedMethod !== 'new_card') {
                     handlePayWithSavedCard(selectedMethod);
                   } else if (linkInfo.has_target_user) {
-                    handlePayWithTarget();
+                    handlePayWithTarget(choice);
                   } else {
-                    handlePayWithSession();
+                    handlePayWithSession(choice);
                   }
                 }}
                 disabled={isProcessing || savedCardProcessing}
