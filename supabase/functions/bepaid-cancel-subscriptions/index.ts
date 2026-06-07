@@ -220,21 +220,43 @@ Deno.serve(async (req) => {
           shouldMarkCanceled = true;
           console.log(`[bepaid-cancel-subs] Cancelled subscription ${subId}`);
         } else if (response.status === 404) {
-          // PATCH-5: 404 handling - check local state before marking as success
-          if (localSub && (localSub.state === 'canceled' || localSub.state === 'cancelled' || localSub.state === 'terminated')) {
-            // Already non-active locally — treat as success
+          // PATCH-5: 404 handling — check local state before marking as success.
+          const localState = (localSub?.state as string | undefined) ?? null;
+          const alreadyDeadLocal =
+            !!localSub && (localState === 'canceled' || localState === 'cancelled' || localState === 'terminated');
+          const activeOrPendingLocal =
+            !!localSub && (localState === 'active' || localState === 'pending' || localState === 'past_due');
+
+          if (alreadyDeadLocal) {
+            // Already non-active locally — treat as success (existing behaviour).
             shouldMarkCanceled = true;
-            console.log(`[bepaid-cancel-subs] ${subId} returned 404 but already canceled locally (${localSub.state})`);
+            console.log(`[bepaid-cancel-subs] ${subId} returned 404, local already ${localState}`);
+          } else if (activeOrPendingLocal) {
+            // Hotfix-2 (Phase 8 plan §HOTFIX-2):
+            //   bePaid говорит «нет такой подписки», а локально она ещё active/pending/past_due.
+            //   В рамках cancel/replace flow это означает, что удалённого объекта уже нет
+            //   и cancel — фактический no-op. Считаем cancel успешным, помечаем remote_missing,
+            //   НЕ блокируем replacement.
+            shouldMarkCanceled = true;
+            result.remote_missing.push({
+              id: subId,
+              reason_code: 'provider_subscription_not_found_treated_as_canceled',
+              http_status: 404,
+              local_state: localState,
+            });
+            console.warn(
+              `[bepaid-cancel-subs] ${subId} → 404 + local ${localState} → treat as canceled (remote_missing)`,
+            );
           } else {
-            // Unknown or still active — mark as failed
-            const reasonCode = determineReasonCode(404, '', localSub?.state);
+            // Unknown local state — оставляем строгое поведение, чтобы не маскировать рассинхрон.
+            const reasonCode = determineReasonCode(404, '', localState ?? undefined);
             failReason = {
               id: subId,
               error: '404: subscription not found in bePaid',
               reason_code: reasonCode,
               http_status: 404,
             };
-            console.warn(`[bepaid-cancel-subs] ${subId} returned 404, local state=${localSub?.state || 'unknown'}`);
+            console.warn(`[bepaid-cancel-subs] ${subId} returned 404, local state=${localState ?? 'unknown'}`);
           }
         } else {
           const errText = await response.text();
