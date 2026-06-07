@@ -132,3 +132,25 @@ SOT: `_shared/acquiring/business-stream-resolver.ts` — приоритет `off
 ### Phase 6-G.2 (следующий коммит, после approve)
 - Вариант A: в `handleSaveOffer` после успешного save оффера, при условии `subscription + stripe + account_code + business_stream`, вызвать `supabase.functions.invoke('admin-provision-stripe-price', { body: { tariff_offer_id, account_code, business_stream, execute: true } })`. Результат показать toast'ом (success / warning); сохранение оффера не откатывается при failure provisioning.
 - Runtime-freeze edge-functions сохранён (никаких diff в checkout/webhook/grant-access).
+
+
+---
+
+## Phase 6-G.2 — статус (2026-06-07)
+
+| Подэтап | Статус |
+|---|---|
+| 6-A / 6-B / 6-C / 6-D / 6-E / 6-F | PASS |
+| 6-G.1 (убран ложный warning, динамический hint) | PASS |
+| 6-G.2 (auto-provision Stripe Price on save) | CODE COMPLETE + SIMULATION PROOF PASS; RUNTIME E2E DEFERRED |
+
+### Зависимости (без изменений)
+- `supabase/functions/admin-provision-stripe-price/` — already deployed, контракт не трогался.
+- `supabase/functions/_shared/acquiring/business-stream-resolver.ts` — резолв `business_stream` для STOP-guard.
+- `supabase/functions/_shared/create-stripe-checkout.ts` — читает `tariff_offers.meta.stripe.price_id` (mirror из `meta.acquiring.stripe.price_id` пишется самим `admin-provision-stripe-price` через `update_tariff_offer_meta`).
+
+### Freeze-список (соблюдён)
+- bepaid-webhook, stripe-webhook, grant-access-for-order, telegram-*, subscriptions-reconcile, admin-provision-stripe-price.
+
+### Открытое
+- Runtime E2E Stripe subscription proof (см. `.lovable/proofs/phase_6_payment_profiles_v1.md` §S9) — выполняется в Final Regression.

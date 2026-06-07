@@ -199,3 +199,134 @@ Runtime файлы вне UI-слоя не изменены. Phase 5-D конт�
 - [ ] Повторный save того же оффера: НЕ создаёт новый Stripe Price (idempotent_hit, audit `stripe_provision_idempotent_existing`).
 - [ ] Stripe subscription checkout использует этот `price_id` (через `_shared/create-stripe-checkout.ts` — без изменений).
 - [ ] bePaid subscription без регрессии.
+
+
+---
+
+## Phase 6-G.2 — SIMULATION PROOF (2026-06-07)
+
+> **Статус:**
+> - STATIC PROOF = PASS
+> - SIMULATION PROOF = PASS
+> - RUNTIME E2E PROOF = DEFERRED → final regression (см. checklist ниже)
+>
+> SIMULATION PROOF не заменяет RUNTIME E2E. Он подтверждает только безопасность кода
+> и expected flow. Финальный PASS Phase 6 возможен только после runtime E2E.
+
+### S1. Точный diff изменённых файлов (vs. до G.2)
+- `src/pages/admin/AdminProductDetailV2.tsx` — добавлен блок Phase 6-G.2 в `handleSaveOffer` (строки 695–767):
+  - захват `savedOfferId` из `updateOffer` / `createOffer`;
+  - STOP-guard блок;
+  - `supabase.functions.invoke("admin-provision-stripe-price", { body: { tariff_offer_id, account_code, business_stream, execute: true } })`;
+  - mirror в `meta.acquiring.stripe.{price_id, product_id}` вторым `updateOffer.mutateAsync({ id, meta })`.
+- Прочие файлы — без изменений.
+
+### S2. Runtime-freeze confirmation
+Не изменены (freeze policy):
+- `supabase/functions/bepaid-webhook/`
+- `supabase/functions/stripe-webhook/`
+- `supabase/functions/grant-access-for-order/`
+- `supabase/functions/telegram-*`
+- `supabase/functions/subscriptions-reconcile/`
+- `supabase/functions/admin-provision-stripe-price/` (контракт не тронут, только используется)
+
+### S3. Анализ второго `updateOffer` (mirror)
+Цитата (AdminProductDetailV2.tsx:743–754):
+```ts
+const nextStripe = {
+  ...(acqSaved?.stripe || {}),
+  account_code: stripeAccount,
+  price_id: provRes.stripe.price_id,
+  product_id: provRes.stripe.product_id ?? acqSaved?.stripe?.product_id ?? null,
+};
+const nextAcq: OfferAcquiring = { ...(acqSaved as OfferAcquiring), stripe: nextStripe as any };
+const mirrorMeta = { ...(metaToSave as any), acquiring: nextAcq };
+await updateOffer.mutateAsync({ id: savedOfferId, meta: mirrorMeta as any });
+```
+- Hook сигнатура: `updateOffer.mutateAsync({ id, ...fields })` — PATCH-семантика. Передаются ТОЛЬКО `id` и `meta`.
+- `amount/currency/is_active/button_label/tariff_id/offer_type/payment_method/installment_*` не передаются → не перезаписываются.
+- Внутри `meta` `acquiring.stripe.*` обновляется через spread от существующего объекта — другие ключи `meta` (`recurring`, `crm_routing`, `document_scenarios`, `welcome_message`, и т.д.) сохраняются, т.к. `mirrorMeta = { ...metaToSave, acquiring: nextAcq }`.
+
+### S4. STOP-guards (цитаты)
+AdminProductDetailV2.tsx:718–725:
+```ts
+const shouldProvision =
+  !!savedOfferId &&            // (a) offer успешно сохранён
+  !isInstallment &&            // (b) не installment-оффер
+  isSubscriptionForAcq &&      // (c) subscription/trial/preregistration
+  stripeEnabled &&             // (d) 'stripe' в allowed_payment_providers
+  !!stripeAccount &&           // (e) meta.acquiring.stripe.account_code заполнен
+  !!businessStream &&          // (f) business_stream резолвится (offer→product)
+  !existingPriceId;            // (g) idempotency / skip-noise
+```
+По п. (f) `business_stream`: STOP подтверждён как обязательный — `supabase/functions/admin-provision-stripe-price/index.ts:160` возвращает HTTP 400 `bad_request:missing tariff_offer_id|account_code|business_stream`, далее `_shared/acquiring/stripe-metadata.ts:49–55` использует его в metadata Stripe Price. STOP в UI оправдан.
+
+### S5. Idempotency proof
+- `existingPriceId` непустой → `shouldProvision === false` → `admin-provision-stripe-price` не вызывается, toast не показывается. Никаких side-effects.
+- Если STOP-guard пропущен (price_id пуст), но Stripe Price уже создан ранее с тем же deterministic Idempotency-Key (`stripe-price:{offer_id}:{currency}:{unit_amount}:{interval}:{interval_count}`) — Stripe вернёт существующий ресурс, новый Price не создаётся. Mirror просто перезапишет в meta те же значения.
+
+### S6. Expected payload (admin-provision-stripe-price)
+```json
+{
+  "tariff_offer_id": "<uuid сохранённого оффера>",
+  "account_code": "<meta.acquiring.stripe.account_code>",
+  "business_stream": "<offer.meta.business_stream || product.meta.business_stream>",
+  "execute": true
+}
+```
+Заголовок: `Authorization: Bearer <super_admin JWT>` (передаётся клиентом supabase автоматически).
+
+### S7. SQL-шаблоны before/after (для runtime E2E, в этом спринте не выполняются)
+```sql
+-- BEFORE save
+SELECT id,
+       meta->'acquiring'->'stripe' AS acq_stripe,
+       meta->'stripe'              AS canonical_stripe
+FROM tariff_offers
+WHERE id = '<offer_id>';
+
+-- EXPECTED AFTER save:
+--   acq_stripe.price_id     IS NOT NULL  ('price_xxx')
+--   acq_stripe.product_id   IS NOT NULL  ('prod_xxx')
+--   acq_stripe.account_code unchanged
+--   все прочие ключи meta (recurring, crm_routing, document_scenarios, ...)
+--   присутствуют без изменений (diff strictly = {acquiring.stripe.price_id, acquiring.stripe.product_id})
+```
+
+### S8. Expected flow diagram
+```
+[admin save offer]
+  └─► updateOffer / createOffer  (PATCH, all canonical fields)
+        └─► STOP-guards (a..g)
+              └─► [if all pass]
+                    invoke admin-provision-stripe-price { execute: true }
+                      ├─► Stripe Prices lookup by deterministic Idempotency-Key
+                      ├─► reuse existing  OR  create new
+                      └─► return { status:'ok', stripe:{ price_id, product_id } }
+                    └─► updateOffer (PATCH, only { id, meta: { ...metaToSave, acquiring:{ ...stripe } } })
+                          └─► toast.success
+              └─► [if any guard fails] silent skip (no toast, no invoke)
+  └─► close dialog
+```
+
+### S9. Runtime E2E checklist (DEFERRED — final regression)
+Не блокирует спринт. Готов к запуску оператором:
+1. Выбрать subscription-offer с `stripe ∈ allowed_payment_providers` и пустым `acquiring.stripe.price_id`.
+2. SQL before — snapshot `meta->'acquiring'->'stripe'` и `meta->'stripe'`.
+3. UI save offer (без изменений других полей).
+4. SQL after — `price_id` и `product_id` заполнены; иные ключи `meta` без изменений.
+5. Повторный save без изменений — diff `meta->'acquiring'->'stripe'` пустой; в Stripe нет нового Price (lookup в Stripe Dashboard).
+6. Публичный checkout по этому offer → Stripe subscription mode.
+7. Webhook → проверить записи:
+   - `orders_v2` (paid),
+   - `payments_v2` (succeeded),
+   - `subscriptions_v2` (active, auto_renew=true),
+   - `entitlements` (visible),
+   - **`provider_events`** (`stripe.invoice.payment_succeeded` / `checkout.session.completed` получено, нормализовано, без дублей).
+8. bePaid sanity: тот же продукт через bePaid (BYN) — без регрессии (one-time + subscription).
+
+### Итог Phase 6-G.2
+- STATIC PROOF = PASS
+- SIMULATION PROOF = PASS
+- RUNTIME E2E PROOF = DEFERRED (final regression)
+- **Phase 6-G.2 = CODE COMPLETE / WAITING FOR RUNTIME PROOF**
