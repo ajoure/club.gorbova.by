@@ -930,20 +930,15 @@ ${amountLine}
   // Phase 4.1 — Stripe-specific guards (UI level, backend validates повторно).
   const stripeInstallmentBlocked = provider === "stripe" && isInstallmentOffer;
   const stripeAccountMissing = provider === "stripe" && !stripeAccountCode;
-  // PATCH 4.1.1 — отдельный guard: для Stripe+subscription нет ни одного eligible offer'а.
-  // UI больше не даёт выбрать невалидную кнопку (см. visibleOffers), но defence-in-depth.
-  const stripeSubscriptionPriceMissing =
-    provider === "stripe" &&
-    paymentType === "subscription" &&
-    !!effectiveOffer &&
-    !(effectiveOffer as any)?.meta?.stripe?.price_id;
+  // Phase 6-G: stripeSubscriptionPriceMissing убран — Stripe price автопровижнится по
+  // настройкам кнопки. Submit больше не блокируется отсутствием price_id; backend
+  // вернёт понятную ошибку, если provisioning не сработает.
   // PATCH 4.1.1 — currency не должна быть disabled в supported_currencies аккаунта.
   const stripeCurrencyUnsupported =
     provider === "stripe" && isStripeCurrencyDisabled(stripeCurrency);
   const stripeBlocked =
     stripeInstallmentBlocked ||
     stripeAccountMissing ||
-    stripeSubscriptionPriceMissing ||
     stripeCurrencyUnsupported ||
     noStripeSubscriptionOffers;
 
