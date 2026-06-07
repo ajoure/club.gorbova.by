@@ -199,14 +199,34 @@ Deno.serve(async (req) => {
       }
     } else {
       // customer_choice
-      if (!provider_choice) {
-        return errorResponse('provider_choice_required', 400);
+      // HOTFIX provider_choice_required:
+      //   • allowed.length === 0  → конфигурационная ошибка, понятный код.
+      //   • allowed.length === 1  → авто-выбор, provider_choice не обязателен.
+      //   • allowed.length  >  1 → требуем явный provider_choice из allowed.
+      // Это синхронизирует backend с UI-резолвером resolveProviderChoice (зеркало),
+      // который для single allowed скрывает CustomerProviderChoice.
+      if (resolution.providers.length === 0) {
+        return errorResponse('no_allowed_payment_providers', 400);
       }
-      if (!isValidProviderChoice(provider_choice, resolution)) {
-        return errorResponse('invalid_provider_choice', 400);
+
+      let chosen: CustomerProvider;
+      if (resolution.mode === 'single') {
+        chosen = resolution.providers[0];
+        if (provider_choice && provider_choice !== chosen) {
+          return errorResponse('invalid_provider_choice', 400);
+        }
+      } else {
+        if (!provider_choice) {
+          return errorResponse('provider_choice_required', 400);
+        }
+        if (!isValidProviderChoice(provider_choice, resolution)) {
+          return errorResponse('invalid_provider_choice', 400);
+        }
+        chosen = provider_choice;
       }
-      effectiveProvider = provider_choice;
-      // Resolve Stripe account on the fly when customer chose stripe.
+
+      effectiveProvider = chosen;
+      // Resolve Stripe account on the fly when effective provider is stripe.
       if (effectiveProvider === 'stripe') {
         effectiveAccountCode = stripeAccountFromMeta || effectiveAccountCode;
         if (!effectiveAccountCode) {
