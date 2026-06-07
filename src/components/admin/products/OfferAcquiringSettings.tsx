@@ -11,6 +11,10 @@ import {
   filterByProvider,
   type AcquiringProfile,
 } from "@/hooks/admin/useAcquiringProfiles";
+import {
+  BUSINESS_ALLOWED_CURRENCIES,
+  resolveAvailableProviders,
+} from "@/utils/currencyProviderResolver";
 
 /**
  * PATCH 5-B.3 — UI-only: только бизнес-настройки кнопки оплаты.
@@ -117,6 +121,35 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
     () => stripeConnections.find((c) => c.account_code === acq.stripe?.account_code),
     [stripeConnections, acq.stripe?.account_code],
   );
+
+  // Phase 7-UI follow-up — frontend mirror резолвера для информационных подсказок.
+  // ВАЖНО: UI mirror НЕ source of truth и НЕ удаляет provider из allowed_payment_providers;
+  // финальная блокировка несовместимых currency × provider — на backend
+  // (admin-create-public-link → _shared/acquiring/currency-provider-resolver.ts).
+  const stripeSupportedByAccount = useMemo<string[] | null>(() => {
+    const cap = (selectedStripe as any)?.capabilities_snapshot?.supported_currencies;
+    if (!Array.isArray(cap) || cap.length === 0) return null;
+    return cap.map((c: unknown) => String(c));
+  }, [selectedStripe]);
+
+  // Список бизнес-валют, для которых выбранный Stripe-аккаунт совместим (по mirror).
+  const stripeUsableCurrencies = useMemo<string[]>(() => {
+    if (!hasStripe || !acq.stripe?.account_code) return [];
+    return Array.from(BUSINESS_ALLOWED_CURRENCIES).filter((cur) => {
+      const r = resolveAvailableProviders({
+        currency: cur,
+        payment_type: isSubscription ? "subscription" : "one_time",
+        candidate_providers: ["stripe"],
+        stripe_account_supported_currencies: stripeSupportedByAccount,
+        stripe_account_resolved: true,
+        is_installment: isInstallment,
+      });
+      return r.availableProviders.includes("stripe");
+    });
+  }, [hasStripe, acq.stripe?.account_code, stripeSupportedByAccount, isInstallment, isSubscription]);
+
+  const stripeHasNoUsableCurrency =
+    hasStripe && Boolean(acq.stripe?.account_code) && stripeUsableCurrencies.length === 0;
 
   function update(next: Partial<OfferAcquiring>) {
     const merged: OfferAcquiring = { ...acq, ...next };
@@ -233,6 +266,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                       {modeBadge(selectedBepaid.test_mode)}
                     </Badge>
                   )}
+                  {/* Phase 7-UI follow-up — currency contract bePaid (информационно). */}
+                  <Badge variant="secondary" className="text-xs">
+                    Принимает только BYN
+                  </Badge>
                 </div>
               )}
             </div>
@@ -292,6 +329,29 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                       {modeBadge(selectedStripe.test_mode)}
                     </Badge>
                   )}
+                  {/* Phase 7-UI follow-up — список совместимых валют этого Stripe-аккаунта. */}
+                  {acq.stripe?.account_code && stripeUsableCurrencies.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      Принимает: {stripeUsableCurrencies.join(" · ")}
+                    </Badge>
+                  )}
+                  {acq.stripe?.account_code && !stripeSupportedByAccount && (
+                    <Badge variant="outline" className="text-xs text-muted-foreground">
+                      Список валют будет уточнён автоматически
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 7-UI follow-up — предупреждение при полной несовместимости (без блокировки save). */}
+              {stripeHasNoUsableCurrency && (
+                <div className="flex items-start gap-2 text-xs text-destructive border border-destructive/40 rounded p-2 bg-destructive/5">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    Выбранное подключение Stripe не поддерживает ни одну из доступных валют (BYN, EUR, USD, PLN).
+                    Сохранение возможно, но создание ссылки на оплату будет отклонено: выберите другое подключение
+                    или оставьте только белорусские карты.
+                  </span>
                 </div>
               )}
 

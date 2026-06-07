@@ -42,6 +42,7 @@ import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
+import { resolveAvailableProviders } from "@/utils/currencyProviderResolver";
 
 /**
  * mode:
@@ -239,35 +240,59 @@ export function AdminPaymentLinkDialog({
     }
   }, [provider, providerModeChoice, stripeAccounts, stripeAccountCode]);
 
-  // PATCH 4.1.1 — supported currencies выбранного Stripe-аккаунта (lowercase).
-  // Если snapshot пуст — UI не дизейблит ничего (бэкенд всё равно отвергнет в edge-case).
-  const stripeSupportedCurrencies = useMemo<Set<string>>(() => {
-    if (provider !== "stripe" || !stripeAccountCode) return new Set();
+  // Phase 7-UI follow-up — supported currencies выбранного Stripe-аккаунта.
+  // Передаются в shared `resolveAvailableProviders` (frontend mirror SOT).
+  // Если snapshot пуст — резолвер выдаёт R1 fallback (warning) и не дизейблит ничего;
+  // финальная блокировка всё равно происходит на backend.
+  const stripeAccountSupportedCurrencies = useMemo<string[] | null>(() => {
+    if (!stripeAccountCode) return null;
     const acct = (stripeAccounts ?? []).find(
-      (a: any) => a.account_code === stripeAccountCode
+      (a: any) => a.account_code === stripeAccountCode,
     ) as any;
     const arr = acct?.capabilities_snapshot?.supported_currencies;
-    if (!Array.isArray(arr) || arr.length === 0) return new Set();
-    return new Set(arr.map((c: unknown) => String(c).toLowerCase()));
-  }, [provider, stripeAccountCode, stripeAccounts]);
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    return arr.map((c: unknown) => String(c));
+  }, [stripeAccountCode, stripeAccounts]);
 
   const STRIPE_CURRENCY_OPTIONS = ["BYN", "EUR", "USD", "PLN"] as const;
-  const isStripeCurrencyDisabled = (code: string) => {
-    if (provider !== "stripe") return false;
-    if (stripeSupportedCurrencies.size === 0) return false;
-    return !stripeSupportedCurrencies.has(code.toLowerCase());
+
+  // Phase 7-UI follow-up — все currency/provider проверки UI идут через shared mirror.
+  // Backend всё равно перепроверяет в admin-create-public-link (SOT = edge resolver).
+  const resolveProviderForUi = (
+    p: "bepaid" | "stripe",
+    currency: string,
+  ): { allowed: boolean; reason?: string; message?: string } => {
+    const r = resolveAvailableProviders({
+      currency,
+      payment_type: paymentType,
+      candidate_providers: [p],
+      stripe_account_supported_currencies: stripeAccountSupportedCurrencies,
+      stripe_account_resolved: Boolean(stripeAccountCode),
+      bepaid_shop_resolved: true,
+      is_installment: isInstallmentOffer,
+    });
+    if (r.availableProviders.includes(p)) return { allowed: true };
+    const d = r.disabledProviders.find((x) => x.provider === p);
+    return { allowed: false, reason: d?.reason_code, message: d?.message };
   };
 
-  // Если текущая выбранная Stripe-валюта стала недоступной (смена account_code) —
-  // переключаемся на первую доступную из whitelist.
-  useEffect(() => {
-    if (provider !== "stripe") return;
-    if (stripeSupportedCurrencies.size === 0) return;
-    if (!isStripeCurrencyDisabled(stripeCurrency)) return;
-    const fallback = STRIPE_CURRENCY_OPTIONS.find((c) => !isStripeCurrencyDisabled(c));
-    if (fallback && fallback !== stripeCurrency) setStripeCurrency(fallback);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, stripeAccountCode, stripeSupportedCurrencies]);
+  const isStripeCurrencyDisabled = (code: string): { disabled: boolean; message?: string } => {
+    const r = resolveAvailableProviders({
+      currency: code,
+      payment_type: paymentType,
+      candidate_providers: ["stripe"],
+      stripe_account_supported_currencies: stripeAccountSupportedCurrencies,
+      stripe_account_resolved: Boolean(stripeAccountCode),
+      is_installment: isInstallmentOffer,
+    });
+    if (r.availableProviders.includes("stripe")) return { disabled: false };
+    const d = r.disabledProviders.find((x) => x.provider === "stripe");
+    return { disabled: true, message: d?.message };
+  };
+
+  // Phase 7-UI follow-up — auto-fallback валюты УДАЛЁН (см. план §Scope.1).
+  // Пользователь сам выбирает совместимую currency × provider комбинацию;
+  // backend блокирует несовместимые конфигурации controlled-ошибкой.
 
   // PATCH 4.1.2 — единый derived-валютный токен для UI-меток/preview.
   // Backend сам выбирает валюту корректно; здесь только отображение.
@@ -394,15 +419,25 @@ export function AdminPaymentLinkDialog({
   //   • bepaid: считаем доступным (нет лёгкого client-side disable-signal; backend валидирует);
   //   • stripe: нужен хотя бы один active acquiring_connection, не installment, валюта в whitelist.
   const stripeAvailableForCustomerChoice = useMemo(() => {
-    if (isInstallmentOffer) return false;
     if (!stripeAccounts || stripeAccounts.length === 0) return false;
-    // Если у выбранного/дефолтного аккаунта snapshot пуст — считаем доступным; иначе валюта в whitelist.
+    // Phase 7-UI follow-up — используем shared mirror резолвер.
+    // Берём дефолтный/первый Stripe-аккаунт (как и раньше),
+    // currency = текущий выбор админа (stripeCurrency).
     const acct = (stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0]) as any;
     const cap = acct?.capabilities_snapshot?.supported_currencies;
-    if (!Array.isArray(cap) || cap.length === 0) return true;
-    const set = new Set((cap as unknown[]).map((c) => String(c).toLowerCase()));
-    return set.has(stripeCurrency.toLowerCase());
-  }, [stripeAccounts, isInstallmentOffer, stripeCurrency]);
+    const supported = Array.isArray(cap) && cap.length > 0
+      ? cap.map((c: unknown) => String(c))
+      : null;
+    const r = resolveAvailableProviders({
+      currency: stripeCurrency,
+      payment_type: paymentType,
+      candidate_providers: ["stripe"],
+      stripe_account_supported_currencies: supported,
+      stripe_account_resolved: true,
+      is_installment: isInstallmentOffer,
+    });
+    return r.availableProviders.includes("stripe");
+  }, [stripeAccounts, isInstallmentOffer, stripeCurrency, paymentType]);
 
   const customerChoiceAllowed = useMemo<("bepaid" | "stripe")[]>(() => {
     const list: ("bepaid" | "stripe")[] = ["bepaid"];
@@ -980,9 +1015,10 @@ ${amountLine}
   // Phase 6-G: stripeSubscriptionPriceMissing убран — Stripe price автопровижнится по
   // настройкам кнопки. Submit больше не блокируется отсутствием price_id; backend
   // вернёт понятную ошибку, если provisioning не сработает.
-  // PATCH 4.1.1 — currency не должна быть disabled в supported_currencies аккаунта.
-  const stripeCurrencyUnsupported =
-    provider === "stripe" && isStripeCurrencyDisabled(stripeCurrency);
+  // Phase 7-UI follow-up — currency-check через shared mirror резолвер.
+  const stripeCurrencyCheck = isStripeCurrencyDisabled(stripeCurrency);
+  const stripeCurrencyUnsupported = provider === "stripe" && stripeCurrencyCheck.disabled;
+  const stripeCurrencyUnsupportedMessage = stripeCurrencyCheck.message;
   const stripeBlocked =
     stripeInstallmentBlocked ||
     stripeAccountMissing ||
@@ -1181,16 +1217,31 @@ ${amountLine}
                       {
                         key: "bepaid" as const,
                         title: "Белорусская карта",
-                        hint: "bePaid · BYN · локальные карты",
+                        // Phase 7-UI follow-up — reason от shared mirror; bePaid привязан к BYN.
+                        hint: (() => {
+                          const r = resolveProviderForUi("bepaid", "BYN");
+                          return r.allowed ? "bePaid · BYN · локальные карты" : (r.message ?? "Способ оплаты недоступен");
+                        })(),
                         icon: <CreditCard className="h-4 w-4 text-emerald-600" />,
-                        disabled: !isSuperAdmin && !offerAllowedProviders.includes("bepaid"),
+                        disabled:
+                          (!isSuperAdmin && !offerAllowedProviders.includes("bepaid")) ||
+                          !resolveProviderForUi("bepaid", "BYN").allowed,
                       },
                       {
                         key: "stripe" as const,
                         title: "Иностранная карта",
-                        hint: "Stripe · EUR / USD / PLN",
+                        // Phase 7-UI follow-up — reason от shared mirror; currency = выбранная stripeCurrency.
+                        hint: (() => {
+                          const r = resolveProviderForUi("stripe", stripeCurrency);
+                          return r.allowed
+                            ? `Stripe · ${stripeCurrency} · карты других стран`
+                            : (r.message ?? "Способ оплаты недоступен");
+                        })(),
                         icon: <CreditCard className="h-4 w-4 text-indigo-500" />,
-                        disabled: (!isSuperAdmin && !offerAllowedProviders.includes("stripe")) || isInstallmentOffer,
+                        disabled:
+                          (!isSuperAdmin && !offerAllowedProviders.includes("stripe")) ||
+                          isInstallmentOffer ||
+                          !resolveProviderForUi("stripe", stripeCurrency).allowed,
                       },
                     ];
                     })().map((opt) => {
@@ -1264,16 +1315,17 @@ ${amountLine}
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {
-                                const disabled = isStripeCurrencyDisabled(code);
+                                const check = isStripeCurrencyDisabled(code);
                                 return (
                                   <SelectItem
                                     key={code}
                                     value={code}
-                                    disabled={disabled}
+                                    disabled={check.disabled}
+                                    title={check.message ?? undefined}
                                   >
                                     {code}
-                                    {disabled
-                                      ? ` · не поддерживается${stripeAccountCode ? ` (${stripeAccountCode})` : ""}`
+                                    {check.disabled
+                                      ? ` · ${check.message ?? "недоступно"}`
                                       : ""}
                                   </SelectItem>
                                 );
@@ -1294,7 +1346,9 @@ ${amountLine}
                       )}
                       {stripeCurrencyUnsupported && (
                         <p className="text-xs text-destructive">
-                          Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
+                          {stripeCurrencyUnsupportedMessage ??
+                            `Валюта ${stripeCurrency} не поддерживается выбранным Stripe-аккаунтом.`}
+                          {" "}Выберите другую валюту или другое подключение.
                         </p>
                       )}
                       {provider === "stripe" && paymentType === "subscription" && (

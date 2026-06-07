@@ -1,212 +1,180 @@
-# да, согласен, с учетом правок:
+# да, согласен
 
-1. **В §2.1 не использовать** `provider_mode = 'customer_choice'` **как единственный новый internal mode без проверки enum/CHECK.**
+План можно выполнять.
 
-Добавить:
+Ключевые условия зафиксированы правильно:
 
-```md
-Перед изменением payload проверить фактический CHECK/enum для `payment_links.provider_mode`.
+- Phase 8 не начинать до закрытия P7-7.
+- Только UI follow-up.
+- Backend / Edge Functions / миграции не трогать.
+- `currencyProviderResolver.ts` не менять без отдельного STOP + approve.
+- `OfferAcquiringSettings` только предупреждает, но не меняет `allowed_payment_providers`.
+- Backend остаётся source of truth.
+- Proof должен закрыть `P7-7-final` скринами и `git diff --name-only`.
 
-Если `customer_choice` уже разрешён — использовать его.
-Если не разрешён — не делать миграцию в этой задаче, а использовать существующее допустимое значение/metadata-контракт, который уже читает `PublicPayPage`.
-Если без миграции невозможно — STOP и отдельный approve.
-```
-
-2. **В §2.1 уточнить, что “Клиент выбирает” не должен слепо добавлять Stripe, если валюта BYN и Stripe её не поддерживает.**
-
-```md
-Режим «Клиент выбирает» собирает не все подключенные provider'ы вообще, а все совместимые provider'ы для текущих:
-- currency;
-- payment_type;
-- offer_id;
-- account/shop settings;
-- subscription capability.
-```
-
-3. **В §2.2 убрать риск перезаписи настроек кнопки.**
-
-Добавить:
+После выполнения нужен **отчет о выполненной работе**, не новый план:
 
 ```md
-Создание admin public link в режиме «Клиент выбирает» не должно изменять `tariff_offers.meta.acquiring.allowed_payment_providers`.
-Override хранится только в `payment_links` / metadata конкретной ссылки.
+Отчет о выполнении: Phase 7-UI follow-up — currency/provider mirror в админ UI
 ```
 
-4. **В §2.2 по** `provider` **колонке осторожнее.**
-
-Сейчас написано:
-
-```md
-provider = default из списка
-```
-
-Уточнить:
-
-```md
-`payment_links.provider` заполняется только для backward compatibility. Source of truth для режима выбора — `provider_mode` + `meta.acquiring.allowed_payment_providers`. Downstream не должен ошибочно трактовать `provider` как принудительный единственный provider, если `provider_mode='customer_choice'`.
-```
-
-5. **В §2.3 добавить explicit rule: “По настройке кнопки” и “Клиент выбирает” — разные режимы.**
-
-```md
-`По настройке кнопки`:
-- использует allowed_payment_providers из offer/button settings.
-
-`Клиент выбирает`:
-- игнорирует provider-настройку кнопки как ограничение;
-- собирает доступные provider'ы по acquiring connections + currency/type guards;
-- сохраняет override только на уровне payment_link.
-```
-
-6. **В §2.4 не утверждать “при одном — сразу инициирует оплату” без проверки текущего поведения.**
-
-Заменить на:
-
-```md
-Проверить текущее поведение `/pay/:token` при одном provider:
-- либо сразу инициирует оплату;
-- либо показывает одну карточку.
-Оба варианта допустимы, если пользователь не попадает в тупик и checkout создаётся корректно.
-```
-
-7. **В Proof добавить сценарий “0 provider доступно”.**
-
-```md
-Сценарий E:
-- выбрать режим «Клиент выбирает»;
-- смоделировать валюту/тип оплаты, где нет доступных provider'ов;
-- submit blocked;
-- показана понятная ошибка;
-- payment_link не создаётся.
-```
-
-8. **В Gates добавить C10.**
-
-```md
-| C10 | Режим «Клиент выбирает» не изменяет настройки исходной кнопки/offer |
-```
-
-9. **В DoD добавить обязательный runtime smoke по новому режиму.**
-
-```md
-DoD включает создание реальной ссылки из карточки контакта в режиме «Клиент выбирает» и проверку `/pay/:token`, что клиент видит доступные варианты оплаты.
-```
-
-После этих правок план можно выполнять. Главное: 4-й режим должен быть **override на уровне конкретной ссылки**, а не изменение кнопки/тарифа. Это соответствует безопасной архитектуре: не ломать source of truth кнопки и не делать скрытых побочных эффектов.  
+В отчете обязательно: измененные файлы, скрины, diff, freeze confirmation, статус `P7-7-final`.
 
 &nbsp;
 
-План: Admin payment link — режим «Клиент выбирает способ оплаты»
+да, согласен, с учетом правок:
 
-## 0. Статус
+1. **Добавь pre-check перед кодом: не менять** `currencyProviderResolver.ts`**, если его текущий контракт не покрывает нужные поля.**
 
-- Предыдущий blocker fix (Stripe subscription link, eager provision price_id) принят как CODE COMPLETE / WAITING FOR RUNTIME SMOKE.
-- Phase 7-EXEC отложен до закрытия этой задачи.
-- Runtime freeze сохраняется: webhook/grant/Telegram/reconcile/bePaid checkout не трогаем.
+```md
+Перед правками UI проверить, что `src/utils/currencyProviderResolver.ts` уже поддерживает нужные inputs:
+- currency;
+- payment_type;
+- candidate_providers;
+- stripe supported currencies;
+- account/shop resolved;
+- is_installment.
 
-## 1. Проблема
+Если контракт не покрывает эти inputs — STOP и отдельный approve на изменение mirror resolver. В рамках этого плана mirror resolver не правим.
+```
 
-В `AdminPaymentLinkDialog` сейчас 3 режима:
+2. **В** `OfferAcquiringSettings.tsx` **уточнить: не блокировать сохранение offer только из-за UI mirror.**
 
-1. По настройке кнопки
-2. Белорусская карта (force bePaid)
-3. Иностранная карта (force Stripe)
+Текущий пункт:
 
-Не хватает 4-го: **«Клиент выбирает»** — принудительно собрать ВСЕ технически доступные provider'ы и показать customer choice на public checkout, независимо от настройки кнопки.
+Если все providers недоступны — показать предупреждение «Сохранение допустимо, но создание ссылки будет отклонено backend».
 
-## 2. Изменения в коде
+Оставить, но добавить:
 
-### 2.1 Frontend — `src/components/admin/AdminPaymentLinkDialog.tsx`
+```md
+UI mirror в `OfferAcquiringSettings` не является source of truth и не должен автоматически удалять provider из `allowed_payment_providers`. Он только предупреждает администратора. Финальная блокировка несовместимой оплаты — на backend resolver в `admin-create-public-link`.
+```
 
-- Добавить 4-ю карточку в селектор «Способ оплаты для этой ссылки»:
-  - Label: «Клиент выбирает»
-  - Subtitle (динамический):
-    - если доступны ≥2 provider'а → «Клиент сам выберет белорусскую или иностранную карту»
-    - если только 1 доступен → warning «Сейчас доступен только один способ оплаты: bePaid / Stripe» + режим разрешён
-    - если 0 доступно → submit blocked
-- Карточки вертикально, full-width, тот же selected-state, без slug/account_code в копирайте.
-- Новый internal mode: `provider_mode = 'customer_choice'`.
-- Резолвер доступных provider'ов читает `useAcquiringProfiles` + STOP-guards (см. §2.3) и формирует `allowed_payment_providers: ('bepaid'|'stripe')[]`.
-- Submit payload в admin-create-public-link:
-  - `provider_mode: 'customer_choice'`
-  - `allowed_payment_providers: [...]`
-  - `provider_choice_source: 'explicit'`
-  - `provider` колонка: основной (default = `bepaid` если в списке, иначе первый из списка) — чтобы не нарушать существующий CHECK constraint.
+3. **В** `AdminPaymentLinkDialog.tsx` **добавить отдельное правило для режима “Клиент выбирает”.**
 
-### 2.2 Backend — `supabase/functions/admin-create-public-link/index.ts`
+```md
+В режиме «Клиент выбирает» UI должен формировать список только из совместимых provider'ов.
 
-Проверить и при необходимости минимально доработать:
+Если один provider совместим — ссылку разрешить, но показать warning:
+«Сейчас доступен только один способ оплаты».
 
-- Принимает `provider_mode='customer_choice'` + `allowed_payment_providers[]`.
-- Записывает в `payment_links`:
-  - `provider` = default из списка
-  - `provider_mode` = `'customer_choice'`
-  - `account_code` = соответствующий default account
-  - `meta.acquiring.allowed_payment_providers` = массив
-  - `meta.acquiring.default_provider`
-- Если в списке есть `stripe` и `payment_type='subscription'` → вызвать eager provisioning Stripe price (логика уже добавлена blocker-фиксом, переиспользуем).
-- STOP-guards применить ДО INSERT; при пустом списке → 400 с понятной причиной.
-- НЕ трогать webhook / grant-access / checkout downstream.
+Если ноль provider'ов совместимы — submit disabled.
+```
 
-### 2.3 STOP-guards для `customer_choice`
+4. **Добавь проверку, что UI не меняет валюту сам.**
 
-Provider добавляется в `allowed_payment_providers` только если:
+```md
+Удаление auto-fallback должно быть доказано:
+- нет useEffect, который автоматически меняет currency на BYN/EUR;
+- нет silent fallback при несовместимой валюте;
+- пользователь сам выбирает валюту/провайдера.
+```
 
-- провайдер enabled, есть active acquiring connection (`useAcquiringProfiles`/`acquiring_connections`/`integration_instances`);
-- есть account_code / shop_id;
-- валюта поддерживается (для Stripe — `capabilities_snapshot.supported_currencies`; для bePaid — BYN/локальный whitelist);
-- если `payment_type='subscription'` — provider поддерживает recurring (Stripe: да, bePaid: да);
-- для Stripe subscription provisioning возможен (offer_id есть, recurring meta согласован);
-- `offer_id`/`amount`/`currency` присутствуют.
+5. **В proof добавить точный** `git diff --name-only`**.**
 
-### 2.4 Public checkout
+Ожидаемо только:
 
-Уже есть `resolveProviderChoice` (читает `meta.acquiring.allowed_payment_providers`) и `CustomerProviderChoice` UI. **Кода не трогаем** — проверяем, что при `allowed_payment_providers=['bepaid','stripe']` страница `/pay/:token` показывает выбор; при одном — сразу инициирует оплату.
+```text
+src/components/admin/AdminPaymentLinkDialog.tsx
+src/components/admin/products/OfferAcquiringSettings.tsx
+.lovable/proofs/phase_7_ui_followup_v1.md
+.lovable/proofs/phase_7_currency_provider_resolver_v1.md
+```
 
-## 3. Что НЕ трогаем (runtime freeze)
+Если появляется `src/utils/currencyProviderResolver.ts` — нужен отдельный комментарий, почему нарушен out of scope.
 
-- `bepaid-webhook`, `stripe-webhook`
-- `grant-access-for-order`
-- `telegram-grant-access`, queue
-- `subscriptions-reconcile`
-- `_shared/create-payment-checkout.ts` (downstream branch)
-- миграции БД
+6. **Добавь gate P7-7-final.**
 
-## 4. Proof — `.lovable/proofs/phase_6_payment_profiles_v1.md`
+```md
+| P7-7-final | Admin UI показывает disabled/reason для несовместимых currency/provider комбинаций в AdminPaymentLinkDialog и OfferAcquiringSettings, подтверждено скринами |
+```
 
-Новый раздел **«Admin contact link — customer choice override»**:
+После этих правок план можно выполнять. Это правильный короткий UI follow-up: backend уже является SOT, теперь нужно привести админский UI в соответствие, без изменений runtime и без перехода к Phase 8 до закрытия P7-7.  
 
-- Скрин модалки с 4 вариантами.
-- Сценарий A: кнопка только bePaid + «Клиент выбирает» → `allowed=['bepaid','stripe']`.
-- Сценарий B: кнопка bePaid+Stripe + «По настройке» → клиент видит выбор.
-- Сценарий C: «Белорусская карта» → только bePaid на checkout.
-- Сценарий D: «Иностранная карта» → только Stripe.
-- SQL extract по `payment_links`: `provider`, `provider_mode`, `meta.acquiring.allowed_payment_providers`, `provider_choice_source`, `payment_type`, `offer_id`.
-- Runtime freeze diff (`git diff --name-only` — только UI + admin-create-public-link + proof).
+&nbsp;
 
-## 5. Gates
+План: Phase 7-UI follow-up — currency/provider mirror в админ UI
 
+## Контекст и Diagnose
 
-| Gate | Проверка                                                                 |
-| ---- | ------------------------------------------------------------------------ |
-| C1   | В AdminPaymentLinkDialog есть 4-й вариант «Клиент выбирает»              |
-| C2   | «По настройке кнопки» использует только настройки кнопки                 |
-| C3   | «Клиент выбирает» собирает все доступные provider'ы независимо от кнопки |
-| C4   | Force bePaid → только bePaid на checkout                                 |
-| C5   | Force Stripe → только Stripe на checkout                                 |
-| C6   | Stripe subscription provisioning price_id отрабатывает                   |
-| C7   | Provider, недоступный по валюте/типу оплаты, не попадает в список        |
-| C8   | Runtime freeze соблюдён (нет diff в webhook/grant/checkout shared)       |
-| C9   | Proof содержит 4 сценария + SQL extract                                  |
+P7-7 ранее помечен как PASS, но это не подтверждено:
 
+- `src/components/admin/AdminPaymentLinkDialog.tsx` (строки 244–270, 985, 1267) использует **локальный** `isStripeCurrencyDisabled`, основанный только на `stripeSupportedCurrencies` выбранного Stripe-аккаунта. Он:
+  - НЕ дизейблит bePaid при non-BYN валюте (нет аналога `bepaidSupports`);
+  - НЕ показывает структурированный `reason_code` / tooltip;
+  - НЕ переиспользует `src/utils/currencyProviderResolver.ts`.
+- `src/components/admin/products/OfferAcquiringSettings.tsx` не импортирует shared mirror.
 
-## 6. DoD
+Следовательно: backend Phase 7-EXEC = PASS, но **P7-7 = PARTIAL**. До исправления — Phase 8 не начинаем.
 
-Из карточки контакта ссылка создаётся в любом из 4 режимов; public checkout показывает корректный набор; SQL по `payment_links` совпадает с выбранным режимом; proof обновлён; runtime smoke по blocker fix также пройден.
+## Цель
 
-## 7. Дальше по спринту
+Довести Phase 7 до полного PASS: админский UI показывает, какие провайдеры доступны/недоступны для выбранной валюты, с человеческой причиной. Backend остаётся SOT и проверки на стороне сервера не меняются.
 
-1. Runtime smoke по blocker fix (Stripe subscription link).
-2. Эта задача (customer choice).
-3. Phase 7-EXEC — Currency Provider Resolver Implementation.
-4. Final Regression §S9 (E2E по обоим provider'ам, customer choice, admin override, entitlements/access).
+## Scope (UI-only)
+
+### 1. `src/components/admin/AdminPaymentLinkDialog.tsx`
+
+- Заменить локальный `isStripeCurrencyDisabled` на вызов `resolveAvailableProviders` из `src/utils/currencyProviderResolver.ts`.
+- Source-инпуты резолвера:
+  - `currency` — выбранная валюта (для bePaid всегда BYN; для Stripe — `stripeCurrency`);
+  - `payment_type` — текущий выбранный тип;
+  - `candidate_providers` — зависит от режима (`fixed` → один provider; `customer_choice` → оба);
+  - `stripe_account_supported_currencies` — из `capabilities_snapshot` выбранного аккаунта;
+  - `stripe_account_resolved` / `bepaid_shop_resolved` — по факту наличия конфигурации;
+  - `is_installment` — из текущего offer.
+- Поведение UI:
+  - В селекторе валют Stripe — пункт `disabled` + tooltip с `message` из резолвера;
+  - В блоке выбора провайдера (fixed/customer_choice) — карточка провайдера disabled, если он в `disabledProviders`, с reason-tooltip;
+  - В customer_choice: чекбоксы провайдеров, попавших в `disabledProviders`, недоступны;
+  - Кнопка submit disabled, если `availableProviders` пуст для выбранной конфигурации;
+  - Никакого auto-fallback валюты (удалить `useEffect` строки 263–270) — пользователь сам выбирает совместимую комбинацию.
+- Никаких технических slug (`bepaid`/`stripe`/`account_code`) в copy: использовать «карта белорусского банка» / «карта иностранного банка» / «валюта недоступна для этого способа оплаты», по контракту `CustomerProviderChoice`.
+
+### 2. `src/components/admin/products/OfferAcquiringSettings.tsx`
+
+- Импорт `resolveAvailableProviders`.
+- При смене валюты offer:
+  - Для каждого `allowed_payment_providers` показать статус (доступен / недоступен + причина);
+  - BYN → bePaid доступен; Stripe — по `account.capabilities_snapshot`;
+  - EUR/PLN/USD → bePaid disabled с reason `currency_not_supported_by_provider`; Stripe — по аккаунту;
+  - Не менять валюту автоматически, не делать silent fallback;
+  - Если все providers недоступны — показать предупреждение «Сохранение допустимо, но создание ссылки будет отклонено backend».
+- Не трогать схему `meta.acquiring` (runtime freeze).
+
+### 3. Proof: `.lovable/proofs/phase_7_ui_followup_v1.md`
+
+Содержит:
+
+- Скрин `AdminPaymentLinkDialog`: BYN-режим, Stripe карточка/опция disabled с reason (если account не поддерживает BYN);
+- Скрин `AdminPaymentLinkDialog`: EUR-режим, bePaid карточка disabled с reason;
+- Скрин `OfferAcquiringSettings`: BYN offer — статусы провайдеров;
+- Скрин `OfferAcquiringSettings`: EUR/PLN/USD offer — bePaid disabled;
+- Скрин customer_choice: оба провайдера активны при совместимости, один disabled при несовместимости;
+- git diff по двум файлам;
+- Подтверждение backend freeze: edge functions/migrations не тронуты;
+- Закрытие P7-7 с привязкой каждого скрина к gate.
+
+## Out of scope (явно НЕ трогаем)
+
+- `supabase/functions/admin-create-public-link/index.ts` и любые edge functions;
+- `currency-provider-resolver.ts` (edge SOT) — не правим;
+- `currencyProviderResolver.ts` (frontend mirror) — только использовать, без правок логики;
+- Любые миграции / схема БД;
+- Webhook / grant-access / reconcile / Telegram;
+- `admin-provision-stripe-price` whitelist (остаётся в follow-up Phase 7-EXEC §10.1);
+- `CustomerProviderChoice` (публичный /pay/:token) — copy уже корректен.
+
+## DoD
+
+- `AdminPaymentLinkDialog` и `OfferAcquiringSettings` используют `currencyProviderResolver`;
+- BYN + Stripe (без BYN в capabilities) → Stripe disabled с reason в UI;
+- EUR/PLN/USD + bePaid → bePaid disabled с reason в UI;
+- Customer_choice исключает несовместимых в UI до submit;
+- Нет auto-fallback валюты;
+- Никаких технических slug в copy для пользователя;
+- Backend не изменён (freeze diff пустой по edge functions/migrations);
+- `.lovable/proofs/phase_7_ui_followup_v1.md` создан со всеми скринами и закрывает P7-7;
+- Финальный статус Phase 7-EXEC обновлён до полного PASS в `.lovable/proofs/phase_7_currency_provider_resolver_v1.md` (короткая ссылка на UI follow-up proof).
+
+После PASS — переходим к Phase 8 (Receipts / Documents).
