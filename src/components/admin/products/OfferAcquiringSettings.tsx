@@ -266,6 +266,10 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                       {modeBadge(selectedBepaid.test_mode)}
                     </Badge>
                   )}
+                  {/* Phase 7-UI follow-up — currency contract bePaid (информационно). */}
+                  <Badge variant="secondary" className="text-xs">
+                    Принимает только BYN
+                  </Badge>
                 </div>
               )}
             </div>
