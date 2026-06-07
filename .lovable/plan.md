@@ -1,3 +1,17 @@
+# Phase 5 — Product Acquiring Settings (master plan)
+
+**Статус:**
+- Phase 5-A Discovery = **DONE** (2026-06-07). Артефакт: `.lovable/discovery/product_acquiring_settings_inventory_v1.md`.
+- Phase 5-B (Offer Settings UI + Backfill) = **PENDING APPROVE**.
+- Phase 5-C (Runtime Provider Selection) = pending.
+- Phase 5-D (Admin Override + Public Links) = pending.
+
+Ключевые факты Discovery: 38 offers (26 active), 1 offer со Stripe price_id, 0 installments, 0 существующих `meta.acquiring`. `payment_links.provider` имеет жёсткий CHECK (`bepaid|stripe|admin|admin_test|admin_test_direct`) и NOT NULL → multi-provider реализуем через существующий `provider_mode='customer_choice'` + `meta.allowed_payment_providers` (без ALTER CHECK). `default_provider` и `customer_choice_enabled` добавлены в контракт `meta.acquiring`. Installment + Stripe запрещены (`stripe_installment_not_supported`). Точка вставки UI — существующая вкладка «Оплата» в `src/pages/admin/AdminProductDetailV2.tsx:1729-1733`.
+
+---
+
+# Phase 5 — исходный план (для истории)
+
 да, согласен, с учетом правок:
 
 1. **Phase 5 сразу не делать целиком**
