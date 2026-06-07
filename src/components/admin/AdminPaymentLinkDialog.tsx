@@ -1176,13 +1176,15 @@ ${amountLine}
                           <Select value={stripeAccountCode} onValueChange={setStripeAccountCode}>
                             <SelectTrigger><SelectValue placeholder="Выберите аккаунт" /></SelectTrigger>
                             <SelectContent>
-                              {(stripeAccounts ?? []).map((a: any) => (
-                                <SelectItem key={a.account_code} value={a.account_code}>
-                                  {a.account_name ?? a.account_code}
-                                  {a.test_mode ? " (test)" : ""}
-                                  {a.is_default ? " · default" : ""}
-                                </SelectItem>
-                              ))}
+                              {(stripeAccounts ?? []).map((a: any) => {
+                                const name = (a.account_name ?? "").trim() || "Stripe — подключение без названия";
+                                return (
+                                  <SelectItem key={a.account_code} value={a.account_code}>
+                                    {name}
+                                    {a.test_mode ? " · тестовое" : ""}
+                                  </SelectItem>
+                                );
+                              })}
                             </SelectContent>
                           </Select>
                         </div>
