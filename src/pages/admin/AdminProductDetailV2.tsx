@@ -1963,7 +1963,15 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+
+            {/* Phase 5-B — Offer Acquiring Settings (bePaid / Stripe) */}
+            <OfferAcquiringSettings
+              value={(offerForm.meta as any)?.acquiring}
+              onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
+              isInstallment={offerForm.payment_method === "internal_installment"}
+            />
             </TabsContent>
+
 
             <TabsContent value="renewal" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
