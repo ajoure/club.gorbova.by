@@ -33,6 +33,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
+import { consumePaymentLinkForOrder } from './consume-payment-link.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
