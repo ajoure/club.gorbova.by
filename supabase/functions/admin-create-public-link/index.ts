@@ -134,6 +134,9 @@ Deno.serve(async (req) => {
     let offerPaymentMethod: string | null = null;
     let offerInstallmentMaxMonths: number | null = null;
     let offerInstallmentCountLegacy: number | null = null;
+    // Phase 5-C — snapshot acquiring из оффера для customer_choice ссылок.
+    let offerAllowedProviders: ('bepaid' | 'stripe')[] = [];
+    let offerStripeAccountCode: string | null = null;
     if (offer_id) {
       const { data: offer } = await supabase
         .from('tariff_offers')
@@ -149,6 +152,32 @@ Deno.serve(async (req) => {
       const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
         metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+      const acq = (offer as any).meta?.acquiring;
+      if (Array.isArray(acq?.allowed_payment_providers)) {
+        offerAllowedProviders = acq.allowed_payment_providers.filter(
+          (p: any) => p === 'bepaid' || p === 'stripe'
+        );
+      }
+      if (acq?.stripe?.account_code) offerStripeAccountCode = String(acq.stripe.account_code);
+    }
+    if (offerAllowedProviders.length === 0) {
+      // Legacy / offer без acquiring meta → backward-compat: только bepaid.
+      offerAllowedProviders = ['bepaid'];
+    }
+
+    // ── Phase 5-C: validation per provider_mode ──
+    if (providerMode === 'fixed') {
+      if (!offerAllowedProviders.includes(provider)) {
+        return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
+      }
+    } else {
+      // customer_choice
+      if (offerAllowedProviders.length < 2) {
+        return errorResponse('customer_choice_requires_multi_provider_offer', 400);
+      }
+      if (offerAllowedProviders.includes('stripe') && (installment_offer || offerPaymentMethod === 'internal_installment')) {
+        return errorResponse('customer_choice_not_supported_for_installment', 400);
+      }
     }
 
     // ── Stage L: installment validation + расчёт сумм ──
