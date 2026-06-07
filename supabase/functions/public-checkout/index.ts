@@ -61,7 +61,27 @@ Deno.serve(async (req) => {
 
       const product = (link as any).products_v2;
       const tariff = (link as any).tariffs;
-      const installment = (link as any).meta?.installment ?? null;
+      const linkMetaGet = (link as any).meta || {};
+      const installment = linkMetaGet.installment ?? null;
+
+      // Phase 5-C: surface allowed providers + provider_mode для UI выбора.
+      // Источник истины: payment_links.meta.allowed_payment_providers (зеркалит offer.meta.acquiring
+      // на момент создания ссылки). Если отсутствует — берём из offer.meta.acquiring как fallback.
+      let allowedPaymentProviders: ('bepaid' | 'stripe')[] | null =
+        Array.isArray(linkMetaGet.allowed_payment_providers)
+          ? linkMetaGet.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+          : null;
+      if ((!allowedPaymentProviders || allowedPaymentProviders.length === 0) && (link as any).offer_id) {
+        const { data: offerRow } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', (link as any).offer_id)
+          .maybeSingle();
+        const fromOffer = (offerRow as any)?.meta?.acquiring?.allowed_payment_providers;
+        if (Array.isArray(fromOffer)) {
+          allowedPaymentProviders = fromOffer.filter((p: any) => p === 'bepaid' || p === 'stripe');
+        }
+      }
 
       return jsonResponse({
         product_name: product?.name || 'Продукт',
@@ -86,6 +106,9 @@ Deno.serve(async (req) => {
         // Phase 4.1 — provider indicator (UI badge / saved-card gating).
         provider: (link as any).provider ?? 'bepaid',
         account_code: (link as any).account_code ?? null,
+        // Phase 5-C — provider_mode + allowed_payment_providers для пользовательского выбора.
+        provider_mode: (link as any).provider_mode ?? 'fixed',
+        allowed_payment_providers: allowedPaymentProviders ?? null,
       });
     }
 
