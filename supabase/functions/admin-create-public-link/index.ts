@@ -55,6 +55,9 @@ interface CreatePublicLinkRequest {
   // Stripe-валюта для price provisioning, когда provider_mode='customer_choice' и stripe в list.
   // link.currency при этом остаётся BYN (bepaid-домен).
   stripe_currency?: string;
+  // Phase 6 hot-patch: explicit business_stream override на ссылку (низший приоритет в резолвере).
+  // SOT остаётся offer.meta → product.meta (см. shared resolveBusinessStream).
+  business_stream?: string | null;
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
