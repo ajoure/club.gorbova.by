@@ -91,6 +91,7 @@ export async function cancelOldSubscriptionForReplacement(
 
   // --- 2. Provider cancel (только для provider_managed) ---
   let cancelResult: unknown = null;
+  let remoteMissingTreatedAsCanceled = false;
   if (mode === 'provider_managed') {
     const { data: cancelData, error: cancelError } = await supabase.functions.invoke(
       "bepaid-cancel-subscriptions",
@@ -100,10 +101,23 @@ export async function cancelOldSubscriptionForReplacement(
       console.error('[replacement] provider cancel error', cancelError);
       throw new Error("Не удалось отменить текущую подписку у провайдера. Попробуйте позже.");
     }
-    if (cancelData?.failed?.length > 0) {
-      const reason = cancelData.failed[0]?.error || "неизвестная ошибка";
+    // Hotfix-2 (Phase 8 plan §HOTFIX-2): edge явно возвращает remote_missing[] для случая,
+    // когда bePaid 404, а локально подписка ещё active/pending/past_due. Это не блокирует
+    // replace. Дополнительная страховка: failed[].reason_code === 'not_found' или
+    // 'provider_subscription_not_found_treated_as_canceled' тоже трактуем как success.
+    const remoteMissingHere =
+      Array.isArray(cancelData?.remote_missing) && cancelData.remote_missing.length > 0;
+    const failedHard = Array.isArray(cancelData?.failed)
+      ? cancelData.failed.filter((f: { reason_code?: string }) =>
+          f?.reason_code !== 'not_found'
+          && f?.reason_code !== 'provider_subscription_not_found_treated_as_canceled',
+        )
+      : [];
+    if (failedHard.length > 0) {
+      const reason = failedHard[0]?.error || "неизвестная ошибка";
       throw new Error(`Провайдер не смог отменить подписку: ${reason}`);
     }
+    remoteMissingTreatedAsCanceled = remoteMissingHere;
     cancelResult = cancelData;
   }
 
