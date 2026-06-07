@@ -1,199 +1,190 @@
 # да, согласен, с учетом правок:
 
-1. **В шаге 3 по Stripe убрать предположение “EUR/PLN/USD допустимы” как ожидаемый вывод.**  
-Оставить только как гипотезу до подтверждения:
+1. **В §3.1 добавить обязательное чтение актуального** `offer.meta` **после provision.**  
+Не полагаться только на ответ функции, если backend дальше читает `price_id` из БД.
 
 ```md
-Ожидание до проверки: EUR/PLN/USD могут быть допустимы; BYN/RUB могут быть недоступны для Stripe Poland. Финальный вывод — только после discovery.
+После успешного `admin-provision-stripe-price` backend обязан перечитать `tariff_offers.meta` по `offer_id` и получить актуальный `meta.acquiring.stripe.price_id`.
+
+Если после provision `price_id` всё ещё отсутствует — вернуть `stripe_price_provision_failed:no_price_id_after_provision`.
 ```
 
-2. **В шаге 3 добавить разделение “provider support” и “business allowed”.**
+2. **Уточнить путь meta. Сейчас в плане смешаны два пути:**
+
+- `meta.stripe.price_id`
+- `meta.acquiring.stripe.price_id`
+
+Нужно везде привести к одному каноническому пути:
 
 ```md
-Отдельно фиксировать:
-- provider_supported: технически поддерживается провайдером;
-- account_enabled: доступно конкретному аккаунту;
-- business_allowed: разрешено бизнес-логикой проекта;
-- final_allowed = provider_supported && account_enabled && business_allowed.
+Канонический путь: `tariff_offers.meta.acquiring.stripe.price_id`.
+Legacy/старые проверки `meta.stripe.price_id` удалить или заменить на canonical resolver.
 ```
 
-3. **В шаге 4 resolver добавить** `source` **и** `reason_code`**.**
-
-```ts
-disabledProviders: [
-  {
-    provider: 'stripe',
-    reason_code: 'currency_not_supported_by_account',
-    message: 'Stripe account does not support this currency',
-    source: 'stripe_account_capabilities'
-  }
-]
-```
-
-Минимальные `reason_code`:
+3. **В §3.1 добавить запрет на пользовательский JWT при backend provision.**
 
 ```md
-- currency_not_supported_by_provider
-- currency_not_supported_by_account
-- currency_not_allowed_by_business
-- provider_not_configured
-- provider_disabled
-- missing_shop_id
-- missing_account_code
+Вызов `admin-provision-stripe-price` из `admin-create-public-link` должен выполняться через service role / internal context. Нельзя использовать пользовательский JWT как источник полномочий для server-side provisioning.
 ```
 
-4. **В шаге 5 UI impact map добавить админскую настройку offer currency.**
+4. **В §3.1 добавить защиту от частичного успеха.**
 
 ```md
-- Product/Offer editor — при выборе валюты сразу показывать, какие provider будут доступны/недоступны.
+Если Stripe Price создан, но запись `price_id` в `tariff_offers.meta.acquiring.stripe.price_id` не подтверждена повторным чтением БД, ссылку не создавать. Вернуть controlled error и записать audit/log для диагностики.
 ```
 
-5. **В шаге 7 DoD добавить machine-check по отсутствию изменений вне discovery.**
+5. **В §3.2 frontend не должен сам решать currency support.**
 
-```bash
-git diff --name-only
-```
+Frontend может показывать предупреждения, но финальное решение — backend.
 
-Ожидаемо только:
-
-```text
-.lovable/discovery/phase_7_currencies_inventory_v1.md
-.lovable/discovery/phase_7_currency_provider_resolver_v1.md
-.lovable/discovery/stripe_currency_support_v1.md
-```
-
-6. **В шаге 8 добавить запрет на “currency fallback”.**
+Добавить:
 
 ```md
-Запрещено добавлять или сохранять fallback-логику вида: если currency unsupported → использовать BYN/EUR по умолчанию.
+Frontend guard не является source of truth. Backend `admin-create-public-link` обязан повторно проверить offer_id, payment_type, provider, account_code, currency и price/provision result.
 ```
 
-7. **В технических деталях** `code--write`**/**`code--line_replace` **ограничить только** `.lovable/discovery/`**.**
+6. **В §5 добавить проверку customer choice после фикса.**
+
+Потому что этот blocker может затронуть не только explicit Stripe, но и режим «По настройке кнопки».
 
 ```md
-code--write/code--line_replace разрешены только для файлов `.lovable/discovery/*`. Любая правка `src/`, `supabase/functions/`, migrations запрещена в Phase 7 Discovery.
+Дополнительно проверить: если admin выбирает «По настройке кнопки», а offer содержит bePaid + Stripe и subscription, public link создаётся с customer_choice и Stripe branch не блокируется отсутствием initial price_id.
 ```
 
-После этих правок план можно запускать. Это правильный следующий шаг: Phase 6 больше не трогать, Phase 7 сейчас только discovery/spec, без runtime-изменений и без скрытых побочных эффектов.  
+7. **В §6 proof добавить audit/log по backend error path.**
+
+```md
+Proof должен показать не только successful path, но и controlled failure path:
+- если provision упал, backend возвращает понятную ошибку;
+- ссылка не создаётся частично;
+- нет orphan payment_link без рабочего Stripe subscription path.
+```
+
+8. **В §7 добавить gate B8.**
+
+```md
+| B8 | Customer choice subscription link с bePaid + Stripe создаётся и не блокируется отсутствием initial Stripe price_id |
+```
+
+После этих правок план можно выполнять. Это правильный blocker-fix: сначала закрыть невозможность создать Stripe subscription link из карточки контакта, потом возвращаться к Phase 7-EXEC. Главное — не оставлять `price_id` ручной UI-настройкой, а обрабатывать его как технический provider mapping с backend-проверкой и audit. Это соответствует safe workflow и запрету скрытых побочных эффектов.  
 
 &nbsp;
 
-План: Phase 7 — Currencies Discovery / Currency Provider Resolver Spec
+План: BLOCKER FIX — Admin payment link Stripe subscription заблокирован старым guard'ом price_id
 
-## Статус Phase 6 (зафиксировано, не трогаем)
+## 0. Статус
 
-- Phase 6 implementation complete.
-- Phase 6-G.2 = CODE COMPLETE + SIMULATION PROOF PASS.
-- Runtime E2E вынесен в Final Regression §S9 (S9.1–S9.10).
-- Новые proof-only правки по Phase 6 не делать.
-- К Phase 6 не возвращаемся до Final Regression.
+- Phase 7 Discovery — DONE, не трогаем.
+- Phase 7-EXEC откладывается до закрытия этого blocker'а.
+- Runtime freeze сохраняется: bepaid-webhook, stripe-webhook, grant-access-for-order, telegram-*, subscriptions-reconcile, bePaid checkout — не трогаем.
 
-## Цель Phase 7 Discovery
+## 1. Diagnose (подтверждено чтением кода)
 
-Собрать полную картину валют в системе и подготовить спецификацию resolver'а, определяющего доступные payment providers для конкретной валюты. **Discovery/spec-only**: без миграций, UI-правок, runtime/checkout/webhook/grant-access изменений, без новых Edge Functions.
+Блокировка существует в ДВУХ местах одновременно:
 
----
+### 1.1. Frontend — `src/components/admin/AdminPaymentLinkDialog.tsx`
 
-## Шаг 1. SQL inventory валют
+- Стр. 277–293: `stripeEligibleOffers = activeOffers.filter(o => meta.stripe.price_id)`; `noStripeSubscriptionOffers = …length === 0` → схлопывает список офферов для Stripe+subscription.
+- Стр. 310–333: `effectiveOffer` для Stripe+subscription берётся только из `stripeEligibleOffers` → при отсутствии price_id → `null` → submit недоступен.
+- Стр. 1239 и 1324–1325: видимые тексты «нужен meta.stripe.price_id … Используйте bePaid или добавьте Stripe Price».
+- Стр. 1346: повторная фильтрация офферов по `meta.stripe.price_id` в селекторе.
 
-Запустить через `supabase--read_query`:
-
-```sql
-SELECT currency, count(*) FROM tariff_offers   GROUP BY currency ORDER BY count(*) DESC;
-SELECT currency, count(*) FROM payment_links   GROUP BY currency ORDER BY count(*) DESC;
-SELECT currency, count(*) FROM orders_v2       GROUP BY currency ORDER BY count(*) DESC;
-SELECT currency, count(*) FROM payments_v2     GROUP BY currency ORDER BY count(*) DESC;
-SELECT currency, count(*) FROM subscriptions_v2 GROUP BY currency ORDER BY count(*) DESC;
-```
-
-Если поле называется иначе (currency_code/amount_currency и т.д.) — зафиксировать фактическое имя. Результаты записать в `.lovable/discovery/phase_7_currencies_inventory_v1.md` (файл уже создан в прошлом сообщении — дополнить реальными цифрами).
-
-## Шаг 2. Code inventory hardcoded currencies
-
-```bash
-rg -n "'BYN'|'EUR'|'PLN'|'USD'|'RUB'|defaultCurrency|default_currency|amount_currency|provider_currency|currency fallback" src supabase/functions
-```
-
-Для каждого hit зафиксировать: file, line, контекст, классификация (UI default / business rule / provider constraint / legacy fallback). Записать в тот же `phase_7_currencies_inventory_v1.md`.
-
-## Шаг 3. Provider currency support matrix
-
-**bePaid:**
-
-- какие валюты реально встречаются в bePaid-платежах (по `payments_v2`/`orders_v2` где provider=bepaid);
-- наличие shop_id только под BYN — по `acquiring_connections` и edge config;
-- хелперы, считающие bePaid currency;
-- зафиксировать как: *Known current support: BYN, pending confirmation from bePaid configuration*.
-
-**Stripe (три уровня):**
-
-1. Theoretical (Stripe Poland) — что поддерживает в принципе.
-2. Account-level — что реально доступно текущему Stripe account (по существующему discovery, без новых вызовов).
-3. Business whitelist — EUR / PLN / USD / BYN / RUB — классифицировать каждую (allowed / not supported by Stripe / forbidden by business).
-
-Ожидание: EUR/PLN/USD — допустимы; BYN/RUB — вероятно не поддерживаются Stripe Poland.
-
-Обновить `.lovable/discovery/stripe_currency_support_v1.md` (если файла нет — создать).
-
-## Шаг 4. Resolver spec
-
-Дополнить `.lovable/discovery/phase_7_currency_provider_resolver_v1.md` (создан в прошлом сообщении):
+### 1.2. Backend — `supabase/functions/admin-create-public-link/index.ts`, стр. 299–312
 
 ```ts
-resolveAvailableProviders({
-  currency,
-  offer_id,
-  account_code,
-  payment_type
-}) => {
-  availableProviders: ['bepaid', 'stripe'],
-  disabledProviders: [{ provider: 'stripe', reason: 'currency_not_supported' }],
-  warnings: []
+if (payment_type === 'subscription') {
+  ...
+  if (!priceId) return errorResponse('stripe_price_missing_in_offer_meta', 400);
 }
 ```
 
-Логика: (1) взять currency из offer/payment_link; (2) проверить bePaid support; (3) проверить Stripe account support; (4) собрать available; (5) для каждого недоступного — reason; (6) если ни одного — STOP.
+Это hard 400 без price_id — даже если UI пропустит submit, backend упадёт. Значит фикс только во frontend недостаточен.
 
-**STOP-правила:** нельзя silently менять валюту, нельзя fallback на BYN/EUR, нельзя создавать checkout, если currency не поддерживается выбранным provider.
+### 1.3. Provisioning инфраструктура уже есть
 
-## Шаг 5. UI impact map (только список, без кода)
+- `supabase/functions/admin-provision-stripe-price/` существует.
+- `supabase/functions/admin-stripe-price-lookup/` существует.
+Это путь автоматического создания price без ручного ввода в meta.
 
-- `OfferAcquiringSettings.tsx` — provider disabled + tooltip с reason при неподдерживаемой валюте.
-- `AdminPaymentLinkDialog.tsx` — фильтр provider по currency; проверка совместимости при override.
-- `PaymentDialog.tsx` / `PublicPayPage` — customer choice только из совместимых; если один — без выбора.
-- `stripe-create-subscription-checkout` — pre-check currency × Stripe account.
-- bePaid checkout helper — pre-check currency × shop_id.
+## 2. Решение (выбранный вариант)
 
-## Шаг 6. Open questions (зафиксировать в discovery)
+**Вариант A — eager provision в `admin-create-public-link**` (без изменений webhook'ов, без lazy provision в checkout).
 
-1. Какие валюты bePaid реально поддерживает по текущему shop_id?
-2. Какие валюты принимает Stripe Poland account?
-3. Нужны ли отдельные provider profiles по валютам?
-4. Разрешать ли BYN через Stripe? (если нет — запретить)
-5. Разрешать ли PLN/EUR через bePaid? (если shop_id BYN-only — запретить)
-6. Где должен жить business whitelist: config / metadata / acquiring profile / code constant?
+Backend сам создаёт/находит Stripe Price, если его нет, и продолжает INSERT ссылки. UI больше не валидирует price_id.
 
-## Шаг 7. DoD Phase 7 Discovery
+Причина выбора: соответствует Phase 6-G.2 (price_id — provider mapping, а не бизнес-настройка администратора), минимальный blast radius, не трогает webhook/checkout, симметрично с другими auto-provision потоками.
 
-Выполнено, если есть:
+## 3. Изменения
 
-- `.lovable/discovery/phase_7_currencies_inventory_v1.md` — с реальными SQL цифрами + grep inventory;
-- `.lovable/discovery/phase_7_currency_provider_resolver_v1.md` — resolver spec + UI impact map + open questions;
-- обновлённый `.lovable/discovery/stripe_currency_support_v1.md` — provider matrix;
-- подтверждение: код, БД, runtime не изменялись (только файлы под `.lovable/discovery/`).
+### 3.1. Backend — `supabase/functions/admin-create-public-link/index.ts`
 
-## Шаг 8. Запреты (на эту фазу)
+Заменить блок стр. 299–312:
 
-Не делать: миграции, UI-изменения, checkout/webhook changes, новые Edge Functions, новый Stripe helper, новые provider profiles, currency conversion, FX rates, авто-конвертацию.
+- Если `payment_type === 'subscription'` и нет `offer_id` → оставить 400 (`Stripe subscription requires offer_id`).
+- Если `priceId` отсутствует:
+  - вызвать `admin-provision-stripe-price` как внутренний invoke с payload:
+    ```json
+    { "tariff_offer_id": "<offer_id>", "account_code": "<resolvedAccountCode>", "execute": true }
+    ```
+  - на успех — перечитать `tariff_offers.meta.stripe.price_id` и продолжить.
+  - на провал — вернуть `errorResponse('stripe_price_provision_failed:<reason>', 502)`.
+- Идемпотентность: provision сам идемпотентен (повторный вызов не создаёт дубль) — это уже свойство `admin-provision-stripe-price`, подтвердить чтением функции до правки.
+- STOP-guards оставить: installment+stripe запрет, currency whitelist, account capability, отсутствие offer_id.
 
-## Шаг 9. После Phase 7 Discovery
+### 3.2. Frontend — `src/components/admin/AdminPaymentLinkDialog.tsx`
 
-После отчёта дать отдельный план **Phase 7-EXEC — Currency Provider Resolver Implementation** — но только после отдельного approve.
+- Удалить `stripeEligibleOffers` и `noStripeSubscriptionOffers`.
+- `visibleOffers` для Stripe+subscription = `activeOffers` (без фильтра по price_id).
+- `effectiveOffer` для Stripe+subscription резолвится так же, как для bePaid (через `resolveCanonicalOffer` + override).
+- Удалить тексты на стр. 1239 и 1324–1325; заменить нейтральным info-блоком: «Stripe-подписка будет создана по настройкам тарифа. Техническая привязка Stripe Price выполняется автоматически.»
+- В фильтре селектора (стр. ≈1346) убрать ветку `hasStripePrice`.
+- Submit блокируется ТОЛЬКО при: нет offer_id, нет amount, нет currency, нет account_code (для stripe), offer не recurring/autorenew (для subscription), provider disabled, currency не поддерживается аккаунтом.
 
----
+### 3.3. Что НЕ трогаем
 
-## Технические детали
+- bepaid-webhook, stripe-webhook, grant-access-for-order, telegram-*, subscriptions-reconcile, bePaid checkout, `_shared/create-payment-checkout.ts`, `stripe-pre-create-subscription.ts`.
+- `admin-provision-stripe-price` — только вызываем, тело не правим.
+- Миграций нет.
 
-- Тулы: `supabase--read_query` (Шаг 1), `rg` через `code--exec` (Шаг 2), `code--view`/`code--write`/`code--line_replace` для трёх discovery-файлов под `.lovable/discovery/`.
-- Никаких изменений вне `.lovable/discovery/`. Никаких миграций и edge deploys.
-- Формат сообщений: «План:» / «Отчёт о выполнении:» согласно `docs/ENGINEERING_RULES.md`.
+## 4. STOP-guards (после фикса)
+
+Stripe subscription link НЕ создаётся, если: нет `offer_id` / `amount` / `currency` / `Stripe account_code`; offer не subscription/autorenewal; Stripe provider disabled; currency не поддерживается аккаунтом; provision price упал.
+
+Отсутствие price_id в meta — НЕ повод для STOP.
+
+## 5. Verify (runtime smoke из карточки контакта)
+
+Тарифа Gorbova Club FULL, способ оплаты «Иностранная карта/Stripe», тип «Подписка»:
+
+1. Если у оффера НЕТ `meta.stripe.price_id` — ссылка создаётся, в `tariff_offers.meta.stripe.price_id` появляется значение, в `payment_links` строка с `provider='stripe'`, `payment_type='subscription'`, `provider_choice_source='explicit'`, `offer_id` заполнен.
+2. Повторное создание ссылки на тот же оффер — `price_id` не меняется (идемпотентность provision).
+3. Если у оффера УЖЕ есть `price_id` — provision не вызывается (проверить по логам edge-функции), ссылка создаётся.
+4. bePaid one-time и bePaid subscription из того же диалога — без регрессии.
+
+## 6. Proof
+
+Обновить `.lovable/proofs/phase_6_payment_profiles_v1.md`, добавить раздел **«Admin contact link — Stripe subscription blocker fix»**:
+
+- Скрин «до»: ошибка про `meta.stripe.price_id`.
+- Скрин «после»: Stripe + Подписка выбраны, ошибки нет, ссылка создана.
+- SQL-выдержка из `payment_links` (provider, payment_type, provider_choice_source, offer_id) и `tariff_offers.meta.stripe.price_id` (до/после).
+- Лог `admin-provision-stripe-price` (single call / no-op при повторе).
+- Diff изменённых файлов (только 2: `AdminPaymentLinkDialog.tsx`, `admin-create-public-link/index.ts`).
+- Подтверждение runtime freeze (`git diff --name-only` — отсутствие webhook/grant/telegram/reconcile).
+- bePaid smoke — PASS.
+
+## 7. Gates / DoD
+
+
+| Gate | Проверка                                                                               |
+| ---- | -------------------------------------------------------------------------------------- |
+| B1   | В `AdminPaymentLinkDialog.tsx` нет упоминаний `meta.stripe.price_id` в видимых строках |
+| B2   | Из карточки контакта создаётся Stripe subscription link на Gorbova Club FULL           |
+| B3   | Отсутствие price_id в оффере не блокирует submit                                       |
+| B4   | Все остальные STOP-guards сохранены                                                    |
+| B5   | bePaid создание ссылок без регрессии                                                   |
+| B6   | Runtime freeze (webhooks/grant/telegram/reconcile/bepaid-checkout не тронуты)          |
+| B7   | Proof содержит скрины до/после, payload, лог provision, diff                           |
+
+
+DoD: успешный runtime smoke по п.5 + обновлённый proof. После этого возврат к Phase 7-EXEC.
