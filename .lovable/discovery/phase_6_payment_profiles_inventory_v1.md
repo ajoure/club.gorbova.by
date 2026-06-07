@@ -97,3 +97,38 @@ type AcquiringProfile = {
 - ✅ Runtime freeze-лист зафиксирован
 - ✅ Решение по migration: не требуется
 - ✅ Контракт unified read-model зафиксирован
+
+---
+
+## Phase 6-G discovery (2026-06-07)
+
+### Источники warning «Интеграции → Stripe → Тарифы»
+- `src/components/admin/products/OfferAcquiringSettings.tsx` — UI-блок (`subscriptionStripeNotConfigured`) + ветка в `validateOfferAcquiring`, блокировавшая save при `isSubscription && !acq.stripe.price_id`.
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — guard `stripeSubscriptionPriceMissing` (зеркало offer-валидатора), блокировал submit.
+
+### Stripe subscription helpers (уже существуют)
+- `admin-provision-stripe-price` (super_admin JWT, verify_jwt=true): идемпотентно создаёт Stripe Product+Price по SOT `tariff_prices` + `meta.recurring` (resolver `month/1` или `year/1`); пишет `tariff_offers.meta.stripe.{price_id, product_id, ...}` (schema_version=1). Контракт: `{ tariff_offer_id, account_code, business_stream, execute }`.
+- `admin-stripe-price-lookup` — поиск существующего price по metadata.
+- `_shared/create-stripe-checkout.ts` (используется public-checkout) — для `payment_type='subscription'` читает `tariff_offers.meta.stripe.price_id`; при отсутствии возвращает 422 `stripe_price_missing_in_offer_meta` (line 407–410). Это **реальный runtime-блокер**, а не ложный warning.
+- `stripe-create-subscription-checkout` — admin-only sandbox writer (super_admin JWT), не используется в публичном checkout.
+
+### `business_stream` для provisioning
+SOT: `_shared/acquiring/business-stream-resolver.ts` — приоритет `offer.meta.business_stream` → `product.meta.business_stream` → explicit override.
+
+### Решение: Вариант A (предпочтительно) или Вариант B
+- **Вариант A (UI-driven save-time provision):** save-handler `AdminProductDetailV2.handleSaveOffer` после успешного `updateOffer/createOffer` дёргает `admin-provision-stripe-price` под текущим super_admin JWT (если subscription+stripe+account_code+business_stream). Никаких runtime-изменений в edge-functions. **Минимальный риск.**
+- **Вариант B (lazy в checkout):** требует рефакторинга `admin-provision-stripe-price` в shared helper, вызываемого service-role'ом из `create-stripe-checkout.ts`. Больший runtime-diff.
+
+### Baseline (snapshot 2026-06-07)
+- Активных subscription-офферов с `hasStripe=true` и пустым `meta.stripe.price_id`: на момент discovery не замерялось отдельно (не блокирующее — provision будет вызываться лениво при следующем save оффера или в рамках 6-G.2).
+
+### Phase 6-G.1 (применено в этом коммите)
+- Удалён warning-блок и ветка `price_id` из `validateOfferAcquiring`.
+- Под Stripe-блоком — нейтральный info: «Stripe-подписка использует выбранное подключение. Тариф Stripe будет создан и привязан автоматически — при сохранении кнопки или при первой оплате».
+- Удалён `stripeSubscriptionPriceMissing` из AdminPaymentLinkDialog — submit не блокируется.
+- Динамический hint «По настройке кнопки» на основе `offerAllowedProviders` (bePaid+Stripe → «Клиент сможет выбрать…», моно-provider → конкретная карта).
+- G116 PASS: `rg "Интеграции.*Stripe.*Тарифы|снимите галочку|отключите подписку"` → 0 совпадений.
+
+### Phase 6-G.2 (следующий коммит, после approve)
+- Вариант A: в `handleSaveOffer` после успешного save оффера, при условии `subscription + stripe + account_code + business_stream`, вызвать `supabase.functions.invoke('admin-provision-stripe-price', { body: { tariff_offer_id, account_code, business_stream, execute: true } })`. Результат показать toast'ом (success / warning); сохранение оффера не откатывается при failure provisioning.
+- Runtime-freeze edge-functions сохранён (никаких diff в checkout/webhook/grant-access).
