@@ -11,6 +11,10 @@ import {
   filterByProvider,
   type AcquiringProfile,
 } from "@/hooks/admin/useAcquiringProfiles";
+import {
+  BUSINESS_ALLOWED_CURRENCIES,
+  resolveAvailableProviders,
+} from "@/utils/currencyProviderResolver";
 
 /**
  * PATCH 5-B.3 — UI-only: только бизнес-настройки кнопки оплаты.
