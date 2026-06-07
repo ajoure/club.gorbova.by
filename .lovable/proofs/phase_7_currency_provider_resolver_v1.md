@@ -2,7 +2,11 @@
 
 Дата: 2026-06-07.
 Статус backend: **PASS**.
-Статус UI integration (P7-7): **PARTIAL → закрыт в follow-up** — см. `.lovable/proofs/phase_7_ui_followup_v1.md` (UI переведён на shared mirror, auto-fallback валюты удалён, без изменений backend).
+Статус UI integration (P7-7): **закрыт в Phase 7-UI follow-up + DB hotfix `acquiring_stripe_missing_price_id`** —
+см. `.lovable/proofs/phase_7_ui_followup_v1.md`. UI переведён на shared mirror, auto-fallback валюты удалён,
+DB-триггер больше не блокирует сохранение Stripe-офферов без `price_id` (`price_id` стал техническим
+provider mapping и создаётся при выпуске payment link / Stripe checkout, не при сохранении оффера).
+Финальный статус Phase 7-EXEC = PASS подтверждается после ручного screenshot smoke S1–S8.
 
 ## 0. Summary
 Реализован canonical shared резолвер `currency × provider × account capabilities × payment_type × installment`. Подключён в `admin-create-public-link` как единственный источник истины для проверки совместимости валюты и провайдера. Старые inline-whitelists (`STRIPE_ALLOWED_CURRENCIES` + ручной capability check) удалены. Добавлен ранее отсутствовавший bePaid currency guard.
