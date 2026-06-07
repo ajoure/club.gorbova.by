@@ -214,12 +214,14 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     const md_business_stream = (md.business_stream as string | undefined) ?? null;
     const pi_id = (obj.payment_intent as string) ?? null;
     const session_id = obj.id as string;
+    const md_payment_link_id = (md.payment_link_id as string | undefined) ?? null;
     await mergeStripeMetaOnOrder(supabase, order_id_meta, {
       checkout_session_id: session_id,
       payment_intent_id: pi_id,
       customer_id: session_customer,
       account_code,
       business_stream: md_business_stream,
+      payment_link_id: md_payment_link_id,
     });
 
     // Find order; call grant-access-for-order (existing, untouched).
