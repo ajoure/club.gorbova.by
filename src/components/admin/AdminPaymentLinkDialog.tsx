@@ -1087,10 +1087,48 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Phase 4.1 — Эквайер (provider) для публичной ссылки */}
+              {/* Phase 5-C — Способ оплаты (provider_mode) */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
-                  <Label>Эквайер</Label>
+                  <Label>Способ оплаты</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {([
+                      { key: "auto" as const, title: "По настройке кнопки", hint: offerSupportsCustomerChoice ? "Покупатель выберет карту" : "Единственный способ оффера" },
+                      { key: "bepaid" as const, title: "Только белорусская карта", hint: "BYN, локальная карта", disabled: !offerAllowedProviders.includes("bepaid") },
+                      { key: "stripe" as const, title: "Только иностранная карта", hint: "EUR / USD / PLN", disabled: !offerAllowedProviders.includes("stripe") || isInstallmentOffer },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => !opt.disabled && setProviderModeChoice(opt.key)}
+                        disabled={opt.disabled}
+                        className={cn(
+                          "flex flex-col items-start gap-1 rounded-lg border-2 p-3 text-left text-sm font-medium transition-all",
+                          providerModeChoice === opt.key
+                            ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                            : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                          opt.disabled && "opacity-50 cursor-not-allowed",
+                        )}
+                      >
+                        <span>{opt.title}</span>
+                        <span className="text-xs font-normal text-muted-foreground">{opt.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {providerModeChoice === "auto" && (
+                    <p className="text-xs text-muted-foreground">
+                      {offerSupportsCustomerChoice
+                        ? "На странице оплаты покупатель сам выберет карту белорусского или иностранного банка."
+                        : `Будет использован единственный способ оплаты, разрешённый в настройках кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}.`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Phase 4.1 — Технические настройки Stripe (показываем только для fixed=stripe) */}
+              {selectedTariffId && providerModeChoice === "stripe" && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <Label>Настройки иностранного эквайринга</Label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
