@@ -327,11 +327,21 @@ Deno.serve(async (req) => {
       origin,
       actor_type: 'system',
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
-      meta_extra: { payment_link_id: link.id, ...installmentMetaExtra },
-      // Phase 4.1 — provider routing. default 'bepaid' (полный бэк-компат для 113 legacy ссылок).
-      provider: (link.provider as 'bepaid' | 'stripe' | null) ?? 'bepaid',
-      account_code: link.account_code ?? null,
-      currency: link.currency ?? 'BYN',
+      meta_extra: {
+        payment_link_id: link.id,
+        ...installmentMetaExtra,
+        // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
+        provider_choice_resolution: {
+          mode: providerMode,
+          chosen: effectiveProvider,
+          provider_choice_param: provider_choice ?? null,
+          allowed_payment_providers: allowedProvidersPre.length > 0 ? allowedProvidersPre : null,
+        },
+      },
+      // Phase 5-C — effective provider после customer_choice / fixed.
+      provider: effectiveProvider,
+      account_code: effectiveAccountCode,
+      currency: link.currency ?? (effectiveProvider === 'stripe' ? 'EUR' : 'BYN'),
     });
 
     if (!result.success) {
