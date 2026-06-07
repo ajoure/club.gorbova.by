@@ -60,10 +60,13 @@ interface CreatePublicLinkRequest {
   business_stream?: string | null;
 }
 
-// PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
-// Сужено до 4 валют по бизнес-требованию: BYN, EUR, USD, PLN. GBP/CHF/CZK/RON удалены.
-// Defence-in-depth: backend отвергнет любой иной код даже если фронт когда-нибудь его подаст.
-const STRIPE_ALLOWED_CURRENCIES = new Set(['BYN', 'EUR', 'USD', 'PLN']);
+// Phase 7-EXEC — Canonical resolver SOT.
+// STRIPE_ALLOWED_CURRENCIES оставлен только как тонкая обёртка для обратной совместимости
+// логов / error-кодов; реальная проверка теперь идёт через resolveAvailableProviders.
+import {
+  resolveAvailableProviders,
+  type PaymentProvider as ResolverProvider,
+} from '../_shared/acquiring/currency-provider-resolver.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
