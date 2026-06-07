@@ -11,8 +11,12 @@
 //
 // Hard rules:
 //   • super_admin only (verify_jwt=true in config.toml)
-//   • amount/currency SOT = active tariff_prices row (never offer.amount)
-//   • GAP-A whitelist: currency ∈ {BYN, USD, EUR, PLN, RUB, KZT, UAH}
+//   • amount/currency SOT priority:
+//       1) active tariff_prices row (preferred, исторический канон);
+//       2) Hotfix-1 fallback: offer.amount + requested_currency из body
+//          (включается ТОЛЬКО если активной tariff_prices строки нет).
+//      Никакого hardcode "EUR", никакого FX-конверта.
+//   • Whitelist валют (Phase 8 plan §HOTFIX-1): {BYN, USD, EUR, PLN}
 //   • GAP-B resolver: only month/1 + year/1 (interval_count > 1 → 422)
 //   • Idempotency: if meta.stripe.price_id exists + retrieve PASS → return
 //     idempotent_hit (no create). Drift → manual_review (no silent recreate).
@@ -25,7 +29,7 @@ import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 const SCHEMA_VERSION = 1;
-const CURRENCY_WHITELIST = ['BYN', 'USD', 'EUR', 'PLN', 'RUB', 'KZT', 'UAH'];
+const CURRENCY_WHITELIST = ['BYN', 'USD', 'EUR', 'PLN'];
 const PURPOSE = 'stripe_subscription_mvp';
 const ENVIRONMENT = 'test';
 
