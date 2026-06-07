@@ -1094,60 +1094,68 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Phase 5-C/5-D — Способ оплаты для этой ссылки */}
+              {/* Phase 5-C/5-D + Phase 6-F — Способ оплаты для этой ссылки */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Способ оплаты для этой ссылки</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="flex flex-col gap-2">
                     {([
-                      { key: "auto" as const, title: "По настройке кнопки", hint: offerSupportsCustomerChoice ? "Покупатель выберет карту" : "Единственный способ оффера" },
+                      {
+                        key: "auto" as const,
+                        title: "По настройке кнопки",
+                        hint: offerSupportsCustomerChoice
+                          ? "Покупатель сам выберет карту на странице оплаты"
+                          : `Будет использован способ из настроек кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}`,
+                        icon: <MousePointerClick className="h-4 w-4 text-muted-foreground" />,
+                        disabled: false,
+                      },
                       {
                         key: "bepaid" as const,
-                        title: "Белорусская карта (bePaid)",
-                        hint: "BYN, локальная карта",
+                        title: "Белорусская карта",
+                        hint: "bePaid · BYN · локальные карты",
+                        icon: <CreditCard className="h-4 w-4 text-emerald-600" />,
                         disabled: !isSuperAdmin && !offerAllowedProviders.includes("bepaid"),
-                        bypass: isSuperAdmin && !offerAllowedProviders.includes("bepaid"),
                       },
                       {
                         key: "stripe" as const,
-                        title: "Иностранная карта (Stripe)",
-                        hint: "EUR / USD / PLN",
+                        title: "Иностранная карта",
+                        hint: "Stripe · EUR / USD / PLN",
+                        icon: <CreditCard className="h-4 w-4 text-indigo-500" />,
                         disabled: (!isSuperAdmin && !offerAllowedProviders.includes("stripe")) || isInstallmentOffer,
-                        bypass: isSuperAdmin && !offerAllowedProviders.includes("stripe") && !isInstallmentOffer,
                       },
-                    ]).map((opt) => (
-                      <button
-                        key={opt.key}
-                        type="button"
-                        onClick={() => !opt.disabled && setProviderModeChoice(opt.key)}
-                        disabled={opt.disabled}
-                        className={cn(
-                          "flex flex-col items-start gap-1 rounded-lg border-2 p-3 text-left text-sm font-medium transition-all",
-                          providerModeChoice === opt.key
-                            ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                            : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                          opt.disabled && "opacity-50 cursor-not-allowed",
-                        )}
-                      >
-                        <span className="flex items-center gap-2">
-                          {opt.title}
-                          {opt.bypass && (
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                              super_admin
-                            </span>
+                    ]).map((opt) => {
+                      const selected = providerModeChoice === opt.key;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => !opt.disabled && setProviderModeChoice(opt.key)}
+                          disabled={opt.disabled}
+                          className={cn(
+                            "flex items-start gap-3 rounded-lg border-2 p-3 text-left transition-all w-full",
+                            selected
+                              ? "border-primary bg-primary/5 shadow-sm"
+                              : "border-border bg-background hover:border-primary/40",
+                            opt.disabled && "opacity-50 cursor-not-allowed hover:border-border",
                           )}
-                        </span>
-                        <span className="text-xs font-normal text-muted-foreground">{opt.hint}</span>
-                      </button>
-                    ))}
+                        >
+                          <span className="mt-0.5 shrink-0">{opt.icon}</span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-sm font-medium text-foreground truncate">
+                              {opt.title}
+                            </span>
+                            <span className="block text-xs text-muted-foreground mt-0.5 break-words">
+                              {opt.hint}
+                            </span>
+                          </span>
+                          {selected && (
+                            <CheckCircle className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                  {providerModeChoice === "auto" ? (
-                    <p className="text-xs text-muted-foreground">
-                      {offerSupportsCustomerChoice
-                        ? "На странице оплаты покупатель сам выберет карту белорусского или иностранного банка."
-                        : `Будет использован единственный способ оплаты, разрешённый в настройках кнопки: ${offerAllowedProviders[0] === "stripe" ? "иностранная карта" : "белорусская карта"}.`}
-                    </p>
-                  ) : (
+                  {providerModeChoice !== "auto" && (
                     <p className="text-xs text-muted-foreground">
                       Изменение применяется только к этой оплате. Настройки кнопки оплаты не меняются.
                     </p>
