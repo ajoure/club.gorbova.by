@@ -760,6 +760,8 @@ ${amountLine}
             // Phase 4.1 — provider routing
             provider: effectiveProvider,
             provider_mode: effectiveProviderMode,
+            // Phase 5-D — explicit admin override marker (для audit на сервере)
+            provider_choice_source: providerModeChoice === "auto" ? "auto" : "explicit",
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
@@ -855,6 +857,8 @@ ${amountLine}
             // Phase 4.1 — provider routing (telegram_combined path)
             provider: effectiveProvider,
             provider_mode: effectiveProviderMode,
+            // Phase 5-D — explicit admin override marker
+            provider_choice_source: providerModeChoice === "auto" ? "auto" : "explicit",
             ...(effectiveProvider === "stripe" && effectiveProviderMode === "fixed"
               ? { account_code: stripeAccountCode, currency: stripeCurrency }
               : {}),
