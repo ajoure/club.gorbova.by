@@ -295,13 +295,12 @@ export function OfferAcquiringSettings({ value, onChange, isInstallment, isSubsc
                 </div>
               )}
 
-              {subscriptionStripeNotConfigured && (
-                <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200 border border-amber-300/60 rounded p-2 bg-amber-50/60 dark:bg-amber-950/20">
+              {showStripeSubscriptionInfo && (
+                <div className="flex items-start gap-2 text-xs text-muted-foreground border rounded p-2 bg-muted/40">
                   <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>
-                    Для подписки через Stripe не настроен тариф Stripe. Настройка тарифов Stripe
-                    будет доступна в разделе «Интеграции → Stripe → Тарифы». Сохранение этого
-                    способа оплаты сейчас недоступно — снимите галочку или отключите подписку.
+                    Stripe-подписка использует выбранное подключение. Тариф Stripe будет создан
+                    и привязан автоматически — при сохранении кнопки или при первой оплате.
                   </span>
                 </div>
               )}
