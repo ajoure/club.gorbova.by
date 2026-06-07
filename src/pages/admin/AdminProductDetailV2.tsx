@@ -692,13 +692,80 @@ export default function AdminProductDetailV2() {
       meta: Object.keys(metaToSave).length > 0 ? metaToSave : (offerForm.requires_card_tokenization ? metaToSave : null),
     };
     
+    let savedOfferId: string | null = null;
     if (offerDialog.editing) {
-      await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
+      const updated = await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
+      savedOfferId = (updated as any)?.id ?? offerDialog.editing.id;
     } else {
-      await createOffer.mutateAsync(data);
+      const created = await createOffer.mutateAsync(data);
+      savedOfferId = (created as any)?.id ?? null;
     }
+
+    // Phase 6-G.2 — auto-provision Stripe recurring Price on save (idempotent).
+    // STOP conditions (silent skip): no offer id, not subscription, Stripe not enabled in
+    // allowed providers, no stripe.account_code, no business_stream resolvable, or
+    // missing amount/currency/interval (function itself returns 422 → toast warning).
+    try {
+      const acqSaved = (metaToSave as any)?.acquiring as OfferAcquiring | undefined;
+      const stripeEnabled = !!acqSaved?.allowed_payment_providers?.includes("stripe");
+      const stripeAccount = acqSaved?.stripe?.account_code || null;
+      const existingPriceId = acqSaved?.stripe?.price_id || null;
+      const businessStream =
+        ((metaToSave as any)?.business_stream as string | undefined) ||
+        ((product as any)?.meta?.business_stream as string | undefined) ||
+        null;
+
+      const shouldProvision =
+        !!savedOfferId &&
+        !isInstallment &&
+        isSubscriptionForAcq &&
+        stripeEnabled &&
+        !!stripeAccount &&
+        !!businessStream &&
+        !existingPriceId; // idempotent, but skip when already set to avoid noise
+
+      if (shouldProvision) {
+        const { data: provRes, error: provErr } = await supabase.functions.invoke(
+          "admin-provision-stripe-price",
+          {
+            body: {
+              tariff_offer_id: savedOfferId,
+              account_code: stripeAccount,
+              business_stream: businessStream,
+              execute: true,
+            },
+          },
+        );
+        if (provErr) {
+          toast.error(`Stripe price: ${provErr.message || "ошибка автопровижна"}`);
+        } else if (provRes?.status === "ok" && provRes?.stripe?.price_id) {
+          // Mirror to meta.acquiring.stripe so UI reflects provisioned price_id.
+          const nextStripe = {
+            ...(acqSaved?.stripe || {}),
+            account_code: stripeAccount,
+            price_id: provRes.stripe.price_id,
+            product_id: provRes.stripe.product_id ?? acqSaved?.stripe?.product_id ?? null,
+          };
+          const nextAcq: OfferAcquiring = {
+            ...(acqSaved as OfferAcquiring),
+            stripe: nextStripe as any,
+          };
+          const mirrorMeta = { ...(metaToSave as any), acquiring: nextAcq };
+          await updateOffer.mutateAsync({ id: savedOfferId, meta: mirrorMeta as any });
+          toast.success("Stripe Price подключён к кнопке");
+        } else if (provRes?.status === "manual_review") {
+          toast.error(`Stripe price: требуется ручная проверка (${provRes.reason || "drift"})`);
+        } else if (provRes?.error) {
+          toast.error(`Stripe price: ${provRes.error}`);
+        }
+      }
+    } catch (e: any) {
+      toast.error(`Stripe price: ${e?.message || "не удалось вызвать автопровижн"}`);
+    }
+
     setOfferDialog({ open: false, editing: null });
   };
+
 
   const handleToggleOfferActive = async (id: string, isActive: boolean) => {
     await updateOffer.mutateAsync({ id, is_active: isActive });
