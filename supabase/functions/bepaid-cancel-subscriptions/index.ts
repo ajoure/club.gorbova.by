@@ -7,7 +7,16 @@ const corsHeaders = {
 };
 
 // PATCH-G: Reason codes for cancel failures
-type CancelReasonCode = 'cannot_cancel_until_paid' | 'not_found' | 'already_canceled' | 'api_error' | 'unknown';
+// Hotfix-2 (Phase 8 plan §HOTFIX-2): добавлен код provider_subscription_not_found_treated_as_canceled,
+//   когда bePaid отвечает 404, а локально подписка ещё active/pending/past_due — это replace/cancel
+//   flow, и удалённого объекта уже нет; считаем cancel успешным (НЕ блокируем replacement).
+type CancelReasonCode =
+  | 'cannot_cancel_until_paid'
+  | 'not_found'
+  | 'already_canceled'
+  | 'api_error'
+  | 'unknown'
+  | 'provider_subscription_not_found_treated_as_canceled';
 
 interface CancelFailure {
   id: string;
@@ -17,9 +26,19 @@ interface CancelFailure {
   provider_error?: string;
 }
 
+interface RemoteMissingEntry {
+  id: string;
+  reason_code: 'provider_subscription_not_found_treated_as_canceled';
+  http_status: 404;
+  local_state: string | null;
+}
+
 interface CancelResult {
   canceled: string[];  // Use 'canceled' (correct spelling)
   failed: CancelFailure[];
+  // Hotfix-2: подписки, которых нет в bePaid, но локально были active/pending/past_due —
+  // помечаем canceled локально и сообщаем клиенту явно через этот массив.
+  remote_missing: RemoteMissingEntry[];
   total_requested: number;
 }
 
