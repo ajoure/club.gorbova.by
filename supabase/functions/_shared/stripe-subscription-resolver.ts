@@ -847,6 +847,20 @@ async function onInvoicePaid(
     offer_id = (offerRow as any)?.id ?? null;
   }
 
+  // Phase 4.3: resolve payment_link_id (public link consume linkage).
+  // Priority: invoice.parent.subscription_details.metadata → invoice.subscription_details.metadata → subv2.meta.payment_link_id.
+  const md_pli: string | null =
+    ((parentSubDetails as any)?.metadata?.payment_link_id as string | null | undefined) ??
+    (((invoice as any).subscription_details as any)?.metadata?.payment_link_id as string | null | undefined) ??
+    (((subv2 as any).meta as any)?.payment_link_id as string | null | undefined) ??
+    null;
+
+  // Phase 4.3: capture activation flag BEFORE ps.state is mutated below.
+  // First successful invoice of a subscription = consume the public-link slot once.
+  const wasPendingBeforeActivation = ps.state === 'pending' || ps.state === 'past_due';
+  const isSubscriptionCreate = (invoice.billing_reason ?? null) === 'subscription_create';
+  const isActivationInvoice = wasPendingBeforeActivation || isSubscriptionCreate;
+
   // ---- Materialize orders_v2 (activation write-path) ----
   const order_number = `STRIPE-${invoice_id}`.slice(0, 64);
   const orderInsert = {
@@ -879,6 +893,9 @@ async function onInvoicePaid(
       subscription_v2_id: subv2.id,
       provider_subscription_row_id: ps.id,
       source: 'stripe.invoice.paid',
+      // Phase 4.3: top-level payment_link_id so consumePaymentLinkForOrder can resolve it.
+      // Only on activation invoice — renewals must NOT re-link to the same public link.
+      ...(md_pli && isActivationInvoice ? { payment_link_id: md_pli } : {}),
     },
   };
 
