@@ -356,6 +356,22 @@ Deno.serve(async (req) => {
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {};
     if (installmentBlock) linkMeta.installment = installmentBlock;
+    // Phase 5-C — snapshot allowed providers + stripe account для рантайма customer_choice.
+    if (providerMode === 'customer_choice') {
+      linkMeta.allowed_payment_providers = offerAllowedProviders;
+      if (offerStripeAccountCode) linkMeta.stripe_account_code = offerStripeAccountCode;
+    }
+
+    // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
+    // (DB CHECK + NOT NULL). Используем default_provider оффера = 'bepaid' как fallback,
+    // фактический выбор делается в public-checkout по provider_choice от покупателя.
+    const linkProviderForFixed = provider;
+    const linkProviderColumn: 'bepaid' | 'stripe' =
+      providerMode === 'customer_choice' ? 'bepaid' : linkProviderForFixed;
+    const linkAccountCodeColumn: string | null =
+      providerMode === 'customer_choice'
+        ? null
+        : (provider === 'stripe' ? resolvedAccountCode : null);
 
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
@@ -374,12 +390,12 @@ Deno.serve(async (req) => {
         url_token,
         public_url,
         meta: linkMeta,
-        // Phase 4.1 — provider routing fields
-        provider,
-        account_code: provider === 'stripe' ? resolvedAccountCode : null,
-        provider_mode: 'fixed',
+        // Phase 4.1 + 5-C — provider routing fields
+        provider: linkProviderColumn,
+        account_code: linkAccountCodeColumn,
+        provider_mode: providerMode,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code, provider_mode')
       .single();
 
     if (insertErr || !link) {
