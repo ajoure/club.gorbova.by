@@ -345,6 +345,20 @@ export function AdminPaymentLinkDialog({
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
 
+  // Hotfix-1 — авто-default Stripe-валюты от offer.currency / offer.meta.currency / 'BYN'.
+  // Не перетирает выбор админа, если он уже вручную поменял валюту.
+  useEffect(() => {
+    if (stripeCurrencyManuallySet) return;
+    const offerCurrency =
+      ((effectiveOffer as any)?.currency as string | undefined) ||
+      ((effectiveOffer as any)?.meta?.currency as string | undefined) ||
+      "BYN";
+    const upper = offerCurrency.toUpperCase();
+    if (upper !== stripeCurrency) setStripeCurrency(upper);
+    // Сброс manual-flag при смене оффера через selectedOfferId не делаем —
+    // явный выбор админа сохраняется в рамках одной сессии модалки.
+  }, [effectiveOffer, stripeCurrencyManuallySet, stripeCurrency]);
+
   // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
   const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
     const list = (effectiveOffer as any)?.meta?.acquiring?.allowed_payment_providers;
