@@ -300,16 +300,105 @@ Deno.serve(async (req) => {
         if (!offer_id) {
           return errorResponse('Stripe subscription requires offer_id', 400);
         }
+
+        // BLOCKER FIX (Phase 6-G/7 boundary): отсутствие meta.stripe.price_id больше НЕ
+        // блокирует создание ссылки. Если price_id отсутствует — вызываем
+        // admin-provision-stripe-price (идемпотентно), затем ПЕРЕЧИТЫВАЕМ tariff_offers.meta
+        // из БД и продолжаем. Если price_id всё ещё нет после provision — controlled error,
+        // ссылка НЕ создаётся (защита от частичного успеха).
         const { data: offerStripe } = await supabase
           .from('tariff_offers')
           .select('meta')
           .eq('id', offer_id)
           .maybeSingle();
-        const priceId = (offerStripe as any)?.meta?.stripe?.price_id;
+        let priceId = (offerStripe as any)?.meta?.stripe?.price_id as string | undefined;
+
         if (!priceId) {
-          return errorResponse('stripe_price_missing_in_offer_meta', 400);
+          // Резолвим business_stream так же, как frontend (offer.meta → product.meta).
+          const offerMeta = (offerStripe as any)?.meta ?? {};
+          let businessStream: string | null =
+            (offerMeta?.business_stream as string | undefined) ?? null;
+          if (!businessStream) {
+            const { data: tariffRow } = await supabase
+              .from('tariff_offers')
+              .select('tariff_id, tariffs:tariff_id(product_id, products_v2:product_id(meta))')
+              .eq('id', offer_id)
+              .maybeSingle();
+            businessStream =
+              ((tariffRow as any)?.tariffs?.products_v2?.meta?.business_stream as
+                | string
+                | undefined) ?? null;
+          }
+          if (!businessStream) {
+            return errorResponse(
+              'stripe_price_provision_failed:business_stream_not_resolved',
+              422,
+            );
+          }
+
+          // Forward caller's JWT — admin-provision-stripe-price требует super_admin.
+          const provInvoke = await fetch(
+            `${supabaseUrl}/functions/v1/admin-provision-stripe-price`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: authHeader,
+              },
+              body: JSON.stringify({
+                tariff_offer_id: offer_id,
+                account_code: resolvedAccountCode,
+                business_stream: businessStream,
+                execute: true,
+              }),
+            },
+          );
+          const provJson: any = await provInvoke.json().catch(() => ({}));
+
+          if (!provInvoke.ok || provJson?.status === 'error' || provJson?.status === 'manual_review') {
+            const reason =
+              provJson?.reason ||
+              provJson?.error ||
+              `http_${provInvoke.status}`;
+            // Audit controlled failure (no partial link created).
+            await supabase.from('audit_logs').insert({
+              action: 'admin_create_public_link.stripe_price_provision_failed',
+              actor_user_id: user.id,
+              actor_type: 'user',
+              actor_label: 'super_admin:admin-create-public-link',
+              entity_type: 'tariff_offer',
+              entity_id: offer_id,
+              meta: { reason, account_code: resolvedAccountCode, business_stream: businessStream, http_status: provInvoke.status, provision_response: provJson },
+            });
+            return errorResponse(`stripe_price_provision_failed:${reason}`, 502);
+          }
+
+          // Re-read meta from DB — НЕ полагаемся только на ответ функции.
+          const { data: offerAfter } = await supabase
+            .from('tariff_offers')
+            .select('meta')
+            .eq('id', offer_id)
+            .maybeSingle();
+          priceId = (offerAfter as any)?.meta?.stripe?.price_id as string | undefined;
+
+          if (!priceId) {
+            await supabase.from('audit_logs').insert({
+              action: 'admin_create_public_link.stripe_price_provision_failed',
+              actor_user_id: user.id,
+              actor_type: 'user',
+              actor_label: 'super_admin:admin-create-public-link',
+              entity_type: 'tariff_offer',
+              entity_id: offer_id,
+              meta: { reason: 'no_price_id_after_provision', provision_response: provJson },
+            });
+            return errorResponse(
+              'stripe_price_provision_failed:no_price_id_after_provision',
+              502,
+            );
+          }
         }
       }
+
     }
 
 

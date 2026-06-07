@@ -274,23 +274,11 @@ export function AdminPaymentLinkDialog({
     [allOffers]
   );
 
-  // PATCH 4.1.1 — Stripe-eligible offers (только для provider='stripe' + subscription).
-  // Фильтрация: offer должен иметь meta.stripe.price_id, иначе Stripe-подписка не сможет оплатиться.
-  const stripeEligibleOffers = useMemo(
-    () => activeOffers.filter((o) => !!(o as any).meta?.stripe?.price_id),
-    [activeOffers]
-  );
-
-  // Видимый набор кнопок в селекторе зависит от выбранного провайдера и типа оплаты.
-  const visibleOffers = useMemo(() => {
-    if (provider === "stripe" && paymentType === "subscription") {
-      return stripeEligibleOffers;
-    }
-    return activeOffers;
-  }, [provider, paymentType, activeOffers, stripeEligibleOffers]);
-
-  const noStripeSubscriptionOffers =
-    provider === "stripe" && paymentType === "subscription" && stripeEligibleOffers.length === 0;
+  // BLOCKER FIX (Phase 6-G/7 boundary): отсутствие meta.stripe.price_id больше
+  // НЕ блокирует создание Stripe-подписочной ссылки. Backend (admin-create-public-link)
+  // сам вызовет admin-provision-stripe-price при необходимости и идемпотентно создаст/найдёт
+  // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
+  const visibleOffers = activeOffers;
 
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
@@ -306,22 +294,11 @@ export function AdminPaymentLinkDialog({
   );
 
 
-  // Effective offer: пользовательский override (если выбран и валиден) > resolver
-  // PATCH 4.1.1 — для Stripe+subscription отбираем ТОЛЬКО офферы с meta.stripe.price_id.
+  // Effective offer: пользовательский override (если выбран и валиден) > resolver.
+  // BLOCKER FIX: Stripe+subscription больше не требует meta.stripe.price_id во фронте —
+  // оффер выбирается так же, как для bePaid, а технический provider mapping (Stripe Price)
+  // обеспечивает backend через admin-provision-stripe-price.
   const effectiveOffer: TariffOffer | null = useMemo(() => {
-    const isStripeSub = provider === "stripe" && paymentType === "subscription";
-    if (isStripeSub) {
-      // user override должен быть в eligible-сете; иначе берём первый primary/первый из set.
-      if (selectedOfferId) {
-        const pick = stripeEligibleOffers.find((o) => o.id === selectedOfferId);
-        if (pick) return pick;
-      }
-      if (stripeEligibleOffers.length === 0) return null;
-      return (
-        stripeEligibleOffers.find((o) => (o as any).is_primary) ??
-        stripeEligibleOffers[0]
-      );
-    }
     if (!resolved.ok) return null;
     if (selectedOfferId) {
       const userPick = (allOffers || []).find(
@@ -330,7 +307,7 @@ export function AdminPaymentLinkDialog({
       if (userPick) return userPick;
     }
     return resolved.offer;
-  }, [resolved, selectedOfferId, allOffers, provider, paymentType, stripeEligibleOffers]);
+  }, [resolved, selectedOfferId, allOffers]);
 
   // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
   const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
@@ -939,8 +916,7 @@ ${amountLine}
   const stripeBlocked =
     stripeInstallmentBlocked ||
     stripeAccountMissing ||
-    stripeCurrencyUnsupported ||
-    noStripeSubscriptionOffers;
+    stripeCurrencyUnsupported;
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
@@ -1234,9 +1210,9 @@ ${amountLine}
                           Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
                         </p>
                       )}
-                      {noStripeSubscriptionOffers && (
-                        <p className="text-xs text-destructive">
-                          У этого тарифа нет кнопки, настроенной для Stripe-подписки (нужен meta.stripe.price_id). Используйте bePaid или добавьте Stripe Price в настройках кнопки.
+                      {provider === "stripe" && paymentType === "subscription" && (
+                        <p className="text-xs text-muted-foreground">
+                          Stripe-подписка будет создана по настройкам тарифа. Техническая привязка Stripe Price выполняется автоматически.
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground">
@@ -1317,15 +1293,6 @@ ${amountLine}
 
                   {offersLoading ? (
                     <Skeleton className="h-10 w-full" />
-                  ) : noStripeSubscriptionOffers ? (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                      <p>
-                        У этого тарифа нет кнопки, настроенной для Stripe-подписки
-                        (нужно meta.stripe.price_id в настройках кнопки). Используйте bePaid
-                        или добавьте Stripe Price.
-                      </p>
-                    </div>
                   ) : resolved.ok === false ? (
                     <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -1343,18 +1310,17 @@ ${amountLine}
                         <SelectContent>
                           {visibleOffers.map((o) => {
                             const isSub = !!o.meta?.recurring?.is_recurring;
-                            const hasStripePrice = !!(o as any).meta?.stripe?.price_id;
                             return (
                               <SelectItem key={o.id} value={o.id}>
                                 {o.button_label} — {Number(o.amount)} {previewCurrency}
                                 {isSub ? " · подписка" : " · разовая"}
                                 {o.is_primary ? " · основная" : ""}
-                                {provider === "stripe" && hasStripePrice ? " · Stripe price ✓" : ""}
                               </SelectItem>
                             );
                           })}
                         </SelectContent>
                       </Select>
+
 
 
                       {/* Audit-бейдж режима резолва */}
