@@ -449,6 +449,9 @@ Deno.serve(async (req) => {
                 account_code: resolvedAccountCode,
                 business_stream: businessStream,
                 execute: true,
+                // Hotfix-1: передаём запрошенную валюту — используется как fallback,
+                // если у тарифа нет активной tariff_prices строки.
+                requested_currency: stripeValidationCurrency,
               }),
             },
           );
