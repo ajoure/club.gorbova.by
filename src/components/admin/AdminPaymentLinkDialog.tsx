@@ -1211,9 +1211,9 @@ ${amountLine}
                           Валюта {stripeCurrency} не поддерживается выбранным Stripe-аккаунтом. Выберите другую.
                         </p>
                       )}
-                      {noStripeSubscriptionOffers && (
-                        <p className="text-xs text-destructive">
-                          У этого тарифа нет кнопки, настроенной для Stripe-подписки (нужен meta.stripe.price_id). Используйте bePaid или добавьте Stripe Price в настройках кнопки.
+                      {provider === "stripe" && paymentType === "subscription" && (
+                        <p className="text-xs text-muted-foreground">
+                          Stripe-подписка будет создана по настройкам тарифа. Техническая привязка Stripe Price выполняется автоматически.
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground">
