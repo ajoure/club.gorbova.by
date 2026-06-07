@@ -570,6 +570,14 @@ export default function AdminProductDetailV2() {
     }
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
+
+    // Phase 5-B — acquiring validation (UI mirrors DB trigger)
+    const acqError = validateOfferAcquiring((offerForm.meta as any)?.acquiring as OfferAcquiring | undefined, isInstallment);
+    if (acqError) {
+      toast.error(acqError);
+      return;
+    }
+
     
     // Build meta object with preregistration and recurring settings if applicable
     let metaToSave: OfferMetaConfig = { ...offerForm.meta };
