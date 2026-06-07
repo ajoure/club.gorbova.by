@@ -917,8 +917,7 @@ ${amountLine}
   const stripeBlocked =
     stripeInstallmentBlocked ||
     stripeAccountMissing ||
-    stripeCurrencyUnsupported ||
-    noStripeSubscriptionOffers;
+    stripeCurrencyUnsupported;
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
