@@ -155,43 +155,56 @@ src/components/admin/products/OfferAcquiringSettings.tsx
 
 | # | Где | Конфигурация | Ожидаемый UI |
 |---|---|---|---|
-| S1 | AdminPaymentLinkDialog | Способ оплаты = «Иностранная карта» (fixed Stripe), account без BYN, currency=BYN | `Select` пункт BYN disabled + текст «Аккаунт Stripe не поддерживает BYN»; destructive строка ниже валютного блока |
-| S2 | AdminPaymentLinkDialog | Способ оплаты = «Иностранная карта», installment-оффер | Карточка «Иностранная карта» disabled, hint = «Рассрочка через Stripe недоступна» |
-| S3 | AdminPaymentLinkDialog | Способ оплаты = «Клиент выбирает», только bePaid совместим | Опция «Клиент выбирает» активна с hint «Сейчас доступен только один способ оплаты: bePaid» |
-| S4 | AdminPaymentLinkDialog | currency=EUR/USD/PLN на Stripe + account без этой валюты | пункт валюты disabled + reason; submit заблокирован |
-| S5 | OfferAcquiringSettings | bePaid включён, любой оффер | Badge «Принимает только BYN» рядом с подключением |
-| S6 | OfferAcquiringSettings | Stripe включён, account с capabilities `[eur, usd]` | Badge «Принимает: EUR · USD»; BYN/PLN отсутствуют |
-| S7 | OfferAcquiringSettings | Stripe включён, account без пересечения с whitelist | Destructive предупреждение, но save доступен (toast/валидатор не блокируют) |
+| S1 | AdminPaymentLinkDialog | bePaid + BYN | Карточка «bePaid» active, ссылка создаётся, provider=bepaid |
+| S2 | AdminPaymentLinkDialog | bePaid + EUR/USD/PLN | Карточка «bePaid» disabled + hint «Доступно только для BYN» |
+| S3 | AdminPaymentLinkDialog | Stripe + BYN при account без BYN | Карточка «Иностранная карта» disabled + hint «Аккаунт Stripe не поддерживает BYN». **Если в dev-окружении нет Stripe-аккаунта без BYN — `acquiring_connections.capabilities_snapshot` вручную НЕ менять.** Допустимые варианты: (а) simulation proof через unit resolver matrix (`.lovable/proofs/phase_7_currency_provider_resolver_v1.md` §6, кейсы 3 и 12); (б) временный `UPDATE` строго внутри `BEGIN ... ROLLBACK;` с before-snapshot SQL и rollback-блоком, приложенным сюда. |
+| S4 | AdminPaymentLinkDialog | Stripe + EUR на account с capabilities ⊇ EUR | Карточка active, ссылка создаётся, provider=stripe |
+| S5 | AdminPaymentLinkDialog | customer_choice, currency=BYN, Stripe-account ⊇ {BYN,EUR} | Опция «Клиент выбирает» active, оба провайдера available |
+| S6 | AdminPaymentLinkDialog | customer_choice, currency=EUR | bePaid disabled с reason, остаётся только Stripe + warning «Сейчас доступен только один способ оплаты: Stripe» |
+| S7 | OfferAcquiringSettings | Stripe-only оффер (`['stripe']`) **без** `meta.acquiring.stripe.price_id` | Save проходит **без** `acquiring_stripe_missing_price_id`; Badge «Принимает: …» отрисовывается; в БД `allowed_payment_providers=['stripe']`, `meta.acquiring.stripe.price_id` отсутствует / null |
+| S8 | OfferAcquiringSettings | one-time Stripe-only оффер без `price_id` → затем создание payment link | Save оффера проходит; последующий выпуск payment link через `admin-create-public-link` отрабатывает корректно: либо переиспользует существующий Stripe price, либо создаёт новый через `admin-provision-stripe-price` (lazy provisioning). Stripe checkout без `price_id` не уходит — но проверка живёт на стороне `admin-create-public-link` / Stripe checkout flow, **не** на стороне сохранения оффера. |
 
-Скрины S1–S7 прикладывает админ в это же proof-файл в раздел §8 при выполнении smoke;
-этот шаг — handover-ready, runtime изменений не требует.
+Скрины S1–S8 прикладывает админ в этот же proof-файл в раздел §8 при выполнении smoke;
+этот шаг runtime изменений не требует (DB hotfix уже применён).
 
 ## 7. Gates
 
 | Gate | Проверка | Result |
 |---|---|---|
-| P7-7-final | Admin UI показывает disabled/reason для несовместимых currency/provider в AdminPaymentLinkDialog и OfferAcquiringSettings | ✅ code-level closed; визуальная фиксация = §6 |
+| P7-7-final | Admin UI показывает disabled/reason для несовместимых currency/provider в AdminPaymentLinkDialog и OfferAcquiringSettings | ⏳ ждёт скрины §8 (S1–S8) |
 | P7-UI-1 | Mirror резолвер импортирован в оба UI-файла | ✅ |
 | P7-UI-2 | Удалён auto-fallback валюты | ✅ (см. §3.6) |
 | P7-UI-3 | Mirror резолвер не правился | ✅ (§1) |
-| P7-UI-4 | Backend / edge / миграции не тронуты | ✅ (§5) |
-| P7-UI-5 | OfferAcquiringSettings не блокирует save и не редактирует `allowed_payment_providers` автоматически | ✅ (§4.4–4.5) |
-| P7-UI-6 | Нет технических slug в copy для администратора | ✅ — reason приходит из mirror `message`, slug-и `bepaid`/`stripe` не попадают в новые user-facing строки |
-| P7-UI-7 | Customer_choice в UI собирает только совместимые провайдеры (mirror) | ✅ (§3.5) |
-| P7-UI-8 | `git diff --name-only` ограничен ожидаемым списком | ✅ (§5) |
+| P7-UI-4 | Backend edge functions / webhook / grant / Telegram / reconcile не тронуты | ✅ (только DB-функция триггера через миграцию — см. §2.1) |
+| P7-UI-5 | OfferAcquiringSettings не блокирует save и не редактирует `allowed_payment_providers` автоматически | ✅ |
+| P7-UI-6 | Нет технических slug в copy для администратора | ✅ |
+| P7-UI-7 | Customer_choice в UI собирает только совместимые провайдеры (mirror) | ✅ |
+| P7-UI-8 | `git diff --name-only` ограничен ожидаемым списком (§2) | ✅ |
+| P7-DB-1 | Триггер `tariff_offers_acquiring_validate` больше не требует `stripe.price_id` | ✅ (§2.1 machine-check) |
+| P7-DB-2 | `acquiring_no_providers` / `acquiring_unknown_provider` / `stripe_installment_not_supported` сохранены | ✅ (§2.1 machine-check) |
+| P7-DB-3 | `default_provider` auto-derive и `customer_choice_enabled` defaulting сохранены | ✅ (§2.1 machine-check) |
+| P7-DB-4 | Rollback SQL присутствует в миграции | ✅ (§2.1) |
 
 ## 8. Скрины (заполняется при ручном smoke)
 
-> Placeholder — добавить S1–S7 по таблице §6.
+> Placeholder — добавить S1–S8 по таблице §6.
 
 ## 9. DoD
 
+- ✅ DB-триггер больше не требует `meta.acquiring.stripe.price_id`;
+- ✅ Остальные guard-проверки триггера сохранены (machine-check §2.1);
+- ✅ Rollback SQL приложен в миграцию;
 - ✅ `AdminPaymentLinkDialog` использует `currencyProviderResolver` для всех currency/provider проверок;
-- ✅ `OfferAcquiringSettings` использует mirror для информационных Badge + warning, без блокировки save;
-- ✅ Auto-fallback валюты удалён;
-- ✅ Нет технических slug в новых строках UI;
-- ✅ Backend = SOT, mirror = UX-only (явно зафиксировано в комментариях);
-- ✅ `git diff --name-only` соответствует scope;
-- ⏳ §8 ждёт ручные скрины S1–S7 в превью.
+- ✅ `OfferAcquiringSettings` использует mirror для Badge + warning, без блокировки save;
+- ✅ Auto-fallback валюты удалён, нет технических slug в новых строках UI;
+- ✅ `currencyProviderResolver`, shared edge helper, webhook/grant/Telegram/reconcile, `admin-create-public-link` — **не тронуты**;
+- ✅ `git diff --name-only` соответствует scope §2 (1 migration + 2 proof md, без frontend);
+- ⏳ §8 ждёт ручные скрины S1–S8 в превью.
 
-После добавления §8 — Phase 7-EXEC закрывается полным PASS и можно переходить к Phase 8 (Receipts / Documents).
+После добавления §8 (S1–S8 PASS):
+- `P7-7-final` = **PASS**;
+- Phase 7-EXEC = **PASS**;
+- Phase 8 — Receipts / Documents **разблокирована**.
+
+Если любой из S1–S8 падает — статус **PARTIAL**, blocker фиксируется отдельным mini-планом, Phase 8 не стартует.
+
