@@ -92,6 +92,7 @@ Deno.serve(async (req) => {
       account_code: rawAccountCode = null,
       provider_mode: rawProviderMode,
       provider_choice_source: rawProviderChoiceSource,
+      allowed_payment_providers: rawAllowedProvidersExplicit,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
