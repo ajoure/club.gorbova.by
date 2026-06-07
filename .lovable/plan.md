@@ -292,3 +292,24 @@ resolveAvailableProviders(currency, tariff, account):
 - updated: `.lovable/discovery/stripe_currency_support_v1.md` (§2 заполнен)
 
 **Никаких изменений кода** в этом спринте — только proof и discovery.
+
+---
+
+## Финальный статус Phase 6 (2026-06-07)
+
+- 6-A / 6-B / 6-C / 6-D / 6-E / 6-F = PASS
+- 6-G.1 = PASS (UI-only fix, runtime freeze соблюдён)
+- 6-G.2 = **CODE COMPLETE + STATIC PROOF PASS + SIMULATION PROOF PASS**
+  - Runtime E2E proof = **DEFERRED → Final Regression**
+  - Final PASS по Phase 6 возможен только после runtime E2E (см. `.lovable/proofs/phase_6_payment_profiles_v1.md` §S9)
+- bePaid runtime files freeze = confirmed
+- Phase 6 implementation complete. Спринт не блокируется ожиданием runtime proof.
+
+## Переход к Phase 7 — Currencies Discovery / Currency Provider Resolver Spec
+
+В этом спринте Phase 7 **не меняет** runtime, checkout, webhook, UI и БД. Это discovery/spec-only этап.
+
+Артефакты:
+- `.lovable/discovery/phase_7_currencies_inventory_v1.md` — SQL inventory, hardcoded литералы, UI-карта.
+- `.lovable/discovery/phase_7_currency_provider_resolver_v1.md` — подпись резолвера, 3-уровневый SOT для Stripe, STOP-логика, точки внедрения для EXEC.
+- `.lovable/discovery/stripe_currency_support_v1.md` §2 — заполняется в Phase 7-EXEC (capability discovery через существующий `admin-payments-diagnostics`; новый helper только под отдельный mini-plan).
