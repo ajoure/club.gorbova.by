@@ -163,3 +163,39 @@ Runtime файлы вне UI-слоя не изменены. Phase 5-D конт�
 ### Статус
 - Phase 6-G.1 = PASS (UI-only, runtime-freeze соблюдён).
 - Phase 6-G.2 = TODO (auto-provision при save).
+
+---
+
+## Phase 6-G.2 — Auto-provision Stripe Price on offer save (EXECUTE)
+
+### DIAGNOSE
+- Канонический writer Stripe Price: `supabase/functions/admin-provision-stripe-price/index.ts` (super_admin only, идемпотентный).
+- SOT для checkout: `tariff_offers.meta.stripe.price_id` (читает `_shared/create-stripe-checkout.ts`).
+- UI читает `meta.acquiring.stripe.price_id` — нужно зеркало после провижна.
+- `business_stream` берётся из `tariff_offers.meta.business_stream` → `products_v2.meta.business_stream` (см. `_shared/acquiring/business-stream-resolver.ts`).
+
+### EXECUTE
+- `src/pages/admin/AdminProductDetailV2.tsx::handleSaveOffer`:
+  - после save offer вызывается `admin-provision-stripe-price` с `execute:true` при выполнении ВСЕХ условий:
+    - `savedOfferId` получен;
+    - оффер не installment;
+    - `isSubscriptionForAcq === true` (включено автопродление / trial / preregistration);
+    - `meta.acquiring.allowed_payment_providers` содержит `stripe`;
+    - `meta.acquiring.stripe.account_code` непустой;
+    - `business_stream` резолвится (offer.meta → product.meta);
+    - `meta.acquiring.stripe.price_id` пустой (skip-noise; функция всё равно идемпотентна).
+  - lookup-цепочка делегирована функции: existing `meta.stripe.price_id` → Stripe retrieve по id → Stripe create с deterministic `Idempotency-Key` (`stripe-price:{offer_id}:{currency}:{unit_amount}:{interval}:{interval_count}`). Дубликаты Stripe Price НЕ создаются.
+  - при успехе `provRes.stripe.price_id` зеркалится в `meta.acquiring.stripe.{price_id,product_id}` через второй `updateOffer.mutateAsync` — UI больше не показывает «missing».
+  - при `manual_review` / `error` / Stripe error → `toast.error`, save оффера сохраняется (UI-only fallback).
+
+### Runtime freeze (G.2)
+- НЕ изменены: `bepaid-webhook`, `stripe-webhook`, `grant-access-for-order`, Telegram функции, `subscriptions-reconcile`, `admin-provision-stripe-price` (его контракт не тронут).
+- Изменён только клиентский handler `handleSaveOffer` + один существующий edge-call.
+- bePaid поток не затрагивается: условие `stripeEnabled && stripeAccount` отсекает чисто-bePaid офферы.
+
+### Acceptance (G.2)
+- [ ] До save: `meta.acquiring.stripe.price_id` пустой / null.
+- [ ] После save subscription-оффера с включённым Stripe: `meta.acquiring.stripe.price_id` заполнен, `meta.stripe.price_id` тоже (написан edge-функцией).
+- [ ] Повторный save того же оффера: НЕ создаёт новый Stripe Price (idempotent_hit, audit `stripe_provision_idempotent_existing`).
+- [ ] Stripe subscription checkout использует этот `price_id` (через `_shared/create-stripe-checkout.ts` — без изменений).
+- [ ] bePaid subscription без регрессии.
