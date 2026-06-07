@@ -51,6 +51,9 @@ interface CreatePublicLinkRequest {
   // поверх offer.meta.acquiring.allowed_payment_providers. Применяется ТОЛЬКО для
   // provider_mode='customer_choice' + provider_choice_source='explicit'. Не изменяет offer.
   allowed_payment_providers?: ('bepaid' | 'stripe')[];
+  // Stripe-валюта для price provisioning, когда provider_mode='customer_choice' и stripe в list.
+  // link.currency при этом остаётся BYN (bepaid-домен).
+  stripe_currency?: string;
 }
 
 // PATCH 4.1.1 — Stripe currencies whitelist (SOT, must mirror frontend).
