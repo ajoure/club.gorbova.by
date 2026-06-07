@@ -1142,6 +1142,16 @@ ${amountLine}
                             : hasSt
                               ? "Будет использована иностранная карта (Stripe)"
                               : "Будут использованы настройки оплаты этой кнопки";
+                      const ccHasBp = customerChoiceAllowed.includes("bepaid");
+                      const ccHasSt = customerChoiceAllowed.includes("stripe");
+                      const customerChoiceHint =
+                        ccHasBp && ccHasSt
+                          ? "Клиент сам выберет белорусскую или иностранную карту"
+                          : ccHasBp
+                            ? "Сейчас доступен только один способ оплаты: bePaid"
+                            : ccHasSt
+                              ? "Сейчас доступен только один способ оплаты: Stripe"
+                              : "Нет доступных способов оплаты";
                       return [
                       {
                         key: "auto" as const,
@@ -1149,6 +1159,13 @@ ${amountLine}
                         hint: autoHint,
                         icon: <MousePointerClick className="h-4 w-4 text-muted-foreground" />,
                         disabled: false,
+                      },
+                      {
+                        key: "customer_choice" as const,
+                        title: "Клиент выбирает",
+                        hint: customerChoiceHint,
+                        icon: <Users className="h-4 w-4 text-blue-500" />,
+                        disabled: customerChoiceAllowed.length === 0,
                       },
                       {
                         key: "bepaid" as const,
