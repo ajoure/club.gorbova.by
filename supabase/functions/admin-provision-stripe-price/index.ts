@@ -370,26 +370,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ---- EXECUTE: drift re-check (compare with plan from DB right now) ----
-    // (Re-read offer+price right before create to detect concurrent change.)
+    // ---- EXECUTE: drift re-check (concurrent change detection) ----
     const { data: offerNow } = await supabase
       .from('tariff_offers')
-      .select('amount, meta')
+      .select('amount, meta, is_active')
       .eq('id', tariff_offer_id)
       .maybeSingle();
-    const { data: priceNow } = await supabase
-      .from('tariff_prices')
-      .select('final_price, currency, is_active')
-      .eq('tariff_id', (tariff as any).id)
-      .eq('is_active', true)
-      .maybeSingle();
-    if (
-      !priceNow ||
-      !(priceNow as any).is_active ||
-      String((priceNow as any).currency).toUpperCase() !== currency ||
-      Math.round(Number((priceNow as any).final_price) * 100) !== unit_amount
-    ) {
-      return json(409, { status: 'error', error: 'configuration_changed:tariff_prices' });
+    if (!offerNow || !(offerNow as any).is_active) {
+      return json(409, { status: 'error', error: 'configuration_changed:offer_inactive' });
+    }
+    if (amount_source === 'tariff_prices.final_price') {
+      const { data: priceNow } = await supabase
+        .from('tariff_prices')
+        .select('final_price, currency, is_active')
+        .eq('tariff_id', (tariff as any).id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (
+        !priceNow ||
+        !(priceNow as any).is_active ||
+        String((priceNow as any).currency).toUpperCase() !== currency ||
+        Math.round(Number((priceNow as any).final_price) * 100) !== unit_amount
+      ) {
+        return json(409, { status: 'error', error: 'configuration_changed:tariff_prices' });
+      }
+    } else {
+      // Hotfix-1 fallback: SOT = offer.amount. Перепроверяем, что amount не сменился.
+      const amountNow = Number((offerNow as any).amount);
+      if (!Number.isFinite(amountNow) || Math.round(amountNow * 100) !== unit_amount) {
+        return json(409, { status: 'error', error: 'configuration_changed:offer_amount' });
+      }
     }
     const periodNow = resolveBillingPeriod((offerNow as any)?.meta);
     if (!periodNow.ok || periodNow.interval !== period.interval || periodNow.interval_count !== period.interval_count) {
