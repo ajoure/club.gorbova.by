@@ -1,228 +1,236 @@
-## Phase 4.2 — Public Link Lifecycle Integrity = **FAIL**
-
-- Discovery: `.lovable/discovery/stripe_public_links_lifecycle_v1.md`
-- Proof: `.lovable/proofs/stripe_phase_4_2_lifecycle_audit_v1.md`
-- Root cause: `stripe-webhook` НЕ вызывает `consume-payment-link` после terminal paid.
-- Next: **Phase 4.3 — Stripe consume-payment-link integration** (точка вставки: handlers `checkout.session.completed` + `invoice.paid` в `supabase/functions/stripe-webhook/index.ts`).
-
-Gate-результаты: G61 FAIL · G62 PARTIAL/BLOCKED-BY-G61 · G63 PASS · G64 PASS · G65 FAIL · G66a PASS create / FAIL consume · G66b PENDING (нет subscription stripe-eligible offer) · G67 NO.
-
----
-
 да, согласен, с учетом правок:
 
-1. **Не выполнять реальные bePaid оплаты в 4.2**
+1. **G75 bePaid оплату не запускать**
 
-Для bePaid parity достаточно:
+Не делать новую реальную bePaid оплату.
 
-- существующая ссылка открывается;
-- новая ссылка создаётся;
-- GET/POST enforcement работает;
-- historical proof по consume-payment-link.
+Для G75 достаточно:
 
-Новые bePaid оплаты не запускать, чтобы не трогать реальный платёжный контур.
+- grep/diff: bepaid-webhook unchanged
 
-2. **Stripe оплаты тоже не делать без необходимости**
+- historical proof: bePaid consume path работал до патча
 
-Phase 4.2 — lifecycle audit, но не обязательно заново оплачивать картой.
+- новая bePaid public link открывается
 
-Порядок:
+- existing bePaid public link открывается
 
-1. Discovery.
+bePaid payment runtime — не нужен в этом патче.
 
-2. Если discovery показывает, что stripe-webhook не вызывает consume-payment-link,
+2. **G73 replay не требовать через Stripe CLI**
 
-   то G61/G65 сразу FAIL по структурной причине.
+Если нет доступа к Stripe CLI, idempotency проверять так:
 
-3. Не создавать лишние тестовые Stripe оплаты ради подтверждения уже найденного gap.
+- повторный вызов существующего reconcile/replay-инструмента, если он уже есть;
 
-Если структурного gap нет — тогда делать минимальный Stripe test payment.
+или
 
-3. **G62 max_uses зависит от G61**
+- SQL proof: orders_v2.meta.payment_link_counted=true + helper guard;
 
-Если current_uses не инкрементится, то max_uses enforcement после оплаты тоже не может быть доказан.
+или
 
-В таком случае:
+- provider_events idempotency уже блокирует duplicate event.
 
-G61 = FAIL
+Не возвращать задачу оператору.
 
-G62 = BLOCKED-BY-G61
+3. **G72 subscription payment можно делать только если доступно через штатный test checkout**
 
-Не пытаться искусственно накрутить current_uses.
+Если нельзя быстро оплатить subscription public link через test checkout, ставить:
 
-4. **G66 разделить на one-time и subscription**
+G72 = PENDING
 
-Формат:
+Но code path должен быть доказан:
 
-G66a Stripe one-time payment_link_id linkage
+- payment_link_id есть в Session metadata
 
-G66b Stripe subscription payment_link_id linkage
+- payment_link_id есть в subscription_data.metadata
 
-Если subscription оплаты не было — G66b = PENDING / N/A, а не общий FAIL.
+- invoice.paid resolver добавляет payment_link_id в orderInsert.meta
 
-5. **Не использовать admin-update-payment-link для истечения ссылки, если это write**
+- consume вызывается только на activation invoice
 
-Для G63 можно проверять только уже существующую expired link или создать ссылку с коротким expires_at через штатный create flow.
+4. **Для one-time G71 нужен полный runtime**
 
-Но не делать ручной UPDATE.
+G71 обязателен:
 
-6. **Все тестовые ссылки после проверки можно инвалидировать только штатным admin-invalidate-payment-link**
+Stripe one-time public link
 
-Это допустимо.
+→ test card 4242
 
-Прямые UPDATE запрещены.
+→ checkout.session.completed
 
-7. **Финальный статус Phase 4.2**
+→ order paid
 
-Если будет найдено, что stripe-webhook не вызывает consume-payment-link, то итог:
+→ current_uses 0→1
 
-Phase 4.2 = FAIL
+Это главный proof.
 
-Root cause = Stripe webhook does not consume payment link after paid event
+5. **Не шуметь audit при admin/direct Stripe**
 
-Next patch = Phase 4.3 — Stripe consume-payment-link integration
+Для one-time:
 
-Это нормальный результат discovery.
+если payment_link_id отсутствует — skip silently
 
-После этих правок план можно выполнять.
+без audit, чтобы admin checkout не засорял логи.
+
+6. **Формат итогового статуса**
+
+Если G71 PASS, G74 PASS, bePaid freeze PASS, но G72 не оплачен:
+
+Phase 4.3 = PARTIAL PASS
+
+Open: G72 subscription runtime pending
+
+Если G71 FAIL:
+
+Phase 4.3 = FAIL
+
+7. **Сделать отдельный grep freeze**
+
+В proof обязательно:
+
+bepaid-webhook unchanged
+
+consume-payment-link unchanged
+
+public-checkout unchanged
+
+grant-access-for-order unchanged
+
+После этих правок план можно запускать.
 
 &nbsp;
 
-План: Phase 4.2 — Public Link Lifecycle Integrity
+&nbsp;
 
-Scope: ТОЛЬКО discovery + runtime audit. Никаких правок кода, миграций, edge functions, схемы. Цель — доказать, что Stripe public links интегрированы в жизненный цикл ссылок так же, как bePaid (current_uses / max_uses / expires_at / status / consume / linkage).
+## План: Phase 4.3 — Stripe consume-payment-link integration
 
-Аккаунт для runtime тестов: [7500084@gmail.com](mailto:7500084@gmail.com).
-
----
-
-## Этап 1. Discovery (read-only)
-
-### 1.1 Карта lifecycle write-path'ей
-
-Прочитать и зафиксировать, КТО и КОГДА изменяет колонки `payment_links`:
-
-- `supabase/functions/_shared/consume-payment-link.ts` — единственный writer `current_uses`? Подтвердить grep'ом.
-- `supabase/functions/bepaid-webhook/index.ts` — где вызывается `consumePaymentLink`, под какими условиями (terminal=paid, idempotency через `orders_v2.meta.payment_link_counted=true`).
-- `supabase/functions/stripe-webhook/index.ts` — вызывается ли `consumePaymentLink`? Из Phase 4.1 known gap G-NEXT-1: НЕТ. Подтвердить актуальное состояние после 4.1.2.
-- `admin-invalidate-payment-link` / `admin-update-payment-link` — write-paths для `status`/`expires_at`/`max_uses`.
-
-### 1.2 Карта read/enforce-путей
-
-- `public-checkout` (GET info + POST start) — какие проверки делает перед стартом checkout: `status='active'`, `expires_at > now()`, `current_uses < max_uses`. Проверить, что enforcement одинаков для обеих веток (раннее, ДО `params.provider === 'stripe'` early-dispatch).
-- `_shared/create-payment-checkout.ts` Stripe-ветка — НЕ дублирует ли свои собственные lifecycle-проверки и не обходит ли их.
-- `payment_links_enriched_v` — derived поля `is_expired`, `is_exhausted`, `is_invalid` (используются в админке).
-
-### 1.3 Metadata linkage
-
-- Подтвердить, что `payment_link_id` передаётся в Stripe metadata (one_time: `metadata.payment_link_id`, subscription: `metadata.payment_link_id` + `subscription_data.metadata.payment_link_id` — из proof 4.1).
-- Проверить, читает ли `stripe-webhook` это metadata и куда пишет (`orders_v2.payment_link_id` колонка / `meta.payment_link_id`).
-- Для bePaid: где `payment_link_id` появляется в `orders_v2` (writer-точка в `public-checkout` POST → `_shared/create-payment-checkout.ts`).
-
-### 1.4 Запросы к БД (baseline + orphan-чек)
-
-- Stripe orders без `payment_link_id` за период с момента 4.1.1 (исключая admin sandbox direct path, у которого `payment_link_id` принципиально NULL): фильтр `meta->>'provider'='stripe' AND meta->>'origin'!='admin_sandbox'`.
-- `payment_links` со status='used' но `current_uses=0` (потенциальный orphan).
-- `payment_links` с `paid_orders_count > current_uses` (рассинхрон счётчика).
-- Для bePaid baseline по тем же запросам — сравнить пропорции.
-
-Артефакт этапа: `.lovable/discovery/stripe_public_links_lifecycle_v1.md` с матрицей write/read paths, найденными гэпами и baseline-цифрами.
+**Цель:** после успешной Stripe-оплаты по public link инкрементировать `payment_links.current_uses` через существующий helper `consumePaymentLinkForOrder`, паритет с bePaid. Никаких новых таблиц, миграций, writer'ов; только два call-site существующего helper.
 
 ---
 
-## Этап 2. Runtime Audit — 7 Gates
+### Discovery (read-only, уже выполнен)
 
-Все тесты на тестовых ссылках, минимальные суммы. Каждый gate фиксируется снимком SQL (до/после).
 
-### G61 — current_uses increment
+| Факт                                                                                         | Источник                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `consumePaymentLinkForOrder(supabase, orderId, callerLabel)` — единственный canonical writer | `_shared/consume-payment-link.ts` (133 строки, идемпотентен через `orders_v2.meta.payment_link_counted`, защита от race через optimistic `current_uses` guard)                                                                                                                                                                             |
+| One-time Stripe webhook путь                                                                 | `stripe-webhook/index.ts:154-260`, ветка `checkout.session.completed`. `transitionOrderPaid` уже вызывается; `mergeStripeMetaOnOrder` уже мерджит в `orders_v2.meta`. `payment_link_id` ДОСТУПЕН в `md.payment_link_id` (см. `create-stripe-checkout.ts:205`).                                                                             |
+| Subscription Stripe activation путь                                                          | `_shared/stripe-subscription-resolver.ts:849-994`, обработчик `invoice.paid`. Создаёт `orders_v2.insert(orderInsert)`, затем `grant-access-for-order`. `payment_link_id` доступен в `invoice.parent.subscription_details.metadata.payment_link_id` (см. `stripe-pre-create-subscription.ts:267-268`) и/или в `subv2.meta.payment_link_id`. |
+| Renewal-инвойсы                                                                              | Stripe прокидывает `subscription_data.metadata` в КАЖДЫЙ renewal invoice. Чтобы НЕ инкрементить counter повторно при renewal, ограничиваем consume первым активационным invoice'ом (`billing_reason='subscription_create'` ИЛИ `ps.state==='pending'` до апдейта).                                                                         |
+| Freeze                                                                                       | `bepaid-webhook`, `_shared/create-payment-checkout.ts`, `public-checkout`, `grant-access-for-order`, `payment_links` схема — не трогаем.                                                                                                                                                                                                   |
 
-1. Создать новую Stripe one-time public link (offer Gorbova Club / CHAT, единственный Stripe-eligible — из proof 4.1.1), `max_uses=null`.
-2. Зафиксировать `current_uses` до оплаты = 0.
-3. Оплатить тест-картой Stripe `4242 4242 4242 4242`.
-4. Дождаться `provider_events: checkout.session.completed` + `payment_intent.succeeded`.
-5. Проверить `current_uses` после: ожидание =1 (PASS) / =0 (FAIL → подтверждение known gap G-NEXT-1).
-6. Параллельный bePaid контроль: новая bePaid one-time link, оплата, `current_uses` =1.
-
-### G62 — max_uses enforcement
-
-1. Создать Stripe public link с `max_uses=1`.
-2. Оплатить успешно → `current_uses` должен стать 1, статус ссылки derived `is_exhausted=true`.
-3. Открыть тот же `/pay/:token` повторно → `public-checkout` GET должен вернуть error `link_exhausted` / `inactive`.
-4. POST start → отказ ДО создания Stripe Session.
-5. bePaid parity: тот же сценарий через bePaid link с `max_uses=1`.
-
-### G63 — expires_at enforcement
-
-1. Создать Stripe link с `expires_at = now() + 2 минуты`.
-2. Подождать истечения (или вручную сдвинуть через `admin-update-payment-link`).
-3. GET `/pay/:token` → error `link_expired`.
-4. POST start → отказ.
-5. bePaid parity.
-
-### G64 — inactive link block
-
-1. Создать Stripe link, оплату НЕ делать.
-2. Через `admin-invalidate-payment-link` перевести status в `inactive`.
-3. GET/POST `/pay/:token` → отказ для обеих веток.
-4. bePaid parity на отдельной ссылке.
-
-### G65 — consume-payment-link path
-
-- Подтвердить grep'ом и edge function логами: для Stripe оплаты `consume-payment-link` вызывается из `stripe-webhook` (если 4.1 patch это добавил) или НЕ вызывается (если known gap G-NEXT-1 ещё открыт).
-- Это диагностический gate: его результат напрямую определяет G61.
-- Если FAIL — зафиксировать как backlog для Phase 4.3 (write fix), не правим в 4.2.
-
-### G66 — payment_link_id linkage
-
-1. Для каждой успешной Stripe-оплаты из G61/G62 проверить:
-  - `orders_v2.payment_link_id` = id ссылки (one_time).
-  - `subscriptions_v2.meta.payment_link_id` = id ссылки (subscription).
-  - `provider_events.payload.data.object.metadata.payment_link_id` присутствует.
-2. Stripe subscription public link: создать (если найдётся offer с `meta.stripe.price_id` и `is_recurring=true`), оплатить, проверить linkage в `subscriptions_v2` + `provider_subscriptions` + первый `invoice.paid` → `orders_v2.payment_link_id`.
-3. Orphan-запрос из 1.4 повторить после тестов: дельта = 0 ожидается.
-
-### G67 — bePaid parity
-
-- Свести таблицу: для каждого gate G61-G66 — `bePaid: PASS/FAIL`, `Stripe: PASS/FAIL`, `parity: YES/NO`.
-- Parity=NO допустим только для документированных gap'ов (G-NEXT-1 если ещё открыт).
 
 ---
 
-## Этап 3. Отчёт
+### PATCH 4.3.1 — one-time Stripe consume
 
-Артефакт: `.lovable/proofs/stripe_phase_4_2_lifecycle_audit_v1.md`
+Файл: `supabase/functions/stripe-webhook/index.ts`
 
-Структура:
+1. Импорт в шапке:
+  ```ts
+   import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
+  ```
+2. В ветке `checkout.session.completed`, ПОСЛЕ `transitionOrderPaid` и `applyCrmStageOnTerminal`, ДО `return`:
+  - Извлечь `const md_payment_link_id = md.payment_link_id ?? null;`
+  - Если `null` → audit `stripe.payment_link.consume_skipped_no_payment_link_id` (только если запись имеет смысл — т.е. для public-link сценариев; admin sandbox такого md не имеет, и для них skip без аудита, чтобы не шуметь). Решение: если `!md_payment_link_id` — просто continue без аудита (как и bePaid).
+  - Если есть — гарантировать, что `orders_v2.meta.payment_link_id` присутствует:
+    - Уже мерджим `mergeStripeMetaOnOrder`; добавить параллельный merge `payment_link_id` (минимальное расширение helper'а или прямой UPDATE с COALESCE-merge, не затрагивая существующие поля).
+  - Обернуть в try/catch:
+    ```ts
+    try {
+      const res = await consumePaymentLinkForOrder(supabase, order_id_meta, 'stripe-webhook[checkout.session.completed]');
+      // helper сам пишет audit_logs на success/limit_reached/race
+    } catch (e) {
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.payment_link.consume_failed',
+        entity_type: 'orders_v2', entity_id: order_id_meta,
+        meta: { error: e instanceof Error ? e.message : String(e), account_code, source: 'checkout.session.completed' },
+      });
+    }
+    ```
+  - Никогда не throw — flow продолжается.
 
-- Per-gate: команда/действие, ожидание, факт, PASS/FAIL, SQL-снимок, edge function log refs.
-- Итоговая матрица 7 gate × 2 провайдера.
-- Если есть FAIL — точка отказа, файл/строка, и предложение для Phase 4.3 (write fix, отдельный sprint, НЕ в 4.2).
-- Update `.lovable/plan.md`: Phase 4.2 = PASS / FAIL.
+### PATCH 4.3.2 — subscription Stripe consume (первый invoice)
 
-Формат финального ответа пользователю:
+Файл: `supabase/functions/_shared/stripe-subscription-resolver.ts` (обработчик `invoice.paid`, lines 849-1004).
+
+1. Импорт `consumePaymentLinkForOrder` из `./consume-payment-link.ts`.
+2. Резолв `payment_link_id` (приоритеты):
+  ```ts
+   const md_pli =
+     (parentSubDetails2?.metadata?.payment_link_id as string | null) ??
+     ((invoice.subscription_details as any)?.metadata?.payment_link_id as string | null) ??
+     ((subv2.meta as any)?.payment_link_id as string | null) ??
+     null;
+  ```
+3. В `orderInsert.meta` добавить `payment_link_id: md_pli ?? undefined` — чтобы helper смог его прочитать.
+4. После `grant-access-for-order` (после блока 991-1004) и ТОЛЬКО для активационного invoice:
+  - Условие активации: `billing_reason === 'subscription_create'` ИЛИ `ps.state === 'pending'` до апдейта (захватить в локальную переменную ДО строки 965).
+  - Если активационный invoice **и** `md_pli`:
+    ```ts
+    try {
+      await consumePaymentLinkForOrder(supabase, order_id, 'stripe-webhook[invoice.paid]');
+    } catch (e) {
+      await writeAudit(supabase, {
+        event, account_code,
+        action: 'stripe.payment_link.consume_failed',
+        result: 'logged',
+        subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
+        extra: { invoice_id, order_id, error: e instanceof Error ? e.message : String(e) },
+      });
+    }
+    ```
+  - Если НЕ активационный (renewal) — skip без аудита (это норма, не должен инкрементить).
+  - Если `md_pli` отсутствует на активационном invoice — audit `stripe.payment_link.consume_skipped_no_payment_link_id`.
+
+### Идемпотентность (G73)
+
+Достигается без новой логики: helper уже guard'ит через `orders_v2.meta.payment_link_counted === true`. Replay того же `checkout.session.completed` или `invoice.paid` → найдёт тот же `order_id` (через session_id/invoice_id idempotency на уровне `provider_events` и SELECT-before-INSERT) → helper вернёт `already_counted`.
+
+### Freeze-зоны (zero-diff verifier)
 
 ```
-G61 current_uses increment   = PASS/FAIL  (Stripe: …, bePaid: …)
-G62 max_uses enforcement     = PASS/FAIL
-G63 expires_at enforcement   = PASS/FAIL
-G64 inactive link block      = PASS/FAIL
-G65 consume-payment-link     = PASS/FAIL
-G66 payment_link_id linkage  = PASS/FAIL
-G67 bePaid parity            = PASS/FAIL
+bepaid-webhook/                          unchanged
+_shared/create-payment-checkout.ts       unchanged
+_shared/consume-payment-link.ts          unchanged
+public-checkout/                         unchanged
+grant-access-for-order/                  unchanged
+payment_links table schema               unchanged
+UI                                       unchanged
 ```
 
 ---
 
-## STOP-guards
+### Runtime smoke (на `7500084@gmail.com`)
 
-- Если discovery (этап 1.3) покажет, что `stripe-webhook` НЕ вызывает `consume-payment-link` — G61/G65 ожидаемо FAIL. НЕ правим в рамках 4.2: фиксируем как Phase 4.3 backlog с точной строкой вставки. Это исследовательский этап.
-- Если для Stripe subscription public link нет eligible offer (`meta.stripe.price_id`) — G66 subscription-часть помечается N/A с пояснением (offer mapping = Phase 5 backlog).
-- Любая правка кода в рамках 4.2 запрещена. Только админ-действия через существующие edge functions (`admin-invalidate-payment-link`, `admin-update-payment-link`) и runtime checkout.
 
-## DoD
+| Gate | Сценарий                                                                                                        | Ожидание                                                                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G71  | Stripe one-time public link (Gorbova Club CHAT BYN 10, max_uses=null) → оплатить 4242                           | `current_uses: 0 → 1`, audit `public_checkout.link_consumed`, `orders_v2.meta.payment_link_counted=true`                                              |
+| G72  | Stripe subscription public link (recurring offer `6f306cbc…`) → оплатить 4242, дождаться первого `invoice.paid` | `current_uses: 0 → 1`, `subscriptions_v2.meta.payment_link_id` linked, активационный order имеет `meta.payment_link_id` + `payment_link_counted=true` |
+| G73  | Re-trigger одного и того же webhook event через `stripe-reconcile-session` / Stripe CLI replay                  | `current_uses` не меняется; helper возвращает `already_counted` (или SELECT-before-INSERT находит существующий order)                                 |
+| G74  | Создать Stripe link с `max_uses=1`, оплатить → попытаться повторный GET/POST `/pay/:token`                      | 410 `Payment link usage limit reached` (enforcement уже есть в `public-checkout`, теперь подкреплён реальным инкрементом)                             |
+| G75  | bePaid one-time public link оплата                                                                              | `current_uses: 0 → 1`, поведение и audit идентичны до патча; путь `bepaid-webhook → consumePaymentLinkForOrder` не изменён                            |
 
-- Discovery файл создан.
-- Proof файл создан с 7 gate-результатами и SQL-снимками.
-- `.lovable/plan.md` обновлён.
-- Финальный отчёт пользователю в указанном формате.
-- 0 правок в production-коде, 0 миграций.
+
+Если на момент прогона нет реальной карты для Stripe subscription — G72 можно подтвердить через Stripe Dashboard test mode + `stripe-reconcile-session` (если он покрывает invoice.paid replay) ИЛИ marker'ом «PENDING-BY-STRIPE-TIME» с фиксацией structural readiness (impon code path + dry-run проверка резолва `md_pli`).
+
+---
+
+### Артефакты
+
+- edit `supabase/functions/stripe-webhook/index.ts` (импорт + consume call в checkout.session.completed + payment_link_id merge)
+- edit `supabase/functions/_shared/stripe-subscription-resolver.ts` (импорт + payment_link_id в orderInsert.meta + consume call на активационном invoice.paid)
+- create `.lovable/proofs/stripe_phase_4_3_consume_payment_link_v1.md` — proof с 5 gates (G71-G75), SQL-снимками до/после, list audit_logs, freeze-grep
+- update `.lovable/plan.md` — статус 4.3
+
+### DoD
+
+- Импорт `consumePaymentLinkForOrder` в обеих точках.
+- One-time: после оплаты `payment_links.current_uses` инкрементирован, `orders_v2.meta.payment_link_counted=true`, audit `public_checkout.link_consumed`.
+- Subscription (первый invoice): то же поведение; renewal invoices НЕ инкрементят.
+- Отсутствие `payment_link_id` → audit `consume_skipped_no_payment_link_id`, flow не падает.
+- Ошибка helper'а → audit `consume_failed`, flow не падает.
+- Replay webhook → counter не растёт повторно.
+- bePaid поведение не изменилось (G75 PASS, grep по `bepaid-webhook` / `_shared/create-payment-checkout.ts` = 0 diff).
+- Proof-файл и итоговый отчёт с G71-G75.
