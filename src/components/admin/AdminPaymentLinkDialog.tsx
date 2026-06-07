@@ -196,7 +196,12 @@ export function AdminPaymentLinkDialog({
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
-  const [stripeCurrency, setStripeCurrency] = useState<string>("EUR");
+  // Hotfix-1 (Phase 8 plan §HOTFIX-1):
+  //   Default Stripe-валюты = валюта выбранного offer (offer.currency || offer.meta.currency || 'BYN').
+  //   Никакого hardcoded "EUR". Если админ вручную меняет валюту — флаг
+  //   `stripeCurrencyManuallySet` блокирует авто-перезапись при смене оффера.
+  const [stripeCurrency, setStripeCurrency] = useState<string>("BYN");
+  const [stripeCurrencyManuallySet, setStripeCurrencyManuallySet] = useState(false);
   // Phase 5-C — provider_mode (fixed vs customer_choice) для публичной ссылки.
   // 'auto' = по настройке кнопки оплаты (multi-provider оффер → customer_choice; иначе fixed=default).
   // 'customer_choice' = override: клиент выбирает из всех технически доступных provider'ов,
@@ -339,6 +344,20 @@ export function AdminPaymentLinkDialog({
     }
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
+
+  // Hotfix-1 — авто-default Stripe-валюты от offer.currency / offer.meta.currency / 'BYN'.
+  // Не перетирает выбор админа, если он уже вручную поменял валюту.
+  useEffect(() => {
+    if (stripeCurrencyManuallySet) return;
+    const offerCurrency =
+      ((effectiveOffer as any)?.currency as string | undefined) ||
+      ((effectiveOffer as any)?.meta?.currency as string | undefined) ||
+      "BYN";
+    const upper = offerCurrency.toUpperCase();
+    if (upper !== stripeCurrency) setStripeCurrency(upper);
+    // Сброс manual-flag при смене оффера через selectedOfferId не делаем —
+    // явный выбор админа сохраняется в рамках одной сессии модалки.
+  }, [effectiveOffer, stripeCurrencyManuallySet, stripeCurrency]);
 
   // Phase 5-C — allowed providers с уровня оффера (SOT для customer_choice).
   const offerAllowedProviders = useMemo<("bepaid" | "stripe")[]>(() => {
@@ -1311,7 +1330,14 @@ ${amountLine}
                         </div>
                         <div>
                           <Label className="text-xs">Валюта</Label>
-                          <Select value={stripeCurrency} onValueChange={setStripeCurrency}>
+                          <Select
+                            value={stripeCurrency}
+                            onValueChange={(v) => {
+                              setStripeCurrency(v);
+                              setStripeCurrencyManuallySet(true);
+                            }}
+                          >
+
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {

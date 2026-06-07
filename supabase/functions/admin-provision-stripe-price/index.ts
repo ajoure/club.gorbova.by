@@ -11,8 +11,12 @@
 //
 // Hard rules:
 //   • super_admin only (verify_jwt=true in config.toml)
-//   • amount/currency SOT = active tariff_prices row (never offer.amount)
-//   • GAP-A whitelist: currency ∈ {BYN, USD, EUR, PLN, RUB, KZT, UAH}
+//   • amount/currency SOT priority:
+//       1) active tariff_prices row (preferred, исторический канон);
+//       2) Hotfix-1 fallback: offer.amount + requested_currency из body
+//          (включается ТОЛЬКО если активной tariff_prices строки нет).
+//      Никакого hardcode "EUR", никакого FX-конверта.
+//   • Whitelist валют (Phase 8 plan §HOTFIX-1): {BYN, USD, EUR, PLN}
 //   • GAP-B resolver: only month/1 + year/1 (interval_count > 1 → 422)
 //   • Idempotency: if meta.stripe.price_id exists + retrieve PASS → return
 //     idempotent_hit (no create). Drift → manual_review (no silent recreate).
@@ -25,7 +29,7 @@ import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 const SCHEMA_VERSION = 1;
-const CURRENCY_WHITELIST = ['BYN', 'USD', 'EUR', 'PLN', 'RUB', 'KZT', 'UAH'];
+const CURRENCY_WHITELIST = ['BYN', 'USD', 'EUR', 'PLN'];
 const PURPOSE = 'stripe_subscription_mvp';
 const ENVIRONMENT = 'test';
 
@@ -43,6 +47,9 @@ interface ProvisionRequest {
   account_code: string;
   business_stream: string;
   execute?: boolean;
+  // Hotfix-1: используется только когда tariff_prices не содержит активной строки.
+  // Whitelist валют тот же, что и для tariff_prices пути.
+  requested_currency?: string;
 }
 
 interface StripeProduct {
@@ -156,6 +163,7 @@ Deno.serve(async (req) => {
     const account_code = body.account_code;
     const business_stream = body.business_stream;
     const execute = body.execute === true;
+    const requested_currency_raw = (body.requested_currency || '').toString().toUpperCase().trim();
 
     if (!tariff_offer_id || !account_code || !business_stream) {
       return json(400, {
@@ -194,13 +202,51 @@ Deno.serve(async (req) => {
       .eq('tariff_id', (tariff as any).id)
       .eq('is_active', true)
       .maybeSingle();
-    if (!price) {
-      await audit('manual_review', actor_user_id, tariff_offer_id, { reason: 'no_active_tariff_price' });
-      return json(422, { status: 'manual_review', error: 'no_active_tariff_price' });
-    }
 
-    const currency = String((price as any).currency).toUpperCase();
-    const amountDecimal = Number((price as any).final_price);
+    // Hotfix-1: amount/currency SOT с fallback.
+    //   1) Active tariff_prices row → исторический канон.
+    //   2) Иначе → offer.amount + requested_currency из body (no FX, no conversion).
+    let currency: string;
+    let amountDecimal: number;
+    let amount_source: 'tariff_prices.final_price' | 'offer.amount' = 'tariff_prices.final_price';
+    let currency_source: 'tariff_prices.currency' | 'request.requested_currency' = 'tariff_prices.currency';
+    let tariff_price_id: string | null = null;
+
+    if (price) {
+      currency = String((price as any).currency).toUpperCase();
+      amountDecimal = Number((price as any).final_price);
+      tariff_price_id = (price as any).id;
+    } else {
+      if (!requested_currency_raw) {
+        await audit('manual_review', actor_user_id, tariff_offer_id, {
+          reason: 'no_active_tariff_price_and_no_requested_currency',
+        });
+        return json(422, {
+          status: 'manual_review',
+          error: 'no_active_tariff_price:requested_currency_required',
+        });
+      }
+      const offerAmount = Number((offer as any).amount);
+      if (!Number.isFinite(offerAmount) || offerAmount <= 0) {
+        await audit('manual_review', actor_user_id, tariff_offer_id, {
+          reason: 'offer_amount_invalid_for_fallback',
+          offer_amount: (offer as any).amount,
+        });
+        return json(422, { status: 'manual_review', error: 'offer_amount_invalid' });
+      }
+      currency = requested_currency_raw;
+      amountDecimal = offerAmount;
+      amount_source = 'offer.amount';
+      currency_source = 'request.requested_currency';
+      await audit('offer_amount_fallback', actor_user_id, tariff_offer_id, {
+        reason: 'no_active_tariff_price',
+        currency,
+        amount: amountDecimal,
+        offer_id: tariff_offer_id,
+        tariff_id: (tariff as any).id,
+        source: 'offer_meta',
+      });
+    }
     const unit_amount = Math.round(amountDecimal * 100);
 
     if (!CURRENCY_WHITELIST.includes(currency)) {
@@ -251,9 +297,9 @@ Deno.serve(async (req) => {
         idempotency_key: `stripe-price:${tariff_offer_id}:${currency}:${unit_amount}:${period.interval}:${period.interval_count}`,
       },
       sot: {
-        amount_source: 'tariff_prices.final_price',
-        currency_source: 'tariff_prices.currency',
-        tariff_price_id: (price as any).id,
+        amount_source,
+        currency_source,
+        tariff_price_id,
         offer_amount_legacy_diagnostic: (offer as any).amount,
       },
       foreign_mappings_detected: foreign,
@@ -324,26 +370,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ---- EXECUTE: drift re-check (compare with plan from DB right now) ----
-    // (Re-read offer+price right before create to detect concurrent change.)
+    // ---- EXECUTE: drift re-check (concurrent change detection) ----
     const { data: offerNow } = await supabase
       .from('tariff_offers')
-      .select('amount, meta')
+      .select('amount, meta, is_active')
       .eq('id', tariff_offer_id)
       .maybeSingle();
-    const { data: priceNow } = await supabase
-      .from('tariff_prices')
-      .select('final_price, currency, is_active')
-      .eq('tariff_id', (tariff as any).id)
-      .eq('is_active', true)
-      .maybeSingle();
-    if (
-      !priceNow ||
-      !(priceNow as any).is_active ||
-      String((priceNow as any).currency).toUpperCase() !== currency ||
-      Math.round(Number((priceNow as any).final_price) * 100) !== unit_amount
-    ) {
-      return json(409, { status: 'error', error: 'configuration_changed:tariff_prices' });
+    if (!offerNow || !(offerNow as any).is_active) {
+      return json(409, { status: 'error', error: 'configuration_changed:offer_inactive' });
+    }
+    if (amount_source === 'tariff_prices.final_price') {
+      const { data: priceNow } = await supabase
+        .from('tariff_prices')
+        .select('final_price, currency, is_active')
+        .eq('tariff_id', (tariff as any).id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (
+        !priceNow ||
+        !(priceNow as any).is_active ||
+        String((priceNow as any).currency).toUpperCase() !== currency ||
+        Math.round(Number((priceNow as any).final_price) * 100) !== unit_amount
+      ) {
+        return json(409, { status: 'error', error: 'configuration_changed:tariff_prices' });
+      }
+    } else {
+      // Hotfix-1 fallback: SOT = offer.amount. Перепроверяем, что amount не сменился.
+      const amountNow = Number((offerNow as any).amount);
+      if (!Number.isFinite(amountNow) || Math.round(amountNow * 100) !== unit_amount) {
+        return json(409, { status: 'error', error: 'configuration_changed:offer_amount' });
+      }
     }
     const periodNow = resolveBillingPeriod((offerNow as any)?.meta);
     if (!periodNow.ok || periodNow.interval !== period.interval || periodNow.interval_count !== period.interval_count) {
