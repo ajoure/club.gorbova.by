@@ -462,6 +462,36 @@ Deno.serve(async (req) => {
       },
     });
 
+    // ── Phase 5-D: admin.payment_provider.override audit ──
+    // Пишем только когда админ ЯВНО выбрал provider (provider_choice_source='explicit'),
+    // даже если выбранный provider совпал с default оффера. Auto-выбор не аудируем.
+    // actor_user_id — ТОЛЬКО из JWT, никогда из body.
+    if (providerChoiceSource === 'explicit' && providerMode === 'fixed') {
+      const defaultOfferProvider: 'bepaid' | 'stripe' =
+        offerAllowedProviders.length === 1 ? offerAllowedProviders[0] : 'bepaid';
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'admin.payment_provider.override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          default_provider: defaultOfferProvider,
+          chosen_provider: provider,
+          allowed_payment_providers: offerAllowedProviders,
+          super_admin_bypass: superAdminBypass,
+          stripe_account_code: provider === 'stripe' ? resolvedAccountCode : null,
+          currency: provider === 'stripe' ? currency : null,
+          reason: 'admin_explicit_override',
+        },
+      });
+    }
+
+
     return jsonResponse({
       success: true,
       payment_link_id: link.id,
