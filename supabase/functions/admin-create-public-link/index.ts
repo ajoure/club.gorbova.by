@@ -335,9 +335,9 @@ Deno.serve(async (req) => {
         const supportedSet = new Set(
           supportedCurrenciesRaw.map((c) => String(c).toLowerCase())
         );
-        if (!supportedSet.has(currency.toLowerCase())) {
+        if (!supportedSet.has(stripeValidationCurrency.toLowerCase())) {
           return errorResponse(
-            `stripe_currency_not_supported_by_account:${currency}:${resolvedAccountCode}`,
+            `stripe_currency_not_supported_by_account:${stripeValidationCurrency}:${resolvedAccountCode}`,
             400,
           );
         }
