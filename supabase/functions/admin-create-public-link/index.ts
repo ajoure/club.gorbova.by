@@ -366,27 +366,45 @@ Deno.serve(async (req) => {
         let priceId = (offerStripe as any)?.meta?.stripe?.price_id as string | undefined;
 
         if (!priceId) {
-          // Резолвим business_stream так же, как frontend (offer.meta → product.meta).
+          // Phase 6 hot-patch: используем shared resolveBusinessStream (SOT).
+          // Priority: offer.meta → product.meta → explicit link override (rawBusinessStream).
           const offerMeta = (offerStripe as any)?.meta ?? {};
-          let businessStream: string | null =
-            (offerMeta?.business_stream as string | undefined) ?? null;
+          const { data: tariffRow } = await supabase
+            .from('tariff_offers')
+            .select('tariff_id, tariffs:tariff_id(product_id, products_v2:product_id(meta))')
+            .eq('id', offer_id)
+            .maybeSingle();
+          const productMeta =
+            ((tariffRow as any)?.tariffs?.products_v2?.meta as Record<string, unknown> | undefined) ?? null;
+          const businessStream = resolveBusinessStream({
+            tariff_offer_meta: offerMeta,
+            product_meta: productMeta,
+            link_business_stream: rawBusinessStream,
+          });
           if (!businessStream) {
-            const { data: tariffRow } = await supabase
-              .from('tariff_offers')
-              .select('tariff_id, tariffs:tariff_id(product_id, products_v2:product_id(meta))')
-              .eq('id', offer_id)
-              .maybeSingle();
-            businessStream =
-              ((tariffRow as any)?.tariffs?.products_v2?.meta?.business_stream as
-                | string
-                | undefined) ?? null;
-          }
-          if (!businessStream) {
+            // Controlled failure — link НЕ создаётся, audit запись для трассировки.
+            await supabase.from('audit_logs').insert({
+              action: 'admin_create_public_link.stripe_price_provision_failed',
+              actor_user_id: user.id,
+              actor_type: 'user',
+              actor_label: 'super_admin:admin-create-public-link',
+              entity_type: 'tariff_offer',
+              entity_id: offer_id,
+              meta: {
+                reason: 'business_stream_not_resolved',
+                provider_mode: providerMode,
+                allowed_payment_providers: effectiveAllowedProviders,
+                offer_meta_business_stream: (offerMeta as any)?.business_stream ?? null,
+                product_meta_business_stream: (productMeta as any)?.business_stream ?? null,
+                link_business_stream: rawBusinessStream ?? null,
+              },
+            });
             return errorResponse(
               'stripe_price_provision_failed:business_stream_not_resolved',
               422,
             );
           }
+
 
           // Forward caller's JWT — admin-provision-stripe-price требует super_admin.
           const provInvoke = await fetch(
