@@ -412,10 +412,32 @@ export function AdminPaymentLinkDialog({
       : "one_time";
   }, [effectiveOffer, paymentType]);
 
+  // BLOCKER FIX (Phase 8 follow-up) — для recurring offer + Stripe path
+  // backend форсит payment_type='subscription' (Core rule Product Type SOT).
+  // UI блокирует toggle, чтобы не дезориентировать админа: видимое значение
+  // соответствует тому, что реально запишет admin-create-public-link.
+  const isStripePathActive =
+    provider === "stripe" ||
+    (providerModeChoice === "customer_choice" && stripeAvailableForCustomerChoice);
+  const lockPaymentTypeToSubscription =
+    !!effectiveOffer &&
+    effectiveOfferType === "subscription" &&
+    isStripePathActive &&
+    !isInstallmentOffer;
+
+  // Авто-промоут UI-стейта, чтобы preview/audit совпадали с backend-решением.
+  useEffect(() => {
+    if (lockPaymentTypeToSubscription && paymentType !== "subscription") {
+      setPaymentType("subscription");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockPaymentTypeToSubscription]);
+
   // Override = выбор админа не совпадает с типом offer'а, но ссылка всё равно
   // создаётся как payment_type выбранный админом (controlled override).
   const isOverrideMode =
     !!effectiveOffer && effectiveOfferType !== effectivePaymentType;
+
 
   // ── Stage L: installment offer detection ──
   // offerKind: 'installment' | 'subscription' | 'one_time'.
