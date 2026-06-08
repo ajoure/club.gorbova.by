@@ -1936,6 +1936,31 @@ Deno.serve(async (req) => {
         }
 
         if (clubId) {
+          // UX fix: подтягиваем product_name/tariff_name, чтобы DM "✅ Доступ открыт"
+          // содержал название продукта и тарифа (как в bePaid-сценарии).
+          let dmProductName: string | null = null;
+          let dmTariffName: string | null = null;
+          try {
+            if (productId) {
+              const { data: prodRow } = await supabase
+                .from('products')
+                .select('name')
+                .eq('id', productId)
+                .maybeSingle();
+              dmProductName = (prodRow as any)?.name ?? null;
+            }
+            if (tariffId) {
+              const { data: tariffRow } = await supabase
+                .from('tariffs')
+                .select('name')
+                .eq('id', tariffId)
+                .maybeSingle();
+              dmTariffName = (tariffRow as any)?.name ?? null;
+            }
+          } catch (lookupErr) {
+            console.warn('[grant-access] product/tariff name lookup failed (non-critical):', lookupErr);
+          }
+
           const telegramResponse = await fetch(`${supabaseUrl}/functions/v1/telegram-grant-access`, {
             method: "POST",
             headers: {
@@ -1947,6 +1972,8 @@ Deno.serve(async (req) => {
               club_id: clubId,
               source_id: orderId,
               source: 'grant-access-for-order',
+              product_name: dmProductName,
+              tariff_name: dmTariffName,
               // Sub-patch B: Pass parent lineage from ledger write
               parent_event_key: grantLedgerSourceEventKey || null,
               parent_execution_key: grantLedgerExecutionKey || null,
