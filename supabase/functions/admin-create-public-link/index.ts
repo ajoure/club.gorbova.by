@@ -725,6 +725,29 @@ Deno.serve(async (req) => {
       },
     });
 
+    // ── BLOCKER FIX audit: payment_type был промоутнут recurring-guard'ом ──
+    if (recurringPromoted) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        action: 'payment_link.payment_type_promoted_recurring',
+        actor_label: 'admin-create-public-link',
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          requested_payment_type: recurringPromotedFromPaymentType,
+          effective_payment_type: 'subscription',
+          provider,
+          provider_mode: providerMode,
+          provider_choice_source: providerChoiceSource,
+          reason: 'offer_is_recurring',
+        },
+      });
+    }
+
+
     // ── Phase 5-D: admin.payment_provider.override audit ──
     // Пишем только когда админ ЯВНО выбрал provider (provider_choice_source='explicit'),
     // даже если выбранный provider совпал с default оффера. Auto-выбор не аудируем.
