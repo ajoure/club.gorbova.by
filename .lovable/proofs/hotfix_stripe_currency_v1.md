@@ -81,3 +81,25 @@ supabase/functions/admin-create-public-link/index.ts
 
 - Решение, нужно ли проводить one-shot бэкфилл `tariff_offers.meta.currency` — отдельной задачей; сейчас fallback покрывает.
 - Long-term: вынести `currency` на уровень оффера как first-class поле — отдельной фазой.
+
+---
+
+## 8. Runtime smoke = PASS (2026-06-08)
+
+Источник: `payment_links` + `audit_logs.admin.payment_provider.*` за 7 дней.
+
+| # | Сценарий | Фикстура | Результат |
+|---|---|---|---|
+| S1 | Fixed Stripe override, offer 250 BYN | `payment_links.id=4fbbfbcd-…` (2026-06-08 07:29:04) | `currency=BYN`, audit `admin.payment_provider.override` `chosen_provider=stripe, currency=BYN, stripe_account_code=stripe_poland` |
+| S2 | Fixed bePaid explicit | `payment_links.id=551a45d7-…` (2026-06-08 07:29:14) | `currency=BYN`, audit `chosen_provider=bepaid` |
+| S3 | customer_choice + stripe_currency=EUR | `payment_links.id=488afa9a-…` (2026-06-08 07:29:10) | `currency=BYN` (link), `meta.stripe_currency=EUR` (явный выбор админа) |
+| S4 | customer_choice без явного stripe_currency | `payment_links.id=38f82d35-…` (2026-06-07 21:20) | `meta.stripe_currency=BYN` (не EUR fallback) |
+| S5 | Исторические Stripe-links | За 7 дней — currency ∈ {BYN, EUR} в зависимости от выбора, не всегда EUR | EUR hardcode устранён |
+
+Подтверждено отдельно:
+- silent fallback `stripe_currency='EUR'` убран (`admin-create-public-link/index.ts` теперь использует `rawStripeCurrency || currency` вместо `|| 'EUR'`);
+- `tariff_offers.meta.acquiring` не изменялся (UPDATE-ов в этой ветке нет);
+- bePaid links того же тарифа создаются без изменений в BYN.
+
+**Статус: PASS.**
+
