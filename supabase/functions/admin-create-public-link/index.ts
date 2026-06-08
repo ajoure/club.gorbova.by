@@ -307,31 +307,42 @@ Deno.serve(async (req) => {
       payment_type = 'subscription';
     }
 
-    // ── BLOCKER FIX (Phase 8 follow-up) — recurring Stripe → force subscription ──
-    // Core rule «Product Type SOT»: recurring vs one_time определяется ТОЛЬКО через
-    // tariff_offers.meta.recurring.is_recurring. UI payment_type='one_time' не может
-    // понизить recurring offer до one-time, иначе Stripe Checkout создаётся в mode='payment'
-    // (PaymentIntent), не приходит invoice.paid и hosted_invoice_url/invoice_pdf/stripe_invoice_id
-    // остаются пустыми (Phase 8 invoice materialization blocker).
+    // ── Phase 8 follow-up FIX — auto vs explicit recurring handling ──
+    // Контракт (Core rule «Product Type SOT» + admin override):
     //
-    // Scope: только Stripe path (fixed=stripe или customer_choice c stripe в allowed).
-    // bePaid recurring lifecycle не меняем — сохраняется legacy flow.
-    // Installment пропускаем — он уже форсится в subscription выше.
-    // super_admin bypass НЕ добавляем: даже super_admin не должен ломать recurring semantics.
+    //   provider_choice_source='auto'    → система следует SOT оффера.
+    //                                       recurring offer + Stripe path + one_time →
+    //                                       promote to subscription, audit
+    //                                       `payment_link.payment_type_promoted_recurring`.
+    //
+    //   provider_choice_source='explicit' → админ — источник истины. payment_type НЕ форсится.
+    //                                       Разрешена разовая оплата по recurring offer
+    //                                       (mode=payment, без subscription). Audit
+    //                                       `payment_link.payment_type_admin_override`.
+    //
+    // Installment отдельная ветка — payment_type уже форсится в subscription выше.
+    // bePaid recurring не трогаем — legacy lifecycle сохраняется.
     let recurringPromoted = false;
     let recurringPromotedFromPaymentType: 'one_time' | 'subscription' | null = null;
-    const recurringPromotionEligible =
+    let adminOverrideRecurringOneTime = false;
+    const stripePathSelected =
+      (providerMode === 'fixed' && provider === 'stripe') ||
+      (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
+    const recurringStripeEligible =
       offerIsRecurring === true &&
       !installmentBlock &&
       offerPaymentMethod !== 'internal_installment' &&
-      (
-        (providerMode === 'fixed' && provider === 'stripe') ||
-        (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'))
-      );
-    if (recurringPromotionEligible && payment_type === 'one_time') {
-      recurringPromotedFromPaymentType = 'one_time';
-      payment_type = 'subscription';
-      recurringPromoted = true;
+      stripePathSelected;
+
+    if (recurringStripeEligible && payment_type === 'one_time') {
+      if (providerChoiceSource === 'auto') {
+        recurringPromotedFromPaymentType = 'one_time';
+        payment_type = 'subscription';
+        recurringPromoted = true;
+      } else {
+        // explicit override — уважаем выбор админа, payment_type остаётся one_time.
+        adminOverrideRecurringOneTime = true;
+      }
     }
 
 
@@ -725,7 +736,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    // ── BLOCKER FIX audit: payment_type был промоутнут recurring-guard'ом ──
+    // ── Phase 8 follow-up audit: payment_type был промоутнут recurring-guard'ом (auto-mode) ──
     if (recurringPromoted) {
       await supabase.from('audit_logs').insert({
         actor_type: 'system',
@@ -741,8 +752,32 @@ Deno.serve(async (req) => {
           effective_payment_type: 'subscription',
           provider,
           provider_mode: providerMode,
-          provider_choice_source: providerChoiceSource,
-          reason: 'offer_is_recurring',
+          provider_choice_source: 'auto',
+          reason: 'offer_is_recurring_auto_mode',
+        },
+      });
+    }
+
+    // ── Phase 8 follow-up audit: admin явно создал one_time по recurring offer (explicit override) ──
+    if (adminOverrideRecurringOneTime) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'payment_link.payment_type_admin_override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          requested_payment_type: 'one_time',
+          effective_payment_type: 'one_time',
+          provider,
+          provider_mode: providerMode,
+          provider_choice_source: 'explicit',
+          offer_is_recurring: true,
+          reason: 'admin_explicit_override',
         },
       });
     }

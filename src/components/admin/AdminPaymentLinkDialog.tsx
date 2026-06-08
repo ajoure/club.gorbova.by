@@ -466,16 +466,33 @@ export function AdminPaymentLinkDialog({
     return list;
   }, [stripeAvailableForCustomerChoice]);
 
-  // BLOCKER FIX (Phase 8 follow-up) — для recurring offer + Stripe path backend
-  // форсит payment_type='subscription' (Core rule Product Type SOT). UI блокирует
-  // toggle, чтобы preview/audit совпадали с тем, что запишет admin-create-public-link.
+  // Phase 8 follow-up FIX — auto vs explicit recurring policy.
+  // Lock only in auto-mode ("По настройке кнопки"): тогда система следует SOT оффера и
+  // recurring offer + Stripe гарантированно даёт subscription. В explicit-режимах
+  // (Белорусская карта / Иностранная карта / Клиент выбирает) админ — источник истины и
+  // имеет право создать разовую админскую оплату даже по recurring offer.
   const isStripePathActive =
     provider === "stripe" ||
     (providerModeChoice === "customer_choice" && stripeAvailableForCustomerChoice);
-  const lockPaymentTypeToSubscription =
+  const isAutoProviderMode = providerModeChoice === "auto";
+  const isExplicitProviderMode = !isAutoProviderMode;
+  const recurringOfferOnStripePath =
     !!effectiveOffer &&
     effectiveOfferType === "subscription" &&
     isStripePathActive &&
+    !isInstallmentOffer;
+  const lockPaymentTypeToSubscription =
+    recurringOfferOnStripePath && isAutoProviderMode;
+  // Warning без блокировки: explicit + recurring + one_time на Stripe.
+  const warnExplicitOneTimeOnRecurringStripe =
+    recurringOfferOnStripePath &&
+    isExplicitProviderMode &&
+    paymentType === "one_time";
+  // Hint: explicit + subscription на Stripe.
+  const hintExplicitSubscriptionStripe =
+    isStripePathActive &&
+    isExplicitProviderMode &&
+    paymentType === "subscription" &&
     !isInstallmentOffer;
 
   useEffect(() => {
@@ -1458,7 +1475,15 @@ ${amountLine}
                   </div>
                   {lockPaymentTypeToSubscription ? (
                     <p className="text-xs text-amber-600">
-                      Тариф является рекуррентным, поэтому для Stripe будет создана подписка (mode=subscription). Изменить тип нельзя.
+                      По настройке тарифа будет создана подписка (mode=subscription). В режиме «По настройке кнопки» система следует SOT оффера.
+                    </p>
+                  ) : warnExplicitOneTimeOnRecurringStripe ? (
+                    <p className="text-xs text-amber-600">
+                      Тариф является рекуррентным, но вы создаёте разовую админскую оплату. Подписка Stripe создана не будет (mode=payment).
+                    </p>
+                  ) : hintExplicitSubscriptionStripe ? (
+                    <p className="text-xs text-muted-foreground">
+                      Для Stripe будет создана подписка (mode=subscription).
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground">
