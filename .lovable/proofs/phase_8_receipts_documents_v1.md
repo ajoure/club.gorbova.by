@@ -370,3 +370,114 @@ OWNER:   следующий реальный test-mode подписочный п
 - Final Phase 8 PASS: **pending** до закрытия P8-4 (минимум одна реальная
   материализация Stripe invoice document в `payments_v2`).
 - Phase 9 не начинать без отдельного approve.
+
+---
+
+## Section 8 — Runtime Verify Execute (вариант B, test-mode Stripe)
+
+Approved plan: `.lovable/plan.md` (Phase 8 Runtime Verify через Stripe test-mode).
+Scope freeze соблюдён: код/миграции/edge functions/UI не меняются.
+Этот раздел заполняется по ходу runtime теста.
+
+### 8.1 Test fixture
+
+- Контакт: **Сергей Федорчук** / `7500084@gmail.com`
+  - `profiles.id = a4b7c8c9-8210-499e-ae3f-2a5db2121577`
+- Продукт: **Gorbova Club** (`product_id = 11c9f1b8-0355-4753-bd74-40b42aa53616`)
+- Активные recurring pay_now офферы (все `is_recurring=true`, все ограничены
+  bePaid в `offer.meta.acquiring.allowed_payment_providers`):
+
+  | tariff_id | tariff_name | offer_id | amount BYN |
+  |---|---|---|---|
+  | 31f75673-a7ae-420a-b5ab-5906e34cbf84 | CHAT      | 6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e | 100 |
+  | b276d8a5-8e5f-4876-9f99-36f818722d6c | FULL      | c5781abf-0376-4e1f-91dc-99773906ee77 | 150 |
+  | 7c748940-dcad-4c7c-a92e-76a2344622d3 | BUSINESS  | bc0f7a90-df41-4a86-b2ea-2a1234d0d534 | 250 |
+  | b018e9be-53ce-4840-8034-e09f8e319080 | ИДЕОЛОГИЯ | d307b438-758c-4f1e-b7d5-fe32df7cae1c | 350 |
+
+- Stripe routing: explicit admin override `provider_mode='fixed'` +
+  `provider='stripe'` + `provider_choice_source='explicit'` (Phase 5-D
+  BLOCKER FIX подтверждён, override НЕ изменяет `tariff_offers.meta.acquiring`).
+- Currency для Stripe: EUR (по умолчанию резолвера при provider=stripe).
+
+### 8.2 Diagnose (baseline — снят до тестовой оплаты)
+
+```sql
+-- последние 10 Stripe payments в системе
+SELECT id, provider, provider_payment_id, order_id,
+       receipt_url IS NOT NULL AS has_receipt,
+       meta->'stripe'->>'hosted_invoice_url' IS NOT NULL AS has_hosted_invoice,
+       meta->'stripe'->>'invoice_pdf'         IS NOT NULL AS has_invoice_pdf,
+       meta->'stripe'->>'stripe_invoice_id'   AS stripe_invoice_id,
+       created_at
+FROM payments_v2
+WHERE provider='stripe'
+ORDER BY created_at DESC LIMIT 10;
+```
+
+Результат (10/10 строк):
+
+- `has_receipt = false` у всех 10 Stripe payments.
+- `has_hosted_invoice = false` у всех 10.
+- `has_invoice_pdf = false` у всех 10.
+- `stripe_invoice_id = NULL` у всех 10.
+- Самый свежий: `2026-06-07 21:21:23+00` (pi_3Tfo8A6UYJj2vm0G0hiVaLJ2).
+- Все 10 payments созданы ДО deploy materialize helper (Phase 8 deploy
+  ≈ 2026-06-08 12:18 UTC) → согласуется с §7.6 (post-deploy events = 0).
+
+Подписки контакта `7500084@gmail.com`:
+
+```sql
+SELECT id, status, tariff_id, access_end_at,
+       meta->'stripe' AS stripe_meta, updated_at
+FROM subscriptions_v2
+WHERE user_id='a4b7c8c9-8210-499e-ae3f-2a5db2121577'
+ORDER BY updated_at DESC LIMIT 10;
+```
+
+Результат: **0 строк** — у контакта нет Stripe subscriptions_v2; чистый
+baseline для теста: новая запись будет однозначно идентифицируема.
+
+Materialize audit baseline:
+
+```sql
+SELECT action, COUNT(*) FROM audit_logs
+WHERE action LIKE 'stripe.%materializ%'
+   OR action LIKE 'stripe.%document%'
+GROUP BY action;
+```
+
+Результат: **0 строк** — ни одного materialize-audit события в системе.
+После теста любая запись с этими actions = факт работы нового кода.
+
+### 8.3 Идемпотентность guard (подтверждение)
+
+`provider_events_idem_unique` на `(provider, event_id)` активен (см. §7.4).
+Это не блокер для нового теста — мы создаём НОВЫЙ Stripe payment с НОВЫМИ
+event_id, а не replay’им существующие. Guard защитит от случайного дубля
+при retries Stripe-а.
+
+### 8.4 Required action (user)
+
+Для прохождения runtime test я НЕ могу автономно ввести Stripe test card в
+браузер. Нужно действие администратора:
+
+1. Перейти в **/admin/payments/links** → «Создать ссылку».
+2. Выбрать:
+   - Продукт: Gorbova Club
+   - Тариф: любой из 4 (рекомендуется CHAT — минимальная сумма 100 BYN)
+   - Получатель: Сергей Федорчук (`7500084@gmail.com`)
+   - Провайдер: **Stripe** (explicit override, customer_choice=fixed)
+   - Currency: EUR (или другая, поддерживаемая аккаунтом)
+3. Открыть полученный `/pay/:token` в новой вкладке.
+4. Ввести Stripe test card `4242 4242 4242 4242`, любая будущая дата
+   exp, любой CVC.
+5. Дождаться successful checkout (Stripe dashboard покажет webhook events:
+   `checkout.session.completed`, `customer.subscription.created`,
+   `invoice.paid`).
+6. Сообщить мне `payment_link_id` (или просто факт «оплачено») — я выполню
+   verify SQL/audit и завершу §8.5–8.9.
+
+### 8.5–8.9 — Verify / Lifecycle safety / UI screenshots / Status
+
+**Pending — заполняется после §8.4 user action.**
+
