@@ -178,7 +178,7 @@ export default function AdminOrdersV2() {
           products_v2(id, name, code),
           tariffs(id, name, code),
           flows(id, name, code),
-          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status)
+          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status, meta)
         `)
         .order("created_at", { ascending: false })
         .limit(100);
