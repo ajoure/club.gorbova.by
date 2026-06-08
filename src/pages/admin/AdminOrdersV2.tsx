@@ -436,9 +436,14 @@ export default function AdminOrdersV2() {
                   {filteredOrders.map((order) => {
                     const statusConfig = ORDER_STATUS_LABELS[order.status] || { label: order.status, variant: "secondary" as const };
                     const profile = (order as any).profile;
-                    const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => 
-                      p.provider === 'bepaid' && p.status === 'succeeded'
+                    // Phase 8-C: accept both bePaid and Stripe acquiring payments for the
+                    // Receipt column. Stripe receipt_url is materialized into payments_v2
+                    // by stripe-webhook; hosted_invoice_url / invoice_pdf live in meta.stripe.
+                    const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) =>
+                      (p.provider === 'bepaid' || p.provider === 'stripe') && p.status === 'succeeded'
                     );
+                    const stripeHosted = bepaidPayment?.meta?.stripe?.hosted_invoice_url || null;
+                    const stripeInvoicePdf = bepaidPayment?.meta?.stripe?.invoice_pdf || null;
                     const refundedAmount = bepaidPayment ? Number(bepaidPayment.refunded_amount) || 0 : 0;
                     const paymentAmount = bepaidPayment ? Number(bepaidPayment.amount) || 0 : 0;
                     const refundStatus = refundedAmount >= paymentAmount && refundedAmount > 0 ? 'full' : refundedAmount > 0 ? 'partial' : 'none';
