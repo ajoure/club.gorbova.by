@@ -736,7 +736,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    // ── BLOCKER FIX audit: payment_type был промоутнут recurring-guard'ом ──
+    // ── Phase 8 follow-up audit: payment_type был промоутнут recurring-guard'ом (auto-mode) ──
     if (recurringPromoted) {
       await supabase.from('audit_logs').insert({
         actor_type: 'system',
@@ -752,8 +752,32 @@ Deno.serve(async (req) => {
           effective_payment_type: 'subscription',
           provider,
           provider_mode: providerMode,
-          provider_choice_source: providerChoiceSource,
-          reason: 'offer_is_recurring',
+          provider_choice_source: 'auto',
+          reason: 'offer_is_recurring_auto_mode',
+        },
+      });
+    }
+
+    // ── Phase 8 follow-up audit: admin явно создал one_time по recurring offer (explicit override) ──
+    if (adminOverrideRecurringOneTime) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        action: 'payment_link.payment_type_admin_override',
+        actor_label: 'admin-create-public-link',
+        target_user_id: user_id ?? null,
+        meta: {
+          payment_link_id: link.id,
+          offer_id: offer_id || null,
+          tariff_id,
+          product_id,
+          requested_payment_type: 'one_time',
+          effective_payment_type: 'one_time',
+          provider,
+          provider_mode: providerMode,
+          provider_choice_source: 'explicit',
+          offer_is_recurring: true,
+          reason: 'admin_explicit_override',
         },
       });
     }
