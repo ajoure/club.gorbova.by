@@ -1422,7 +1422,9 @@ ${amountLine}
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
+                      disabled={lockPaymentTypeToSubscription}
                       onClick={() => {
+                        if (lockPaymentTypeToSubscription) return;
                         setPaymentType("one_time");
                         setSelectedOfferId("");
                       }}
@@ -1430,7 +1432,8 @@ ${amountLine}
                         "flex flex-col items-center justify-center gap-2 rounded-lg border-2 p-4 text-sm font-medium transition-all",
                         paymentType === "one_time"
                           ? "border-primary bg-primary/5 text-foreground shadow-sm"
-                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                        lockPaymentTypeToSubscription && "opacity-40 cursor-not-allowed hover:border-border hover:text-muted-foreground"
                       )}
                     >
                       <CreditCard className="h-5 w-5" />
@@ -1453,11 +1456,18 @@ ${amountLine}
                       Подписка
                     </button>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Предпочтение пользователя. Если в тарифе нет кнопки нужного типа, будет использована основная кнопка тарифа.
-                  </p>
+                  {lockPaymentTypeToSubscription ? (
+                    <p className="text-xs text-amber-600">
+                      Тариф является рекуррентным, поэтому для Stripe будет создана подписка (mode=subscription). Изменить тип нельзя.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Предпочтение пользователя. Если в тарифе нет кнопки нужного типа, будет использована основная кнопка тарифа.
+                    </p>
+                  )}
                 </div>
               )}
+
 
               {/* Stage L: read-only бейдж для installment-оффера */}
               {selectedTariffId && isInstallmentOffer && (
