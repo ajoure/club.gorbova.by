@@ -1,194 +1,298 @@
-да, согласен.
+да, согласен, с учетом правок:
 
-Отправляй в таком виде.
+## **1. План правильный**
 
-Контрольные точки для следующего отчёта:
+Сейчас ключевая правка сформулирована верно:
 
-1. **Phase 8 FULL PASS** — только если закрыты оба сценария:
-  - Stripe subscription `invoice.paid` → `hosted_invoice_url` / `invoice_pdf`;
-  - Stripe one-time → `receipt_url`.
-2. Если one-time не удалось проверить, но subscription прошёл:
-  - статус только **Phase 8 = PASS with one-time receipt_url deferred to Final Regression**.
-3. Если subscription invoice не материализовался:
-  - статус остаётся **CODE COMPLETE / WAITING FOR RUNTIME VERIFY**.
-4. Нельзя принимать отчет без:
-  - SQL before/after;
-  - audit `stripe.invoice_document_materialized`;
-  - `actor_type='system'`, `actor_user_id=NULL`, `actor_label='stripe-webhook'`;
-  - UI-скринов;
-  - проверки отсутствия дублей order/payment/subscription/access/Telegram.
-5. После закрытия Phase 8:
-  - дальше **Phase 9 Reporting / admin visibility**;
-  - затем **Phase 10 Final Regression**.
-  - &nbsp;
-  - План: Phase 8 Runtime Verify (вариант B, test-mode Stripe)
+- `auto` / «По настройке кнопки» → система следует SOT тарифа;
+- `explicit` / ручной выбор админа → админ сам выбирает `one_time` или `subscription`;
+- recurring offer **не должен насильно блокировать** разовую оплату в explicit admin override;
+- для Phase 8 runtime verify нужно просто явно выбрать **Stripe + subscription**, а не ломать свободу выбора.
 
-## 0. Scope freeze (read-only + один реальный test-payment)
+---
 
-Код, миграции, edge functions, UI — НЕ менять.
+## **2. Правка к Step 2 — не добавлять новый toggle, если уже есть выбор способа оплаты**
 
-Не трогать: `grant-access-for-order`, `entitlements`, Telegram, `subscriptions-reconcile-*`, `bepaid-*`, `canonical-document-*`, Gotenberg, storage, PDF generator. Никаких ручных UPDATE для подделки результата.
+В плане написано:
 
-Разрешено только:
+Добавить переключатель «Способ оплаты для ссылки»: auto vs explicit
 
-- создать Stripe payment link через обычный admin flow;
-- пройти Stripe test-mode checkout;
-- дождаться webhook;
-- читать SQL/audit;
-- сделать UI скриншоты;
-- обновить proof.
+Уточни:
 
-## 1. Test fixture
+```md
+Не добавлять новый отдельный toggle, если уже существует UI-блок выбора способа оплаты:
+- «По настройке кнопки»;
+- «Белорусская карта»;
+- «Иностранная карта»;
+- «Клиент выбирает».
 
-- Контакт: Федорчук Сергей / `7500084@gmail.com` (существующий superadmin).
-- Продукт: **Gorbova Club**, тариф — любой доступный (берём первый активный recurring tariff_offer с Stripe-поддержкой).
-- Provider: Stripe, account_code — соответствующий профилю club, currency по offer.
+Использовать существующий выбор как source:
 
-## 2. Diagnose (до создания ссылки)
+- «По настройке кнопки» → `provider_choice_source='auto'`;
+- «Белорусская карта» / «Иностранная карта» / «Клиент выбирает» → `provider_choice_source='explicit'`.
 
-Снять baseline:
-
-```sql
--- последний Stripe payment для контакта
-SELECT id, provider, provider_payment_id, order_id, receipt_url,
-       meta->'stripe' AS stripe_meta, created_at, updated_at
-FROM payments_v2
-WHERE provider='stripe'
-  AND meta->'stripe'->>'customer_email' = '7500084@gmail.com'
-ORDER BY created_at DESC LIMIT 5;
-
--- активные club подписки контакта
-SELECT id, status, tariff_id, access_end_at, meta->'stripe' AS stripe_meta, updated_at
-FROM subscriptions_v2 s
-JOIN profiles p ON p.id = s.user_id
-WHERE p.email = '7500084@gmail.com'
-ORDER BY updated_at DESC LIMIT 5;
+Не плодить второй дублирующий переключатель auto/explicit.
 ```
 
-Зафиксировать `before` snapshot в proof.
+---
 
-**Идемпотентность guard**: убедиться, что `provider_events_idem_unique` активен — replay не нужен, идёт новый event.
+## **3. Правка к backend — customer_choice тоже explicit**
 
-## 3. Тест A — Stripe subscription `invoice.paid` (основной)
+Добавить:
 
-1. Admin создаёт payment link на Gorbova Club (любой recurring tariff), provider=stripe.
-2. Открыть public-link, ввести Stripe test card `4242 4242 4242 4242` (любая CVC/exp).
-3. Дождаться webhook events:
-  - `checkout.session.completed`
-  - `customer.subscription.created`
-  - `invoice.paid`
+```md
+Для `provider_mode='customer_choice'` и `provider_choice_source='explicit'` не форсить recurring в subscription автоматически.
 
-### Verify SQL (после оплаты)
+Если в customer_choice выбран payment_type='one_time':
+- ссылка остаётся one_time;
+- Stripe branch при оплате идёт в mode=payment;
+- bePaid branch — как раньше.
 
-```sql
-SELECT id, provider, provider_payment_id, order_id, receipt_url,
-       meta->'stripe'->>'hosted_invoice_url' AS hosted_invoice_url,
-       meta->'stripe'->>'invoice_pdf'        AS invoice_pdf,
-       meta->'stripe'->>'stripe_invoice_id'  AS stripe_invoice_id,
-       updated_at
-FROM payments_v2
-WHERE provider='stripe'
-ORDER BY updated_at DESC LIMIT 5;
+Если payment_type='subscription':
+- Stripe branch идёт в mode=subscription;
 ```
 
-Expect: `hosted_invoice_url` + `invoice_pdf` + `stripe_invoice_id` заполнены.
+Иначе он снова может зажать customer_choice.
 
-### Audit verify
+---
 
-```sql
-SELECT action, actor_type, actor_user_id, actor_label, metadata, created_at
-FROM audit_logs
-WHERE action LIKE 'stripe.%materializ%'
-   OR action LIKE 'stripe.%document%'
-ORDER BY created_at DESC LIMIT 30;
+## **4. Правка к auto-mode**
+
+Добавить:
+
+```md
+Auto-promote recurring → subscription делать только если реально выбран режим «По настройке кнопки».
+
+Не использовать fallback `provider_choice_source ?? 'auto'` так, чтобы старые/явные admin links случайно стали auto.
+
+Если source отсутствует:
+- определить его из UI-полей/режима;
+- если невозможно определить — логировать/ошибка, а не молча считать auto для explicit-ссылки.
 ```
 
-Expect: `stripe.invoice_document_materialized`, `actor_type='system'`, `actor_user_id IS NULL`, `actor_label='stripe-webhook'`.
+Это важно, чтобы он снова не сделал скрытый auto fallback и не заблокировал админские ссылки.
 
-## 4. Тест B — One-time receipt_url (best-effort)
+---
 
-Если у Gorbova Club есть one-time оффер — пройти его тоже. Если нет — попытка через консультацию / Global Hub. Иначе зафиксировать честно:
+## **5. Правка к audit**
 
-> One-time receipt_url = DEFERRED to Final Regression (нет безопасного one-time оффера в этом запуске).
+Добавить обязательную проверку:
 
-Verify тот же SQL: `receipt_url` должен заполниться из `charge.receipt_url`, audit — `stripe.receipt_materialized`.
+```md
+Audit `payment_link.payment_type_promoted_recurring` должен писаться только в auto-mode.
 
-## 5. Lifecycle safety verify
+Для explicit one_time по recurring offer audit:
+`payment_link.payment_type_admin_override`.
 
-После оплаты проверить отсутствие регрессий:
-
-```sql
--- дубли orders / payments / subs по новому Stripe id
-SELECT order_id, COUNT(*) FROM payments_v2
-WHERE provider='stripe' AND created_at > now() - interval '1 hour'
-GROUP BY order_id HAVING COUNT(*)>1;
-
-SELECT provider_payment_id, COUNT(*) FROM payments_v2
-WHERE provider='stripe' AND created_at > now() - interval '1 hour'
-GROUP BY provider_payment_id HAVING COUNT(*)>1;
-
--- grant ledger для контакта
-SELECT action, source, created_at, metadata
-FROM access_grant_ledger agl
-JOIN profiles p ON p.id = agl.user_id
-WHERE p.email='7500084@gmail.com'
-ORDER BY created_at DESC LIMIT 20;
-
--- Telegram audit
-SELECT action, created_at, metadata
-FROM telegram_access_audit
-WHERE created_at > now() - interval '1 hour'
-  AND metadata::text LIKE '%7500084%'
-ORDER BY created_at DESC LIMIT 20;
+Не писать promote-audit для explicit.
 ```
 
-Expect: ровно по одной строке order/payment/subscription, единичный grant Club через канонический write-path, Telegram — auto-grant через `grant-access-for-order → telegram-grant-access` (без дублей). bePaid не задет.
+---
 
-## 6. UI screenshots (вложить в proof)
+## **6. Правка к Step 5 — negative one-time link лучше создать, но не оплачивать**
 
-1. AdminOrdersV2 — Stripe subscription row с иконками online invoice + PDF.
-2. AdminOrdersV2 — bePaid row с прежним receipt (regression baseline).
-3. Stripe row без документа (если найдётся) — empty state.
-4. Stripe row — кнопка «Получить чек bePaid» ОТСУТСТВУЕТ.
+В плане написано правильно, но уточни:
 
-## 7. Proof update
+```md
+Negative one_time test:
+- создать ссылку explicit one_time;
+- проверить `payment_links.payment_type='one_time'`;
+- проверить Stripe Checkout Session `mode='payment'`;
+- НЕ оплачивать, если не нужно плодить лишние paid orders.
 
-Файл: `.lovable/proofs/phase_8_receipts_documents_v1.md`
+Оплата one-time уже была подтверждена ранее и `receipt_url` PASS.
+```
 
-Добавить Section 8 `Runtime Verify Execute`:
+---
 
-- test contact, test product, tariff_id, payment_link_id;
-- Stripe checkout session id, payment_intent id, invoice id, subscription id;
-- webhook event ids (`evt_*`);
-- before/after SQL snapshots;
-- audit rows (id + action + actor_*);
-- lifecycle safety snapshots;
-- 4 UI screenshots;
-- финальная gate table с честным статусом.
+## **7. Runtime Verify — пусть делает сам**
 
-## 8. Финальный статус (по результату)
+Добавить прямо:
 
+```md
+Runtime Verify выполняет Lovable/агент самостоятельно через preview/dev login.
 
-| Сценарий                                                      | Статус Phase 8                                                    |
-| ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| invoice.paid materialized + one-time receipt_url materialized | **FULL PASS**                                                     |
-| invoice.paid materialized, one-time не пройден                | **PASS with one-time receipt_url deferred to Final Regression**   |
-| invoice.paid не materialized                                  | **CODE COMPLETE / WAITING FOR RUNTIME VERIFY** (откат к diagnose) |
+Не перекладывать оплату тестовой картой на пользователя.
 
+Аккаунт/контакт для теста:
+Федорчук Сергей / 7500084@gmail.com.
 
-НЕ ставить FULL PASS, если one-time не подтверждён реальным charge.
+Тестовая карта:
+4242 4242 4242 4242.
+```
 
-## 9. После Phase 8
+---
 
-- Phase 9 Reporting / admin visibility — отдельный план после approve.
-- Phase 10 Final Regression — bePaid + Stripe + access + CRM + Telegram + documents — отдельный план.
+## **8. Итоговый текст для Lovable**
+
+```md
+План принят с правками.
+
+Ключевые уточнения:
+
+1. Не добавлять отдельный новый toggle auto/explicit, если уже есть блок выбора способа оплаты. Использовать существующую логику:
+   - «По настройке кнопки» → `provider_choice_source='auto'`;
+   - «Белорусская карта» / «Иностранная карта» / «Клиент выбирает» → `provider_choice_source='explicit'`.
+
+2. Backend не должен безусловно форсить recurring offer в subscription.
+   Правильно:
+   - auto + recurring → subscription;
+   - explicit + one_time → one_time;
+   - explicit + subscription → subscription.
+
+3. Customer_choice explicit также должен уважать выбранный `payment_type`.
+
+4. Не использовать опасный fallback `provider_choice_source ?? 'auto'`, если это может превратить explicit admin link в auto. Источник нужно определять явно из режима.
+
+5. Audit:
+   - `payment_link.payment_type_promoted_recurring` — только для auto-promote;
+   - `payment_link.payment_type_admin_override` — для explicit one_time по recurring offer.
+
+6. Negative one_time test:
+   - создать explicit one_time link;
+   - проверить `payment_links.payment_type='one_time'`;
+   - проверить Stripe Checkout Session `mode='payment'`;
+   - оплачивать не обязательно, потому что one-time receipt_url уже PASS.
+
+7. Runtime verify выполняй самостоятельно через preview/dev login, не перекладывай ввод test card на пользователя.
+   Используй контакт:
+   `Федорчук Сергей / 7500084@gmail.com`
+   и test card:
+   `4242 4242 4242 4242`.
+
+8. Phase 9 не начинать до финального статуса Phase 8.
+
+После правок и успешного subscription runtime verify:
+- если subscription invoice materialization прошла → `Phase 8 = FULL PASS`;
+- если нет → `Phase 8 = PARTIAL PASS` с конкретным gap.
+```
+
+## **9. Контроль следующего отчета**
+
+Принимать **Phase 8 FULL PASS** только если есть:
+
+- explicit one_time по recurring offer остался `one_time`;
+- auto recurring стал `subscription`;
+- explicit subscription создал Stripe Checkout `mode=subscription`;
+- пришёл `invoice.paid`;
+- заполнены:
+  - `hosted_invoice_url`;
+  - `invoice_pdf`;
+  - `stripe_invoice_id`;
+- есть audit `stripe.invoice_document_materialized`;
+- one-time `receipt_url` уже PASS;
+- Phase 9 не стартовал.
+- &nbsp;
+- План: Корректировка blocker-fix Phase 8 (auto vs explicit override) + Runtime Verify
+
+## Контекст
+
+Прошлый фикс был чрезмерным: и UI, и backend безусловно форсили `subscription` для recurring offer + Stripe. Это убирает легитимную возможность админа создать ручную разовую оплату по рекуррентному тарифу. Правильный контракт — два режима: `provider_choice_source='auto'` (следуем SOT оффера) и `'explicit'` (админ — источник истины).
+
+## Diagnose (read-only, до правок)
+
+1. SQL — проверить, какие значения `provider_choice_source` уже встречаются в `payment_links` и поддерживает ли колонка это поле (или хранится в `meta`).
+2. Прочитать актуальные:
+  - `supabase/functions/admin-create-public-link/index.ts` — текущая ветка recurring-guard.
+  - `src/components/admin/AdminPaymentLinkDialog.tsx` — `lockPaymentTypeToSubscription`, состояние provider/payment_type, наличие переключателя «По настройке кнопки / explicit».
+  - `supabase/functions/_shared/create-payment-checkout.ts` и `create-stripe-checkout.ts` — точка ветвления `mode=payment` vs `mode=subscription`.
+3. Зафиксировать в proof фактическое состояние source-of-truth для `provider_choice_source`.
+
+## Step 1 — Backend correction (`admin-create-public-link/index.ts`)
+
+Заменить безусловный recurring-guard на ветвление:
+
+```text
+source = body.provider_choice_source ?? 'auto'   // 'auto' | 'explicit'
+
+if (provider === 'stripe' && offerIsRecurring && !isInstallment) {
+  if (source === 'auto' && requested_payment_type === 'one_time') {
+    effective_payment_type = 'subscription'
+    audit('payment_link.payment_type_promoted_recurring', {
+      requested_payment_type: 'one_time',
+      effective_payment_type: 'subscription',
+      provider_choice_source: 'auto',
+      reason: 'offer_is_recurring_auto_mode'
+    })
+  } else if (source === 'explicit') {
+    effective_payment_type = requested_payment_type   // уважаем выбор админа
+    if (requested_payment_type === 'one_time') {
+      audit('payment_link.payment_type_admin_override', {
+        requested_payment_type: 'one_time',
+        effective_payment_type: 'one_time',
+        provider_choice_source: 'explicit',
+        offer_is_recurring: true,
+        reason: 'admin_explicit_override'
+      })
+    }
+  }
+}
+```
+
+`provider_choice_source` должен сохраняться в `payment_links` (колонка либо `meta.provider_choice_source`) — определим на этапе Diagnose. Installment-ветка не трогается. bePaid-ветка не трогается.
+
+## Step 2 — UI correction (`AdminPaymentLinkDialog.tsx`)
+
+1. Удалить безусловный `lockPaymentTypeToSubscription` и `disabled` на кнопке «Разовая оплата».
+2. Добавить (или реюзать существующий) переключатель «Способ оплаты для ссылки»: `auto` («По настройке кнопки/тарифа») vs `explicit` (админ выбирает сам). Если такой переключатель уже есть в диалоге — привязать логику к нему; если нет — реализовать минимальный toggle.
+3. Поведение:
+  - **auto + recurring** → `payment_type` форсится в `subscription`, кнопки разовая/подписка скрыты или disabled с подсказкой *«По настройке тарифа будет создана подписка.»*
+  - **explicit + Stripe + recurring + one_time** → кнопка активна, amber hint: *«Тариф является рекуррентным, но вы создаёте разовую админскую оплату. Подписка Stripe создана не будет.»*
+  - **explicit + Stripe + subscription** → hint: *«Для Stripe будет создана подписка mode=subscription.»*
+  - **bePaid / installment** → без изменений.
+4. Параллельно убрать прошлую регрессию: «Иностранная карта» disabled при первой загрузке — починить порядок инициализации (если правка не сделана ранее).
+
+## Step 3 — Runtime Verify Phase 8 (агент)
+
+1. Создать payment_link через починенный UI:
+  - Продукт: Gorbova Club, тариф: CHAT, recipient: Сергей Федорчук ([7500084@gmail.com](mailto:7500084@gmail.com)), provider: Stripe, payment_type: `subscription` (explicit), currency: EUR или BYN.
+2. Открыть `/pay/:token`, авторизоваться dev-login `123456` если требуется, оплатить test card `4242 4242 4242 4242` (3DS — Complete).
+3. Дождаться webhook `invoice.paid`.
+
+## Step 4 — Verify SQL (как в задаче, пункт 7)
+
+- `payment_links` (top 20): `provider`, `provider_mode`, `provider_choice_source`, `payment_type`, `offer_id`, `currency`, `meta`.
+- `payments_v2` (provider='stripe', top 20): `provider_payment_id`, `order_id`, `receipt_url`, `meta.stripe.hosted_invoice_url|invoice_pdf|stripe_invoice_id`.
+- `audit_logs` по 4 action'ам.
+
+## Step 5 — Дополнительная негативная проверка
+
+Создать ещё одну ссылку **explicit one_time** по тому же CHAT тарифу и убедиться:
+
+- backend НЕ промоутит в subscription;
+- audit пишет `payment_link.payment_type_admin_override`;
+- Stripe Checkout открывается с `mode=payment` (не оплачиваем — достаточно session inspect через `provider_events`/checkout session id).
+
+## Step 6 — Proof
+
+Создать `.lovable/proofs/phase_8_runtime_verify_full_v1.md` с:
+
+- статусом блоков (one-time receipt_url, subscription invoice materialization, auto vs explicit поведение);
+- ссылками на order_id / subscription id / invoice id;
+- скринами/SQL-выписками;
+- финальным вердиктом Phase 8 = FULL PASS (если subscription invoice materialize) или PARTIAL PASS с конкретным gap.
+
+Обновить `.lovable/plan.md` и пометить прошлый proof `phase_8_blocker_fix_recurring_subscription_v1.md` как superseded.
 
 ## DoD
 
-- Реальный Stripe test-mode payment на `7500084@gmail.com` / Gorbova Club прошёл webhook.
-- `payments_v2.meta.stripe.hosted_invoice_url` + `invoice_pdf` заполнены реальными значениями.
-- Audit содержит `stripe.invoice_document_materialized` с system actor.
-- Нет дублей order/payment/subscription, Telegram/bePaid без регрессий.
-- 4 UI screenshots вложены.
-- Proof обновлён, статус выставлен честно по таблице из §8.
-- Никаких изменений в коде/миграциях/UI.
+- Backend: explicit one_time по recurring offer проходит без promotion; auto + recurring по-прежнему → subscription; bePaid не задет.
+- UI: «Разовая оплата» доступна в explicit Stripe режиме с warning, недоступна (или auto-subscription) в auto режиме для recurring.
+- Audit: оба action'а пишутся в правильных сценариях.
+- Runtime: subscription test показывает все три stripe-поля + audit `stripe.invoice_document_materialized`.
+- One-time runtime (negative): mode=payment подтверждён, без invoice fields.
+- Proof v1 создан, Phase 8 статус зафиксирован.
+- Phase 9 не стартует до явного approve.
+
+## Затрагиваемые файлы (ожидание)
+
+- `supabase/functions/admin-create-public-link/index.ts` — переписать ветку guard.
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — снять lock, добавить warning/auto-режим.
+- `.lovable/proofs/phase_8_runtime_verify_full_v1.md` — новый.
+- `.lovable/proofs/phase_8_blocker_fix_recurring_subscription_v1.md` — пометка superseded.
+- `.lovable/plan.md` — статус.
+
+## Вне scope
+
+- Telegram DM с product/tariff names, redirect URL после оплаты, прочие follow-up фиксы из `stripe_runtime_followup_fixes_v1.md`.
+- Phase 9 / Phase 10.
