@@ -198,6 +198,175 @@ resend событий из Dashboard → события Materialize пройду
       кабинет автоматически подхватит Stripe receipt_url.
 - [x] Нет новой таблицы, нет миграций, нет storage copy, нет PDF generator.
 - [x] Нет изменений `grant/access/Telegram/reconcile/canonical/bePaid`.
-- [x] Proof закрыт, 10/10 gates PASS.
+- [~] Proof — см. §7 «Runtime Verify Diagnose» — статус скорректирован честно.
 - [ ] Runtime verification (queries §5) — выполнить после первого реального
       Stripe event пост-deploy.
+
+---
+
+## 7. Runtime Verify Diagnose (2026-06-08)
+
+### 7.1 Stripe account scope
+
+Единственный активный Stripe-аккаунт (таблица `acquiring_accounts` НЕ существует,
+SOT = `acquiring_connections`):
+
+```
+ account_code  |    account_name     | test_mode | is_default | status
+---------------+---------------------+-----------+------------+--------
+ stripe_poland | Stripe - Gorbova.pl | t         | t          | active
+```
+
+Все Stripe events в `provider_events` — `payload->>'livemode' = false`.
+Replay безопасен по конфигурации (нет production cards / live grants).
+
+### 7.2 Baseline `provider_events` (invoice.paid)
+
+```
+ event_type   | processing_status | count
+--------------+-------------------+-------
+ invoice.paid | failed            |     1
+ invoice.paid | manual_review     |     2
+ invoice.paid | processed         |     6
+```
+
+Топ-5 processed events с непустыми `hosted_invoice_url`/`invoice_pdf` в payload
+(все livemode=false, диапазон 2026-06-05 .. 2026-06-07) — НИ ОДИН не содержит
+materialized данных в `payments_v2`:
+
+```
+event_id                       | has_receipt | pm_hosted | pm_has_pdf | pm_inv_id
+evt_1Tfb5U6UYJj2vm0GyFRVtNkF   | f           | NULL      | f          | NULL
+evt_1TfHh16UYJj2vm0GnpYQrkvg   | f           | NULL      | f          | NULL
+evt_1Tf4ZE6UYJj2vm0G7PsDV9Eu   | f           | NULL      | f          | NULL
+evt_1Tf4WG6UYJj2vm0GoMmVxZXr   | f           | NULL      | f          | NULL
+evt_1TewfB6UYJj2vm0G9p1eaBmt   | f           | NULL      | f          | NULL
+```
+
+```sql
+SELECT COUNT(*) FROM audit_logs
+WHERE action LIKE 'stripe.receipt%' OR action LIKE 'stripe.invoice_document%';
+-- → 0 rows
+```
+
+**Объяснение:** все 5 processed events созданы 2026-06-05 .. 2026-06-07,
+тогда как helper `stripe-receipt-materialize.ts` и точки его вызова
+задеплоены 2026-06-08 12:18 UTC (`ls -la`). Эти события прошли через
+старый код пути → отсутствие материализации **не баг**, а ожидаемое
+поведение для pre-deploy фикстур.
+
+### 7.3 Idempotency guard (lifecycle safety)
+
+`stripe-webhook/index.ts:610-632`:
+
+```ts
+const idempotency_key = `stripe:${verifiedAccount}:${event.id}`;
+// INSERT provider_events (idempotency_key) ON CONFLICT DO NOTHING
+// → если уже был: return 200 { status: 'skipped_duplicate' }
+```
+
+**Следствие для replay:** Stripe Dashboard "Resend" любого уже processed event
+вернёт `skipped_duplicate` ДО входа в обработку — это защищает order /
+payment / subscription / entitlement / grant / Telegram lifecycle от дублей
+(PASS требования user §1 / §2), **но одновременно делает невозможным запуск
+`materializeStripeDocumentLinks` через replay** существующих events.
+
+Безопасные способы получить runtime PASS:
+
+1. Дождаться нового реального test-mode Stripe event (preferred);
+2. Сделать новый test-mode оплату через Stripe test-card в pre-prod — это
+   создаст fresh `payment_intent.succeeded` + (для подписки) `invoice.paid`
+   с новым `event.id`, проходящим guard;
+3. **Forbidden** (по требованию user §4): искусственно очищать
+   `idempotency_key` существующих events ради re-processing.
+
+### 7.4 Negative-path proof — code-path reasoning (SIMULATED)
+
+Прямой live test для skip-кодов в production запрещён (user §4). Code-path
+proof из `_shared/stripe-receipt-materialize.ts`:
+
+- **`skipped_no_document_url`** — early-return когда `!receipt_url &&
+  !hosted_invoice_url && !invoice_pdf`; audit пишется, payments_v2 не
+  трогается. ✅ Verified by code review.
+- **`skipped_payment_not_found`** — early-return когда lookup по
+  `provider_payment_id` / `stripe_invoice_id` / `order_id` lineage не дал
+  payment row; audit, без INSERT. ✅ Verified by code review.
+- **`skipped_existing_receipt_url`** — UPDATE использует `COALESCE(receipt_url,
+  $new)`, существующий `receipt_url` не перезаписывается; `meta.stripe`
+  объединяется через jsonb merge. ✅ Verified by code review.
+- **Helper failure safety** — все 4 call-sites обёрнуты в
+  `try { await materializeStripeDocumentLinks(...) } catch (e) { console.error
+  ... }` без re-throw; основной webhook lifecycle не откатывается.
+  ✅ Verified by code review (grep `materializeStripeDocumentLinks` + 4
+  try-блока в stripe-webhook + 1 в stripe-subscription-resolver).
+
+**SIMULATED, не LIVE.** Искусственный throw в deployed webhook не внедрялся
+(user §5).
+
+### 7.5 One-time `receipt_url` — Deferred Checklist (Final Regression)
+
+```text
+WHEN:    первый реальный Stripe one-time payment пост-deploy (любой test-mode
+         или production checkout)
+WAIT FOR EVENT: payment_intent.succeeded ИЛИ checkout.session.completed
+                (mode=payment, не subscription)
+VERIFY SQL:
+  SELECT id, receipt_url, meta->'stripe', updated_at
+  FROM payments_v2
+  WHERE provider='stripe' AND provider_payment_id='<pi_xxx>';
+EXPECT:
+  - receipt_url = charge.receipt_url (взят из latest_charge через Stripe API)
+  - audit: stripe.receipt_materialized, actor_type=system,
+    actor_label=stripe-webhook, actor_user_id IS NULL
+  - grant-access-for-order вызван по обычному lifecycle (helper не вмешивается)
+OWNER:   Final Regression sprint
+```
+
+### 7.6 Subscription invoice replay — Deferred (with reason)
+
+```text
+WHEN:    первый новый реальный test-mode invoice.paid event пост-deploy
+         (idempotency guard блокирует replay существующих events)
+VERIFY SQL: §5 (4) + §7 baseline diff
+EXPECT:
+  - payments_v2.meta.stripe.hosted_invoice_url IS NOT NULL
+  - payments_v2.meta.stripe.invoice_pdf IS NOT NULL
+  - payments_v2.meta.stripe.stripe_invoice_id IS NOT NULL
+  - payments_v2.receipt_url — заполнен ИЛИ сохранён existing (COALESCE)
+  - audit: stripe.invoice_document_materialized, actor_type=system,
+    actor_user_id IS NULL, actor_label=stripe-webhook
+  - subscriptions_v2 / entitlements / telegram_access — без новых строк
+    и без изменений updated_at для затронутой подписки
+OWNER:   следующий реальный test-mode подписочный платёж
+```
+
+### 7.7 UI screenshots — Deferred
+
+Реального Stripe payment row с заполненными invoice links в `payments_v2`
+сейчас НЕТ → screenshots Stripe invoice UI **не делаем** (user §6:
+запрещено подделывать state ручным UPDATE). bePaid UI с существующим
+`receipt_url` доступен и unchanged — отдельный скрин не требуется,
+поведение прежнее.
+
+### 7.8 Итоговый статус (честный)
+
+| Gate | Статус | Комментарий |
+|------|--------|-------------|
+| P8-1  Helper существует, идемпотентен | PASS | Code review |
+| P8-2  Webhook вызывает helper (4 точки) | PASS | grep подтвердил |
+| P8-3  Receipt не перезаписывается | PASS | COALESCE в коде |
+| P8-4  Stripe invoice materialized в payments_v2 | **DEFERRED** | Нет post-deploy events; replay blocked by idempotency guard |
+| P8-5  Audit actor=system, label=stripe-webhook | DEFERRED | Зависит от P8-4 |
+| P8-6  Webhook lifecycle не сломан | PASS | try/catch без re-throw |
+| P8-7  bePaid flow без изменений | PASS | Code unchanged |
+| P8-8  Admin UI поддерживает Stripe links | PASS (code) / DEFERRED (visual) | Нет данных для скрина |
+| P8-9  Нет новой таблицы / миграций / storage copy / PDF generator | PASS | Подтверждено |
+| P8-10 Negative-path | SIMULATED | Code-path proof, без live writes |
+
+**Phase 8-B/C/D/E = CODE COMPLETE / WAITING FOR RUNTIME VERIFY.**
+
+- Subscription `invoice.paid` runtime verify: **WAITING** (нужен новый event).
+- One-time `receipt_url` runtime verify: **DEFERRED → Final Regression**.
+- Final Phase 8 PASS: **pending** до закрытия P8-4 (минимум одна реальная
+  материализация Stripe invoice document в `payments_v2`).
+- Phase 9 не начинать без отдельного approve.
