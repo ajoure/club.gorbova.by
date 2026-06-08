@@ -522,7 +522,45 @@ export default function AdminOrdersV2() {
                                 <TooltipContent>Открыть чек</TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
-                          ) : bepaidPayment?.provider_payment_id ? (
+                          ) : stripeHosted || stripeInvoicePdf ? (
+                            // Phase 8-C: Stripe subscription invoice links.
+                            <div className="flex items-center gap-1">
+                              {stripeHosted && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <a
+                                        href={stripeHosted}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
+                                      >
+                                        <Receipt className="h-4 w-4 text-blue-600" />
+                                      </a>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Stripe-инвойс (онлайн)</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              {stripeInvoicePdf && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <a
+                                        href={stripeInvoicePdf}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
+                                      >
+                                        <Download className="h-4 w-4 text-blue-600" />
+                                      </a>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Stripe-инвойс (PDF)</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                          ) : bepaidPayment?.provider === 'bepaid' && bepaidPayment?.provider_payment_id ? (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
