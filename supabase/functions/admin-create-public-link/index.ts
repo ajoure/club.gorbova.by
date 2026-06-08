@@ -213,11 +213,25 @@ Deno.serve(async (req) => {
       allowedProvidersOverride = true;
     }
 
-    // ── Phase 5-C / 5-D: validation per provider_mode ──
-    // Phase 5-D: super_admin может оверрайдить provider, не входящий в offer.allowed_payment_providers.
-    // Для всех остальных admin'ов — провайдер обязан быть в allowed_payment_providers.
+    // ── Phase 5-C / 5-D / Hotfix admin_provider_override_v1: validation per provider_mode ──
+    //
+    // Контракт:
+    //   • offer.allowed_payment_providers = настройка ПУБЛИЧНОЙ кнопки на сайте.
+    //   • Admin-created payment link (карточка контакта / админ-диалог) = OVERRIDE
+    //     на уровне конкретной ссылки. tariff_offers.meta.acquiring НЕ изменяется.
+    //
+    //   • providerChoiceSource='auto'     → «По настройке кнопки» (UI),
+    //                                       guard offer.allowed применяется.
+    //   • providerChoiceSource='explicit' → admin явно выбрал bePaid/Stripe/customer_choice,
+    //                                       guard offer.allowed НЕ применяется.
+    //                                       Валидируются ТОЛЬКО технические условия
+    //                                       (currency × provider × account_code × installment)
+    //                                       — Step 1 (bePaid) и Step 2 (Stripe) ниже.
+    //
+    // super_admin bypass остаётся safety-net для auto-режима; обычные admin'ы получают
+    // override через explicit flag без super_admin.
     let superAdminBypass = false;
-    if (providerMode === 'fixed') {
+    if (providerMode === 'fixed' && providerChoiceSource === 'auto') {
       if (!offerAllowedProviders.includes(provider)) {
         if (isSuper) {
           superAdminBypass = true;
@@ -225,8 +239,7 @@ Deno.serve(async (req) => {
           return errorResponse(`provider_not_allowed_by_offer:${provider}`, 400);
         }
       }
-    } else {
-      // customer_choice
+    } else if (providerMode === 'customer_choice') {
       if (effectiveAllowedProviders.length < 1) {
         return errorResponse('customer_choice_requires_at_least_one_provider', 400);
       }
@@ -237,6 +250,11 @@ Deno.serve(async (req) => {
         return errorResponse('customer_choice_not_supported_for_installment', 400);
       }
     }
+    // providerMode === 'fixed' && providerChoiceSource === 'explicit'
+    // → НЕ блокируем по offer.allowed_payment_providers. Технические проверки
+    //   (валюта по resolver, account_code, capability snapshot, installment guard,
+    //   Stripe price provisioning) выполняются в Step 1 / Step 2 ниже.
+
 
     // ── Stage L: installment validation + расчёт сумм ──
     // Контракт:
@@ -301,12 +319,16 @@ Deno.serve(async (req) => {
     const stripePathActive =
       provider === 'stripe' ||
       (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
-    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся BYN).
+    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся bePaid-валютой).
+    // Hotfix admin_provider_override_v1: НЕ подставляем EUR по умолчанию — fallback на валюту
+    // ссылки/оффера. Это позволяет admin'у создать customer_choice ссылку с BYN для bePaid +
+    // явно переданным stripe_currency=EUR/USD/PLN/BYN для Stripe-ветки.
     const stripeValidationCurrency = (
       providerMode === 'customer_choice'
-        ? (rawStripeCurrency || 'EUR')
+        ? (rawStripeCurrency || currency)
         : currency
     ).toUpperCase();
+
 
     // ── Step 1: bePaid currency guard (P7-3) ──
     // Применяется к fixed=bepaid и к customer_choice со bePaid в allowed.
