@@ -1,373 +1,194 @@
-# да, согласен, с учетом правок:
+да, согласен.
 
-## **1. План в целом правильный**
+Отправляй в таком виде.
 
-Это действительно **баг**, а не настройка оффера.
+Контрольные точки для следующего отчёта:
 
-Правильная модель:
+1. **Phase 8 FULL PASS** — только если закрыты оба сценария:
+  - Stripe subscription `invoice.paid` → `hosted_invoice_url` / `invoice_pdf`;
+  - Stripe one-time → `receipt_url`.
+2. Если one-time не удалось проверить, но subscription прошёл:
+  - статус только **Phase 8 = PASS with one-time receipt_url deferred to Final Regression**.
+3. Если subscription invoice не материализовался:
+  - статус остаётся **CODE COMPLETE / WAITING FOR RUNTIME VERIFY**.
+4. Нельзя принимать отчет без:
+  - SQL before/after;
+  - audit `stripe.invoice_document_materialized`;
+  - `actor_type='system'`, `actor_user_id=NULL`, `actor_label='stripe-webhook'`;
+  - UI-скринов;
+  - проверки отсутствия дублей order/payment/subscription/access/Telegram.
+5. После закрытия Phase 8:
+  - дальше **Phase 9 Reporting / admin visibility**;
+  - затем **Phase 10 Final Regression**.
+  - &nbsp;
+  - План: Phase 8 Runtime Verify (вариант B, test-mode Stripe)
 
-- `offer.allowed_payment_providers` управляет **публичной кнопкой**.
-- `admin-created payment link` из карточки контакта — это **override на уровне конкретной ссылки**.
-- Админ должен иметь возможность создать Stripe-ссылку, даже если в настройках offer включён только bePaid.
-- `tariff_offers.meta.acquiring` при этом **не меняется**.
+## 0. Scope freeze (read-only + один реальный test-payment)
 
----
+Код, миграции, edge functions, UI — НЕ менять.
 
-## **2. Главная правка к плану: customer_choice должен учитывать разные валюты для bePaid и Stripe**
+Не трогать: `grant-access-for-order`, `entitlements`, Telegram, `subscriptions-reconcile-*`, `bepaid-*`, `canonical-document-*`, Gotenberg, storage, PDF generator. Никаких ручных UPDATE для подделки результата.
 
-В плане сейчас есть риск: `resolveAvailableProviders({ currency, payment_type })` использует одну валюту для всех provider.
+Разрешено только:
 
-Но в нашей модели:
+- создать Stripe payment link через обычный admin flow;
+- пройти Stripe test-mode checkout;
+- дождаться webhook;
+- читать SQL/audit;
+- сделать UI скриншоты;
+- обновить proof.
 
-- bePaid использует валюту основной ссылки / offer, чаще BYN;
-- Stripe может использовать `stripe_currency`, выбранную админом;
-- для admin override Stripe-валюта может отличаться от валюты bePaid.
+## 1. Test fixture
 
-Добавь в план:
+- Контакт: Федорчук Сергей / `7500084@gmail.com` (существующий superadmin).
+- Продукт: **Gorbova Club**, тариф — любой доступный (берём первый активный recurring tariff_offer с Stripe-поддержкой).
+- Provider: Stripe, account_code — соответствующий профилю club, currency по offer.
 
-```md
-Для customer_choice explicit нельзя проверять все provider'ы одной общей currency.
+## 2. Diagnose (до создания ссылки)
 
-Правильно:
-- bePaid проверяется по `link.currency` / `offer.currency`;
-- Stripe проверяется по `stripe_currency`;
-- итоговый `effectiveAllowed` собирается по каждому provider отдельно.
+Снять baseline:
 
-Пример:
-- offer currency = BYN;
-- stripe_currency = EUR;
-- customer_choice = ['bepaid','stripe'];
+```sql
+-- последний Stripe payment для контакта
+SELECT id, provider, provider_payment_id, order_id, receipt_url,
+       meta->'stripe' AS stripe_meta, created_at, updated_at
+FROM payments_v2
+WHERE provider='stripe'
+  AND meta->'stripe'->>'customer_email' = '7500084@gmail.com'
+ORDER BY created_at DESC LIMIT 5;
 
-Это валидный сценарий:
-- bePaid branch работает в BYN;
-- Stripe branch работает в EUR;
-- оба provider могут попасть в allowed list, если каждый проходит свою техническую проверку.
+-- активные club подписки контакта
+SELECT id, status, tariff_id, access_end_at, meta->'stripe' AS stripe_meta, updated_at
+FROM subscriptions_v2 s
+JOIN profiles p ON p.id = s.user_id
+WHERE p.email = '7500084@gmail.com'
+ORDER BY updated_at DESC LIMIT 5;
 ```
 
----
+Зафиксировать `before` snapshot в proof.
 
-## **3. В §2.2 fixed bePaid explicit уточнить валюту**
+**Идемпотентность guard**: убедиться, что `provider_events_idem_unique` активен — replay не нужен, идёт новый event.
 
-Сейчас написано:
+## 3. Тест A — Stripe subscription `invoice.paid` (основной)
 
-currency допустим bePaid-резолвером
+1. Admin создаёт payment link на Gorbova Club (любой recurring tariff), provider=stripe.
+2. Открыть public-link, ввести Stripe test card `4242 4242 4242 4242` (любая CVC/exp).
+3. Дождаться webhook events:
+  - `checkout.session.completed`
+  - `customer.subscription.created`
+  - `invoice.paid`
 
-Добавить:
+### Verify SQL (после оплаты)
 
-```md
-Для fixed bePaid используется основная валюта ссылки / offer.
-bePaid не должен использовать `stripe_currency`.
+```sql
+SELECT id, provider, provider_payment_id, order_id, receipt_url,
+       meta->'stripe'->>'hosted_invoice_url' AS hosted_invoice_url,
+       meta->'stripe'->>'invoice_pdf'        AS invoice_pdf,
+       meta->'stripe'->>'stripe_invoice_id'  AS stripe_invoice_id,
+       updated_at
+FROM payments_v2
+WHERE provider='stripe'
+ORDER BY updated_at DESC LIMIT 5;
 ```
 
----
+Expect: `hosted_invoice_url` + `invoice_pdf` + `stripe_invoice_id` заполнены.
 
-## **4. В §2.3 fixed Stripe explicit уточнить валюту**
+### Audit verify
 
-Добавить:
-
-```md
-Для fixed Stripe используется `stripe_currency`, если она передана.
-Если `stripe_currency` не передана — использовать валюту offer/link.
-Нельзя по умолчанию подставлять EUR.
+```sql
+SELECT action, actor_type, actor_user_id, actor_label, metadata, created_at
+FROM audit_logs
+WHERE action LIKE 'stripe.%materializ%'
+   OR action LIKE 'stripe.%document%'
+ORDER BY created_at DESC LIMIT 30;
 ```
 
-И оставить только 4 валюты:
+Expect: `stripe.invoice_document_materialized`, `actor_type='system'`, `actor_user_id IS NULL`, `actor_label='stripe-webhook'`.
 
-```md
-Разрешённые валюты проекта для Stripe-ссылок: BYN / USD / EUR / PLN.
-Другие валюты в этом hotfix не учитывать.
+## 4. Тест B — One-time receipt_url (best-effort)
+
+Если у Gorbova Club есть one-time оффер — пройти его тоже. Если нет — попытка через консультацию / Global Hub. Иначе зафиксировать честно:
+
+> One-time receipt_url = DEFERRED to Final Regression (нет безопасного one-time оффера в этом запуске).
+
+Verify тот же SQL: `receipt_url` должен заполниться из `charge.receipt_url`, audit — `stripe.receipt_materialized`.
+
+## 5. Lifecycle safety verify
+
+После оплаты проверить отсутствие регрессий:
+
+```sql
+-- дубли orders / payments / subs по новому Stripe id
+SELECT order_id, COUNT(*) FROM payments_v2
+WHERE provider='stripe' AND created_at > now() - interval '1 hour'
+GROUP BY order_id HAVING COUNT(*)>1;
+
+SELECT provider_payment_id, COUNT(*) FROM payments_v2
+WHERE provider='stripe' AND created_at > now() - interval '1 hour'
+GROUP BY provider_payment_id HAVING COUNT(*)>1;
+
+-- grant ledger для контакта
+SELECT action, source, created_at, metadata
+FROM access_grant_ledger agl
+JOIN profiles p ON p.id = agl.user_id
+WHERE p.email='7500084@gmail.com'
+ORDER BY created_at DESC LIMIT 20;
+
+-- Telegram audit
+SELECT action, created_at, metadata
+FROM telegram_access_audit
+WHERE created_at > now() - interval '1 hour'
+  AND metadata::text LIKE '%7500084%'
+ORDER BY created_at DESC LIMIT 20;
 ```
 
----
+Expect: ровно по одной строке order/payment/subscription, единичный grant Club через канонический write-path, Telegram — auto-grant через `grant-access-for-order → telegram-grant-access` (без дублей). bePaid не задет.
 
-## **5. В §2.4 customer_choice explicit исправить формулу**
+## 6. UI screenshots (вложить в proof)
 
-Текущий вариант:
+1. AdminOrdersV2 — Stripe subscription row с иконками online invoice + PDF.
+2. AdminOrdersV2 — bePaid row с прежним receipt (regression baseline).
+3. Stripe row без документа (если найдётся) — empty state.
+4. Stripe row — кнопка «Получить чек bePaid» ОТСУТСТВУЕТ.
 
-```text
-effectiveAllowed = explicitAllowedList ∩ technicallyAvailable(currency)
-```
+## 7. Proof update
 
-Заменить на:
+Файл: `.lovable/proofs/phase_8_receipts_documents_v1.md`
 
-```md
-effectiveAllowed собирается provider-by-provider:
+Добавить Section 8 `Runtime Verify Execute`:
 
-- если explicitAllowedList содержит `bepaid`:
-  - проверить bePaid по основной валюте ссылки/offer;
-  - если проходит — добавить `bepaid`.
+- test contact, test product, tariff_id, payment_link_id;
+- Stripe checkout session id, payment_intent id, invoice id, subscription id;
+- webhook event ids (`evt_*`);
+- before/after SQL snapshots;
+- audit rows (id + action + actor_*);
+- lifecycle safety snapshots;
+- 4 UI screenshots;
+- финальная gate table с честным статусом.
 
-- если explicitAllowedList содержит `stripe`:
-  - проверить Stripe по `stripe_currency` или fallback currency offer;
-  - если проходит — добавить `stripe`.
+## 8. Финальный статус (по результату)
 
-Нельзя исключать Stripe только потому, что основная валюта ссылки BYN, если для Stripe передана отдельная `stripe_currency`.
-```
 
----
+| Сценарий                                                      | Статус Phase 8                                                    |
+| ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| invoice.paid materialized + one-time receipt_url materialized | **FULL PASS**                                                     |
+| invoice.paid materialized, one-time не пройден                | **PASS with one-time receipt_url deferred to Final Regression**   |
+| invoice.paid не materialized                                  | **CODE COMPLETE / WAITING FOR RUNTIME VERIFY** (откат к diagnose) |
 
-## **6. В smoke F заменить пример**
 
-Текущий пример:
+НЕ ставить FULL PASS, если one-time не подтверждён реальным charge.
 
-customer_choice empty intersect (например BYN-only + admin прислал [‘stripe’] с stripe-currency=EUR)
+## 9. После Phase 8
 
-Это некорректный пример, потому что `stripe_currency=EUR` может быть валидным.
+- Phase 9 Reporting / admin visibility — отдельный план после approve.
+- Phase 10 Final Regression — bePaid + Stripe + access + CRM + Telegram + documents — отдельный план.
 
-Заменить на:
+## DoD
 
-```md
-F — customer_choice empty intersect:
-- explicitAllowedList содержит только provider, который технически недоступен;
-- например Stripe без active account_code;
-- либо currency вне BYN/USD/EUR/PLN;
-- либо installment + Stripe.
-
-Ожидаемо: 400 `customer_choice_no_technically_available_providers`.
-```
-
----
-
-## **7. Audit — правильно, но добавить failure audit**
-
-В §2.6 добавить:
-
-```md
-Если admin override отклонён техническим guard'ом, записать диагностический audit/log без создания payment_link:
-- action: `admin.payment_provider.override_failed`
-- reason_code;
-- provider;
-- provider_mode;
-- provider_choice_source;
-- offer_id;
-- offer_allowed;
-- requested_allowed;
-- effective_allowed.
-```
-
-Если audit до создания link неудобен — минимум структурированный log в proof.
-
----
-
-## **8. SuperAdminBypass формулировку упростить**
-
-Фраза:
-
-superAdminBypass остаётся как safety-net на случай, когда auto режим запросил странную конфигурацию
-
-Лучше заменить:
-
-```md
-superAdminBypass оставить без расширения. Новый admin override не должен зависеть от superAdminBypass: обычный admin, которому доступно создание ссылок, должен иметь право выбрать Stripe/bePaid/customer_choice в рамках технических guard'ов.
-```
-
----
-
-## **9. В Proof добавить проверку ролей**
-
-Добавь:
-
-```md
-Smoke выполнять под обычным admin/developer, не под super_admin.
-Цель — доказать, что обычный админский flow работает без super_admin bypass.
-```
-
----
-
-## **10. Итоговый ответ Lovable**
-
-```md
-План принят, с обязательными правками:
-
-1. Не менять `tariff_offers.meta.acquiring.allowed_payment_providers`.
-2. Не включать Stripe массово в offer.
-3. Admin-created link — это override на уровне `payment_links`.
-4. Guard `offer.allowed_payment_providers` применяется только для режима «По настройке кнопки» / `provider_choice_source='auto'`.
-5. Для explicit fixed Stripe / fixed bePaid / customer_choice этот guard не применяется.
-6. Для customer_choice проверять provider'ы отдельно:
-   - bePaid по основной валюте ссылки/offer;
-   - Stripe по `stripe_currency` или fallback валюте offer.
-7. Валюты Stripe в этом hotfix только: BYN / USD / EUR / PLN.
-8. Не подставлять EUR по умолчанию.
-9. Smoke делать под обычным admin/developer, не super_admin.
-10. Proof должен подтвердить, что offer не изменился, а override записан только в `payment_links`.
-
-После этих правок выполняй blocker-fix.
-
-Порядок остаётся прежним:
-1. Admin provider override blocker → PASS.
-2. Повторить smoke Hotfix-1 Stripe currency.
-3. Повторить smoke Hotfix-2 bePaid 404 replacement.
-4. Только потом Phase 8-A Discovery.
-5. Phase 8-B…F — только после отдельного approve по результатам Discovery.
-```
-
-Ключевое: **offer.allowed — это настройки кнопки, а не ограничение для ручной админской ссылки.**
-
-&nbsp;
-
-План: BLOCKER FIX — admin provider override не зависит от `offer.allowed_payment_providers`
-
-## 1. Контекст
-
-`admin-create-public-link` сейчас применяет один и тот же guard:
-
-```
-provider ∈ tariff_offers.meta.acquiring.allowed_payment_providers
-```
-
-для всех режимов админ-ссылки. Это блокирует fixed Stripe / customer_choice
-Stripe даже при `provider_choice_source='explicit'`, если в оффере по-умолчанию
-включён только bePaid. По базе сейчас 0/38 офферов имеют Stripe в whitelist →
-fixed Stripe-ссылку нельзя создать ни на одном продукте без super_admin bypass.
-
-Это баг: ограничение `allowed_payment_providers` — это **настройка публичной
-кнопки**, а админ-ссылка из карточки контакта — это override на уровне
-конкретной ссылки.
-
-## 2. Что меняем
-
-Один файл — `supabase/functions/admin-create-public-link/index.ts`,
-секция «Phase 5-C / 5-D: validation per provider_mode» (~строки 216–239).
-UI уже шлёт `provider_choice_source: 'auto' | 'explicit'` — backend это поле
-сейчас использует только для audit, не для логики gating. Делаем его частью
-gating.
-
-### 2.1 Новый contract gating
-
-
-| Режим (UI)          | provider_mode                 | provider_choice_source | gating                                                                            |
-| ------------------- | ----------------------------- | ---------------------- | --------------------------------------------------------------------------------- |
-| По настройке кнопки | `fixed` (резолвится из offer) | `auto`                 | provider обязан быть в `offer.allowed_payment_providers`                          |
-| Только bePaid       | `fixed`                       | `explicit`             | guard offer.allowed снят; только технические проверки bePaid                      |
-| Только Stripe       | `fixed`                       | `explicit`             | guard offer.allowed снят; только технические проверки Stripe                      |
-| Клиент выбирает     | `customer_choice`             | `explicit`             | guard offer.allowed снят; effectiveAllowed = explicit list ∩ технически доступные |
-
-
-### 2.2 Технические проверки fixed bePaid (`explicit`)
-
-- payment_type ∈ {`one_time`, `subscription`};
-- currency допустим bePaid-резолвером (через существующий `resolveAvailableProviders`);
-- installment guard сохранить как есть.
-
-Никаких новых вызовов bePaid API из writer (контракт writer'а — only INSERT в
-`payment_links`). Проверка `shop_id`/активного подключения уже происходит
-позже, в `public-checkout` → `_shared/create-payment-checkout.ts`.
-
-### 2.3 Технические проверки fixed Stripe (`explicit`)
-
-- active Stripe `acquiring_connections` row есть (или валидный `account_code`);
-- если `account_code` не передан — резолв через тот же fallback на
-`is_default=true`, что уже используется в `public-checkout` (Phase 7-EXEC);
-- currency ∈ `['BYN','USD','EUR','PLN']`;
-- payment_type ∈ {`one_time`, `subscription`};
-- если subscription — отрабатывает уже существующий вызов
-`admin-provision-stripe-price` (внутри writer);
-- installment guard: fixed Stripe + installment → 400 `stripe_installment_not_supported`.
-
-### 2.4 customer_choice (`explicit`)
-
-- effectiveAllowed = `(explicitAllowedList ?? offer.allowed_payment_providers) ∩ technicallyAvailable(currency)`;
-- если результат пуст → 400 `customer_choice_no_technically_available_providers`;
-- installment guard как сейчас (`customer_choice_not_supported_for_installment`);
-- запись override → ТОЛЬКО в `payment_links.meta.acquiring.allowed_payment_providers`;
-`tariff_offers.meta.acquiring` НЕ трогать.
-
-### 2.5 «По настройке кнопки» (`auto`)
-
-- единственный путь, где остаётся guard `provider ∈ offer.allowed_payment_providers`;
-- `offerAllowedProviders` legacy fallback (`['bepaid']` при пустой acquiring meta) сохраняется только для этого режима.
-
-### 2.6 Audit
-
-Добавить в `audit_logs` явные actions без изменения существующих:
-
-- `admin.payment_provider.override` — для fixed bepaid/stripe explicit;
-- `admin.payment_provider.customer_choice_override` — для customer_choice explicit с непустым `allowedProvidersOverride`.
-
-actor = JWT user; metadata = `{ link_id, provider, provider_mode, provider_choice_source, offer_id, offer_allowed, effective_allowed, currency }`.
-
-## 3. Что НЕ делаем
-
-- НЕ `UPDATE tariff_offers.meta.acquiring`;
-- НЕ массовое включение Stripe на офферах;
-- НЕ требуем super_admin для обычного admin override (текущий `superAdminBypass` оставляем как safety-net, но обычным admin'ам он больше не нужен);
-- НЕ обходим через service_role на стороне фронта;
-- НЕ меняем `public-checkout` (он уже корректно auto-select'ит при single allowed → fix `provider_choice_required` уже в проде);
-- НЕ меняем UI dialog (`AdminPaymentLinkDialog.tsx` уже шлёт `provider_choice_source`);
-- НЕ трогаем `bepaid-webhook`, `grant-access-for-order`, `telegram-grant-access`, `subscriptions-reconcile-*`;
-- Миграций нет.
-
-## 4. Технические детали (для разработчика)
-
-Файлы, которые меняются:
-
-```
-supabase/functions/admin-create-public-link/index.ts   (~30–50 строк в одном блоке)
-```
-
-Псевдокод нового блока validation:
-
-```text
-if (providerMode === 'fixed' && providerChoiceSource === 'auto') {
-  // «По настройке кнопки»
-  if (!offerAllowedProviders.includes(provider))
-    return errorResponse('provider_not_allowed_by_offer:' + provider, 400);
-}
-else if (providerMode === 'fixed' && providerChoiceSource === 'explicit') {
-  // Только bePaid / Только Stripe — admin override
-  const techAvail = resolveAvailableProviders({ currency, payment_type });
-  if (!techAvail.includes(provider))
-    return errorResponse('provider_not_technically_available:' + provider, 400);
-  if (provider === 'stripe') {
-    // currency whitelist + account_code resolution + installment guard
-  }
-  // НЕ читаем offer.allowed_payment_providers как блокирующий guard
-  // audit: admin.payment_provider.override
-}
-else if (providerMode === 'customer_choice') {
-  const baseAllowed = explicitAllowedList?.length ? explicitAllowedList : offerAllowedProviders;
-  const techAvail = resolveAvailableProviders({ currency, payment_type });
-  effectiveAllowed = intersect(baseAllowed, techAvail);
-  if (effectiveAllowed.length === 0)
-    return errorResponse('customer_choice_no_technically_available_providers', 400);
-  if (effectiveAllowed.includes('stripe') && (installment_offer || offerPaymentMethod === 'internal_installment'))
-    return errorResponse('customer_choice_not_supported_for_installment', 400);
-  // audit: admin.payment_provider.customer_choice_override (если allowedProvidersOverride)
-}
-```
-
-`superAdminBypass` остаётся как safety-net на случай, когда `auto` режим
-запросил странную конфигурацию — поведение не регрессирует.
-
-## 5. Smoke + Proof
-
-После имплементации:
-
-1. Runtime smoke по `admin-create-public-link` (curl, JWT обычного admin'а, не super_admin):
-  - **A — fixed Stripe override**: offer с allowed=`['bepaid']`, body `{ provider:'stripe', provider_mode:'fixed', provider_choice_source:'explicit', currency:'BYN', payment_type:'one_time' }` → 200, в payment_links строка с `provider='stripe'`, offer не изменён.
-  - **B — customer_choice override**: offer allowed=`['bepaid']`, body `{ provider_mode:'customer_choice', provider_choice_source:'explicit', allowed_payment_providers:['bepaid','stripe'] }` → 200, `payment_links.meta.acquiring.allowed_payment_providers=['bepaid','stripe']`, offer не изменён.
-  - **C — auto «По настройке кнопки»**: тот же offer, body `{ provider:'bepaid', provider_mode:'fixed', provider_choice_source:'auto' }` → 200, bepaid-only; повтор с `provider:'stripe'` → 400 `provider_not_allowed_by_offer:stripe` (регрессия отсутствует).
-  - **D — fixed bePaid explicit**: 200, без регрессии.
-  - **E — Stripe + installment fixed**: 400 `stripe_installment_not_supported`.
-  - **F — customer_choice empty intersect** (например BYN-only + admin прислал `['stripe']` с stripe-currency=EUR): 400 `customer_choice_no_technically_available_providers`.
-2. Proof файл: `.lovable/proofs/hotfix_admin_provider_override_v1.md` —
-  SQL before/after по `tariff_offers` и `payment_links`, audit_logs выборка, freeze confirmation, git diff (только index.ts), результаты A–F.
-
-## 6. Порядок после PASS
-
-1. Этот blocker-fix → PASS.
-2. Повторить runtime smoke Hotfix-1 (Stripe currency) и Hotfix-2 (bePaid 404 replacement).
-3. Только затем — Phase 8-A Discovery (read-only).
-4. Phase 8-B…F — отдельным approve после Discovery.
-
-## 7. Gates (DoD)
-
-- AOV-1 fixed Stripe admin link создаётся при offer allowed=`['bepaid']`;
-- AOV-2 customer_choice admin link создаётся при offer allowed=`['bepaid']`;
-- AOV-3 «По настройке кнопки» сохраняет старое поведение;
-- AOV-4 `tariff_offers.meta.acquiring` не меняется ни в одном сценарии;
-- AOV-5 Stripe subscription provisioning работает для fixed Stripe / customer_choice (через существующий `admin-provision-stripe-price`);
-- AOV-6 fixed bePaid без регрессии;
-- AOV-7 freeze: webhook / grant / telegram / reconcile / миграций — без изменений;
-- AOV-8 proof содержит SQL before/after, выборку payment_links, audit, результаты smoke A–F.
+- Реальный Stripe test-mode payment на `7500084@gmail.com` / Gorbova Club прошёл webhook.
+- `payments_v2.meta.stripe.hosted_invoice_url` + `invoice_pdf` заполнены реальными значениями.
+- Audit содержит `stripe.invoice_document_materialized` с system actor.
+- Нет дублей order/payment/subscription, Telegram/bePaid без регрессий.
+- 4 UI screenshots вложены.
+- Proof обновлён, статус выставлен честно по таблице из §8.
+- Никаких изменений в коде/миграциях/UI.
