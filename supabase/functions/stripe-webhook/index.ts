@@ -670,6 +670,28 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       });
       return { order_id: order_id_meta, note: 'refund_record_failed', error: rpcErr.message };
     }
+    // Phase 8-C: opportunistically materialize parent payment's receipt_url from
+    // charge.refunded payload (charge.receipt_url is the canonical Stripe receipt
+    // page for the original charge). COALESCE — never overwrites existing value.
+    // refunds[] structure update is INTENTIONALLY skipped (ambiguous structure).
+    if (event.type === 'charge.refunded') {
+      const rcpt = (obj as { receipt_url?: string | null }).receipt_url ?? null;
+      await materializeStripeDocumentLinks(
+        supabase,
+        parent_payment_id,
+        { receipt_url: rcpt },
+        { event_id: event.id, event_type: event.type, account_code, source: 'charge.refunded.payload' },
+      );
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.receipt_materialization.skipped_refund_structure_ambiguous',
+        entity_type: 'payments_v2',
+        entity_id: parent_payment_id,
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'stripe-webhook',
+        meta: { event_id: event.id, refund_id: refund.id, note: 'refunds[] per-entry receipt_url not materialized in Phase 8' },
+      });
+    }
     return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
   }
 
