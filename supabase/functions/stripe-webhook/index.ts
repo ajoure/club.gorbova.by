@@ -500,6 +500,31 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.payment_intent.succeeded');
+    // Phase 8-C: materialize one-time charge.receipt_url via Stripe API (latest_charge).
+    // Strictly non-fatal: never affects webhook lifecycle. Lineage = pi_id only.
+    try {
+      if (payment_id && pi_id) {
+        let sk: string | null = null;
+        try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); } catch { /* swallow */ }
+        if (sk) {
+          const resp = await fetch(
+            `https://api.stripe.com/v1/payment_intents/${pi_id}?expand[]=latest_charge`,
+            { headers: { Authorization: `Bearer ${sk}` } },
+          );
+          if (resp.ok) {
+            const data = await resp.json();
+            const latest = data?.latest_charge;
+            const receipt_url = (latest && typeof latest === 'object') ? (latest.receipt_url ?? null) : null;
+            await materializeStripeDocumentLinks(
+              supabase,
+              payment_id,
+              { receipt_url },
+              { event_id: event.id, event_type: event.type, account_code, source: 'pi.succeeded.api_latest_charge' },
+            );
+          }
+        }
+      }
+    } catch { /* never re-throw */ }
     return { order_id: order_id_meta, payment_id };
   }
 
