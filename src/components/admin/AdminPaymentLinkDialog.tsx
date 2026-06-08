@@ -466,6 +466,26 @@ export function AdminPaymentLinkDialog({
     return list;
   }, [stripeAvailableForCustomerChoice]);
 
+  // BLOCKER FIX (Phase 8 follow-up) — для recurring offer + Stripe path backend
+  // форсит payment_type='subscription' (Core rule Product Type SOT). UI блокирует
+  // toggle, чтобы preview/audit совпадали с тем, что запишет admin-create-public-link.
+  const isStripePathActive =
+    provider === "stripe" ||
+    (providerModeChoice === "customer_choice" && stripeAvailableForCustomerChoice);
+  const lockPaymentTypeToSubscription =
+    !!effectiveOffer &&
+    effectiveOfferType === "subscription" &&
+    isStripePathActive &&
+    !isInstallmentOffer;
+
+  useEffect(() => {
+    if (lockPaymentTypeToSubscription && paymentType !== "subscription") {
+      setPaymentType("subscription");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockPaymentTypeToSubscription]);
+
+
   // Авто-переключение с customer_choice, если ни один provider не доступен (теоретически невозможно,
   // т.к. bepaid считаем всегда доступным; на случай будущих изменений).
   useEffect(() => {
