@@ -1475,7 +1475,15 @@ ${amountLine}
                   </div>
                   {lockPaymentTypeToSubscription ? (
                     <p className="text-xs text-amber-600">
-                      Тариф является рекуррентным, поэтому для Stripe будет создана подписка (mode=subscription). Изменить тип нельзя.
+                      По настройке тарифа будет создана подписка (mode=subscription). В режиме «По настройке кнопки» система следует SOT оффера.
+                    </p>
+                  ) : warnExplicitOneTimeOnRecurringStripe ? (
+                    <p className="text-xs text-amber-600">
+                      Тариф является рекуррентным, но вы создаёте разовую админскую оплату. Подписка Stripe создана не будет (mode=payment).
+                    </p>
+                  ) : hintExplicitSubscriptionStripe ? (
+                    <p className="text-xs text-muted-foreground">
+                      Для Stripe будет создана подписка (mode=subscription).
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground">
