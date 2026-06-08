@@ -34,6 +34,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
 import { consumePaymentLinkForOrder } from './consume-payment-link.ts';
+import { materializeStripeDocumentLinks } from './stripe-receipt-materialize.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
