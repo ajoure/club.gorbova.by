@@ -235,15 +235,15 @@ export function AdminPaymentLinkDialog({
     enabled: open,
   });
 
-  // Авто-выбор первого/default-аккаунта при переключении провайдера / включении cc-stripe.
+  // UX fix: предзагружаем default Stripe-аккаунт сразу, как только список загружен,
+  // чтобы кнопка «Иностранная карта» в блоке выбора способа оплаты не была
+  // disabled при первом открытии диалога из-за `stripe_account_resolved=false`.
   useEffect(() => {
-    const needsStripeAccount =
-      provider === "stripe" || providerModeChoice === "customer_choice";
-    if (needsStripeAccount && !stripeAccountCode && stripeAccounts?.length) {
+    if (!stripeAccountCode && stripeAccounts?.length) {
       const def = stripeAccounts.find((a: any) => a.is_default) ?? stripeAccounts[0];
       setStripeAccountCode((def as any).account_code);
     }
-  }, [provider, providerModeChoice, stripeAccounts, stripeAccountCode]);
+  }, [stripeAccounts, stripeAccountCode]);
 
   // Phase 7-UI follow-up — supported currencies выбранного Stripe-аккаунта.
   // Передаются в shared `resolveAvailableProviders` (frontend mirror SOT).
