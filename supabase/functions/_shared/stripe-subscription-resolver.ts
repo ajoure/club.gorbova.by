@@ -974,6 +974,7 @@ async function onInvoicePaid(
         })
         .select('id')
         .maybeSingle();
+      payment_id = (pIns as any)?.id;
     }
   }
 
