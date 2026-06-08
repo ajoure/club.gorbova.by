@@ -71,3 +71,54 @@ Memory-файл обновлю в следующем сообщении (пос�
 ## 7. Freeze confirmation
 
 Не тронуты: bePaid webhook, Stripe webhook, grant-access, Telegram, subscriptions-reconcile, bepaid-receipts-cron, миграции БД.
+
+---
+
+## 8. Runtime smoke = PASS (2026-06-07)
+
+Фикстура: `subscription_v2_id=465ba5c1-626f-4cd0-986b-2a03a791c5cc`, `bepaid_id=sub_1TfHh06UYJj2vm0GxSYzxR2Y`.
+
+**Before fix (2026-06-07 20:27:42):**
+```
+audit_logs.bepaid.subscription.cancel:
+  canceled: 0
+  failed: 1
+  failed_details: [{ id: sub_1Tf..., http_status: 404, reason_code: not_found }]
+→ replacement BLOCKED (красный alert)
+```
+
+**After fix (2026-06-07 21:10:25):**
+```
+audit_logs.bepaid.subscription.cancel:
+  canceled: 1
+  failed: 0
+  remote_missing_count: 1
+  remote_missing: [{
+    id: sub_1Tf...,
+    http_status: 404,
+    local_state: active,
+    reason_code: provider_subscription_not_found_treated_as_canceled
+  }]
+  source: public_link_replace
+
+audit_logs.subscription.replace_started:
+  replacement_mode: provider_managed
+  cancel_result.remote_missing: [{ reason_code: provider_subscription_not_found_treated_as_canceled, ... }]
+
+subscriptions_v2.id=465ba5c1-...:
+  status: superseded
+  auto_renew: false
+  updated_at: 2026-06-07 21:10:25
+```
+
+| # | Сценарий | Результат |
+|---|---|---|
+| S1 | bePaid 404 + local active → replace | PASS: cancel = success с `remote_missing`, old → superseded, новая оплата прошла |
+| S2 | bePaid 500 / timeout / auth | NOT REGRESSED: код блокировки сохранён (`failed[]` без `not_found`-кода → throw) |
+| S3 | Local already canceled + bePaid 404 | PASS: success (как раньше) |
+| S4 | Audit содержит `remote_missing=true` и `reason_code=provider_subscription_not_found_treated_as_canceled` | PASS (см. выше) |
+
+Freeze: `bepaid-webhook`, `grant-access-for-order`, `telegram-*`, `subscriptions-reconcile`, `bepaid-receipts-cron`, миграции — не тронуты.
+
+**Статус: PASS.**
+
