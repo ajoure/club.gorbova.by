@@ -178,7 +178,7 @@ export default function AdminOrdersV2() {
           products_v2(id, name, code),
           tariffs(id, name, code),
           flows(id, name, code),
-          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status)
+          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status, meta)
         `)
         .order("created_at", { ascending: false })
         .limit(100);
@@ -436,9 +436,14 @@ export default function AdminOrdersV2() {
                   {filteredOrders.map((order) => {
                     const statusConfig = ORDER_STATUS_LABELS[order.status] || { label: order.status, variant: "secondary" as const };
                     const profile = (order as any).profile;
-                    const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => 
-                      p.provider === 'bepaid' && p.status === 'succeeded'
+                    // Phase 8-C: accept both bePaid and Stripe acquiring payments for the
+                    // Receipt column. Stripe receipt_url is materialized into payments_v2
+                    // by stripe-webhook; hosted_invoice_url / invoice_pdf live in meta.stripe.
+                    const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) =>
+                      (p.provider === 'bepaid' || p.provider === 'stripe') && p.status === 'succeeded'
                     );
+                    const stripeHosted = bepaidPayment?.meta?.stripe?.hosted_invoice_url || null;
+                    const stripeInvoicePdf = bepaidPayment?.meta?.stripe?.invoice_pdf || null;
                     const refundedAmount = bepaidPayment ? Number(bepaidPayment.refunded_amount) || 0 : 0;
                     const paymentAmount = bepaidPayment ? Number(bepaidPayment.amount) || 0 : 0;
                     const refundStatus = refundedAmount >= paymentAmount && refundedAmount > 0 ? 'full' : refundedAmount > 0 ? 'partial' : 'none';
@@ -517,7 +522,45 @@ export default function AdminOrdersV2() {
                                 <TooltipContent>Открыть чек</TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
-                          ) : bepaidPayment?.provider_payment_id ? (
+                          ) : stripeHosted || stripeInvoicePdf ? (
+                            // Phase 8-C: Stripe subscription invoice links.
+                            <div className="flex items-center gap-1">
+                              {stripeHosted && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <a
+                                        href={stripeHosted}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
+                                      >
+                                        <Receipt className="h-4 w-4 text-blue-600" />
+                                      </a>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Stripe-инвойс (онлайн)</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              {stripeInvoicePdf && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <a
+                                        href={stripeInvoicePdf}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
+                                      >
+                                        <Download className="h-4 w-4 text-blue-600" />
+                                      </a>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Stripe-инвойс (PDF)</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                          ) : bepaidPayment?.provider === 'bepaid' && bepaidPayment?.provider_payment_id ? (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>

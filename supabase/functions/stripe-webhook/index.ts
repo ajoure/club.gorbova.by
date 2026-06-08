@@ -30,6 +30,7 @@ import {
   STRIPE_SUBSCRIPTION_EVENT_TYPES,
 } from '../_shared/stripe-subscription-resolver.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
+import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materialize.ts';
 
 function svc() {
   return createClient(
@@ -124,6 +125,13 @@ async function mergeStripeMetaOnOrder(
   }
   await supabase.from('orders_v2').update({ meta: nextMeta }).eq('id', order_id);
 }
+
+// Phase 8-B/C — Stripe receipt/invoice link materialization (reuse existing fields).
+// See supabase/functions/_shared/stripe-receipt-materialize.ts for contract.
+
+
+
+
 
 
 async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
@@ -289,6 +297,30 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         });
       }
     }
+    // Phase 8-C: same one-time charge.receipt_url materialization for checkout.session.completed.
+    try {
+      if (payment_id && pi_id) {
+        let sk: string | null = null;
+        try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); } catch { /* swallow */ }
+        if (sk) {
+          const resp = await fetch(
+            `https://api.stripe.com/v1/payment_intents/${pi_id}?expand[]=latest_charge`,
+            { headers: { Authorization: `Bearer ${sk}` } },
+          );
+          if (resp.ok) {
+            const data = await resp.json();
+            const latest = data?.latest_charge;
+            const receipt_url = (latest && typeof latest === 'object') ? (latest.receipt_url ?? null) : null;
+            await materializeStripeDocumentLinks(
+              supabase,
+              payment_id,
+              { receipt_url },
+              { event_id: event.id, event_type: event.type, account_code, source: 'checkout.session.completed.api_latest_charge' },
+            );
+          }
+        }
+      }
+    } catch { /* never re-throw */ }
     return { order_id: order_id_meta, payment_id };
   }
 
@@ -340,6 +372,31 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.payment_intent.succeeded');
+    // Phase 8-C: materialize one-time charge.receipt_url via Stripe API (latest_charge).
+    // Strictly non-fatal: never affects webhook lifecycle. Lineage = pi_id only.
+    try {
+      if (payment_id && pi_id) {
+        let sk: string | null = null;
+        try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); } catch { /* swallow */ }
+        if (sk) {
+          const resp = await fetch(
+            `https://api.stripe.com/v1/payment_intents/${pi_id}?expand[]=latest_charge`,
+            { headers: { Authorization: `Bearer ${sk}` } },
+          );
+          if (resp.ok) {
+            const data = await resp.json();
+            const latest = data?.latest_charge;
+            const receipt_url = (latest && typeof latest === 'object') ? (latest.receipt_url ?? null) : null;
+            await materializeStripeDocumentLinks(
+              supabase,
+              payment_id,
+              { receipt_url },
+              { event_id: event.id, event_type: event.type, account_code, source: 'pi.succeeded.api_latest_charge' },
+            );
+          }
+        }
+      }
+    } catch { /* never re-throw */ }
     return { order_id: order_id_meta, payment_id };
   }
 
@@ -460,6 +517,28 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         meta: { error: rpcErr.message, refund_id: refund.id, parent_payment_id },
       });
       return { order_id: order_id_meta, note: 'refund_record_failed', error: rpcErr.message };
+    }
+    // Phase 8-C: opportunistically materialize parent payment's receipt_url from
+    // charge.refunded payload (charge.receipt_url is the canonical Stripe receipt
+    // page for the original charge). COALESCE — never overwrites existing value.
+    // refunds[] structure update is INTENTIONALLY skipped (ambiguous structure).
+    if (event.type === 'charge.refunded') {
+      const rcpt = (obj as { receipt_url?: string | null }).receipt_url ?? null;
+      await materializeStripeDocumentLinks(
+        supabase,
+        parent_payment_id,
+        { receipt_url: rcpt },
+        { event_id: event.id, event_type: event.type, account_code, source: 'charge.refunded.payload' },
+      );
+      await supabase.from('audit_logs').insert({
+        action: 'stripe.receipt_materialization.skipped_refund_structure_ambiguous',
+        entity_type: 'payments_v2',
+        entity_id: parent_payment_id,
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'stripe-webhook',
+        meta: { event_id: event.id, refund_id: refund.id, note: 'refunds[] per-entry receipt_url not materialized in Phase 8' },
+      });
     }
     return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
   }

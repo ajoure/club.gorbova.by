@@ -34,6 +34,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
 import { consumePaymentLinkForOrder } from './consume-payment-link.ts';
+import { materializeStripeDocumentLinks } from './stripe-receipt-materialize.ts';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -976,6 +977,25 @@ async function onInvoicePaid(
       payment_id = (pIns as any)?.id;
     }
   }
+
+  // Phase 8-C: materialize subscription invoice document links into
+  // payments_v2.meta.stripe.{hosted_invoice_url,invoice_pdf}.
+  // Strictly non-fatal — never affects activation / grant-access.
+  // Lineage = invoice_id (already resolved). Fields read from payload directly.
+  try {
+    if (payment_id) {
+      const hosted_invoice_url = (invoice as any).hosted_invoice_url ?? null;
+      const invoice_pdf = (invoice as any).invoice_pdf ?? null;
+      await materializeStripeDocumentLinks(
+        supabase as any,
+        payment_id,
+        { hosted_invoice_url, invoice_pdf },
+        { event_id: event.id, event_type: event.type, account_code, source: 'invoice.paid.payload' },
+      );
+    }
+  } catch { /* never re-throw */ }
+
+
 
 
   // ---- Link order_id back to provider_subscriptions + promote state pending→active.
