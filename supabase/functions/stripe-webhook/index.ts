@@ -30,6 +30,7 @@ import {
   STRIPE_SUBSCRIPTION_EVENT_TYPES,
 } from '../_shared/stripe-subscription-resolver.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
+import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materialize.ts';
 
 function svc() {
   return createClient(
