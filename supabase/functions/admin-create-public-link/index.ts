@@ -319,12 +319,16 @@ Deno.serve(async (req) => {
     const stripePathActive =
       provider === 'stripe' ||
       (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
-    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся BYN).
+    // Для cc Stripe-валюта берётся из body.stripe_currency (link.currency остаётся bePaid-валютой).
+    // Hotfix admin_provider_override_v1: НЕ подставляем EUR по умолчанию — fallback на валюту
+    // ссылки/оффера. Это позволяет admin'у создать customer_choice ссылку с BYN для bePaid +
+    // явно переданным stripe_currency=EUR/USD/PLN/BYN для Stripe-ветки.
     const stripeValidationCurrency = (
       providerMode === 'customer_choice'
-        ? (rawStripeCurrency || 'EUR')
+        ? (rawStripeCurrency || currency)
         : currency
     ).toUpperCase();
+
 
     // ── Step 1: bePaid currency guard (P7-3) ──
     // Применяется к fixed=bepaid и к customer_choice со bePaid в allowed.
