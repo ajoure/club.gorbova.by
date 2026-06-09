@@ -559,8 +559,13 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
             currency: currency.toUpperCase(),
             interval: inlineRecurring!.interval,
             interval_count: inlineRecurring!.interval_count,
-            product_id: stripe_product_id,
-            product_name: (product as { name?: string }).name || 'Subscription',
+            // PATCH-SUB-PRICE-2: never reuse saved product_id — может быть из другого Stripe mode/account.
+            // Stripe сам создаст inline product в текущем mode/account по product_data.name.
+            product_id: null,
+            product_name: [
+              (product as { name?: string }).name,
+              (tariff as { name?: string }).name,
+            ].filter(Boolean).join(' — ') || 'Subscription',
           },
         }
       : {
