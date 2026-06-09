@@ -324,6 +324,134 @@ Deno.serve(async (req) => {
       let bepaidRefundError: string | null = null;
       let bepaidAlreadyRefunded = false;
 
+      // PATCH-STRIPE-REFUND-V1 (2026-06-09):
+      // Provider-aware branch. For Stripe payments we MUST NOT call bePaid
+      // (causes "Parent transaction not found"). We call Stripe Refund API
+      // via the canonical `stripe-admin-refund` edge function. The
+      // `charge.refunded` webhook does the canonical write through
+      // `record_refund_atomic_multi`. No manual refund-row insert here.
+      const isStripePayment = successfulPayment?.provider === 'stripe'
+        && typeof successfulPayment?.provider_payment_id === 'string'
+        && successfulPayment.provider_payment_id.startsWith('pi_');
+
+      if (isStripePayment) {
+        const stripeMeta = (successfulPayment.meta as any) || {};
+        const accountCode = stripeMeta?.stripe?.account_code
+          || stripeMeta?.account_code
+          || 'stripe_poland';
+
+        let stripeRefundResp: any = null;
+        let stripeRefundError: string | null = null;
+        try {
+          const { data: srData, error: srErr } = await supabase.functions.invoke(
+            'stripe-admin-refund',
+            {
+              body: {
+                payment_intent: successfulPayment.provider_payment_id,
+                amount_minor: Math.round(actualRefundAmount * 100),
+                account_code: accountCode,
+                reason: 'requested_by_customer',
+              },
+              headers: { Authorization: authHeader },
+            },
+          );
+          if (srErr) stripeRefundError = srErr.message || String(srErr);
+          stripeRefundResp = srData;
+          if (srData && srData.ok === false) {
+            stripeRefundError = JSON.stringify(srData.stripe_error || srData);
+          }
+        } catch (err) {
+          stripeRefundError = err instanceof Error ? err.message : String(err);
+        }
+
+        const effective = access_action || 'keep';
+        const stripeOk = !stripeRefundError && stripeRefundResp?.ok === true;
+
+        await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: order.user_id,
+          actor_type: 'user',
+          actor_label: 'subscription-admin-actions[refund][stripe]',
+          action: stripeOk
+            ? 'admin.subscription.refund_stripe_initiated'
+            : 'admin.subscription.refund_stripe_failed',
+          meta: {
+            order_id,
+            order_number: order.order_number,
+            refund_amount: actualRefundAmount,
+            refund_reason,
+            access_action: effective,
+            payment_intent: successfulPayment.provider_payment_id,
+            account_code: accountCode,
+            stripe_response: stripeRefundResp,
+            stripe_error: stripeRefundError,
+            note: 'PATCH-STRIPE-REFUND-V1 — canonical write-path via stripe webhook + record_refund_atomic_multi',
+          },
+        });
+
+        if (!stripeOk) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: stripeRefundError || 'Stripe refund failed',
+            stripe_response: stripeRefundResp,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Access action handling — keep / revoke / reduce / keep_subscription.
+        // Order status flip is left to the Stripe webhook (canonical write-path).
+        if (effective === 'revoke' || effective === 'reduce') {
+          const { data: relatedSub } = await supabase
+            .from('subscriptions_v2')
+            .select('*, products_v2(telegram_club_id)')
+            .eq('order_id', order_id)
+            .maybeSingle();
+          if (relatedSub) {
+            if (effective === 'revoke') {
+              await supabase
+                .from('subscriptions_v2')
+                .update({
+                  status: 'canceled',
+                  access_end_at: new Date().toISOString(),
+                  cancel_at: new Date().toISOString(),
+                  canceled_at: new Date().toISOString(),
+                  cancel_reason: `Возврат (stripe): ${refund_reason}`,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', relatedSub.id);
+            } else if (effective === 'reduce' && reduce_days > 0) {
+              const currentEnd = relatedSub.access_end_at
+                ? new Date(relatedSub.access_end_at)
+                : new Date();
+              const newEnd = new Date(currentEnd.getTime() - reduce_days * 24 * 60 * 60 * 1000);
+              const finalEnd = newEnd < new Date() ? new Date() : newEnd;
+              await supabase
+                .from('subscriptions_v2')
+                .update({
+                  access_end_at: finalEnd.toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', relatedSub.id);
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          provider: 'stripe',
+          refund_amount: actualRefundAmount,
+          order_number: order.order_number,
+          access_action: effective,
+          stripe_refund_id: stripeRefundResp?.refund_id || null,
+          stripe_status: stripeRefundResp?.status || null,
+          note: 'Refund initiated via Stripe API. Order status will flip when webhook arrives (canonical write-path).',
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // Process refund through bePaid if we have a payment UID
       if (successfulPayment?.provider_payment_id) {
         // PATCH-P0.9.1: Strict creds
