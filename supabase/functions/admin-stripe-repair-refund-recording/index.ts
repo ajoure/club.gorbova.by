@@ -49,14 +49,18 @@ Deno.serve(async (req) => {
 
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace('Bearer ', '').trim();
-    if (!token) return errorResponse('unauthorized: missing bearer', 401);
+    const cronSecretHeader = req.headers.get('x-cron-secret') ?? '';
+    const cronSecretEnv = Deno.env.get('CRON_SECRET') ?? '';
 
-    // Allow either super_admin JWT OR direct service_role key invocation.
+    // Allow super_admin JWT OR service_role OR explicit CRON_SECRET (server-only invocation by ops).
     let actorUserId: string | null = null;
     let actorLabel = 'admin-stripe-repair-refund-recording';
-    if (token === serviceKey) {
+    const usingCronSecret = cronSecretEnv && cronSecretHeader && cronSecretHeader === cronSecretEnv;
+    if (usingCronSecret) {
+      actorLabel = 'ops:cron-secret:admin-stripe-repair-refund-recording';
+    } else if (token && token === serviceKey) {
       actorLabel = 'service-role:admin-stripe-repair-refund-recording';
-    } else {
+    } else if (token) {
       const authClient = createClient(supabaseUrl, anonKey, {
         global: { headers: { Authorization: `Bearer ${token}` } },
       });
@@ -68,6 +72,8 @@ Deno.serve(async (req) => {
         _user_id: actorUserId, _role_code: 'super_admin',
       });
       if (!isSuper) return errorResponse('forbidden: super_admin required', 403);
+    } else {
+      return errorResponse('unauthorized: missing bearer or x-cron-secret', 401);
     }
 
     const supabase = createClient(supabaseUrl, serviceKey);
