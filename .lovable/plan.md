@@ -1,248 +1,483 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-План принят.
+План в целом принят, но перед выполнением нужно скорректировать scope и порядок.
 
-Можно начинать Phase 1 — миграцию `normalize_order_user_id()`.
+Главная правка: **Phase 10 не должен быть PAUSED полностью**, если P0 ghost-profile sprint ещё не закрыт. Сейчас есть два разных блока:
 
-## **Обязательные уточнения перед execute**
+1. **P0 Ghost profile / Live Stripe binding / card data** — критический blocker, который должен быть закрыт первым.
+2. **PATCH PACK refund/cancel/cleanup/follow-up proofs** — следующий пакет после закрытия P0.
 
-### **1. Phase 1 можно выполнять сразу**
-
-Phase 1 — это исправление функции-триггера.  
-Она устраняет root cause, поэтому её можно выполнять первой.
-
-После миграции обязательно дать proof:
-
-- старый порядок lookup;
-- новый порядок lookup;
-- тест на `user_id=05cd3754…610b`;
-- подтверждение, что теперь выбирается реальный профиль:
-
-```text
-a4b7c8c9-8210-499e-ae3f-2a5db2121577
-```
-
-а не ghost:
-
-```text
-05cd3754-d589-4d90-97d1-89ba2bee610b
-```
+Нельзя начинать refund/cancel/cleanup, пока live Stripe payment 5 BYN окончательно не привязан к реальному профилю Сергея и не отображается корректно.
 
 ---
 
-### **2. Phase 2–3 только после dry-run в proof**
+# **Новый порядок**
 
-Перед любым UPDATE/DELETE обязательно показать в proof:
+## **Step 0 — сначала закрыть P0 Ghost profile sprint**
 
-- affected rows по `orders_v2`;
-- affected rows по `payments_v2`;
-- affected rows по `subscriptions_v2`;
-- affected rows по `entitlements`;
-- affected rows по `access_grant_ledger`;
-- affected rows по `telegram_access_queue`;
-- affected rows по `payment_links`;
-- affected rows по другим таблицам, где есть `profile_id`.
+До выполнения PATCH 1–5 нужно завершить текущий P0:
 
-Если где-то есть неоднозначная связь — STOP и report.
-
----
-
-### **3. Ghost-профили удалить можно**
-
-Подтверждаю: ghost-профили можно удалить после repoint и FK-check:
-
-```text
-05cd3754-d589-4d90-97d1-89ba2bee610b
-7a942227-e274-4e3f-8ed0-08195fc11542
-```
-
-Но только если финальная проверка показывает `0` ссылок на них во всех связанных таблицах.
-
-Если остаются ссылки — не удалять, дать report.
-
----
-
-### **4. Card data backfill — только для одного live Stripe payment**
-
-Для P0 разрешён только точечный backfill:
-
-```text
-payments_v2.id = 2d40bc7e-e69f-4633-88d5-102561e49a54
-payment_intent = pi_3TgMkD6UYJj2vm0G1ZUpRzvH
-```
-
-Массовый backfill старых Stripe-платежей не делать.
-
----
-
-### **5. Deal / CRM**
-
-Так как отдельной таблицы `deals` нет, Phase 6 исключаем из execute.
-
-Если CRM-связь живёт через `orders_v2.pipeline_stage` / `pipeline_stages` / meta — только зафиксировать состояние в proof.  
-Никаких дополнительных CRM-правок в этом P0 не делать без отдельного approve.
-
----
-
-### **6. Failed bePaid payment не трогать**
-
-Failed bePaid attempt:
-
-```text
-5b5cb22f…
-```
-
-оставить как есть.
-
-Он должен остаться отдельной failed bePaid-строкой и не смешиваться со Stripe success.
-
----
-
-## **Approve на выполнение**
-
-Порядок:
-
-1. Phase 1 — миграция `normalize_order_user_id()`.
-2. Отчёт/proof по Phase 1.
-3. Phase 2 — repoint orders/payments/related rows только по dry-run.
-4. Phase 3 — delete ghost profiles только после FK-check.
-5. Phase 4 — Stripe card data для будущих платежей.
-6. Phase 5 — точечный card-data backfill для `2d40bc7e…`.
-7. Phase 6/7 — UI verify + proof.
-
-## **Статус после выполнения**
-
-P0 можно закрыть только если:
-
-- live Stripe 5 BYN привязан к реальному Сергею;
-- ghost-контакты исчезли или доказательно неактивны;
-- `/admin/payments` показывает Stripe 5 BYN с контактом Сергей Федорчук;
+- `normalize_order_user_id()` исправлен;
+- ghost-профили repointed/deleted или доказательно скрыты;
+- payment `2d40bc7e…` привязан к реальному Сергею `a4b7c8c9…`;
+- card data для `2d40bc7e…` заполнены;
+- `/admin/payments` показывает 5 BYN Stripe строку с:
+  - provider = Stripe;
+  - status = succeeded;
+  - contact = Сергей Федорчук;
+  - card data;
+  - Stripe receipt;
 - карточка Сергея показывает этот платёж;
-- payer/card data заполнены;
-- receipt ведёт на `pay.stripe.com`;
-- entitlement остался active;
-- bePaid failed attempt остался отдельным failed bePaid;
-- bePaid / Telegram / access не регрессировали;
-- proof `.lovable/proofs/phase_L4_ghost_profile_fix_v1.md` закрыт.
+- failed bePaid `5b5cb22f…` остаётся отдельной failed bePaid-строкой.
 
-Начинай Phase 1.
+Без этого refund/cancel/cleanup могут работать по неправильным связям.
+
+---
+
+# **PATCH PACK можно начинать только после P0 PASS**
+
+После P0 PASS принимаю следующий порядок:
+
+```text
+Step 1 — DIAGNOSE + DRY-RUN по PATCH PACK
+Step 2 — approve
+Step 3 — execute PATCH 1 / 2 / 4
+Step 4 — PATCH 3 cleanup только после отдельного approve KEEP/HIDE списка
+Step 5 — PATCH 5 proof-only
+Step 6 — Phase 10 final regression resume
+```
+
+---
+
+# **Правки к PATCH 1 — Stripe refund**
+
+План правильный, но добавить обязательные ограничения:
+
+## **1. Не делать refund до P0 PASS**
+
+Refund на `pi_3TgMkD6…` выполнять только после того, как payment `2d40bc7e…`:
+
+- привязан к реальному профилю Сергея;
+- виден в `/admin/payments`;
+- имеет card data;
+- имеет Stripe receipt;
+- не связан с ghost.
+
+## **2. Перед refund — dry-run**
+
+Перед реальным refund показать:
+
+```sql
+SELECT
+  id,
+  provider,
+  provider_payment_id,
+  order_id,
+  user_id,
+  profile_id,
+  amount,
+  currency,
+  status,
+  refunded_amount,
+  receipt_url,
+  meta
+FROM payments_v2
+WHERE provider_payment_id = 'pi_3TgMkD6UYJj2vm0G1ZUpRzvH'
+   OR id = '2d40bc7e-e69f-4633-88d5-102561e49a54';
+```
+
+И отдельно order/access:
+
+```sql
+SELECT id, status, user_id, profile_id, contact_id, final_price, currency, paid_at, meta
+FROM orders_v2
+WHERE id = (
+  SELECT order_id FROM payments_v2 WHERE id='2d40bc7e-e69f-4633-88d5-102561e49a54'
+);
+```
+
+## **3. Refund amount**
+
+Для первого live refund использовать **частичный refund минимальной суммы**, если Stripe позволяет.
+
+Если система поддерживает только full refund — STOP и report до execute.
+
+Не делать full refund без отдельного подтверждения.
+
+## **4. Access action**
+
+По умолчанию для тестового refund:
+
+```text
+access_action = keep
+```
+
+Не отзывать доступ автоматически в этом PATCH, если отдельно не подтверждено.
+
+---
+
+# **Правки к PATCH 2 — Stripe subscription cancel**
+
+План правильный, но:
+
+## **1. Не отменять live production subscription без явного подтверждения**
+
+Если `sub_1Tg9B66…` — live subscription, то перед cancel сделать dry-run:
+
+- subscription owner;
+- product/tariff;
+- access_end_at;
+- next billing date;
+- current status;
+- Stripe status.
+
+## **2. Default action**
+
+Для первого теста:
+
+```text
+cancel_at_period_end
+```
+
+а не `cancel_now`.
+
+`cancel_now` — только отдельным подтверждением.
+
+## **3. Access integrity**
+
+После cancel_at_period_end:
+
+- `access_end_at` не должен сокращаться;
+- entitlement должен остаться active до конца оплаченного периода;
+- `auto_renew=false`;
+- `meta.stripe.cancel_at_period_end=true`.
+
+---
+
+# **Правки к PATCH 3 — cleanup**
+
+PATCH 3 нельзя выполнять в одном execute-пакете с refund/cancel.
+
+## **Cleanup только отдельным approve**
+
+Сначала нужен отдельный dry-run list:
+
+```text
+KEEP / HIDE / DO NOT TOUCH
+```
+
+По каждой строке:
+
+- table;
+- id;
+- provider_payment_id / subscription_id;
+- user/profile;
+- live/test;
+- reason;
+- proposed action.
+
+## **Важно**
+
+Не скрывать:
+
+- live payment `pi_3TgMkD6…`;
+- live subscription `sub_1Tg9B66…`;
+- любые клиентские реальные записи;
+- любые записи, которые участвуют в текущем proof.
+
+Soft-hide допустим только для очевидных dev/sandbox артефактов.
+
+---
+
+# **Правки к PATCH 4 — card data**
+
+Если P0 уже включает targeted card data для `2d40bc7e…`, то PATCH 4 не должен дублировать работу.
+
+Правильный статус:
+
+```text
+PATCH 4 = only verify after P0
+```
+
+Новая edge function `stripe-card-data-fetch` сейчас не нужна, если P0 уже решает targeted fetch.
+
+Если P0 не сможет получить card data безопасно — тогда вернуться к PATCH 4 отдельным планом.
+
+---
+
+# **Правки к PATCH 5 — follow-up proofs**
+
+PATCH 5 можно делать как proof-only после P0, но не смешивать с refund/cancel.
+
+В proof подтвердить только уже сделанное:
+
+- redirect URLs;
+- Telegram DM product/tariff;
+- UI «Иностранная карта» enabled on mount.
+
+Если discovery покажет, что что-то не сделано — не исправлять внутри PATCH 5, а вынести отдельным PATCH.
+
+---
+
+# **Исправленный порядок выполнения**
+
+```text
+0. Закрыть P0 Ghost profile / binding / card data = PASS.
+
+1. PATCH PACK Diagnose + Dry-run:
+   - refund path;
+   - cancel path;
+   - cleanup candidates;
+   - card data status after P0;
+   - follow-up proof status.
+
+2. После approve:
+   PATCH 1 — provider-aware refund, но refund execute только после отдельного подтверждения суммы/access_action.
+
+3. PATCH 2 — Stripe subscription cancel UI/provider derivation.
+   cancel_at_period_end только после отдельного подтверждения.
+
+4. PATCH 5 — follow-up proofs.
+
+5. PATCH 3 — cleanup только после отдельного approve KEEP/HIDE list.
+
+6. Phase 10 final regression resume.
+```
+
+---
+
+# **Что сейчас НЕ делать**
+
+До P0 PASS не делать:
+
+- refund;
+- cancel subscription;
+- cleanup/hide;
+- card-data mass backfill;
+- saved cards;
+- webinar access;
+- subscription tab rename;
+- Phase 10 final PASS.
+
+---
+
+# **Proof structure**
+
+После P0 закрыть:
+
+```text
+.lovable/proofs/phase_L4_ghost_profile_fix_v1.md
+```
+
+После PATCH PACK:
+
+```text
+.lovable/proofs/patch_stripe_refund_v1.md
+.lovable/proofs/patch_stripe_subscription_cancel_v1.md
+.lovable/proofs/patch_stripe_cleanup_live_artifacts_v1.md
+.lovable/proofs/patch_stripe_card_data_v1.md
+.lovable/proofs/stripe_runtime_followup_fixes_v1.md
+```
+
+Если PATCH 4 полностью закрыт в P0, в `patch_stripe_card_data_v1.md` указать:
+
+```text
+Resolved by P0 ghost profile sprint; no extra edge function created.
+```
+
+---
+
+# **Итоговое решение**
+
+Сейчас не начинай PATCH PACK execute.
+
+Сначала закончи P0 ghost-profile sprint.
+
+После P0 PASS дай один consolidated DIAGNOSE + DRY-RUN по PATCH PACK и жди approve.
 
 &nbsp;
 
-План: P0 — Ghost profile / Live Stripe payment binding / Stripe card data
+План: PATCH PACK перед Phase 10 (Stripe live refund / cancel / cleanup / card data / follow-up proofs)
 
-## Diagnose (выполнен read-only dry-run)
+Phase 10 Final Regression — **PAUSED**. До финального PASS закрываем 5 PATCH строго по схеме `DIAGNOSE → DRY RUN → PLAN → EXECUTE → VERIFY`. Никакого test-mode, Resend, тестовых карт. Все проверки — на реальных Stripe-объектах Сергея (`pi_3TgMkD6UYJj2vm0G1ZUpRzvH` 5 BYN, sub `sub_1Tg9B66UYJj2vm0Gx2Ghaoch`).
 
-### Профили
+### Discovery итог (что уже выяснили без правок)
 
+```text
+Refund SOT path (bePaid-only, hardcoded):
+  RefundDialog → subscription-admin-actions[action='refund']
+  → жёстко жмёт https://gateway.bepaid.by/transactions/refunds (parent_uid)
+  → отсюда "Parent transaction not found" для Stripe-платежей.
 
-| id                                     | user_id         | email                                                                   | created_at | роль                              |
-| -------------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------- | --------------------------------- |
-| `a4b7c8c9-8210-499e-ae3f-2a5db2121577` | `05cd3754…610b` | [7500084@gmail.com](mailto:7500084@gmail.com)                           | 2025-12-25 | **реальный Сергей Федорчук**      |
-| `05cd3754-d589-4d90-97d1-89ba2bee610b` | `NULL`          | [7500084+dev@gmail.com](mailto:7500084+dev@gmail.com)                   | 2026-06-06 | ghost (id == auth.user_id Сергея) |
-| `7a942227-e274-4e3f-8ed0-08195fc11542` | `NULL`          | [7500084+stripe-smoke@gmail.com](mailto:7500084+stripe-smoke@gmail.com) | 2026-06-07 | ghost                             |
+Stripe refund уже есть, но вне SOT:
+  supabase/functions/stripe-admin-refund — super-admin утилита,
+  принимает pi_*, идёт в Stripe Refund API, опирается на charge.refunded
+  webhook + record_refund_atomic. НЕ вызывается из RefundDialog.
 
+Cancel subscription:
+  SubscriptionActionsSheet уже ветвится по subscription.provider==='stripe'
+  → рендерит StripeSubscriptionActionsBlock → stripe-subscription-action
+  (cancel_now / cancel_at_period_end). Базово работает.
+  Проблема пользователя ("только bePaid") = либо subscription.provider не
+  приходит в карточке (нет колонки в subscriptions_v2; provider живёт в
+  provider_subscriptions), либо UI открывает старый bePaid-only flow.
 
-### Root cause
+Card data:
+  stripe-webhook уже сохраняет card_brand/last4/holder в
+  checkout.session.completed и payment_intent.succeeded (PATCH-LIVE-CARD).
+  Для исторических Stripe-платежей карточные поля = NULL — массовый
+  backfill в backlog F7, не делаем. Для pi_3TgMkD6… допустим targeted fetch.
 
-`public.normalize_order_user_id()` сначала проверяет `profiles.id = NEW.user_id`. Ghost-профиль `05cd3754…` имеет `id`, совпадающий с auth `user_id` Сергея, поэтому матч случается на ghost и `profile_id` ставится в ghost; ветка `profiles.user_id = NEW.user_id` (→ реальный `a4b7c8c9…`) выполняется только если первый lookup ничего не нашёл.
-
-### Affected rows (на ghost `05cd3754…`)
-
-- `orders_v2`: 8 (включая `b464dc75…` paid 5 BYN live Stripe; `0bce80eb…` failed bePaid; и старые тестовые 06–08.06)
-- `payments_v2`: 7 на ghost (Stripe + failed bePaid + admin_test), включая `2d40bc7e…` (live Stripe 5 BYN, без card_brand/last4/holder)
-- `7a942227…` (ghost-stripe-smoke): orders/payments не найдено в Sergey-выборке (FK-чек по нему — отдельно в Phase 0.4)
-- Старые orders/payments уже на реальном `a4b7c8c9…` (до 2026-06-06) — не трогаем
-
-### Live Stripe payment 2d40bc7e
-
-- provider=stripe, status=succeeded, PI=`pi_3TgMkD6UYJj2vm0G1ZUpRzvH`
-- order=`b464dc75…` status=paid
-- `card_brand/last4/holder` = NULL (webhook их не пишет)
-- failed bePaid attempt `5b5cb22f…` (payment `f51d1795…`) — отдельная строка, оставляем как есть
-
-### CRM
-
-Таблицы `deals` в схеме нет — Phase 6 из исходного плана исключаем (CRM-привязка живёт через pipeline_stages на orders_v2, отдельной сущности не существует).
+Stripe cleanup кандидаты в БД (по факту):
+  payments_v2 provider='stripe' = 20+ строк, среди них
+    - pi_3TgMkD6UYJj2vm0G1ZUpRzvH (5 BYN, KEEP, live, сегодня)
+    - pi_sim_* (явный симулятор, CLEAN кандидат)
+    - re_3Te* refunded-rows и pi_3Te*/pi_3Tf* без user_id (sandbox)
+    - prov-checkout pi_3Tg9B3.., pi_3Tg8Fx.., pi_3TfHgy.. (Сергей, dev
+      checkout'ы Phase 8/9). Не клиентские — CLEAN/HIDE кандидаты.
+  subscriptions_v2: 6+ Stripe-подписок Сергея с cs_test_* checkout sessions
+  — все, кроме sub_1Tg9B66… (live, KEEP), — dev артефакты.
+```
 
 ---
 
-## Phase 1 — Fix trigger `normalize_order_user_id()`
+### PATCH 1 — Provider-aware refund в SOT
 
-Миграция: переписать функцию по приоритетам.
+**Файлы:** `supabase/functions/subscription-admin-actions/index.ts`, `src/components/admin/RefundDialog.tsx`.
 
-1. Если `NEW.user_id` задан — **сначала** `SELECT id FROM profiles WHERE user_id = NEW.user_id LIMIT 1` → `NEW.profile_id := found.id; RETURN NEW`.
-2. Только если не найдено — fallback `SELECT id, user_id FROM profiles WHERE id = NEW.user_id LIMIT 1`. Если найден профиль с `user_id IS NOT NULL` — нормализовать `NEW.user_id := resolved_auth_id`, `NEW.profile_id := resolved_profile_id`, пометить `_user_id_normalized=true`.
-3. Если найден только ghost (без `user_id`) — оставить, пометить `_is_ghost_profile=true, _ghost_reason='profile_id_without_user_id'`.
+1. В refund-ветке определить `provider` платежа: `successfulPayment.provider` (`'stripe' | 'bepaid'`).
+2. Для `stripe`:
+  - вытащить `pi_*` из `provider_payment_id` (или `meta.stripe.payment_intent`), `account_code` из `meta.stripe.account_code`;
+  - вызвать `https://api.stripe.com/v1/refunds` через `readAcquiringSecret('stripe', account_code, 'secret_key')` (как в `stripe-admin-refund`);
+  - НЕ писать refund-row напрямую — `stripe-webhook` `charge.refunded` сам вызовет `record_refund_atomic` (memory: Refund Canonical Write-Path);
+  - после успешного create — обновить access по выбранному `access_action` (revoke/reduce/keep/keep_subscription) тем же кодом, что уже есть для bePaid;
+  - audit `admin.subscription.refund_stripe_*` (requested / created / failed / already_refunded).
+3. Для `bepaid` — оставить текущий путь без изменений.
+4. Идемпотентность: если Stripe вернул `charge already refunded` → audit + 200 без поломки.
+5. RefundDialog: текст модалки и кнопка ветвятся по `paymentProvider`:
+  - `stripe` → «Возврат будет проведён через Stripe.»;
+  - `bepaid` → текущая bePaid-формулировка;
+  - `manual/admin*` → текущий warning «ручной платёж».
+6. Ошибки нормализовать через `normalizeEdgeFunctionError`; больше никакого «Parent transaction not found» для Stripe.
 
-Имя триггера/таблицы/SECURITY DEFINER/search_path не менять.
-
-## Phase 2 — Repoint Sergey (data-only, через `supabase--insert`)
-
-После approve Phase 1 миграции:
-
-```sql
-UPDATE orders_v2
-SET profile_id = 'a4b7c8c9-8210-499e-ae3f-2a5db2121577',
-    meta = COALESCE(meta,'{}'::jsonb) || jsonb_build_object('_repoint_ghost_fix_p0', now()::text)
-WHERE user_id='05cd3754-d589-4d90-97d1-89ba2bee610b'
-  AND profile_id='05cd3754-d589-4d90-97d1-89ba2bee610b';  -- 8 rows
-
-UPDATE payments_v2
-SET profile_id = 'a4b7c8c9-8210-499e-ae3f-2a5db2121577'
-WHERE user_id='05cd3754-d589-4d90-97d1-89ba2bee610b'
-  AND profile_id='05cd3754-d589-4d90-97d1-89ba2bee610b';  -- ~7 rows
-```
-
-`subscriptions_v2/entitlements/access_grant_ledger/telegram_access_queue/payment_links` — уже принадлежат Сергею по `user_id`; перед UPDATE прогоняем точечный SELECT на `profile_id IN (ghost1, ghost2)` и repoint только однозначные. Если есть строки без однозначной связи — STOP & report (не делаем guess).
-
-## Phase 3 — Delete ghost profiles
-
-Final FK-check по всем таблицам с `profile_id`/`user_id` на `05cd3754…` и `7a942227…`. Только при `cnt=0` всех ссылок (исключая `profiles.id` сами):
-
-```sql
-DELETE FROM profiles WHERE id IN ('05cd3754…','7a942227…');
-```
-
-Если хоть одна ссылка осталась — не удаляем, фиксируем в proof.
-
-## Phase 4 — Stripe card data в webhook
-
-`supabase/functions/stripe-webhook/index.ts`: в обработчиках `checkout.session.completed` и `payment_intent.succeeded` при upsert `payments_v2` дополнительно писать `card_brand`, `card_last4`, `card_holder` из expanded `latest_charge.payment_method_details.card` + `charge.billing_details.name`. Webhook signature/livemode/idempotency/receipt/grant — не трогаем.
-
-## Phase 5 — Backfill для `2d40bc7e…`
-
-Точечный one-off: через Stripe live secret получить `pi_3TgMkD6UYJj2vm0G1ZUpRzvH` с `expand[]=latest_charge`, затем UPDATE одной строки `payments_v2.id='2d40bc7e…'` — только `card_brand/card_last4/card_holder`. Массового исторического backfill нет (в backlog F7).
-
-## Phase 6 — Verify UI
-
-- `/admin/payments`: строка 5 BYN Stripe показывает Stripe-провайдер, succeeded, контакт = Сергей Федорчук, карта Visa ****/holder, receipt → pay.stripe.com.
-- Карточка Сергея (`a4b7c8c9…`): на вкладке «Платежи» виден live Stripe 5 BYN.
-- Ghost-контакты в списке контактов отсутствуют.
-- Failed bePaid `5b5cb22f…` остаётся отдельной failed-строкой (provider=bepaid, merchant.bepaid.by).
-
-## Phase 7 — Proof + backlog
-
-- `.lovable/proofs/phase_L4_ghost_profile_fix_v1.md` (root cause, dry-run SQL, миграция, repoint diff, FK-check, delete result, card-fix, backfill, UI скрины, freeze-подтверждение).
-- `.lovable/backlog/live_stripe_post_payment_followups.md` — обновить F2–F7 (уже частично существует).
+**Proof:** `.lovable/proofs/patch_stripe_refund_v1.md` — реальная попытка возврата 5 BYN, Stripe refund_id, audit, before/after, bePaid не сломан.
 
 ---
 
-## Freeze (не трогаем)
+### PATCH 2 — Stripe subscription cancel, гарантия provider-aware UI
 
-bePaid webhook/receipt, Stripe checkout/secrets/webhook signature, grant-access lifecycle, Telegram, subscriptions reconcile, refund flow, access resolver, saved cards, tariff_offers/meta, любые миграции кроме одной точечной для функции триггера.
+**Файлы:** `src/components/admin/SubscriptionActionsSheet.tsx` и хук, который грузит подписки в карточку контакта.
 
-## Expected files
+1. Diagnose: найти хук, отдающий объект `subscription` в Sheet (вероятно `useSubscriptionsV2` / `useContactSubscriptions`). В `subscriptions_v2` нет колонки `provider` → derivation должен идти из `provider_subscriptions.provider` или из `meta.stripe.subscription_id IS NOT NULL`.
+2. В этом хуке выставлять `subscription.provider = 'stripe' | 'bepaid'` (SOT priority: `provider_subscriptions.provider` → `meta.stripe.subscription_id ? 'stripe'` → `'bepaid'`).
+3. SubscriptionActionsSheet:
+  - при `provider==='stripe'` показывать ТОЛЬКО `StripeSubscriptionActionsBlock` (уже реализован: `cancel_at_period_end` / `cancel_now` через `stripe-subscription-action`);
+  - скрыть/задизейблить bePaid-кнопки с пояснением «только для bePaid»;
+  - bePaid path не трогать.
+4. По умолчанию для Stripe — `cancel_at_period_end` (доступ до конца оплаченного периода). Memory: Club Status Integrity (paid не отзывать).
+5. Backend `stripe-subscription-action` уже пишет audit и обновляет `subscriptions_v2.auto_renew=false` + `meta.stripe.cancel_at_period_end` — проверить, не дублируем.
 
-- `supabase/migrations/<ts>_fix_normalize_order_user_id_lookup.sql`
-- `supabase/functions/stripe-webhook/index.ts` (только Stripe card capture)
-- `.lovable/proofs/phase_L4_ghost_profile_fix_v1.md`
-- `.lovable/backlog/live_stripe_post_payment_followups.md`
+**Proof:** `.lovable/proofs/patch_stripe_subscription_cancel_v1.md` — реальная отмена sub Сергея `sub_1Tg9B66…`, before/after, Stripe response, audit, `access_end_at` не изменён.
 
-Никаких изменений в `src/`, `_shared/create-*-checkout.ts`, `public-checkout`, bePaid/Telegram/reconcile functions.
+Backlog F3 (`stripe_subscription_cancel`) после PATCH 2 закрыть.
 
-## DoD
+---
 
-Все 11 пунктов из исходного брифа (trigger приоритизирует `profiles.user_id`, repoint выполнен, ghost удалены или явно объяснено почему нет, `2d40bc7e…` привязан к реальному профилю с card data, UI показывает Stripe-строку с корректным контактом/картой/receipt, failed bePaid отдельно, entitlement активен, bePaid/Telegram/access не регрессировали, proof полный).
+### PATCH 3 — Soft-cleanup dev/live Stripe-артефактов
 
-Начинаю с Phase 1 (миграция функции). Phase 2–5 — после approve миграции, по одному.
+**Подход:** только soft-hide через `meta.cleanup`, никаких hard DELETE, никаких изменений `payments_v2`/`orders_v2` lifecycle.
+
+1. Discovery query (полный список Stripe-records по 4 таблицам: `payments_v2`, `orders_v2`, `subscriptions_v2`, `provider_subscriptions`). Классифицировать:
+  - **KEEP:** `pi_3TgMkD6…` + любые клиентские Stripe-платежи (есть `user_id` ≠ Сергей и контактный профиль реальный).
+  - **HIDE candidates:** dev артефакты Сергея и анонимные sandbox-строки (`user_id IS NULL`, `pi_sim_*`, sandbox-checkout-функция).
+  - **DO NOT TOUCH:** bePaid, `audit_logs`, `provider_events`, `record_refund_atomic` refund-rows.
+2. Решение по модели «hide»:
+  - в `payments_v2`/`orders_v2`/`subscriptions_v2` нет колонок `archived_at/is_test/hidden`;
+  - выбрать: расширить admin-list фильтр в `useUnifiedPayments`/`PaymentsTable` — исключать `meta->>'cleanup_hidden' = 'true'` и `provider_payment_id LIKE 'pi_sim_%'`;
+  - DRY-RUN сначала вывести список, дождаться явного approve, затем INSERT-tool обновить `meta.cleanup_hidden=true`, `meta.cleanup_reason='phase8_dev_artifact'`, `meta.cleanup_actor=<admin>`, `meta.cleanup_at=now()`.
+3. Stripe Dashboard НЕ трогаем.
+
+**Proof:** `.lovable/proofs/patch_stripe_cleanup_live_artifacts_v1.md` — dry-run list, KEEP/HIDE, SQL before/after, подтверждение `pi_3TgMkD6…` виден, bePaid не тронут.
+
+---
+
+### PATCH 4 — Stripe card data: проверка + targeted fetch для 5 BYN
+
+**Файлы:** `supabase/functions/stripe-webhook/index.ts` (уже патчен), новая edge функция `stripe-card-data-fetch` (targeted, super-admin only).
+
+1. Подтвердить, что в `stripe-webhook` есть запись `card_brand/card_last4/card_holder` в обоих хендлерах (PATCH-LIVE-CARD).
+2. Создать `stripe-card-data-fetch`:
+  - super-admin guard;
+  - body: `{ payment_intent_id }`;
+  - тянет `payment_intents/{id}?expand[]=latest_charge`;
+  - обновляет ТОЛЬКО `payments_v2.card_brand/card_last4/card_holder` для одной строки;
+  - audit `admin.stripe.card_data_targeted_fetch`;
+  - НЕ трогает lifecycle, статусы, refund, grant.
+3. Применить к `pi_3TgMkD6UYJj2vm0G1ZUpRzvH` (одна строка).
+4. Массовый backfill — остаётся в backlog F7. Не делаем.
+5. Следующий live-Stripe платёж уже сам подтянет card data через webhook — отдельная proof-точка.
+
+**Proof:** `.lovable/proofs/patch_stripe_card_data_v1.md` — источник данных, обновлённая строка, UI-скрин админки после targeted fetch.
+
+---
+
+### PATCH 5 — Follow-up fixes proof
+
+Только фиксация уже сделанного (без правок кода, если discovery подтвердит):
+
+A. **Stripe redirect URLs** — проверить `supabase/functions/stripe-create-checkout` и `stripe-create-subscription-checkout`: `success_url=/purchases?payment=processing`, `cancel_url=/payment/result?status=cancelled`. bePaid redirect не тронут.
+
+B. **Telegram DM product/tariff names** — `grant-access-for-order` → `telegram-grant-access` (memory: Canonical Telegram Grant Write-Path): DM содержит product/tariff, нет дублей, access не ломается.
+
+C. **UI «Иностранная карта» enabled on mount** — `PaymentDialog`/`PaymentMethodSelector`: Stripe account resolved сразу при открытии, кнопка активна без race-condition; bePaid path не сломан.
+
+**Proof:** `.lovable/proofs/stripe_runtime_followup_fixes_v1.md` — три блока A/B/C с цитатами кода и скринами.
+
+---
+
+### Порядок выполнения
+
+```text
+Step 1 — DIAGNOSE + DRY-RUN (один отчёт)
+   • полный список Stripe records (payments_v2 + orders_v2 +
+     subscriptions_v2 + provider_subscriptions);
+   • точные точки правок refund/cancel;
+   • KEEP / HIDE классификация;
+   • STOP-риски;
+   → ждать approve.
+
+Step 2 — EXECUTE по порядку
+   1. PATCH 1 — provider-aware refund
+   2. PATCH 2 — Stripe cancel UI + provider derivation
+   3. PATCH 4 — stripe-card-data-fetch + targeted fetch pi_3TgMkD6…
+   4. PATCH 3 — soft-hide dev artefacts (после явного approve списка)
+   5. PATCH 5 — follow-up proofs
+
+Step 3 — VERIFY
+   • реальный refund 5 BYN на pi_3TgMkD6…;
+   • реальная cancel_at_period_end на sub_1Tg9B66…;
+   • UI /admin/payments чистый, KEEP виден, bePaid не сломан;
+   • все 5 proof-файлов закрыты.
+
+Step 4 — Снять PAUSED с Phase 10.
+```
+
+### Запреты на весь pack
+
+- никаких Stripe test-mode, test card, Dashboard Resend, фиктивных webhook events;
+- никаких hard DELETE из `payments_v2`/`orders_v2`/`subscriptions_v2`/`audit_logs`/`provider_events`;
+- bePaid flow и `record_refund_atomic` SOT не трогаем;
+- массовый card backfill — backlog F7, не сейчас;
+- никаких UPDATE без dry-run + approve;
+- клиентские (не-Сергей) Stripe-записи — DO NOT TOUCH.
+
+### DoD
+
+1. Refund на Stripe-платёж работает из админки без `Parent transaction not found`.
+2. Cancel Stripe-подписки работает из карточки контакта.
+3. `/admin/payments` показывает реальный 5 BYN Stripe-платёж, dev артефакты скрыты.
+4. `pi_3TgMkD6…` имеет card_brand/last4/holder; следующий live Stripe платёж получает их автоматически.
+5. Follow-up proof оформлен.
+6. bePaid refund/cancel/grant/Telegram не регрессированы.
+7. 5 proof-файлов созданы и закрыты.
+8. Phase 10 снят с PAUSED.
