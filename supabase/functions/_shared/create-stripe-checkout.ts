@@ -593,6 +593,9 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       tariff_name: tariff.name,
       account_code: resolved_account_code,
       payment_link_id: payment_link_id ?? null,
+      price_source: useInlinePrice ? 'inline_payment_link' : 'offer_saved_price_id',
+      inline_amount_major: useInlinePrice ? amountMajor : null,
+      inline_currency: useInlinePrice ? currency.toUpperCase() : null,
       note: 'orders_v2_deferred_to_invoice_paid',
     },
   });
