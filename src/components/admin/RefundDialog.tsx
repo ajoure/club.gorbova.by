@@ -137,7 +137,14 @@ export function RefundDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {paymentProvider && paymentProvider !== 'bepaid' ? (
+          {paymentProvider === 'stripe' ? (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800">
+              <AlertTriangle className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-indigo-800 dark:text-indigo-200">
+                Возврат будет проведён через Stripe Refund API. Статус заказа обновится автоматически по приходу webhook (canonical write-path через record_refund_atomic).
+              </p>
+            </div>
+          ) : paymentProvider && paymentProvider !== 'bepaid' ? (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-300 dark:border-orange-700">
               <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-orange-800 dark:text-orange-200">
