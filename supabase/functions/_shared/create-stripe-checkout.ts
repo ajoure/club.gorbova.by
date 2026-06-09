@@ -417,26 +417,53 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     return { success: false, provider: 'stripe', error: 'stripe_price_missing_in_offer_meta' };
   }
 
-  // Резолвим recurring period из offer.meta.recurring (canonical SOT).
+  // Резолвим recurring period.
+  // PATCH-RUNTIME-PERIOD-PARITY: SOT для link-based subscription —
+  //   payment_links.meta.stripe_recurring_snapshot (записан admin-create-public-link).
+  // Fallback — offer.meta.recurring (canonical product SOT) с расширенной нормализацией
+  //   billing_period_mode ∈ {day(s), week(s), month(s), year(s)}.
   let inlineRecurring: { interval: 'day' | 'week' | 'month' | 'year'; interval_count: number } | null = null;
   if (useInlinePrice) {
-    const rec = (offerMeta.recurring ?? {}) as Record<string, unknown>;
-    if (!rec || rec.is_recurring !== true) {
-      return { success: false, provider: 'stripe', error: 'offer_not_recurring_for_subscription_link' };
+    // 1) Try payment_links snapshot.
+    if (payment_link_id) {
+      const { data: linkRow } = await supabase
+        .from('payment_links')
+        .select('meta')
+        .eq('id', payment_link_id)
+        .maybeSingle();
+      const snap = ((linkRow?.meta ?? {}) as Record<string, unknown>).stripe_recurring_snapshot as
+        | { interval?: string; interval_count?: number } | undefined;
+      if (snap?.interval) {
+        const iv = String(snap.interval).toLowerCase();
+        const ic = Number(snap.interval_count ?? 1);
+        if (['day','week','month','year'].includes(iv) && Number.isFinite(ic) && ic >= 1) {
+          inlineRecurring = { interval: iv as 'day'|'week'|'month'|'year', interval_count: ic };
+        }
+      }
     }
-    const periodMode = String((rec.billing_period_mode as string) || 'days').toLowerCase();
-    const periodN = Number(rec.billing_period_days ?? 0);
-    if (!Number.isFinite(periodN) || periodN <= 0) {
-      return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
-    }
-    if (periodMode === 'days') {
-      if (periodN === 30 || periodN === 31) inlineRecurring = { interval: 'month', interval_count: 1 };
-      else if (periodN === 7) inlineRecurring = { interval: 'week', interval_count: 1 };
-      else if (periodN === 365 || periodN === 366) inlineRecurring = { interval: 'year', interval_count: 1 };
-      else if (periodN <= 365) inlineRecurring = { interval: 'day', interval_count: periodN };
-      else return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
-    } else {
-      return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
+    // 2) Fallback to offer.meta.recurring.
+    if (!inlineRecurring) {
+      const rec = (offerMeta.recurring ?? {}) as Record<string, unknown>;
+      if (!rec || rec.is_recurring !== true) {
+        return { success: false, provider: 'stripe', error: 'offer_not_recurring_for_subscription_link' };
+      }
+      const rawMode = String((rec.billing_period_mode as string) || 'days').toLowerCase();
+      const normMode = rawMode.endsWith('s') ? rawMode.slice(0, -1) : rawMode; // day|week|month|year
+      const periodDays = Number(rec.billing_period_days ?? rec.recurring_interval_days ?? 0);
+
+      if (['day','week','month','year'].includes(normMode)) {
+        // Direct interval mapping (e.g. mode='month' → 1 month per cycle).
+        inlineRecurring = { interval: normMode as 'day'|'week'|'month'|'year', interval_count: 1 };
+      } else if (rawMode === 'days' && Number.isFinite(periodDays) && periodDays > 0) {
+        // Legacy days-based mapping.
+        if (periodDays === 30 || periodDays === 31) inlineRecurring = { interval: 'month', interval_count: 1 };
+        else if (periodDays === 7) inlineRecurring = { interval: 'week', interval_count: 1 };
+        else if (periodDays === 365 || periodDays === 366) inlineRecurring = { interval: 'year', interval_count: 1 };
+        else if (periodDays <= 365) inlineRecurring = { interval: 'day', interval_count: periodDays };
+      }
+      if (!inlineRecurring) {
+        return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { rawMode, periodDays } };
+      }
     }
   }
 
