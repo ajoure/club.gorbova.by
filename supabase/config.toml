@@ -1,4 +1,4 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
-[functions._one_shot_trigger_stripe_repair_ord_26_00167]
+[functions.oneshot-stripe-repair-ord-26-00167]
 verify_jwt = false
