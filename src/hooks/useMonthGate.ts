@@ -223,27 +223,31 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           return;
         }
 
+        // Index rules by target_ref (root module_id).
+        const rulesByRootModule = new Map<string, TcRuleRow[]>();
+        for (const r of rules) {
+          if (!rulesByRootModule.has(r.target_ref)) rulesByRootModule.set(r.target_ref, []);
+          rulesByRootModule.get(r.target_ref)!.push(r);
+        }
 
         // 4) For each candidate lesson, find a matching rule -> build RPC payload.
-        // OR-aggregation across ALL matching rules. If ANY matching tariff
-        // grants the month purchase, the lesson is unlocked.
-        // Synthetic RPC key = `${lesson_id}::${tariff_id}` to disambiguate
-        // multiple (lesson, tariff) tuples within one RPC batch.
         const payload: Array<{
-          lesson_id: string; // synthetic key
+          lesson_id: string;
           tariff_id: string;
           content_month: string;
         }> = [];
-        // Map<lesson_id, Array<{ syntheticKey, tariff_id, content_month }>>
         const lessonTuples = new Map<
           string,
           Array<{ syntheticKey: string; tariff_id: string; content_month: string }>
         >();
 
         for (const c of candidates) {
+          // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
+          if (bypassLessonIds.has(c.lesson_id) || bypassModuleIds.has(c.module_id)) continue;
           const rootMod = lessonRootModule.get(c.lesson_id);
           if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRootModule.get(rootMod) || [];
+
           const matches = candidateRules.filter((r) =>
             lessonInRuleScope(c.lesson_id, c.module_id, r.conditions)
           );
