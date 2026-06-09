@@ -1,6 +1,10 @@
 # Backlog — Live Stripe post-payment follow-ups
 
-Отложено из P0 (закрыт `.lovable/proofs/phase_L4_live_one_time_pass_v1.md`). Каждый пункт — отдельный PATCH.
+Отложено из P0 (закрыт `.lovable/proofs/phase_L4_live_one_time_pass_v1.md` + `.lovable/proofs/phase_L4_ghost_profile_fix_v1.md`). Каждый пункт — отдельный PATCH.
+
+## F7 — Historical Stripe card data backfill
+**Симптом:** для исторических Stripe-платежей до PATCH-LIVE-CARD (2026-06-09) `payments_v2.card_brand/card_last4/card_holder` = NULL.
+**Что сделать:** один batch, который пройдёт по `payments_v2 WHERE provider='stripe' AND card_brand IS NULL AND provider_payment_id LIKE 'pi_%'`, дёрнет Stripe `payment_intents/{id}?expand[]=latest_charge` через `readAcquiringSecret('stripe', account_code, 'secret_key')` и UPDATE-нет card fields. Требует отдельного approve перед массовой записью.
 
 ## F2 — Webinar access rule mismatch
 **Симптом:** entitlement у не-админа есть (`fabd7e5a…`, продукт `62a522a5`, до 09.07.26), вебинар не открывается.
