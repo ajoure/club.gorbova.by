@@ -702,6 +702,7 @@ export default function PaymentsTable({
               isQueueItem={payment.rawSource === 'queue'}
               statusNormalized={payment.status_normalized}
               providerUid={payment.uid}
+              provider={payment.provider}
               onRefetch={onRefetch}
             />
           );
@@ -717,6 +718,7 @@ export default function PaymentsTable({
               isQueueItem={payment.rawSource === 'queue'}
               statusNormalized={payment.status_normalized}
               providerUid={payment.uid}
+              provider={payment.provider}
               onRefetch={onRefetch}
             />
           );
