@@ -121,3 +121,15 @@ Test card `4242 4242 4242 4242`, MM/YY `12/30`, ZIP `10001`, ZIP `Sergey Fedorch
 **Phase 8 = FULL PASS**
 
 Phase 9 разрешён к старту после явного approve пользователя.
+
+---
+
+## 7. Уточнение по audit-action для invoice materialization (post-approve)
+
+Подтверждено пользователем при approve Phase 8 = FULL PASS:
+
+`stripe.receipt_materialization.applied` является **фактическим audit-action** для invoice materialization. Отдельного `stripe.invoice_document_materialized` в системе НЕТ — `…receipt_materialization.applied` используется и для one-time `receipt_url`, и для subscription invoice fields (`hosted_invoice_url`, `invoice_pdf`, `invoice_id`).
+
+Доказательство по §4 этого proof: audit-запись для subscription оплаты содержит `updates=[meta.stripe.hosted_invoice_url, meta.stripe.invoice_pdf]` + `source=invoice.paid.payload`. Поля `hosted_invoice_url`, `invoice_pdf`, `stripe_invoice_id` (`meta.stripe.invoice_id`), `subscription_id` реально записаны в `payments_v2.meta.stripe` (см. §4 таблицу).
+
+Idempotency-вариант: `stripe.receipt_materialization.skipped_existing_receipt_url`.

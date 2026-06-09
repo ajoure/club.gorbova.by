@@ -1,298 +1,328 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 ## **1. План правильный**
 
-Сейчас ключевая правка сформулирована верно:
-
-- `auto` / «По настройке кнопки» → система следует SOT тарифа;
-- `explicit` / ручной выбор админа → админ сам выбирает `one_time` или `subscription`;
-- recurring offer **не должен насильно блокировать** разовую оплату в explicit admin override;
-- для Phase 8 runtime verify нужно просто явно выбрать **Stripe + subscription**, а не ломать свободу выбора.
+Phase 9-A должен быть только **Discovery only**. Никакой реализации до отдельного approve Phase 9-B.
 
 ---
 
-## **2. Правка к Step 2 — не добавлять новый toggle, если уже есть выбор способа оплаты**
 
-В плане написано:
 
-Добавить переключатель «Способ оплаты для ссылки»: auto vs explicit
+## **2. Уточнить**
 
-Уточни:
+`git diff --name-only`
+
+Добавь:
 
 ```md
-Не добавлять новый отдельный toggle, если уже существует UI-блок выбора способа оплаты:
-- «По настройке кнопки»;
-- «Белорусская карта»;
-- «Иностранная карта»;
-- «Клиент выбирает».
+Ожидаемый diff:
 
-Использовать существующий выбор как source:
+.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md
 
-- «По настройке кнопки» → `provider_choice_source='auto'`;
-- «Белорусская карта» / «Иностранная карта» / «Клиент выбирает» → `provider_choice_source='explicit'`.
+Опционально:
 
-Не плодить второй дублирующий переключатель auto/explicit.
+.lovable/proofs/phase_8_runtime_verify_full_v1.md
+
+Любой diff в src/, supabase/functions/, supabase/migrations/ = STOP и объяснение.
 ```
 
 ---
 
-## **3. Правка к backend — customer_choice тоже explicit**
+
+
+## **3. Audit inventory — не ограничивать только**
+
+`LIMIT N`
+
+В разделе audit лучше указать:
+
+```md
+SELECT DISTINCT action
+FROM audit_logs
+WHERE action LIKE 'stripe.%'
+   OR action LIKE 'payment_link.%'
+   OR action LIKE 'bepaid.%'
+   OR action LIKE 'payment.%'
+   OR action LIKE 'subscription.%'
+ORDER BY action;
+```
+
+`LIMIT N` может скрыть важные actions.
+
+---
+
+## **4. Provider events — добавить агрегацию по статусам**
+
+В Discovery добавить read-only summary:
+
+```sql
+SELECT
+  provider,
+  account_code,
+  event_type,
+  processing_status,
+  COUNT(*) AS cnt
+FROM provider_events
+GROUP BY provider, account_code, event_type, processing_status
+ORDER BY cnt DESC;
+```
+
+И отдельно failed/manual_review/skipped:
+
+```sql
+SELECT
+  provider,
+  account_code,
+  event_type,
+  processing_status,
+  processing_error,
+  COUNT(*) AS cnt
+FROM provider_events
+WHERE processing_status IN ('failed', 'manual_review', 'skipped')
+GROUP BY provider, account_code, event_type, processing_status, processing_error
+ORDER BY cnt DESC;
+```
+
+---
+
+## **5. Gap matrix — добавить приоритет**
+
+В `Gap matrix` добавить колонку:
+
+```text
+priority: P0 / P1 / P2
+```
+
+Где:
+
+- **P0** — мешает администратору понять статус оплаты/доступа/ошибки;
+- **P1** — важно для удобства и контроля;
+- **P2** — косметика / future improvement.
+
+---
+
+## **6. Phase 9-B recommendation — не смешивать Reporting и Repair**
+
+Добавить правило:
+
+```md
+Phase 9-B — только visibility/reporting.
+
+Не добавлять repair actions:
+- retry webhook;
+- regrant access;
+- force reconcile;
+- manual remap;
+- delete/orphan cleanup;
+- backfill execute.
+
+Если discovery найдёт потребность в repair-actions, оформить их отдельным future PATCH / Phase 9-C, но не включать в Phase 9-B без approve.
+```
+
+---
+
+## **7. Subscriptions — зафиксировать design question**
+
+Добавить в Open questions:
+
+```md
+Нужно выбрать модель UI для подписок:
+
+A. Оставить отдельные tabs bePaid / Stripe.
+B. Сделать unified Subscriptions tab с provider filter.
+C. Оставить bePaid legacy tab и добавить Stripe visibility только в Payments/Orders.
+
+В Discovery дать рекомендацию, но не реализовывать.
+```
+
+---
+
+## **8. Links visibility — добавить обязательные поля**
+
+В `payment_links` inventory обязательно проверить, отображаются ли в UI:
+
+```text
+provider
+provider_mode
+provider_choice_source
+payment_type
+account_code
+stripe_currency
+business_stream
+created_by / actor
+offer_id
+tariff_id
+target contact / email
+```
+
+---
+
+## **9. Receipts/Documents visibility — разделить one-time и subscription**
 
 Добавить:
 
 ```md
-Для `provider_mode='customer_choice'` и `provider_choice_source='explicit'` не форсить recurring в subscription автоматически.
+В UI gaps отдельно проверить:
 
-Если в customer_choice выбран payment_type='one_time':
-- ссылка остаётся one_time;
-- Stripe branch при оплате идёт в mode=payment;
-- bePaid branch — как раньше.
+Stripe one-time:
+- payments_v2.receipt_url;
+- audit stripe.receipt_materialization.applied.
 
-Если payment_type='subscription':
-- Stripe branch идёт в mode=subscription;
-```
+Stripe subscription:
+- meta.stripe.hosted_invoice_url;
+- meta.stripe.invoice_pdf;
+- meta.stripe.stripe_invoice_id / invoice_id;
+- meta.stripe.subscription_id.
 
-Иначе он снова может зажать customer_choice.
-
----
-
-## **4. Правка к auto-mode**
-
-Добавить:
-
-```md
-Auto-promote recurring → subscription делать только если реально выбран режим «По настройке кнопки».
-
-Не использовать fallback `provider_choice_source ?? 'auto'` так, чтобы старые/явные admin links случайно стали auto.
-
-Если source отсутствует:
-- определить его из UI-полей/режима;
-- если невозможно определить — логировать/ошибка, а не молча считать auto для explicit-ссылки.
-```
-
-Это важно, чтобы он снова не сделал скрытый auto fallback и не заблокировал админские ссылки.
-
----
-
-## **5. Правка к audit**
-
-Добавить обязательную проверку:
-
-```md
-Audit `payment_link.payment_type_promoted_recurring` должен писаться только в auto-mode.
-
-Для explicit one_time по recurring offer audit:
-`payment_link.payment_type_admin_override`.
-
-Не писать promote-audit для explicit.
+bePaid:
+- payments_v2.receipt_url;
+- bePaid receipt button;
+- bePaid receipt cron status, если отображается.
 ```
 
 ---
 
-## **6. Правка к Step 5 — negative one-time link лучше создать, но не оплачивать**
-
-В плане написано правильно, но уточни:
-
-```md
-Negative one_time test:
-- создать ссылку explicit one_time;
-- проверить `payment_links.payment_type='one_time'`;
-- проверить Stripe Checkout Session `mode='payment'`;
-- НЕ оплачивать, если не нужно плодить лишние paid orders.
-
-Оплата one-time уже была подтверждена ранее и `receipt_url` PASS.
-```
-
----
-
-## **7. Runtime Verify — пусть делает сам**
-
-Добавить прямо:
-
-```md
-Runtime Verify выполняет Lovable/агент самостоятельно через preview/dev login.
-
-Не перекладывать оплату тестовой картой на пользователя.
-
-Аккаунт/контакт для теста:
-Федорчук Сергей / 7500084@gmail.com.
-
-Тестовая карта:
-4242 4242 4242 4242.
-```
-
----
-
-## **8. Итоговый текст для Lovable**
+## **10. Итоговый ответ Lovable**
 
 ```md
 План принят с правками.
 
-Ключевые уточнения:
+Phase 9-A выполняем строго как Discovery only.
 
-1. Не добавлять отдельный новый toggle auto/explicit, если уже есть блок выбора способа оплаты. Использовать существующую логику:
-   - «По настройке кнопки» → `provider_choice_source='auto'`;
-   - «Белорусская карта» / «Иностранная карта» / «Клиент выбирает» → `provider_choice_source='explicit'`.
+Уточнения:
 
-2. Backend не должен безусловно форсить recurring offer в subscription.
-   Правильно:
-   - auto + recurring → subscription;
-   - explicit + one_time → one_time;
-   - explicit + subscription → subscription.
+1. Ожидаемый diff:
+   - `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`;
+   - опционально `.lovable/proofs/phase_8_runtime_verify_full_v1.md`.
+   Любой diff в `src/`, `supabase/functions/`, `supabase/migrations/` = STOP.
 
-3. Customer_choice explicit также должен уважать выбранный `payment_type`.
+2. Audit inventory делать без `LIMIT N`, чтобы не потерять actions.
 
-4. Не использовать опасный fallback `provider_choice_source ?? 'auto'`, если это может превратить explicit admin link в auto. Источник нужно определять явно из режима.
+3. По `provider_events` добавить агрегацию по `provider / account_code / event_type / processing_status`, отдельно failed/manual_review/skipped.
 
-5. Audit:
-   - `payment_link.payment_type_promoted_recurring` — только для auto-promote;
-   - `payment_link.payment_type_admin_override` — для explicit one_time по recurring offer.
+4. В Gap matrix добавить priority: P0 / P1 / P2.
 
-6. Negative one_time test:
-   - создать explicit one_time link;
-   - проверить `payment_links.payment_type='one_time'`;
-   - проверить Stripe Checkout Session `mode='payment'`;
-   - оплачивать не обязательно, потому что one-time receipt_url уже PASS.
+5. Phase 9-B — только visibility/reporting. Никаких repair-actions, retry, regrant, reconcile, cleanup, backfill execute.
 
-7. Runtime verify выполняй самостоятельно через preview/dev login, не перекладывай ввод test card на пользователя.
-   Используй контакт:
-   `Федорчук Сергей / 7500084@gmail.com`
-   и test card:
-   `4242 4242 4242 4242`.
+6. По subscriptions добавить design question:
+   - unified tab;
+   - отдельные bePaid/Stripe tabs;
+   - либо visibility только через Payments/Orders.
 
-8. Phase 9 не начинать до финального статуса Phase 8.
+7. В Links visibility обязательно проверить:
+   - provider;
+   - provider_mode;
+   - provider_choice_source;
+   - payment_type;
+   - account_code;
+   - stripe_currency;
+   - business_stream;
+   - created_by / actor;
+   - offer/tariff/contact.
 
-После правок и успешного subscription runtime verify:
-- если subscription invoice materialization прошла → `Phase 8 = FULL PASS`;
-- если нет → `Phase 8 = PARTIAL PASS` с конкретным gap.
+8. Receipts/Documents visibility разделить:
+   - Stripe one-time receipt_url;
+   - Stripe subscription hosted_invoice_url / invoice_pdf / invoice_id;
+   - bePaid receipt_url.
+
+После Discovery дать отчет на русском и предложить Phase 9-B implementation plan. Phase 9-B не начинать без отдельного approve.
+
+
+План: Phase 9-A — Reporting / Admin Visibility (Discovery only)
 ```
-
-## **9. Контроль следующего отчета**
-
-Принимать **Phase 8 FULL PASS** только если есть:
-
-- explicit one_time по recurring offer остался `one_time`;
-- auto recurring стал `subscription`;
-- explicit subscription создал Stripe Checkout `mode=subscription`;
-- пришёл `invoice.paid`;
-- заполнены:
-  - `hosted_invoice_url`;
-  - `invoice_pdf`;
-  - `stripe_invoice_id`;
-- есть audit `stripe.invoice_document_materialized`;
-- one-time `receipt_url` уже PASS;
-- Phase 9 не стартовал.
-- &nbsp;
-- План: Корректировка blocker-fix Phase 8 (auto vs explicit override) + Runtime Verify
 
 ## Контекст
 
-Прошлый фикс был чрезмерным: и UI, и backend безусловно форсили `subscription` для recurring offer + Stripe. Это убирает легитимную возможность админа создать ручную разовую оплату по рекуррентному тарифу. Правильный контракт — два режима: `provider_choice_source='auto'` (следуем SOT оффера) и `'explicit'` (админ — источник истины).
+Phase 8 закрыт (FULL PASS). Phase 9-B не стартует без отдельного approve. Текущая задача — только discovery-файл. Никаких UI-правок, миграций, edge functions, RPC, runtime-кода.
 
-## Diagnose (read-only, до правок)
+## Scope (строго)
 
-1. SQL — проверить, какие значения `provider_choice_source` уже встречаются в `payment_links` и поддерживает ли колонка это поле (или хранится в `meta`).
-2. Прочитать актуальные:
-  - `supabase/functions/admin-create-public-link/index.ts` — текущая ветка recurring-guard.
-  - `src/components/admin/AdminPaymentLinkDialog.tsx` — `lockPaymentTypeToSubscription`, состояние provider/payment_type, наличие переключателя «По настройке кнопки / explicit».
-  - `supabase/functions/_shared/create-payment-checkout.ts` и `create-stripe-checkout.ts` — точка ветвления `mode=payment` vs `mode=subscription`.
-3. Зафиксировать в proof фактическое состояние source-of-truth для `provider_choice_source`.
+Разрешено:
 
-## Step 1 — Backend correction (`admin-create-public-link/index.ts`)
+- read-only чтение UI-компонентов, hooks, RPC, view, edge functions через `code--view`, `rg`, `supabase--read_query`;
+- создание одного нового файла: `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`;
+- (опционально) минимальная актуализация уточнения в `.lovable/proofs/phase_8_runtime_verify_full_v1.md` ТОЛЬКО для фиксации, что `stripe.receipt_materialization.applied` является фактическим audit-action для invoice materialization (если на текущий момент этот пункт не отражён).
 
-Заменить безусловный recurring-guard на ветвление:
+Запрещено: всё перечисленное в Phase 9 scope (lifecycle, webhooks, grant/access, Telegram, reconcile, новая архитектура, backfill execute, live Stripe, ЭСЧФ).
+
+## Discovery-обследование (read-only)
+
+### 1. UI-инвентаризация — где сейчас показываются сущности
+
+Прочитать и зафиксировать текущее состояние:
+
+- Платежи: `src/components/admin/payments/PaymentsTabContent.tsx`, `src/components/admin/payments/columns/*`, `usePaymentsServerStats`, `usePayments*`.
+- Заказы: `src/pages/admin/AdminOrders*`, `src/components/admin/orders/*`.
+- Подписки: `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`, `AutoRenewalsTabContent.tsx`, Stripe subs (если есть отдельный таб).
+- Payment links: `src/components/admin/payments/links/LinksTabContent.tsx`, `LinkDetailsDrawer.tsx`, `LinkStatusBadge.tsx`, `usePaymentLinks.ts`.
+- Provider events: `src/components/admin/integrations/StripeEventsTab.tsx`, аналог для bePaid (если есть).
+- Diagnostics: `src/components/admin/payments/DiagnosticsTabContent.tsx`, `PaymentIssuesTabContent.tsx`.
+- Audit logs: где админ может увидеть `audit_logs` записи по платежам/линкам.
+
+Для каждой точки указать: какой компонент, какие колонки, какие фильтры, какие badge.
+
+### 2. Поля БД — что фактически есть
+
+Через `supabase--read_query` (read-only `information_schema` + sample row):
+
+- `payments_v2`: `provider`, `status`, `currency`, `receipt_url`, `meta.stripe.{hosted_invoice_url, invoice_pdf, invoice_id, subscription_id, receipt_url}`.
+- `orders_v2`: `provider`, `meta.payment_flow`, `meta.payment_link_id`, currency.
+- `payment_links`: `provider`, `provider_mode`, `provider_choice_source`, `account_code`, `profile_code`, `business_stream`, `payment_type`.
+- `subscriptions_v2`: provider hint в `meta`, `provider_subscriptions` join.
+- `provider_events`: `account_code`, `event_type`, `processing_status`, `signature_valid`, `processing_error`.
+- `audit_logs`: action codes, относящиеся к Stripe/bePaid/payment_link (`stripe.receipt_materialization.applied`, `payment_link.payment_type_promoted_recurring`, `payment_link.payment_type_admin_override`, `stripe.invoice.paid.activated` и т.д.) — собрать актуальный список через `SELECT DISTINCT action FROM audit_logs WHERE action LIKE 'stripe.%' OR action LIKE 'payment_link.%' OR action LIKE 'bepaid.%' LIMIT N`.
+- Enriched views/RPC: `payment_links_enriched_v`, `get_admin_payment_links_v1`, `admin_get_payments_stats_v1`, `stripe-list-events` — что они уже возвращают.
+
+### 3. UI Gaps — что отсутствует
+
+Для каждой gap зафиксировать: где должен быть, какое поле читать, почему важно:
+
+- provider badge в таблице платежей/заказов/ссылок/подписок;
+- фильтр по `provider` (bepaid / stripe) в Payments, Orders, Links;
+- видимость способа создания ссылки: `provider_choice_source` (button settings / admin override / customer choice) — есть ли в `LinkDetailsDrawer`;
+- видимость currency в Payments/Orders (особенно при mixed BYN/USD/EUR);
+- видимость `account_code` / `profile_code` / `business_stream` для Stripe-платежей;
+- наличие/отсутствие receipt link для bePaid и invoice/PDF link для Stripe (one-time vs subscription);
+- webhook health: количество failed/skipped/manual_review `provider_events` за период, ссылка на конкретное событие;
+- override visibility: видно ли в карточке ссылки, что админ выбрал explicit one_time на recurring offer;
+- duplicate/orphan: видна ли таблица `provider_webhook_orphans` / `payment_reconcile_queue` админу;
+- subscription provider visibility: bePaid vs Stripe в табах подписок (сейчас есть только `BepaidSubscriptionsTabContent`).
+
+### 4. Рекомендация Phase 9-B (только тезисы, без реализации)
+
+В discovery-файле:
+
+- список конкретных UI-файлов, которые потребуют изменений в Phase 9-B;
+- список добавляемых колонок/badge/фильтров (без кода);
+- надо ли создавать новый read-only diagnostics-блок или дополнить существующий;
+- список proof, которые понадобятся в Phase 9-B (скрин Stripe-платежа с invoice link, фильтр по provider, override-флаг в LinkDetails, webhook orphan list);
+- риски и зависимости (например: разделение Stripe/bePaid subscriptions tabs vs unified tab — это design-вопрос для approve до Phase 9-B).
+
+## Структура discovery-файла
+
+`.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`:
 
 ```text
-source = body.provider_choice_source ?? 'auto'   // 'auto' | 'explicit'
-
-if (provider === 'stripe' && offerIsRecurring && !isInstallment) {
-  if (source === 'auto' && requested_payment_type === 'one_time') {
-    effective_payment_type = 'subscription'
-    audit('payment_link.payment_type_promoted_recurring', {
-      requested_payment_type: 'one_time',
-      effective_payment_type: 'subscription',
-      provider_choice_source: 'auto',
-      reason: 'offer_is_recurring_auto_mode'
-    })
-  } else if (source === 'explicit') {
-    effective_payment_type = requested_payment_type   // уважаем выбор админа
-    if (requested_payment_type === 'one_time') {
-      audit('payment_link.payment_type_admin_override', {
-        requested_payment_type: 'one_time',
-        effective_payment_type: 'one_time',
-        provider_choice_source: 'explicit',
-        offer_is_recurring: true,
-        reason: 'admin_explicit_override'
-      })
-    }
-  }
-}
+1. Цель и scope
+2. UI inventory (компонент → отображаемые поля → фильтры → gaps)
+3. DB / RPC / view inventory (поле → текущее использование → доступность в UI)
+4. Audit action inventory (action → семантика → используется ли в UI)
+5. Gap matrix (gap → где → impact → recommended fix scope)
+6. Рекомендация Phase 9-B (файлы / поля / фильтры / proof)
+7. Open questions для approve перед Phase 9-B
+8. DoD Phase 9-A
 ```
 
-`provider_choice_source` должен сохраняться в `payment_links` (колонка либо `meta.provider_choice_source`) — определим на этапе Diagnose. Installment-ветка не трогается. bePaid-ветка не трогается.
+## DoD Phase 9-A
 
-## Step 2 — UI correction (`AdminPaymentLinkDialog.tsx`)
+- Создан только `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`.
+- (Опционально) одна правка в `.lovable/proofs/phase_8_runtime_verify_full_v1.md` с явной фиксацией `stripe.receipt_materialization.applied` как audit-action для invoice materialization.
+- Никаких изменений в `src/`, `supabase/functions/`, `supabase/migrations/`.
+- `git diff --name-only` показывает только discovery-файл (и опционально proof-уточнение).
+- Отчёт о выполнении на русском + предложение Phase 9-B implementation plan для отдельного approve.
 
-1. Удалить безусловный `lockPaymentTypeToSubscription` и `disabled` на кнопке «Разовая оплата».
-2. Добавить (или реюзать существующий) переключатель «Способ оплаты для ссылки»: `auto` («По настройке кнопки/тарифа») vs `explicit` (админ выбирает сам). Если такой переключатель уже есть в диалоге — привязать логику к нему; если нет — реализовать минимальный toggle.
-3. Поведение:
-  - **auto + recurring** → `payment_type` форсится в `subscription`, кнопки разовая/подписка скрыты или disabled с подсказкой *«По настройке тарифа будет создана подписка.»*
-  - **explicit + Stripe + recurring + one_time** → кнопка активна, amber hint: *«Тариф является рекуррентным, но вы создаёте разовую админскую оплату. Подписка Stripe создана не будет.»*
-  - **explicit + Stripe + subscription** → hint: *«Для Stripe будет создана подписка mode=subscription.»*
-  - **bePaid / installment** → без изменений.
-4. Параллельно убрать прошлую регрессию: «Иностранная карта» disabled при первой загрузке — починить порядок инициализации (если правка не сделана ранее).
+## Out of scope (явно)
 
-## Step 3 — Runtime Verify Phase 8 (агент)
-
-1. Создать payment_link через починенный UI:
-  - Продукт: Gorbova Club, тариф: CHAT, recipient: Сергей Федорчук ([7500084@gmail.com](mailto:7500084@gmail.com)), provider: Stripe, payment_type: `subscription` (explicit), currency: EUR или BYN.
-2. Открыть `/pay/:token`, авторизоваться dev-login `123456` если требуется, оплатить test card `4242 4242 4242 4242` (3DS — Complete).
-3. Дождаться webhook `invoice.paid`.
-
-## Step 4 — Verify SQL (как в задаче, пункт 7)
-
-- `payment_links` (top 20): `provider`, `provider_mode`, `provider_choice_source`, `payment_type`, `offer_id`, `currency`, `meta`.
-- `payments_v2` (provider='stripe', top 20): `provider_payment_id`, `order_id`, `receipt_url`, `meta.stripe.hosted_invoice_url|invoice_pdf|stripe_invoice_id`.
-- `audit_logs` по 4 action'ам.
-
-## Step 5 — Дополнительная негативная проверка
-
-Создать ещё одну ссылку **explicit one_time** по тому же CHAT тарифу и убедиться:
-
-- backend НЕ промоутит в subscription;
-- audit пишет `payment_link.payment_type_admin_override`;
-- Stripe Checkout открывается с `mode=payment` (не оплачиваем — достаточно session inspect через `provider_events`/checkout session id).
-
-## Step 6 — Proof
-
-Создать `.lovable/proofs/phase_8_runtime_verify_full_v1.md` с:
-
-- статусом блоков (one-time receipt_url, subscription invoice materialization, auto vs explicit поведение);
-- ссылками на order_id / subscription id / invoice id;
-- скринами/SQL-выписками;
-- финальным вердиктом Phase 8 = FULL PASS (если subscription invoice materialize) или PARTIAL PASS с конкретным gap.
-
-Обновить `.lovable/plan.md` и пометить прошлый proof `phase_8_blocker_fix_recurring_subscription_v1.md` как superseded.
-
-## DoD
-
-- Backend: explicit one_time по recurring offer проходит без promotion; auto + recurring по-прежнему → subscription; bePaid не задет.
-- UI: «Разовая оплата» доступна в explicit Stripe режиме с warning, недоступна (или auto-subscription) в auto режиме для recurring.
-- Audit: оба action'а пишутся в правильных сценариях.
-- Runtime: subscription test показывает все три stripe-поля + audit `stripe.invoice_document_materialized`.
-- One-time runtime (negative): mode=payment подтверждён, без invoice fields.
-- Proof v1 создан, Phase 8 статус зафиксирован.
-- Phase 9 не стартует до явного approve.
-
-## Затрагиваемые файлы (ожидание)
-
-- `supabase/functions/admin-create-public-link/index.ts` — переписать ветку guard.
-- `src/components/admin/AdminPaymentLinkDialog.tsx` — снять lock, добавить warning/auto-режим.
-- `.lovable/proofs/phase_8_runtime_verify_full_v1.md` — новый.
-- `.lovable/proofs/phase_8_blocker_fix_recurring_subscription_v1.md` — пометка superseded.
-- `.lovable/plan.md` — статус.
-
-## Вне scope
-
-- Telegram DM с product/tariff names, redirect URL после оплаты, прочие follow-up фиксы из `stripe_runtime_followup_fixes_v1.md`.
-- Phase 9 / Phase 10.
+- Никакого UI-кода, миграций, edge functions, RPC.
+- Никаких изменений в checkout / webhooks / grant / Telegram / reconcile.
+- Phase 9-B implementation — отдельным approve.
