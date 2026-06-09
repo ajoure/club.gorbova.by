@@ -183,9 +183,10 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
           );
           for (const r of bypassCandidateRules) {
             if (!activeProductIds.has(r.product_id)) continue;
-            for (const mid of r.conditions.allowed_module_ids as string[]) {
+            for (const mid of (r.conditions as any).allowed_module_ids as string[]) {
               bypassModuleIds.add(mid);
             }
+
           }
         }
 
