@@ -443,126 +443,41 @@ Deno.serve(async (req) => {
           return errorResponse('Stripe subscription requires offer_id', 400);
         }
 
-        // BLOCKER FIX (Phase 6-G/7 boundary): отсутствие meta.stripe.price_id больше НЕ
-        // блокирует создание ссылки. Если price_id отсутствует — вызываем
-        // admin-provision-stripe-price (идемпотентно), затем ПЕРЕЧИТЫВАЕМ tariff_offers.meta
-        // из БД и продолжаем. Если price_id всё ещё нет после provision — controlled error,
-        // ссылка НЕ создаётся (защита от частичного успеха).
-        const { data: offerStripe } = await supabase
+        // PATCH-SUB-PRICE-3 (PATCH-B, 2026-06-09): payment-link amount/currency override parity.
+        // Для link-based Stripe subscription цена/валюта берутся из payment_links.amount/currency,
+        // а в Stripe Checkout передаются через line_items.price_data (inline override).
+        // Глобальный tariff_offers.meta.stripe.price_id больше НЕ обязателен и НЕ provisioning-ится
+        // на этапе создания ссылки — это исключает blocker billing_period_mode_not_supported
+        // и сохраняет parity с bePaid/e-clearing/Pay (ссылка задаёт сумму).
+        //
+        // Если global price_id у оффера уже есть (legacy), он остаётся snapshot-only в meta
+        // и не мешает inline-override в checkout (см. _shared/create-stripe-checkout.ts).
+        const { data: offerForRecurring } = await supabase
           .from('tariff_offers')
           .select('meta')
           .eq('id', offer_id)
           .maybeSingle();
-        let priceId = (offerStripe as any)?.meta?.stripe?.price_id as string | undefined;
-
-        if (!priceId) {
-          // Phase 6 hot-patch: используем shared resolveBusinessStream (SOT).
-          // Priority: offer.meta → product.meta → explicit link override (rawBusinessStream).
-          const offerMeta = (offerStripe as any)?.meta ?? {};
-          const { data: tariffRow } = await supabase
-            .from('tariff_offers')
-            .select('tariff_id, tariffs:tariff_id(product_id, products_v2:product_id(meta))')
-            .eq('id', offer_id)
-            .maybeSingle();
-          const productMeta =
-            ((tariffRow as any)?.tariffs?.products_v2?.meta as Record<string, unknown> | undefined) ?? null;
-          const businessStream = resolveBusinessStream({
-            tariff_offer_meta: offerMeta,
-            product_meta: productMeta,
-            link_business_stream: rawBusinessStream,
-          });
-          if (!businessStream) {
-            // Controlled failure — link НЕ создаётся, audit запись для трассировки.
-            await supabase.from('audit_logs').insert({
-              action: 'admin_create_public_link.stripe_price_provision_failed',
-              actor_user_id: user.id,
-              actor_type: 'user',
-              actor_label: 'super_admin:admin-create-public-link',
-              entity_type: 'tariff_offer',
-              entity_id: offer_id,
-              meta: {
-                reason: 'business_stream_not_resolved',
-                provider_mode: providerMode,
-                allowed_payment_providers: effectiveAllowedProviders,
-                offer_meta_business_stream: (offerMeta as any)?.business_stream ?? null,
-                product_meta_business_stream: (productMeta as any)?.business_stream ?? null,
-                link_business_stream: rawBusinessStream ?? null,
-              },
-            });
-            return errorResponse(
-              'stripe_price_provision_failed:business_stream_not_resolved',
-              422,
-            );
-          }
-
-
-          // Forward caller's JWT — admin-provision-stripe-price требует super_admin.
-          const provInvoke = await fetch(
-            `${supabaseUrl}/functions/v1/admin-provision-stripe-price`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: authHeader,
-              },
-              body: JSON.stringify({
-                tariff_offer_id: offer_id,
-                account_code: resolvedAccountCode,
-                business_stream: businessStream,
-                execute: true,
-                // Hotfix-1: передаём запрошенную валюту — используется как fallback,
-                // если у тарифа нет активной tariff_prices строки.
-                requested_currency: stripeValidationCurrency,
-              }),
-            },
+        const offerMetaRecurring = (offerForRecurring as any)?.meta ?? {};
+        const recurringMeta = (offerMetaRecurring as any)?.recurring ?? {};
+        const intervalRaw = String(recurringMeta?.interval ?? recurringMeta?.period ?? 'month').toLowerCase();
+        const ALLOWED_INTERVALS = new Set(['day', 'week', 'month', 'year']);
+        if (!ALLOWED_INTERVALS.has(intervalRaw)) {
+          return errorResponse(
+            `stripe_subscription_interval_not_supported:${intervalRaw}`,
+            400,
           );
-          const provJson: any = await provInvoke.json().catch(() => ({}));
-
-          if (!provInvoke.ok || provJson?.status === 'error' || provJson?.status === 'manual_review') {
-            const reason =
-              provJson?.reason ||
-              provJson?.error ||
-              `http_${provInvoke.status}`;
-            // Audit controlled failure (no partial link created).
-            await supabase.from('audit_logs').insert({
-              action: 'admin_create_public_link.stripe_price_provision_failed',
-              actor_user_id: user.id,
-              actor_type: 'user',
-              actor_label: 'super_admin:admin-create-public-link',
-              entity_type: 'tariff_offer',
-              entity_id: offer_id,
-              meta: { reason, account_code: resolvedAccountCode, business_stream: businessStream, http_status: provInvoke.status, provision_response: provJson },
-            });
-            return errorResponse(`stripe_price_provision_failed:${reason}`, 502);
-          }
-
-          // Re-read meta from DB — НЕ полагаемся только на ответ функции.
-          const { data: offerAfter } = await supabase
-            .from('tariff_offers')
-            .select('meta')
-            .eq('id', offer_id)
-            .maybeSingle();
-          priceId = (offerAfter as any)?.meta?.stripe?.price_id as string | undefined;
-
-          if (!priceId) {
-            await supabase.from('audit_logs').insert({
-              action: 'admin_create_public_link.stripe_price_provision_failed',
-              actor_user_id: user.id,
-              actor_type: 'user',
-              actor_label: 'super_admin:admin-create-public-link',
-              entity_type: 'tariff_offer',
-              entity_id: offer_id,
-              meta: { reason: 'no_price_id_after_provision', provision_response: provJson },
-            });
-            return errorResponse(
-              'stripe_price_provision_failed:no_price_id_after_provision',
-              502,
-            );
-          }
         }
+
+        // Snapshot для трассировки — не источник истины (checkout всегда читает payment_links).
+        linkMetaStripePriceMode = 'inline_override';
+        linkMetaStripeRecurringSnapshot = {
+          interval: intervalRaw,
+          interval_count: Number(recurringMeta?.interval_count ?? 1) || 1,
+        };
       }
 
     }
+
 
 
     // Финальная нормализация audit-полей.
