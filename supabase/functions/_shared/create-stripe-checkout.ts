@@ -533,7 +533,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     return { success: false, provider: 'stripe', error: 'stripe_secret_read_failed', detail: String((e as Error)?.message ?? e) };
   }
 
-  const preResult = await stripePreCreateSubscription({
+  const sharedPreParams = {
     supabase,
     user_id,
     product_id,
@@ -547,10 +547,27 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     stripe_secret_key: secret,
     success_url: urls.success_url,
     cancel_url: urls.cancel_url,
-    price_id,
     stripe_product_id,
     actor_user_id: actor_user_id ?? null,
-  });
+  };
+  const preResult = await stripePreCreateSubscription(
+    useInlinePrice
+      ? {
+          ...sharedPreParams,
+          inline_price: {
+            amount_major: amountMajor,
+            currency: currency.toUpperCase(),
+            interval: inlineRecurring!.interval,
+            interval_count: inlineRecurring!.interval_count,
+            product_id: stripe_product_id,
+            product_name: (product as { name?: string }).name || 'Subscription',
+          },
+        }
+      : {
+          ...sharedPreParams,
+          price_id: offer_price_id!,
+        },
+  );
 
   if (!preResult.ok) {
     return {
