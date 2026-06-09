@@ -20,8 +20,30 @@
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { resolveStripeCheckoutUrls } from './public-app-host.ts';
+import { toStripeMinorUnits } from './stripe-minor-units.ts';
 
-export interface StripePreCreateSubscriptionParams {
+/**
+ * INLINE PRICE (PATCH-SUB-PRICE-1 v2):
+ * Если caller передал inline_price вместо price_id, Stripe Checkout Session
+ * создаётся с line_items[0][price_data][...] — recurring price строится прямо
+ * под конкретную payment_link.amount/currency. saved tariff_offers.meta.stripe.price_id
+ * НЕ используется и НЕ retrieve'ится (drift-check скипается).
+ *
+ * Это нужно для parity с bePaid/e-clearing/Pay payment links: бизнес-SOT суммы =
+ * payment_links.amount/currency, а не глобальная цена offer.
+ */
+export interface InlineStripePriceInput {
+  amount_major: number;
+  currency: string; // 3-letter, UPPER
+  interval: 'day' | 'week' | 'month' | 'year';
+  interval_count: number;
+  /** prod_… — если уже есть в Stripe account, reuse чтобы не плодить лишних Stripe Products. */
+  product_id?: string | null;
+  /** Используется только если product_id не передан (Stripe создаст on-the-fly product). */
+  product_name?: string;
+}
+
+export type StripePreCreateSubscriptionParams = {
   supabase: SupabaseClient;
   user_id: string;
   product_id: string;
@@ -39,12 +61,22 @@ export interface StripePreCreateSubscriptionParams {
   stripe_secret_key: string;
   success_url: string;
   cancel_url: string;
-  /** Цены/продукта price_id и stripe_product_id — резолвит вызывающий из tariff_offers.meta.stripe. */
-  price_id: string;
-  stripe_product_id: string | null;
   /** Опциональный actor_user_id для audit_logs (admin-функция передаёт user.user_id; public — null). */
   actor_user_id: string | null;
-}
+  /** stripe_product_id из offer.meta.stripe — для inline path можно использовать как price_data[product]. */
+  stripe_product_id: string | null;
+} & (
+  | {
+      /** Canonical saved Stripe price — drift-check выполняется. */
+      price_id: string;
+      inline_price?: undefined;
+    }
+  | {
+      /** Inline custom price_data — для payment_link override. drift-check скипается. */
+      price_id?: undefined;
+      inline_price: InlineStripePriceInput;
+    }
+);
 
 export interface StripePreCreateSubscriptionSuccess {
   ok: true;
