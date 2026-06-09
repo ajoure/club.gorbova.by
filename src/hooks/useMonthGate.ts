@@ -162,7 +162,7 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         //    whose target_ref points to one of these root modules.
         const { data: rulesRaw, error: rulesErr } = await supabase
           .from("access_rules")
-          .select("id, tariff_id, target_ref, conditions")
+          .select("id, tariff_id, target_ref, conditions, product_id")
           .eq("grant_target_type", "training_content")
           .eq("is_active", true)
           .in("target_ref", rootModuleIds);
@@ -171,6 +171,53 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         const rules: TcRuleRow[] = (rulesRaw || []).filter(
           (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id
         );
+
+        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
+        // Explicit product-grant bypass: rule must be active, training_content,
+        // target_ref ∈ rootModuleIds, have product_id and a non-empty explicit
+        // allowlist (allowed_module_ids OR allowed_lesson_ids).
+        // full/root rules with both allowlists empty DO NOT bypass.
+        const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
+          const am = r?.conditions?.allowed_module_ids;
+          const al = r?.conditions?.allowed_lesson_ids;
+          const hasAllow =
+            (Array.isArray(am) && am.length > 0) ||
+            (Array.isArray(al) && al.length > 0);
+          return r?.product_id && hasAllow;
+        });
+        const bypassProductIds = Array.from(
+          new Set(bypassCandidateRules.map((r: any) => r.product_id as string))
+        );
+        const bypassModuleIds = new Set<string>();
+        const bypassLessonIds = new Set<string>();
+        if (bypassProductIds.length > 0) {
+          const { data: entRows } = await supabase
+            .from("entitlements")
+            .select("product_id, status, expires_at")
+            .eq("user_id", user.id)
+            .eq("status", "active")
+            .in("product_id", bypassProductIds);
+          const nowMs = Date.now();
+          const activeProductIds = new Set<string>(
+            (entRows || [])
+              .filter(
+                (e: any) =>
+                  !e.expires_at || new Date(e.expires_at).getTime() > nowMs
+              )
+              .map((e: any) => e.product_id as string)
+          );
+          for (const r of bypassCandidateRules) {
+            if (!activeProductIds.has(r.product_id)) continue;
+            const cond = r.conditions as any;
+            for (const mid of (cond.allowed_module_ids as string[] | undefined) || []) {
+              bypassModuleIds.add(mid);
+            }
+            for (const lid of (cond.allowed_lesson_ids as string[] | undefined) || []) {
+              bypassLessonIds.add(lid);
+            }
+          }
+        }
+
         if (rules.length === 0) {
           if (!cancelled) setMap(result);
           return;
@@ -184,25 +231,23 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         }
 
         // 4) For each candidate lesson, find a matching rule -> build RPC payload.
-        // OR-aggregation across ALL matching rules. If ANY matching tariff
-        // grants the month purchase, the lesson is unlocked.
-        // Synthetic RPC key = `${lesson_id}::${tariff_id}` to disambiguate
-        // multiple (lesson, tariff) tuples within one RPC batch.
         const payload: Array<{
-          lesson_id: string; // synthetic key
+          lesson_id: string;
           tariff_id: string;
           content_month: string;
         }> = [];
-        // Map<lesson_id, Array<{ syntheticKey, tariff_id, content_month }>>
         const lessonTuples = new Map<
           string,
           Array<{ syntheticKey: string; tariff_id: string; content_month: string }>
         >();
 
         for (const c of candidates) {
+          // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
+          if (bypassLessonIds.has(c.lesson_id) || bypassModuleIds.has(c.module_id)) continue;
           const rootMod = lessonRootModule.get(c.lesson_id);
           if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRootModule.get(rootMod) || [];
+
           const matches = candidateRules.filter((r) =>
             lessonInRuleScope(c.lesson_id, c.module_id, r.conditions)
           );

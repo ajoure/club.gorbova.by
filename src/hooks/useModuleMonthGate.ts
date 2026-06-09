@@ -142,7 +142,7 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
 
         const { data: rulesRaw, error: rulesErr } = await supabase
           .from("access_rules")
-          .select("id, tariff_id, target_ref, conditions")
+          .select("id, tariff_id, target_ref, conditions, product_id")
           .eq("grant_target_type", "training_content")
           .eq("is_active", true)
           .in("target_ref", rootIds);
@@ -151,10 +151,50 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
         const rules: TcRuleRow[] = (rulesRaw || []).filter(
           (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id,
         );
+
+        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
+        // Explicit product-grant bypass: rule must be active, training_content,
+        // target_ref ∈ rootIds, have product_id and non-empty allowed_module_ids.
+        // User must have ACTIVE entitlement on that product_id.
+        // full/root rules with empty allowlist DO NOT bypass.
+        const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
+          const allowed = r?.conditions?.allowed_module_ids;
+          return r?.product_id && Array.isArray(allowed) && allowed.length > 0;
+        });
+        const bypassProductIds = Array.from(
+          new Set(bypassCandidateRules.map((r: any) => r.product_id as string)),
+        );
+        const bypassModuleIds = new Set<string>();
+        if (bypassProductIds.length > 0) {
+          const { data: entRows } = await supabase
+            .from("entitlements")
+            .select("product_id, status, expires_at")
+            .eq("user_id", user.id)
+            .eq("status", "active")
+            .in("product_id", bypassProductIds);
+          const nowMs = Date.now();
+          const activeProductIds = new Set<string>(
+            (entRows || [])
+              .filter(
+                (e: any) =>
+                  !e.expires_at || new Date(e.expires_at).getTime() > nowMs,
+              )
+              .map((e: any) => e.product_id as string),
+          );
+          for (const r of bypassCandidateRules) {
+            if (!activeProductIds.has(r.product_id)) continue;
+            for (const mid of (r.conditions as any).allowed_module_ids as string[]) {
+              bypassModuleIds.add(mid);
+            }
+
+          }
+        }
+
         if (rules.length === 0) {
           if (!cancelled) setMap(result);
           return;
         }
+
 
         const rulesByRoot = new Map<string, TcRuleRow[]>();
         for (const r of rules) {
@@ -175,12 +215,14 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
         >();
 
         for (const c of candidates) {
+          if (bypassModuleIds.has(c.module_id)) continue; // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
           const rootMod = moduleRoot.get(c.module_id);
           if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRoot.get(rootMod) || [];
           const matches = candidateRules.filter((r) =>
             moduleInRuleScope(c.module_id, r.conditions),
           );
+
           if (matches.length === 0) continue;
 
           const seenTariffs = new Set<string>();
