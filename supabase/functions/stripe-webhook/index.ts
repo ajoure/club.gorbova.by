@@ -248,10 +248,19 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         .eq('provider_payment_id', pi_id)
         .maybeSingle();
       if (!existing) {
+        // PATCH-LIVE-2: подтягиваем user_id/profile_id из связанного orders_v2,
+        // чтобы Stripe-платёж был виден в карточке контакта и в фильтрах "Контакт=Есть".
+        const { data: ordRow } = await supabase
+          .from('orders_v2')
+          .select('user_id, profile_id')
+          .eq('id', order_id_meta)
+          .maybeSingle();
         const { data: ins } = await supabase
           .from('payments_v2')
           .insert({
             order_id: order_id_meta,
+            user_id: ordRow?.user_id ?? null,
+            profile_id: ordRow?.profile_id ?? null,
             provider: 'stripe',
             provider_payment_id: pi_id,
             amount: amount_major,
@@ -350,10 +359,18 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     if (existing) {
       payment_id = existing.id;
     } else {
+      // PATCH-LIVE-2: см. checkout.session.completed — копируем user_id/profile_id из orders_v2.
+      const { data: ordRow } = await supabase
+        .from('orders_v2')
+        .select('user_id, profile_id')
+        .eq('id', order_id_meta)
+        .maybeSingle();
       const { data: ins } = await supabase
         .from('payments_v2')
         .insert({
           order_id: order_id_meta,
+          user_id: ordRow?.user_id ?? null,
+          profile_id: ordRow?.profile_id ?? null,
           provider: 'stripe',
           provider_payment_id: pi_id,
           amount: amount_major,
