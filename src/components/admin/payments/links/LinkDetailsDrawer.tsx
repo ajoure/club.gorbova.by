@@ -74,11 +74,28 @@ export function LinkDetailsDrawer({
         </SheetHeader>
 
         <div className="space-y-4 mt-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <LinkStatusBadge link={link} />
             <span className="text-xs text-muted-foreground">
               {link.payment_type === "subscription" ? "Подписка" : "Разовая оплата"}
             </span>
+            {/* Phase 9-B — provider badge */}
+            {link.provider && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                  link.provider === "stripe"
+                    ? "border-indigo-500 text-indigo-600 dark:text-indigo-300"
+                    : "border-emerald-500 text-emerald-600 dark:text-emerald-300"
+                }`}
+              >
+                {link.provider === "stripe" ? "Stripe" : link.provider === "bepaid" ? "bePaid" : link.provider}
+              </span>
+            )}
+            {link.provider_mode && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground">
+                {link.provider_mode === "customer_choice" ? "Клиент выбирает" : "Фиксированный провайдер"}
+              </span>
+            )}
           </div>
 
           <div>
@@ -103,6 +120,28 @@ export function LinkDetailsDrawer({
           <DetailRow label="Описание" value={link.description} />
 
           <Separator />
+
+          {/* Phase 9-B — provider visibility (read-only, no lifecycle changes) */}
+          <DetailRow label="Провайдер" value={link.provider === "stripe" ? "Stripe" : link.provider === "bepaid" ? "bePaid" : link.provider} />
+          <DetailRow
+            label="Режим выбора провайдера"
+            value={
+              link.provider_mode === "customer_choice"
+                ? "Клиент выбирает"
+                : link.provider_mode === "fixed"
+                ? "Фиксированный провайдер"
+                : link.provider_mode
+            }
+          />
+          <DetailRow label="Acquiring account" value={link.account_code} />
+          <DetailRow label="Profile code" value={link.profile_code} />
+          <DetailRow label="Business stream" value={link.business_stream} />
+          <div className="text-[10px] text-muted-foreground italic">
+            Поле «Способ создания ссылки» (provider_choice_source) сейчас хранится только в payment_links.meta и не отдаётся текущим RPC — visibility вынесена в Phase 9-C.
+          </div>
+
+          <Separator />
+
 
           <DetailRow
             label="Получатель результата оплаты"

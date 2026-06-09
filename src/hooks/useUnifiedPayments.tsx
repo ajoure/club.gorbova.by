@@ -87,7 +87,13 @@ export interface UnifiedPayment {
   
   // bePaid description for display and search
   bepaid_description: string | null;
-  
+
+  // Phase 9-B — Stripe document/subscription visibility (read-only, from payments_v2.meta.stripe)
+  stripe_invoice_id: string | null;
+  stripe_subscription_id: string | null;
+  stripe_hosted_invoice_url: string | null;
+  stripe_invoice_pdf: string | null;
+
   // P0-guard: Pre-built search index (computed once during transformation)
   search_index: string;
 }
@@ -340,6 +346,16 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // Extract commission_total from meta (synced from bePaid statement)
         const meta = (p.meta || {}) as any;
         const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
+
+        // Phase 9-B — Stripe meta extraction (read-only, no normalization).
+        // Tolerate both invoice_id/stripe_invoice_id and subscription_id/stripe_subscription_id keys.
+        const stripeMeta = (meta?.stripe || {}) as any;
+        const stripe_invoice_id =
+          stripeMeta?.invoice_id ?? stripeMeta?.stripe_invoice_id ?? null;
+        const stripe_subscription_id =
+          stripeMeta?.subscription_id ?? stripeMeta?.stripe_subscription_id ?? null;
+        const stripe_hosted_invoice_url = stripeMeta?.hosted_invoice_url ?? null;
+        const stripe_invoice_pdf = stripeMeta?.invoice_pdf ?? null;
         
         // F13.ADD: Extract bepaid_description with expanded fallback chain
         const bepaid_description = 
@@ -422,6 +438,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           provider_response: providerResponse,
           commission_total,
           bepaid_description,
+          stripe_invoice_id,
+          stripe_subscription_id,
+          stripe_hosted_invoice_url,
+          stripe_invoice_pdf,
           search_index,
         };
       });
@@ -532,6 +552,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             payment_classification: null, // Queue items don't have classification
             origin: q.source || null, // Use queue source as origin
             bepaid_description: q.description || null,
+            stripe_invoice_id: null,
+            stripe_subscription_id: null,
+            stripe_hosted_invoice_url: null,
+            stripe_invoice_pdf: null,
             // P0-guard: Build search index ONCE during transformation
             search_index: buildSearchIndex([
               q.bepaid_uid,

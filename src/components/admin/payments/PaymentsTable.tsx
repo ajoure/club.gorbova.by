@@ -51,16 +51,17 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
   { key: "date", label: "Дата", visible: true, width: 110, order: 1 },
   { key: "uid", label: "UID", visible: true, width: 110, order: 2 },
-  { key: "type", label: "Тип", visible: true, width: 90, order: 3 },
-  { key: "status", label: "Статус", visible: true, width: 90, order: 4 },
-  { key: "amount", label: "Сумма", visible: true, width: 100, order: 5 },
-  { key: "payer", label: "Плательщик", visible: true, width: 180, order: 6 },
-  { key: "contact", label: "Контакт", visible: true, width: 140, order: 7 },
-  { key: "deal", label: "Сделка", visible: true, width: 120, order: 8 },
-  { key: "product", label: "Продукт", visible: true, width: 130, order: 9 },
-  { key: "bepaid_description", label: "Описание bePaid", visible: false, width: 220, order: 10 },
-  { key: "receipt", label: "Чек", visible: true, width: 50, order: 11 },
-  { key: "actions", label: "", visible: true, width: 50, order: 12 },
+  { key: "provider", label: "Провайдер", visible: true, width: 90, order: 3 },
+  { key: "type", label: "Тип", visible: true, width: 90, order: 4 },
+  { key: "status", label: "Статус", visible: true, width: 90, order: 5 },
+  { key: "amount", label: "Сумма", visible: true, width: 100, order: 6 },
+  { key: "payer", label: "Плательщик", visible: true, width: 180, order: 7 },
+  { key: "contact", label: "Контакт", visible: true, width: 140, order: 8 },
+  { key: "deal", label: "Сделка", visible: true, width: 120, order: 9 },
+  { key: "product", label: "Продукт", visible: true, width: 130, order: 10 },
+  { key: "bepaid_description", label: "Описание bePaid", visible: false, width: 220, order: 11 },
+  { key: "receipt", label: "Документы", visible: true, width: 120, order: 12 },
+  { key: "actions", label: "", visible: true, width: 50, order: 13 },
 ];
 
 interface PaymentsTableProps {
@@ -635,18 +636,93 @@ export default function PaymentsTable({
           </Tooltip>
         );
         
-      case 'receipt':
-        return (
-          <ReceiptStatusBadge
-            receiptUrl={payment.receipt_url}
-            paymentId={payment.id}
-            orderId={payment.order_id}
-            isQueueItem={payment.rawSource === 'queue'}
-            statusNormalized={payment.status_normalized}
-            providerUid={payment.uid}
-            onRefetch={onRefetch}
-          />
-        );
+      case 'provider': {
+        // Phase 9-B — provider badge from payments_v2.provider
+        const prov = (payment.provider || '').toLowerCase();
+        if (prov === 'stripe') {
+          return (
+            <Badge variant="outline" className="text-[10px] border-indigo-500 text-indigo-600 dark:border-indigo-400 dark:text-indigo-300">
+              Stripe
+            </Badge>
+          );
+        }
+        if (prov === 'bepaid') {
+          return (
+            <Badge variant="outline" className="text-[10px] border-emerald-500 text-emerald-600 dark:border-emerald-400 dark:text-emerald-300">
+              bePaid
+            </Badge>
+          );
+        }
+        return <Badge variant="outline" className="text-[10px]">{payment.provider || '—'}</Badge>;
+      }
+
+      case 'receipt': {
+        // Phase 9-B — единая ячейка «Документы»:
+        // bePaid:            receipt_url → «Чек»
+        // Stripe one-time:   receipt_url → «Stripe receipt»
+        // Stripe subscription: hosted_invoice_url → «Invoice», invoice_pdf → «PDF»
+        const isStripe = (payment.provider || '').toLowerCase() === 'stripe';
+        const hasReceipt = !!payment.receipt_url;
+        const hasInvoice = !!payment.stripe_hosted_invoice_url;
+        const hasPdf = !!payment.stripe_invoice_pdf;
+
+        if (isStripe && (hasInvoice || hasPdf)) {
+          return (
+            <div className="flex flex-wrap items-center gap-1">
+              {hasInvoice && (
+                <a
+                  href={payment.stripe_hosted_invoice_url!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[10px] underline text-indigo-600 dark:text-indigo-300"
+                >
+                  <ExternalLink className="h-3 w-3" /> Invoice
+                </a>
+              )}
+              {hasPdf && (
+                <a
+                  href={payment.stripe_invoice_pdf!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[10px] underline text-indigo-600 dark:text-indigo-300"
+                >
+                  <ExternalLink className="h-3 w-3" /> PDF
+                </a>
+              )}
+            </div>
+          );
+        }
+
+        if (hasReceipt) {
+          return (
+            <ReceiptStatusBadge
+              receiptUrl={payment.receipt_url}
+              paymentId={payment.id}
+              orderId={payment.order_id}
+              isQueueItem={payment.rawSource === 'queue'}
+              statusNormalized={payment.status_normalized}
+              providerUid={payment.uid}
+              onRefetch={onRefetch}
+            />
+          );
+        }
+
+        // Fallback — bePaid pending receipt / Stripe без docs
+        if (!isStripe) {
+          return (
+            <ReceiptStatusBadge
+              receiptUrl={payment.receipt_url}
+              paymentId={payment.id}
+              orderId={payment.order_id}
+              isQueueItem={payment.rawSource === 'queue'}
+              statusNormalized={payment.status_normalized}
+              providerUid={payment.uid}
+              onRefetch={onRefetch}
+            />
+          );
+        }
+        return <span className="text-[10px] text-muted-foreground">Документ ещё не получен</span>;
+      }
         
       case 'actions':
         return (
