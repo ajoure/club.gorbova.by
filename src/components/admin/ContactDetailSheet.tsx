@@ -2277,7 +2277,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   variant={isActive ? 'default' : 'secondary'}
                                   className={isActive ? 'bg-blue-600' : ''}
                                 >
-                                  {sub.state}
+                                  {stateLabel}
                                 </Badge>
                                 <Badge variant="outline" className="text-[10px]">
                                   {providerLabel}
