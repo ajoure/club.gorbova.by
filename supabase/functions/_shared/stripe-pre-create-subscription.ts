@@ -220,7 +220,9 @@ export async function stripePreCreateSubscription(
     ? {
         account_code,
         price_id: null,
-        product_id: inline_price.product_id ?? stripe_product_id ?? null,
+        // PATCH-SUB-PRICE-2: inline-product изолирован от saved meta.stripe.product_id —
+        // Stripe создаст product по product_data.name в нужном mode/account.
+        product_id: null,
         tariff_offer_id,
         inline_price: {
           amount_major: inline_price.amount_major,
@@ -229,6 +231,7 @@ export async function stripePreCreateSubscription(
           interval: inline_price.interval,
           interval_count: inline_price.interval_count,
           source: 'payment_link',
+          product_source: 'inline_product_data',
         },
       }
     : {
