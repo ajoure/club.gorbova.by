@@ -19,3 +19,16 @@
 
 ## Out of scope MP-A2-2
 Ни один из вариантов не реализуется в рамках MP-A2-2.
+
+## PATCH-LIVE-1 follow-up (Saved Cards × Stripe Live, 2026-06-09)
+
+После снятия live-guard `stripe_account_not_test_mode` оплата новой картой через live Stripe должна проходить. Отдельно остаётся вопрос совместимости сохранённых карт на `/pay/:token`:
+
+- определить источник saved card (Stripe `payment_method` vs legacy bePaid token / `card_profile_links`);
+- если карта не Stripe-compatible — не показывать её как доступную для Stripe live, либо рендерить disabled с пояснением «Сохранённая карта недоступна для оплаты через Stripe, используйте новую карту»;
+- если карта Stripe-compatible — разрешить оплату и корректно отрабатывать 3DS/SCA;
+- добавить provider badge у сохранённой карты в UI оплаты;
+- никогда не передавать bePaid token в Stripe checkout и наоборот.
+
+Это **не блокирует** L-4 PASS: первый live-платёж проводится новой картой.
+

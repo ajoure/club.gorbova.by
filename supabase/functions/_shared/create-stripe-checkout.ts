@@ -102,20 +102,16 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     return { success: false, provider: 'stripe', error: 'missing_currency' };
   }
 
-  // === Resolve Stripe account (test_mode guard parity with admin) ===
+  // === Resolve Stripe account ===
+  // SOT режима — сама запись в acquiring_connections (test_mode/live).
+  // Pre-prod guard `stripe_account_not_test_mode` снят: live-checkout разрешён,
+  // когда admin сохранил live connection через UI интеграций. test_mode остаётся
+  // в meta для телеметрии (см. ниже).
   let acct: Awaited<ReturnType<typeof resolveDefaultStripeAccount>>;
   try {
     acct = await resolveDefaultStripeAccount(supabase, account_code ?? null);
   } catch (e) {
     return { success: false, provider: 'stripe', error: e instanceof Error ? e.message : 'stripe_account_resolve_failed' };
-  }
-  if (!acct.test_mode) {
-    return {
-      success: false,
-      provider: 'stripe',
-      error: 'stripe_account_not_test_mode',
-      detail: { account_code: acct.account_code },
-    };
   }
   const resolved_account_code = acct.account_code;
 
