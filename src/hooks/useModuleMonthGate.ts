@@ -215,12 +215,14 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
         >();
 
         for (const c of candidates) {
+          if (bypassModuleIds.has(c.module_id)) continue; // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
           const rootMod = moduleRoot.get(c.module_id);
           if (!rootMod || !c.content_month) continue;
           const candidateRules = rulesByRoot.get(rootMod) || [];
           const matches = candidateRules.filter((r) =>
             moduleInRuleScope(c.module_id, r.conditions),
           );
+
           if (matches.length === 0) continue;
 
           const seenTariffs = new Set<string>();
