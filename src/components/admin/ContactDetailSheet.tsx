@@ -2315,6 +2315,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                       'Отменить'
                                     )}
                                   </Button>
+                              ) : sub.provider === 'stripe' && sub.subscription_v2_id ? (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs rounded-full"
+                                  onClick={() => {
+                                    if (window.confirm('Отменить Stripe-подписку в конце текущего периода? Доступ сохраняется до даты окончания, Telegram не отзывается.')) {
+                                      cancelStripeSubAdminMutation.mutate(sub.subscription_v2_id);
+                                    }
+                                  }}
+                                  disabled={cancelStripeSubAdminMutation.isPending}
+                                  title="Cancel at period end (Stripe)"
+                                >
+                                  {cancelStripeSubAdminMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    'Отменить (Stripe)'
+                                  )}
+                                </Button>
                               ) : (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -2329,7 +2348,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                       </Button>
                                     </span>
                                   </TooltipTrigger>
-                                  <TooltipContent>Отмена доступна только для bePaid</TooltipContent>
+                                  <TooltipContent>Провайдер {sub.provider || 'unknown'} не поддерживает отмену из админки</TooltipContent>
                                 </Tooltip>
                               )
                             )}
