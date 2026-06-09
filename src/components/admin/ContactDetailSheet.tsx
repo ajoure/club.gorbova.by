@@ -2157,15 +2157,53 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   if (meta?.inv22_provider_dead_local_active === true) return true;
                   return false;
                 };
+                // PATCH-A (2026-06-09): pending drafts (созданные ссылки / pending checkout)
+                // НЕ являются реальной подпиской и не должны отображаться в карточке контакта.
+                // Реальной считаем запись с настоящим provider_subscription_id:
+                //   • stripe → начинается с 'sub_'
+                //   • bepaid → не пусто и не 'pending:%'
+                //   • прочие → не пусто и не 'pending:%'
+                // Такие записи живут в «Платежи → Ссылки» / диагностике.
+                const isRealProviderSubscription = (sub: any): boolean => {
+                  const psid = String(sub?.provider_subscription_id ?? '').trim();
+                  if (!psid) return false;
+                  if (psid.toLowerCase().startsWith('pending:')) return false;
+                  if (sub?.provider === 'stripe' && !psid.startsWith('sub_')) return false;
+                  const sv2Status = String(sub?.subscriptions_v2?.status ?? '').toLowerCase();
+                  if (sv2Status === 'pending') return false;
+                  return true;
+                };
                 const isHealthyProviderSub = (sub: any) => {
                   if (!LIVE_PROVIDER_STATES.has(sub?.state)) return false;
                   if (isProviderDead(sub)) return false;
+                  if (!isRealProviderSubscription(sub)) return false;
                   return true;
                 };
                 const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
                 const zombieProviderSubs = allProviderSubs.filter(
-                  (s: any) => s?.provider === 'bepaid' && s?.state === 'active' && isProviderDead(s),
+                  (s: any) =>
+                    s?.provider === 'bepaid' &&
+                    s?.state === 'active' &&
+                    isRealProviderSubscription(s) &&
+                    isProviderDead(s),
                 );
+                // Русские лейблы провайдер-состояний (только для реальных подписок).
+                const PROVIDER_STATE_LABELS_RU: Record<string, string> = {
+                  active: 'Активна',
+                  trial: 'Пробный период',
+                  pending: 'Ожидает оплаты',
+                  canceled: 'Отменена',
+                  cancelled: 'Отменена',
+                  expired: 'Завершена',
+                  terminated: 'Завершена',
+                  finished: 'Завершена',
+                  failed: 'Ошибка оплаты',
+                  refunded: 'Возврат',
+                };
+                const PROVIDER_BRAND_LABELS: Record<string, string> = {
+                  stripe: 'Иностранная карта (Stripe)',
+                  bepaid: 'Белорусская карта (bePaid)',
+                };
                 return (
                   <>
                     {contact.user_id && healthyProviderSubs.length > 0 && (
