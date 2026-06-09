@@ -1,328 +1,293 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-## **1. План правильный**
+## 1. План правильный
 
-Phase 9-A должен быть только **Discovery only**. Никакой реализации до отдельного approve Phase 9-B.
-
----
-
-
-
-## **2. Уточнить**
-
-`git diff --name-only`
-
-Добавь:
-
-```md
-Ожидаемый diff:
-
-.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md
-
-Опционально:
-
-.lovable/proofs/phase_8_runtime_verify_full_v1.md
-
-Любой diff в src/, supabase/functions/, supabase/migrations/ = STOP и объяснение.
-```
+Phase 9-B можно выполнять в этом scope: **минимальная видимость / reporting**, без lifecycle, repair, миграций и новых функций.
 
 ---
 
+## 2. Главная правка: не хардкодить значения `provider_choice_source`
 
-
-## **3. Audit inventory — не ограничивать только**
-
-`LIMIT N`
-
-В разделе audit лучше указать:
-
-```md
-SELECT DISTINCT action
-FROM audit_logs
-WHERE action LIKE 'stripe.%'
-   OR action LIKE 'payment_link.%'
-   OR action LIKE 'bepaid.%'
-   OR action LIKE 'payment.%'
-   OR action LIKE 'subscription.%'
-ORDER BY action;
-```
-
-`LIMIT N` может скрыть важные actions.
-
----
-
-## **4. Provider events — добавить агрегацию по статусам**
-
-В Discovery добавить read-only summary:
-
-```sql
-SELECT
-  provider,
-  account_code,
-  event_type,
-  processing_status,
-  COUNT(*) AS cnt
-FROM provider_events
-GROUP BY provider, account_code, event_type, processing_status
-ORDER BY cnt DESC;
-```
-
-И отдельно failed/manual_review/skipped:
-
-```sql
-SELECT
-  provider,
-  account_code,
-  event_type,
-  processing_status,
-  processing_error,
-  COUNT(*) AS cnt
-FROM provider_events
-WHERE processing_status IN ('failed', 'manual_review', 'skipped')
-GROUP BY provider, account_code, event_type, processing_status, processing_error
-ORDER BY cnt DESC;
-```
-
----
-
-## **5. Gap matrix — добавить приоритет**
-
-В `Gap matrix` добавить колонку:
+В плане есть маппинг:
 
 ```text
-priority: P0 / P1 / P2
+button → По настройке кнопки
+admin / override → Admin override
+customer → Клиент выбирает
+
 ```
 
-Где:
-
-- **P0** — мешает администратору понять статус оплаты/доступа/ошибки;
-- **P1** — важно для удобства и контроля;
-- **P2** — косметика / future improvement.
-
----
-
-## **6. Phase 9-B recommendation — не смешивать Reporting и Repair**
-
-Добавить правило:
-
-```md
-Phase 9-B — только visibility/reporting.
-
-Не добавлять repair actions:
-- retry webhook;
-- regrant access;
-- force reconcile;
-- manual remap;
-- delete/orphan cleanup;
-- backfill execute.
-
-Если discovery найдёт потребность в repair-actions, оформить их отдельным future PATCH / Phase 9-C, но не включать в Phase 9-B без approve.
-```
-
----
-
-## **7. Subscriptions — зафиксировать design question**
-
-Добавить в Open questions:
-
-```md
-Нужно выбрать модель UI для подписок:
-
-A. Оставить отдельные tabs bePaid / Stripe.
-B. Сделать unified Subscriptions tab с provider filter.
-C. Оставить bePaid legacy tab и добавить Stripe visibility только в Payments/Orders.
-
-В Discovery дать рекомендацию, но не реализовывать.
-```
-
----
-
-## **8. Links visibility — добавить обязательные поля**
-
-В `payment_links` inventory обязательно проверить, отображаются ли в UI:
+Но ранее фактические значения были:
 
 ```text
-provider
-provider_mode
-provider_choice_source
-payment_type
-account_code
-stripe_currency
-business_stream
-created_by / actor
-offer_id
-tariff_id
-target contact / email
+auto | explicit
+
+```
+
+Поэтому нужно заменить на безопасную логику:
+
+```md
+Отображать способ создания ссылки по комбинации полей:
+
+- provider_choice_source='auto' → «По настройке кнопки»
+- provider_choice_source='explicit' + provider_mode='fixed' → «Admin override»
+- provider_choice_source='explicit' + provider_mode='customer_choice' → «Клиент выбирает»
+
+Не вводить новые значения `button/admin/customer`, если их нет в БД.
+
 ```
 
 ---
 
-## **9. Receipts/Documents visibility — разделить one-time и subscription**
+## 3. `provider_choice_source` не тянуть через новый RPC
 
 Добавить:
 
 ```md
-В UI gaps отдельно проверить:
+Если `provider_choice_source` лежит только в `payment_links.meta` и текущий RPC/view не отдаёт его в UI, не расширять RPC/view в Phase 9-B.
 
-Stripe one-time:
-- payments_v2.receipt_url;
-- audit stripe.receipt_materialization.applied.
+В этом случае:
+- зафиксировать gap в proof;
+- показать только доступные поля;
+- вынести расширение RPC/view в Phase 9-C / отдельный approve.
 
-Stripe subscription:
-- meta.stripe.hosted_invoice_url;
-- meta.stripe.invoice_pdf;
-- meta.stripe.stripe_invoice_id / invoice_id;
-- meta.stripe.subscription_id.
-
-bePaid:
-- payments_v2.receipt_url;
-- bePaid receipt button;
-- bePaid receipt cron status, если отображается.
 ```
 
 ---
 
-## **10. Итоговый ответ Lovable**
+## 4. Stripe invoice fields — использовать fallback по ключам
+
+В разных местах могли встречаться разные ключи:
+
+```text
+invoice_id
+stripe_invoice_id
+subscription_id
+stripe_subscription_id
+
+```
+
+Добавить:
+
+```md
+Для Stripe invoice visibility использовать фактические ключи из `payments_v2.meta.stripe`.
+
+Если встречаются оба варианта:
+- `stripe_invoice_id` / `invoice_id`;
+- `stripe_subscription_id` / `subscription_id`;
+
+показывать доступное значение, но не переписывать meta и не нормализовать данные в Phase 9-B.
+
+```
+
+---
+
+## 5. Provider events statuses — не хардкодить `skipped_duplicate`
+
+Добавить:
+
+```md
+В `StripeEventsTab` использовать фактические `processing_status` из данных.
+
+Не хардкодить только `skipped_duplicate`, если в таблице фактически используются `skipped`, `duplicate`, `manual_review`, `failed` или другие значения.
+
+В UI показать все non-success statuses, найденные в data.
+
+```
+
+---
+
+## 6. Orders — не делать новые join/RPC
+
+Добавить:
+
+```md
+Если `AdminOrdersV2` не получает Stripe invoice/payment fields из текущих данных, не добавлять новый RPC/join в Phase 9-B.
+
+Тогда:
+- показать только provider/currency/payment_link_id/payment_flow, если они уже доступны;
+- Stripe invoice/subscription visibility оставить в Payments;
+- gap по Orders вынести в proof.
+
+```
+
+---
+
+## 7. Перед Execute нужен короткий Diagnose-result
+
+Добавить между Diagnose и Execute:
+
+```md
+После Шага 0 дать короткий internal plan/update в proof:
+- какие файлы реально будут изменены;
+- какие поля реально доступны без RPC/view/migration;
+- какие пункты будут deferred;
+- подтвердить, что нет STOP-условий.
+
+Только после этого Execute.
+
+```
+
+---
+
+## 8. Итоговый ответ Lovable
 
 ```md
 План принят с правками.
 
-Phase 9-A выполняем строго как Discovery only.
+Уточнения перед выполнением:
 
-Уточнения:
+1. Не хардкодить `provider_choice_source` как `button/admin/customer`, если таких значений нет в БД.
+   Использовать фактическую модель:
+   - `auto` → «По настройке кнопки»;
+   - `explicit + fixed` → «Admin override»;
+   - `explicit + customer_choice` → «Клиент выбирает».
 
-1. Ожидаемый diff:
-   - `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`;
-   - опционально `.lovable/proofs/phase_8_runtime_verify_full_v1.md`.
-   Любой diff в `src/`, `supabase/functions/`, `supabase/migrations/` = STOP.
+2. Если `provider_choice_source` не отдаётся текущим RPC/view в UI — не расширять RPC/view в Phase 9-B. Зафиксировать gap и вынести в Phase 9-C.
 
-2. Audit inventory делать без `LIMIT N`, чтобы не потерять actions.
+3. Для Stripe invoice/subscription fields использовать фактические ключи из `payments_v2.meta.stripe`: `invoice_id` / `stripe_invoice_id`, `subscription_id` / `stripe_subscription_id`. Ничего не нормализовать в БД.
 
-3. По `provider_events` добавить агрегацию по `provider / account_code / event_type / processing_status`, отдельно failed/manual_review/skipped.
+4. В provider events не хардкодить `skipped_duplicate`; отображать фактические non-success statuses из данных.
 
-4. В Gap matrix добавить priority: P0 / P1 / P2.
+5. В Orders не добавлять новые joins/RPC. Если нужных Stripe-полей нет в текущем payload — показать только доступные поля, остальное deferred.
 
-5. Phase 9-B — только visibility/reporting. Никаких repair-actions, retry, regrant, reconcile, cleanup, backfill execute.
+6. После Diagnose зафиксировать в proof:
+   - доступные поля;
+   - финальный список файлов;
+   - deferred gaps;
+   - отсутствие STOP-условий.
 
-6. По subscriptions добавить design question:
-   - unified tab;
-   - отдельные bePaid/Stripe tabs;
-   - либо visibility только через Payments/Orders.
+7. Phase 9-B остаётся только visibility/reporting:
+   - без миграций;
+   - без новых RPC;
+   - без новых Edge Functions;
+   - без repair/retry/regrant/reconcile/backfill;
+   - без изменений checkout/webhook/grant/Telegram.
 
-7. В Links visibility обязательно проверить:
-   - provider;
-   - provider_mode;
-   - provider_choice_source;
-   - payment_type;
-   - account_code;
-   - stripe_currency;
-   - business_stream;
-   - created_by / actor;
-   - offer/tariff/contact.
+После этого можно выполнять Phase 9-B.
 
-8. Receipts/Documents visibility разделить:
-   - Stripe one-time receipt_url;
-   - Stripe subscription hosted_invoice_url / invoice_pdf / invoice_id;
-   - bePaid receipt_url.
-
-После Discovery дать отчет на русском и предложить Phase 9-B implementation plan. Phase 9-B не начинать без отдельного approve.
-
-
-План: Phase 9-A — Reporting / Admin Visibility (Discovery only)
 ```
 
-## Контекст
+## 9. Контроль следующего отчёта
 
-Phase 8 закрыт (FULL PASS). Phase 9-B не стартует без отдельного approve. Текущая задача — только discovery-файл. Никаких UI-правок, миграций, edge functions, RPC, runtime-кода.
+Принимать Phase 9-B PASS только если:
+
+- есть provider badge в Payments;
+- provider filter работает;
+- Stripe invoice/PDF видны там, где данные доступны;
+- bePaid receipt не сломан;
+- payment links показывают доступные provider/payment fields;
+- failed/manual_review/skipped provider events видны;
+- нет изменений в `supabase/functions/`, `supabase/migrations/`, lifecycle-файлах;
+- все недоступные поля честно отмечены как deferred, а не закрыты фиктивно.
+- &nbsp;
+- План: Phase 9-B — Minimal Admin Visibility / Reporting
+
+## Цель
+
+Дать админу видимость по bePaid / Stripe в существующих экранах: provider, currency, receipt/invoice/PDF, способ создания ссылки, состояние provider events. Никакого изменения lifecycle, миграций, repair-кнопок.
 
 ## Scope (строго)
 
-Разрешено:
+Разрешено: правки UI-компонентов, hooks, использование уже существующих RPC/view-полей, новые badges/filters/колонки/линки.
+Запрещено: миграции, новые edge functions, новые RPC, изменения checkout/webhook/access/grant/Telegram/reconcile, любые repair/retry/regrant/backfill/cleanup actions, новый unified subscriptions module.
 
-- read-only чтение UI-компонентов, hooks, RPC, view, edge functions через `code--view`, `rg`, `supabase--read_query`;
-- создание одного нового файла: `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`;
-- (опционально) минимальная актуализация уточнения в `.lovable/proofs/phase_8_runtime_verify_full_v1.md` ТОЛЬКО для фиксации, что `stripe.receipt_materialization.applied` является фактическим audit-action для invoice materialization (если на текущий момент этот пункт не отражён).
+## Этапы (Diagnose → Plan → Dry run → Execute → Verify)
 
-Запрещено: всё перечисленное в Phase 9 scope (lifecycle, webhooks, grant/access, Telegram, reconcile, новая архитектура, backfill execute, live Stripe, ЭСЧФ).
+### Шаг 0. Diagnose (read-only, 1 проход)
 
-## Discovery-обследование (read-only)
+Перед правками подтвердить по фактическому коду/данным:
 
-### 1. UI-инвентаризация — где сейчас показываются сущности
+- путь `provider_choice_source` в `payment_links.meta` и реально ли он попадает в `usePaymentLinks` / RPC `get_admin_payment_links_v1`;
+- наличие `payments_v2.meta.stripe.{hosted_invoice_url, invoice_pdf, invoice_id, subscription_id}` и `receipt_url`;
+- название action `payment_link.payment_type_promoted_recurring` (или его отсутствие) в `admin-create-public-link`;
+- использует ли `PaymentsTable.tsx` уже поле `provider`/валюту;
+- что отдаёт `stripe-list-events` (поля account_code, processing_status, processing_error).
+Если для нужного поля требуется миграция/новый RPC/изменение view — STOP, отдельный approve. Никаких миграций в Phase 9-B.
 
-Прочитать и зафиксировать текущее состояние:
+### Шаг 1. Payments table — provider/currency/документы
 
-- Платежи: `src/components/admin/payments/PaymentsTabContent.tsx`, `src/components/admin/payments/columns/*`, `usePaymentsServerStats`, `usePayments*`.
-- Заказы: `src/pages/admin/AdminOrders*`, `src/components/admin/orders/*`.
-- Подписки: `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`, `AutoRenewalsTabContent.tsx`, Stripe subs (если есть отдельный таб).
-- Payment links: `src/components/admin/payments/links/LinksTabContent.tsx`, `LinkDetailsDrawer.tsx`, `LinkStatusBadge.tsx`, `usePaymentLinks.ts`.
-- Provider events: `src/components/admin/integrations/StripeEventsTab.tsx`, аналог для bePaid (если есть).
-- Diagnostics: `src/components/admin/payments/DiagnosticsTabContent.tsx`, `PaymentIssuesTabContent.tsx`.
-- Audit logs: где админ может увидеть `audit_logs` записи по платежам/линкам.
+Файлы: `src/components/admin/payments/PaymentsTable.tsx`, `PaymentsFilters.tsx`, `PaymentsTabContent.tsx`, при необходимости `ReceiptStatusBadge.tsx` (только расширение, не лом).
 
-Для каждой точки указать: какой компонент, какие колонки, какие фильтры, какие badge.
+- Колонка/бейдж Provider: `bePaid` / `Stripe` из `payments_v2.provider`.
+- Колонка Currency: `BYN / EUR / USD / PLN` без пересчёта.
+- Документы (одна ячейка «Документы»):
+  - bePaid: `receipt_url` → «Чек»;
+  - Stripe one-time: `receipt_url` → «Stripe receipt»;
+  - Stripe subscription: `meta.stripe.hosted_invoice_url` → «Invoice», `meta.stripe.invoice_pdf` → «PDF»;
+  - иначе — «Документ ещё не получен».
+- Provider filter: если уже есть — только проверить и не дублировать; если значения не покрывают Stripe/bePaid — поправить в UI/hook без миграций.
 
-### 2. Поля БД — что фактически есть
+### Шаг 2. Orders — минимальная visibility
 
-Через `supabase--read_query` (read-only `information_schema` + sample row):
+Файлы: `src/pages/admin/AdminOrdersV2.tsx` и связанные строковые/детальные компоненты, без нового lifecycle.
 
-- `payments_v2`: `provider`, `status`, `currency`, `receipt_url`, `meta.stripe.{hosted_invoice_url, invoice_pdf, invoice_id, subscription_id, receipt_url}`.
-- `orders_v2`: `provider`, `meta.payment_flow`, `meta.payment_link_id`, currency.
-- `payment_links`: `provider`, `provider_mode`, `provider_choice_source`, `account_code`, `profile_code`, `business_stream`, `payment_type`.
-- `subscriptions_v2`: provider hint в `meta`, `provider_subscriptions` join.
-- `provider_events`: `account_code`, `event_type`, `processing_status`, `signature_valid`, `processing_error`.
-- `audit_logs`: action codes, относящиеся к Stripe/bePaid/payment_link (`stripe.receipt_materialization.applied`, `payment_link.payment_type_promoted_recurring`, `payment_link.payment_type_admin_override`, `stripe.invoice.paid.activated` и т.д.) — собрать актуальный список через `SELECT DISTINCT action FROM audit_logs WHERE action LIKE 'stripe.%' OR action LIKE 'payment_link.%' OR action LIKE 'bepaid.%' LIMIT N`.
-- Enriched views/RPC: `payment_links_enriched_v`, `get_admin_payment_links_v1`, `admin_get_payments_stats_v1`, `stripe-list-events` — что они уже возвращают.
+- В строке заказа/деталях показать: provider, currency, `payment_link_id` (если есть), `payment_flow` (если есть), Stripe `invoice_id` / `subscription_id` из связанного `payments_v2.meta.stripe`.
+- Никаких новых действий и репэйров.
 
-### 3. UI Gaps — что отсутствует
+### Шаг 3. Payment links — provider/способ создания/тип
 
-Для каждой gap зафиксировать: где должен быть, какое поле читать, почему важно:
+Файлы: `src/components/admin/payments/links/LinksTabContent.tsx`, `LinkDetailsDrawer.tsx`, `LinkStatusBadge.tsx` (только дополнение), `src/hooks/usePaymentLinks.ts` (только маппинг, если поле уже отдаётся RPC).
 
-- provider badge в таблице платежей/заказов/ссылок/подписок;
-- фильтр по `provider` (bepaid / stripe) в Payments, Orders, Links;
-- видимость способа создания ссылки: `provider_choice_source` (button settings / admin override / customer choice) — есть ли в `LinkDetailsDrawer`;
-- видимость currency в Payments/Orders (особенно при mixed BYN/USD/EUR);
-- видимость `account_code` / `profile_code` / `business_stream` для Stripe-платежей;
-- наличие/отсутствие receipt link для bePaid и invoice/PDF link для Stripe (one-time vs subscription);
-- webhook health: количество failed/skipped/manual_review `provider_events` за период, ссылка на конкретное событие;
-- override visibility: видно ли в карточке ссылки, что админ выбрал explicit one_time на recurring offer;
-- duplicate/orphan: видна ли таблица `provider_webhook_orphans` / `payment_reconcile_queue` админу;
-- subscription provider visibility: bePaid vs Stripe в табах подписок (сейчас есть только `BepaidSubscriptionsTabContent`).
+- В строке/драйвере показать: `provider`, `provider_mode`, `provider_choice_source` (из JSON-path подтверждённого в Шаге 0), `payment_type`, `account_code`, `profile_code`, `business_stream`, валюту, offer/tariff/контакт.
+- Отображение `provider_choice_source`:
+  - `button` → «По настройке кнопки»;
+  - `admin` / override → «Admin override»;
+  - `customer` → «Клиент выбирает».
+- Badge/warning «Разовая админская оплата по рекуррентному тарифу» — по данным самой ссылки: `provider_choice_source='admin'` (или эквивалент) + recurring offer + `payment_type='one_time'`. Audit-action — только как дополнительный proof, не как условие отображения.
+- Если `provider_choice_source` фактически не доходит до клиента — зафиксировать в proof и не показывать поле в Phase 9-B (без миграции/расширения RPC). Не вводить новые БД-поля.
 
-### 4. Рекомендация Phase 9-B (только тезисы, без реализации)
+### Шаг 4. Provider events / diagnostics (read-only)
 
-В discovery-файле:
+Файлы: `src/components/admin/integrations/StripeEventsTab.tsx`, `src/components/admin/payments/DiagnosticsTabContent.tsx`.
 
-- список конкретных UI-файлов, которые потребуют изменений в Phase 9-B;
-- список добавляемых колонок/badge/фильтров (без кода);
-- надо ли создавать новый read-only diagnostics-блок или дополнить существующий;
-- список proof, которые понадобятся в Phase 9-B (скрин Stripe-платежа с invoice link, фильтр по provider, override-флаг в LinkDetails, webhook orphan list);
-- риски и зависимости (например: разделение Stripe/bePaid subscriptions tabs vs unified tab — это design-вопрос для approve до Phase 9-B).
+- В `StripeEventsTab` добавить сводку (client-side по уже загружаемым событиям): count `failed`, `manual_review`, `skipped_duplicate`; фильтр по `processing_status` и `account_code`; показывать `processing_error` в drawer/раскрытии строки.
+- В `DiagnosticsTabContent` — короткий read-only блок «Provider events health» с цифрами (по `provider_events`, через уже существующую функцию `stripe-list-events`; если данных недостаточно — отметить в proof как deferred, без нового RPC).
+- Никаких retry/repair кнопок.
 
-## Структура discovery-файла
+### Шаг 5. Subscriptions visibility (минимум)
 
-`.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`:
+Без нового unified-модуля.
 
-```text
-1. Цель и scope
-2. UI inventory (компонент → отображаемые поля → фильтры → gaps)
-3. DB / RPC / view inventory (поле → текущее использование → доступность в UI)
-4. Audit action inventory (action → семантика → используется ли в UI)
-5. Gap matrix (gap → где → impact → recommended fix scope)
-6. Рекомендация Phase 9-B (файлы / поля / фильтры / proof)
-7. Open questions для approve перед Phase 9-B
-8. DoD Phase 9-A
-```
+- В payment details и order details показывать `meta.stripe.subscription_id`, если присутствует.
+- В StripeEventsTab фильтр/видимость subscription-related event_type (через уже доступные данные).
+- Полноценный unified subscriptions tab — backlog / Phase 9-C.
 
-## DoD Phase 9-A
+### Шаг 6. Audit (минимум)
 
-- Создан только `.lovable/discovery/phase_9_reporting_admin_visibility_inventory_v1.md`.
-- (Опционально) одна правка в `.lovable/proofs/phase_8_runtime_verify_full_v1.md` с явной фиксацией `stripe.receipt_materialization.applied` как audit-action для invoice materialization.
-- Никаких изменений в `src/`, `supabase/functions/`, `supabase/migrations/`.
-- `git diff --name-only` показывает только discovery-файл (и опционально proof-уточнение).
-- Отчёт о выполнении на русском + предложение Phase 9-B implementation plan для отдельного approve.
+- Никакого drill-down.
+- Допустимо: 1–2 последних релевантных audit-записи в драйвере платежа/ссылки, ТОЛЬКО если они уже доступны без нового RPC. Иначе — в proof пометить deferred.
 
-## Out of scope (явно)
+## Proof
 
-- Никакого UI-кода, миграций, edge functions, RPC.
-- Никаких изменений в checkout / webhooks / grant / Telegram / reconcile.
-- Phase 9-B implementation — отдельным approve.
+Создать `.lovable/proofs/phase_9_admin_visibility_v1.md` c:
+
+- diff summary и списком изменённых файлов;
+- скриншоты: Payments+provider badge; Stripe payment c invoice/PDF; bePaid payment с receipt; Link details с provider_choice_source/payment_type; Diagnostics/StripeEvents с failed/manual_review/skipped;
+- SQL-семплы строк, подтверждающие поля (read-only `supabase--read_query`);
+- freeze-confirmation: webhooks / grant-access / Telegram / reconcile / migrations — untouched; no repair actions.
+
+## Gates (DoD)
+
+P9-1 provider badge в Payments; P9-2 provider filter работает; P9-3 Stripe receipt/invoice/PDF видны; P9-4 bePaid receipt не сломан; P9-5 links показывают provider_mode/provider_choice_source/payment_type; P9-6 explicit one_time на recurring виден как admin override; P9-7 failed/manual_review/skipped видны; P9-8 Stripe subscription_id виден в payment/order details; P9-9 нет repair/retry/reconcile/backfill; P9-10 freeze соблюдён.
+
+## Технические заметки
+
+- Источники данных строго существующие: `payments_v2`, `orders_v2`, `payment_links` + RPC `get_admin_payment_links_v1`, `provider_events` (через `stripe-list-events`).
+- Если в ходе Diagnose обнаружится, что какое-то поле требует расширения RPC/view/миграции — выносим пункт в backlog Phase 9-C, в Phase 9-B этого пункта НЕ делаем.
+- Все новые лейблы/бейджи — через существующий design system (`Badge`, токены), без хардкода цветов.
+- Никаких изменений в `supabase/functions/`, `supabase/migrations/`, `src/integrations/supabase/client.ts`.
+
+## Ожидаемые зоны изменений
+
+- `src/components/admin/payments/PaymentsTable.tsx`
+- `src/components/admin/payments/PaymentsFilters.tsx` (опц.)
+- `src/components/admin/payments/PaymentsTabContent.tsx` (опц., только проброс)
+- `src/components/admin/payments/links/LinksTabContent.tsx`
+- `src/components/admin/payments/links/LinkDetailsDrawer.tsx`
+- `src/components/admin/integrations/StripeEventsTab.tsx`
+- `src/components/admin/payments/DiagnosticsTabContent.tsx`
+- `src/pages/admin/AdminOrdersV2.tsx` (+ дочерние строковые компоненты заказа)
+- `.lovable/proofs/phase_9_admin_visibility_v1.md` (новый)
+
+Фактический список финализируется после Шага 0 Diagnose и фиксируется в proof.
