@@ -121,6 +121,28 @@ export function LinkDetailsDrawer({
 
           <Separator />
 
+          {/* Phase 9-B — provider visibility (read-only, no lifecycle changes) */}
+          <DetailRow label="Провайдер" value={link.provider === "stripe" ? "Stripe" : link.provider === "bepaid" ? "bePaid" : link.provider} />
+          <DetailRow
+            label="Режим выбора провайдера"
+            value={
+              link.provider_mode === "customer_choice"
+                ? "Клиент выбирает"
+                : link.provider_mode === "fixed"
+                ? "Фиксированный провайдер"
+                : link.provider_mode
+            }
+          />
+          <DetailRow label="Acquiring account" value={link.account_code} />
+          <DetailRow label="Profile code" value={link.profile_code} />
+          <DetailRow label="Business stream" value={link.business_stream} />
+          <div className="text-[10px] text-muted-foreground italic">
+            Поле «Способ создания ссылки» (provider_choice_source) сейчас хранится только в payment_links.meta и не отдаётся текущим RPC — visibility вынесена в Phase 9-C.
+          </div>
+
+          <Separator />
+
+
           <DetailRow
             label="Получатель результата оплаты"
             value={
