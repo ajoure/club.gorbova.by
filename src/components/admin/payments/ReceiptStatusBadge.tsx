@@ -23,6 +23,8 @@ interface ReceiptStatusBadgeProps {
   isQueueItem: boolean;
   statusNormalized: string;
   providerUid?: string;
+  /** PATCH-LIVE-2: 'stripe' → не зовём bepaid-get-receipt; только открываем receipt_url. */
+  provider?: string | null;
   onRefetch?: () => void;
   className?: string;
 }
@@ -44,16 +46,29 @@ export default function ReceiptStatusBadge({
   isQueueItem,
   statusNormalized,
   providerUid,
+  provider,
   onRefetch,
   className,
 }: ReceiptStatusBadgeProps) {
   const [isLoading, setIsLoading] = useState(false);
-  
+
+  const isStripe = (provider ?? '').toLowerCase() === 'stripe';
+
   // Derive status from available data if not explicitly set
-  const derivedStatus: ReceiptStatus = receiptStatus || (receiptUrl ? 'available' : 'pending');
+  // PATCH-LIVE-2: для Stripe без receipt_url не маркируем как pending с retry —
+  // мы не зовём bepaid-get-receipt; либо чек уже есть, либо помечаем unavailable.
+  const derivedStatus: ReceiptStatus =
+    receiptStatus ||
+    (receiptUrl ? 'available' : (isStripe ? 'unavailable' : 'pending'));
   
   // Handle manual receipt fetch
   const handleFetchReceipt = async () => {
+    // PATCH-LIVE-2: Stripe receipt приходит только из webhook materialization,
+    // bepaid-get-receipt для Stripe не применим. Безопасный no-op.
+    if (isStripe) {
+      toast.info("Чек Stripe материализуется автоматически по webhook. Откройте платёж позже.");
+      return;
+    }
     if (!providerUid) {
       toast.error("Нет UID провайдера для получения чека");
       return;

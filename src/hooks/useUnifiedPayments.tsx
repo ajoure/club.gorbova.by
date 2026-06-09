@@ -206,7 +206,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
-          .eq("provider", "bepaid");
+          // PATCH-LIVE-2: грузим и bePaid, и Stripe. UI-фильтр "Провайдер" (PaymentsTabContent)
+          // применяется клиентом: all/bepaid/stripe. Stripe-платежи сейчас пишутся с
+          // origin='bepaid' (default колонки), поэтому отдельной нормализации origin не нужно —
+          // ниже OR уже включает 'bepaid' и origin IS NULL.
+          .in("provider", ["bepaid", "stripe"]);
         
         // PATCH-C1: Removed .not("paid_at", "is", null) to show processing/pending transactions
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
@@ -215,6 +219,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification", "payment_link"]);
         } else {
           // Show all non-import origins (PATCH-F: include card_verification, PATCH-PL: include payment_link)
+          // PATCH-LIVE-2: origin IS NULL допустим — на случай если для будущих Stripe-платежей origin не проставится.
           query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.eq.payment_link,origin.is.null");
         }
         
