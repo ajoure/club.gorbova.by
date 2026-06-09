@@ -370,12 +370,11 @@ export async function stripePreCreateSubscription(
     checkoutPayload['line_items[0][price_data][unit_amount]'] = String(inlineAmountMinor);
     checkoutPayload['line_items[0][price_data][recurring][interval]'] = inline_price.interval;
     checkoutPayload['line_items[0][price_data][recurring][interval_count]'] = String(inline_price.interval_count);
-    const reuseProduct = inline_price.product_id ?? stripe_product_id ?? null;
-    if (reuseProduct) {
-      checkoutPayload['line_items[0][price_data][product]'] = reuseProduct;
-    } else {
-      checkoutPayload['line_items[0][price_data][product_data][name]'] = inline_price.product_name || 'Subscription';
-    }
+    // PATCH-SUB-PRICE-2: ВСЕГДА используем product_data.name, никогда не реюзаем saved product_id.
+    // Saved id может быть test-mode, а ключ live (или наоборот) → checkout_session_create_failed.
+    // Stripe создаст inline product в нужном mode/account автоматически.
+    checkoutPayload['line_items[0][price_data][product_data][name]'] =
+      inline_price.product_name || 'Subscription';
   } else {
     checkoutPayload['line_items[0][price]'] = price_id!;
     checkoutPayload['line_items[0][quantity]'] = '1';
