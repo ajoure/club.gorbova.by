@@ -355,6 +355,9 @@ Deno.serve(async (req) => {
     // Phase 4.1 inline-проверки (STRIPE_ALLOWED_CURRENCIES + capability snapshot)
     // унифицированы внутри resolver'а.
     let resolvedAccountCode: string | null = null;
+    // PATCH-SUB-PRICE-3 (PATCH-B): snapshot для link.meta — заполняется в Stripe-subscription ветке.
+    let linkMetaStripePriceMode: 'inline_override' | null = null;
+    let linkMetaStripeRecurringSnapshot: { interval: string; interval_count: number } | null = null;
     const stripePathActive =
       provider === 'stripe' ||
       (providerMode === 'customer_choice' && effectiveAllowedProviders.includes('stripe'));
