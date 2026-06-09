@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.oneshot-stripe-webhook-diagnose-r2]
 verify_jwt = false
+
+[functions.oneshot-stripe-webhook-ensure-r2]
+verify_jwt = false
