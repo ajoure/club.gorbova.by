@@ -2222,7 +2222,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
                       const isActive = sub.state === 'active' || sub.state === 'pending';
                       const isBepaid = sub.provider === 'bepaid';
-                      const providerLabel = sub.provider === 'bepaid' ? 'bePaid' : (sub.provider || 'UNKNOWN').toUpperCase();
+                      const providerLabel =
+                        PROVIDER_BRAND_LABELS[String(sub.provider).toLowerCase()] ||
+                        (sub.provider ? sub.provider.toString() : 'Провайдер');
+                      const stateLabel =
+                        PROVIDER_STATE_LABELS_RU[String(sub.state).toLowerCase()] || 'Активна';
 
                       const nextCharge = sub.next_charge_at ?? sub.subscriptions_v2?.next_charge_at ?? null;
                       const hasAmount = sub.amount_cents != null && sub.currency;
