@@ -437,7 +437,17 @@ export async function stripePreCreateSubscription(
       provider_subscription_row_id,
       checkout_session_id: cs.id,
       account_code,
-      price_id,
+      price_id: price_id ?? null,
+      inline_price: inline_price
+        ? {
+            amount_major: inline_price.amount_major,
+            amount_minor: inlineAmountMinor,
+            currency: inline_price.currency.toUpperCase(),
+            interval: inline_price.interval,
+            interval_count: inline_price.interval_count,
+            product_id: inline_price.product_id ?? stripe_product_id ?? null,
+          }
+        : null,
       tariff_offer_id,
       business_stream,
       idempotency_key: idempotencyKey,
