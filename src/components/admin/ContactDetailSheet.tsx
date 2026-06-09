@@ -783,6 +783,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // PATCH-STRIPE-SUB-CANCEL-V1 (2026-06-09):
+  // Provider-aware Stripe subscription cancel (cancel_at_period_end only).
+  // Calls canonical edge function `stripe-subscription-action`. Access is preserved.
+  const cancelStripeSubAdminMutation = useMutation({
+    mutationFn: async (subscriptionV2Id: string) => {
+      const { data, error } = await supabase.functions.invoke('stripe-subscription-action', {
+        body: {
+          subscription_v2_id: subscriptionV2Id,
+          action: 'cancel_at_period_end',
+          dry_run: false,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.detail || data.error);
+      return data;
+    },
+    onSuccess: () => {
+      if (contact?.user_id) {
+        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
+      }
+      toast.success('Stripe-подписка будет отменена в конце периода');
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+
   // PATCH 7: Sync bePaid subscription mutation
   const syncBepaidSubMutation = useMutation({
     mutationFn: async (providerSubId: string) => {
@@ -2288,6 +2315,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                       'Отменить'
                                     )}
                                   </Button>
+                              ) : sub.provider === 'stripe' && sub.subscription_v2_id ? (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs rounded-full"
+                                  onClick={() => {
+                                    if (window.confirm('Отменить Stripe-подписку в конце текущего периода? Доступ сохраняется до даты окончания, Telegram не отзывается.')) {
+                                      cancelStripeSubAdminMutation.mutate(sub.subscription_v2_id);
+                                    }
+                                  }}
+                                  disabled={cancelStripeSubAdminMutation.isPending}
+                                  title="Cancel at period end (Stripe)"
+                                >
+                                  {cancelStripeSubAdminMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    'Отменить (Stripe)'
+                                  )}
+                                </Button>
                               ) : (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -2302,7 +2348,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                       </Button>
                                     </span>
                                   </TooltipTrigger>
-                                  <TooltipContent>Отмена доступна только для bePaid</TooltipContent>
+                                  <TooltipContent>Провайдер {sub.provider || 'unknown'} не поддерживает отмену из админки</TooltipContent>
                                 </Tooltip>
                               )
                             )}
