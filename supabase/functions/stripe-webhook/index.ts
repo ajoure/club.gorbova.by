@@ -326,6 +326,21 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'checkout.session.completed.api_latest_charge' },
             );
+            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            try {
+              if (latest && typeof latest === 'object') {
+                const card = latest?.payment_method_details?.card ?? null;
+                const card_brand = card?.brand ?? null;
+                const card_last4 = card?.last4 ?? null;
+                const card_holder = latest?.billing_details?.name ?? null;
+                if (card_brand || card_last4 || card_holder) {
+                  await supabase
+                    .from('payments_v2')
+                    .update({ card_brand, card_last4, card_holder })
+                    .eq('id', payment_id);
+                }
+              }
+            } catch { /* never re-throw */ }
           }
         }
       }
@@ -410,6 +425,21 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'pi.succeeded.api_latest_charge' },
             );
+            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            try {
+              if (latest && typeof latest === 'object') {
+                const card = latest?.payment_method_details?.card ?? null;
+                const card_brand = card?.brand ?? null;
+                const card_last4 = card?.last4 ?? null;
+                const card_holder = latest?.billing_details?.name ?? null;
+                if (card_brand || card_last4 || card_holder) {
+                  await supabase
+                    .from('payments_v2')
+                    .update({ card_brand, card_last4, card_holder })
+                    .eq('id', payment_id);
+                }
+              }
+            } catch { /* never re-throw */ }
           }
         }
       }
