@@ -212,6 +212,18 @@ function mapKnown(raw: string): string | null {
   if (s.includes("no_active_default_stripe_account")) {
     return "Оплата иностранной картой временно недоступна. Попробуйте позже или выберите другой способ.";
   }
+  if (s.includes("currency_not_supported_by_stripe_account")) {
+    return "Валюта ссылки не поддерживается выбранным платёжным аккаунтом. Свяжитесь с поддержкой.";
+  }
+  if (s.includes("offer_not_recurring_for_subscription_link")) {
+    return "Этот продукт не настроен как подписка. Обновите страницу или свяжитесь с поддержкой.";
+  }
+  if (s.includes("unsupported_recurring_period_for_inline_price")) {
+    return "Период оплаты ссылки не поддерживается. Свяжитесь с поддержкой.";
+  }
+  if (s.includes("inline_amount_invalid")) {
+    return "Некорректная сумма ссылки. Свяжитесь с поддержкой.";
+  }
   if (s.includes("could not determine subscription amount")) {
     return "Не удалось определить сумму подписки. Свяжитесь с поддержкой.";
   }

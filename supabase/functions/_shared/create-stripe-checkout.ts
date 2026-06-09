@@ -400,11 +400,46 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   }
   const offerMeta = ((offerRow as any).meta ?? {}) as Record<string, unknown>;
   const stripeOnOffer = (offerMeta.stripe ?? {}) as Record<string, unknown>;
-  const price_id = (stripeOnOffer.price_id as string | undefined) ?? null;
-  const stripe_product_id = (stripeOnOffer.product_id as string | undefined) ?? null;
-  if (!price_id) {
+  const stripeAccountsOnOffer = (stripeOnOffer.accounts ?? {}) as Record<string, { product_id?: string; price_id?: string }>;
+  const stripe_product_id =
+    (stripeAccountsOnOffer[resolved_account_code]?.product_id as string | undefined)
+    ?? (stripeOnOffer.product_id as string | undefined)
+    ?? null;
+  const offer_price_id = (stripeOnOffer.price_id as string | undefined) ?? null;
+
+  // PATCH-SUB-PRICE-1 v2 — payment_link amount/currency override parity.
+  // Если subscription checkout создаётся из payment_link, бизнес-SOT суммы —
+  // payment_links.amount/currency (caller передал amountMajor + currency).
+  // Игнорируем saved offer.meta.stripe.price_id и строим inline recurring price_data.
+  const useInlinePrice = Boolean(payment_link_id);
+
+  if (!useInlinePrice && !offer_price_id) {
     return { success: false, provider: 'stripe', error: 'stripe_price_missing_in_offer_meta' };
   }
+
+  // Резолвим recurring period из offer.meta.recurring (canonical SOT).
+  let inlineRecurring: { interval: 'day' | 'week' | 'month' | 'year'; interval_count: number } | null = null;
+  if (useInlinePrice) {
+    const rec = (offerMeta.recurring ?? {}) as Record<string, unknown>;
+    if (!rec || rec.is_recurring !== true) {
+      return { success: false, provider: 'stripe', error: 'offer_not_recurring_for_subscription_link' };
+    }
+    const periodMode = String((rec.billing_period_mode as string) || 'days').toLowerCase();
+    const periodN = Number(rec.billing_period_days ?? 0);
+    if (!Number.isFinite(periodN) || periodN <= 0) {
+      return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
+    }
+    if (periodMode === 'days') {
+      if (periodN === 30 || periodN === 31) inlineRecurring = { interval: 'month', interval_count: 1 };
+      else if (periodN === 7) inlineRecurring = { interval: 'week', interval_count: 1 };
+      else if (periodN === 365 || periodN === 366) inlineRecurring = { interval: 'year', interval_count: 1 };
+      else if (periodN <= 365) inlineRecurring = { interval: 'day', interval_count: periodN };
+      else return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
+    } else {
+      return { success: false, provider: 'stripe', error: 'unsupported_recurring_period_for_inline_price', detail: { periodMode, periodN } };
+    }
+  }
+
 
   // Replacement vs duplicate guards (same contract as bePaid subscription branch).
   if (replacement_of_subscription_v2_id) {
@@ -498,7 +533,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     return { success: false, provider: 'stripe', error: 'stripe_secret_read_failed', detail: String((e as Error)?.message ?? e) };
   }
 
-  const preResult = await stripePreCreateSubscription({
+  const sharedPreParams = {
     supabase,
     user_id,
     product_id,
@@ -512,10 +547,27 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     stripe_secret_key: secret,
     success_url: urls.success_url,
     cancel_url: urls.cancel_url,
-    price_id,
     stripe_product_id,
     actor_user_id: actor_user_id ?? null,
-  });
+  };
+  const preResult = await stripePreCreateSubscription(
+    useInlinePrice
+      ? {
+          ...sharedPreParams,
+          inline_price: {
+            amount_major: amountMajor,
+            currency: currency.toUpperCase(),
+            interval: inlineRecurring!.interval,
+            interval_count: inlineRecurring!.interval_count,
+            product_id: stripe_product_id,
+            product_name: (product as { name?: string }).name || 'Subscription',
+          },
+        }
+      : {
+          ...sharedPreParams,
+          price_id: offer_price_id!,
+        },
+  );
 
   if (!preResult.ok) {
     return {
@@ -541,6 +593,9 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       tariff_name: tariff.name,
       account_code: resolved_account_code,
       payment_link_id: payment_link_id ?? null,
+      price_source: useInlinePrice ? 'inline_payment_link' : 'offer_saved_price_id',
+      inline_amount_major: useInlinePrice ? amountMajor : null,
+      inline_currency: useInlinePrice ? currency.toUpperCase() : null,
       note: 'orders_v2_deferred_to_invoice_paid',
     },
   });

@@ -20,8 +20,30 @@
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { resolveStripeCheckoutUrls } from './public-app-host.ts';
+import { toStripeMinorUnits } from './stripe-minor-units.ts';
 
-export interface StripePreCreateSubscriptionParams {
+/**
+ * INLINE PRICE (PATCH-SUB-PRICE-1 v2):
+ * Если caller передал inline_price вместо price_id, Stripe Checkout Session
+ * создаётся с line_items[0][price_data][...] — recurring price строится прямо
+ * под конкретную payment_link.amount/currency. saved tariff_offers.meta.stripe.price_id
+ * НЕ используется и НЕ retrieve'ится (drift-check скипается).
+ *
+ * Это нужно для parity с bePaid/e-clearing/Pay payment links: бизнес-SOT суммы =
+ * payment_links.amount/currency, а не глобальная цена offer.
+ */
+export interface InlineStripePriceInput {
+  amount_major: number;
+  currency: string; // 3-letter, UPPER
+  interval: 'day' | 'week' | 'month' | 'year';
+  interval_count: number;
+  /** prod_… — если уже есть в Stripe account, reuse чтобы не плодить лишних Stripe Products. */
+  product_id?: string | null;
+  /** Используется только если product_id не передан (Stripe создаст on-the-fly product). */
+  product_name?: string;
+}
+
+export type StripePreCreateSubscriptionParams = {
   supabase: SupabaseClient;
   user_id: string;
   product_id: string;
@@ -39,12 +61,22 @@ export interface StripePreCreateSubscriptionParams {
   stripe_secret_key: string;
   success_url: string;
   cancel_url: string;
-  /** Цены/продукта price_id и stripe_product_id — резолвит вызывающий из tariff_offers.meta.stripe. */
-  price_id: string;
-  stripe_product_id: string | null;
   /** Опциональный actor_user_id для audit_logs (admin-функция передаёт user.user_id; public — null). */
   actor_user_id: string | null;
-}
+  /** stripe_product_id из offer.meta.stripe — для inline path можно использовать как price_data[product]. */
+  stripe_product_id: string | null;
+} & (
+  | {
+      /** Canonical saved Stripe price — drift-check выполняется. */
+      price_id: string;
+      inline_price?: undefined;
+    }
+  | {
+      /** Inline custom price_data — для payment_link override. drift-check скипается. */
+      price_id?: undefined;
+      inline_price: InlineStripePriceInput;
+    }
+);
 
 export interface StripePreCreateSubscriptionSuccess {
   ok: true;
@@ -154,12 +186,58 @@ export async function stripePreCreateSubscription(
     stripe_secret_key,
     success_url,
     cancel_url,
-    price_id,
     stripe_product_id,
     actor_user_id,
   } = params;
+  const price_id = (params as { price_id?: string }).price_id ?? null;
+  const inline_price = (params as { inline_price?: InlineStripePriceInput }).inline_price ?? null;
+
+  if (!price_id && !inline_price) {
+    return { ok: false, error: 'missing_price_input' };
+  }
+  if (price_id && inline_price) {
+    return { ok: false, error: 'conflicting_price_inputs' };
+  }
+
+  // Precompute inline amount in minor units (fail fast before any DB write).
+  let inlineAmountMinor: number | null = null;
+  let inlineCurrencyLower: string | null = null;
+  if (inline_price) {
+    try {
+      inlineAmountMinor = toStripeMinorUnits(inline_price.amount_major, inline_price.currency);
+    } catch (e) {
+      return {
+        ok: false,
+        error: 'inline_amount_invalid',
+        detail: e instanceof Error ? e.message : String(e),
+      };
+    }
+    inlineCurrencyLower = String(inline_price.currency).toLowerCase();
+  }
 
   // ---- 1) Pre-create subscriptions_v2(pending) ----
+  const stripeMetaSnapshot: Record<string, unknown> = inline_price
+    ? {
+        account_code,
+        price_id: null,
+        product_id: inline_price.product_id ?? stripe_product_id ?? null,
+        tariff_offer_id,
+        inline_price: {
+          amount_major: inline_price.amount_major,
+          amount_minor: inlineAmountMinor,
+          currency: inline_price.currency.toUpperCase(),
+          interval: inline_price.interval,
+          interval_count: inline_price.interval_count,
+          source: 'payment_link',
+        },
+      }
+    : {
+        account_code,
+        price_id,
+        product_id: stripe_product_id,
+        tariff_offer_id,
+      };
+
   const subInsert = {
     user_id,
     product_id,
@@ -169,12 +247,7 @@ export async function stripePreCreateSubscription(
     auto_renew: false,
     access_start_at: new Date().toISOString(),
     meta: {
-      stripe: {
-        account_code,
-        price_id,
-        product_id: stripe_product_id,
-        tariff_offer_id,
-      },
+      stripe: stripeMetaSnapshot,
       business_stream,
       lifecycle: {
         created_by: lifecycle_created_by,
@@ -203,14 +276,9 @@ export async function stripePreCreateSubscription(
     user_id,
     subscription_v2_id,
     state: 'pending',
-    currency: 'BYN',
+    currency: inline_price ? inline_price.currency.toUpperCase() : 'BYN',
     meta: {
-      stripe: {
-        account_code,
-        price_id,
-        product_id: stripe_product_id,
-        tariff_offer_id,
-      },
+      stripe: stripeMetaSnapshot,
       stage: 'pending_pre_create',
       business_stream,
       ...(payment_link_id ? { payment_link_id } : {}),
@@ -227,20 +295,23 @@ export async function stripePreCreateSubscription(
   }
   const provider_subscription_row_id = (provCreated as any).id as string;
 
-  // ---- 3) Drift-check price (active + test + recurring) ----
-  const priceCheck = await stripeGet(stripe_secret_key, `prices/${price_id}`);
-  if (!priceCheck.ok) {
-    await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'price_retrieve_failed', actor_user_id, lifecycle_created_by);
-    return { ok: false, error: 'price_retrieve_failed', stripe_error: priceCheck.data, rollback_done: true };
-  }
-  const p = priceCheck.data;
-  const drift: string[] = [];
-  if (!p.active) drift.push('inactive');
-  if (p.livemode !== false) drift.push('livemode');
-  if (!p.recurring) drift.push('not_recurring');
-  if (drift.length > 0) {
-    await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'price_drift', actor_user_id, lifecycle_created_by);
-    return { ok: false, error: 'price_drift_detected', detail: { drift }, rollback_done: true };
+  // ---- 3) Drift-check price (only for saved price_id path) ----
+  if (price_id) {
+    const priceCheck = await stripeGet(stripe_secret_key, `prices/${price_id}`);
+    if (!priceCheck.ok) {
+      await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'price_retrieve_failed', actor_user_id, lifecycle_created_by);
+      return { ok: false, error: 'price_retrieve_failed', stripe_error: priceCheck.data, rollback_done: true };
+    }
+    const p = priceCheck.data;
+    const drift: string[] = [];
+    if (!p.active) drift.push('inactive');
+    // NOTE: drift на livemode сохраняется как в исходной логике (legacy test offers).
+    if (p.livemode !== false) drift.push('livemode');
+    if (!p.recurring) drift.push('not_recurring');
+    if (drift.length > 0) {
+      await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'price_drift', actor_user_id, lifecycle_created_by);
+      return { ok: false, error: 'price_drift_detected', detail: { drift }, rollback_done: true };
+    }
   }
 
   // ---- 4) Stripe Checkout Session create (mode=subscription) ----
@@ -253,7 +324,7 @@ export async function stripePreCreateSubscription(
     'metadata[tariff_id]': tariff_id,
     'metadata[account_code]': account_code,
     'metadata[business_stream]': business_stream ?? '',
-    'metadata[price_id]': price_id,
+    'metadata[price_id]': price_id ?? '',
     'subscription_data[metadata][subscription_v2_id]': subscription_v2_id,
     'subscription_data[metadata][provider_subscription_row_id]': provider_subscription_row_id,
     'subscription_data[metadata][tariff_offer_id]': tariff_offer_id,
@@ -261,8 +332,23 @@ export async function stripePreCreateSubscription(
     'subscription_data[metadata][tariff_id]': tariff_id,
     'subscription_data[metadata][account_code]': account_code,
     'subscription_data[metadata][business_stream]': business_stream ?? '',
-    'subscription_data[metadata][price_id]': price_id,
+    'subscription_data[metadata][price_id]': price_id ?? '',
   };
+  if (inline_price) {
+    const inlineMeta: Record<string, string> = {
+      'metadata[inline_price]': '1',
+      'metadata[inline_amount_minor]': String(inlineAmountMinor),
+      'metadata[inline_currency]': inline_price.currency.toUpperCase(),
+      'metadata[inline_interval]': inline_price.interval,
+      'metadata[inline_interval_count]': String(inline_price.interval_count),
+      'subscription_data[metadata][inline_price]': '1',
+      'subscription_data[metadata][inline_amount_minor]': String(inlineAmountMinor),
+      'subscription_data[metadata][inline_currency]': inline_price.currency.toUpperCase(),
+      'subscription_data[metadata][inline_interval]': inline_price.interval,
+      'subscription_data[metadata][inline_interval_count]': String(inline_price.interval_count),
+    };
+    Object.assign(metaForm, inlineMeta);
+  }
   if (payment_link_id) {
     metaForm['metadata[payment_link_id]'] = payment_link_id;
     metaForm['subscription_data[metadata][payment_link_id]'] = payment_link_id;
@@ -270,19 +356,40 @@ export async function stripePreCreateSubscription(
 
   const checkoutPayload: Record<string, string> = {
     mode: 'subscription',
-    'line_items[0][price]': price_id,
-    'line_items[0][quantity]': '1',
     client_reference_id: subscription_v2_id,
     success_url,
     cancel_url,
     ...metaForm,
   };
+  if (inline_price) {
+    checkoutPayload['line_items[0][quantity]'] = '1';
+    checkoutPayload['line_items[0][price_data][currency]'] = inlineCurrencyLower!;
+    checkoutPayload['line_items[0][price_data][unit_amount]'] = String(inlineAmountMinor);
+    checkoutPayload['line_items[0][price_data][recurring][interval]'] = inline_price.interval;
+    checkoutPayload['line_items[0][price_data][recurring][interval_count]'] = String(inline_price.interval_count);
+    const reuseProduct = inline_price.product_id ?? stripe_product_id ?? null;
+    if (reuseProduct) {
+      checkoutPayload['line_items[0][price_data][product]'] = reuseProduct;
+    } else {
+      checkoutPayload['line_items[0][price_data][product_data][name]'] = inline_price.product_name || 'Subscription';
+    }
+  } else {
+    checkoutPayload['line_items[0][price]'] = price_id!;
+    checkoutPayload['line_items[0][quantity]'] = '1';
+  }
   if (customer_email) checkoutPayload.customer_email = customer_email;
 
   const csRes = await stripeForm(stripe_secret_key, 'checkout/sessions', checkoutPayload, idempotencyKey);
   if (!csRes.ok) {
     await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'checkout_session_failed', actor_user_id, lifecycle_created_by);
-    return { ok: false, error: 'checkout_session_create_failed', stripe_error: csRes.data, rollback_done: true };
+    // Маппим Stripe 400 на currency mismatch в понятный код.
+    const stripeMsg = String(csRes.data?.error?.message || '').toLowerCase();
+    const stripeCode = String(csRes.data?.error?.code || '');
+    let mappedError = 'checkout_session_create_failed';
+    if (stripeMsg.includes('currency') && (stripeMsg.includes('support') || stripeMsg.includes('not') || stripeCode === 'currency_not_supported')) {
+      mappedError = 'currency_not_supported_by_stripe_account';
+    }
+    return { ok: false, error: mappedError, stripe_error: csRes.data, rollback_done: true };
   }
   const cs = csRes.data;
 
@@ -330,7 +437,17 @@ export async function stripePreCreateSubscription(
       provider_subscription_row_id,
       checkout_session_id: cs.id,
       account_code,
-      price_id,
+      price_id: price_id ?? null,
+      inline_price: inline_price
+        ? {
+            amount_major: inline_price.amount_major,
+            amount_minor: inlineAmountMinor,
+            currency: inline_price.currency.toUpperCase(),
+            interval: inline_price.interval,
+            interval_count: inline_price.interval_count,
+            product_id: inline_price.product_id ?? stripe_product_id ?? null,
+          }
+        : null,
       tariff_offer_id,
       business_stream,
       idempotency_key: idempotencyKey,
