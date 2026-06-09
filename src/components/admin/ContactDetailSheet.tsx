@@ -783,6 +783,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // PATCH-STRIPE-SUB-CANCEL-V1 (2026-06-09):
+  // Provider-aware Stripe subscription cancel (cancel_at_period_end only).
+  // Calls canonical edge function `stripe-subscription-action`. Access is preserved.
+  const cancelStripeSubAdminMutation = useMutation({
+    mutationFn: async (subscriptionV2Id: string) => {
+      const { data, error } = await supabase.functions.invoke('stripe-subscription-action', {
+        body: {
+          subscription_v2_id: subscriptionV2Id,
+          action: 'cancel_at_period_end',
+          dry_run: false,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.detail || data.error);
+      return data;
+    },
+    onSuccess: () => {
+      if (contact?.user_id) {
+        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
+      }
+      toast.success('Stripe-подписка будет отменена в конце периода');
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+
   // PATCH 7: Sync bePaid subscription mutation
   const syncBepaidSubMutation = useMutation({
     mutationFn: async (providerSubId: string) => {
