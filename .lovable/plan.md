@@ -273,3 +273,14 @@ Proof = PASS только если все 8 блоков отмечены PASS (
 1. **Stripe test mode**: использовать существующий sandbox account_code (если настроен в `provider_profiles`), или Block 2/3 пометить `manual_test_pending` для ручного прогона пользователем?
 2. **bePaid test card**: использовать тестовый профиль bePaid из env, или Block 1 тоже `manual_test_pending`?
 3. **Screenshots**: brower-tool для preview URL `/admin/payments` (требуется dev-login `123456`) — выполнить автоматически или приложить инструкцию для ручной проверки?
+
+---
+
+## Phase 10 — Final Regression: PASS (2026-06-09)
+
+- Proof: `.lovable/proofs/phase_10_final_regression_v1.md`
+- Backlog: `.lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md`
+- Diff: только proof + backlog + plan (см. proof §Diff confirmation)
+- Verdict: bePaid не сломан, Stripe one-time + subscription работают, provider_events 0 дублей, admin reporting корректен, Telegram/access без дублей.
+
+Stripe Master Sprint завершён. Остаток — Phase 9-C backlog.
