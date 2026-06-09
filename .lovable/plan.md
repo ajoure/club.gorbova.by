@@ -1,134 +1,105 @@
 ## да, согласен, с учетом правок:
 
-## **1. По open questions — решения**
+## **1. План правильный**
 
-```md
-1. Stripe test mode:
-Использовать существующий sandbox/test-mode account_code `stripe_poland`.
-Block 2/3 не помечать manual_test_pending, если test-mode Stripe уже работает и Phase 8 проходил через test card.
+Диагноз корректный: `stripe_account_not_test_mode` был временным pre-prod guard и теперь блокирует нормальный live-flow. Его нужно удалить в обоих местах.
 
-2. bePaid:
-Не делать реальный bePaid платёж, если для него нет безопасного sandbox/test профиля.
-Для Block 1 достаточно regression smoke без оплаты:
-- ссылка создаётся;
-- checkout открывается;
-- bePaid provider/profile корректный;
-- существующий bePaid receipt/payment не сломан в UI;
-- существующие bePaid webhook/payment данные читаются.
-Если есть безопасный bePaid test profile — можно прогнать полный тест.
+Ключевой принцип верный:
 
-3. Screenshots:
-Выполнять автоматически через preview/dev login `123456`.
-Не перекладывать скриншоты на пользователя.
+```text
+SOT режима Stripe = acquiring_connections.test_mode
+```
+
+Если connection live (`test_mode=false`) и она активна, checkout должен быть разрешён.
+
+---
+
+## **2. Важная правка: это не Phase L-3, а PATCH перед L-4**
+
+Proof лучше назвать не `phase_L3...`, чтобы не путать с L-3 subscriptions UI.
+
+Заменить:
+
+```text
+.lovable/proofs/phase_L3_unblock_live_stripe_guard_v1.md
+```
+
+на:
+
+```text
+.lovable/proofs/live_stripe_unblock_live_guard_v1.md
+```
+
+И статус:
+
+```text
+PATCH-LIVE-1 — unblock live Stripe guard
 ```
 
 ---
 
-## **2. Важная правка: Phase 10 не должен требовать новых реальных bePaid оплат**
+## **3. Добавить проверку, что удаляется только guard, а не test-mode telemetry**
 
-В плане сейчас Block 1 звучит как создание и оплата bePaid one-time. Это может быть лишним риском.
+В proof обязательно показать, что удалён только запрет:
 
-Заменить на:
+```text
+if (!acct.test_mode) return stripe_account_not_test_mode
+```
 
-```md
-Block 1 — bePaid regression
+Но сохранены:
 
-Цель: доказать, что bePaid flow не сломан.
+- `meta.test_mode`;
+- `account_code`;
+- `livemode` handling в webhook;
+- telemetry/debug fields.
 
-Если есть безопасный bePaid sandbox/test card:
-- создать bePaid one-time link;
-- пройти checkout;
-- проверить webhook/payment/receipt/access.
+То есть мы не стираем различие test/live, а только разрешаем live checkout.
 
-Если безопасного bePaid sandbox нет:
-- создать bePaid link;
-- проверить, что checkout открывается;
-- проверить existing successful bePaid payment:
-  - payments_v2.provider='bepaid';
-  - receipt_url есть;
-  - UI показывает чек;
-  - access/grant по старым данным не сломан;
-- статус блока: PASS (smoke + existing data regression), без manual_test_pending.
+---
+
+## **4. Subscription checkout тоже обязательно исправить**
+
+План правильно включает:
+
+```text
+stripe-create-subscription-checkout/index.ts
+```
+
+Это важно, иначе one-time live заработает, а live subscription снова упадёт.
+
+Добавить в DoD:
+
+```text
+Live subscription checkout no longer fails with stripe_account_not_test_mode
 ```
 
 ---
 
-## **3. Block 6 replay — не делать destructive replay**
+## **5. Saved cards — правильно вынести отдельно**
 
-В плане есть:
+Да, saved card compatibility не блокирует L-4.
 
-повторный webhook с тем же event_id → skipped_duplicate
+Но в backlog формулировка должна быть конкретной:
 
-Уточнить:
-
-```md
-Replay делать только если он уже доказан безопасным и выполняется в test-mode.
-
-Если replay требует вмешательства в webhook delivery или может затронуть lifecycle:
-- не выполнять;
-- использовать уже существующие duplicate/skipped records или code-path proof;
-- проверить SQL на отсутствие дублей provider_events/orders/payments/subscriptions.
-```
-
-Не нужно снова рисковать ради доказательства, которое уже проверялось.
-
----
-
-## **4. Block 7 Telegram — не требовать реальный Telegram DM как blocker**
-
-Добавить:
-
-```md
-Telegram проверять через audit/queue/status, без требования фактического получения DM пользователем.
-
-PASS, если:
-- grant вызван один раз;
-- telegram queue/access rows без дублей;
-- revoke не появился;
-- audit показывает успешный путь.
+```text
+PATCH Saved Cards / Stripe Live:
+- определить источник saved card на /pay/:token;
+- если card_profile_links/bePaid token — не показывать как доступную для Stripe;
+- если Stripe payment_method — разрешить оплату и SCA/3DS;
+- добавить provider badge у сохранённой карты;
+- не смешивать bePaid token и Stripe payment_method.
 ```
 
 ---
 
-## **5. Proof PASS/SKIPPED формулировка**
+## **6. После unblock не использовать старую BYN-ссылку как единственный тест**
 
-Сейчас написано:
+Текущая ссылка уже создана и может иметь старый state. После деплоя лучше:
 
-PASS только если все 8 блоков PASS или explicit SKIPPED…
+1. проверить, что старая ссылка больше не показывает `stripe_account_not_test_mode`;
+2. но для L-4 PASS создать **новую live Stripe one-time ссылку** через актуальный flow.
 
-Лучше так:
-
-```md
-Phase 10 PASS допускается при:
-- PASS по всем критическим блокам;
-- SKIPPED только для внешне-зависимых действий, где есть безопасное обоснование и existing-data regression proof.
-
-SKIPPED не допускается для:
-- Stripe one-time;
-- Stripe subscription;
-- provider_events duplicates;
-- admin reporting visibility;
-если sandbox/test-mode уже доступен.
-```
-
-То есть Stripe блоки сейчас должны быть **PASS**, а не skipped.
-
----
-
-## **6. Добавить no-data-mutation контроль**
-
-В proof добавить обязательный diff/check:
-
-```md
-git diff --name-only
-
-Ожидаемые файлы:
-- .lovable/proofs/phase_10_final_regression_v1.md
-- .lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md
-- .lovable/plan.md
-
-Любой diff в src/, supabase/functions/, supabase/migrations/ = FAIL/STOP.
-```
+Так proof будет чистым.
 
 ---
 
@@ -137,150 +108,198 @@ git diff --name-only
 ```md
 План принят с правками.
 
-Решения по open questions:
+Approve на build.
 
-1. Stripe test mode:
-   - использовать существующий `stripe_poland` / test-mode;
-   - Blocks 2/3 должны быть runtime PASS, не manual_test_pending.
+Что делаем:
 
-2. bePaid:
-   - если есть безопасный bePaid sandbox/test profile — можно выполнить полный test checkout;
-   - если нет — не делать рискованный платёж, а закрыть Block 1 через link-open smoke + existing successful bePaid payment regression + UI receipt proof.
+1. Удалить pre-prod guard `stripe_account_not_test_mode` в двух местах:
+   - `supabase/functions/_shared/create-stripe-checkout.ts`;
+   - `supabase/functions/stripe-create-subscription-checkout/index.ts`.
 
-3. Screenshots:
-   - делать автоматически через preview/dev login `123456`;
-   - не перекладывать на пользователя.
+2. Не добавлять env-флаги.
+   SOT режима — `acquiring_connections.test_mode`.
 
-Правки к плану:
+3. Не трогать:
+   - `stripe-webhook`;
+   - bePaid;
+   - card_profile_links;
+   - saved-card flow;
+   - tariff_offers;
+   - secrets/Vault;
+   - webhook endpoint.
 
-1. Block 1 bePaid не должен требовать реального bePaid платежа без sandbox.
-2. Block 6 replay делать только если безопасно; иначе existing duplicate/code-path proof.
-3. Telegram проверять через audit/queue/status, не через фактический DM.
-4. Stripe Blocks 2/3 не SKIPPED, если test-mode работает.
-5. Expected diff только:
-   - `.lovable/proofs/phase_10_final_regression_v1.md`;
-   - `.lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md`;
-   - `.lovable/plan.md`.
-6. Любой diff в `src/`, `supabase/functions/`, `supabase/migrations/` = STOP.
+4. Сохранить telemetry:
+   - `meta.test_mode`;
+   - `account_code`;
+   - live/test routing;
+   - webhook livemode logging.
 
-Можно начинать Phase 10 Final Regression.
+5. Proof назвать:
+
+```text
+.lovable/proofs/live_stripe_unblock_live_guard_v1.md
 ```
 
-## **8. Что останется после Phase 10**
+6. Backlog saved cards обновить:
 
-Если Phase 10 будет PASS, Stripe Master Sprint можно закрывать как завершённый, а остатки вынести в backlog:
+```text
+.lovable/backlog/stripe_saved_pm_followup.md
+```
 
-- Phase 9-C: `provider_choice_source` в RPC/UI;
-- full Stripe subscriptions visibility;
-- audit drill-down;
-- repair/retry/reconcile actions — только отдельным спринтом;
-- live Stripe readiness — отдельный gate перед production.
-- &nbsp;
-- План: Phase 10 — Final Regression (Stripe Master Sprint)
+7. После deploy:
+  - проверить, что ошибка `stripe_account_not_test_mode` исчезла;
+  - создать новую live Stripe one-time ссылку;
+  - пользователь оплачивает реальной картой;
+  - выполнить SQL verify;
+  - закрыть L-2 + L-4.
+8. Для L-4 разрешены валюты:
 
-Цель — выполнить финальный регрессионный прогон по всем 8 блокам checklist'а и зафиксировать результат в едином proof. Никаких runtime-изменений, миграций, новых функций, repair/retry/backfill. Только verify + read-only SQL + UI screenshots + audit checks.
+```text
+BYN / EUR / PLN / USD
+```
 
----
+Не блокировать BYN на уровне приложения.
 
-### Scope freeze (заявлен в начале proof)
+9. L-4 PASS только после реального live payment:
+  - `provider_events.livemode=true`;
+  - `signature_valid=true`;
+  - `processing_status='processed'`;
+  - `payments_v2.provider='stripe'`;
+  - `receipt_url` заполнен;
+  - order/contact/profile связаны;
+  - entitlement создан один раз;
+  - платеж виден в `/admin/payments`;
+  - bePaid untouched.
 
-- ❌ `supabase/functions/` — не трогать
-- ❌ `supabase/migrations/` — не трогать
-- ❌ webhook/grant/Telegram/reconcile lifecycle — не трогать
-- ❌ repair / retry / regrant / backfill execute — не запускать
-- ❌ новые UI-компоненты/фичи
-- ✅ только тестовые оплаты, read-only SQL, screenshots, чтение audit/provider_events
-- ✅ обновление backlog и единственный новый файл — proof
+Начинай build.
 
-### Артефакты
+```
+## 8. Контроль следующего отчёта
 
-1. `**.lovable/proofs/phase_10_final_regression_v1.md**` — единый proof по 8 блокам.
-2. `**.lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md**` — фиксация Phase 9-C deferred (provider_choice_source в RPC/UI, full Stripe subscriptions module).
-3. Обновление `.lovable/plan.md` (Phase 9-B = PASS, Phase 9-C = BACKLOG, Phase 10 = IN PROGRESS → PASS).
+Не принимать L-4 PASS только по факту удаления guard. Нужно:
 
-Никаких других файлов не создаётся и не редактируется.
+- реальная оплата;
+- live webhook;
+- запись в `payments_v2`;
+- receipt;
+- доступ;
+- отображение в админке.
 
-### Структура proof (по блокам)
+План: Unblock Live Stripe Guard (L-4 prerequisite)
+```
 
-Каждый блок содержит: список ID (link/order/payment/subscription), SQL before/after (read-only `supabase--read_query`), audit rows, provider_events rows, screenshot UI (через preview), verdict PASS/FAIL/SKIPPED + причина.
+### Diagnose
 
-**Block 1 — bePaid regression**
+`rg "stripe_account_not_test_mode"` нашёл guard ровно в двух местах:
 
-- Создание bePaid one-time payment link через UI.
-- Test checkout (test card) или skip с пометкой `manual_test_pending` если требуется реальный платёж.
-- Проверка: `orders_v2` + `payments_v2.receipt_url` + audit `bepaid.webhook.*` + Telegram grant audit.
+1. `supabase/functions/_shared/create-stripe-checkout.ts` — строки 105–119 (one-time checkout через `public-checkout`/`create-payment-checkout` → adapter).
+2. `supabase/functions/stripe-create-subscription-checkout/index.ts` — строки 108–112 (admin/super_admin subscription checkout).
 
-**Block 2 — Stripe one-time**
+Оба guard-а написаны как «pre-prod ограничитель» в момент, когда живых ключей в системе не было:
 
-- Создание Stripe explicit `one_time` link.
-- Checkout `mode=payment`, PaymentIntent проходит (Stripe test mode / sandbox).
-- Verify: `payments_v2.meta.stripe.receipt_url`, audit `stripe.receipt_materialization.applied`, access grant.
-- UI screenshot: Payments table показывает `Stripe` badge + Stripe receipt link.
+```ts
+if (!acct.test_mode) {
+  return { error: 'stripe_account_not_test_mode', ... };
+}
+```
 
-**Block 3 — Stripe subscription**
+SOT режима — сама запись в `acquiring_connections` (`provider='stripe'`, `account_code='stripe_poland'`, `status='active'`, `test_mode=false`). После Phase L-1 в проде записана **live** connection, поэтому guard теперь блокирует именно тот flow, ради которого включали live.
 
-- Создание Stripe explicit `subscription` link.
-- Checkout `mode=subscription`, `invoice.paid` приходит.
-- Verify: `subscriptions_v2` + `payments_v2.meta.stripe.{hosted_invoice_url, invoice_pdf, invoice_id, subscription_id}` + audit `stripe.receipt_materialization.applied`.
-- UI screenshot: Payments table показывает Invoice / PDF links.
+`resolveDefaultStripeAccount` возвращает `test_mode` как есть (не зависит от guard). Значение продолжит писаться в `meta` (`create-stripe-checkout.ts:157`, `stripe-create-subscription-checkout/index.ts:202`) — телеметрия не теряется. Никаких других мест, где `test_mode` влияет на бизнес-решение, нет: `stripe-webhook` читает `account_code, status, test_mode` только для логирования/маршрутизации.
 
-**Block 4 — Admin override matrix**
+### Принцип исправления
 
-- recurring offer + explicit `one_time` → остаётся one_time (verify через `payment_links.meta.payment_type_admin_override`).
-- recurring offer + explicit `subscription` → остаётся subscription.
-- auto + recurring → subscription.
-- Verify: `tariff_offers.meta.acquiring` не изменён (SELECT before/after).
+Connection — источник истины. Если admin сохранил live connection через UI интеграций (`/admin/integrations/payments`) и поставил её `is_default=true`, то checkout через эту connection разрешён. Если сохранена sandbox connection — checkout идёт в sandbox. Никакого env-флага не нужно: `acquiring_connections.test_mode` уже корректно отделяет два мира.
 
-**Block 5 — Customer choice**
+### Изменения кода (только два места, add-only логика на стороне webhook не трогается)
 
-- customer_choice multi → UI показывает выбор провайдеров.
-- single-provider auto-select → автоматический выбор без UI.
-- empty allowed providers → понятная ошибка (нормализованная через `normalizeEdgeFunctionError`).
+**1) `supabase/functions/_shared/create-stripe-checkout.ts**` — удалить блок строк 112–119 (guard `if (!acct.test_mode) { ... }`). Комментарий 105 переписать: «Resolve Stripe account (SOT = acquiring_connections; test_mode/live определяется самой connection)». Поле `meta.test_mode = acct.test_mode` (строка 157) остаётся как есть.
 
-**Block 6 — Provider events idempotency**
+**2) `supabase/functions/stripe-create-subscription-checkout/index.ts**` — удалить блок строк 110–112. Комментарий 108 переписать в том же духе. `meta.test_mode` на строке 202 остаётся.
 
-- SQL: `SELECT count(*), event_id FROM provider_events GROUP BY event_id HAVING count(*) > 1` (ожидается 0).
-- Verify: failed / manual_review / skipped_duplicate видны в `StripeEventsTab`.
-- Replay-сценарий: повторный webhook с тем же `event_id` → `skipped_duplicate`, нет новых orders.
+bePaid, `stripe-webhook`, `public-checkout` (resolver), `CustomerProviderChoice`, `card_profile_links`, `tariff_offers.meta.acquiring` — **не трогаем**. Никаких миграций, никаких массовых UPDATE по офферам, никаких изменений секретов.
 
-**Block 7 — Access / CRM / Telegram**
+### Saved cards — вне scope L-4
 
-- SQL чек: `orders_v2` ↔ `contacts` / `profiles`; `payments_v2.order_id`; `subscriptions_v2.order_id`.
-- Access grant ровно один раз: `entitlements` rows count по тестовому order_id.
-- Telegram: `telegram_access_queue` нет дублей; audit `telegram-grant-access` PASS.
+Карта VISA на `/pay/:token` — отдельный вопрос совместимости (Stripe payment method vs `card_profile_links`/bePaid token). Под этот патч НЕ попадает. Если новая карта проходит live Stripe — L-4 закрывается как PASS. Saved-card compatibility выносится отдельным PATCH в `.lovable/backlog/stripe_saved_pm_followup.md` (файл уже существует) — туда добавлю строку про проверку фильтрации saved cards в UI оплаты.
 
-**Block 8 — Admin reporting (Phase 9-B UI)**
+### Verify (после деплоя двух функций)
 
-- Screenshot: `/admin/payments` — bePaid badge, Stripe badge, Stripe Invoice/PDF links, bePaid receipt link.
-- Screenshot: `/admin/payments/links` → LinkDetailsDrawer показывает provider/provider_mode/account_code/profile_code/business_stream.
-- Screenshot: StripeEventsTab — health summary + filters работают.
+1. Открыть существующую ссылку `/pay/:token` (или создать новую — см. ниже). Ошибки `stripe_account_not_test_mode` быть не должно. Кнопка оплаты активна.
+2. Если ошибка ещё видна — проверить `supabase--edge_function_logs` для `public-checkout` и `stripe-create-subscription-checkout`.
 
-### Deferred (зафиксировать в backlog)
+### Создание live one-time ссылки для теста (после unblock)
 
-В `.lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md`:
+Через существующий канон — `admin-create-public-link` с admin override:
 
-- расширить `get_admin_payment_links_v1` / view для `provider_choice_source`;
-- показать auto / explicit / customer_choice в UI;
-- показать explicit one_time recurring как admin override badge;
-- решить модель Stripe subscriptions visibility (unified tab vs separate vs payment/order-only).
+```
+contact: Федорчук Сергей (7500084@gmail.com)
+provider: stripe
+account_code: stripe_poland
+payment_type: one_time
+currency: BYN | EUR | PLN  ← решает админ; default-кандидат EUR 1.00 как минимальная безопасная
+amount: minimal
+offer: безопасный one-time (вебинар со скрина — если у него есть pay_now offer с stripe в allowed_payment_providers; иначе подобрать другой)
+```
 
-### DoD Phase 10
+Ссылка отдаётся пользователю → оплата **новой** картой (saved card может быть несовместима, это отдельный PATCH).
 
-Proof = PASS только если все 8 блоков отмечены PASS (или explicit SKIPPED с обоснованием «требует live Stripe / production webhook» — допустимо для blocks 2/3 если нет sandbox-ключа в env). bePaid не сломан, Stripe работает, нет дублей в provider_events, admin reporting корректен. Никаких изменений вне proof + backlog + `.lovable/plan.md`.
+### SQL verify после реальной оплаты
 
-### Open questions перед стартом
+```sql
+-- 1) Webhook принял live event
+SELECT event_id, provider, account_code, event_type, livemode, signature_valid,
+       processing_status, related_payment_id, processing_error, created_at
+FROM provider_events
+WHERE provider='stripe'
+ORDER BY created_at DESC LIMIT 20;
 
-1. **Stripe test mode**: использовать существующий sandbox account_code (если настроен в `provider_profiles`), или Block 2/3 пометить `manual_test_pending` для ручного прогона пользователем?
-2. **bePaid test card**: использовать тестовый профиль bePaid из env, или Block 1 тоже `manual_test_pending`?
-3. **Screenshots**: brower-tool для preview URL `/admin/payments` (требуется dev-login `123456`) — выполнить автоматически или приложить инструкцию для ручной проверки?
+-- 2) Платёж записан
+SELECT id, provider, provider_payment_id, order_id, amount, currency, status,
+       receipt_url, meta->'stripe' AS stripe_meta, created_at
+FROM payments_v2 WHERE provider='stripe' ORDER BY created_at DESC LIMIT 10;
 
----
+-- 3) Order + grant
+SELECT id, status, contact_id, profile_id, product_id, tariff_id,
+       final_price, currency, paid_at, meta
+FROM orders_v2 ORDER BY created_at DESC LIMIT 10;
 
-## Phase 10 — Final Regression: PASS (2026-06-09)
+SELECT * FROM entitlements ORDER BY created_at DESC LIMIT 10;
+```
 
-- Proof: `.lovable/proofs/phase_10_final_regression_v1.md`
-- Backlog: `.lovable/backlog/phase_9c_provider_choice_and_stripe_subscriptions_visibility.md`
-- Diff: только proof + backlog + plan (см. proof §Diff confirmation)
-- Verdict: bePaid не сломан, Stripe one-time + subscription работают, provider_events 0 дублей, admin reporting корректен, Telegram/access без дублей.
+### DoD / PASS criteria
 
-Stripe Master Sprint завершён. Остаток — Phase 9-C backlog.
+**Guard-патч PASS:**
+
+- guard `stripe_account_not_test_mode` удалён в обоих файлах;
+- live `/pay/:token` не падает с этой ошибкой;
+- sandbox flow (если когда-нибудь снова появится test connection) продолжает работать — мы ничего не запретили, только сняли запрет;
+- bePaid не затронут (diff = 0 в bePaid-функциях и таблицах);
+- proof: `.lovable/proofs/phase_L3_unblock_live_stripe_guard_v1.md` с diff-выдержкой, SQL-снимком `acquiring_connections` и логом запуска live-чекаута.
+
+**L-4 PASS (после реального платежа):**
+
+- `provider_events.livemode=true`, `signature_valid=true`, `processing_status='processed'`;
+- `payments_v2.provider='stripe'`, `status='paid'`, `receipt_url` заполнен;
+- order/contact/profile связаны, `entitlement` создан один раз;
+- платёж виден в `/admin/payments`;
+- bePaid untouched; no дублей в provider_events/orders/payments/access.
+
+### Что НЕ делаем
+
+- env-флаги `STRIPE_LIVE_MODE`/`production_only` — не вводим (SOT = connection).
+- Не трогаем `stripe-webhook` (он уже не зависит от guard-а).
+- Не делаем массовых UPDATE по `tariff_offers.meta.acquiring`.
+- Не меняем bePaid, `card_profile_links`, saved-card flow (отдельный PATCH).
+- Никаких `secrets--add_secret`, ручных правок Vault, новых webhook endpoint-ов.
+- Не требуем `test_mode=true` для live.
+- Не блокируем BYN на уровне приложения — валюту выбирает админ при создании ссылки.
+
+### Файлы
+
+- edit: `supabase/functions/_shared/create-stripe-checkout.ts` (удалить guard, переписать комментарий).
+- edit: `supabase/functions/stripe-create-subscription-checkout/index.ts` (удалить guard, переписать комментарий).
+- create: `.lovable/proofs/phase_L3_unblock_live_stripe_guard_v1.md` (diff + SQL snapshot + verify-лог).
+- edit: `.lovable/backlog/stripe_saved_pm_followup.md` (добавить пункт «фильтрация saved cards на /pay/:token при выборе Stripe live»).
+
+Approve — и переходим в build.
