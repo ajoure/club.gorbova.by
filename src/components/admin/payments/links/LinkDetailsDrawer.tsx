@@ -74,11 +74,28 @@ export function LinkDetailsDrawer({
         </SheetHeader>
 
         <div className="space-y-4 mt-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <LinkStatusBadge link={link} />
             <span className="text-xs text-muted-foreground">
               {link.payment_type === "subscription" ? "Подписка" : "Разовая оплата"}
             </span>
+            {/* Phase 9-B — provider badge */}
+            {link.provider && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                  link.provider === "stripe"
+                    ? "border-indigo-500 text-indigo-600 dark:text-indigo-300"
+                    : "border-emerald-500 text-emerald-600 dark:text-emerald-300"
+                }`}
+              >
+                {link.provider === "stripe" ? "Stripe" : link.provider === "bepaid" ? "bePaid" : link.provider}
+              </span>
+            )}
+            {link.provider_mode && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground">
+                {link.provider_mode === "customer_choice" ? "Клиент выбирает" : "Фиксированный провайдер"}
+              </span>
+            )}
           </div>
 
           <div>
