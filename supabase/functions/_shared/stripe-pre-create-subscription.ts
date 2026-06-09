@@ -383,6 +383,20 @@ export async function stripePreCreateSubscription(
 
   const csRes = await stripeForm(stripe_secret_key, 'checkout/sessions', checkoutPayload, idempotencyKey);
   if (!csRes.ok) {
+    // PATCH-SUB-PRICE-2: safe diagnostic log (без секретов / PAN).
+    console.error('[stripe-pre-create-subscription] checkout_session_failed', {
+      status: csRes.status,
+      code: csRes.data?.error?.code ?? null,
+      type: csRes.data?.error?.type ?? null,
+      message: csRes.data?.error?.message ?? null,
+      request_id: csRes.data?.error?.request_log_url ?? csRes.data?.error?.request_id ?? null,
+      account_code,
+      payment_link_id: payment_link_id ?? null,
+      offer_id: tariff_offer_id,
+      currency: inline_price ? inline_price.currency.toUpperCase() : null,
+      amount_minor: inlineAmountMinor,
+      mode: inline_price ? 'inline_price' : 'saved_price_id',
+    });
     await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'checkout_session_failed', actor_user_id, lifecycle_created_by);
     // Маппим Stripe 400 на currency mismatch в понятный код.
     const stripeMsg = String(csRes.data?.error?.message || '').toLowerCase();
