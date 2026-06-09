@@ -557,6 +557,13 @@ Deno.serve(async (req) => {
         };
       }
     }
+    // PATCH-SUB-PRICE-3 (PATCH-B): Stripe-subscription link amount/currency override.
+    if (linkMetaStripePriceMode) {
+      linkMeta.stripe_price_mode = linkMetaStripePriceMode;
+    }
+    if (linkMetaStripeRecurringSnapshot) {
+      linkMeta.stripe_recurring_snapshot = linkMetaStripeRecurringSnapshot;
+    }
 
     // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
     // (DB CHECK + NOT NULL). Используем default_provider оффера = 'bepaid' как fallback,
