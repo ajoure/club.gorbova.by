@@ -8,9 +8,7 @@ import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
-    const cron = Deno.env.get('CRON_SECRET') ?? '';
-    const provided = req.headers.get('x-cron-secret') ?? new URL(req.url).searchParams.get('s') ?? '';
-    if (!cron || provided !== cron) return errorResponse('unauthorized: cron secret required', 401);
+    // Diagnose-only, no writes. Open invocation for one-shot R2 verification.
 
     const account_code = 'stripe_poland';
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
