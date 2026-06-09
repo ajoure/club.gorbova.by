@@ -105,11 +105,12 @@ Deno.serve(async (req) => {
       if (!body[k]) return json(400, { ok: false, error: `missing_${k}` });
     }
 
-    // ---- 2) Resolve Stripe account (test-mode only) ----
+    // ---- 2) Resolve Stripe account ----
+    // SOT режима — acquiring_connections.test_mode. Live subscription checkout
+    // разрешён, если admin сохранил live connection через UI интеграций.
+    // Pre-prod guard `stripe_account_not_test_mode` снят. test_mode остаётся
+    // в meta (см. ниже) для телеметрии.
     const acct = await resolveDefaultStripeAccount(admin, body.account_code);
-    if (!acct.test_mode) {
-      return json(422, { ok: false, error: 'stripe_account_not_test_mode', account_code: acct.account_code });
-    }
     const account_code = acct.account_code;
 
     // ---- 3) Resolve offer + price_id from tariff_offers.meta.stripe.price_id ----
