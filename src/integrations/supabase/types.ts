@@ -371,6 +371,657 @@ export type Database = {
         }
         Relationships: []
       }
+      _stripe_cleanup_2026_06_backup_access_grant_ledger: {
+        Row: {
+          action_type: string | null
+          created_at: string | null
+          error_details: Json | null
+          execution_key: string | null
+          id: string | null
+          metadata: Json | null
+          order_id: string | null
+          parent_event_key: string | null
+          parent_execution_key: string | null
+          profile_id: string | null
+          reason_code: string | null
+          result: Json | null
+          source_event_key: string | null
+          source_event_type: string | null
+          source_offer_id: string | null
+          source_order_id: string | null
+          source_subject_ref: string | null
+          source_subject_type: string | null
+          source_subscription_id: string | null
+          status: string | null
+          target_key: string | null
+          target_ref: string | null
+          target_type: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action_type?: string | null
+          created_at?: string | null
+          error_details?: Json | null
+          execution_key?: string | null
+          id?: string | null
+          metadata?: Json | null
+          order_id?: string | null
+          parent_event_key?: string | null
+          parent_execution_key?: string | null
+          profile_id?: string | null
+          reason_code?: string | null
+          result?: Json | null
+          source_event_key?: string | null
+          source_event_type?: string | null
+          source_offer_id?: string | null
+          source_order_id?: string | null
+          source_subject_ref?: string | null
+          source_subject_type?: string | null
+          source_subscription_id?: string | null
+          status?: string | null
+          target_key?: string | null
+          target_ref?: string | null
+          target_type?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action_type?: string | null
+          created_at?: string | null
+          error_details?: Json | null
+          execution_key?: string | null
+          id?: string | null
+          metadata?: Json | null
+          order_id?: string | null
+          parent_event_key?: string | null
+          parent_execution_key?: string | null
+          profile_id?: string | null
+          reason_code?: string | null
+          result?: Json | null
+          source_event_key?: string | null
+          source_event_type?: string | null
+          source_offer_id?: string | null
+          source_order_id?: string | null
+          source_subject_ref?: string | null
+          source_subject_type?: string | null
+          source_subscription_id?: string | null
+          status?: string | null
+          target_key?: string | null
+          target_ref?: string | null
+          target_type?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_entitlements: {
+        Row: {
+          created_at: string | null
+          expires_at: string | null
+          id: string | null
+          meta: Json | null
+          order_id: string | null
+          product_code: string | null
+          product_id: string | null
+          profile_id: string | null
+          status: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          meta?: Json | null
+          order_id?: string | null
+          product_code?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          meta?: Json | null
+          order_id?: string | null
+          product_code?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_orders: {
+        Row: {
+          base_price: number | null
+          bepaid_subscription_id: string | null
+          created_at: string | null
+          currency: string | null
+          customer_email: string | null
+          customer_ip: string | null
+          customer_phone: string | null
+          deal_date: string | null
+          discount_percent: number | null
+          final_price: number | null
+          flow_id: string | null
+          gc_next_retry_at: string | null
+          id: string | null
+          invoice_email: string | null
+          invoice_sent_at: string | null
+          is_trial: boolean | null
+          meta: Json | null
+          offer_id: string | null
+          order_number: string | null
+          paid_amount: number | null
+          payer_type: string | null
+          payment_plan_id: string | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
+          pricing_stage_id: string | null
+          product_id: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_payment_id: string | null
+          purchase_snapshot: Json | null
+          reconcile_source: string | null
+          status: Database["public"]["Enums"]["order_status"] | null
+          tariff_id: string | null
+          trial_end_at: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          base_price?: number | null
+          bepaid_subscription_id?: string | null
+          created_at?: string | null
+          currency?: string | null
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          deal_date?: string | null
+          discount_percent?: number | null
+          final_price?: number | null
+          flow_id?: string | null
+          gc_next_retry_at?: string | null
+          id?: string | null
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
+          is_trial?: boolean | null
+          meta?: Json | null
+          offer_id?: string | null
+          order_number?: string | null
+          paid_amount?: number | null
+          payer_type?: string | null
+          payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          purchase_snapshot?: Json | null
+          reconcile_source?: string | null
+          status?: Database["public"]["Enums"]["order_status"] | null
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          base_price?: number | null
+          bepaid_subscription_id?: string | null
+          created_at?: string | null
+          currency?: string | null
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          deal_date?: string | null
+          discount_percent?: number | null
+          final_price?: number | null
+          flow_id?: string | null
+          gc_next_retry_at?: string | null
+          id?: string | null
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
+          is_trial?: boolean | null
+          meta?: Json | null
+          offer_id?: string | null
+          order_number?: string | null
+          paid_amount?: number | null
+          payer_type?: string | null
+          payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          purchase_snapshot?: Json | null
+          reconcile_source?: string | null
+          status?: Database["public"]["Enums"]["order_status"] | null
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_payment_links: {
+        Row: {
+          account_code: string | null
+          amount: number | null
+          business_stream: string | null
+          created_at: string | null
+          created_by: string | null
+          currency: string | null
+          current_uses: number | null
+          description: string | null
+          expires_at: string | null
+          id: string | null
+          max_uses: number | null
+          meta: Json | null
+          offer_id: string | null
+          payment_type: string | null
+          product_id: string | null
+          profile_code: string | null
+          provider: string | null
+          provider_mode: string | null
+          public_url: string | null
+          status: string | null
+          tariff_id: string | null
+          updated_at: string | null
+          url_token: string | null
+          user_id: string | null
+        }
+        Insert: {
+          account_code?: string | null
+          amount?: number | null
+          business_stream?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          currency?: string | null
+          current_uses?: number | null
+          description?: string | null
+          expires_at?: string | null
+          id?: string | null
+          max_uses?: number | null
+          meta?: Json | null
+          offer_id?: string | null
+          payment_type?: string | null
+          product_id?: string | null
+          profile_code?: string | null
+          provider?: string | null
+          provider_mode?: string | null
+          public_url?: string | null
+          status?: string | null
+          tariff_id?: string | null
+          updated_at?: string | null
+          url_token?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          account_code?: string | null
+          amount?: number | null
+          business_stream?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          currency?: string | null
+          current_uses?: number | null
+          description?: string | null
+          expires_at?: string | null
+          id?: string | null
+          max_uses?: number | null
+          meta?: Json | null
+          offer_id?: string | null
+          payment_type?: string | null
+          product_id?: string | null
+          profile_code?: string | null
+          provider?: string | null
+          provider_mode?: string | null
+          public_url?: string | null
+          status?: string | null
+          tariff_id?: string | null
+          updated_at?: string | null
+          url_token?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_payments: {
+        Row: {
+          amount: number | null
+          card_brand: string | null
+          card_holder: string | null
+          card_last4: string | null
+          created_at: string | null
+          currency: string | null
+          error_message: string | null
+          id: string | null
+          import_ref: string | null
+          installment_number: number | null
+          is_recurring: boolean | null
+          meta: Json | null
+          order_id: string | null
+          origin: string | null
+          paid_at: string | null
+          payment_classification: string | null
+          payment_token: string | null
+          product_name_raw: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_payment_id: string | null
+          provider_response: Json | null
+          receipt_url: string | null
+          reference_payment_id: string | null
+          refunded_amount: number | null
+          refunded_at: string | null
+          refunds: Json | null
+          status: Database["public"]["Enums"]["payment_status"] | null
+          transaction_type: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount?: number | null
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4?: string | null
+          created_at?: string | null
+          currency?: string | null
+          error_message?: string | null
+          id?: string | null
+          import_ref?: string | null
+          installment_number?: number | null
+          is_recurring?: boolean | null
+          meta?: Json | null
+          order_id?: string | null
+          origin?: string | null
+          paid_at?: string | null
+          payment_classification?: string | null
+          payment_token?: string | null
+          product_name_raw?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          provider_response?: Json | null
+          receipt_url?: string | null
+          reference_payment_id?: string | null
+          refunded_amount?: number | null
+          refunded_at?: string | null
+          refunds?: Json | null
+          status?: Database["public"]["Enums"]["payment_status"] | null
+          transaction_type?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount?: number | null
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4?: string | null
+          created_at?: string | null
+          currency?: string | null
+          error_message?: string | null
+          id?: string | null
+          import_ref?: string | null
+          installment_number?: number | null
+          is_recurring?: boolean | null
+          meta?: Json | null
+          order_id?: string | null
+          origin?: string | null
+          paid_at?: string | null
+          payment_classification?: string | null
+          payment_token?: string | null
+          product_name_raw?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          provider_response?: Json | null
+          receipt_url?: string | null
+          reference_payment_id?: string | null
+          refunded_amount?: number | null
+          refunded_at?: string | null
+          refunds?: Json | null
+          status?: Database["public"]["Enums"]["payment_status"] | null
+          transaction_type?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_provider_events: {
+        Row: {
+          account_code: string | null
+          created_at: string | null
+          event_id: string | null
+          event_type: string | null
+          id: string | null
+          idempotency_key: string | null
+          payload: Json | null
+          processed_at: string | null
+          processing_error: string | null
+          processing_status: string | null
+          provider: string | null
+          related_order_id: string | null
+          related_payment_id: string | null
+          signature_valid: boolean | null
+        }
+        Insert: {
+          account_code?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string | null
+          idempotency_key?: string | null
+          payload?: Json | null
+          processed_at?: string | null
+          processing_error?: string | null
+          processing_status?: string | null
+          provider?: string | null
+          related_order_id?: string | null
+          related_payment_id?: string | null
+          signature_valid?: boolean | null
+        }
+        Update: {
+          account_code?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string | null
+          idempotency_key?: string | null
+          payload?: Json | null
+          processed_at?: string | null
+          processing_error?: string | null
+          processing_status?: string | null
+          provider?: string | null
+          related_order_id?: string | null
+          related_payment_id?: string | null
+          signature_valid?: boolean | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_provider_subs: {
+        Row: {
+          amount_cents: number | null
+          card_brand: string | null
+          card_last4: string | null
+          card_token: string | null
+          created_at: string | null
+          currency: string | null
+          id: string | null
+          interval_days: number | null
+          last_charge_at: string | null
+          meta: Json | null
+          next_charge_at: string | null
+          order_id: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_subscription_id: string | null
+          raw_data: Json | null
+          state: string | null
+          subscription_v2_id: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount_cents?: number | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          created_at?: string | null
+          currency?: string | null
+          id?: string | null
+          interval_days?: number | null
+          last_charge_at?: string | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_subscription_id?: string | null
+          raw_data?: Json | null
+          state?: string | null
+          subscription_v2_id?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount_cents?: number | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          created_at?: string | null
+          currency?: string | null
+          id?: string | null
+          interval_days?: number | null
+          last_charge_at?: string | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_subscription_id?: string | null
+          raw_data?: Json | null
+          state?: string | null
+          subscription_v2_id?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      _stripe_cleanup_2026_06_backup_subscriptions: {
+        Row: {
+          access_end_at: string | null
+          access_start_at: string | null
+          auto_renew: boolean | null
+          auto_renew_disabled_at: string | null
+          auto_renew_disabled_by: string | null
+          auto_renew_disabled_by_user_id: string | null
+          billing_type: string | null
+          cancel_at: string | null
+          cancel_reason: string | null
+          canceled_at: string | null
+          charge_attempts: number | null
+          created_at: string | null
+          flow_id: string | null
+          grace_period_ends_at: string | null
+          grace_period_started_at: string | null
+          grace_period_status: string | null
+          id: string | null
+          is_trial: boolean | null
+          keep_access_until_trial_end: boolean | null
+          meta: Json | null
+          next_charge_at: string | null
+          order_id: string | null
+          payment_method_id: string | null
+          payment_token: string | null
+          product_id: string | null
+          profile_id: string | null
+          status: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id: string | null
+          trial_canceled_at: string | null
+          trial_canceled_by: string | null
+          trial_end_at: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          access_end_at?: string | null
+          access_start_at?: string | null
+          auto_renew?: boolean | null
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string | null
+          cancel_at?: string | null
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string | null
+          flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
+          id?: string | null
+          is_trial?: boolean | null
+          keep_access_until_trial_end?: boolean | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_method_id?: string | null
+          payment_token?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          access_end_at?: string | null
+          access_start_at?: string | null
+          auto_renew?: boolean | null
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string | null
+          cancel_at?: string | null
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string | null
+          flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
+          id?: string | null
+          is_trial?: boolean | null
+          keep_access_until_trial_end?: boolean | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_method_id?: string | null
+          payment_token?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       access_grant_ledger: {
         Row: {
           action_type: string
