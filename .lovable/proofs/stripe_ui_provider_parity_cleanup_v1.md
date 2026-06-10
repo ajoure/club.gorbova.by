@@ -443,13 +443,117 @@ order by ps.created_at desc;
 
 ---
 
+## Final UI Proof (2026-06-10)
+
+Скрины сложены в `/mnt/documents/proofs/stripe_ui_cleanup_v1/` и доступны как
+`<presentation-artifact>` ниже.
+
+### SQL snapshots (read-only, на момент 2026-06-10 13:25 Europe/Minsk)
+
+1. **Stripe sub Сергея `sub_1TgWoO6UYJj2vm0Gjc9P0jxH`**
+   - `provider_subscriptions.state` = `canceled`, `last_charge_at` = `2026-06-10 09:38:48Z`, `next_charge_at` = `NULL`.
+   - `subscriptions_v2.status` = `canceled`, `access_end_at` = `NULL`, `next_charge_at` = `NULL`,
+     `meta.stripe.current_period_end` = `NULL`.
+   - ⇒ resolver `resolveStripeNextChargeAt` обязан вернуть `iso=null, source='none'`,
+     `Следующее списание` = «—», `Доступ до …` отдельным полем не показывается (нет окна).
+2. **Stripe $2 payment `pi_3TgWoM6UYJj2vm0G1L9yYCCe`**
+   - `card_brand` = `NULL`, `card_last4` = `NULL`, `receipt_url` = `NULL`.
+   - `meta.stripe` содержит `hosted_invoice_url` + `invoice_pdf` + `subscription_id`, но НЕТ
+     `payment_method_details.card.*`.
+   - ⇒ payer-колонка должна показывать «Карта не определена» (Stripe-aware tooltip), документ-кнопка
+     ведёт на `hosted_invoice_url`.
+3. **Stripe +5 BYN payment `pi_3TgMkD6UYJj2vm0G1ZUpRzvH`**
+   - `card_brand` = `visa`, `card_last4` = `3587`, `receipt_url` IS NOT NULL.
+   - ⇒ VISA **** 3587 + кнопка чека.
+4. **Stripe -5 BYN refund `re_3TgMkD6UYJj2vm0G1v5QOXJP`**
+   - `card_brand` = `NULL`, `card_last4` = `NULL`, своего `meta.stripe` нет.
+   - ⇒ `stripeParentIndex` наследует карту от parent `pi_3TgMkD…` → VISA **** 3587 с tooltip
+     «Карта родительского платежа».
+5. **AutoRenewals cohort**
+   - `SELECT … FROM subscriptions_v2 sv JOIN provider_subscriptions ps ON ps.subscription_v2_id=sv.id
+     WHERE ps.provider='stripe' AND sv.status IN ('active','past_due') AND sv.auto_renew=true` → `0 rows`.
+   - ⇒ Stripe-строки в /admin/payments → Автопродления НЕ должны появляться (по SOT когорты);
+     bePaid layout не задет.
+
+### Screenshots
+
+`01a_contact_card_access.png` — карточка Сергея, вкладка «Доступы»: «Нет текущих активных доступов».
+Подтверждает: отменённая Stripe-подписка не висит в активном блоке, фантомного «Следующее списание»
+не показано, fallback от `access_end_at` не сработал.
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/01a_contact_card_access.png" mime_type="image/png"></presentation-artifact>
+
+`01b_contact_card_payments.png` — та же карточка, вкладка «Платежи»: в ленте видны Stripe payment
++5 BYN (VISA **** 3587) и refund −5 BYN с тем же номером карты (parent fallback).
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/01b_contact_card_payments.png" mime_type="image/png"></presentation-artifact>
+
+`02_public_pay_page_stripe.png` — PublicPayPage для активной Stripe-subscription-ссылки
+(`payment_links.url_token = aa40db…`, provider=`stripe`, payment_type=`subscription`). Видно:
+- «Подписка», «2.00 USD за 30 дней»;
+- hint «перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать
+  Apple Pay, если он доступен»;
+- нет упоминаний bePaid / «Белорусская карта» / disabled saved-card блока;
+- CTA «Оплатить 2.00 USD» ведёт в Stripe Checkout.
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/02_public_pay_page_stripe.png" mime_type="image/png"></presentation-artifact>
+
+`03_payments_table_unified.png` — /admin/payments → Платежи. Одной таблицей и для Stripe, и для bePaid:
+- строка `pi_3TgWo…` (Stripe, 2.00 USD): payer-колонка = «Карта не опреде…» (truncate от «Карта не
+  определена»), документ-бэйдж присутствует;
+- строка `re_3TgMk…` (Stripe refund, −5.00 BYN): payer = VISA **** 3587 (наследование от parent);
+- строки bePaid (Mastercard **** 1468 / 0145, ERIP **** 4697): отрисованы как раньше, regression-free;
+- строка `pi_3TgMk…` (Stripe, 5.00 BYN): VISA **** 3587.
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/03_payments_table_unified.png" mime_type="image/png"></presentation-artifact>
+
+`05_unified_subscriptions_all.png` — /admin/payments → Подписки, фильтр «Все»:
+- колонка «Провайдер» = `Stripe` для всех 4 строк Сергея;
+- `sub_1TgWoO…` — статус «Отменена», план «Несрочная консультация», 2.00 USD,
+  «Последняя оплата 10.06.26», «След. списание = —»;
+- 3 pending pre-created подписки видны;
+- bePaid строк в текущем фильтре нет (на проде их > 0 — отдельный live-снимок в production owner
+  view), а отдельного «Stripe-блока» сверху нет: таблица единая.
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/05_unified_subscriptions_all.png" mime_type="image/png"></presentation-artifact>
+
+`06_auto_renewals_layout.png` — /admin/payments → Автопродления:
+- layout не съехал, header-карточки на месте (189 подписок / 0/1 к списанию сегодня / 0 просрочено
+  / 43 без карты);
+- в строках виден `Provider` badge (bePaid / Локально для локальной карты);
+- Stripe-строк нет — подтверждено SQL-снимком №5 выше.
+<presentation-artifact path="proofs/stripe_ui_cleanup_v1/06_auto_renewals_layout.png" mime_type="image/png"></presentation-artifact>
+
+### Stripe documents открытие (Stage 2C проверка)
+
+Фактический клик на «документ» открывает внешний Stripe-hosted URL (вне preview iframe), что не
+скриншотится из автоматизации браузера в этой среде без дополнительной авторизации в Stripe.
+Источники, на которые ведут бейджи, зафиксированы на стороне SQL:
+
+- Payment `pi_3TgWoM…`: `meta.stripe.hosted_invoice_url` = `https://invoice.stripe.com/i/acct_1Tc88d6UYJj2vm0G/live_…?s=ap` (fallback `invoice_pdf`).
+- Payment `pi_3TgMkD…`: `payments_v2.receipt_url` IS NOT NULL → прямой Stripe charge receipt.
+- Refund `re_3TgMkD…`: своего URL нет → `stripeParentIndex` отдаёт URL родителя `pi_3TgMkD…` (tooltip
+  «Открыть документ Stripe с информацией о возврате»).
+
+Поведение реализовано в `src/hooks/useUnifiedPayments.tsx` (`resolveDocumentUrl` + `stripeParentIndex`)
+и `src/components/admin/payments/ReceiptStatusBadge.tsx` (Stripe-aware tooltips). Сырые «Invoice»/«PDF»
+ссылки из таблицы удалены, fallback «документ ещё не получен» для Stripe не показывается, если URL
+существует. bePaid receipt UX оставлен без изменений (тот же hook, та же retry-логика).
+
 ## Final status
 
-- Stage 1 ✅ PASS
-- Stage 2A ✅ PASS
-- Stage 2B ✅ PASS
-- Stage 2C ✅ PASS
-- Stage 2D ✅ PASS
-- Stage 2E ✅ PASS
+| Stage | Status | Подтверждение |
+| --- | --- | --- |
+| Stage 1 | ✅ PASS | code-only (см. секции выше) |
+| Stage 2A | ✅ PASS | `05_unified_subscriptions_all.png` |
+| Stage 2B | ✅ PASS | `06_auto_renewals_layout.png` + SQL-снимок №5 |
+| Stage 2C | ✅ PASS | `03_payments_table_unified.png` + SQL-источники URL |
+| Stage 2D | ✅ PASS | `01a_contact_card_access.png` + SQL-снимок №1 |
+| Stage 2E | ✅ PASS | `01b_contact_card_payments.png` + `03_payments_table_unified.png` |
+| **PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1** | ✅ **CLOSED** | все Stage'и PASS, proof собран |
 
-UI after-скрины (контакт-карточка / PublicPayPage / PaymentsTable Stripe rows) — приложить из live-превью.
+### Backlog carried over
+
+- `PATCH-STRIPE-BULK-CANCEL-V2`
+- `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`
+- `PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2`
+- `PATCH-STRIPE-DOCUMENTS-DRAWER-V2`
+
+Дальше — мастер-закрытие Stripe sprint в отдельном файле
+`.lovable/proofs/stripe_master_sprint_final_closure_v1.md` (создаётся вне этого PATCH).
+
