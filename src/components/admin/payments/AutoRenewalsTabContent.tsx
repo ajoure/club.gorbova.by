@@ -865,7 +865,11 @@ export function AutoRenewalsTabContent() {
         break;
       case 'bepaid':
         // PATCH 3.1: filter by is_bepaid (source of truth from provider_subscriptions)
-        result = result.filter(r => r.is_bepaid);
+        result = result.filter(r => r.provider === 'bepaid');
+        break;
+      case 'stripe':
+        // Stage 2B: Stripe cohort — provider=stripe + provider_subscription_id starts with sub_
+        result = result.filter(r => r.provider === 'stripe' && (r.provider_subscription_id || '').startsWith('sub_'));
         break;
       // PATCH 3.2: Error and bad card filters
       case 'errors':
