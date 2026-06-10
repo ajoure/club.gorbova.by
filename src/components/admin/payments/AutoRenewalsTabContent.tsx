@@ -1223,6 +1223,19 @@ export function AutoRenewalsTabContent() {
             )}
           </div>
         );
+      case 'provider': {
+        const cfg: Record<string, { label: string; className: string }> = {
+          bepaid: { label: 'bePaid', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-300/50' },
+          stripe: { label: 'Stripe', className: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-300/50' },
+          local: { label: 'Локально', className: 'bg-muted text-muted-foreground border-border' },
+        };
+        const c = cfg[renewal.provider] || cfg.local;
+        return (
+          <Badge variant="outline" className={cn('text-[10px] px-1.5 font-medium', c.className)}>
+            {c.label}
+          </Badge>
+        );
+      }
       case 'billing_type': {
         const dbt = renewal.display_billing_type;
         const billingConfig: Record<string, { label: string; emoji: string; className: string }> = {
