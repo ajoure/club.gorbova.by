@@ -748,7 +748,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at, interval_days,
           subscription_v2_id, meta,
           subscriptions_v2 (
-            id, status, billing_type, tariff_id, access_end_at, next_charge_at,
+            id, status, billing_type, tariff_id, access_end_at, next_charge_at, meta,
             products_v2 ( id, name ),
             tariffs ( id, name, product_id )
           )
