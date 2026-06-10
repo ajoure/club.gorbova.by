@@ -323,6 +323,7 @@ export function BepaidSubscriptionsTabContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(urlSearch ? "all" : "active");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
