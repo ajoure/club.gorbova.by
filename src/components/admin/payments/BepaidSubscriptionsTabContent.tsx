@@ -527,6 +527,11 @@ export function BepaidSubscriptionsTabContent() {
     } else if (sourceFilter === "token_only") {
       result = result.filter((s: BepaidSubscription) => s.is_synthetic);
     }
+
+    // Stage 2A: provider filter
+    if (providerFilter !== "all") {
+      result = result.filter((s: BepaidSubscription) => (s.provider ?? 'bepaid') === providerFilter);
+    }
     
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
