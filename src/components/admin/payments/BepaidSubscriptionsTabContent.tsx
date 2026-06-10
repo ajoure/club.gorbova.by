@@ -75,6 +75,7 @@ import { LinkSubscriptionContactDialog } from "./LinkSubscriptionContactDialog";
 import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDialog";
 import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
 import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
+import { useStripeSubscriptionsList } from "@/hooks/admin/useStripeSubscriptionsList";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -123,6 +124,9 @@ interface BepaidSubscription {
   canceled_at?: string | null;
   // PATCH-P2.2: Synthetic detection (client-side)
   is_synthetic?: boolean;
+  // PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 Stage 2A: provider-aware rows
+  provider?: 'bepaid' | 'stripe';
+  last_payment_at?: string;
 }
 
 interface SubscriptionStats {
@@ -180,29 +184,32 @@ interface ColumnConfig {
 
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "id", label: "ID подписки", visible: true, width: 130, order: 1 },
-  { key: "status", label: "Статус", visible: true, width: 100, order: 2 },
-  { key: "customer", label: "Клиент", visible: true, width: 160, order: 3 },
-  { key: "plan", label: "План", visible: true, width: 150, order: 4 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
-  { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
-  { key: "card", label: "Карта", visible: true, width: 100, order: 7 },
-  { key: "payment_id", label: "ID платежа", visible: true, width: 130, order: 8 }, // PATCH-U2: visible by default
-  { key: "deal", label: "Сделка", visible: true, width: 100, order: 9 },
-  { key: "created", label: "Создано", visible: false, width: 100, order: 10 },
-  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 11 },
-  { key: "connection", label: "Связь", visible: true, width: 100, order: 12 },
-  { key: "actions", label: "", visible: true, width: 100, order: 13 },
+  { key: "provider", label: "Провайдер", visible: true, width: 90, order: 1 },
+  { key: "id", label: "ID подписки", visible: true, width: 130, order: 2 },
+  { key: "status", label: "Статус", visible: true, width: 100, order: 3 },
+  { key: "customer", label: "Клиент", visible: true, width: 160, order: 4 },
+  { key: "plan", label: "План", visible: true, width: 150, order: 5 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 6 },
+  { key: "next_billing", label: "След. списание", visible: true, width: 110, order: 7 },
+  { key: "last_payment", label: "Последняя оплата", visible: true, width: 110, order: 8 },
+  { key: "card", label: "Карта", visible: true, width: 100, order: 9 },
+  { key: "payment_id", label: "ID платежа", visible: false, width: 130, order: 10 },
+  { key: "deal", label: "Сделка", visible: true, width: 100, order: 11 },
+  { key: "created", label: "Создано", visible: false, width: 100, order: 12 },
+  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 13 },
+  { key: "connection", label: "Связь", visible: true, width: 100, order: 14 },
+  { key: "actions", label: "", visible: true, width: 100, order: 15 },
 ];
 
-const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v3'; // PATCH-U2: reset columns
+const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v4'; // Stage 2A: +provider +last_payment
 const PAYLOAD_STORAGE_KEY = 'admin_bepaid_subscriptions_last_payload_v1'; // PATCH-U1: persist data
 
 // Russian status labels dictionary
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
-  pending: 'Ожидает подтверждения',
+  trialing: 'Пробный период',
+  pending: 'Ожидает оплаты',
   past_due: 'Просрочена',
   canceled: 'Отменена',
   terminated: 'Завершена',
@@ -219,6 +226,7 @@ const STATUS_LABELS: Record<string, string> = {
 type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due" | "pending";
 type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
 type SourceFilter = "all" | "sbs_only" | "token_only";
+type ProviderFilter = "all" | "bepaid" | "stripe";
 type SortField = "created_at" | "next_billing_at" | "plan_amount" | "status";
 type SortDir = "asc" | "desc";
 
@@ -315,6 +323,7 @@ export function BepaidSubscriptionsTabContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(urlSearch ? "all" : "active");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -440,7 +449,34 @@ export function BepaidSubscriptionsTabContent() {
     placeholderData: getCachedPayload, // PATCH-U1: Show cached data immediately
   });
 
-  const subscriptions = data?.subscriptions || [];
+  // Stage 2A: merge Stripe local-DB rows + tag bePaid rows.
+  const { data: stripeRows = [] } = useStripeSubscriptionsList();
+  const subscriptions = useMemo<BepaidSubscription[]>(() => {
+    const bp: BepaidSubscription[] = (data?.subscriptions || []).map((s: BepaidSubscription) => ({
+      ...s,
+      provider: s.provider ?? 'bepaid',
+    }));
+    const st: BepaidSubscription[] = (stripeRows || []).map((s) => ({
+      id: s.id,
+      status: s.status,
+      plan_title: s.plan_title,
+      plan_amount: s.plan_amount,
+      plan_currency: s.plan_currency,
+      customer_email: s.customer_email,
+      customer_name: s.customer_name,
+      card_last4: s.card_last4,
+      card_brand: s.card_brand,
+      created_at: s.created_at,
+      next_billing_at: s.next_billing_at,
+      linked_subscription_id: s.linked_subscription_id,
+      linked_user_id: s.linked_user_id,
+      linked_profile_name: s.linked_profile_name,
+      is_linked_full: s.is_linked_full,
+      provider: 'stripe',
+      last_payment_at: s.last_payment_at,
+    }));
+    return [...bp, ...st];
+  }, [data?.subscriptions, stripeRows]);
   const debugInfo = data?.debug;
   
   const rawStats = data?.stats || { total: 0, active: 0, trial: 0, pending: 0, canceled: 0, cancelled: 0, not_linked: 0, linked: 0 };
@@ -491,6 +527,11 @@ export function BepaidSubscriptionsTabContent() {
     } else if (sourceFilter === "token_only") {
       result = result.filter((s: BepaidSubscription) => s.is_synthetic);
     }
+
+    // Stage 2A: provider filter
+    if (providerFilter !== "all") {
+      result = result.filter((s: BepaidSubscription) => (s.provider ?? 'bepaid') === providerFilter);
+    }
     
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -534,7 +575,7 @@ export function BepaidSubscriptionsTabContent() {
     });
     
     return result;
-  }, [subscriptions, statusFilter, linkFilter, sourceFilter, searchQuery, sortField, sortDir]);
+  }, [subscriptions, statusFilter, linkFilter, sourceFilter, providerFilter, searchQuery, sortField, sortDir]);
 
   // Mutations
   const reconcileMutation = useMutation({
@@ -661,10 +702,14 @@ export function BepaidSubscriptionsTabContent() {
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length) {
+    // Stage 2A: bulk select только bePaid (Stripe cancel — через карточку контакта).
+    const selectable = filteredSubscriptions.filter(
+      (s: BepaidSubscription) => s.status !== 'canceled' && (s.provider ?? 'bepaid') === 'bepaid'
+    );
+    if (selectedIds.size === selectable.length && selectable.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').map((s: BepaidSubscription) => s.id)));
+      setSelectedIds(new Set(selectable.map((s: BepaidSubscription) => s.id)));
     }
   };
 
@@ -801,8 +846,24 @@ export function BepaidSubscriptionsTabContent() {
     const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && !sub.is_linked_full;
     const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
     
+    const isStripe = (sub.provider ?? 'bepaid') === 'stripe';
+
     switch (columnKey) {
       case 'checkbox':
+        if (isStripe) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Checkbox checked={false} disabled />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs max-w-[240px]">
+                Stripe: используйте карточку контакта для отмены подписки.
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
         return (
           <Checkbox
             checked={selectedIds.has(sub.id)}
@@ -810,6 +871,25 @@ export function BepaidSubscriptionsTabContent() {
             disabled={sub.status === "canceled"}
           />
         );
+
+      case 'provider':
+        return isStripe ? (
+          <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-700 border-violet-500/30">
+            Stripe
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] bg-sky-500/10 text-sky-700 border-sky-500/30">
+            bePaid
+          </Badge>
+        );
+
+      case 'last_payment':
+        return sub.last_payment_at ? (
+          <span className="text-xs text-muted-foreground">{formatDate(sub.last_payment_at)}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+
         
       case 'id':
         return (
@@ -1103,11 +1183,13 @@ export function BepaidSubscriptionsTabContent() {
                   </>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}>
-                  <ExternalLink className="h-3 w-3 mr-2" />
-                  Открыть в bePaid
-                </DropdownMenuItem>
-                {['active', 'trial', 'past_due', 'pending', 'failed_attempt'].includes(sub.snapshot_state || sub.status) && (
+                {!isStripe && (
+                  <DropdownMenuItem onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}>
+                    <ExternalLink className="h-3 w-3 mr-2" />
+                    Открыть в bePaid
+                  </DropdownMenuItem>
+                )}
+                {!isStripe && ['active', 'trial', 'past_due', 'pending', 'failed_attempt'].includes(sub.snapshot_state || sub.status) && (
                   <DropdownMenuItem 
                     className="text-destructive focus:text-destructive"
                     onClick={() => {
@@ -1117,6 +1199,12 @@ export function BepaidSubscriptionsTabContent() {
                   >
                     <Ban className="h-3 w-3 mr-2" />
                     Отменить в bePaid
+                  </DropdownMenuItem>
+                )}
+                {isStripe && (
+                  <DropdownMenuItem disabled className="text-muted-foreground">
+                    <Info className="h-3 w-3 mr-2" />
+                    Stripe: отмена — в карточке контакта
                   </DropdownMenuItem>
                 )}
                 {sub.is_linked_full && (
@@ -1333,6 +1421,18 @@ export function BepaidSubscriptionsTabContent() {
             <SelectItem value="all">Все источники</SelectItem>
             <SelectItem value="sbs_only">Только sbs_*</SelectItem>
             <SelectItem value="token_only">Только Token</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Stage 2A: Provider filter */}
+        <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as ProviderFilter)}>
+          <SelectTrigger className="w-36 h-8 bg-background/50">
+            <SelectValue placeholder="Провайдер" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все провайдеры</SelectItem>
+            <SelectItem value="bepaid">bePaid</SelectItem>
+            <SelectItem value="stripe">Stripe</SelectItem>
           </SelectContent>
         </Select>
         
