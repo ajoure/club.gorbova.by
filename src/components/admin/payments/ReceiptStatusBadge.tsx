@@ -52,12 +52,17 @@ export default function ReceiptStatusBadge({
   statusNormalized,
   providerUid,
   provider,
+  transactionType,
+  documentSource,
   onRefetch,
   className,
 }: ReceiptStatusBadgeProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const isStripe = (provider ?? '').toLowerCase() === 'stripe';
+  const isRefund = (transactionType ?? '').toLowerCase() === 'refund';
+  const isParentReceiptFallback = documentSource === 'parent_charge_receipt' || documentSource === 'parent_invoice_hosted';
+
 
   // Derive status from available data if not explicitly set
   // PATCH-LIVE-2: для Stripe без receipt_url не маркируем как pending с retry —
