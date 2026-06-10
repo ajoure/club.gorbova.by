@@ -123,6 +123,9 @@ interface BepaidSubscription {
   canceled_at?: string | null;
   // PATCH-P2.2: Synthetic detection (client-side)
   is_synthetic?: boolean;
+  // PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 Stage 2A: provider-aware rows
+  provider?: 'bepaid' | 'stripe';
+  last_payment_at?: string;
 }
 
 interface SubscriptionStats {
