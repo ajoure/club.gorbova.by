@@ -58,7 +58,7 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'stripe' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
@@ -75,6 +75,7 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
   { value: 'bepaid', label: 'BePaid подписки', icon: CreditCard },
+  { value: 'stripe', label: 'Stripe подписки', icon: CreditCard },
   { value: 'broken_token', label: '⚠️ Broken token' },
   { value: 'requires_3ds', label: '🔐 Requires 3DS' },
   { value: 'link_only', label: '🔗 Только ссылка' },
@@ -93,25 +94,26 @@ const RELEVANT_TG_EVENT_TYPES = [
   'grace_expired',
 ];
 
-// Column configuration
+// Stage 2B: Column configuration — bumped widths for readability + provider column
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "contact", label: "Контакт", visible: true, width: 160, order: 1 },
-  { key: "product", label: "Продукт", visible: true, width: 130, order: 2 },
-  { key: "billing_type", label: "Биллинг", visible: true, width: 70, order: 3 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 4 },
-  { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 5 },
-  { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 6 },
-  { key: "grace_remaining", label: "Grace", visible: true, width: 80, order: 7 },
-  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 8 },
-  { key: "card", label: "Карта", visible: true, width: 50, order: 9 },
-  { key: "pm", label: "PM", visible: true, width: 80, order: 10 },
-  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 11 },
-  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 12 },
-  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 13 },
+  { key: "contact", label: "Контакт", visible: true, width: 200, order: 1 },
+  { key: "product", label: "Продукт", visible: true, width: 180, order: 2 },
+  { key: "provider", label: "Провайдер", visible: true, width: 95, order: 3 },
+  { key: "billing_type", label: "Биллинг", visible: true, width: 100, order: 4 },
+  { key: "amount", label: "Сумма", visible: true, width: 110, order: 5 },
+  { key: "next_charge", label: "След. списание", visible: true, width: 130, order: 6 },
+  { key: "access_end", label: "Доступ до", visible: true, width: 100, order: 7 },
+  { key: "grace_remaining", label: "Grace", visible: true, width: 90, order: 8 },
+  { key: "attempts", label: "Попытки", visible: true, width: 80, order: 9 },
+  { key: "card", label: "Карта", visible: true, width: 70, order: 10 },
+  { key: "pm", label: "PM", visible: true, width: 110, order: 11 },
+  { key: "last_attempt", label: "Last Attempt", visible: true, width: 130, order: 12 },
+  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 80, order: 13 },
+  { key: "email_status", label: "Email 7/3/1", visible: true, width: 80, order: 14 },
 ];
 
-const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
+const STORAGE_KEY = 'admin_auto_renewals_columns_v2';
 
 // Columns that should NOT be sortable
 const NON_SORTABLE_COLUMNS = new Set(['checkbox', 'card', 'tg_status', 'email_status']);
