@@ -73,20 +73,6 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
-    const credsResult = await getBepaidCredsStrict(supabase);
-    
-    if (isBepaidCredsError(credsResult)) {
-      console.error('[create-token] bePaid credentials error:', credsResult.error);
-      return new Response(
-        JSON.stringify({ success: false, error: credsResult.error }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    
-    const bepaidCreds = credsResult;
-    console.log('[create-token] Using bePaid credentials from:', bepaidCreds.creds_source);
-
     // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');
     let authUserId: string | null = null;
@@ -143,7 +129,7 @@ Deno.serve(async (req) => {
       if (offerId) {
         const { data: specificOffer } = await supabase
           .from('tariff_offers')
-          .select('amount, trial_days, auto_charge_amount, requires_card_tokenization, offer_type')
+          .select('amount, trial_days, auto_charge_amount, requires_card_tokenization, offer_type, meta')
           .eq('id', offerId)
           .eq('is_active', true)
           .maybeSingle();
@@ -347,6 +333,125 @@ Deno.serve(async (req) => {
         console.log('Created new user:', userId);
       }
     }
+
+    // Provider-aware one-time payment (e.g. consultations). This branch runs before any bePaid
+    // credentials/order/bootstrap work, so Stripe-only offers never try bePaid and never fallback to bePaid.
+    if (isOneTime) {
+      console.log('[bepaid-create-token] One-time payment: early provider-aware createPaymentCheckout');
+
+      let tariffIdForCheckout: string | null = null;
+      if (tariffCode) {
+        const { data: tariffRow } = await supabase
+          .from('tariffs')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('code', tariffCode)
+          .maybeSingle();
+        tariffIdForCheckout = tariffRow?.id ?? null;
+      }
+      if (!tariffIdForCheckout && offerId) {
+        const { data: offerRow } = await supabase
+          .from('tariff_offers')
+          .select('tariff_id')
+          .eq('id', offerId)
+          .maybeSingle();
+        tariffIdForCheckout = offerRow?.tariff_id ?? null;
+      }
+
+      if (!tariffIdForCheckout) {
+        console.error('[bepaid-create-token] Cannot resolve tariff_id for early one-time checkout', { tariffCode, offerId, productId });
+        return paymentFallbackResponse('Не удалось определить тариф для оплаты. Попробуйте ещё раз.', {
+          flow: 'one_time_checkout_early',
+          productId,
+          tariffCode: tariffCode || null,
+          offerId: offerId || null,
+        });
+      }
+
+      let effectiveProvider: 'bepaid' | 'stripe' = 'bepaid';
+      let effectiveAccountCode: string | null = null;
+      let allowedPaymentProviders: ('bepaid' | 'stripe')[] = [];
+      if (offerId) {
+        const { data: offerProviderRow } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', offerId)
+          .maybeSingle();
+        const acquiring = ((offerProviderRow?.meta as Record<string, any> | null)?.acquiring ?? {}) as Record<string, any>;
+        allowedPaymentProviders = Array.isArray(acquiring.allowed_payment_providers)
+          ? acquiring.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+          : [];
+        const defaultProvider = acquiring.default_provider === 'stripe' || acquiring.default_provider === 'bepaid'
+          ? acquiring.default_provider
+          : null;
+        if (allowedPaymentProviders.length === 1) {
+          effectiveProvider = allowedPaymentProviders[0];
+        } else if (defaultProvider && allowedPaymentProviders.includes(defaultProvider)) {
+          effectiveProvider = defaultProvider;
+        }
+        effectiveAccountCode = effectiveProvider === 'stripe'
+          ? (typeof acquiring?.stripe?.account_code === 'string' ? acquiring.stripe.account_code : null)
+          : null;
+      }
+
+      const origin = req.headers.get('origin') || 'https://lovable.app';
+      const checkoutResult = await createPaymentCheckout({
+        supabase,
+        user_id: userId as string,
+        product_id: productId,
+        tariff_id: tariffIdForCheckout,
+        amount: Math.round(productInfo.price * 100),
+        payment_type: 'one_time',
+        description: description || productInfo.name,
+        offer_id: offerId,
+        origin,
+        actor_type: 'system',
+        provider: effectiveProvider,
+        account_code: effectiveAccountCode,
+        currency: productInfo.currency || (effectiveProvider === 'stripe' ? 'BYN' : undefined),
+        meta_extra: {
+          provider_choice_resolution: {
+            mode: 'fixed',
+            chosen: effectiveProvider,
+            allowed_payment_providers: allowedPaymentProviders.length > 0 ? allowedPaymentProviders : null,
+            source: 'tariff_offer_meta_acquiring',
+          },
+        },
+      });
+
+      if (!checkoutResult.success) {
+        console.error('[bepaid-create-token] early createPaymentCheckout failed:', checkoutResult.error);
+        return paymentFallbackResponse(checkoutResult.error, {
+          flow: 'one_time_checkout_early',
+          productId,
+          offerId: offerId || null,
+          provider: effectiveProvider,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          redirectUrl: checkoutResult.redirect_url,
+          orderId: checkoutResult.order_id,
+          provider: checkoutResult.provider || effectiveProvider,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback).
+    // Loaded only for non-Stripe/non-one-time legacy bePaid flows.
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[create-token] bePaid credentials error:', credsResult.error);
+      return new Response(
+        JSON.stringify({ success: false, error: credsResult.error }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const bepaidCreds = credsResult;
+    console.log('[create-token] Using bePaid credentials from:', bepaidCreds.creds_source);
 
     // Get payment settings - use integration_instances values if available, fallback to payment_settings
     const { data: settings } = await supabase
@@ -689,78 +794,6 @@ Deno.serve(async (req) => {
     };
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
-
-    // For one-time payments (e.g., consultations), use checkout API instead of subscriptions
-    if (isOneTime) {
-      console.log('[bepaid-create-token] One-time payment: delegating to canonical createPaymentCheckout');
-      
-      // Resolve tariff_id UUID for the shared helper
-      let tariffIdForCheckout: string | null = null;
-      if (tariffCode) {
-        const { data: tariffRow } = await supabase
-          .from('tariffs')
-          .select('id')
-          .eq('product_id', productId)
-          .eq('code', tariffCode)
-          .maybeSingle();
-        tariffIdForCheckout = tariffRow?.id ?? null;
-      }
-      if (!tariffIdForCheckout && offerId) {
-        const { data: offerRow } = await supabase
-          .from('tariff_offers')
-          .select('tariff_id')
-          .eq('id', offerId)
-          .maybeSingle();
-        tariffIdForCheckout = offerRow?.tariff_id ?? null;
-      }
-
-      if (!tariffIdForCheckout) {
-        console.error('[bepaid-create-token] Cannot resolve tariff_id for one-time checkout', { tariffCode, offerId, productId });
-        return paymentFallbackResponse('Не удалось определить тариф для оплаты. Попробуйте ещё раз.', {
-          flow: 'one_time_checkout',
-          productId,
-          tariffCode: tariffCode || null,
-          offerId: offerId || null,
-        });
-      }
-
-      const amountKopecks = Math.round(paymentAmount * 100);
-      const checkoutResult = await createPaymentCheckout({
-        supabase,
-        user_id: userId as string,
-        product_id: productId,
-        tariff_id: tariffIdForCheckout,
-        amount: amountKopecks,
-        payment_type: 'one_time',
-        description: description || productInfo.name,
-        offer_id: offerId,
-        origin: origin,
-        actor_type: 'system',
-      });
-
-      if (!checkoutResult.success) {
-        console.error('[bepaid-create-token] createPaymentCheckout failed:', checkoutResult.error);
-        return paymentFallbackResponse(checkoutResult.error, {
-          flow: 'one_time_checkout',
-          productId,
-          offerId: offerId || null,
-        });
-      }
-
-      console.log('[bepaid-create-token] One-time checkout created via canonical flow:', {
-        order_id: checkoutResult.order_id,
-        payment_type: checkoutResult.payment_type,
-      });
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          redirectUrl: checkoutResult.redirect_url,
-          orderId: checkoutResult.order_id,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
 
     // PATCH-2: MIT tokenization flow - use checkout API with recurring contract (NOT subscriptions API)
     // This saves the card for future MIT charges without creating a bePaid subscription
