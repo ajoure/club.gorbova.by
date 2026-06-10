@@ -1,429 +1,248 @@
+## да, согласен, с учетом правок:
+
 Да, согласен, с учетом правок.
 
-План Stage 2D принимается, но нужно добавить обязательный Stage 2E: Stripe payer/card data parity в столбце «Плательщик».
+План финального закрытия PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 через UI-proof принят.
 
-# Дополнение к Stage 2D / Stage 2E
-
-## Новая проблема
-
-В /admin/payments в столбце:
-
-text Плательщик 
-
-для Stripe payment/refund сейчас отображается:
-
-text Без данных Метод оплаты: Без данных Данные карты недоступны 
-
-Это неправильно.
-
-По Stripe-платежам должны отображаться данные карты так же, как по bePaid:
-
-text VISA **** 3587 
-
-или:
-
-text Apple Pay / VISA **** 3587 
-
-если платёж был через Apple Pay.
-
-На скрине Stripe payment/refund строки показывают «Без данных», хотя карта известна по Stripe и уже использовалась в этих платежах.
+Код и миграции не трогать. Только read-only SQL, UI-скрины и обновление proof.
 
 ---
 
-# Stage 2D — принимается
+# **Обязательные правки к плану**
 
-Stage 2D выполняем как в плане:
+## **1. Не закрывать PATCH только по текстовому отчёту**
 
-1. В карточке контакта разделить:
+Финальный статус:
 
-   text    Следующее списание    Доступ до    
+```text
+PATCH = CLOSED
+```
 
-2. Не подменять next_charge_at через access_end_at.
+можно ставить только если proof содержит:
 
-3. PublicPayPage Stripe subscription final proof.
+- SQL-снапшоты;
+- after-скрины;
+- ссылки на скрины;
+- финальную таблицу Stage 1 / 2A / 2B / 2C / 2D / 2E;
+- список backlog carried over.
 
-4. Зафиксировать Stripe recurring:
-
-   text    interval    interval_count    collection_method    
-
-5. Периодичность Stripe в этом PATCH не менять.
-
----
-
-# Stage 2E — Stripe payer/card data parity в PaymentsTable
-
-## Цель
-
-Stripe payment/refund строки в таблице «Платежи» должны показывать карту/метод оплаты в колонке «Плательщик» так же, как bePaid.
-
-Не должно быть:
-
-text Без данных 
-
-если Stripe metadata содержит card/payment method data или если данные можно взять из связанной parent payment строки.
+Если хотя бы один скрин противоречит логике — PATCH не закрывать, а открыть точечный fix.
 
 ---
 
-# Discovery Stage 2E
+## **2. Уточнить пункт про 12 скринов**
 
-Проверить read-only:
+Не обязательно именно 12 отдельных файлов, если один скрин покрывает несколько пунктов.
 
-## 1. Stripe payment $2
+Но в proof должны быть закрыты все проверки:
 
-Посмотреть:
+```text
+карточка контакта
+PublicPayPage
+PaymentsTable Stripe $2
+PaymentsTable Stripe +5 BYN
+PaymentsTable Stripe refund -5 BYN
+bePaid payment regression
+Stripe payment document
+Stripe refund document
+bePaid document regression
+Unified Subscriptions
+AutoRenewals
+SQL cohort explanation
+```
 
-sql select id, provider, provider_payment_id, transaction_type, amount, currency,        receipt_url, meta from payments_v2 where provider='stripe' order by created_at desc; 
-
-Найти в meta:
-
-text payment_method_details card brand last4 wallet apple_pay payment_method_id charge payment_intent 
-
-## 2. Stripe payment +5 BYN
-
-Проверить, есть ли:
-
-text VISA last4 = 3587 wallet / apple_pay 
-
-в payments_v2.meta, provider_response, stripe.card, charge.payment_method_details.
-
-## 3. Stripe refund -5 BYN
-
-Refund row должен наследовать payer/card data от parent payment:
-
-text parent_payment_id meta.parent_payment_id meta.parent_payment_uid payment_intent_id 
-
-Если refund сам не содержит card data, использовать parent payment card snapshot.
+Можно делать один скрин на несколько пунктов, но в proof явно подписать, какие пункты он закрывает.
 
 ---
 
-# Required mapping для payer/card
+## **3. По AutoRenewals не требовать Stripe-строку, если её нет в когорте**
 
-Добавить derived fields в useUnifiedPayments.tsx:
+Для AutoRenewals proof должен честно показать:
 
-ts payer_card_brand payer_card_last4 payer_card_wallet payer_card_exp_month payer_card_exp_year payer_display 
+```text
+Stripe active recurring row сейчас отсутствует по SQL, потому что нет active/trialing/past_due + auto_renew=true + sub_* + next_charge_at.
+```
 
-SOT остаётся payments_v2.meta / parent payment meta.
+Это не FAIL, если SQL подтверждает отсутствие подходящей Stripe-подписки.
 
-## Priority для Stripe payment row
-
-text 1. meta.stripe.payment_method_details.card.brand / last4 2. meta.stripe.charge.payment_method_details.card.brand / last4 3. meta.stripe.card.brand / last4 4. meta.provider_response.stripe.payment_method_details.card 5. meta.provider_response.stripe.charge.payment_method_details.card 6. existing card_* fields, если есть 7. null 
-
-Если wallet:
-
-text meta.stripe.payment_method_details.card.wallet.type = apple_pay 
-
-то display:
-
-text Apple Pay · VISA **** 3587 
-
-Иначе:
-
-text VISA **** 3587 
-
-## Priority для Stripe refund row
-
-Refund row:
-
-text 1. собственные card fields, если есть 2. parent payment card data через parent_payment_id 3. parent payment card data через parent_payment_uid / provider_payment_id 4. null 
-
-Refund должен отображать карту родительского платежа, потому что возврат идёт на ту же карту.
+Но layout и bePaid regression показать обязательно.
 
 ---
 
-# UI Stage 2E
+## **4. По карточке контакта Сергея**
 
-В PaymentsTable.tsx в колонке «Плательщик»:
+Так как Stripe-подписка Сергея уже отменена, в активном блоке её быть не должно.
 
-## Для Stripe payment/refund
+Proof должен показать:
 
-Если card data есть, показывать:
+- активной Stripe-подписки в карточке нет;
+- доступ не отозван;
+- если есть блок доступа/entitlement — он сохранён до `access_end_at`;
+- `Следующее списание` не подменено через `access_end_at`.
 
-text VISA **** 3587 
-
-или:
-
-text Apple Pay · VISA **** 3587 
-
-Provider badge уже есть отдельно, его не дублировать.
-
-## Если card data нет
-
-Показывать:
-
-text Карта не определена 
-
-или:
-
-text Метод оплаты не сохранён 
-
-но не общий Без данных, если это технически означает «мы не достали карту».
-
-Tooltip:
-
-text Данные карты не сохранены в Stripe metadata 
+Если в карточке нет активной подписки, не требовать дату следующего списания именно по отменённой подписке. Достаточно показать, что логика не врёт.
 
 ---
 
-# Важно по refund
+## **5. По PaymentsTable payer/card**
 
-Для Stripe refund row:
+Обязательно отдельно зафиксировать:
 
-- сумма -5.00 BYN;
+- `$2 Stripe` может показывать «Карта не определена», если в историческом meta нет card-data;
+- `+5 BYN Stripe` должен показывать `VISA **** 3587`, если данные есть;
+- `-5 BYN refund` должен наследовать карту parent payment;
+- bePaid строки показывают карты как раньше.
 
-- тип Возврат;
+Если `$2` без card-data — это не FAIL, а backlog:
 
-- payer/card должен быть тем же, что у parent payment:
-
-  text   VISA **** 3587   
-
-- документ refund открывается через Stage 2C mapping.
-
----
-
-# Что НЕ делать
-
-Не делать:
-
-- не делать сетевые Stripe API вызовы из frontend;
-
-- не добавлять новую edge function только ради UI;
-
-- не менять payments_v2 без отдельного backfill;
-
-- не ломать bePaid payer display;
-
-- не смешивать payer card с customer/contact;
-
-- не показывать полный PAN карты;
-
-- не показывать CVC/expiry, если это не нужно.
+```text
+PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2
+```
 
 ---
 
-# Если данных карты реально нет в БД
+## **6. По Stripe documents**
 
-Если discovery покажет, что в payments_v2.meta по Stripe нет card data, тогда:
+Proof должен не просто показать кнопку, а подтвердить фактическое открытие URL.
 
-1. Не делать вид, что всё ок.
+Минимум:
 
-2. Зафиксировать в proof:
+- скрин таблицы с кнопкой;
+- скрин открытой Stripe hosted page / receipt / invoice;
+- подпись, какой row открыл какой URL.
 
-   text    card data missing in local Stripe payment meta    
+Важно:
 
-3. Добавить follow-up:
-
-   text    PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2    
-
-4. Scope follow-up:
-
-   - при webhook/materialization сохранять payment_method_details.card.brand/last4/wallet;
-
-   - для старых Stripe payments сделать targeted enrichment через Stripe API;
-
-   - refund rows наследуют card snapshot от parent payment.
-
-Но если данные уже есть в meta — Stage 2E должен быть закрыт сейчас.
+```text
+payment row не открывает refund-документ
+refund row не пишет «документ ещё не получен», если fallback URL есть
+```
 
 ---
 
-# Stage 2D + 2E Verify
+## **7. По PublicPayPage**
 
-## Stage 2D
+Нужно использовать актуальную Stripe subscription payment link.
 
-Проверить:
+Proof должен показать:
 
-- карточка контакта показывает:
+- provider = Stripe;
+- payment_type = subscription;
+- нет disabled bePaid saved card;
+- нет текста «Белорусская карта»;
+- есть Stripe/Apple Pay hint;
+- CTA ведёт в Stripe Checkout.
 
-  text   Следующее списание: ...   Доступ до: ...   
-
-- access_end_at не маскируется под next_charge_at;
-
-- PublicPayPage Stripe subscription без bePaid card/text;
-
-- Stripe interval/interval_count зафиксирован.
-
-## Stage 2E
-
-Проверить /admin/payments:
-
-### Stripe payment $2
-
-Ожидаемо:
-
-text Плательщик: VISA **** 3587 
-
-или Apple Pay variant, если был Apple Pay.
-
-### Stripe payment +5 BYN
-
-Ожидаемо:
-
-text Плательщик: VISA **** 3587 
-
-### Stripe refund -5 BYN
-
-Ожидаемо:
-
-text Плательщик: VISA **** 3587 
-
-через parent payment.
-
-### bePaid regression
-
-bePaid строки продолжают показывать карты как раньше:
-
-text Mastercard **** 1468 Visa **** 0145 
+Не выполнять реальную оплату.
 
 ---
 
-# Proof additions
+# **Исправленный финальный DoD**
 
-В .lovable/proofs/stripe_ui_provider_parity_cleanup_[v1.md](http://v1.md) добавить:
+PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 = CLOSED, если:
 
-## Stage 2E proof
-
-1. Before screenshot:
-
-   - Stripe rows показывают «Без данных».
-
-2. SQL/meta snapshot:
-
-   - Stripe $2 payment card fields;
-
-   - Stripe +5 BYN payment card fields;
-
-   - Stripe -5 BYN refund parent link.
-
-3. After screenshot:
-
-   - Stripe rows показывают карту/метод оплаты;
-
-   - refund row наследует карту parent payment.
-
-4. Regression:
-
-   - bePaid payer column не изменился.
+1. Все Stage 1 / 2A / 2B / 2C / 2D / 2E отмечены PASS.
+2. SQL-снапшоты добавлены в proof.
+3. UI-скрины добавлены в proof.
+4. Stripe и bePaid в одной таблице «Подписки».
+5. AutoRenewals layout исправлен и SQL объясняет отсутствие Stripe-строк, если их нет.
+6. PaymentsTable:
+  - Stripe документы через единую кнопку;
+  - Stripe payer/card отображается корректно или честно указано отсутствие card-data;
+  - bePaid не сломан.
+7. PublicPayPage Stripe subscription clean от bePaid-текстов.
+8. «Проблемы с оплатой» скрыта из nav.
+9. Backlog перенесён:
+  - `PATCH-STRIPE-BULK-CANCEL-V2`;
+  - `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`;
+  - `PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2`;
+  - `PATCH-STRIPE-DOCUMENTS-DRAWER-V2`.
+10. Не было code/migration changes в этом финальном proof-step.
 
 ---
 
-# Updated DoD
+# **Команда**
 
-PATCH не закрывать, пока:
+Выполняй финальный UI-proof.
 
-- Stage 2D = PASS;
+Код не менять.
 
-- Stage 2E = PASS;
-
-- Stripe payer/card data больше не показывает «Без данных», если данные есть;
-
-- refund inherits parent card data;
-
-- bePaid payer display не сломан;
-
-- final proof обновлён.
-
-Начинай Stage 2D + Stage 2E.
+Если на любом скрине обнаружится расхождение — остановиться и дать отдельный план точечного фикса, не ставить `PATCH = CLOSED`.
 
 &nbsp;
 
-План: Stage 2D — next_charge_at / access_until + PublicPayPage proof (PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1)
+План: финальное закрытие PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 через UI-proof
 
-## Цель
+Цель — собрать фактические скрины/SQL-факты по 6 чек-пунктам ревью и обновить `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`. Кода не трогаем — все Stage 1 / 2A–2E уже PASS по логике.
 
-Завершить PATCH:
+### Этап 1. Diagnose — собрать SQL-факты (read-only)
 
-1. Карточка контакта корректно показывает «Следующее списание» и «Доступ до» отдельно, с приоритетом Stripe-источников для `next_charge_at`.
-2. PublicPayPage Stripe subscription чист от bePaid-текстов и disabled bePaid-карт (подтвердить proof, без изменений если уже ок).
-3. Зафиксировать Stripe recurring `interval`/`interval_count` в proof (без изменения периодичности).
-4. Обновить `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` с before/after скринами и SQL-сниппетами.
+Через `supabase--read_query` зафиксировать в proof ровно те значения, которые отрисуются на скринах:
 
-## Изменения в коде (минимальные)
+1. Stripe subscription Сергея (`sub_1TgWoO...`) — `provider_subscriptions` + `subscriptions_v2.meta.stripe.current_period_end`, `status`, `access_end_at`.
+2. Stripe $2 payment (`pi_3TgWoM...`) — `payments_v2.meta.stripe` (подтвердить отсутствие card data → ожидаем «Карта не определена»).
+3. Stripe +5 BYN payment и -5 BYN refund — `payments_v2` parent/refund pair, проверить `card_brand/card_last4` или `meta.stripe.payment_method_details.card`.
+4. bePaid контрольная строка — взять одну активную и одну с receipt для регресс-скрина.
+5. AutoRenewals когорта — SQL по `subscriptions_v2 WHERE meta->'recurring'->>'is_recurring'='true' AND provider='stripe' AND status IN ('active','past_due')` → подтвердить пустой набор, обосновать отсутствие Stripe-строки.
 
-### 1) `src/components/admin/ContactDetailSheet.tsx` (только блок healthyProviderSubs, строки ~2235–2330)
+### Этап 2. UI-proof — скрины через preview (`/admin/payments`, карточка контакта, PublicPayPage)
 
-Поменять резолвер `nextCharge` на канонический приоритет:
+Для каждого скрина: `browser--navigate_to_url` → при необходимости логин «Login as Developer» (`123456`) → `browser--screenshot`. Файлы складываем в `/mnt/documents/proofs/stripe_ui_cleanup_v1/` и линкуем из proof-файла.
 
-```
-nextCharge =
-  1) sub.subscriptions_v2?.meta?.stripe?.current_period_end (unix sec → ISO)
-  2) sub.meta?.stripe?.current_period_end (unix sec → ISO)
-  3) sub.subscriptions_v2?.meta?.current_period_end (если когда-нибудь сохранено)
-  4) sub.next_charge_at (bePaid-резолвер, как сейчас)
-  5) sub.subscriptions_v2?.next_charge_at
-  → иначе null
-```
+Перечень обязательных скринов (1 файл = 1 пункт ревью):
 
-Правила отображения (контракт Stage 2D):
-
-- Строка «Следующее списание: DD.MM.YYYY HH:mm — amount» — рисуется ТОЛЬКО когда `nextCharge` резолвится; иначе `Следующее списание: —` (как сейчас, не меняем).
-- ❗ Не подменять `next_charge_at` через `access_end_at`. Если резолверы 1–5 вернули null — оставить `—`, даже если `accessEnd` известно.
-- Строка «Доступ до …» рисуется независимо, по существующему `accessEnd` (db → provider_snapshot.active_to), без изменений.
-
-В запрос подписок (`ContactDetailSheet.tsx` ~748–760) добавить `meta` в выборку `subscriptions_v2` и `provider_subscriptions`, если ещё не выбирается (проверить и расширить только select-list, без новых join'ов и без изменения RLS-доступа).
-
-Маленький helper `resolveNextChargeAt(sub)` — рядом с компонентом или в `src/utils/`, чтобы тот же приоритет был переиспользуемым (read-only). Никаких записей в БД, никаких новых RPC.
-
-### 2) `src/pages/PublicPayPage.tsx` — без изменений
-
-Текущее поведение уже соответствует требованию:
-
-- `isStripeSubscription` отключает `showSubscriptionDisabledCards` и `showSubscriptionFallbackHint`.
-- `showStripeSubscriptionHint` рисует чистый Stripe-текст без слова «bePaid»/«Белорусская карта».
-- CTA Stripe subscription уходит в Stripe Checkout (без изменений в этом стейдже).
-
-Только зафиксировать факт в proof со скрином.
-
-## Discovery / proof (read-only SQL)
-
-В `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` добавить раздел Stage 2D:
-
-1. SQL для recurring параметров Stripe-подписки Сергея:
-
-```sql
-select id, status, access_end_at, next_charge_at,
-       meta->'stripe'->>'current_period_end' as cpe,
-       meta->'stripe'->>'subscription_id'    as stripe_sub,
-       meta->'stripe'->>'collection_method'  as collection_method,
-       meta->'stripe'->'price'                as price,
-       meta->'stripe'->'recurring'            as recurring
-from subscriptions_v2
-where id in (...sergey subv2...);
+```text
+01_contact_card_sergey.png        — карточка контакта Сергея
+                                    • «Следующее списание: …» и «Доступ до: …» раздельно
+                                    • cancelled Stripe-sub НЕ в активном блоке
+                                    • access сохранён
+02_public_pay_page_stripe.png     — PublicPayPage для Stripe-tariff
+                                    • нет disabled bePaid card
+                                    • нет «Белорусская карта»
+                                    • есть Stripe/Apple Pay hint
+                                    • CTA → Stripe Checkout
+03a_payments_table_stripe_2usd.png   — строка $2 Stripe sub payment → «Карта не определена»
+03b_payments_table_stripe_5byn.png   — строка +5 BYN → VISA **** XXXX
+03c_payments_table_stripe_refund.png — строка -5 BYN refund → карта от parent
+03d_payments_table_bepaid_regression.png — bePaid-строка с картой как раньше
+04a_documents_stripe_payment.png  — клик «документ» на Stripe payment → открывается receipt
+04b_documents_stripe_refund.png   — клик «документ» на refund → receipt/hosted page с refund info
+04c_documents_bepaid_regression.png — bePaid receipt UX
+05_unified_subscriptions_all.png  — таблица «Подписки», bePaid+Stripe вместе, фильтр provider, Stripe cancelled видна в «Все» и «Отменена»
+06_auto_renewals_layout.png       — AutoRenewals: layout цел, provider-badge есть, bePaid строки, отсутствие Stripe объяснено SQL из Этапа 1
 ```
 
-В proof — JSON-snapshot с полями `interval`, `interval_count`, `billing_mode` (как есть; ничего не меняем).
+### Этап 3. Обновить proof-файл
 
-2. SQL для provider_subscriptions parity:
+`.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`:
 
-```sql
-select id, provider, state, last_charge_at,
-       meta->'stripe'->>'current_period_end' as cpe,
-       meta->'current_period_end'            as cpe_flat
-from provider_subscriptions
-where provider='stripe' order by created_at desc limit 20;
-```
+- секция «Final UI Proof» со ссылками на 12 скринов выше и краткой подписью к каждой;
+- секция «SQL Snapshots» с выводами из Этапа 1 (с timestamp запроса);
+- финальная таблица статусов: Stage 1, 2A, 2B, 2C, 2D, 2E = PASS, PATCH = CLOSED;
+- блок «Backlog carried over»:
+  - PATCH-STRIPE-BULK-CANCEL-V2
+  - PATCH-STRIPE-BILLING-PERIOD-MODE-V2
+  - PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2
+  - PATCH-STRIPE-DOCUMENTS-DRAWER-V2
+- ссылка-плейсхолдер на `.lovable/proofs/stripe_master_sprint_final_closure_v1.md` (будет создан отдельным шагом, не в этом PATCH).
 
-3. UI-скрины (after):
-  - Карточка контакта Сергея: одновременно видны «Следующее списание: —» (или дата из Stripe) и «Доступ до: …» — раздельно.
-  - PublicPayPage Stripe-subscription ссылка: нет disabled bePaid-карт, нет текста «Белорусская карта», виден Stripe-hint, CTA ведёт в Stripe Checkout.
-  - Stripe-сабка Сергея сейчас `canceled` → текущий next_charge = null; для after-скрина показать кейс с активной Stripe-сабкой, если появится; иначе зафиксировать «нет активной recurring → ожидаемо `—`».
-4. Backlog (НЕ в этом PATCH):
-  - `PATCH-STRIPE-BILLING-PERIOD-MODE-V2` — изменение периодичности recurring (interval/interval_count) и admin UI.
-  - Добавить в `.lovable/backlog/` короткий файл-указатель.
+### Этап 4. Verify (DoD)
 
-## DoD
+PATCH считается CLOSED только если:
 
-- Контакт-карточка использует новый резолвер next_charge_at (Stripe meta → bePaid → null), `access_end_at` НЕ маскируется под дату списания.
-- `Следующее списание: —` корректно показывается, когда нет ни одного из источников.
-- `Доступ до …` рисуется отдельно как и раньше.
-- PublicPayPage Stripe-subscription чист — proof со скрином.
-- В proof зафиксированы Stripe `interval` / `interval_count` / `collection_method` как есть.
-- В proof файл `stripe_ui_provider_parity_cleanup_v1.md` помечен Stage 2D = PASS; добавлен Final Proof: Stages 1, 2A, 2B, 2C, 2D = PASS.
-- bePaid карточка контакта не сломана (regression-скрин bePaid-подписки).
-- Никаких изменений в edge functions, в `cancel`-логике Stripe, в публичной checkout-схеме.
+- все 12 скринов лежат в `/mnt/documents/proofs/stripe_ui_cleanup_v1/` и отрендерены как `<presentation-artifact>`;
+- proof-файл обновлён и содержит SQL-снэпшоты + ссылки на скрины;
+- ни один скрин не противоречит логике Stage 2A–2E;
+- bePaid-регрессия (скрины 03d, 04c, 05, 06) визуально идентична до-патч поведению.
 
-## Файлы
+### Технические детали
 
-- edit: `src/components/admin/ContactDetailSheet.tsx` (резолвер next_charge_at + расширение select при необходимости)
-- new (опц.): `src/utils/resolveStripeNextChargeAt.ts` (тонкий helper)
-- edit: `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` (Stage 2D + Final proof)
-- new: `.lovable/backlog/stripe_billing_period_mode_v2.md` (one-pager)
+- Кода и миграций не пишем; только чтение БД и скриншоты.
+- Для скринов используем preview URL (`/admin/payments`, карточка контакта по deep-link, `/pay/<token>` для PublicPayPage). При необходимости проходим «Login as Developer» с паролем `123456`.
+- Если какой-то скрин выявит расхождение с логикой Stage 2D/2E — НЕ закрываем PATCH, открываем точечный фикс отдельным сообщением (формат «План: …»).
+
+### Out of scope (в backlog, не делаем сейчас)
+
+- enrichment card data для исторических Stripe-платежей (PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2);
+- bulk cancel, billing period mode, documents drawer (отдельные PATCH'и);
+- мастер-закрытие Stripe sprint (`stripe_master_sprint_final_closure_v1.md`).
