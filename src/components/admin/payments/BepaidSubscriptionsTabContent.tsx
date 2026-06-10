@@ -226,6 +226,7 @@ const STATUS_LABELS: Record<string, string> = {
 type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due" | "pending";
 type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
 type SourceFilter = "all" | "sbs_only" | "token_only";
+type ProviderFilter = "all" | "bepaid" | "stripe";
 type SortField = "created_at" | "next_billing_at" | "plan_amount" | "status";
 type SortDir = "asc" | "desc";
 
