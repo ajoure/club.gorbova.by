@@ -27,6 +27,11 @@ interface PaymentMethodBadgeProps {
   cardLast4?: string | null;
   providerResponse?: any;
   className?: string;
+  // Stage 2E
+  walletOverride?: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
+  provider?: string | null;
+  /** 'parent_payment' → tooltip помечает refund-наследование. */
+  payerCardSource?: string | null;
 }
 
 // Determine payment method from provider_response
@@ -141,39 +146,51 @@ export default function PaymentMethodBadge({
   cardBrand, 
   cardLast4, 
   providerResponse,
-  className 
+  className,
+  walletOverride,
+  provider,
+  payerCardSource,
 }: PaymentMethodBadgeProps) {
-  const methodKind = detectPaymentMethodKind(cardBrand, providerResponse);
+  const detected = detectPaymentMethodKind(cardBrand, providerResponse);
+  const methodKind: PaymentMethodKind = walletOverride ?? detected;
   const hasCard = cardLast4 && cardLast4.trim() !== '';
-  
+  const isStripe = String(provider || '').toLowerCase() === 'stripe';
+
   // E1: If no card data, show reason badge (wallet/ERIP/unknown)
   if (!hasCard) {
+    const unknownLabel = isStripe ? 'Карта не определена' : MethodLabels[methodKind];
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <div className={cn(
             "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md",
             "bg-muted/50 border border-border/50",
-            "max-w-[130px] h-6",
+            "max-w-[160px] h-6",
             className
           )}>
             <BrandIcon kind={methodKind} />
             <span className="text-xs text-muted-foreground truncate leading-none">
-              {MethodLabels[methodKind]}
+              {methodKind === 'unknown' ? unknownLabel : MethodLabels[methodKind]}
             </span>
           </div>
         </TooltipTrigger>
         <TooltipContent>
           <div className="text-xs">
-            <div>Метод оплаты: {MethodLabels[methodKind]}</div>
-            {methodKind === 'unknown' && <div className="text-muted-foreground">Данные карты недоступны</div>}
+            <div>Метод оплаты: {methodKind === 'unknown' ? unknownLabel : MethodLabels[methodKind]}</div>
+            {methodKind === 'unknown' && (
+              <div className="text-muted-foreground">
+                {isStripe
+                  ? 'Данные карты не сохранены в Stripe metadata'
+                  : 'Данные карты недоступны'}
+              </div>
+            )}
           </div>
         </TooltipContent>
       </Tooltip>
     );
   }
-  
-  // E2: Card exists - show brand icon + last4
+
+  // E2: Card exists - show brand icon + last4 (+ optional wallet prefix)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -181,14 +198,25 @@ export default function PaymentMethodBadge({
           "inline-flex items-center gap-1.5 h-5",
           className
         )}>
-          <BrandIcon kind={methodKind} />
+          {walletOverride && (
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {MethodLabels[walletOverride]} ·
+            </span>
+          )}
+          <BrandIcon kind={detected} />
           <span className="font-mono text-xs leading-none">**** {cardLast4}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent>
         <div className="text-xs">
-          <div>{MethodLabels[methodKind]}</div>
+          <div>
+            {walletOverride ? `${MethodLabels[walletOverride]} · ` : ''}
+            {MethodLabels[detected]}
+          </div>
           {cardBrand && <div className="text-muted-foreground">{cardBrand}</div>}
+          {payerCardSource === 'parent_payment' && (
+            <div className="text-muted-foreground">Карта родительского платежа</div>
+          )}
         </div>
       </TooltipContent>
     </Tooltip>
