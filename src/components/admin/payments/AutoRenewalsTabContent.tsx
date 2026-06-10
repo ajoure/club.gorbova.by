@@ -58,7 +58,7 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'stripe' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
@@ -75,6 +75,7 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
   { value: 'bepaid', label: 'BePaid подписки', icon: CreditCard },
+  { value: 'stripe', label: 'Stripe подписки', icon: CreditCard },
   { value: 'broken_token', label: '⚠️ Broken token' },
   { value: 'requires_3ds', label: '🔐 Requires 3DS' },
   { value: 'link_only', label: '🔗 Только ссылка' },
@@ -93,25 +94,26 @@ const RELEVANT_TG_EVENT_TYPES = [
   'grace_expired',
 ];
 
-// Column configuration
+// Stage 2B: Column configuration — bumped widths for readability + provider column
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "contact", label: "Контакт", visible: true, width: 160, order: 1 },
-  { key: "product", label: "Продукт", visible: true, width: 130, order: 2 },
-  { key: "billing_type", label: "Биллинг", visible: true, width: 70, order: 3 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 4 },
-  { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 5 },
-  { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 6 },
-  { key: "grace_remaining", label: "Grace", visible: true, width: 80, order: 7 },
-  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 8 },
-  { key: "card", label: "Карта", visible: true, width: 50, order: 9 },
-  { key: "pm", label: "PM", visible: true, width: 80, order: 10 },
-  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 11 },
-  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 12 },
-  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 13 },
+  { key: "contact", label: "Контакт", visible: true, width: 200, order: 1 },
+  { key: "product", label: "Продукт", visible: true, width: 180, order: 2 },
+  { key: "provider", label: "Провайдер", visible: true, width: 95, order: 3 },
+  { key: "billing_type", label: "Биллинг", visible: true, width: 100, order: 4 },
+  { key: "amount", label: "Сумма", visible: true, width: 110, order: 5 },
+  { key: "next_charge", label: "След. списание", visible: true, width: 130, order: 6 },
+  { key: "access_end", label: "Доступ до", visible: true, width: 100, order: 7 },
+  { key: "grace_remaining", label: "Grace", visible: true, width: 90, order: 8 },
+  { key: "attempts", label: "Попытки", visible: true, width: 80, order: 9 },
+  { key: "card", label: "Карта", visible: true, width: 70, order: 10 },
+  { key: "pm", label: "PM", visible: true, width: 110, order: 11 },
+  { key: "last_attempt", label: "Last Attempt", visible: true, width: 130, order: 12 },
+  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 80, order: 13 },
+  { key: "email_status", label: "Email 7/3/1", visible: true, width: 80, order: 14 },
 ];
 
-const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
+const STORAGE_KEY = 'admin_auto_renewals_columns_v2';
 
 // Columns that should NOT be sortable
 const NON_SORTABLE_COLUMNS = new Set(['checkbox', 'card', 'tg_status', 'email_status']);
@@ -282,6 +284,8 @@ interface AutoRenewal {
   provider_subscription_id: string | null;
   provider_last_charge_at: string | null;
   charged_today: boolean;
+  // Stage 2B: provider-aware label ('bepaid' | 'stripe' | 'local')
+  provider: 'bepaid' | 'stripe' | 'local';
 }
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
@@ -505,7 +509,7 @@ export function AutoRenewalsTabContent() {
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
       const { data: providerSubs } = await supabase
         .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
+        .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
         .eq('state', 'active');
 
       // Build lookup: subscription_v2_id → provider_subscription record
@@ -639,6 +643,8 @@ export function AutoRenewalsTabContent() {
           provider_subscription_id: linkedPs?.provider_subscription_id || null,
           provider_last_charge_at: linkedPs?.last_charge_at || null,
           charged_today: !!linkedPs?.last_charge_at && isTodayMinsk(new Date(linkedPs.last_charge_at)),
+          // Stage 2B: provider label
+          provider: linkedPs?.provider === 'stripe' ? 'stripe' : (linkedPs ? 'bepaid' : 'local'),
         };
       });
 
@@ -678,6 +684,7 @@ export function AutoRenewalsTabContent() {
         const profile = ps.user_id ? profileMap.get(ps.user_id) : (ps.profile_id ? profileByIdMap.get(ps.profile_id) : null);
         const planTitle = ps.raw_data?.plan?.title || ps.raw_data?.plan?.name || null;
         const amountByn = (ps.amount_cents || 0) / 100;
+        const psProvider: 'bepaid' | 'stripe' = ps.provider === 'stripe' ? 'stripe' : 'bepaid';
 
         dedupedSubs.push({
           id: ps.id, // use provider_subscriptions UUID
@@ -711,7 +718,7 @@ export function AutoRenewalsTabContent() {
           grace_period_started_at: null,
           grace_period_ends_at: null,
           billing_type: 'provider_managed',
-          is_bepaid: true,
+          is_bepaid: psProvider === 'bepaid',
           display_billing_type: 'provider_managed' as const,
           // PATCH 3.2
           pm_verification_status: null,
@@ -720,6 +727,7 @@ export function AutoRenewalsTabContent() {
           provider_subscription_id: ps.provider_subscription_id || null,
           provider_last_charge_at: ps.last_charge_at || null,
           charged_today: !!ps.last_charge_at && isTodayMinsk(new Date(ps.last_charge_at)),
+          provider: psProvider,
         });
       }
 
@@ -857,7 +865,11 @@ export function AutoRenewalsTabContent() {
         break;
       case 'bepaid':
         // PATCH 3.1: filter by is_bepaid (source of truth from provider_subscriptions)
-        result = result.filter(r => r.is_bepaid);
+        result = result.filter(r => r.provider === 'bepaid');
+        break;
+      case 'stripe':
+        // Stage 2B: Stripe cohort — provider=stripe + provider_subscription_id starts with sub_
+        result = result.filter(r => r.provider === 'stripe' && (r.provider_subscription_id || '').startsWith('sub_'));
         break;
       // PATCH 3.2: Error and bad card filters
       case 'errors':
@@ -1211,6 +1223,19 @@ export function AutoRenewalsTabContent() {
             )}
           </div>
         );
+      case 'provider': {
+        const cfg: Record<string, { label: string; className: string }> = {
+          bepaid: { label: 'bePaid', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-300/50' },
+          stripe: { label: 'Stripe', className: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-300/50' },
+          local: { label: 'Локально', className: 'bg-muted text-muted-foreground border-border' },
+        };
+        const c = cfg[renewal.provider] || cfg.local;
+        return (
+          <Badge variant="outline" className={cn('text-[10px] px-1.5 font-medium', c.className)}>
+            {c.label}
+          </Badge>
+        );
+      }
       case 'billing_type': {
         const dbt = renewal.display_billing_type;
         const billingConfig: Record<string, { label: string; emoji: string; className: string }> = {
@@ -1715,7 +1740,7 @@ export function AutoRenewalsTabContent() {
               <div data-table-scroll-x="true" className="table-scroll-x">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={sortedColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
-                    <Table style={{ tableLayout: 'fixed', width: totalColumnsWidth, minWidth: totalColumnsWidth }}>
+                    <Table style={{ tableLayout: 'fixed', width: '100%', minWidth: totalColumnsWidth }}>
                       <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
                         <TableRow>
                           {sortedColumns.map(col => (
