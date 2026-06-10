@@ -31,6 +31,8 @@ import {
 } from '../_shared/stripe-subscription-resolver.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materialize.ts';
+import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
+
 
 function svc() {
   return createClient(
