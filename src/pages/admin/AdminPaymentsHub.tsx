@@ -1,6 +1,6 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, AlertCircle } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 import { usePaymentIssuesCounters } from "@/hooks/admin/usePaymentIssuesCounters";
