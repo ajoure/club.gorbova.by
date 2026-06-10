@@ -159,6 +159,22 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   const meta_account_code = md.account_code;
   const order_id_meta = md.order_id ?? (obj.client_reference_id as string | undefined);
 
+  // PATCH: Stripe subscription checkout materialization (recovery / safety path).
+  // Если это checkout.session.completed для subscription и invoice.paid не пришёл —
+  // подтягиваем invoice из Stripe API и делегируем onInvoicePaid (canonical).
+  // Идемпотентно: при последующем реальном invoice.paid дубль не создастся.
+  if (event.type === 'checkout.session.completed' && String(obj.mode ?? '') === 'subscription') {
+    const out = await activateStripeSubscriptionCheckout(supabase, {
+      session: obj,
+      account_code,
+      source_event_id: event.id,
+      source: 'stripe.webhook.checkout.session.completed',
+    });
+    const note = out.manual_review
+      ? `manual_review:${out.manual_review_reason ?? out.skipped ?? 'unknown'}`
+      : (out.note ?? out.skipped);
+    return { order_id: out.order_id, payment_id: out.payment_id, note };
+  }
 
   // Cross-check resolved (from webhook secret) vs metadata account_code
   if (meta_account_code && meta_account_code !== account_code) {
@@ -167,6 +183,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   if (!order_id_meta) {
     return { note: 'no_order_id_in_metadata' };
   }
+
 
   if (event.type === 'checkout.session.completed') {
     // MP-A2-2: customer identity guard. session.customer must match profile cache for
