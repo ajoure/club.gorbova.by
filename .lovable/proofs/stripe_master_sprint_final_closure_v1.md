@@ -24,6 +24,12 @@ orders_v2 (provider='bepaid'|'stripe') ──► webhook (bepaid|stripe) ──�
 
 Никаких новых SOT-таблиц, никаких параллельных fulfillment-веток.
 
+> **Примечание:** в ходе master closure был обнаружен и исправлен production blocker:
+> Stripe-only consultation offer всё ещё уходила через bePaid legacy function.
+> Hot-fix применён отдельно и закрыт собственным proof:
+> `.lovable/proofs/stripe_consultation_oneoff_fix_v1.md`.
+
+
 ## 2. Closed proofs
 
 | Фаза | Proof |
@@ -57,6 +63,7 @@ orders_v2 (provider='bepaid'|'stripe') ──► webhook (bepaid|stripe) ──�
 - [x] Stripe links видны в «Ссылках» — `payment_links` + `payment_links_enriched_v`.
 - [x] Stripe subscriptions видны в «Подписках» — Stage 2A unified table.
 - [x] PublicPayPage provider-clean — Stage 2E.
+- [x] Stripe documents/payer UI aligned with bePaid — Stage 2C/2D/2E (`stripe_ui_provider_parity_cleanup_v1`).
 - [x] Лендинги (`/consultation` и аналогичные one-time продукты) уходят в Stripe, если оффер Stripe-only — сегодняшний hot-fix `stripe_consultation_oneoff_fix_v1`.
 - [x] bePaid не сломан (см. §4).
 
@@ -109,3 +116,17 @@ refund / access flows закрыты и подтверждены.
 Production-critical флоу закрыты и подтверждены runtime + UI proof.
 Осознанные хвосты вынесены в backlog с явными ID и owner-actionable
 формулировками.
+
+## 9. Hot-fix: consultation one-off routing
+
+Факты:
+
+- Все 5 активных consultation-офферов имеют:
+  `acquiring.allowed_payment_providers=["stripe"]`,
+  `default_provider="stripe"`, `account_code="stripe_poland"`.
+- Smoke: `POST /bepaid-create-token` для «Несрочная консультация» (500 BYN)
+  вернул `provider="stripe"`, `redirectUrl` на `checkout.stripe.com`.
+- bePaid checkout URL не возвращался.
+- bePaid credentials path не активировался для `isOneTime=true`.
+- Изменённый файл: `supabase/functions/bepaid-create-token/index.ts`.
+- Proof: `.lovable/proofs/stripe_consultation_oneoff_fix_v1.md`.
