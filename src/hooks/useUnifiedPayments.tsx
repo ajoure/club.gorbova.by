@@ -94,6 +94,15 @@ export interface UnifiedPayment {
   stripe_hosted_invoice_url: string | null;
   stripe_invoice_pdf: string | null;
 
+  // Stage 2C — единый URL документа для рендера (UI-derived; не SOT).
+  // bePaid: receipt_url. Stripe payment: charge.receipt_url > receipt_url > invoice hosted > invoice pdf.
+  // Stripe refund: refund hosted > parent charge receipt > parent invoice hosted.
+  document_url: string | null;
+  // 'charge_receipt' | 'receipt_url' | 'invoice_hosted' | 'invoice_pdf'
+  // | 'refund_receipt' | 'parent_charge_receipt' | 'parent_invoice_hosted' | null
+  document_url_source: string | null;
+
+
   // P0-guard: Pre-built search index (computed once during transformation)
   search_index: string;
 }
