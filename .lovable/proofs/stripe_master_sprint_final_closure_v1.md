@@ -1,7 +1,10 @@
 # Stripe Master Sprint — финальное закрытие
 
 Дата: 2026-06-10
-Статус: **Stripe Master Sprint = CLOSED WITH BACKLOG**
+Статус:
+- PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 = CLOSED
+- PATCH-CONSULTATION-STRIPE-ONEOFF-ROUTING = PASS
+- Stripe Master Sprint = CLOSED WITH BACKLOG
 
 ## 1. Scope
 
