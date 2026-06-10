@@ -1,392 +1,357 @@
-# да, согласен
+да, согласен, с учетом правок:
 
-План принят. Можно выполнять PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1.
+План Stage 2C принимаю. Реализация правильная: один `document_url` per row + единая кнопка документа в стиле bePaid.
 
-Обязательное уточнение перед Execute:
+# **Stage 2C — approve на Execute**
 
-# Не допускается частичная UI-реализация
+Цель корректная:
 
-Нельзя снова сделать временное решение вида:
+```text
+PaymentsTable должен показывать один документ-action для Stripe payment/refund, как у bePaid.
+```
 
-text Stripe сверху отдельным блоком bePaid ниже отдельной таблицей 
+Без:
 
-Результат должен быть только такой:
+```text
+Invoice
+PDF
+Документ ещё не получен
+```
 
-text одна таблица «Подписки» одна таблица «Автопродления» одна таблица «Платежи» provider-aware строки внутри существующего UI 
-
-Stripe должен быть встроен в существующие таблицы, фильтры, статусы, действия и receipt UX так же, как bePaid.
+если Stripe hosted URL доступен.
 
 ---
 
-# Дополнительный proof по parity
+# **Что в плане правильно**
 
-В proof обязательно добавить отдельный раздел:
 
-text bePaid parity checklist 
 
-Проверить и показать:
+## **1. Единый**
 
-## Подписки
+`document_url`
 
-- bePaid и Stripe отображаются в одной таблице;
+Правильно добавить в `UnifiedPayment` derived field:
 
-- одинаковые бизнес-колонки;
+```text
+document_url
+```
 
-- provider-specific действия не смешиваются;
+Это UI-derived поле, а не новый SOT.
 
-- Stripe не рендерится отдельным блоком;
+SOT остаётся:
 
-- фильтр по provider работает.
+```text
+payments_v2.receipt_url
+payments_v2.meta
+parent_payment_id
+provider_response
+```
 
-## Автопродления
+## **2. Payment/refund не смешивать**
 
-- bePaid строки остались как были;
+Правильно:
 
-- Stripe recurring строки добавлены только при валидном sub_*, auto_renew=true, next_charge_at;
+- payment row открывает документ оплаты;
+- refund row открывает документ возврата или hosted page, где виден refund;
+- payment row не должен открывать refund URL;
+- refund row не должен ошибочно писать «документ не получен», если можно открыть parent charge receipt / Stripe hosted page.
 
-- layout не съехал.
+## **3. bePaid не трогать**
 
-## Cancel
+Правильно:
 
-- Stripe cancel повторяет bePaid cancel behavior:
+```text
+bePaid document_url = receipt_url
+```
 
-  - рекуррент отменён;
+и весь retry/получение чека через `bepaid-get-receipt` остаётся как есть.
 
-  - доступ не отозван;
+---
 
-  - refund не создан;
+# **Обязательные правки перед Execute**
 
-  - платежи/заказы не изменены;
 
-  - подписка исчезла из активной карточки контакта;
 
-  - новую подписку можно создать.
 
-## Документы
+
+## **1. Не использовать**
+
+`checkout_session.url` **как document fallback**
+
+В mapping для Stripe payment убрать или оставить только как debug, но не как документ.
+
+```text
+meta.stripe.checkout_session?.url
+```
+
+не является документом оплаты. Это checkout URL, который после оплаты может быть недоступен/истёк и не должен открываться как чек.
+
+Итоговый priority для Stripe payment:
+
+```text
+1. meta.stripe.charge.receipt_url
+2. receipt_url
+3. meta.stripe.hosted_invoice_url
+4. meta.stripe.invoice.hosted_invoice_url
+5. meta.stripe.invoice_pdf
+6. meta.stripe.invoice.invoice_pdf
+7. null
+```
+
+## **2. Для refund fallback на parent charge receipt должен быть явно помечен**
+
+Если refund row открывает receipt родительского charge, tooltip должен быть не «Открыть чек», а например:
+
+```text
+Открыть документ Stripe
+```
+
+или:
+
+```text
+Открыть квитанцию Stripe с информацией о возврате
+```
+
+Потому что это не отдельный refund PDF, а Stripe hosted receipt/charge page, где отражён refund.
+
+## **3. Parent lookup должен работать по обоим ключам**
+
+Для refund parent map искать родителя по:
+
+```text
+parent_payment_id
+meta.parent_payment_id
+meta.parent_payment_uid
+provider_payment_id
+meta.stripe.payment_intent_id
+```
+
+Но использовать только доказуемые связи.
+
+Если parent найден неоднозначно — не подставлять случайный URL, а оставить `document_url=null` и зафиксировать в proof.
+
+## **4. Не ломать статусы bePaid receipt**
+
+В `ReceiptStatusBadge` не менять поведение bePaid.
+
+Stripe-specific tooltip добавлять через provider-aware branch:
+
+```text
+if provider === 'stripe'
+```
+
+bePaid retry/get receipt должен остаться прежним.
+
+## **5. Drawer — не блокирует PASS**
+
+Согласен: если у Stripe есть несколько документов (`hosted_invoice_url`, `invoice_pdf`, `receipt_url`), в основной таблице оставляем одну кнопку.
+
+Дополнительные ссылки в drawer — backlog, не блокирует Stage 2C.
+
+Добавить backlog-note:
+
+```text
+PATCH-STRIPE-DOCUMENTS-DRAWER-V2
+```
+
+---
+
+# **Исправленный mapping**
+
+## **Stripe payment row**
+
+```text
+1. meta.stripe.charge.receipt_url
+2. payments_v2.receipt_url
+3. meta.stripe.hosted_invoice_url
+4. meta.stripe.invoice.hosted_invoice_url
+5. meta.stripe.invoice_pdf
+6. meta.stripe.invoice.invoice_pdf
+7. null
+```
+
+Запрещено:
+
+```text
+refund.receipt_url
+refund hosted url
+checkout_session.url
+```
+
+## **Stripe refund row**
+
+```text
+1. meta.provider_response.stripe.refund.receipt_url
+2. meta.provider_response.stripe.refund.hosted_receipt_url
+3. meta.stripe.refund.receipt_url
+4. meta.stripe.refund.hosted_receipt_url
+5. parent payment: meta.stripe.charge.receipt_url
+6. parent payment: receipt_url
+7. parent payment: meta.stripe.hosted_invoice_url
+8. parent payment: meta.stripe.invoice.hosted_invoice_url
+9. null
+```
+
+Если используется parent payment receipt, tooltip:
+
+```text
+Открыть документ Stripe с информацией о возврате
+```
+
+---
+
+# **Execute разрешён**
+
+Файлы:
+
+```text
+src/hooks/useUnifiedPayments.tsx
+src/components/admin/payments/ReceiptStatusBadge.tsx
+src/components/admin/payments/PaymentsTable.tsx
+.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md
+```
+
+---
+
+# **Verify Stage 2C**
+
+Проверить 4 строки:
+
+## **1. Stripe payment 2.00 USD**
+
+Ожидаемо:
+
+- одна кнопка документа;
+- открывает hosted invoice / invoice PDF;
+- нет сырого `Invoice/PDF` в таблице.
+
+## **2. Stripe payment +5 BYN**
+
+Ожидаемо:
+
+- одна кнопка документа;
+- открывает документ оплаты;
+- не открывает refund document.
+
+## **3. Stripe refund −5 BYN**
+
+Ожидаемо:
+
+- одна кнопка документа;
+- открывает refund receipt или parent charge hosted page с refund information;
+- нет «Документ ещё не получен», если fallback URL найден.
+
+## **4. bePaid payment**
+
+Ожидаемо:
+
+- кнопка/статус чека работает как раньше;
+- retry/get receipt не сломан.
+
+---
+
+# **DoD Stage 2C**
+
+Stage 2C = PASS, если:
 
 - Stripe payment row открывает документ оплаты;
+- Stripe refund row открывает документ возврата / Stripe hosted page с refund info;
+- payment row не открывает refund URL;
+- refund row не показывает «документ не получен», если есть fallback URL;
+- в таблице нет сырых `Invoice` / `PDF`;
+- UI документа — единая иконка/кнопка как у bePaid;
+- bePaid receipt UX не сломан;
+- proof обновлён со SQL/meta и after screenshots.
 
-- Stripe refund row открывает документ возврата / Stripe hosted page с refund information;
-
-- payment row не открывает refund-документ;
-
-- refund row не пишет «документ не получен», если URL есть;
-
-- UI-кнопка такая же по стилю, как у bePaid.
-
-## Navigation
-
-- «Проблемы с оплатой» скрыта из UI;
-
-- legacy route не удалён.
-
----
-
-# Execute разрешён
-
-Начинай с Discovery, затем выполняй PATCH по этапам A–G.
-
-DoD остаётся как в плане:
-
-text PASS ⇔ все Verify зелёные, Stripe встроен в единые provider-aware разделы, bePaid не сломан. 
+Начинай Execute Stage 2C.
 
 &nbsp;
 
-План: PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (revised)
+Отчет о выполнении: discovery завершён. План Stage 2C ниже.
 
-## Бизнес-принцип (фундамент всего патча)
+## Цель
 
-Три независимые сущности — **никогда не смешивать автоматически**:
+В `/admin/payments` (PaymentsTable) убрать парные ссылки `Invoice` / `PDF` и сделать одну кнопку «Документы» (как у bePaid) для Stripe payment и refund строк. Payment-строка не должна открывать refund-URL; refund-строка не должна писать «Документ ещё не получен», если URL доступен (включая fallback на чек родительского charge).
 
-1. **Рекуррент / автосписание** (subscriptions_v2 + provider_subscriptions)
-2. **Оплаченный доступ** (entitlements + access_end_at)
-3. **Возврат денег** (payments_v2 refund row)
+## Discovery (read-only, уже выполнено)
 
-Cancel рекуррента ≠ revoke access ≠ refund. Каждая операция — отдельная кнопка, отдельная edge-функция, отдельный audit.
+Stripe в БД сейчас (3 строки):
 
----
+- payment 2.00 USD (sub `sub_1TgWoO…`): `receipt_url=NULL`, в `meta.stripe`: `hosted_invoice_url`, `invoice_pdf`, `invoice_id`, `payment_intent_id`, `subscription_id`. → должна показать одну кнопку через invoice URL.
+- payment 5.00 BYN (one-time, Сергей): `receipt_url` есть (Stripe hosted receipt), в `meta.stripe`: `payment_intent_id`, `checkout_session_id`. → одна кнопка через `receipt_url`.
+- refund −5.00 BYN: `receipt_url=NULL`, `meta.provider_response.stripe.refund` без `hosted_receipt_url`; есть `parent_payment_id=2d40bc7e…` (это payment 5 BYN с готовым `receipt_url`). → fallback на чек родительского charge.
 
-## Discovery (read-only, обязательный pre-step)
+Текущий код:
 
-1. `BepaidSubscriptionsTabContent` + `BepaidSubscriptionsList` — текущий query/row model, какие действия provider-specific.
-2. `StripeSubscriptionsList.tsx` — удаление как отдельного блока.
-3. `AutoRenewalsTabContent` — фильтр когорты (`tariff_offers.meta.recurring.is_recurring=true` per memory) + layout issues.
-4. `PaymentsTable` + receipt actions (`ReceiptStatusBadge` и пр.) — общий компонент для bePaid documents.
-5. Карточка контакта — компонент с блоком «Подписки» (где «Следующее списание: —» и «Отменить (Stripe)»). Определить query.
-6. `stripe-subscription-action` edge function (уже существует, см. `StripeSubscriptionActionsBlock`) — текущее поведение `cancel_at_period_end` / `cancel_now`. **Не дублировать**, переиспользовать.
-7. `stripe-webhook` — пишет ли `customer.subscription.updated` → `subscriptions_v2.meta.stripe.current_period_end`. SQL-проверка для активной подписки Сергея (`sub_1TgWoO6UYJj2vm0Gjc9P0jxH`).
-8. SQL: `payments_v2.meta.stripe.*` для $2 payment и $5 refund — какие URL уже есть (`receipt_url`, `invoice_pdf`, `hosted_invoice_url`, `refund.receipt_url`).
-9. `tariff_offers.meta.recurring` для текущего Stripe-тарифа — зафиксировать `interval` / `interval_count` (для proof, не менять).
+- `useUnifiedPayments.tsx` уже извлекает `stripe_hosted_invoice_url` / `stripe_invoice_pdf` и `receipt_url`, но НЕ извлекает `parent_payment_id`, charge receipt и refund-специфичные URL.
+- `PaymentsTable.tsx` (ячейка `receipt`, ~659–727) рендерит две сырые ссылки `Invoice` / `PDF` и для Stripe без URL пишет «Документ ещё не получен».
+- `ReceiptStatusBadge.tsx` уже умеет работать с `provider='stripe'` (no-op для `bepaid-get-receipt`), но текущий fallback зависит от наличия `receipt_url`.
 
----
+## Реализация
 
-## PATCH-A — Unified Subscriptions Table (add-only)
+### 1. `src/hooks/useUnifiedPayments.tsx` — единый `document_url` per row
 
-**Цель:** одна provider-aware таблица «Подписки» во вкладке `/admin/payments/bepaid-subscriptions` (route legacy сохраняется).
+Добавить в тип `UnifiedPayment` поле `document_url: string | null` (читается ТОЛЬКО для рендера; SOT остаётся `receipt_url` + `meta`).
 
-**Реализация — строго add-only:**
+Резолвер (pure, без сетевых вызовов):
 
-- Удалить из `BepaidSubscriptionsTabContent` импорт и рендер отдельного `StripeSubscriptionsList` сверху.
-- Расширить существующий reader/таблицу `BepaidSubscriptionsList` на `provider_subscriptions.provider IN ('bepaid','stripe')`. Не переписывать таблицу с нуля.
-- Все bePaid-specific колонки и действия — сохранить. Stripe-rows маппятся в ту же row model.
-- Stripe mapping:
-  - amount/currency — из `subscriptions_v2.meta.amount_byn`+`meta.currency` или `meta.stripe.price`; для Stripe — реальная валюта (USD/EUR/PLN/BYN), без приведения.
-  - next_charge_at — `meta.stripe.current_period_end` → `provider_subscriptions.meta.current_period_end` → fallback `access_end_at` (с другой подписью, см. PATCH-D).
-  - last_payment_at — `payments_v2.paid_at` (max) по `subscription_v2_id`.
-  - payment_method — `meta.stripe.default_payment_method` brand (если есть).
-- Действия — **provider-aware**: bePaid actions показываются только при `provider='bepaid'`, Stripe actions — только при `provider='stripe'`.
+- bePaid: `document_url = receipt_url` (как сейчас).
+- Stripe `transaction_type='payment'`:
+  1. `meta.stripe.charge.receipt_url`
+  2. `receipt_url` (если уже сохранён в колонке)
+  3. `meta.stripe.hosted_invoice_url`
+  4. `meta.stripe.invoice_pdf`
+  5. `meta.stripe.checkout_session?.url` (если есть), иначе `null`.
+  Никогда не использовать refund-URL для payment-строки.
+- Stripe `transaction_type='refund'`:
+  1. `meta.provider_response.stripe.refund.receipt_url` / `hosted_receipt_url` (если когда-нибудь появится)
+  2. fallback: `receipt_url` родительского платежа — построить map `paymentId → receipt_url + meta.stripe.charge.receipt_url` по `payments_v2`, искать `meta.parent_payment_id` или `meta.parent_payment_uid` (= `provider_payment_id` родителя).
+  3. fallback: `meta.stripe.hosted_invoice_url` родителя.
+  4. иначе `null`.
 
-**Колонки (только бизнес-названия, RU):**
-ID подписки · Провайдер · Статус · Клиент · Продукт/тариф · Сумма · Валюта · Создана · Последняя оплата · Следующее списание · Метод оплаты · ID платежа · Сделка · Связь · Действия.
+Реализовать через два прохода: сначала собрать словарь родителей, затем при map'е refund-строк подставлять.
 
-Технические `subv2_id` / `Stripe ID` / `Состояние (state)` — НЕ в основные колонки. Допустимо сокращённый ID + copy-button.
+### 2. `src/components/admin/payments/ReceiptStatusBadge.tsx` — мягкий tooltip для Stripe
 
-**Локализация статусов:**
-active → Активна, pending → Ожидает оплаты, canceled → Отменена, past_due → Просрочена, payment_failed → Ошибка оплаты, completed → Завершена.
+Минимальная правка: когда `provider='stripe'` и `derivedStatus='available'`, в тултипе показывать «Открыть документ Stripe» вместо «Открыть чек». Когда `unavailable` для Stripe и `transaction_type='refund'` — тултип «Документ возврата недоступен» (вместо общего «Чек недоступен»). Прокинуть опциональный `transactionType` пропс.
 
-**Фильтр «Провайдер»:** Все / bePaid / Stripe (динамически из distinct). Pending не смешивать с активными — отдельный статус.
+### 3. `src/components/admin/payments/PaymentsTable.tsx` — единая кнопка
 
----
+Заменить блок `case 'receipt'` (lines ~659–727):
 
-## PATCH-B — AutoRenewals: provider-aware + fix layout
+- Убрать ветку с двумя `<a>Invoice</a>` / `<a>PDF</a>`.
+- Всегда рендерить `<ReceiptStatusBadge receiptUrl={payment.document_url} transactionType={payment.transaction_type} provider={payment.provider} … />`.
+- Удалить fallback `«Документ ещё не получен»` для Stripe — теперь решает badge через `derivedStatus`. Для Stripe без URL badge покажет серый `XCircle` с тултипом «Документ недоступен» (он уже такой для Stripe).
 
-**Когорта Stripe** (строгие условия, по аналогии с bePaid SOT):
+bePaid-путь не меняется: `document_url = receipt_url`, бейдж работает идентично текущему поведению, кнопка «получить чек» (`bepaid-get-receipt`) сохраняется.
 
-```
-provider = 'stripe'
-status IN ('active','trialing','past_due')
-auto_renew = true
-provider_subscription_id LIKE 'sub_%'
-next_charge_at IS NOT NULL   -- из meta.stripe.current_period_end
-```
+### 4. Drawer (опционально, без блокировки PASS)
 
-Если `next_charge_at` нет — строка идёт в отдельный warning-фильтр («Без даты следующего списания»), а не в основной список (чтобы не ломать таблицу).
+Если у Stripe payment одновременно есть и charge receipt, и invoice/PDF — оставить кнопку одну (основной URL), а дополнительные ссылки (Invoice / PDF) перенести в существующий `PaymentDetailsDrawer` (вне основной таблицы). Если drawer-расширение не вмещается в Stage 2C — оставить как backlog-note в proof и не блокировать PASS.
 
-**UI fix:**
+## Proof (`.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`)
 
-- Снять жёсткие узкие `width`, поставить `min-w-*` на ключевые колонки.
-- Не использовать `table-fixed`, либо задать sensible widths.
-- Горизонтальный scroll только при переполнении.
-- Provider badge bePaid/Stripe.
-- Колонки: Контакт · Продукт · Провайдер · Сумма · Валюта · Следующее списание · Последнее списание · Попытки · Метод · Статус · Связь · Действия.
+Добавить раздел Stage 2C:
 
-bePaid строки не должны измениться визуально.
+- Before: текущий рендер с `Invoice` / `PDF` и «Документ ещё не получен» (скрин уже у пользователя).
+- SQL-снапшоты для трёх строк (2 USD / +5 BYN / −5 BYN) с `meta.stripe` / `meta.provider_response.stripe.refund` / `parent_payment_id` (готово из discovery выше).
+- Mapping-логика payment / refund (копия из раздела 1 плана).
+- After-скрины: payment $2 → invoice, payment +5 BYN → Stripe receipt, refund −5 BYN → чек родительского charge, bePaid regression (одна строка).
+- DoD checklist Stage 2C.
 
----
+## Файлы под изменение
 
-## PATCH-C — Stripe cancel = bePaid cancel parity
+- `src/hooks/useUnifiedPayments.tsx` (тип + резолвер + parent map).
+- `src/components/admin/payments/ReceiptStatusBadge.tsx` (tooltip wording + опц. `transactionType`).
+- `src/components/admin/payments/PaymentsTable.tsx` (ячейка `receipt`).
+- `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` (раздел Stage 2C).
 
-**Принцип:** кнопка «Отменить» отменяет только рекуррент. Доступ/entitlements/telegram/orders/payments — не трогаются.
+## DoD Stage 2C
 
-**Backend** (`stripe-subscription-action`, переиспользовать существующий):
-
-- Использовать action `cancel_now` → `stripe.subscriptions.cancel(id)` для immediate cancel рекуррента.
-- Локально:
-  ```
-  subscriptions_v2.status = 'canceled'
-  subscriptions_v2.auto_renew = false
-  subscriptions_v2.canceled_at = now()
-  provider_subscriptions.state/status = 'canceled'
-  provider_subscriptions.canceled_at = now()
-  ```
-- **НЕ менять:** `access_end_at`, `entitlements`, `access_grant_ledger`, `telegram_access`, `orders_v2`, `payments_v2`.
-
-**STOP-guards (перед cancel):**
-
-- `provider = 'stripe'`
-- `provider_subscription_id LIKE 'sub_%'` (НЕ `pending:*`)
-- subscription exists in Stripe
-- local sub принадлежит ожидаемому user/profile
-- Stripe status ∈ (active, trialing, past_due)
-
-**Edge cases:**
-
-- Если `provider_subscription_id` начинается с `pending:` — кнопку «Отменить» не показывать; edge возвращает `cannot_cancel_pending_subscription`.
-- Если Stripe уже `canceled` — не ошибка, только синхронизация локального статуса, success.
-
-**UI:**
-
-- В карточке контакта и в таблице «Подписки» кнопка «Отменить» (без `(Stripe)` суффикса в caption — provider в badge).
-- Confirm dialog: «Подписка отменяется. Будущих списаний не будет. Доступ сохраняется до {access_end_at}. Деньги не возвращаются.»
-- После cancel: подписка пропадает из активного блока карточки контакта; видна только в общей таблице под фильтром «Отменена»/«Все».
-
-**Conflict guard для новой подписки:**
-Создание новой подписки на тот же продукт блокируется только если существует:
-
-```
-status IN ('active','trialing','past_due') AND auto_renew=true
-AND provider_subscription_id NOT LIKE 'pending:%'
-```
-
-Canceled subscriptions не блокируют. Перекрытие access-окон допустимо.
-
----
-
-## PATCH-D — «Следующее списание» vs «Доступ до» (карточка контакта)
-
-В блоке «Подписки» карточки контакта показывать **две даты раздельно**:
-
-```
-Следующее списание: DD.MM.YYYY
-Доступ до:          DD.MM.YYYY
-```
-
-**Резолвер `next_charge_at`:**
-
-1. `subscriptions_v2.meta.stripe.current_period_end` (epoch → ISO)
-2. `provider_subscriptions.meta.current_period_end`
-3. Для bePaid — существующий резолвер (без изменений)
-4. Если ни одного — показывать «—», НЕ подменять на `access_end_at`.
-
-**Резолвер `access_until`:** всегда `subscriptions_v2.access_end_at`.
-
-**Webhook check (discovery):** убедиться, что `stripe-webhook` на `customer.subscription.created/updated` пишет `current_period_end` в `subscriptions_v2.meta.stripe`. Если для подписки Сергея пусто — одноразовый pull через существующий sync-механизм (без массовой миграции).
-
----
-
-## PATCH-E — Payments documents parity
-
-**Текущая проблема:** payment row открывает refund-документ; refund row пишет «документ не получен»; для Stripe рисуется отдельный «Invoice PDF» текстом.
-
-**Решение:** единая иконка/кнопка документа (тот же компонент, что для bePaid).
-
-**Mapping для Stripe payment row:**
-
-1. `meta.stripe.charge.receipt_url`
-2. `meta.stripe.invoice.hosted_invoice_url`
-3. `meta.stripe.invoice.invoice_pdf`
-4. Stripe hosted payment page fallback
-
-Caption: «Открыть чек» (как у bePaid). Payment row **никогда** не открывает refund URL.
-
-**Mapping для Stripe refund row:**
-
-1. `meta.stripe.refund.receipt_url` (если Stripe выдал)
-2. `meta.stripe.charge.receipt_url` (с refund information)
-3. `meta.stripe.invoice.hosted_invoice_url` (credit note, если есть)
-4. Stripe hosted payment page (последний fallback)
-
-Caption: «Открыть документ Stripe» / «Открыть квитанцию Stripe» если нет отдельного refund PDF.
-
-**Запрет:** не писать «документ ещё не получен», если есть **любой** Stripe hosted URL.
-
-**Не изобретать новые компоненты** — переиспользовать существующий receipt-action component bePaid.
-
----
-
-## PATCH-F — Скрыть «Проблемы с оплатой»
-
-- Убрать tab-trigger из `AdminPaymentsHub` nav.
-- Route `/admin/payments/payment-issues` оставить legacy hidden (прямой URL работает).
-- Backend / data logic / `PaymentIssuesTabContent` не удалять.
-
----
-
-## PATCH-G — PublicPayPage final check (verify only)
-
-Прочитать текущий `PublicPayPage.tsx`, зафиксировать в proof: для Stripe subscription нет disabled bePaid card, нет «Белорусская карта», CTA → Stripe Checkout/Apple Pay. Если уже OK — только proof, без изменений.
-
----
-
-## Stripe recurring period (НЕ менять, только зафиксировать)
-
-В этом PATCH периодичность Stripe не меняется. Зафиксировать в proof текущие значения `interval` / `interval_count` для активной подписки.
-
-**В backlog:** `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`:
-
-- Явный billing_mode на тарифе: `every_N_days` (bePaid parity) / `calendar_month` (Stripe).
-- UI labels: «каждые 30 дней» vs «ежемесячно в дату оформления».
-- Пересчёт `next_charge_at` и публичных текстов.
-
----
-
-## Что НЕ делать
-
-- Не менять `grant-access-for-order`, не писать в `entitlements` напрямую.
-- Не отзывать доступ при cancel.
-- Не делать refund автоматически при cancel.
-- Не менять `access_end_at` при cancel.
-- Не менять Stripe interval/interval_count.
-- Не удалять `StripeSubscriptionsList.tsx` файл (только убрать импорт из вкладки) — может пригодиться для дебага.
-- Не удалять route `/admin/payments/payment-issues`.
-- Не делать миграций без явного dry-run/rowcount.
-- Не ломать bePaid checkout/cancel/documents/auto-renewals.
-- Не показывать английские статусы и технические поля (`subv2`, `Stripe ID`, `state`) в основной таблице.
-
----
-
-## Verify (acceptance)
-
-**Подписки** `/admin/payments/bepaid-subscriptions`:
-
-- одна таблица, нет отдельного Stripe-блока сверху;
-- активная Stripe-подписка Сергея видна: клиент, продукт «Платная консультация — Несрочная консультация», 2.00 USD, Stripe badge, Активна, последняя оплата 10.06.26, следующее списание определено или «—» (не подменено);
-- provider filter работает;
-- bePaid строки не изменились.
-
-**Cancel Stripe:**
-
-- кнопка «Отменить» доступна только для реальных `sub_*`;
-- после cancel: status='canceled', auto_renew=false; access_end_at не изменился; entitlements целы;
-- подписка исчезла из активного блока карточки контакта;
-- видна в «Подписках» под фильтром «Отменена/Все»;
-- можно создать новую подписку на тот же продукт.
-
-**Карточка контакта:**
-
-- две отдельные даты «Следующее списание» и «Доступ до»;
-- для активной Stripe-подписки «Следующее списание» заполнено реальной датой из meta.
-
-**Автопродления** `/admin/payments/auto-renewals`:
-
-- layout не съехал;
-- Stripe active recurring subscription с next billing date — видна с provider badge;
-- Stripe subscriptions без next_charge_at — не ломают таблицу (отдельный warning/filter);
-- bePaid строки целы.
-
-**Платежи** `/admin/payments`:
-
-- Stripe payment $2 — единая кнопка «Открыть чек», открывает документ оплаты;
-- Stripe refund 5 BYN — единая кнопка, открывает документ возврата / hosted page с refund info;
-- нет текстовых «Invoice PDF»;
-- payment row не открывает refund URL и наоборот;
-- нет ложного «документ ещё не получен», если есть любой URL.
-
-**Навигация:** tab «Проблемы с оплатой» скрыт; прямой URL работает (read-only).
-
-**Regression:** bePaid подписки/автопродления/документы/cancel — без изменений.
-
----
-
-## Proof
-
-`.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`:
-
-1. **Before/after скриншоты:** отдельный Stripe-блок исчез; единая таблица; provider filter; AutoRenewals fixed; payments documents унифицированы; «Проблемы с оплатой» скрыты.
-2. **Cancel proof:** SQL до/после (`subscriptions_v2.status`, `auto_renew`, `canceled_at`, `access_end_at`, `entitlements` count), подтверждение что доступ не отозван, новая подписка не блокируется.
-3. **Documents proof:** для $2 payment и $5 refund — какие URL были в meta до, какой URL открывает кнопка после.
-4. **Recurring period proof:** текущий `interval`/`interval_count` (зафиксировано без изменений); ссылка на backlog `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`.
-5. **Regression proof:** bePaid subscriptions/auto-renewals/documents целы (счётчики до/после).
-6. Без миграций. Если потребуется точечный backfill `meta.stripe.current_period_end` — отдельный dry-run + rowcount.
-
----
-
-## DoD (обновлённый)
-
-PASS ⇔ все пункты Verify зелёные, и:
-
-- отдельный `StripeSubscriptionsList` как блок не рендерится;
-- Stripe и bePaid в одной таблице;
-- у Stripe-строки есть клиент/продукт/сумма/валюта/статус/последняя оплата/следующее списание (или «—» честное)/доступ до;
-- фильтр по provider работает;
-- AutoRenewals не съехал, Stripe только валидные recurring;
-- Stripe cancel = bePaid behavior (рекуррент off, доступ цел);
-- pending:* подписки нельзя отменить;
-- после cancel — можно создать новую подписку;
-- карточка контакта показывает обе даты корректно;
-- Stripe payment/refund документы — единый icon-button UX;
-- payment row → документ оплаты; refund row → документ возврата;
-- «Проблемы с оплатой» скрыта;
-- Stripe interval не менялся (зафиксировано в proof);
-- bePaid checkout/cancel/documents/auto-renewals не сломаны;
-- статусы и колонки только русские, технические ID — сокращённо + copy.
+- Stripe payment row открывает документ оплаты (charge receipt > invoice hosted > invoice pdf).
+- Stripe refund row открывает чек/документ возврата (refund receipt, иначе чек родителя).
+- Payment row никогда не указывает на refund-URL.
+- Refund row не пишет «документ ещё не получен», когда есть fallback URL.
+- В таблице нет сырых текстов `Invoice` / `PDF` — только единая кнопка-иконка как у bePaid.
+- bePaid receipt-кнопка и retry через `bepaid-get-receipt` не сломаны.
+- Proof обновлён, SQL и скрины приложены.

@@ -25,9 +25,14 @@ interface ReceiptStatusBadgeProps {
   providerUid?: string;
   /** PATCH-LIVE-2: 'stripe' → не зовём bepaid-get-receipt; только открываем receipt_url. */
   provider?: string | null;
+  /** Stage 2C: 'payment' | 'refund' — влияет на формулировку tooltip для Stripe. */
+  transactionType?: string | null;
+  /** Stage 2C: источник document_url (parent_charge_receipt → особый текст). */
+  documentSource?: string | null;
   onRefetch?: () => void;
   className?: string;
 }
+
 
 const ErrorMessages: Record<ReceiptErrorCode, string> = {
   NO_PROVIDER_ID: 'Нет UID провайдера',
@@ -47,12 +52,17 @@ export default function ReceiptStatusBadge({
   statusNormalized,
   providerUid,
   provider,
+  transactionType,
+  documentSource,
   onRefetch,
   className,
 }: ReceiptStatusBadgeProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const isStripe = (provider ?? '').toLowerCase() === 'stripe';
+  const isRefund = (transactionType ?? '').toLowerCase() === 'refund';
+  const isParentReceiptFallback = documentSource === 'parent_charge_receipt' || documentSource === 'parent_invoice_hosted';
+
 
   // Derive status from available data if not explicitly set
   // PATCH-LIVE-2: для Stripe без receipt_url не маркируем как pending с retry —
@@ -103,6 +113,16 @@ export default function ReceiptStatusBadge({
   
   // Available: show icon with link
   if (derivedStatus === 'available' && receiptUrl) {
+    let tooltipText = 'Открыть чек';
+    if (isStripe) {
+      if (isRefund && isParentReceiptFallback) {
+        tooltipText = 'Открыть документ Stripe с информацией о возврате';
+      } else if (isRefund) {
+        tooltipText = 'Открыть документ возврата Stripe';
+      } else {
+        tooltipText = 'Открыть документ Stripe';
+      }
+    }
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -114,13 +134,14 @@ export default function ReceiptStatusBadge({
         </TooltipTrigger>
         <TooltipContent>
           <div className="flex items-center gap-1 text-xs">
-            <span>Открыть чек</span>
+            <span>{tooltipText}</span>
             <ExternalLink className="h-3 w-3" />
           </div>
         </TooltipContent>
       </Tooltip>
     );
   }
+
   
   // Pending: show clock icon with retry option
   if (derivedStatus === 'pending') {
@@ -171,7 +192,11 @@ export default function ReceiptStatusBadge({
         </TooltipTrigger>
         <TooltipContent>
           <div className="text-xs">
-            <div>Чек недоступен</div>
+            <div>
+              {isStripe
+                ? (isRefund ? 'Документ возврата недоступен' : 'Документ Stripe недоступен')
+                : 'Чек недоступен'}
+            </div>
             {receiptErrorCode && (
               <div className="text-muted-foreground">
                 {ErrorMessages[receiptErrorCode] || receiptErrorCode}
@@ -179,6 +204,7 @@ export default function ReceiptStatusBadge({
             )}
           </div>
         </TooltipContent>
+
       </Tooltip>
     );
   }
