@@ -284,6 +284,8 @@ interface AutoRenewal {
   provider_subscription_id: string | null;
   provider_last_charge_at: string | null;
   charged_today: boolean;
+  // Stage 2B: provider-aware label ('bepaid' | 'stripe' | 'local')
+  provider: 'bepaid' | 'stripe' | 'local';
 }
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
