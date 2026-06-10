@@ -113,6 +113,16 @@ export default function ReceiptStatusBadge({
   
   // Available: show icon with link
   if (derivedStatus === 'available' && receiptUrl) {
+    let tooltipText = 'Открыть чек';
+    if (isStripe) {
+      if (isRefund && isParentReceiptFallback) {
+        tooltipText = 'Открыть документ Stripe с информацией о возврате';
+      } else if (isRefund) {
+        tooltipText = 'Открыть документ возврата Stripe';
+      } else {
+        tooltipText = 'Открыть документ Stripe';
+      }
+    }
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -124,13 +134,14 @@ export default function ReceiptStatusBadge({
         </TooltipTrigger>
         <TooltipContent>
           <div className="flex items-center gap-1 text-xs">
-            <span>Открыть чек</span>
+            <span>{tooltipText}</span>
             <ExternalLink className="h-3 w-3" />
           </div>
         </TooltipContent>
       </Tooltip>
     );
   }
+
   
   // Pending: show clock icon with retry option
   if (derivedStatus === 'pending') {
