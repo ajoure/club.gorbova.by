@@ -232,3 +232,93 @@ WHERE ps.provider='stripe';
 - [x] Строки без `next_charge_at` не ломают таблицу (existing `chargeStatus` логика).
 - [x] Proof обновлён.
 
+
+---
+
+## Stage 2C — Payments documents parity (Stripe ↔ bePaid)
+
+### Цель
+В `/admin/payments` (PaymentsTable) убрать сырые ссылки `Invoice` / `PDF` и сделать одну кнопку «Документы» (как у bePaid) для Stripe payment и refund строк. Payment-строка не открывает refund-URL; refund-строка не пишет «Документ ещё не получен», если можно открыть hosted page родительского charge.
+
+### Before
+- Stripe payment 2 USD рендерил пару текстовых ссылок: `Invoice` + `PDF`.
+- Stripe payment +5 BYN — единичный receipt (ок), но текст «Документ ещё не получен», если ничего нет.
+- Stripe refund −5 BYN — `payments_v2.receipt_url=NULL`, в `meta.provider_response.stripe.refund` нет hosted URL, поэтому показывался текст «Документ ещё не получен», хотя hosted-страница родительского charge доступна.
+
+### Discovery snapshot (read-only SQL)
+
+```sql
+SELECT id, transaction_type, amount, currency, provider,
+       receipt_url IS NOT NULL AS has_receipt,
+       provider_payment_id, meta->'stripe' AS stripe_meta
+FROM payments_v2
+WHERE provider='stripe'
+ORDER BY created_at DESC;
+```
+
+| id (короткий)        | type    | amount | currency | provider_payment_id           | receipt_url | stripe meta highlights |
+|----------------------|---------|--------|----------|-------------------------------|-------------|------------------------|
+| `00b39954…` (2 USD)  | payment |  2.00  | USD      | (sub invoice)                 | NULL        | `invoice_id=in_…`, `subscription_id=sub_1TgWoO…`, `hosted_invoice_url`, `invoice_pdf` |
+| `2d40bc7e…` (+5 BYN) | payment |  5.00  | BYN      | `pi_3TgMkD6UYJj2vm0G1ZUpRzvH` | есть Stripe receipt | `payment_intent_id=pi_3TgMkD…`, `checkout_session_id=cs_live_…` |
+| `0da381ef…` (−5 BYN) | refund  | −5.00  | BYN      | `re_3TgMkD6UYJj2vm0G1v5QOXJP` | NULL        | `meta.parent_payment_id=2d40bc7e…`, `meta.provider_response.stripe.refund.payment_intent=pi_3TgMkD…` |
+
+### Mapping (реализовано в `useUnifiedPayments.tsx::resolveDocumentUrl`)
+
+**Stripe payment row** (priority):
+1. `meta.stripe.charge.receipt_url`
+2. `payments_v2.receipt_url`
+3. `meta.stripe.hosted_invoice_url`
+4. `meta.stripe.invoice.hosted_invoice_url`
+5. `meta.stripe.invoice_pdf`
+6. `meta.stripe.invoice.invoice_pdf`
+7. `null` — кнопка серая «Документ Stripe недоступен» (никогда не refund URL, никогда не checkout_session.url).
+
+**Stripe refund row** (priority):
+1. `meta.provider_response.stripe.refund.receipt_url`
+2. `meta.provider_response.stripe.refund.hosted_receipt_url`
+3. fallback на parent payment (lookup в `stripeParentIndex` по: `meta.parent_payment_id`, `meta.parent_payment_uid`, `refund.payment_intent`, `refund.charge`, `meta.stripe.payment_intent_id`, `meta.stripe.charge_id`):
+   - `parent.charge_receipt_url` → tooltip «Открыть документ Stripe с информацией о возврате»
+   - `parent.receipt_url` → тот же tooltip
+   - `parent.hosted_invoice_url`
+4. `null` — серый XCircle с tooltip «Документ возврата недоступен».
+
+**bePaid** (без изменений): `document_url = receipt_url`. Retry через `bepaid-get-receipt` сохранён.
+
+### Реализация
+
+- `src/hooks/useUnifiedPayments.tsx`:
+  - Добавлены поля `document_url`, `document_url_source` в `UnifiedPayment`.
+  - Построен `stripeParentIndex` (Map по `id`, `provider_payment_id`, `meta.stripe.charge_id`, `meta.stripe.payment_intent_id`) до основного `map`.
+  - Pure-резолвер `resolveDocumentUrl(p, provider)` без сетевых вызовов; refund использует parent lookup; payment fallback **никогда** не использует refund URL и checkout_session.url.
+- `src/components/admin/payments/ReceiptStatusBadge.tsx`:
+  - Новые опц. пропсы: `transactionType`, `documentSource`.
+  - Tooltip wording для Stripe: «Открыть документ Stripe» / «Открыть документ возврата Stripe» / «Открыть документ Stripe с информацией о возврате» (для parent fallback).
+  - `unavailable`-state для Stripe: «Документ Stripe недоступен» / «Документ возврата недоступен».
+  - bePaid path не тронут (retry через `bepaid-get-receipt`, тексты `Чек …`).
+- `src/components/admin/payments/PaymentsTable.tsx`:
+  - Ячейка `case 'receipt'` ужата до одной `<ReceiptStatusBadge receiptUrl={document_url} … />`.
+  - Удалены сырые `<a>Invoice</a>` / `<a>PDF</a>` и текст «Документ ещё не получен».
+
+### Ожидаемое поведение на текущих данных
+
+| row              | document_url_source       | UI                                                  |
+|------------------|---------------------------|-----------------------------------------------------|
+| 2 USD payment    | `invoice_hosted`          | зелёный 📄 → Stripe invoice hosted page             |
+| +5 BYN payment   | `receipt_url`             | зелёный 📄 → Stripe hosted receipt                  |
+| −5 BYN refund    | `parent_charge_receipt`   | зелёный 📄 → receipt родителя; tooltip «…с информацией о возврате» |
+| bePaid payment   | `receipt_url`             | как раньше (зелёный 📄 «Открыть чек»)               |
+| bePaid pending   | `null`                    | как раньше (🕘 «Чек ожидается», retry активна)      |
+
+### DoD Stage 2C
+
+- [x] Stripe payment row открывает документ оплаты (charge_receipt > receipt_url > invoice).
+- [x] Stripe refund row открывает refund receipt либо родительский charge receipt; tooltip явно указывает «с информацией о возврате».
+- [x] Payment row не использует refund URL и не использует checkout_session.url.
+- [x] Refund row не показывает «документ не получен», если есть fallback URL.
+- [x] В таблице нет сырых `Invoice` / `PDF` ссылок — одна кнопка-иконка.
+- [x] bePaid (`document_url = receipt_url`, retry через `bepaid-get-receipt`) не сломан.
+- [x] Proof обновлён со SQL/meta-снапшотом и mapping-логикой.
+
+### Backlog (не блокирует Stage 2C)
+
+- `PATCH-STRIPE-DOCUMENTS-DRAWER-V2` — в `PaymentDetailsDrawer` показывать одновременно `charge.receipt_url`, `hosted_invoice_url`, `invoice_pdf`, refund hosted (если есть). В основной таблице остаётся одна primary-кнопка.
