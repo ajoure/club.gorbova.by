@@ -14,12 +14,14 @@ import { BepaidSubscriptionsTabContent } from "@/components/admin/payments/Bepai
 import { LinksTabContent } from "@/components/admin/payments/links/LinksTabContent";
 import { PaymentIssuesTabContent } from "@/components/admin/payments/PaymentIssuesTabContent";
 
+// PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (PATCH-F): «Проблемы с оплатой» скрыта из nav.
+// Route /admin/payments/payment-issues остаётся доступным напрямую (legacy hidden);
+// backend / PaymentIssuesTabContent НЕ удалены.
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
-  { id: "payment-issues", label: "Проблемы с оплатой", icon: AlertCircle, path: "/admin/payments/payment-issues" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
   { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
 ];

@@ -783,15 +783,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  // PATCH-STRIPE-SUB-CANCEL-V1 (2026-06-09):
-  // Provider-aware Stripe subscription cancel (cancel_at_period_end only).
-  // Calls canonical edge function `stripe-subscription-action`. Access is preserved.
+  // PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (PATCH-C): Stripe cancel = bePaid cancel parity.
+  // Action `cancel_now` отменяет рекуррент немедленно у провайдера.
+  // НЕ трогает access_end_at / entitlements / telegram_access / orders / payments
+  // (см. supabase/functions/stripe-subscription-action/index.ts — там это явно гарантировано).
+  // Подписка исчезает из активного списка; оплаченный доступ сохраняется до access_end_at.
   const cancelStripeSubAdminMutation = useMutation({
     mutationFn: async (subscriptionV2Id: string) => {
       const { data, error } = await supabase.functions.invoke('stripe-subscription-action', {
         body: {
           subscription_v2_id: subscriptionV2Id,
-          action: 'cancel_at_period_end',
+          action: 'cancel_now',
           dry_run: false,
         },
       });
@@ -803,7 +805,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (contact?.user_id) {
         queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
       }
-      toast.success('Stripe-подписка будет отменена в конце периода');
+      queryClient.invalidateQueries({ queryKey: ['bepaid-subscriptions-admin'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stripe-subscriptions-list'] });
+      toast.success('Подписка отменена. Доступ сохраняется до конца оплаченного периода.');
     },
     onError: (error: Error) => {
       toast.error('Ошибка: ' + error.message);
@@ -2363,17 +2367,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   size="sm"
                                   className="h-7 px-2 text-xs rounded-full"
                                   onClick={() => {
-                                    if (window.confirm('Отменить Stripe-подписку в конце текущего периода? Доступ сохраняется до даты окончания, Telegram не отзывается.')) {
+                                    const accessLine = accessEnd
+                                      ? `\n\nДоступ сохраняется до: ${formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}`
+                                      : '\n\nДоступ сохраняется до конца оплаченного периода.';
+                                    if (window.confirm(`Отменить подписку?\n\nБудущих списаний не будет. Деньги не возвращаются.${accessLine}`)) {
                                       cancelStripeSubAdminMutation.mutate(sub.subscription_v2_id);
                                     }
                                   }}
                                   disabled={cancelStripeSubAdminMutation.isPending}
-                                  title="Cancel at period end (Stripe)"
+                                  title="Отменить рекуррент (доступ не отзывается)"
                                 >
                                   {cancelStripeSubAdminMutation.isPending ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
                                   ) : (
-                                    'Отменить (Stripe)'
+                                    'Отменить'
                                   )}
                                 </Button>
                               ) : (
