@@ -575,7 +575,7 @@ export function BepaidSubscriptionsTabContent() {
     });
     
     return result;
-  }, [subscriptions, statusFilter, linkFilter, sourceFilter, searchQuery, sortField, sortDir]);
+  }, [subscriptions, statusFilter, linkFilter, sourceFilter, providerFilter, searchQuery, sortField, sortDir]);
 
   // Mutations
   const reconcileMutation = useMutation({
