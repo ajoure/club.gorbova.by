@@ -1183,11 +1183,13 @@ export function BepaidSubscriptionsTabContent() {
                   </>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}>
-                  <ExternalLink className="h-3 w-3 mr-2" />
-                  Открыть в bePaid
-                </DropdownMenuItem>
-                {['active', 'trial', 'past_due', 'pending', 'failed_attempt'].includes(sub.snapshot_state || sub.status) && (
+                {!isStripe && (
+                  <DropdownMenuItem onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}>
+                    <ExternalLink className="h-3 w-3 mr-2" />
+                    Открыть в bePaid
+                  </DropdownMenuItem>
+                )}
+                {!isStripe && ['active', 'trial', 'past_due', 'pending', 'failed_attempt'].includes(sub.snapshot_state || sub.status) && (
                   <DropdownMenuItem 
                     className="text-destructive focus:text-destructive"
                     onClick={() => {
@@ -1197,6 +1199,12 @@ export function BepaidSubscriptionsTabContent() {
                   >
                     <Ban className="h-3 w-3 mr-2" />
                     Отменить в bePaid
+                  </DropdownMenuItem>
+                )}
+                {isStripe && (
+                  <DropdownMenuItem disabled className="text-muted-foreground">
+                    <Info className="h-3 w-3 mr-2" />
+                    Stripe: отмена — в карточке контакта
                   </DropdownMenuItem>
                 )}
                 {sub.is_linked_full && (
