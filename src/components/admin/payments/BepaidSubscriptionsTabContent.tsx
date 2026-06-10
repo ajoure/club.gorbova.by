@@ -846,8 +846,24 @@ export function BepaidSubscriptionsTabContent() {
     const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && !sub.is_linked_full;
     const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
     
+    const isStripe = (sub.provider ?? 'bepaid') === 'stripe';
+
     switch (columnKey) {
       case 'checkbox':
+        if (isStripe) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Checkbox checked={false} disabled />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs max-w-[240px]">
+                Stripe: используйте карточку контакта для отмены подписки.
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
         return (
           <Checkbox
             checked={selectedIds.has(sub.id)}
@@ -855,6 +871,25 @@ export function BepaidSubscriptionsTabContent() {
             disabled={sub.status === "canceled"}
           />
         );
+
+      case 'provider':
+        return isStripe ? (
+          <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-700 border-violet-500/30">
+            Stripe
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] bg-sky-500/10 text-sky-700 border-sky-500/30">
+            bePaid
+          </Badge>
+        );
+
+      case 'last_payment':
+        return sub.last_payment_at ? (
+          <span className="text-xs text-muted-foreground">{formatDate(sub.last_payment_at)}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+
         
       case 'id':
         return (
