@@ -643,6 +643,8 @@ export function AutoRenewalsTabContent() {
           provider_subscription_id: linkedPs?.provider_subscription_id || null,
           provider_last_charge_at: linkedPs?.last_charge_at || null,
           charged_today: !!linkedPs?.last_charge_at && isTodayMinsk(new Date(linkedPs.last_charge_at)),
+          // Stage 2B: provider label
+          provider: linkedPs?.provider === 'stripe' ? 'stripe' : (linkedPs ? 'bepaid' : 'local'),
         };
       });
 
