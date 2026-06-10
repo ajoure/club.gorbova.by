@@ -1274,7 +1274,7 @@ ${amountLine}
                       },
                       {
                         key: "bepaid" as const,
-                        title: "Белорусская карта",
+                        title: "Белорусская карта (bePaid)",
                         // Phase 7-UI follow-up — reason от shared mirror; bePaid привязан к BYN.
                         hint: (() => {
                           const r = resolveProviderForUi("bepaid", "BYN");
@@ -1285,14 +1285,15 @@ ${amountLine}
                           (!isSuperAdmin && !offerAllowedProviders.includes("bepaid")) ||
                           !resolveProviderForUi("bepaid", "BYN").allowed,
                       },
+
                       {
                         key: "stripe" as const,
-                        title: "Иностранная карта",
+                        title: "Иностранная карта / Apple Pay (Stripe)",
                         // Phase 7-UI follow-up — reason от shared mirror; currency = выбранная stripeCurrency.
                         hint: (() => {
                           const r = resolveProviderForUi("stripe", stripeCurrency);
                           return r.allowed
-                            ? `Stripe · ${stripeCurrency} · карты других стран`
+                            ? `Stripe · ${stripeCurrency} · карты других стран, Apple Pay`
                             : (r.message ?? "Способ оплаты недоступен");
                         })(),
                         icon: <CreditCard className="h-4 w-4 text-indigo-500" />,
@@ -1301,6 +1302,7 @@ ${amountLine}
                           isInstallmentOffer ||
                           !resolveProviderForUi("stripe", stripeCurrency).allowed,
                       },
+
                     ];
                     })().map((opt) => {
                       const selected = providerModeChoice === opt.key;

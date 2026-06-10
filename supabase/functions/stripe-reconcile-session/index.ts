@@ -60,6 +60,7 @@ Deno.serve(async (req) => {
 
     const session_status = String(s.status ?? '');
     const payment_status = String(s.payment_status ?? '');
+    const session_mode = String(s.mode ?? '');
     const pi_id = (s.payment_intent as string) ?? null;
     const amount_total_minor = Number(s.amount_total ?? 0);
     const currency = String(s.currency ?? 'usd').toUpperCase();
@@ -67,8 +68,34 @@ Deno.serve(async (req) => {
     const md = (s.metadata ?? {}) as Record<string, string>;
     order_id = order_id ?? md.order_id ?? (s.client_reference_id as string | undefined) ?? null;
 
+    // PATCH: Stripe subscription checkout materialization for reconcile.
+    // Если session.mode = subscription — делегируем общему helper'у,
+    // который сам подтянет invoice и вызовет onInvoicePaid (canonical).
+    if (session_mode === 'subscription') {
+      const { activateStripeSubscriptionCheckout } = await import('../_shared/stripe-checkout-materialize.ts');
+      const out = await activateStripeSubscriptionCheckout(supabase, {
+        session: s,
+        account_code: code,
+        source_event_id: `reconcile_${session_id}`,
+        source: 'stripe.reconcile.session',
+      });
+      return jsonResponse({
+        ok: true,
+        mode: 'subscription',
+        action: out.order_id ? (out.note ?? 'processed') : (out.skipped ?? 'noop'),
+        order_id: out.order_id ?? null,
+        payment_id: out.payment_id ?? null,
+        subscription_v2_id: out.subscription_v2_id ?? null,
+        provider_subscription_id: out.provider_subscription_id ?? null,
+        manual_review: out.manual_review ?? false,
+        manual_review_reason: out.manual_review_reason ?? null,
+        note: out.note ?? null,
+        skipped: out.skipped ?? null,
+      });
+    }
 
     if (!order_id) return jsonResponse({ ok: false, error: 'no_order_id_in_metadata' });
+
 
     const isPaid = session_status === 'complete' && payment_status === 'paid';
     if (!isPaid) {

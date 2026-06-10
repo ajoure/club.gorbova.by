@@ -1,572 +1,694 @@
-Да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-**Approve на Execute PATCH-SUB-PRICE-1 v2**
+План принят. Scope корректный: это не новая фаза Stripe, а bug-fix materialization + UI cleanup после реальной Stripe subscription оплаты.
 
-План принят. Выполняем как:
+# **Approve на выполнение**
 
-Payment Link Amount/Currency Override Parity для Stripe Subscriptions
+Можно выполнять PATCH:
 
-Цель верная: Stripe-подписочные ссылки должны работать так же, как bePaid/e-clearing/Pay:
+```text
+Stripe subscription checkout materialization + provider-clean UI + unified subscriptions
+```
 
-админ создал ссылку на конкретную сумму → именно эта сумма используется при оплате
+---
 
-Для Stripe отличие только в том, что дополнительно учитывается валюта и технически для subscription checkout нужен Stripe-compatible recurring line item.
+# **Обязательные правки перед Execute**
 
-&nbsp;
+## **1. Не называть это fallback как основной путь**
 
-**Ключевой принцип**
+Формулировка должна быть точной:
 
-Business SOT для payment link:
+```text
+checkout.session.completed materialization = recovery/safety path для subscription checkout, если invoice.paid не пришёл или не обработался.
+```
 
-payment_links.amount
+Основной canonical lifecycle для подписок остаётся:
 
-payment_links.currency
+```text
+invoice.paid / invoice.payment_failed / subscription.updated / subscription.deleted
+```
 
-payment_links.payment_type
+Но если Checkout Session уже `complete + paid`, то бизнес-материализация должна быть восстановлена идемпотентно.
 
-payment_links.provider
+---
 
-payment_links.offer_id / product_id / tariff_id
 
-Если ссылка создана как:
 
-Gorbova Club — CHAT
 
-1.00 EUR
 
-subscription
 
-provider = stripe
 
-то Stripe Checkout должен быть:
+## **2. В**
 
-1.00 EUR / subscription
+`checkout.session.completed` **не создавать дубль, если позже придёт** `invoice.paid`
 
-а не 100.00 BYN из базового offer.
+Это главный риск.
 
-&nbsp;
+В helper `activateStripeSubscriptionCheckout()` обязательно добавить idempotency keys:
 
-**Обязательная правка к формулировке inline price**
-
-В proof и кодовых комментариях не писать:
-
-inline price_data не оставляет orphan price
-
-Корректная формулировка:
-
-inline price_data не требует заранее сохранённого tariff_offers.meta.stripe.price_id и позволяет создать Checkout Session на сумму/валюту конкретной payment link.
-
-Если используется существующий stripe_product_id, это снижает риск создания лишних Stripe Products, но inline Price всё равно может появляться на стороне Stripe. Это допустимо.
-
-&nbsp;
-
-**Что точно НЕ делать**
-
-Не менять глобально:
-
-tariff_offers.amount
-
-tariff_offers.currency
-
-tariff_offers.meta.stripe.price_id
-
-tariff_offers.meta.stripe.price_snapshot
-
-Не записывать 1.00 EUR как основную цену оффера.
-
-Не менять bePaid/e-clearing/Pay.
-
-Не создавать отдельную новую бизнес-модель custom prices.
-
-&nbsp;
-
-**Исправленный resolver**
-
-**Для payment_link flow**
-
-Если checkout создаётся из payment_link, то Stripe subscription branch должен брать:
-
-amount = payment_links.amount
-
-currency = payment_links.currency
-
-payment_type = payment_links.payment_type
-
-и создавать Stripe Checkout Session с recurring price_data.
-
-**Для non-payment-link flow**
-
-Если checkout создаётся не из payment link, тогда можно использовать старую логику:
-
-tariff_offers.meta.stripe.price_id
-
-Но старый test price в live connection всё равно должен быть зафиксирован как отдельный follow-up:
-
-canonical live price for offer 6f306cbc / 100 BYN is missing or stale
-
-&nbsp;
-
-**Важная правка по условию override**
-
-Не использовать только:
-
-Boolean(payment_link_id)
-
-как единственный критерий.
-
-Лучше явно передавать/определять:
-
-source = payment_link
-
-amount/currency came from payment_links
-
-Потому что payment link всегда имеет сумму, и именно она должна быть SOT для ссылки.
-
-Итоговая логика:
-
-IF source is payment_link:
-
-    use payment_links.amount/currency
-
-ELSE:
-
-    use canonical offer price_id
-
-&nbsp;
-
-**Recurring period**
-
-Периодичность брать из существующего SOT:
-
-tariff_offers.meta.recurring
-
-Если в проекте уже есть helper/resolver для recurring snapshot — использовать его, не писать новую логику с нуля.
-
-Для billing_period_days = 30 использовать тот же mapping, который уже принят в системе.
-
-Если текущая бизнес-модель — 30 дней, не менять её незаметно на календарный месяц, если это меняет смысл доступа/списания.
-
-Если Stripe mapping не может быть построен безопасно — вернуть:
-
-unsupported_recurring_period_for_inline_price
-
-&nbsp;
-
-**Реализация**
-
-**1.**
-
-**_shared/stripe-pre-create-subscription.ts**
-
-Расширить контракт, но сделать его типобезопасным:
-
-type SubscriptionPriceInput =
-
-  | { price_id: string; inline_price?: never }
-
-  | { price_id?: never; inline_price: InlinePriceInput };
-
-Не использовать:
-
-price_id: undefined as any
-
-Для inline_price:
-
-- не делать prices.retrieve;
-- не делать drift-check saved price;
-- в line_items[0] использовать price_data;
-- metadata расширить inline snapshot.
-
-Metadata:
-
-inline_price = true
-
-inline_amount_minor
-
-inline_currency
-
-inline_interval
-
-inline_interval_count
-
+```text
+checkout_session_id
+invoice_id
+stripe_subscription_id
+subscription_v2_id
+provider_subscription_row_id
 payment_link_id
+```
 
-tariff_offer_id
+Если позже придёт `invoice.paid`, он должен увидеть already materialized state и не создать второй order/payment/access.
 
-product_id
+---
 
-tariff_id
 
+
+
+
+## **3.**
+
+`provider_payment_id` **лучше не делать invoice-only, если можно достать PaymentIntent**
+
+Для Stripe subscription Session часто `payment_intent` может быть `null`, а платёж живёт в invoice/payment_intent.
+
+Поэтому helper должен по возможности достать invoice из Stripe API и взять:
+
+```text
+invoice.payment_intent
+```
+
+Priority:
+
+```text
+1. invoice.payment_intent
+2. session.payment_intent
+3. invoice.id
+4. session.id
+```
+
+В `payments_v2.meta.stripe` сохранить все идентификаторы:
+
+```text
+checkout_session_id
+invoice_id
+payment_intent_id
+subscription_id
+charge_id, если доступен
+payment_link_id
 account_code
+materialized_from = checkout.session.completed
+```
 
+---
+
+## **4. Payment link counter должен быть строго idempotent**
+
+`consumePaymentLinkForOrder` вызывать только если:
+
+```text
+orders_v2.meta.payment_link_counted != true
+```
+
+или если существующая функция сама гарантирует идемпотентность.
+
+После вызова записать marker:
+
+```text
+orders_v2.meta.payment_link_counted = true
+```
+
+Если такой marker уже есть — не увеличивать `current_uses`.
+
+---
+
+## **5. Pending subscriptions в карточке контакта**
+
+Подтверждаю правило:
+
+```text
+pending drafts не показывать в карточке контакта как реальные подписки.
+```
+
+Карточка контакта должна показывать только подписки, где:
+
+```text
+provider_subscription_id starts with sub_
+```
+
+и есть реальный provider lifecycle.
+
+Pending drafts могут отображаться только:
+
+```text
+Платежи → Ссылки
+диагностика
+технический аудит
+```
+
+---
+
+# **PATCH 1 — Backend materialization**
+
+Выполнять через общий helper:
+
+```text
+activateStripeSubscriptionCheckout()
+```
+
+Подключить:
+
+```text
+stripe-webhook → checkout.session.completed
+stripe-reconcile-session → manual recovery
+```
+
+## **Required guards**
+
+Перед write:
+
+```text
+session.mode = subscription
+session.status = complete
+session.payment_status = paid
+session.subscription starts with sub_
+metadata.subscription_v2_id exists
+metadata.provider_subscription_row_id exists
+metadata.payment_link_id exists
+metadata.account_code matches resolved account_code
+local subscriptions_v2 row exists
+local provider_subscriptions row exists
+provider_subscriptions.provider = stripe
+payment_links.provider = stripe
+```
+
+При mismatch:
+
+```text
+manual_review
+no business writes
+audit
+```
+
+## **Required writes**
+
+После successful activation:
+
+```text
+orders_v2.status = paid
+payments_v2.status = succeeded
+subscriptions_v2.status = active
+provider_subscriptions.state = active
+orders_v2.meta.payment_link_id = c5f28396...
+payment_links.current_uses incremented once
+grant-access-for-order called
+```
+
+Никаких direct writes в `entitlements`.
+
+---
+
+# **PATCH 2 — Recovery текущей оплаты $2**
+
+После деплоя helper:
+
+Выполнить точечный reconcile только для:
+
+```text
+cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV
+```
+
+Нельзя делать:
+
+```text
+manual INSERT
+mass repair
+bulk reconcile
+```
+
+После recovery подтвердить:
+
+```text
+orders_v2.status = paid
+payments_v2.status = succeeded
+subscriptions_v2.status = active
+provider_subscriptions.state = active
+entitlement/access granted
+payment_links.current_uses = 1
+paid_orders_count обновился
+```
+
+---
+
+# **PATCH 3 — PublicPayPage provider-clean UI**
+
+Для:
+
+```text
 provider = stripe
-
-**2.**
-
-**_shared/create-stripe-checkout.ts**
-
-В subscription branch:
-
-1. определить, что source = payment_link;
-2. взять amount/currency из параметров, пришедших из payment_links;
-3. построить recurring через существующий recurring resolver;
-4. проверить currency/minor units;
-5. вызвать stripePreCreateSubscription с inline_price;
-6. не читать offer.meta.stripe.price_id для payment_link flow.
-
-**3.**
-
-**stripe-webhook/index.ts**
-
-Read-only сверка:
-
-- webhook должен искать pending subscription/order по metadata.subscription_v2_id;
-- не должен зависеть от price_id;
-- inline_price metadata должна пройти в subscriptions_v2.meta / provider_subscriptions.meta.
-
-Если это уже так — код не менять, только зафиксировать в proof.
-
-**4. Frontend error mapping**
-
-Добавить человекочитаемые ошибки:
-
-offer_not_recurring_for_subscription_link
-
-unsupported_recurring_period_for_inline_price
-
-currency_not_supported_by_stripe_account
-
-inline_amount_invalid
-
-&nbsp;
-
-**Текущая ссылка для проверки**
-
-Исправляем именно ссылку:
-
-payment_link = 2c02396f…
-
-product = Gorbova Club — CHAT
-
-amount = 1.00
-
-currency = EUR
-
 payment_type = subscription
+```
 
-provider = stripe
+убрать:
 
-account_code = stripe_poland
+```text
+disabled saved bePaid card
+bePaid text
+сохранённые карты bePaid
+белорусская карта
+```
 
-После фикса она должна открыть Stripe Checkout на:
+Показать:
 
-1.00 EUR / 30 дней
+```text
+Перейти к оплате картой / Apple Pay
+```
 
-без изменения базовой цены offer.
+Текст:
 
-&nbsp;
+```text
+Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать Apple Pay, если он доступен.
+```
 
-**Verify**
+One-time saved-card selector оставить только там, где provider совместим.
 
-**1. Before/after link**
+---
 
-До:
+# **PATCH 4 — AdminPaymentLinkDialog texts**
 
-price_retrieve_failed
+Исправить тексты, чтобы Stripe не выглядел как fallback в bePaid.
 
-После:
+Для Stripe:
 
-Stripe Checkout opens successfully
+```text
+Оплата через Stripe
+Иностранная карта / Apple Pay
+Валюта: USD / EUR / PLN / BYN
+Подписка будет оформлена на защищённой странице Stripe
+```
 
-**2. Stripe Checkout**
+Для bePaid:
 
-Проверить:
+```text
+Белорусская карта (bePaid)
+```
 
-Gorbova Club — CHAT
+Все пользовательские статусы и helper-тексты — на русском языке.
 
-1.00 EUR
+---
 
-subscription
+# **PATCH 5 — Unified admin subscriptions UI**
 
-**3. После оплаты**
+Переименовать:
 
-Проверить SQL:
+```text
+Подписки BePaid → Подписки
+```
 
-- orders_[v2.final](http://v2.final)_price = 1.00;
-- orders_v2.currency = EUR;
-- payments_v2.amount = 1.00;
-- payments_v2.currency = EUR;
-- subscriptions_v2 создана;
-- provider_subscriptions создана;
-- subscriptions_v2.meta.stripe.inline_price = true;
-- price_id = null или отсутствует для inline flow;
-- payment_link_id = 2c02396f…;
-- entitlement/access выдан корректно.
+Legacy route оставить:
 
-**4. Offer unchanged**
+```text
+/admin/payments/bepaid-subscriptions
+```
 
-Обязательно показать before/after:
+Расширить provider display:
 
-SELECT id, amount, currency, meta
+```text
+provider_subscriptions.provider IN ('bepaid', 'stripe')
+```
 
-FROM tariff_offers
+Показывать provider badge:
 
-WHERE id = '6f306cbc...';
+```text
+bePaid
+Stripe
+```
+
+Не создавать отдельную вкладку Stripe.
+
+Pending drafts в общей вкладке можно показывать только явно как:
+
+```text
+Ожидает оплаты
+```
+
+но в карточке контакта их не показывать как реальные подписки.
+
+---
+
+# **PATCH 6 — Links counters**
+
+Обязательно проверить:
+
+```text
+orders_v2.meta.payment_link_id
+orders_v2.meta.payment_link_counted
+payment_links.current_uses
+payment_links_enriched_v.paid_orders_count
+```
+
+Если UI кэширует ссылки, сделать refetch/invalidation после successful materialization.
+
+---
+
+# **Что НЕ делать**
+
+Не делать:
+
+```text
+bePaid/e-clearing/Pay checkout changes
+direct entitlements writes
+tariff_offers.meta changes
+new real charges
+mass repair
+legacy route removal
+separate Stripe subscriptions tab
+pending drafts in contact card
+```
+
+---
+
+# **Verify**
+
+## **SQL after recovery**
+
+Показать:
+
+```text
+order created
+payment created
+subscription active
+provider_subscription active with sub_...
+payment_link counted once
+entitlement/access granted
+no duplicate order/payment
+```
+
+## **UI**
+
+Показать скрины:
+
+```text
+PublicPayPage без bePaid-confusion
+Stripe Checkout / CTA
+Мои покупки
+Админ → Платежи
+Админ → Ссылки
+Админ → Подписки
+Карточка контакта без pending drafts
+```
+
+## **Idempotency**
+
+Повторно запустить reconcile/webhook replay для той же session:
 
 Ожидаемо:
 
-amount/currency/meta.stripe.price_id не изменились
+```text
+already_materialized
+no duplicate order
+no duplicate payment
+current_uses unchanged
+no duplicate entitlement
+```
 
-**5. Provider regression**
+---
 
-Проверить smoke:
-
-- один bePaid payment link открывается как раньше;
-- Stripe one-time link не сломан;
-- e-clearing/Pay logic не менялась.
-
-&nbsp;
-
-**Proof**
+# **Proof**
 
 Создать:
 
-.lovable/proofs/stripe_subscription_payment_link_amount_override_[v1.md](http://v1.md)
+```text
+.lovable/proofs/stripe_subscription_checkout_materialization_v1.md
+```
 
 Proof должен содержать:
 
-1. Root cause:  
-  
+1. Root cause.
+2. Stripe session snapshot.
+3. Provider events.
+4. Dry-run preconditions.
+5. Helper logic summary.
+6. Recovery result for `$2`.
+7. SQL after по:
+  - order;
+  - payment;
+  - subscription;
+  - provider_subscription;
+  - payment_link;
+  - entitlement/access.
+8. UI screenshots.
+9. Re-run idempotency proof.
+10. bePaid/e-clearing/Pay untouched.
 
-  - old price_id = test-mode;
-  - live connection не могла retrieve test price;
-  - payment_link amount/currency игнорировались.
-2. Подтверждение parity с bePaid/e-clearing/Pay.
-3. Before/after по ссылке 2c02396f….
-4. Checkout Session payload с price_data.
-5. SQL по order/payment/subscription/provider_subscription/entitlement.
-6. Before/after tariff_offers без изменений.
-7. Webhook lookup через subscription_v2_id.
-8. bePaid/e-clearing/Pay untouched.
+---
 
-&nbsp;
+# **DoD**
 
-**DoD**
+PATCH = PASS, если:
 
-PATCH-SUB-PRICE-1 v2 = PASS, если:
-
-- price_retrieve_failed исчез;
-- payment link 2c02396f… ведёт в Stripe Checkout;
-- Checkout использует 1.00 EUR, а не 100 BYN;
-- глобальная цена offer не изменилась;
-- подписка создаётся;
-- payment/order/subscription/access создаются с суммой ссылки;
-- webhook корректно обрабатывает inline-price subscription;
-- bePaid/e-clearing/Pay не затронуты;
-- proof закрыт.
+- `$2` Stripe subscription payment восстановлена;
+- order/payment/subscription/access созданы;
+- user видит покупку;
+- admin видит payment/link/subscription;
+- Stripe subscription PublicPayPage не выглядит как bePaid;
+- disabled bePaid saved card не показывается;
+- вкладка называется «Подписки»;
+- повторный replay не создаёт дублей;
+- bePaid/e-clearing/Pay не затронуты.
 
 Начинай Execute.
 
 &nbsp;
 
-План: PATCH-SUB-PRICE-1 v2 — Payment Link Amount/Currency Override Parity для Stripe Subscriptions
+План:
 
-## Цель
+1. **Проблема**
+  - Реальная Stripe subscription-оплата `$2` по public link прошла, но бизнес-данные не материализовались: нет `orders_v2`, `payments_v2`, active `subscriptions_v2`, видимости в «Мои покупки», «Платежи», «Ссылки».
+  - Stripe-only subscription flow на `/pay/:token` визуально смешан с bePaid: показываются disabled сохранённые bePaid-карты и тексты, из-за чего кажется, что ссылка fallback’ится в bePaid.
+  - Админская вкладка «Подписки BePaid» больше не соответствует системе с несколькими провайдерами.
+2. **Диагностика / dry-run preconditions уже подтверждены read-only**
+  - `checkout.session.completed` существует:
+    - `session_id = cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV`
+    - `mode = subscription`
+    - `status = complete`
+    - `payment_status = paid`
+    - `subscription = sub_1TgWoO6UYJj2vm0Gjc9P0jxH`
+    - `invoice = in_1TgWoM6UYJj2vm0GFNtppUXO`
+    - `amount_total = 200`, `currency = usd`
+    - `account_code = stripe_poland`
+  - Metadata достаточна для controlled recovery:
+    - `subscription_v2_id = ac24c459-478a-40ed-8d2c-87e63d04cb13`
+    - `provider_subscription_row_id = fa7ae2be-d743-4275-af9d-944d9396d53f`
+    - `payment_link_id = c5f28396-a7ce-4575-ba27-b2ab45eb80c9`
+    - `product_id`, `tariff_id`, `tariff_offer_id`, `business_stream` присутствуют.
+  - Local pending rows есть:
+    - `subscriptions_v2.status = pending`, `order_id = null`
+    - `provider_subscriptions.state = pending`, `provider_subscription_id = pending:<subscription_v2_id>`, `order_id = null`
+  - Payment link есть:
+    - `provider = stripe`, `provider_mode = fixed`, `account_code = stripe_poland`
+    - `payment_type = subscription`, `amount = 200`, `currency = USD`
+    - `current_uses = 0`, `status = active`
+  - Idempotency precheck:
+    - `orders_by_session = 0`
+    - `orders_by_invoice = 0`
+    - `orders_by_sub = 0`
+    - `orders_by_payment_link = 0`
+    - `payments_by_session = 0`
+    - `payments_by_invoice = 0`
+    - `payments_by_sub = 0`
+    - `payments_by_provider_payment_id_invoice = 0`
+    - `payments_by_provider_payment_id_session = 0`
+  - Root cause: `invoice.paid` не пришёл, а текущий activation path для Stripe subscriptions активирует бизнес-данные только через `invoice.paid`. `checkout.session.completed` был обработан как processed, но subscription materialization fallback отсутствует.
+3. **Главное архитектурное решение**
+  - Не добавлять второй write-path.
+  - Вынести общий idempotent helper:
+    ```text
+    activateStripeSubscriptionCheckout()
+    ```
+  - Использовать helper из двух мест:
+    ```text
 
-Сделать Stripe-подписочные ссылки такими же, как bePaid/e-clearing/Pay: **бизнес-источник суммы = `payment_links.amount/currency**`, а не глобальный `tariff_offers.meta.stripe.price_id`. Без отдельной модели «custom price», без изменения базовой цены оффера, без слома существующих провайдеров.
-
-## Diagnose
-
-
-| Слой                                             | Сейчас (bePaid)                                                    | Сейчас (Stripe one-time)                                                                | Сейчас (Stripe subscription)                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `public-checkout/index.ts`                       | передаёт `link.amount` + `link.currency` в `createPaymentCheckout` | то же                                                                                   | то же                                                                                                          |
-| `_shared/create-payment-checkout.ts`             | использует переданный amount → bePaid                              | передаёт amount_major+currency → `createStripeCheckout`                                 | передаёт amount_major+currency → `createStripeCheckout`                                                        |
-| `_shared/create-stripe-checkout.ts` one-time     | n/a                                                                | **уже использует amount/currency** (`amountMinor`, `currency.toLowerCase()`) → parity ✅ | —                                                                                                              |
-| `_shared/create-stripe-checkout.ts` subscription | n/a                                                                | —                                                                                       | **игнорирует amount/currency**, тащит `offerMeta.stripe.price_id` → 💥                                         |
-| `_shared/stripe-pre-create-subscription.ts`      | n/a                                                                | n/a                                                                                     | принимает только `price_id`; делает `prices/{id}` retrieve → `price_retrieve_failed` на test-price в live mode |
-
-
-**Root cause `price_retrieve_failed`:** `offer 6f306cbc.meta.stripe.price_id = price_1Teeq26UYJj2vm0G…` — это **test-mode BYN 100.00**. Live `stripe_poland` физически не может его retrieve. И даже если бы мог — это была бы цена 100 BYN, а не 1 EUR из ссылки.
-
-**Что НЕ делаем:** не правим `tariff_offers.amount`, `meta.stripe.price_id`, не создаём отдельную таблицу custom prices, не трогаем bePaid path.
-
-## Design — единый Stripe amount/currency resolver
-
-Priority (читается в `create-stripe-checkout.ts` subscription branch):
-
-```text
-1. Если payment_link передал amount+currency (caller передал params.amount + params.currency)
-   AND payment_link.id присутствует
-   → INLINE price_data (см. ниже). НЕ читаем offer.meta.stripe.price_id.
-
-2. Иначе (site CTA / admin sandbox без custom amount)
-   → existing path: offer.meta.stripe.price_id + drift-check.
-```
-
-Для INLINE-режима recurring-параметры (interval/interval_count) берём ТОЛЬКО из `tariff_offers.meta.recurring.{billing_period_mode, billing_period_days}` (SOT периодичности подписки). Это уже SOT-каноника (`recurring_snapshot_resolver_sot`). Маппинг:
-
-- `billing_period_mode='days', billing_period_days=30` → `interval=month, interval_count=1` (≤31), либо `interval=day, interval_count=N` (>31 или некруглые).
-- Только эти два случая в MVP; всё иное → ошибка `unsupported_recurring_period_for_inline_price`.
-
-Stripe product для inline price:
-
-- если есть `offer.meta.stripe.accounts[account_code].product_id` или `offer.meta.stripe.product_id` — реюзаем (`price_data[product] = prod_…`);
-- иначе `price_data[product_data][name] = product.name` (Stripe создаёт product on-the-fly, привязан к account).
-
-Currency validation (pre-flight, до Stripe call):
-
-- whitelist по `acquiring_connections.meta.supported_currencies` если есть; иначе мягко допускаем (Stripe сам отдаст 400, мы маппим в `currency_not_supported_by_stripe_account`).
-
-## Изменения по файлам
-
-### 1. `supabase/functions/_shared/stripe-pre-create-subscription.ts`
-
-Расширить `StripePreCreateSubscriptionParams` опциональным взаимоисключающим блоком:
-
-```ts
-inline_price?: {
-  amount_major: number;
-  currency: string;            // 3-letter, UPPER
-  interval: 'day'|'week'|'month'|'year';
-  interval_count: number;
-  product_id?: string | null;  // prod_… (reuse)
-  product_name?: string;       // для product_data[name] если product_id нет
-};
-```
-
-Контракт: ровно один из `price_id | inline_price`. Если `inline_price`:
-
-- Шаг 3 (price retrieve/drift-check) **скипается**.
-- Шаг 4 Checkout Session: вместо `line_items[0][price]=price_id` отправляем
-  ```
-  line_items[0][price_data][currency]=eur
-  line_items[0][price_data][unit_amount]=100         // minor units via stripe-minor-units.ts
-  line_items[0][price_data][recurring][interval]=month
-  line_items[0][price_data][recurring][interval_count]=1
-  line_items[0][price_data][product]=prod_…          // OR product_data[name]=...
-  ```
-- Метаданные Session/subscription_data расширяются:
-  - `price_id` → пустая строка ИЛИ ключ `inline_price=1`;
-  - `inline_amount_minor`, `inline_currency`, `inline_interval`, `inline_interval_count` — в обоих metadata-блоках;
-  - `payment_link_id` уже пробрасывается.
-- В `subscriptions_v2.meta.stripe` и `provider_subscriptions.meta.stripe` пишем `inline_price` snapshot вместо `price_id`. `price_id` остаётся `null`.
-- Audit `stripe.subscription_checkout.pre_create` получает `inline_price=true` + snapshot.
-
-### 2. `supabase/functions/_shared/create-stripe-checkout.ts`
-
-В subscription branch (≈стр. 386–518) добавить override-логику ПЕРЕД проверкой `price_id`:
-
-```ts
-const linkOverride = Boolean(payment_link_id);  // caller передал payment_link
-if (linkOverride) {
-  // 1. Resolve recurring from offer.meta.recurring
-  const rec = (offerMeta.recurring ?? {}) as any;
-  if (!rec.is_recurring) return error('offer_not_recurring_for_subscription_link');
-  const periodMode = String(rec.billing_period_mode || 'days');
-  const periodN = Number(rec.billing_period_days || 30);
-  const recurring = mapRecurring(periodMode, periodN);  // helper
-  if (!recurring) return error('unsupported_recurring_period_for_inline_price');
-
-  // 2. Reuse Stripe product if present (avoid orphan products)
-  const stripeProdId =
-    (stripeOnOffer.accounts as any)?.[resolved_account_code]?.product_id
-    ?? (stripeOnOffer.product_id as string | undefined)
-    ?? null;
-
-  // 3. Currency support pre-flight
-  // (мягкая проверка — детально валидирует Stripe)
-
-  // 4. Call helper with inline_price
-  const preResult = await stripePreCreateSubscription({
-    ...,
-    price_id: undefined as any,
-    stripe_product_id: stripeProdId,
-    inline_price: {
-      amount_major: amountMajor,
-      currency: currency.toUpperCase(),
-      interval: recurring.interval,
-      interval_count: recurring.interval_count,
-      product_id: stripeProdId,
-      product_name: product.name,
-    },
-  });
-  ...
-}
-// else: оставить существующий path (price_id + drift-check)
-```
-
-Existing offer-level `price_id` path остаётся как fallback для site-CTA / admin direct (без `payment_link_id`).
-
-### 3. `supabase/functions/stripe-webhook/index.ts`
-
-Точечная сверка (read-only, без логики write-path): проверить, что webhook на `checkout.session.completed` / `customer.subscription.created` / `invoice.paid` использует `metadata.subscription_v2_id` (а не `price_id`) для lookup. По текущему коду — да, lookup идёт через `metadata.subscription_v2_id` и `metadata.tariff_offer_id`. Изменений не требуется. Зафиксировать в proof.
-
-### 4. UI — без изменений
-
-`CreatePublicLinkDialog` уже умеет provider+currency+amount per Phase 4 backlog (или достаточно, чтобы создать такую ссылку вручную). UX-расширение — отдельный backlog (не в этом патче).
-
-## Validation rules (новые ошибки)
-
-- `offer_not_recurring_for_subscription_link` — ссылка subscription, а у оффера нет `recurring.is_recurring=true`.
-- `unsupported_recurring_period_for_inline_price` — нестандартный период (например 45 дней / weeks с дробным count).
-- `currency_not_supported_by_stripe_account` — маппинг Stripe `currency` 400 → понятный код для UI.
-- `inline_amount_invalid` — amount <= 0 или конверсия в minor units упала.
-
-`errorMessageMap` (frontend `normalizeEdgeFunctionError`) — добавить русские строки.
-
-## Что НЕ делаем
-
-- Не правим `tariff_offers.amount` / `meta.stripe.price_id` / `price_snapshot`.
-- Не создаём новый Stripe `price_*` объект в Stripe заранее (inline price_data — встроенный механизм Stripe, не оставляет orphan price).
-- Не трогаем bePaid / e-clearing / Pay код.
-- Не меняем admin sandbox direct-checkout flow (`stripe-create-subscription-checkout`) — он не идёт через payment_link override; останется на classic `price_id`.
-- Не меняем хранение/чтение entitlements/access_rules.
-
-## Dry run
-
-Под ссылку `2c02396f` (CHAT, 1.00 EUR, subscription, provider=stripe, account=stripe_poland; offer `6f306cbc` recurring 30 days):
-
-- Resolver выбирает inline_price: `amount_major=1, currency=EUR, interval=month, interval_count=1, product=prod_UdwjYeet4QFbtW`.
-- `subscriptions_v2(pending)` + `provider_subscriptions(pending)` создаются с `meta.stripe.inline_price` snapshot, `price_id=null`.
-- Stripe Checkout Session создаётся успешно (нет retrieve test price).
-- После оплаты webhook привязывает `subscription_v2_id` через metadata → `grant-access-for-order` стандартный путь.
-- Глобальная цена offer (100 BYN) и его `price_id` НЕ затронуты.
-
-## Execute (build mode)
-
-1. Изменить `_shared/stripe-pre-create-subscription.ts` (доб. `inline_price`).
-2. Изменить `_shared/create-stripe-checkout.ts` subscription branch (resolver).
-3. Добавить helper `mapRecurringToStripeInterval()` рядом (или в `stripe-minor-units.ts` соседом).
-4. Расширить `normalizeEdgeFunctionError` mapping (frontend) новыми кодами.
-5. Создать proof `.lovable/proofs/stripe_subscription_payment_link_amount_override_v1.md`.
-
-## Verify
-
-1. Открыть live preview `/pay/<token>` для ссылки `2c02396f` → переход на Stripe Checkout без `price_retrieve_failed`.
-2. Stripe Checkout показывает `1.00 EUR / month`, привязан к product CHAT.
-3. После test-оплаты (или прерывания): через `supabase--read_query` подтвердить
-  - `subscriptions_v2.meta.stripe.inline_price` есть, `price_id=null`;
-  - `tariff_offers` не изменился;
-  - bePaid links по другим продуктам открываются как раньше (smoke: 1 bePaid one-time link).
-4. SQL guard: `select … from tariff_offers where id='6f306cbc…'` — до/после идентичен.
-5. Edge logs `stripe-webhook` после оплаты: lookup по `subscription_v2_id` PASS.
-
-## DoD
-
-- Ссылка `2c02396f` открывает Stripe Checkout на 1.00 EUR / 30 дней.
-- `tariff_offers.amount/meta.stripe.price_id` не изменён (snapshot до/после в proof).
-- bePaid/e-clearing/Pay не затронуты (smoke на 1 bePaid link + кодовый diff = только Stripe-файлы).
-- Proof `.lovable/proofs/stripe_subscription_payment_link_amount_override_v1.md` создан с before/after, payload Stripe Checkout, SQL snapshots, root cause `price_retrieve_failed`.
-- Новые ошибки добавлены в `normalizeEdgeFunctionError`.
-- Все изменения в read-only режиме для существующих данных (только новые `subscriptions_v2(pending)` строки при тесте).
-
-## Технические детали (для review)
-
-- Stripe inline price_data поддерживает `recurring` начиная с API 2019-09-09; наш Stripe API version 2024-… совместим.
-- `price_data[product]` reuses existing Stripe Product → не создаёт orphan `prod_*` на каждый чекаут.
-- Idempotency key `subv2:{subscription_v2_id}:create` остаётся неизменным — гарантия 1 Session на pending sub.
-- Drift-check (active/livemode/recurring) для inline path не нужен: amount/currency/recurring задаём сами; mode определяется секретным ключом (live ↔ live).
-- Rollback path в `stripe-pre-create-subscription.ts` не меняется.
-
-Approve на Execute?
+    ```
+  1. stripe-webhook → checkout.session.completed
+  2. stripe-reconcile-session → ручное восстановление session
+    `ли текущий`invoice.paid` resolver уже содержит часть логики, helper должен переиспользовать/разделить общую часть, а не копировать отдельную бизнес-логику.
+4. **PATCH 1 — Backend materialization from checkout.session.completed**
+  - Цель: если Stripe subscription Checkout Session завершена и оплачена, но `invoice.paid` отсутствует, создать бизнес-данные через общий helper.
+  - Helper создаёт/обновляет:
+    - `orders_v2.status = paid`
+    - `payments_v2.status = succeeded`
+    - `subscriptions_v2.status = active`
+    - `provider_subscriptions.state = active`
+    - `orders_v2.meta.payment_link_id`
+    - `payment_links.current_uses` через `consumePaymentLinkForOrder`
+  - Доступ выдаётся только через canonical path:
+    ```text
+    grant-access-for-order
+    ```
+  - Direct writes в `entitlements` запрещены.
+5. **Strict guards helper-а**
+  - Перед записью проверить:
+  - При mismatch: STOP/manual_review + audit, без business writes.
+6. **Idempotency helper-а**
+  - Перед созданием искать existing records по:
+  - Если уже материализовано:
+    - не создавать дубль order;
+    - не создавать дубль payment;
+    - не увеличивать `payment_links.current_uses` повторно;
+    - вернуть `already_materialized`.
+7. **Provider payment id priority**
+  - Для `payments_v2.provider_payment_id` использовать приоритет:
+  1. payment_intent, если есть
+  2. invoice id
+  3. checkout session id
+    `` payments_v2.meta.stripe`сохранить:`text
+    eckout_session_id
+    voice_id
+    bscription_id
+    yment_intent_id, если есть
+    yment_link_id
+    count_code
+    urce = checkout.session.completed
+    `
+8. **Grant/access failure policy**
+  - После materialization вызвать `grant-access-for-order`.
+  - Если `grant-access-for-order` упал:
+    - order/payment/subscription остаются;
+    - audit/manual_review фиксируется;
+    - доступ восстанавливается штатным reconcile;
+    - helper не откатывает коммерческий факт оплаты.
+9. **PATCH 2 — Recovery текущей оплаты `$2**`
+  - Доработать `stripe-reconcile-session`, чтобы для `mode=subscription` он вызывал тот же `activateStripeSubscriptionCheckout()`.
+  - Затем выполнить точечный reconcile для:
+    ```text
+    cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV
+    ```
+  - Не делать ручные `INSERT`.
+  - Не делать массовый repair.
+10. **PATCH 3 — PublicPayPage provider-clean UI**
+  - Для:
+     убрать disabled saved bePaid cards.
+  - Новый CTA:
+    ```text
+    Перейти к оплате картой / Apple Pay
+    ```
+    или:
+    ```text
+    Оплатить через Stripe
+    ```
+  - Текст:
+    ```text
+    Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать Apple Pay, если он доступен.
+    ```
+  - Не показывать в Stripe subscription flow:
+    ```text
+    bePaid
+    сохранённые карты bePaid
+    белорусская карта
+    ```
+  - One-time saved-card selector оставить только для совместимого provider flow.
+  - Stripe saved payment methods — вне scope, отдельный будущий PATCH.
+11. **PATCH 4 — AdminPaymentLinkDialog texts**
+  - Исправить тексты provider labels / currency labels / customer-choice / generated preview.
+  - Для Stripe использовать формулировки:
+    ```text
+    Оплата через Stripe
+    Иностранная карта / Apple Pay
+    Валюта: USD / EUR / PLN / BYN
+    Подписка будет оформлена на защищённой странице Stripe
+    ```
+  - Для bePaid:
+    ```text
+    Белорусская карта (bePaid)
+    ```
+  - Не смешивать Stripe и bePaid в одном helper-тексте.
+12. **PATCH 5 — Unified admin subscriptions UI**
+  - Переименовать UI:
+  - Legacy route оставить:
+    ```text
+    /admin/payments/bepaid-subscriptions
+    ```
+  - Не создавать отдельную вкладку Stripe subscriptions.
+  - Добавить provider badge:
+    ```text
+    bePaid
+    Stripe
+    ```
+  - Если текущий reader читает только bePaid rows — расширить на:
+    ```text
+    provider_subscriptions.provider IN ('bepaid', 'stripe')
+    ```
+  - Pending technical rows показывать только с явным статусом/бейджем «Ожидает оплаты».
+  - В карточке контакта pending drafts не показывать как реальные подписки.
+13. **PATCH 6 — Links UI counters**
+  - Helper обязан писать `orders_v2.meta.payment_link_id`, потому что `payment_links_enriched_v` считает `paid_orders_count` через этот meta-path.
+  - После activation вызвать `consumePaymentLinkForOrder`, чтобы `payment_links.current_uses` увеличился один раз.
+  - Проверить, что `usePaymentLinks`/RPC обновляют строки после `updated_at`; при stale-cache — добавить корректную invalidation/refetch в UI без нового source of truth.
+14. **Изменяемые компоненты**
+  - Edge/shared:
+    - `supabase/functions/_shared/stripe-subscription-resolver.ts`
+    - новый shared helper внутри `supabase/functions/_shared/` или вынесенная функция в существующем модуле
+    - `supabase/functions/stripe-webhook/index.ts`
+    - `supabase/functions/stripe-reconcile-session/index.ts`
+  - Frontend:
+    - `src/pages/PublicPayPage.tsx`
+    - `src/components/admin/AdminPaymentLinkDialog.tsx`
+    - `src/pages/admin/AdminPaymentsHub.tsx`
+    - `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
+  - Proof:
+    - `.lovable/proofs/stripe_subscription_checkout_materialization_v1.md`
+15. **Что НЕ делать**
+  - Не трогать bePaid/e-clearing/Pay checkout logic.
+  - Не менять `grant-access-for-order`.
+  - Не писать `entitlements` напрямую.
+  - Не менять глобальные `tariff_offers.meta`.
+  - Не создавать новые реальные списания.
+  - Не удалять legacy route.
+  - Не делать массовый repair.
+  - Не создавать отдельную Stripe subscriptions вкладку.
+  - Не показывать pending drafts в карточке контакта как реальные подписки.
+16. **Execute**
+  - Вынести общий idempotent helper `activateStripeSubscriptionCheckout()`.
+  - Подключить helper в `stripe-webhook` для `checkout.session.completed` subscription sessions.
+  - Подключить helper в `stripe-reconcile-session` для ручного восстановления session.
+  - Деплой edge functions выполняется штатно после правок.
+  - Запустить точечный reconcile для `$2` session.
+  - Исправить `PublicPayPage` UI.
+  - Исправить `AdminPaymentLinkDialog` тексты.
+  - Переименовать admin subscriptions UI.
+  - Проверить counters в links UI.
+17. **Verify**
+  - Public payment page для Stripe subscription:
+    - нет bePaid текстов;
+    - нет disabled saved bePaid card;
+    - CTA ведёт в Stripe Checkout;
+    - можно оплатить другой картой / Apple Pay.
+  - После recovery `$2` появились:
+    ```text
+    orders_v2.status = paid
+    payments_v2.status = succeeded
+    subscriptions_v2.status = active
+    provider_subscriptions.state = active
+    ```
+  - «Мои покупки»: подписка/покупка видна пользователю.
+  - Админка:
+    - Stripe payment виден в «Платежах»;
+    - paid count виден в «Ссылках»;
+    - подписка видна в общей вкладке «Подписки»;
+    - provider badge = Stripe.
+  - Re-run safety:
+    - повторный webhook/reconcile не создаёт дубль order;
+    - не создаёт дубль payment;
+    - не увеличивает счётчик ссылки повторно.
+18. **Proof / DoD**
+  - Создать proof:
+  - Proof должен содержать:
+    - root cause;
+    - Stripe session snapshot;
+    - provider events;
+    - dry-run preconditions;
+    - helper logic summary;
+    - recovery result for `$2`;
+    - SQL after по order/payment/subscription/provider_subscription/payment_link/access;
+    - UI screenshots: PublicPayPage, Stripe Checkout, Мои покупки, Админ Платежи, Ссылки, Подписки;
+    - re-run idempotency proof;
+    - подтверждение, что bePaid/e-clearing/Pay untouched.
+  - PATCH = PASS, если Stripe subscription checkout materializes from `checkout.session.completed` when `invoice.paid` is missing, текущая `$2` оплата восстановлена, UI очищен от bePaid-confusion, вкладка называется «Подписки», и повторный replay не создаёт дублей.

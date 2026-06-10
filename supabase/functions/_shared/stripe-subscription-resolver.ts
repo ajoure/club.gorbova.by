@@ -637,11 +637,12 @@ async function onSubscriptionDeleted(
 // =====================================================================
 // C.4 — invoice.paid  (ONLY activation path)
 // =====================================================================
-async function onInvoicePaid(
+export async function onInvoicePaid(
   supabase: SupabaseClient,
   event: StripeEvent,
   account_code: string,
 ): Promise<ResolveResult> {
+
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
   // Stripe API 2026-04+ moved `subscription` под `invoice.parent.subscription_details.subscription`.

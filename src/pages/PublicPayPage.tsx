@@ -396,13 +396,20 @@ export default function PublicPayPage() {
     !isInstallment &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
-  // PAY-E-LITE: для subscription показываем сохранённые карты в disabled-режиме + уведомление.
+  // PATCH: для Stripe subscription не показываем disabled bePaid saved-cards и не пишем
+  // bePaid-specific fallback hint. Saved cards в системе — это bePaid токены, а Stripe
+  // subscription уводит пользователя в Stripe Checkout, где он сам выбирает карту/Apple Pay.
+  const isStripeSubscription = isSubscription && linkInfo.provider === 'stripe';
+  // PAY-E-LITE: для bePaid subscription показываем сохранённые карты в disabled-режиме + уведомление.
   const showSubscriptionDisabledCards =
     ownsOrPublic &&
     isSubscription &&
+    !isStripeSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
-  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
+  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription && !isStripeSubscription;
+  const showStripeSubscriptionHint = ownsOrPublic && isStripeSubscription;
+
 
   // Phase 5-C — customer provider choice gating.
   // HOTFIX provider_choice_required: согласовано с backend.
@@ -654,6 +661,14 @@ export default function PublicPayPage() {
                 нужно будет ввести карту для подписки.
               </p>
             )}
+
+            {!needsIdentity && !needsProviderChoice && showStripeSubscriptionHint && (
+              <p className="mt-3 text-xs text-center text-muted-foreground leading-relaxed">
+                Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe,
+                где можно ввести новую карту или использовать Apple Pay, если он доступен.
+              </p>
+            )}
+
 
             {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
             {needsIdentity && (
