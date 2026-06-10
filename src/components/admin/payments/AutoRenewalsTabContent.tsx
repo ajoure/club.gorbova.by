@@ -509,7 +509,7 @@ export function AutoRenewalsTabContent() {
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
       const { data: providerSubs } = await supabase
         .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
+        .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
         .eq('state', 'active');
 
       // Build lookup: subscription_v2_id → provider_subscription record
