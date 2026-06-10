@@ -718,7 +718,7 @@ export function AutoRenewalsTabContent() {
           grace_period_started_at: null,
           grace_period_ends_at: null,
           billing_type: 'provider_managed',
-          is_bepaid: true,
+          is_bepaid: psProvider === 'bepaid',
           display_billing_type: 'provider_managed' as const,
           // PATCH 3.2
           pm_verification_status: null,
@@ -727,6 +727,7 @@ export function AutoRenewalsTabContent() {
           provider_subscription_id: ps.provider_subscription_id || null,
           provider_last_charge_at: ps.last_charge_at || null,
           charged_today: !!ps.last_charge_at && isTodayMinsk(new Date(ps.last_charge_at)),
+          provider: psProvider,
         });
       }
 
