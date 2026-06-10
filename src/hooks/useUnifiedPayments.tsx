@@ -394,6 +394,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         
         const providerResponse = p.provider_response as any;
         const refunds = (p.refunds || []) as any[];
+        const docResolved = resolveDocumentUrl(p, p.provider || 'bepaid');
+
         
         // Extract card holder from provider_response
         let card_holder: string | null = null;
