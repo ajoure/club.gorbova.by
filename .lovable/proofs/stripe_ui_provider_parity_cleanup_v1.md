@@ -1,7 +1,69 @@
-# PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 — Stage 1 proof
+# PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 — proof
 
 Дата: 2026-06-10
-Статус: **Stage 1 выполнен, Stage 2 в backlog** (см. ниже)
+Статус: Stage 1 ✅ PASS · Stage 2A ✅ PASS · Stage 2B/2C/2D — backlog
+
+## Stage 2A — Unified Subscriptions Table (выполнено)
+
+**Решение:** вариант B (local merge без новых edge functions).
+
+**Источники строк:**
+- bePaid — существующий `bepaid-list-subscriptions` (не изменён).
+- Stripe — новый read-only hook `src/hooks/admin/useStripeSubscriptionsList.ts`:
+  - `provider_subscriptions` (`provider='stripe'`) → JOIN `subscriptions_v2 → tariffs/products/orders_v2`;
+  - вторым запросом `profiles` по `user_id IN (...)` (FK на auth.users, не на profiles.id).
+  - Никаких новых edge functions, никаких записей в БД.
+
+**Mapping Stripe → BepaidSubscription-совместимая row model:**
+| UI поле | Источник |
+|---|---|
+| `provider` | константа `'stripe'` |
+| `id` | `provider_subscription_id` (`sub_*`); для `pending:*` — `subv2.id` |
+| `status` | `subv2.status` → нормализация: `trialing→trialing`, `incomplete*→pending`, `unpaid→past_due`, `canceled/cancelled→canceled` |
+| `plan_title` | `tariffs.name → products.name → "—"` |
+| `plan_amount` | `orders_v2.final_price → subv2.meta.amount → stripe.inline_price.amount_major → amount_minor/100 → 0` |
+| `plan_currency` | `orders_v2.currency → subv2.meta.currency → inline_price.currency → "USD"` |
+| `customer_email/name` | `profiles` JOIN по `subv2.user_id` |
+| `created_at` | `provider_subscriptions.created_at` |
+| `next_billing_at` | `subv2.meta.stripe.current_period_end → ps.meta.stripe.current_period_end → ""` (показывается «—» если пусто; full resolver — Stage 2D) |
+| `last_payment_at` | `provider_subscriptions.last_charge_at` |
+| `is_linked_full` / `linked_*` | всегда `true` (Stripe строки приходят из локального `subscriptions_v2`) |
+
+**UI изменения в `BepaidSubscriptionsTabContent.tsx`:**
+- Интерфейс `BepaidSubscription` расширен: `provider?: 'bepaid' | 'stripe'`, `last_payment_at?: string`.
+- `DEFAULT_COLUMNS`: добавлены `provider` (после checkbox) и `last_payment` (после `next_billing`); `COLUMNS_STORAGE_KEY` поднят до `v4` (полный reset раскладки).
+- `subscriptions` теперь — `useMemo` merge bePaid (tagged `provider:'bepaid'`) + Stripe rows.
+- Новый стейт `providerFilter: 'all' | 'bepaid' | 'stripe'` + Select в toolbar.
+- `STATUS_LABELS` обновлён: `pending → "Ожидает оплаты"`, добавлен `trialing → "Пробный период"`.
+- `renderCell` для Stripe строк:
+  - `checkbox` → disabled + Tooltip «Stripe: используйте карточку контакта для отмены подписки.»;
+  - `provider` → violet badge `Stripe` / sky badge `bePaid`;
+  - `last_payment` → дата `last_charge_at` или «—»;
+  - actions dropdown: скрыты «Открыть в bePaid» / «Отменить в bePaid»; добавлен disabled-info «Stripe: отмена — в карточке контакта».
+- `handleSelectAll` теперь выбирает только bePaid строки.
+- bulk cancel дёргает только `bepaid-cancel-subscriptions` (Stripe строки в `selectedIds` попасть не могут — checkbox disabled).
+
+**DoD Stage 2A — проверено по фикстуре `sub_1TgWoO6UYJj2vm0Gjc9P0jxH` (Сергей Федорчук, 2.00 USD, активная Stripe-подписка):**
+- ✅ отдельного Stripe-блока сверху нет;
+- ✅ одна таблица «Подписки»;
+- ✅ bePaid + Stripe строки в одной таблице;
+- ✅ для Stripe строки в БД-резолвере видны: клиент `Сергей Федорчук`, тариф `Несрочная консультация`, сумма `2.00 USD`, provider badge `Stripe`, статус `Активна`, last_payment `2026-06-10`;
+- ✅ next_billing честно «—» (Stripe webhook ещё не пишет `current_period_end` в `subv2.meta.stripe` — фикс в Stage 2D);
+- ✅ фильтр provider работает (`Все / bePaid / Stripe`);
+- ✅ bePaid строки идентичны прежним (rendering логика не тронута, кроме новых колонок);
+- ✅ bePaid bulk cancel работает только для bePaid;
+- ✅ Stripe checkbox disabled с tooltip-объяснением;
+- ✅ Stripe action menu — без bePaid-only пунктов.
+
+**Временные ограничения (зафиксированы как backlog):**
+- card_brand/card_last4 для Stripe пусты — `default_payment_method` снапшот пишется в Stage 2D.
+- next_billing_at для Stripe чаще всего «—» до полного резолвера (Stage 2D).
+- Provider-aware bulk cancel UX — Stage 2 follow-up (сейчас Stripe-отмена только через карточку контакта; это явно показано tooltip-ом).
+
+---
+
+## Stage 1 — выполнено (immediate, safe)
+
 
 ## Stage 1 — выполнено (immediate, safe)
 
