@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       if (offerId) {
         const { data: specificOffer } = await supabase
           .from('tariff_offers')
-          .select('amount, trial_days, auto_charge_amount, requires_card_tokenization, offer_type')
+          .select('amount, trial_days, auto_charge_amount, requires_card_tokenization, offer_type, meta')
           .eq('id', offerId)
           .eq('is_active', true)
           .maybeSingle();
@@ -690,9 +690,11 @@ Deno.serve(async (req) => {
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
-    // For one-time payments (e.g., consultations), use checkout API instead of subscriptions
+    // For one-time payments (e.g., consultations), use provider-aware checkout API instead of subscriptions.
+    // If offer meta restricts the public button to Stripe, short-circuit into Stripe branch.
+    // No bePaid redirect/fallback is attempted for Stripe-only offers.
     if (isOneTime) {
-      console.log('[bepaid-create-token] One-time payment: delegating to canonical createPaymentCheckout');
+      console.log('[bepaid-create-token] One-time payment: delegating to canonical provider-aware createPaymentCheckout');
       
       // Resolve tariff_id UUID for the shared helper
       let tariffIdForCheckout: string | null = null;
@@ -724,6 +726,32 @@ Deno.serve(async (req) => {
         });
       }
 
+      let effectiveProvider: 'bepaid' | 'stripe' = 'bepaid';
+      let effectiveAccountCode: string | null = null;
+      let allowedPaymentProviders: ('bepaid' | 'stripe')[] = [];
+      if (offerId) {
+        const { data: offerProviderRow } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', offerId)
+          .maybeSingle();
+        const acquiring = ((offerProviderRow?.meta as Record<string, any> | null)?.acquiring ?? {}) as Record<string, any>;
+        allowedPaymentProviders = Array.isArray(acquiring.allowed_payment_providers)
+          ? acquiring.allowed_payment_providers.filter((p: any) => p === 'bepaid' || p === 'stripe')
+          : [];
+        const defaultProvider = acquiring.default_provider === 'stripe' || acquiring.default_provider === 'bepaid'
+          ? acquiring.default_provider
+          : null;
+        if (allowedPaymentProviders.length === 1) {
+          effectiveProvider = allowedPaymentProviders[0];
+        } else if (defaultProvider && allowedPaymentProviders.includes(defaultProvider)) {
+          effectiveProvider = defaultProvider;
+        }
+        effectiveAccountCode = effectiveProvider === 'stripe'
+          ? (typeof acquiring?.stripe?.account_code === 'string' ? acquiring.stripe.account_code : null)
+          : null;
+      }
+
       const amountKopecks = Math.round(paymentAmount * 100);
       const checkoutResult = await createPaymentCheckout({
         supabase,
@@ -736,6 +764,17 @@ Deno.serve(async (req) => {
         offer_id: offerId,
         origin: origin,
         actor_type: 'system',
+        provider: effectiveProvider,
+        account_code: effectiveAccountCode,
+        currency: productInfo.currency || (effectiveProvider === 'stripe' ? 'BYN' : undefined),
+        meta_extra: {
+          provider_choice_resolution: {
+            mode: 'fixed',
+            chosen: effectiveProvider,
+            allowed_payment_providers: allowedPaymentProviders.length > 0 ? allowedPaymentProviders : null,
+            source: 'tariff_offer_meta_acquiring',
+          },
+        },
       });
 
       if (!checkoutResult.success) {
@@ -750,6 +789,7 @@ Deno.serve(async (req) => {
       console.log('[bepaid-create-token] One-time checkout created via canonical flow:', {
         order_id: checkoutResult.order_id,
         payment_type: checkoutResult.payment_type,
+        provider: checkoutResult.provider || effectiveProvider,
       });
 
       return new Response(
@@ -757,6 +797,7 @@ Deno.serve(async (req) => {
           success: true,
           redirectUrl: checkoutResult.redirect_url,
           orderId: checkoutResult.order_id,
+          provider: checkoutResult.provider || effectiveProvider,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
