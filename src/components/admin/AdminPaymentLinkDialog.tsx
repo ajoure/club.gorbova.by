@@ -1274,7 +1274,7 @@ ${amountLine}
                       },
                       {
                         key: "bepaid" as const,
-                        title: "Белорусская карта",
+                        title: "Белорусская карта (bePaid)",
                         // Phase 7-UI follow-up — reason от shared mirror; bePaid привязан к BYN.
                         hint: (() => {
                           const r = resolveProviderForUi("bepaid", "BYN");
@@ -1285,6 +1285,7 @@ ${amountLine}
                           (!isSuperAdmin && !offerAllowedProviders.includes("bepaid")) ||
                           !resolveProviderForUi("bepaid", "BYN").allowed,
                       },
+
                       {
                         key: "stripe" as const,
                         title: "Иностранная карта / Apple Pay (Stripe)",
