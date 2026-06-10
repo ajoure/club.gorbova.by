@@ -684,6 +684,7 @@ export function AutoRenewalsTabContent() {
         const profile = ps.user_id ? profileMap.get(ps.user_id) : (ps.profile_id ? profileByIdMap.get(ps.profile_id) : null);
         const planTitle = ps.raw_data?.plan?.title || ps.raw_data?.plan?.name || null;
         const amountByn = (ps.amount_cents || 0) / 100;
+        const psProvider: 'bepaid' | 'stripe' = ps.provider === 'stripe' ? 'stripe' : 'bepaid';
 
         dedupedSubs.push({
           id: ps.id, // use provider_subscriptions UUID
