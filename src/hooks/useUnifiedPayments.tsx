@@ -403,6 +403,85 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         return { url: null, source: null };
       }
 
+      // Stage 2E — payer card resolver. Stripe-aware + refund→parent inheritance.
+      function resolvePayerCard(p: any): {
+        brand: string | null;
+        last4: string | null;
+        wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
+        source:
+          | 'db_columns'
+          | 'stripe_meta'
+          | 'stripe_provider_response'
+          | 'parent_payment'
+          | 'parent_db_columns'
+          | null;
+      } {
+        const prov = String(p.provider || '').toLowerCase();
+        const isRefund = String(p.transaction_type || '').toLowerCase() === 'refund';
+        const meta = (p.meta || {}) as any;
+
+        if (prov !== 'stripe') {
+          if (p.card_brand || p.card_last4) {
+            return {
+              brand: p.card_brand ?? null,
+              last4: p.card_last4 ?? null,
+              wallet: null,
+              source: 'db_columns',
+            };
+          }
+          return { brand: null, last4: null, wallet: null, source: null };
+        }
+
+        // Stripe: prefer DB columns (already populated by targeted card fetch).
+        if (p.card_brand || p.card_last4) {
+          return {
+            brand: p.card_brand ?? null,
+            last4: p.card_last4 ?? null,
+            wallet: null,
+            source: 'db_columns',
+          };
+        }
+
+        // Stripe meta extraction.
+        const fromMeta = extractStripeCardFromMeta(meta);
+        if (fromMeta.brand || fromMeta.last4 || fromMeta.wallet) {
+          return { ...fromMeta, source: 'stripe_meta' };
+        }
+
+        // Refund → parent payment lookup.
+        if (isRefund) {
+          const sm = (meta?.stripe || {}) as any;
+          const pr = (meta?.provider_response?.stripe || {}) as any;
+          const refundResp = pr?.refund ?? sm?.refund ?? null;
+          const parentKeys: (string | null | undefined)[] = [
+            meta?.parent_payment_id,
+            meta?.parent_payment_uid,
+            refundResp?.payment_intent,
+            refundResp?.charge,
+            pr?.payment_intent,
+            pr?.charge_id,
+            sm?.payment_intent_id,
+            sm?.charge_id,
+          ];
+          for (const k of parentKeys) {
+            if (!k) continue;
+            const parent = stripeParentIndex.get(k);
+            if (!parent) continue;
+            if (parent.card_brand || parent.card_last4 || parent.card_wallet) {
+              return {
+                brand: parent.card_brand,
+                last4: parent.card_last4,
+                wallet: parent.card_wallet,
+                source: 'parent_payment',
+              };
+            }
+          }
+        }
+
+        return { brand: null, last4: null, wallet: null, source: null };
+      }
+
+
       // Transform payments_v2 data
       const transformedPayments: UnifiedPayment[] = paymentsData.map(p => {
         const order = p.orders as any;
