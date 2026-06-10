@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyPayment } from "@/lib/paymentClassification";
 import { buildSearchIndex } from "@/lib/multiTermSearch";
+import { extractStripeCardFromMeta } from "@/utils/extractStripeCardFromMeta";
 export interface DateFilter {
   from: string;
   to?: string;
