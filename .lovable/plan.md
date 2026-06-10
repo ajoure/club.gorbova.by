@@ -1,694 +1,392 @@
-да, согласен, с учетом правок:
+# да, согласен
 
-План принят. Scope корректный: это не новая фаза Stripe, а bug-fix materialization + UI cleanup после реальной Stripe subscription оплаты.
+План принят. Можно выполнять PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1.
 
-# **Approve на выполнение**
+Обязательное уточнение перед Execute:
 
-Можно выполнять PATCH:
+# Не допускается частичная UI-реализация
 
-```text
-Stripe subscription checkout materialization + provider-clean UI + unified subscriptions
-```
+Нельзя снова сделать временное решение вида:
 
----
+text Stripe сверху отдельным блоком bePaid ниже отдельной таблицей 
 
-# **Обязательные правки перед Execute**
+Результат должен быть только такой:
 
-## **1. Не называть это fallback как основной путь**
+text одна таблица «Подписки» одна таблица «Автопродления» одна таблица «Платежи» provider-aware строки внутри существующего UI 
 
-Формулировка должна быть точной:
-
-```text
-checkout.session.completed materialization = recovery/safety path для subscription checkout, если invoice.paid не пришёл или не обработался.
-```
-
-Основной canonical lifecycle для подписок остаётся:
-
-```text
-invoice.paid / invoice.payment_failed / subscription.updated / subscription.deleted
-```
-
-Но если Checkout Session уже `complete + paid`, то бизнес-материализация должна быть восстановлена идемпотентно.
+Stripe должен быть встроен в существующие таблицы, фильтры, статусы, действия и receipt UX так же, как bePaid.
 
 ---
 
+# Дополнительный proof по parity
 
+В proof обязательно добавить отдельный раздел:
 
+text bePaid parity checklist 
 
+Проверить и показать:
 
+## Подписки
 
+- bePaid и Stripe отображаются в одной таблице;
 
-## **2. В**
+- одинаковые бизнес-колонки;
 
-`checkout.session.completed` **не создавать дубль, если позже придёт** `invoice.paid`
+- provider-specific действия не смешиваются;
 
-Это главный риск.
+- Stripe не рендерится отдельным блоком;
 
-В helper `activateStripeSubscriptionCheckout()` обязательно добавить idempotency keys:
+- фильтр по provider работает.
 
-```text
-checkout_session_id
-invoice_id
-stripe_subscription_id
-subscription_v2_id
-provider_subscription_row_id
-payment_link_id
-```
+## Автопродления
 
-Если позже придёт `invoice.paid`, он должен увидеть already materialized state и не создать второй order/payment/access.
+- bePaid строки остались как были;
 
----
+- Stripe recurring строки добавлены только при валидном sub_*, auto_renew=true, next_charge_at;
 
+- layout не съехал.
 
+## Cancel
 
+- Stripe cancel повторяет bePaid cancel behavior:
 
+  - рекуррент отменён;
 
-## **3.**
+  - доступ не отозван;
 
-`provider_payment_id` **лучше не делать invoice-only, если можно достать PaymentIntent**
+  - refund не создан;
 
-Для Stripe subscription Session часто `payment_intent` может быть `null`, а платёж живёт в invoice/payment_intent.
+  - платежи/заказы не изменены;
 
-Поэтому helper должен по возможности достать invoice из Stripe API и взять:
+  - подписка исчезла из активной карточки контакта;
 
-```text
-invoice.payment_intent
-```
+  - новую подписку можно создать.
 
-Priority:
+## Документы
 
-```text
-1. invoice.payment_intent
-2. session.payment_intent
-3. invoice.id
-4. session.id
-```
+- Stripe payment row открывает документ оплаты;
 
-В `payments_v2.meta.stripe` сохранить все идентификаторы:
+- Stripe refund row открывает документ возврата / Stripe hosted page с refund information;
 
-```text
-checkout_session_id
-invoice_id
-payment_intent_id
-subscription_id
-charge_id, если доступен
-payment_link_id
-account_code
-materialized_from = checkout.session.completed
-```
+- payment row не открывает refund-документ;
+
+- refund row не пишет «документ не получен», если URL есть;
+
+- UI-кнопка такая же по стилю, как у bePaid.
+
+## Navigation
+
+- «Проблемы с оплатой» скрыта из UI;
+
+- legacy route не удалён.
 
 ---
 
-## **4. Payment link counter должен быть строго idempotent**
+# Execute разрешён
 
-`consumePaymentLinkForOrder` вызывать только если:
+Начинай с Discovery, затем выполняй PATCH по этапам A–G.
 
-```text
-orders_v2.meta.payment_link_counted != true
-```
+DoD остаётся как в плане:
 
-или если существующая функция сама гарантирует идемпотентность.
-
-После вызова записать marker:
-
-```text
-orders_v2.meta.payment_link_counted = true
-```
-
-Если такой marker уже есть — не увеличивать `current_uses`.
-
----
-
-## **5. Pending subscriptions в карточке контакта**
-
-Подтверждаю правило:
-
-```text
-pending drafts не показывать в карточке контакта как реальные подписки.
-```
-
-Карточка контакта должна показывать только подписки, где:
-
-```text
-provider_subscription_id starts with sub_
-```
-
-и есть реальный provider lifecycle.
-
-Pending drafts могут отображаться только:
-
-```text
-Платежи → Ссылки
-диагностика
-технический аудит
-```
-
----
-
-# **PATCH 1 — Backend materialization**
-
-Выполнять через общий helper:
-
-```text
-activateStripeSubscriptionCheckout()
-```
-
-Подключить:
-
-```text
-stripe-webhook → checkout.session.completed
-stripe-reconcile-session → manual recovery
-```
-
-## **Required guards**
-
-Перед write:
-
-```text
-session.mode = subscription
-session.status = complete
-session.payment_status = paid
-session.subscription starts with sub_
-metadata.subscription_v2_id exists
-metadata.provider_subscription_row_id exists
-metadata.payment_link_id exists
-metadata.account_code matches resolved account_code
-local subscriptions_v2 row exists
-local provider_subscriptions row exists
-provider_subscriptions.provider = stripe
-payment_links.provider = stripe
-```
-
-При mismatch:
-
-```text
-manual_review
-no business writes
-audit
-```
-
-## **Required writes**
-
-После successful activation:
-
-```text
-orders_v2.status = paid
-payments_v2.status = succeeded
-subscriptions_v2.status = active
-provider_subscriptions.state = active
-orders_v2.meta.payment_link_id = c5f28396...
-payment_links.current_uses incremented once
-grant-access-for-order called
-```
-
-Никаких direct writes в `entitlements`.
-
----
-
-# **PATCH 2 — Recovery текущей оплаты $2**
-
-После деплоя helper:
-
-Выполнить точечный reconcile только для:
-
-```text
-cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV
-```
-
-Нельзя делать:
-
-```text
-manual INSERT
-mass repair
-bulk reconcile
-```
-
-После recovery подтвердить:
-
-```text
-orders_v2.status = paid
-payments_v2.status = succeeded
-subscriptions_v2.status = active
-provider_subscriptions.state = active
-entitlement/access granted
-payment_links.current_uses = 1
-paid_orders_count обновился
-```
-
----
-
-# **PATCH 3 — PublicPayPage provider-clean UI**
-
-Для:
-
-```text
-provider = stripe
-payment_type = subscription
-```
-
-убрать:
-
-```text
-disabled saved bePaid card
-bePaid text
-сохранённые карты bePaid
-белорусская карта
-```
-
-Показать:
-
-```text
-Перейти к оплате картой / Apple Pay
-```
-
-Текст:
-
-```text
-Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать Apple Pay, если он доступен.
-```
-
-One-time saved-card selector оставить только там, где provider совместим.
-
----
-
-# **PATCH 4 — AdminPaymentLinkDialog texts**
-
-Исправить тексты, чтобы Stripe не выглядел как fallback в bePaid.
-
-Для Stripe:
-
-```text
-Оплата через Stripe
-Иностранная карта / Apple Pay
-Валюта: USD / EUR / PLN / BYN
-Подписка будет оформлена на защищённой странице Stripe
-```
-
-Для bePaid:
-
-```text
-Белорусская карта (bePaid)
-```
-
-Все пользовательские статусы и helper-тексты — на русском языке.
-
----
-
-# **PATCH 5 — Unified admin subscriptions UI**
-
-Переименовать:
-
-```text
-Подписки BePaid → Подписки
-```
-
-Legacy route оставить:
-
-```text
-/admin/payments/bepaid-subscriptions
-```
-
-Расширить provider display:
-
-```text
-provider_subscriptions.provider IN ('bepaid', 'stripe')
-```
-
-Показывать provider badge:
-
-```text
-bePaid
-Stripe
-```
-
-Не создавать отдельную вкладку Stripe.
-
-Pending drafts в общей вкладке можно показывать только явно как:
-
-```text
-Ожидает оплаты
-```
-
-но в карточке контакта их не показывать как реальные подписки.
-
----
-
-# **PATCH 6 — Links counters**
-
-Обязательно проверить:
-
-```text
-orders_v2.meta.payment_link_id
-orders_v2.meta.payment_link_counted
-payment_links.current_uses
-payment_links_enriched_v.paid_orders_count
-```
-
-Если UI кэширует ссылки, сделать refetch/invalidation после successful materialization.
-
----
-
-# **Что НЕ делать**
-
-Не делать:
-
-```text
-bePaid/e-clearing/Pay checkout changes
-direct entitlements writes
-tariff_offers.meta changes
-new real charges
-mass repair
-legacy route removal
-separate Stripe subscriptions tab
-pending drafts in contact card
-```
-
----
-
-# **Verify**
-
-## **SQL after recovery**
-
-Показать:
-
-```text
-order created
-payment created
-subscription active
-provider_subscription active with sub_...
-payment_link counted once
-entitlement/access granted
-no duplicate order/payment
-```
-
-## **UI**
-
-Показать скрины:
-
-```text
-PublicPayPage без bePaid-confusion
-Stripe Checkout / CTA
-Мои покупки
-Админ → Платежи
-Админ → Ссылки
-Админ → Подписки
-Карточка контакта без pending drafts
-```
-
-## **Idempotency**
-
-Повторно запустить reconcile/webhook replay для той же session:
-
-Ожидаемо:
-
-```text
-already_materialized
-no duplicate order
-no duplicate payment
-current_uses unchanged
-no duplicate entitlement
-```
-
----
-
-# **Proof**
-
-Создать:
-
-```text
-.lovable/proofs/stripe_subscription_checkout_materialization_v1.md
-```
-
-Proof должен содержать:
-
-1. Root cause.
-2. Stripe session snapshot.
-3. Provider events.
-4. Dry-run preconditions.
-5. Helper logic summary.
-6. Recovery result for `$2`.
-7. SQL after по:
-  - order;
-  - payment;
-  - subscription;
-  - provider_subscription;
-  - payment_link;
-  - entitlement/access.
-8. UI screenshots.
-9. Re-run idempotency proof.
-10. bePaid/e-clearing/Pay untouched.
-
----
-
-# **DoD**
-
-PATCH = PASS, если:
-
-- `$2` Stripe subscription payment восстановлена;
-- order/payment/subscription/access созданы;
-- user видит покупку;
-- admin видит payment/link/subscription;
-- Stripe subscription PublicPayPage не выглядит как bePaid;
-- disabled bePaid saved card не показывается;
-- вкладка называется «Подписки»;
-- повторный replay не создаёт дублей;
-- bePaid/e-clearing/Pay не затронуты.
-
-Начинай Execute.
+text PASS ⇔ все Verify зелёные, Stripe встроен в единые provider-aware разделы, bePaid не сломан. 
 
 &nbsp;
 
-План:
+План: PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (revised)
 
-1. **Проблема**
-  - Реальная Stripe subscription-оплата `$2` по public link прошла, но бизнес-данные не материализовались: нет `orders_v2`, `payments_v2`, active `subscriptions_v2`, видимости в «Мои покупки», «Платежи», «Ссылки».
-  - Stripe-only subscription flow на `/pay/:token` визуально смешан с bePaid: показываются disabled сохранённые bePaid-карты и тексты, из-за чего кажется, что ссылка fallback’ится в bePaid.
-  - Админская вкладка «Подписки BePaid» больше не соответствует системе с несколькими провайдерами.
-2. **Диагностика / dry-run preconditions уже подтверждены read-only**
-  - `checkout.session.completed` существует:
-    - `session_id = cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV`
-    - `mode = subscription`
-    - `status = complete`
-    - `payment_status = paid`
-    - `subscription = sub_1TgWoO6UYJj2vm0Gjc9P0jxH`
-    - `invoice = in_1TgWoM6UYJj2vm0GFNtppUXO`
-    - `amount_total = 200`, `currency = usd`
-    - `account_code = stripe_poland`
-  - Metadata достаточна для controlled recovery:
-    - `subscription_v2_id = ac24c459-478a-40ed-8d2c-87e63d04cb13`
-    - `provider_subscription_row_id = fa7ae2be-d743-4275-af9d-944d9396d53f`
-    - `payment_link_id = c5f28396-a7ce-4575-ba27-b2ab45eb80c9`
-    - `product_id`, `tariff_id`, `tariff_offer_id`, `business_stream` присутствуют.
-  - Local pending rows есть:
-    - `subscriptions_v2.status = pending`, `order_id = null`
-    - `provider_subscriptions.state = pending`, `provider_subscription_id = pending:<subscription_v2_id>`, `order_id = null`
-  - Payment link есть:
-    - `provider = stripe`, `provider_mode = fixed`, `account_code = stripe_poland`
-    - `payment_type = subscription`, `amount = 200`, `currency = USD`
-    - `current_uses = 0`, `status = active`
-  - Idempotency precheck:
-    - `orders_by_session = 0`
-    - `orders_by_invoice = 0`
-    - `orders_by_sub = 0`
-    - `orders_by_payment_link = 0`
-    - `payments_by_session = 0`
-    - `payments_by_invoice = 0`
-    - `payments_by_sub = 0`
-    - `payments_by_provider_payment_id_invoice = 0`
-    - `payments_by_provider_payment_id_session = 0`
-  - Root cause: `invoice.paid` не пришёл, а текущий activation path для Stripe subscriptions активирует бизнес-данные только через `invoice.paid`. `checkout.session.completed` был обработан как processed, но subscription materialization fallback отсутствует.
-3. **Главное архитектурное решение**
-  - Не добавлять второй write-path.
-  - Вынести общий idempotent helper:
-    ```text
-    activateStripeSubscriptionCheckout()
-    ```
-  - Использовать helper из двух мест:
-    ```text
+## Бизнес-принцип (фундамент всего патча)
 
-    ```
-  1. stripe-webhook → checkout.session.completed
-  2. stripe-reconcile-session → ручное восстановление session
-    `ли текущий`invoice.paid` resolver уже содержит часть логики, helper должен переиспользовать/разделить общую часть, а не копировать отдельную бизнес-логику.
-4. **PATCH 1 — Backend materialization from checkout.session.completed**
-  - Цель: если Stripe subscription Checkout Session завершена и оплачена, но `invoice.paid` отсутствует, создать бизнес-данные через общий helper.
-  - Helper создаёт/обновляет:
-    - `orders_v2.status = paid`
-    - `payments_v2.status = succeeded`
-    - `subscriptions_v2.status = active`
-    - `provider_subscriptions.state = active`
-    - `orders_v2.meta.payment_link_id`
-    - `payment_links.current_uses` через `consumePaymentLinkForOrder`
-  - Доступ выдаётся только через canonical path:
-    ```text
-    grant-access-for-order
-    ```
-  - Direct writes в `entitlements` запрещены.
-5. **Strict guards helper-а**
-  - Перед записью проверить:
-  - При mismatch: STOP/manual_review + audit, без business writes.
-6. **Idempotency helper-а**
-  - Перед созданием искать existing records по:
-  - Если уже материализовано:
-    - не создавать дубль order;
-    - не создавать дубль payment;
-    - не увеличивать `payment_links.current_uses` повторно;
-    - вернуть `already_materialized`.
-7. **Provider payment id priority**
-  - Для `payments_v2.provider_payment_id` использовать приоритет:
-  1. payment_intent, если есть
-  2. invoice id
-  3. checkout session id
-    `` payments_v2.meta.stripe`сохранить:`text
-    eckout_session_id
-    voice_id
-    bscription_id
-    yment_intent_id, если есть
-    yment_link_id
-    count_code
-    urce = checkout.session.completed
-    `
-8. **Grant/access failure policy**
-  - После materialization вызвать `grant-access-for-order`.
-  - Если `grant-access-for-order` упал:
-    - order/payment/subscription остаются;
-    - audit/manual_review фиксируется;
-    - доступ восстанавливается штатным reconcile;
-    - helper не откатывает коммерческий факт оплаты.
-9. **PATCH 2 — Recovery текущей оплаты `$2**`
-  - Доработать `stripe-reconcile-session`, чтобы для `mode=subscription` он вызывал тот же `activateStripeSubscriptionCheckout()`.
-  - Затем выполнить точечный reconcile для:
-    ```text
-    cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV
-    ```
-  - Не делать ручные `INSERT`.
-  - Не делать массовый repair.
-10. **PATCH 3 — PublicPayPage provider-clean UI**
-  - Для:
-     убрать disabled saved bePaid cards.
-  - Новый CTA:
-    ```text
-    Перейти к оплате картой / Apple Pay
-    ```
-    или:
-    ```text
-    Оплатить через Stripe
-    ```
-  - Текст:
-    ```text
-    Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать Apple Pay, если он доступен.
-    ```
-  - Не показывать в Stripe subscription flow:
-    ```text
-    bePaid
-    сохранённые карты bePaid
-    белорусская карта
-    ```
-  - One-time saved-card selector оставить только для совместимого provider flow.
-  - Stripe saved payment methods — вне scope, отдельный будущий PATCH.
-11. **PATCH 4 — AdminPaymentLinkDialog texts**
-  - Исправить тексты provider labels / currency labels / customer-choice / generated preview.
-  - Для Stripe использовать формулировки:
-    ```text
-    Оплата через Stripe
-    Иностранная карта / Apple Pay
-    Валюта: USD / EUR / PLN / BYN
-    Подписка будет оформлена на защищённой странице Stripe
-    ```
-  - Для bePaid:
-    ```text
-    Белорусская карта (bePaid)
-    ```
-  - Не смешивать Stripe и bePaid в одном helper-тексте.
-12. **PATCH 5 — Unified admin subscriptions UI**
-  - Переименовать UI:
-  - Legacy route оставить:
-    ```text
-    /admin/payments/bepaid-subscriptions
-    ```
-  - Не создавать отдельную вкладку Stripe subscriptions.
-  - Добавить provider badge:
-    ```text
-    bePaid
-    Stripe
-    ```
-  - Если текущий reader читает только bePaid rows — расширить на:
-    ```text
-    provider_subscriptions.provider IN ('bepaid', 'stripe')
-    ```
-  - Pending technical rows показывать только с явным статусом/бейджем «Ожидает оплаты».
-  - В карточке контакта pending drafts не показывать как реальные подписки.
-13. **PATCH 6 — Links UI counters**
-  - Helper обязан писать `orders_v2.meta.payment_link_id`, потому что `payment_links_enriched_v` считает `paid_orders_count` через этот meta-path.
-  - После activation вызвать `consumePaymentLinkForOrder`, чтобы `payment_links.current_uses` увеличился один раз.
-  - Проверить, что `usePaymentLinks`/RPC обновляют строки после `updated_at`; при stale-cache — добавить корректную invalidation/refetch в UI без нового source of truth.
-14. **Изменяемые компоненты**
-  - Edge/shared:
-    - `supabase/functions/_shared/stripe-subscription-resolver.ts`
-    - новый shared helper внутри `supabase/functions/_shared/` или вынесенная функция в существующем модуле
-    - `supabase/functions/stripe-webhook/index.ts`
-    - `supabase/functions/stripe-reconcile-session/index.ts`
-  - Frontend:
-    - `src/pages/PublicPayPage.tsx`
-    - `src/components/admin/AdminPaymentLinkDialog.tsx`
-    - `src/pages/admin/AdminPaymentsHub.tsx`
-    - `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
-  - Proof:
-    - `.lovable/proofs/stripe_subscription_checkout_materialization_v1.md`
-15. **Что НЕ делать**
-  - Не трогать bePaid/e-clearing/Pay checkout logic.
-  - Не менять `grant-access-for-order`.
-  - Не писать `entitlements` напрямую.
-  - Не менять глобальные `tariff_offers.meta`.
-  - Не создавать новые реальные списания.
-  - Не удалять legacy route.
-  - Не делать массовый repair.
-  - Не создавать отдельную Stripe subscriptions вкладку.
-  - Не показывать pending drafts в карточке контакта как реальные подписки.
-16. **Execute**
-  - Вынести общий idempotent helper `activateStripeSubscriptionCheckout()`.
-  - Подключить helper в `stripe-webhook` для `checkout.session.completed` subscription sessions.
-  - Подключить helper в `stripe-reconcile-session` для ручного восстановления session.
-  - Деплой edge functions выполняется штатно после правок.
-  - Запустить точечный reconcile для `$2` session.
-  - Исправить `PublicPayPage` UI.
-  - Исправить `AdminPaymentLinkDialog` тексты.
-  - Переименовать admin subscriptions UI.
-  - Проверить counters в links UI.
-17. **Verify**
-  - Public payment page для Stripe subscription:
-    - нет bePaid текстов;
-    - нет disabled saved bePaid card;
-    - CTA ведёт в Stripe Checkout;
-    - можно оплатить другой картой / Apple Pay.
-  - После recovery `$2` появились:
-    ```text
-    orders_v2.status = paid
-    payments_v2.status = succeeded
-    subscriptions_v2.status = active
-    provider_subscriptions.state = active
-    ```
-  - «Мои покупки»: подписка/покупка видна пользователю.
-  - Админка:
-    - Stripe payment виден в «Платежах»;
-    - paid count виден в «Ссылках»;
-    - подписка видна в общей вкладке «Подписки»;
-    - provider badge = Stripe.
-  - Re-run safety:
-    - повторный webhook/reconcile не создаёт дубль order;
-    - не создаёт дубль payment;
-    - не увеличивает счётчик ссылки повторно.
-18. **Proof / DoD**
-  - Создать proof:
-  - Proof должен содержать:
-    - root cause;
-    - Stripe session snapshot;
-    - provider events;
-    - dry-run preconditions;
-    - helper logic summary;
-    - recovery result for `$2`;
-    - SQL after по order/payment/subscription/provider_subscription/payment_link/access;
-    - UI screenshots: PublicPayPage, Stripe Checkout, Мои покупки, Админ Платежи, Ссылки, Подписки;
-    - re-run idempotency proof;
-    - подтверждение, что bePaid/e-clearing/Pay untouched.
-  - PATCH = PASS, если Stripe subscription checkout materializes from `checkout.session.completed` when `invoice.paid` is missing, текущая `$2` оплата восстановлена, UI очищен от bePaid-confusion, вкладка называется «Подписки», и повторный replay не создаёт дублей.
+Три независимые сущности — **никогда не смешивать автоматически**:
+
+1. **Рекуррент / автосписание** (subscriptions_v2 + provider_subscriptions)
+2. **Оплаченный доступ** (entitlements + access_end_at)
+3. **Возврат денег** (payments_v2 refund row)
+
+Cancel рекуррента ≠ revoke access ≠ refund. Каждая операция — отдельная кнопка, отдельная edge-функция, отдельный audit.
+
+---
+
+## Discovery (read-only, обязательный pre-step)
+
+1. `BepaidSubscriptionsTabContent` + `BepaidSubscriptionsList` — текущий query/row model, какие действия provider-specific.
+2. `StripeSubscriptionsList.tsx` — удаление как отдельного блока.
+3. `AutoRenewalsTabContent` — фильтр когорты (`tariff_offers.meta.recurring.is_recurring=true` per memory) + layout issues.
+4. `PaymentsTable` + receipt actions (`ReceiptStatusBadge` и пр.) — общий компонент для bePaid documents.
+5. Карточка контакта — компонент с блоком «Подписки» (где «Следующее списание: —» и «Отменить (Stripe)»). Определить query.
+6. `stripe-subscription-action` edge function (уже существует, см. `StripeSubscriptionActionsBlock`) — текущее поведение `cancel_at_period_end` / `cancel_now`. **Не дублировать**, переиспользовать.
+7. `stripe-webhook` — пишет ли `customer.subscription.updated` → `subscriptions_v2.meta.stripe.current_period_end`. SQL-проверка для активной подписки Сергея (`sub_1TgWoO6UYJj2vm0Gjc9P0jxH`).
+8. SQL: `payments_v2.meta.stripe.*` для $2 payment и $5 refund — какие URL уже есть (`receipt_url`, `invoice_pdf`, `hosted_invoice_url`, `refund.receipt_url`).
+9. `tariff_offers.meta.recurring` для текущего Stripe-тарифа — зафиксировать `interval` / `interval_count` (для proof, не менять).
+
+---
+
+## PATCH-A — Unified Subscriptions Table (add-only)
+
+**Цель:** одна provider-aware таблица «Подписки» во вкладке `/admin/payments/bepaid-subscriptions` (route legacy сохраняется).
+
+**Реализация — строго add-only:**
+
+- Удалить из `BepaidSubscriptionsTabContent` импорт и рендер отдельного `StripeSubscriptionsList` сверху.
+- Расширить существующий reader/таблицу `BepaidSubscriptionsList` на `provider_subscriptions.provider IN ('bepaid','stripe')`. Не переписывать таблицу с нуля.
+- Все bePaid-specific колонки и действия — сохранить. Stripe-rows маппятся в ту же row model.
+- Stripe mapping:
+  - amount/currency — из `subscriptions_v2.meta.amount_byn`+`meta.currency` или `meta.stripe.price`; для Stripe — реальная валюта (USD/EUR/PLN/BYN), без приведения.
+  - next_charge_at — `meta.stripe.current_period_end` → `provider_subscriptions.meta.current_period_end` → fallback `access_end_at` (с другой подписью, см. PATCH-D).
+  - last_payment_at — `payments_v2.paid_at` (max) по `subscription_v2_id`.
+  - payment_method — `meta.stripe.default_payment_method` brand (если есть).
+- Действия — **provider-aware**: bePaid actions показываются только при `provider='bepaid'`, Stripe actions — только при `provider='stripe'`.
+
+**Колонки (только бизнес-названия, RU):**
+ID подписки · Провайдер · Статус · Клиент · Продукт/тариф · Сумма · Валюта · Создана · Последняя оплата · Следующее списание · Метод оплаты · ID платежа · Сделка · Связь · Действия.
+
+Технические `subv2_id` / `Stripe ID` / `Состояние (state)` — НЕ в основные колонки. Допустимо сокращённый ID + copy-button.
+
+**Локализация статусов:**
+active → Активна, pending → Ожидает оплаты, canceled → Отменена, past_due → Просрочена, payment_failed → Ошибка оплаты, completed → Завершена.
+
+**Фильтр «Провайдер»:** Все / bePaid / Stripe (динамически из distinct). Pending не смешивать с активными — отдельный статус.
+
+---
+
+## PATCH-B — AutoRenewals: provider-aware + fix layout
+
+**Когорта Stripe** (строгие условия, по аналогии с bePaid SOT):
+
+```
+provider = 'stripe'
+status IN ('active','trialing','past_due')
+auto_renew = true
+provider_subscription_id LIKE 'sub_%'
+next_charge_at IS NOT NULL   -- из meta.stripe.current_period_end
+```
+
+Если `next_charge_at` нет — строка идёт в отдельный warning-фильтр («Без даты следующего списания»), а не в основной список (чтобы не ломать таблицу).
+
+**UI fix:**
+
+- Снять жёсткие узкие `width`, поставить `min-w-*` на ключевые колонки.
+- Не использовать `table-fixed`, либо задать sensible widths.
+- Горизонтальный scroll только при переполнении.
+- Provider badge bePaid/Stripe.
+- Колонки: Контакт · Продукт · Провайдер · Сумма · Валюта · Следующее списание · Последнее списание · Попытки · Метод · Статус · Связь · Действия.
+
+bePaid строки не должны измениться визуально.
+
+---
+
+## PATCH-C — Stripe cancel = bePaid cancel parity
+
+**Принцип:** кнопка «Отменить» отменяет только рекуррент. Доступ/entitlements/telegram/orders/payments — не трогаются.
+
+**Backend** (`stripe-subscription-action`, переиспользовать существующий):
+
+- Использовать action `cancel_now` → `stripe.subscriptions.cancel(id)` для immediate cancel рекуррента.
+- Локально:
+  ```
+  subscriptions_v2.status = 'canceled'
+  subscriptions_v2.auto_renew = false
+  subscriptions_v2.canceled_at = now()
+  provider_subscriptions.state/status = 'canceled'
+  provider_subscriptions.canceled_at = now()
+  ```
+- **НЕ менять:** `access_end_at`, `entitlements`, `access_grant_ledger`, `telegram_access`, `orders_v2`, `payments_v2`.
+
+**STOP-guards (перед cancel):**
+
+- `provider = 'stripe'`
+- `provider_subscription_id LIKE 'sub_%'` (НЕ `pending:*`)
+- subscription exists in Stripe
+- local sub принадлежит ожидаемому user/profile
+- Stripe status ∈ (active, trialing, past_due)
+
+**Edge cases:**
+
+- Если `provider_subscription_id` начинается с `pending:` — кнопку «Отменить» не показывать; edge возвращает `cannot_cancel_pending_subscription`.
+- Если Stripe уже `canceled` — не ошибка, только синхронизация локального статуса, success.
+
+**UI:**
+
+- В карточке контакта и в таблице «Подписки» кнопка «Отменить» (без `(Stripe)` суффикса в caption — provider в badge).
+- Confirm dialog: «Подписка отменяется. Будущих списаний не будет. Доступ сохраняется до {access_end_at}. Деньги не возвращаются.»
+- После cancel: подписка пропадает из активного блока карточки контакта; видна только в общей таблице под фильтром «Отменена»/«Все».
+
+**Conflict guard для новой подписки:**
+Создание новой подписки на тот же продукт блокируется только если существует:
+
+```
+status IN ('active','trialing','past_due') AND auto_renew=true
+AND provider_subscription_id NOT LIKE 'pending:%'
+```
+
+Canceled subscriptions не блокируют. Перекрытие access-окон допустимо.
+
+---
+
+## PATCH-D — «Следующее списание» vs «Доступ до» (карточка контакта)
+
+В блоке «Подписки» карточки контакта показывать **две даты раздельно**:
+
+```
+Следующее списание: DD.MM.YYYY
+Доступ до:          DD.MM.YYYY
+```
+
+**Резолвер `next_charge_at`:**
+
+1. `subscriptions_v2.meta.stripe.current_period_end` (epoch → ISO)
+2. `provider_subscriptions.meta.current_period_end`
+3. Для bePaid — существующий резолвер (без изменений)
+4. Если ни одного — показывать «—», НЕ подменять на `access_end_at`.
+
+**Резолвер `access_until`:** всегда `subscriptions_v2.access_end_at`.
+
+**Webhook check (discovery):** убедиться, что `stripe-webhook` на `customer.subscription.created/updated` пишет `current_period_end` в `subscriptions_v2.meta.stripe`. Если для подписки Сергея пусто — одноразовый pull через существующий sync-механизм (без массовой миграции).
+
+---
+
+## PATCH-E — Payments documents parity
+
+**Текущая проблема:** payment row открывает refund-документ; refund row пишет «документ не получен»; для Stripe рисуется отдельный «Invoice PDF» текстом.
+
+**Решение:** единая иконка/кнопка документа (тот же компонент, что для bePaid).
+
+**Mapping для Stripe payment row:**
+
+1. `meta.stripe.charge.receipt_url`
+2. `meta.stripe.invoice.hosted_invoice_url`
+3. `meta.stripe.invoice.invoice_pdf`
+4. Stripe hosted payment page fallback
+
+Caption: «Открыть чек» (как у bePaid). Payment row **никогда** не открывает refund URL.
+
+**Mapping для Stripe refund row:**
+
+1. `meta.stripe.refund.receipt_url` (если Stripe выдал)
+2. `meta.stripe.charge.receipt_url` (с refund information)
+3. `meta.stripe.invoice.hosted_invoice_url` (credit note, если есть)
+4. Stripe hosted payment page (последний fallback)
+
+Caption: «Открыть документ Stripe» / «Открыть квитанцию Stripe» если нет отдельного refund PDF.
+
+**Запрет:** не писать «документ ещё не получен», если есть **любой** Stripe hosted URL.
+
+**Не изобретать новые компоненты** — переиспользовать существующий receipt-action component bePaid.
+
+---
+
+## PATCH-F — Скрыть «Проблемы с оплатой»
+
+- Убрать tab-trigger из `AdminPaymentsHub` nav.
+- Route `/admin/payments/payment-issues` оставить legacy hidden (прямой URL работает).
+- Backend / data logic / `PaymentIssuesTabContent` не удалять.
+
+---
+
+## PATCH-G — PublicPayPage final check (verify only)
+
+Прочитать текущий `PublicPayPage.tsx`, зафиксировать в proof: для Stripe subscription нет disabled bePaid card, нет «Белорусская карта», CTA → Stripe Checkout/Apple Pay. Если уже OK — только proof, без изменений.
+
+---
+
+## Stripe recurring period (НЕ менять, только зафиксировать)
+
+В этом PATCH периодичность Stripe не меняется. Зафиксировать в proof текущие значения `interval` / `interval_count` для активной подписки.
+
+**В backlog:** `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`:
+
+- Явный billing_mode на тарифе: `every_N_days` (bePaid parity) / `calendar_month` (Stripe).
+- UI labels: «каждые 30 дней» vs «ежемесячно в дату оформления».
+- Пересчёт `next_charge_at` и публичных текстов.
+
+---
+
+## Что НЕ делать
+
+- Не менять `grant-access-for-order`, не писать в `entitlements` напрямую.
+- Не отзывать доступ при cancel.
+- Не делать refund автоматически при cancel.
+- Не менять `access_end_at` при cancel.
+- Не менять Stripe interval/interval_count.
+- Не удалять `StripeSubscriptionsList.tsx` файл (только убрать импорт из вкладки) — может пригодиться для дебага.
+- Не удалять route `/admin/payments/payment-issues`.
+- Не делать миграций без явного dry-run/rowcount.
+- Не ломать bePaid checkout/cancel/documents/auto-renewals.
+- Не показывать английские статусы и технические поля (`subv2`, `Stripe ID`, `state`) в основной таблице.
+
+---
+
+## Verify (acceptance)
+
+**Подписки** `/admin/payments/bepaid-subscriptions`:
+
+- одна таблица, нет отдельного Stripe-блока сверху;
+- активная Stripe-подписка Сергея видна: клиент, продукт «Платная консультация — Несрочная консультация», 2.00 USD, Stripe badge, Активна, последняя оплата 10.06.26, следующее списание определено или «—» (не подменено);
+- provider filter работает;
+- bePaid строки не изменились.
+
+**Cancel Stripe:**
+
+- кнопка «Отменить» доступна только для реальных `sub_*`;
+- после cancel: status='canceled', auto_renew=false; access_end_at не изменился; entitlements целы;
+- подписка исчезла из активного блока карточки контакта;
+- видна в «Подписках» под фильтром «Отменена/Все»;
+- можно создать новую подписку на тот же продукт.
+
+**Карточка контакта:**
+
+- две отдельные даты «Следующее списание» и «Доступ до»;
+- для активной Stripe-подписки «Следующее списание» заполнено реальной датой из meta.
+
+**Автопродления** `/admin/payments/auto-renewals`:
+
+- layout не съехал;
+- Stripe active recurring subscription с next billing date — видна с provider badge;
+- Stripe subscriptions без next_charge_at — не ломают таблицу (отдельный warning/filter);
+- bePaid строки целы.
+
+**Платежи** `/admin/payments`:
+
+- Stripe payment $2 — единая кнопка «Открыть чек», открывает документ оплаты;
+- Stripe refund 5 BYN — единая кнопка, открывает документ возврата / hosted page с refund info;
+- нет текстовых «Invoice PDF»;
+- payment row не открывает refund URL и наоборот;
+- нет ложного «документ ещё не получен», если есть любой URL.
+
+**Навигация:** tab «Проблемы с оплатой» скрыт; прямой URL работает (read-only).
+
+**Regression:** bePaid подписки/автопродления/документы/cancel — без изменений.
+
+---
+
+## Proof
+
+`.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`:
+
+1. **Before/after скриншоты:** отдельный Stripe-блок исчез; единая таблица; provider filter; AutoRenewals fixed; payments documents унифицированы; «Проблемы с оплатой» скрыты.
+2. **Cancel proof:** SQL до/после (`subscriptions_v2.status`, `auto_renew`, `canceled_at`, `access_end_at`, `entitlements` count), подтверждение что доступ не отозван, новая подписка не блокируется.
+3. **Documents proof:** для $2 payment и $5 refund — какие URL были в meta до, какой URL открывает кнопка после.
+4. **Recurring period proof:** текущий `interval`/`interval_count` (зафиксировано без изменений); ссылка на backlog `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`.
+5. **Regression proof:** bePaid subscriptions/auto-renewals/documents целы (счётчики до/после).
+6. Без миграций. Если потребуется точечный backfill `meta.stripe.current_period_end` — отдельный dry-run + rowcount.
+
+---
+
+## DoD (обновлённый)
+
+PASS ⇔ все пункты Verify зелёные, и:
+
+- отдельный `StripeSubscriptionsList` как блок не рендерится;
+- Stripe и bePaid в одной таблице;
+- у Stripe-строки есть клиент/продукт/сумма/валюта/статус/последняя оплата/следующее списание (или «—» честное)/доступ до;
+- фильтр по provider работает;
+- AutoRenewals не съехал, Stripe только валидные recurring;
+- Stripe cancel = bePaid behavior (рекуррент off, доступ цел);
+- pending:* подписки нельзя отменить;
+- после cancel — можно создать новую подписку;
+- карточка контакта показывает обе даты корректно;
+- Stripe payment/refund документы — единый icon-button UX;
+- payment row → документ оплаты; refund row → документ возврата;
+- «Проблемы с оплатой» скрыта;
+- Stripe interval не менялся (зафиксировано в proof);
+- bePaid checkout/cancel/documents/auto-renewals не сломаны;
+- статусы и колонки только русские, технические ID — сокращённо + copy.

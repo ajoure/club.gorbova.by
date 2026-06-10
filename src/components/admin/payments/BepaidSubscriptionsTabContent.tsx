@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { StripeSubscriptionsList } from "@/components/admin/payments/StripeSubscriptionsList";
+// PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1: separate Stripe block removed; Stripe rows будут смержены в единую таблицу (Stage 2).
+
 
 import { useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1157,8 +1158,7 @@ export function BepaidSubscriptionsTabContent() {
 
   return (
     <div className="space-y-4">
-      {/* PATCH: Stripe subscriptions read-only section above bePaid list. */}
-      <StripeSubscriptionsList />
+      {/* PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1: отдельный StripeSubscriptionsList убран; единая таблица «Подписки». */}
       {/* Clickable stats row - glassmorphism style */}
 
       <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-border/20">
