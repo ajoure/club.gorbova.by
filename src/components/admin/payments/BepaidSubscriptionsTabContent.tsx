@@ -1155,7 +1155,10 @@ export function BepaidSubscriptionsTabContent() {
 
   return (
     <div className="space-y-4">
+      {/* PATCH: Stripe subscriptions read-only section above bePaid list. */}
+      <StripeSubscriptionsList />
       {/* Clickable stats row - glassmorphism style */}
+
       <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-border/20">
         <button
           onClick={() => setStatusFilter("all")}
