@@ -73,20 +73,6 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
-    const credsResult = await getBepaidCredsStrict(supabase);
-    
-    if (isBepaidCredsError(credsResult)) {
-      console.error('[create-token] bePaid credentials error:', credsResult.error);
-      return new Response(
-        JSON.stringify({ success: false, error: credsResult.error }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    
-    const bepaidCreds = credsResult;
-    console.log('[create-token] Using bePaid credentials from:', bepaidCreds.creds_source);
-
     // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');
     let authUserId: string | null = null;
