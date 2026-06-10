@@ -1740,7 +1740,7 @@ export function AutoRenewalsTabContent() {
               <div data-table-scroll-x="true" className="table-scroll-x">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={sortedColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
-                    <Table style={{ tableLayout: 'fixed', width: totalColumnsWidth, minWidth: totalColumnsWidth }}>
+                    <Table style={{ tableLayout: 'fixed', width: '100%', minWidth: totalColumnsWidth }}>
                       <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
                         <TableRow>
                           {sortedColumns.map(col => (
