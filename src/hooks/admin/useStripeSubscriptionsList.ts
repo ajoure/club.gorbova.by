@@ -1,13 +1,11 @@
-// PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 — Stage 2A
+// PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 — Stage 2A (fix v2)
 // Local-DB reader for Stripe subscriptions, mapped to BepaidSubscription-compatible shape.
-// SOT: provider_subscriptions + subscriptions_v2 + tariffs + products + orders_v2 + profiles.
-// Не вызывает Stripe API. Не пишет в БД. Только read.
+// NOTE: no FK constraints exist between provider_subscriptions/subscriptions_v2/tariffs/products/orders_v2/profiles,
+// so PostgREST resource embedding does NOT work. We fetch flat tables and join in JS.
 
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
-// Совместимая со строками bePaid форма + provider маркер.
-// Поля card_*, last_payment_at, next_billing_at заполняются по мере наличия данных.
 export interface UnifiedSubscriptionRow {
   provider: "bepaid" | "stripe";
   id: string;
@@ -32,13 +30,8 @@ function unixToIso(v: any): string {
   if (v == null) return "";
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n) || n <= 0) return "";
-  // unix seconds → ms
   const ms = n < 10_000_000_000 ? n * 1000 : n;
-  try {
-    return new Date(ms).toISOString();
-  } catch {
-    return "";
-  }
+  try { return new Date(ms).toISOString(); } catch { return ""; }
 }
 
 function normalizeStripeStatus(s: string | null | undefined): string {
@@ -61,64 +54,69 @@ function normalizeStripeStatus(s: string | null | undefined): string {
   }
 }
 
+function uniq<T>(arr: (T | null | undefined)[]): T[] {
+  return Array.from(new Set(arr.filter((x): x is T => x != null && (x as any) !== "")));
+}
+
 export function useStripeSubscriptionsList() {
   return useQuery({
-    queryKey: ["admin-stripe-subscriptions-list", "v1"],
+    queryKey: ["admin-stripe-subscriptions-list", "v2-flat"],
     queryFn: async (): Promise<UnifiedSubscriptionRow[]> => {
-      // 1) provider_subscriptions + nested subscriptions_v2/tariffs/products/orders_v2
+      // 1) provider_subscriptions (flat)
       const { data: psRows, error: psErr } = await supabase
         .from("provider_subscriptions")
-        .select(
-          `id, provider_subscription_id, state, created_at, last_charge_at, meta,
-           subscription_v2_id,
-           subscriptions_v2 (
-             id, status, user_id, product_id, tariff_id, order_id, meta,
-             tariffs ( name ),
-             products ( name ),
-             orders_v2 ( final_price, currency )
-           )`
-        )
+        .select("id, provider_subscription_id, state, created_at, last_charge_at, meta, subscription_v2_id")
         .eq("provider", "stripe")
         .order("created_at", { ascending: false })
         .limit(500);
-
       if (psErr) throw psErr;
-      const rows = (psRows ?? []) as any[];
-      if (rows.length === 0) return [];
+      const ps = (psRows ?? []) as any[];
+      if (ps.length === 0) return [];
 
-      // 2) profiles by user_id IN (...)
-      const userIds = Array.from(
-        new Set(
-          rows
-            .map((r) => r.subscriptions_v2?.user_id)
-            .filter((x) => typeof x === "string" && x.length > 0)
-        )
-      );
-      let profilesByUserId: Record<string, { email: string | null; full_name: string | null }> = {};
-      if (userIds.length > 0) {
-        const { data: profs } = await supabase
-          .from("profiles")
-          .select("user_id, email, full_name")
-          .in("user_id", userIds);
-        for (const p of profs ?? []) {
-          profilesByUserId[(p as any).user_id] = {
-            email: (p as any).email ?? null,
-            full_name: (p as any).full_name ?? null,
-          };
-        }
-      }
+      const svIds = uniq(ps.map(r => r.subscription_v2_id));
 
-      // 3) Map → UnifiedSubscriptionRow
-      return rows.map((r): UnifiedSubscriptionRow => {
-        const sv = r.subscriptions_v2 ?? {};
+      // 2) subscriptions_v2 (flat)
+      const { data: svRows } = svIds.length
+        ? await supabase
+            .from("subscriptions_v2")
+            .select("id, status, user_id, product_id, tariff_id, order_id, meta")
+            .in("id", svIds)
+        : { data: [] as any[] };
+      const svById: Record<string, any> = {};
+      for (const s of (svRows ?? [])) svById[s.id] = s;
+
+      const userIds = uniq((svRows ?? []).map((s: any) => s.user_id));
+      const productIds = uniq((svRows ?? []).map((s: any) => s.product_id));
+      const tariffIds = uniq((svRows ?? []).map((s: any) => s.tariff_id));
+      const orderIds = uniq((svRows ?? []).map((s: any) => s.order_id));
+
+      // 3) profiles / products / tariffs / orders (parallel)
+      const [profilesRes, productsRes, tariffsRes, ordersRes] = await Promise.all([
+        userIds.length ? supabase.from("profiles").select("user_id, email, full_name").in("user_id", userIds) : Promise.resolve({ data: [] as any[] }),
+        productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] as any[] }),
+        tariffIds.length ? supabase.from("tariffs").select("id, name").in("id", tariffIds) : Promise.resolve({ data: [] as any[] }),
+        orderIds.length ? supabase.from("orders_v2").select("id, final_price, currency").in("id", orderIds) : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      const profById: Record<string, any> = {};
+      for (const p of (profilesRes.data ?? [])) profById[(p as any).user_id] = p;
+      const prodById: Record<string, any> = {};
+      for (const p of (productsRes.data ?? [])) prodById[(p as any).id] = p;
+      const tarById: Record<string, any> = {};
+      for (const t of (tariffsRes.data ?? [])) tarById[(t as any).id] = t;
+      const ordById: Record<string, any> = {};
+      for (const o of (ordersRes.data ?? [])) ordById[(o as any).id] = o;
+
+      return ps.map((r): UnifiedSubscriptionRow => {
+        const sv = svById[r.subscription_v2_id] || {};
         const psMeta = (r.meta ?? {}) as any;
         const svMeta = (sv.meta ?? {}) as any;
         const stripeMeta = (svMeta.stripe ?? psMeta.stripe ?? {}) as any;
         const inline = (stripeMeta.inline_price ?? psMeta?.stripe?.inline_price ?? {}) as any;
-        const order = (sv.orders_v2 ?? {}) as any;
-        const tariff = (sv.tariffs ?? {}) as any;
-        const product = (sv.products ?? {}) as any;
-        const prof = profilesByUserId[sv.user_id] || { email: null, full_name: null };
+        const order = ordById[sv.order_id] || {};
+        const tariff = tarById[sv.tariff_id] || {};
+        const product = prodById[sv.product_id] || {};
+        const prof = profById[sv.user_id] || {};
 
         const subId: string =
           (r.provider_subscription_id && !String(r.provider_subscription_id).startsWith("pending:")
@@ -126,14 +124,13 @@ export function useStripeSubscriptionsList() {
             : sv.id) || r.id;
 
         const amount =
-          (typeof order.final_price === "number" ? order.final_price : null) ??
-          (typeof svMeta.amount === "number" ? svMeta.amount : null) ??
-          (typeof inline.amount_major === "number" ? inline.amount_major : null) ??
-          (typeof inline.amount_minor === "number" ? Number(inline.amount_minor) / 100 : null) ??
+          (typeof order.final_price === "number" ? order.final_price : Number(order.final_price)) ||
+          (typeof svMeta.amount === "number" ? svMeta.amount : null) ||
+          (typeof inline.amount_major === "number" ? inline.amount_major : null) ||
+          (typeof inline.amount_minor === "number" ? Number(inline.amount_minor) / 100 : null) ||
           0;
 
-        const currency =
-          order.currency || svMeta.currency || inline.currency || "USD";
+        const currency = order.currency || svMeta.currency || inline.currency || "USD";
 
         const nextBillingIso =
           unixToIso(stripeMeta.current_period_end) ||
