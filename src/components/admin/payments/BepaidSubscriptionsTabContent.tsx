@@ -449,7 +449,34 @@ export function BepaidSubscriptionsTabContent() {
     placeholderData: getCachedPayload, // PATCH-U1: Show cached data immediately
   });
 
-  const subscriptions = data?.subscriptions || [];
+  // Stage 2A: merge Stripe local-DB rows + tag bePaid rows.
+  const { data: stripeRows = [] } = useStripeSubscriptionsList();
+  const subscriptions = useMemo<BepaidSubscription[]>(() => {
+    const bp: BepaidSubscription[] = (data?.subscriptions || []).map((s: BepaidSubscription) => ({
+      ...s,
+      provider: s.provider ?? 'bepaid',
+    }));
+    const st: BepaidSubscription[] = (stripeRows || []).map((s) => ({
+      id: s.id,
+      status: s.status,
+      plan_title: s.plan_title,
+      plan_amount: s.plan_amount,
+      plan_currency: s.plan_currency,
+      customer_email: s.customer_email,
+      customer_name: s.customer_name,
+      card_last4: s.card_last4,
+      card_brand: s.card_brand,
+      created_at: s.created_at,
+      next_billing_at: s.next_billing_at,
+      linked_subscription_id: s.linked_subscription_id,
+      linked_user_id: s.linked_user_id,
+      linked_profile_name: s.linked_profile_name,
+      is_linked_full: s.is_linked_full,
+      provider: 'stripe',
+      last_payment_at: s.last_payment_at,
+    }));
+    return [...bp, ...st];
+  }, [data?.subscriptions, stripeRows]);
   const debugInfo = data?.debug;
   
   const rawStats = data?.stats || { total: 0, active: 0, trial: 0, pending: 0, canceled: 0, cancelled: 0, not_linked: 0, linked: 0 };
