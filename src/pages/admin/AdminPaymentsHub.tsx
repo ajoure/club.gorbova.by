@@ -18,7 +18,7 @@ const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
-  { id: "bepaid-subs", label: "Подписки BePaid", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
+  { id: "bepaid-subs", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
   { id: "payment-issues", label: "Проблемы с оплатой", icon: AlertCircle, path: "/admin/payments/payment-issues" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
   { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
