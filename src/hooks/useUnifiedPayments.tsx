@@ -36,6 +36,17 @@ export interface UnifiedPayment {
   card_holder: string | null;
   card_last4: string | null;
   card_brand: string | null;
+  // Stage 2E: derived payer view (Stripe-aware + refund→parent inheritance).
+  payer_card_brand: string | null;
+  payer_card_last4: string | null;
+  payer_card_wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
+  payer_card_source:
+    | 'db_columns'
+    | 'stripe_meta'
+    | 'stripe_provider_response'
+    | 'parent_payment'
+    | 'parent_db_columns'
+    | null;
   
   // Linked contact
   profile_id: string | null;
