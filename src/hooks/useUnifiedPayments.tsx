@@ -655,6 +655,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             stripe_subscription_id: null,
             stripe_hosted_invoice_url: null,
             stripe_invoice_pdf: null,
+            document_url: q.receipt_url ?? null,
+            document_url_source: q.receipt_url ? 'receipt_url' : null,
+
             // P0-guard: Build search index ONCE during transformation
             search_index: buildSearchIndex([
               q.bepaid_uid,
