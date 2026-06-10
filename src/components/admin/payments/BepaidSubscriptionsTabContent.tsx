@@ -183,22 +183,24 @@ interface ColumnConfig {
 
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "id", label: "ID подписки", visible: true, width: 130, order: 1 },
-  { key: "status", label: "Статус", visible: true, width: 100, order: 2 },
-  { key: "customer", label: "Клиент", visible: true, width: 160, order: 3 },
-  { key: "plan", label: "План", visible: true, width: 150, order: 4 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
-  { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
-  { key: "card", label: "Карта", visible: true, width: 100, order: 7 },
-  { key: "payment_id", label: "ID платежа", visible: true, width: 130, order: 8 }, // PATCH-U2: visible by default
-  { key: "deal", label: "Сделка", visible: true, width: 100, order: 9 },
-  { key: "created", label: "Создано", visible: false, width: 100, order: 10 },
-  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 11 },
-  { key: "connection", label: "Связь", visible: true, width: 100, order: 12 },
-  { key: "actions", label: "", visible: true, width: 100, order: 13 },
+  { key: "provider", label: "Провайдер", visible: true, width: 90, order: 1 },
+  { key: "id", label: "ID подписки", visible: true, width: 130, order: 2 },
+  { key: "status", label: "Статус", visible: true, width: 100, order: 3 },
+  { key: "customer", label: "Клиент", visible: true, width: 160, order: 4 },
+  { key: "plan", label: "План", visible: true, width: 150, order: 5 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 6 },
+  { key: "next_billing", label: "След. списание", visible: true, width: 110, order: 7 },
+  { key: "last_payment", label: "Последняя оплата", visible: true, width: 110, order: 8 },
+  { key: "card", label: "Карта", visible: true, width: 100, order: 9 },
+  { key: "payment_id", label: "ID платежа", visible: false, width: 130, order: 10 },
+  { key: "deal", label: "Сделка", visible: true, width: 100, order: 11 },
+  { key: "created", label: "Создано", visible: false, width: 100, order: 12 },
+  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 13 },
+  { key: "connection", label: "Связь", visible: true, width: 100, order: 14 },
+  { key: "actions", label: "", visible: true, width: 100, order: 15 },
 ];
 
-const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v3'; // PATCH-U2: reset columns
+const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v4'; // Stage 2A: +provider +last_payment
 const PAYLOAD_STORAGE_KEY = 'admin_bepaid_subscriptions_last_payload_v1'; // PATCH-U1: persist data
 
 // Russian status labels dictionary
