@@ -75,6 +75,7 @@ import { LinkSubscriptionContactDialog } from "./LinkSubscriptionContactDialog";
 import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDialog";
 import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
 import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
+import { useStripeSubscriptionsList } from "@/hooks/admin/useStripeSubscriptionsList";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
