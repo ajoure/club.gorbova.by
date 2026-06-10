@@ -192,7 +192,11 @@ export default function ReceiptStatusBadge({
         </TooltipTrigger>
         <TooltipContent>
           <div className="text-xs">
-            <div>Чек недоступен</div>
+            <div>
+              {isStripe
+                ? (isRefund ? 'Документ возврата недоступен' : 'Документ Stripe недоступен')
+                : 'Чек недоступен'}
+            </div>
             {receiptErrorCode && (
               <div className="text-muted-foreground">
                 {ErrorMessages[receiptErrorCode] || receiptErrorCode}
@@ -200,6 +204,7 @@ export default function ReceiptStatusBadge({
             )}
           </div>
         </TooltipContent>
+
       </Tooltip>
     );
   }
