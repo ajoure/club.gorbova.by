@@ -1423,6 +1423,18 @@ export function BepaidSubscriptionsTabContent() {
             <SelectItem value="token_only">Только Token</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Stage 2A: Provider filter */}
+        <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as ProviderFilter)}>
+          <SelectTrigger className="w-36 h-8 bg-background/50">
+            <SelectValue placeholder="Провайдер" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все провайдеры</SelectItem>
+            <SelectItem value="bepaid">bePaid</SelectItem>
+            <SelectItem value="stripe">Stripe</SelectItem>
+          </SelectContent>
+        </Select>
         
         <Select value={`${sortField}-${sortDir}`} onValueChange={(v) => {
           const [field, dir] = v.split("-") as [SortField, SortDir];
