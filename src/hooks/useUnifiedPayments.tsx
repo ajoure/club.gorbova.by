@@ -299,11 +299,93 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       
       // Dedup key: provider:uid - ONLY provider_payment_id, not fallback to id
       const processedKeys = new Set<string>();
-      
+
+      // Stage 2C — Parent index для Stripe refund → parent charge receipt fallback.
+      // Ключи: payments_v2.id (UUID) и provider_payment_id (pi_*/ch_*).
+      type StripeParentDoc = {
+        receipt_url: string | null;
+        charge_receipt_url: string | null;
+        hosted_invoice_url: string | null;
+        invoice_pdf: string | null;
+      };
+      const stripeParentIndex = new Map<string, StripeParentDoc>();
+      for (const p of paymentsData) {
+        if ((p.provider || '').toLowerCase() !== 'stripe') continue;
+        const meta = (p.meta || {}) as any;
+        const sm = (meta?.stripe || {}) as any;
+        const doc: StripeParentDoc = {
+          receipt_url: p.receipt_url ?? null,
+          charge_receipt_url: sm?.charge?.receipt_url ?? null,
+          hosted_invoice_url:
+            sm?.hosted_invoice_url ?? sm?.invoice?.hosted_invoice_url ?? null,
+          invoice_pdf: sm?.invoice_pdf ?? sm?.invoice?.invoice_pdf ?? null,
+        };
+        if (p.id) stripeParentIndex.set(p.id, doc);
+        if (p.provider_payment_id) stripeParentIndex.set(p.provider_payment_id, doc);
+        if (sm?.charge_id) stripeParentIndex.set(sm.charge_id, doc);
+        if (sm?.payment_intent_id) stripeParentIndex.set(sm.payment_intent_id, doc);
+      }
+
+      function resolveDocumentUrl(
+        p: any,
+        provider: string,
+      ): { url: string | null; source: string | null } {
+        const prov = provider.toLowerCase();
+        if (prov !== 'stripe') {
+          return p.receipt_url
+            ? { url: p.receipt_url, source: 'receipt_url' }
+            : { url: null, source: null };
+        }
+        const meta = (p.meta || {}) as any;
+        const sm = (meta?.stripe || {}) as any;
+        const isRefund = ((p as any).transaction_type || '').toLowerCase() === 'refund';
+
+        if (!isRefund) {
+          // Stripe payment row
+          if (sm?.charge?.receipt_url) return { url: sm.charge.receipt_url, source: 'charge_receipt' };
+          if (p.receipt_url) return { url: p.receipt_url, source: 'receipt_url' };
+          if (sm?.hosted_invoice_url) return { url: sm.hosted_invoice_url, source: 'invoice_hosted' };
+          if (sm?.invoice?.hosted_invoice_url) return { url: sm.invoice.hosted_invoice_url, source: 'invoice_hosted' };
+          if (sm?.invoice_pdf) return { url: sm.invoice_pdf, source: 'invoice_pdf' };
+          if (sm?.invoice?.invoice_pdf) return { url: sm.invoice.invoice_pdf, source: 'invoice_pdf' };
+          return { url: null, source: null };
+        }
+
+        // Stripe refund row
+        const refundResp =
+          meta?.provider_response?.stripe?.refund ??
+          sm?.refund ??
+          null;
+        if (refundResp?.receipt_url) return { url: refundResp.receipt_url, source: 'refund_receipt' };
+        if (refundResp?.hosted_receipt_url) return { url: refundResp.hosted_receipt_url, source: 'refund_receipt' };
+
+        // Fallback: parent charge receipt via several keys.
+        const parentKeys: (string | null | undefined)[] = [
+          meta?.parent_payment_id,
+          meta?.parent_payment_uid,
+          refundResp?.payment_intent,
+          refundResp?.charge,
+          meta?.provider_response?.stripe?.payment_intent,
+          meta?.provider_response?.stripe?.charge_id,
+          sm?.payment_intent_id,
+          sm?.charge_id,
+        ];
+        for (const k of parentKeys) {
+          if (!k) continue;
+          const parent = stripeParentIndex.get(k);
+          if (!parent) continue;
+          if (parent.charge_receipt_url) return { url: parent.charge_receipt_url, source: 'parent_charge_receipt' };
+          if (parent.receipt_url) return { url: parent.receipt_url, source: 'parent_charge_receipt' };
+          if (parent.hosted_invoice_url) return { url: parent.hosted_invoice_url, source: 'parent_invoice_hosted' };
+        }
+        return { url: null, source: null };
+      }
+
       // Transform payments_v2 data
       const transformedPayments: UnifiedPayment[] = paymentsData.map(p => {
         const order = p.orders as any;
         const directProfile = p.profiles as any;
+
         
         // A1: Auto-link contact through deal - Priority: payment.profile -> order.profile
         const orderProfile = order?.profiles as any;
