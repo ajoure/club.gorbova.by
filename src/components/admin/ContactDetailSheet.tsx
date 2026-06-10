@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { resolveStripeNextChargeAt } from "@/utils/resolveStripeNextChargeAt";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
@@ -2232,7 +2233,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       const stateLabel =
                         PROVIDER_STATE_LABELS_RU[String(sub.state).toLowerCase()] || 'Активна';
 
-                      const nextCharge = sub.next_charge_at ?? sub.subscriptions_v2?.next_charge_at ?? null;
+                      // Stage 2D: канонический резолвер. НЕ маскируем через access_end_at.
+                      const nextChargeRes = resolveStripeNextChargeAt(sub as any);
+                      const nextCharge = nextChargeRes.iso;
                       const hasAmount = sub.amount_cents != null && sub.currency;
                       const amountStr = hasAmount ? `${(sub.amount_cents / 100).toFixed(2)} ${sub.currency}` : null;
 
