@@ -662,6 +662,14 @@ export default function PublicPayPage() {
               </p>
             )}
 
+            {!needsIdentity && !needsProviderChoice && showStripeSubscriptionHint && (
+              <p className="mt-3 text-xs text-center text-muted-foreground leading-relaxed">
+                Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe,
+                где можно ввести новую карту или использовать Apple Pay, если он доступен.
+              </p>
+            )}
+
+
             {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
             {needsIdentity && (
               <>
