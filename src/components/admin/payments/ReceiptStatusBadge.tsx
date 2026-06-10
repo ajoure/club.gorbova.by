@@ -25,9 +25,14 @@ interface ReceiptStatusBadgeProps {
   providerUid?: string;
   /** PATCH-LIVE-2: 'stripe' → не зовём bepaid-get-receipt; только открываем receipt_url. */
   provider?: string | null;
+  /** Stage 2C: 'payment' | 'refund' — влияет на формулировку tooltip для Stripe. */
+  transactionType?: string | null;
+  /** Stage 2C: источник document_url (parent_charge_receipt → особый текст). */
+  documentSource?: string | null;
   onRefetch?: () => void;
   className?: string;
 }
+
 
 const ErrorMessages: Record<ReceiptErrorCode, string> = {
   NO_PROVIDER_ID: 'Нет UID провайдера',
