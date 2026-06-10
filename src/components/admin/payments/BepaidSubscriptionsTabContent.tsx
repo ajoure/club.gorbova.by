@@ -702,10 +702,14 @@ export function BepaidSubscriptionsTabContent() {
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length) {
+    // Stage 2A: bulk select только bePaid (Stripe cancel — через карточку контакта).
+    const selectable = filteredSubscriptions.filter(
+      (s: BepaidSubscription) => s.status !== 'canceled' && (s.provider ?? 'bepaid') === 'bepaid'
+    );
+    if (selectedIds.size === selectable.length && selectable.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').map((s: BepaidSubscription) => s.id)));
+      setSelectedIds(new Set(selectable.map((s: BepaidSubscription) => s.id)));
     }
   };
 
