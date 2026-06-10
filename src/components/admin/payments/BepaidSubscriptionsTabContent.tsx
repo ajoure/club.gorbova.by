@@ -207,7 +207,8 @@ const PAYLOAD_STORAGE_KEY = 'admin_bepaid_subscriptions_last_payload_v1'; // PAT
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
-  pending: 'Ожидает подтверждения',
+  trialing: 'Пробный период',
+  pending: 'Ожидает оплаты',
   past_due: 'Просрочена',
   canceled: 'Отменена',
   terminated: 'Завершена',
