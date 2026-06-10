@@ -1,357 +1,429 @@
-да, согласен, с учетом правок:
+Да, согласен, с учетом правок.
 
-План Stage 2C принимаю. Реализация правильная: один `document_url` per row + единая кнопка документа в стиле bePaid.
+План Stage 2D принимается, но нужно добавить обязательный Stage 2E: Stripe payer/card data parity в столбце «Плательщик».
 
-# **Stage 2C — approve на Execute**
+# Дополнение к Stage 2D / Stage 2E
 
-Цель корректная:
+## Новая проблема
 
-```text
-PaymentsTable должен показывать один документ-action для Stripe payment/refund, как у bePaid.
-```
+В /admin/payments в столбце:
 
-Без:
+text Плательщик 
 
-```text
-Invoice
-PDF
-Документ ещё не получен
-```
+для Stripe payment/refund сейчас отображается:
 
-если Stripe hosted URL доступен.
+text Без данных Метод оплаты: Без данных Данные карты недоступны 
 
----
+Это неправильно.
 
-# **Что в плане правильно**
+По Stripe-платежам должны отображаться данные карты так же, как по bePaid:
 
-
-
-## **1. Единый**
-
-`document_url`
-
-Правильно добавить в `UnifiedPayment` derived field:
-
-```text
-document_url
-```
-
-Это UI-derived поле, а не новый SOT.
-
-SOT остаётся:
-
-```text
-payments_v2.receipt_url
-payments_v2.meta
-parent_payment_id
-provider_response
-```
-
-## **2. Payment/refund не смешивать**
-
-Правильно:
-
-- payment row открывает документ оплаты;
-- refund row открывает документ возврата или hosted page, где виден refund;
-- payment row не должен открывать refund URL;
-- refund row не должен ошибочно писать «документ не получен», если можно открыть parent charge receipt / Stripe hosted page.
-
-## **3. bePaid не трогать**
-
-Правильно:
-
-```text
-bePaid document_url = receipt_url
-```
-
-и весь retry/получение чека через `bepaid-get-receipt` остаётся как есть.
-
----
-
-# **Обязательные правки перед Execute**
-
-
-
-
-
-## **1. Не использовать**
-
-`checkout_session.url` **как document fallback**
-
-В mapping для Stripe payment убрать или оставить только как debug, но не как документ.
-
-```text
-meta.stripe.checkout_session?.url
-```
-
-не является документом оплаты. Это checkout URL, который после оплаты может быть недоступен/истёк и не должен открываться как чек.
-
-Итоговый priority для Stripe payment:
-
-```text
-1. meta.stripe.charge.receipt_url
-2. receipt_url
-3. meta.stripe.hosted_invoice_url
-4. meta.stripe.invoice.hosted_invoice_url
-5. meta.stripe.invoice_pdf
-6. meta.stripe.invoice.invoice_pdf
-7. null
-```
-
-## **2. Для refund fallback на parent charge receipt должен быть явно помечен**
-
-Если refund row открывает receipt родительского charge, tooltip должен быть не «Открыть чек», а например:
-
-```text
-Открыть документ Stripe
-```
+text VISA **** 3587 
 
 или:
 
-```text
-Открыть квитанцию Stripe с информацией о возврате
-```
+text Apple Pay / VISA **** 3587 
 
-Потому что это не отдельный refund PDF, а Stripe hosted receipt/charge page, где отражён refund.
+если платёж был через Apple Pay.
 
-## **3. Parent lookup должен работать по обоим ключам**
-
-Для refund parent map искать родителя по:
-
-```text
-parent_payment_id
-meta.parent_payment_id
-meta.parent_payment_uid
-provider_payment_id
-meta.stripe.payment_intent_id
-```
-
-Но использовать только доказуемые связи.
-
-Если parent найден неоднозначно — не подставлять случайный URL, а оставить `document_url=null` и зафиксировать в proof.
-
-## **4. Не ломать статусы bePaid receipt**
-
-В `ReceiptStatusBadge` не менять поведение bePaid.
-
-Stripe-specific tooltip добавлять через provider-aware branch:
-
-```text
-if provider === 'stripe'
-```
-
-bePaid retry/get receipt должен остаться прежним.
-
-## **5. Drawer — не блокирует PASS**
-
-Согласен: если у Stripe есть несколько документов (`hosted_invoice_url`, `invoice_pdf`, `receipt_url`), в основной таблице оставляем одну кнопку.
-
-Дополнительные ссылки в drawer — backlog, не блокирует Stage 2C.
-
-Добавить backlog-note:
-
-```text
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2
-```
+На скрине Stripe payment/refund строки показывают «Без данных», хотя карта известна по Stripe и уже использовалась в этих платежах.
 
 ---
 
-# **Исправленный mapping**
+# Stage 2D — принимается
 
-## **Stripe payment row**
+Stage 2D выполняем как в плане:
 
-```text
-1. meta.stripe.charge.receipt_url
-2. payments_v2.receipt_url
-3. meta.stripe.hosted_invoice_url
-4. meta.stripe.invoice.hosted_invoice_url
-5. meta.stripe.invoice_pdf
-6. meta.stripe.invoice.invoice_pdf
-7. null
-```
+1. В карточке контакта разделить:
 
-Запрещено:
+   text    Следующее списание    Доступ до    
 
-```text
-refund.receipt_url
-refund hosted url
-checkout_session.url
-```
+2. Не подменять next_charge_at через access_end_at.
 
-## **Stripe refund row**
+3. PublicPayPage Stripe subscription final proof.
 
-```text
-1. meta.provider_response.stripe.refund.receipt_url
-2. meta.provider_response.stripe.refund.hosted_receipt_url
-3. meta.stripe.refund.receipt_url
-4. meta.stripe.refund.hosted_receipt_url
-5. parent payment: meta.stripe.charge.receipt_url
-6. parent payment: receipt_url
-7. parent payment: meta.stripe.hosted_invoice_url
-8. parent payment: meta.stripe.invoice.hosted_invoice_url
-9. null
-```
+4. Зафиксировать Stripe recurring:
 
-Если используется parent payment receipt, tooltip:
+   text    interval    interval_count    collection_method    
 
-```text
-Открыть документ Stripe с информацией о возврате
-```
+5. Периодичность Stripe в этом PATCH не менять.
 
 ---
 
-# **Execute разрешён**
-
-Файлы:
-
-```text
-src/hooks/useUnifiedPayments.tsx
-src/components/admin/payments/ReceiptStatusBadge.tsx
-src/components/admin/payments/PaymentsTable.tsx
-.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md
-```
-
----
-
-# **Verify Stage 2C**
-
-Проверить 4 строки:
-
-## **1. Stripe payment 2.00 USD**
-
-Ожидаемо:
-
-- одна кнопка документа;
-- открывает hosted invoice / invoice PDF;
-- нет сырого `Invoice/PDF` в таблице.
-
-## **2. Stripe payment +5 BYN**
-
-Ожидаемо:
-
-- одна кнопка документа;
-- открывает документ оплаты;
-- не открывает refund document.
-
-## **3. Stripe refund −5 BYN**
-
-Ожидаемо:
-
-- одна кнопка документа;
-- открывает refund receipt или parent charge hosted page с refund information;
-- нет «Документ ещё не получен», если fallback URL найден.
-
-## **4. bePaid payment**
-
-Ожидаемо:
-
-- кнопка/статус чека работает как раньше;
-- retry/get receipt не сломан.
-
----
-
-# **DoD Stage 2C**
-
-Stage 2C = PASS, если:
-
-- Stripe payment row открывает документ оплаты;
-- Stripe refund row открывает документ возврата / Stripe hosted page с refund info;
-- payment row не открывает refund URL;
-- refund row не показывает «документ не получен», если есть fallback URL;
-- в таблице нет сырых `Invoice` / `PDF`;
-- UI документа — единая иконка/кнопка как у bePaid;
-- bePaid receipt UX не сломан;
-- proof обновлён со SQL/meta и after screenshots.
-
-Начинай Execute Stage 2C.
-
-&nbsp;
-
-Отчет о выполнении: discovery завершён. План Stage 2C ниже.
+# Stage 2E — Stripe payer/card data parity в PaymentsTable
 
 ## Цель
 
-В `/admin/payments` (PaymentsTable) убрать парные ссылки `Invoice` / `PDF` и сделать одну кнопку «Документы» (как у bePaid) для Stripe payment и refund строк. Payment-строка не должна открывать refund-URL; refund-строка не должна писать «Документ ещё не получен», если URL доступен (включая fallback на чек родительского charge).
+Stripe payment/refund строки в таблице «Платежи» должны показывать карту/метод оплаты в колонке «Плательщик» так же, как bePaid.
 
-## Discovery (read-only, уже выполнено)
+Не должно быть:
 
-Stripe в БД сейчас (3 строки):
+text Без данных 
 
-- payment 2.00 USD (sub `sub_1TgWoO…`): `receipt_url=NULL`, в `meta.stripe`: `hosted_invoice_url`, `invoice_pdf`, `invoice_id`, `payment_intent_id`, `subscription_id`. → должна показать одну кнопку через invoice URL.
-- payment 5.00 BYN (one-time, Сергей): `receipt_url` есть (Stripe hosted receipt), в `meta.stripe`: `payment_intent_id`, `checkout_session_id`. → одна кнопка через `receipt_url`.
-- refund −5.00 BYN: `receipt_url=NULL`, `meta.provider_response.stripe.refund` без `hosted_receipt_url`; есть `parent_payment_id=2d40bc7e…` (это payment 5 BYN с готовым `receipt_url`). → fallback на чек родительского charge.
+если Stripe metadata содержит card/payment method data или если данные можно взять из связанной parent payment строки.
 
-Текущий код:
+---
 
-- `useUnifiedPayments.tsx` уже извлекает `stripe_hosted_invoice_url` / `stripe_invoice_pdf` и `receipt_url`, но НЕ извлекает `parent_payment_id`, charge receipt и refund-специфичные URL.
-- `PaymentsTable.tsx` (ячейка `receipt`, ~659–727) рендерит две сырые ссылки `Invoice` / `PDF` и для Stripe без URL пишет «Документ ещё не получен».
-- `ReceiptStatusBadge.tsx` уже умеет работать с `provider='stripe'` (no-op для `bepaid-get-receipt`), но текущий fallback зависит от наличия `receipt_url`.
+# Discovery Stage 2E
 
-## Реализация
+Проверить read-only:
 
-### 1. `src/hooks/useUnifiedPayments.tsx` — единый `document_url` per row
+## 1. Stripe payment $2
 
-Добавить в тип `UnifiedPayment` поле `document_url: string | null` (читается ТОЛЬКО для рендера; SOT остаётся `receipt_url` + `meta`).
+Посмотреть:
 
-Резолвер (pure, без сетевых вызовов):
+sql select id, provider, provider_payment_id, transaction_type, amount, currency,        receipt_url, meta from payments_v2 where provider='stripe' order by created_at desc; 
 
-- bePaid: `document_url = receipt_url` (как сейчас).
-- Stripe `transaction_type='payment'`:
-  1. `meta.stripe.charge.receipt_url`
-  2. `receipt_url` (если уже сохранён в колонке)
-  3. `meta.stripe.hosted_invoice_url`
-  4. `meta.stripe.invoice_pdf`
-  5. `meta.stripe.checkout_session?.url` (если есть), иначе `null`.
-  Никогда не использовать refund-URL для payment-строки.
-- Stripe `transaction_type='refund'`:
-  1. `meta.provider_response.stripe.refund.receipt_url` / `hosted_receipt_url` (если когда-нибудь появится)
-  2. fallback: `receipt_url` родительского платежа — построить map `paymentId → receipt_url + meta.stripe.charge.receipt_url` по `payments_v2`, искать `meta.parent_payment_id` или `meta.parent_payment_uid` (= `provider_payment_id` родителя).
-  3. fallback: `meta.stripe.hosted_invoice_url` родителя.
-  4. иначе `null`.
+Найти в meta:
 
-Реализовать через два прохода: сначала собрать словарь родителей, затем при map'е refund-строк подставлять.
+text payment_method_details card brand last4 wallet apple_pay payment_method_id charge payment_intent 
 
-### 2. `src/components/admin/payments/ReceiptStatusBadge.tsx` — мягкий tooltip для Stripe
+## 2. Stripe payment +5 BYN
 
-Минимальная правка: когда `provider='stripe'` и `derivedStatus='available'`, в тултипе показывать «Открыть документ Stripe» вместо «Открыть чек». Когда `unavailable` для Stripe и `transaction_type='refund'` — тултип «Документ возврата недоступен» (вместо общего «Чек недоступен»). Прокинуть опциональный `transactionType` пропс.
+Проверить, есть ли:
 
-### 3. `src/components/admin/payments/PaymentsTable.tsx` — единая кнопка
+text VISA last4 = 3587 wallet / apple_pay 
 
-Заменить блок `case 'receipt'` (lines ~659–727):
+в payments_v2.meta, provider_response, stripe.card, charge.payment_method_details.
 
-- Убрать ветку с двумя `<a>Invoice</a>` / `<a>PDF</a>`.
-- Всегда рендерить `<ReceiptStatusBadge receiptUrl={payment.document_url} transactionType={payment.transaction_type} provider={payment.provider} … />`.
-- Удалить fallback `«Документ ещё не получен»` для Stripe — теперь решает badge через `derivedStatus`. Для Stripe без URL badge покажет серый `XCircle` с тултипом «Документ недоступен» (он уже такой для Stripe).
+## 3. Stripe refund -5 BYN
 
-bePaid-путь не меняется: `document_url = receipt_url`, бейдж работает идентично текущему поведению, кнопка «получить чек» (`bepaid-get-receipt`) сохраняется.
+Refund row должен наследовать payer/card data от parent payment:
 
-### 4. Drawer (опционально, без блокировки PASS)
+text parent_payment_id meta.parent_payment_id meta.parent_payment_uid payment_intent_id 
 
-Если у Stripe payment одновременно есть и charge receipt, и invoice/PDF — оставить кнопку одну (основной URL), а дополнительные ссылки (Invoice / PDF) перенести в существующий `PaymentDetailsDrawer` (вне основной таблицы). Если drawer-расширение не вмещается в Stage 2C — оставить как backlog-note в proof и не блокировать PASS.
+Если refund сам не содержит card data, использовать parent payment card snapshot.
 
-## Proof (`.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md`)
+---
 
-Добавить раздел Stage 2C:
+# Required mapping для payer/card
 
-- Before: текущий рендер с `Invoice` / `PDF` и «Документ ещё не получен» (скрин уже у пользователя).
-- SQL-снапшоты для трёх строк (2 USD / +5 BYN / −5 BYN) с `meta.stripe` / `meta.provider_response.stripe.refund` / `parent_payment_id` (готово из discovery выше).
-- Mapping-логика payment / refund (копия из раздела 1 плана).
-- After-скрины: payment $2 → invoice, payment +5 BYN → Stripe receipt, refund −5 BYN → чек родительского charge, bePaid regression (одна строка).
-- DoD checklist Stage 2C.
+Добавить derived fields в useUnifiedPayments.tsx:
 
-## Файлы под изменение
+ts payer_card_brand payer_card_last4 payer_card_wallet payer_card_exp_month payer_card_exp_year payer_display 
 
-- `src/hooks/useUnifiedPayments.tsx` (тип + резолвер + parent map).
-- `src/components/admin/payments/ReceiptStatusBadge.tsx` (tooltip wording + опц. `transactionType`).
-- `src/components/admin/payments/PaymentsTable.tsx` (ячейка `receipt`).
-- `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` (раздел Stage 2C).
+SOT остаётся payments_v2.meta / parent payment meta.
 
-## DoD Stage 2C
+## Priority для Stripe payment row
 
-- Stripe payment row открывает документ оплаты (charge receipt > invoice hosted > invoice pdf).
-- Stripe refund row открывает чек/документ возврата (refund receipt, иначе чек родителя).
-- Payment row никогда не указывает на refund-URL.
-- Refund row не пишет «документ ещё не получен», когда есть fallback URL.
-- В таблице нет сырых текстов `Invoice` / `PDF` — только единая кнопка-иконка как у bePaid.
-- bePaid receipt-кнопка и retry через `bepaid-get-receipt` не сломаны.
-- Proof обновлён, SQL и скрины приложены.
+text 1. meta.stripe.payment_method_details.card.brand / last4 2. meta.stripe.charge.payment_method_details.card.brand / last4 3. meta.stripe.card.brand / last4 4. meta.provider_response.stripe.payment_method_details.card 5. meta.provider_response.stripe.charge.payment_method_details.card 6. existing card_* fields, если есть 7. null 
+
+Если wallet:
+
+text meta.stripe.payment_method_details.card.wallet.type = apple_pay 
+
+то display:
+
+text Apple Pay · VISA **** 3587 
+
+Иначе:
+
+text VISA **** 3587 
+
+## Priority для Stripe refund row
+
+Refund row:
+
+text 1. собственные card fields, если есть 2. parent payment card data через parent_payment_id 3. parent payment card data через parent_payment_uid / provider_payment_id 4. null 
+
+Refund должен отображать карту родительского платежа, потому что возврат идёт на ту же карту.
+
+---
+
+# UI Stage 2E
+
+В PaymentsTable.tsx в колонке «Плательщик»:
+
+## Для Stripe payment/refund
+
+Если card data есть, показывать:
+
+text VISA **** 3587 
+
+или:
+
+text Apple Pay · VISA **** 3587 
+
+Provider badge уже есть отдельно, его не дублировать.
+
+## Если card data нет
+
+Показывать:
+
+text Карта не определена 
+
+или:
+
+text Метод оплаты не сохранён 
+
+но не общий Без данных, если это технически означает «мы не достали карту».
+
+Tooltip:
+
+text Данные карты не сохранены в Stripe metadata 
+
+---
+
+# Важно по refund
+
+Для Stripe refund row:
+
+- сумма -5.00 BYN;
+
+- тип Возврат;
+
+- payer/card должен быть тем же, что у parent payment:
+
+  text   VISA **** 3587   
+
+- документ refund открывается через Stage 2C mapping.
+
+---
+
+# Что НЕ делать
+
+Не делать:
+
+- не делать сетевые Stripe API вызовы из frontend;
+
+- не добавлять новую edge function только ради UI;
+
+- не менять payments_v2 без отдельного backfill;
+
+- не ломать bePaid payer display;
+
+- не смешивать payer card с customer/contact;
+
+- не показывать полный PAN карты;
+
+- не показывать CVC/expiry, если это не нужно.
+
+---
+
+# Если данных карты реально нет в БД
+
+Если discovery покажет, что в payments_v2.meta по Stripe нет card data, тогда:
+
+1. Не делать вид, что всё ок.
+
+2. Зафиксировать в proof:
+
+   text    card data missing in local Stripe payment meta    
+
+3. Добавить follow-up:
+
+   text    PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2    
+
+4. Scope follow-up:
+
+   - при webhook/materialization сохранять payment_method_details.card.brand/last4/wallet;
+
+   - для старых Stripe payments сделать targeted enrichment через Stripe API;
+
+   - refund rows наследуют card snapshot от parent payment.
+
+Но если данные уже есть в meta — Stage 2E должен быть закрыт сейчас.
+
+---
+
+# Stage 2D + 2E Verify
+
+## Stage 2D
+
+Проверить:
+
+- карточка контакта показывает:
+
+  text   Следующее списание: ...   Доступ до: ...   
+
+- access_end_at не маскируется под next_charge_at;
+
+- PublicPayPage Stripe subscription без bePaid card/text;
+
+- Stripe interval/interval_count зафиксирован.
+
+## Stage 2E
+
+Проверить /admin/payments:
+
+### Stripe payment $2
+
+Ожидаемо:
+
+text Плательщик: VISA **** 3587 
+
+или Apple Pay variant, если был Apple Pay.
+
+### Stripe payment +5 BYN
+
+Ожидаемо:
+
+text Плательщик: VISA **** 3587 
+
+### Stripe refund -5 BYN
+
+Ожидаемо:
+
+text Плательщик: VISA **** 3587 
+
+через parent payment.
+
+### bePaid regression
+
+bePaid строки продолжают показывать карты как раньше:
+
+text Mastercard **** 1468 Visa **** 0145 
+
+---
+
+# Proof additions
+
+В .lovable/proofs/stripe_ui_provider_parity_cleanup_[v1.md](http://v1.md) добавить:
+
+## Stage 2E proof
+
+1. Before screenshot:
+
+   - Stripe rows показывают «Без данных».
+
+2. SQL/meta snapshot:
+
+   - Stripe $2 payment card fields;
+
+   - Stripe +5 BYN payment card fields;
+
+   - Stripe -5 BYN refund parent link.
+
+3. After screenshot:
+
+   - Stripe rows показывают карту/метод оплаты;
+
+   - refund row наследует карту parent payment.
+
+4. Regression:
+
+   - bePaid payer column не изменился.
+
+---
+
+# Updated DoD
+
+PATCH не закрывать, пока:
+
+- Stage 2D = PASS;
+
+- Stage 2E = PASS;
+
+- Stripe payer/card data больше не показывает «Без данных», если данные есть;
+
+- refund inherits parent card data;
+
+- bePaid payer display не сломан;
+
+- final proof обновлён.
+
+Начинай Stage 2D + Stage 2E.
+
+&nbsp;
+
+План: Stage 2D — next_charge_at / access_until + PublicPayPage proof (PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1)
+
+## Цель
+
+Завершить PATCH:
+
+1. Карточка контакта корректно показывает «Следующее списание» и «Доступ до» отдельно, с приоритетом Stripe-источников для `next_charge_at`.
+2. PublicPayPage Stripe subscription чист от bePaid-текстов и disabled bePaid-карт (подтвердить proof, без изменений если уже ок).
+3. Зафиксировать Stripe recurring `interval`/`interval_count` в proof (без изменения периодичности).
+4. Обновить `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` с before/after скринами и SQL-сниппетами.
+
+## Изменения в коде (минимальные)
+
+### 1) `src/components/admin/ContactDetailSheet.tsx` (только блок healthyProviderSubs, строки ~2235–2330)
+
+Поменять резолвер `nextCharge` на канонический приоритет:
+
+```
+nextCharge =
+  1) sub.subscriptions_v2?.meta?.stripe?.current_period_end (unix sec → ISO)
+  2) sub.meta?.stripe?.current_period_end (unix sec → ISO)
+  3) sub.subscriptions_v2?.meta?.current_period_end (если когда-нибудь сохранено)
+  4) sub.next_charge_at (bePaid-резолвер, как сейчас)
+  5) sub.subscriptions_v2?.next_charge_at
+  → иначе null
+```
+
+Правила отображения (контракт Stage 2D):
+
+- Строка «Следующее списание: DD.MM.YYYY HH:mm — amount» — рисуется ТОЛЬКО когда `nextCharge` резолвится; иначе `Следующее списание: —` (как сейчас, не меняем).
+- ❗ Не подменять `next_charge_at` через `access_end_at`. Если резолверы 1–5 вернули null — оставить `—`, даже если `accessEnd` известно.
+- Строка «Доступ до …» рисуется независимо, по существующему `accessEnd` (db → provider_snapshot.active_to), без изменений.
+
+В запрос подписок (`ContactDetailSheet.tsx` ~748–760) добавить `meta` в выборку `subscriptions_v2` и `provider_subscriptions`, если ещё не выбирается (проверить и расширить только select-list, без новых join'ов и без изменения RLS-доступа).
+
+Маленький helper `resolveNextChargeAt(sub)` — рядом с компонентом или в `src/utils/`, чтобы тот же приоритет был переиспользуемым (read-only). Никаких записей в БД, никаких новых RPC.
+
+### 2) `src/pages/PublicPayPage.tsx` — без изменений
+
+Текущее поведение уже соответствует требованию:
+
+- `isStripeSubscription` отключает `showSubscriptionDisabledCards` и `showSubscriptionFallbackHint`.
+- `showStripeSubscriptionHint` рисует чистый Stripe-текст без слова «bePaid»/«Белорусская карта».
+- CTA Stripe subscription уходит в Stripe Checkout (без изменений в этом стейдже).
+
+Только зафиксировать факт в proof со скрином.
+
+## Discovery / proof (read-only SQL)
+
+В `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` добавить раздел Stage 2D:
+
+1. SQL для recurring параметров Stripe-подписки Сергея:
+
+```sql
+select id, status, access_end_at, next_charge_at,
+       meta->'stripe'->>'current_period_end' as cpe,
+       meta->'stripe'->>'subscription_id'    as stripe_sub,
+       meta->'stripe'->>'collection_method'  as collection_method,
+       meta->'stripe'->'price'                as price,
+       meta->'stripe'->'recurring'            as recurring
+from subscriptions_v2
+where id in (...sergey subv2...);
+```
+
+В proof — JSON-snapshot с полями `interval`, `interval_count`, `billing_mode` (как есть; ничего не меняем).
+
+2. SQL для provider_subscriptions parity:
+
+```sql
+select id, provider, state, last_charge_at,
+       meta->'stripe'->>'current_period_end' as cpe,
+       meta->'current_period_end'            as cpe_flat
+from provider_subscriptions
+where provider='stripe' order by created_at desc limit 20;
+```
+
+3. UI-скрины (after):
+  - Карточка контакта Сергея: одновременно видны «Следующее списание: —» (или дата из Stripe) и «Доступ до: …» — раздельно.
+  - PublicPayPage Stripe-subscription ссылка: нет disabled bePaid-карт, нет текста «Белорусская карта», виден Stripe-hint, CTA ведёт в Stripe Checkout.
+  - Stripe-сабка Сергея сейчас `canceled` → текущий next_charge = null; для after-скрина показать кейс с активной Stripe-сабкой, если появится; иначе зафиксировать «нет активной recurring → ожидаемо `—`».
+4. Backlog (НЕ в этом PATCH):
+  - `PATCH-STRIPE-BILLING-PERIOD-MODE-V2` — изменение периодичности recurring (interval/interval_count) и admin UI.
+  - Добавить в `.lovable/backlog/` короткий файл-указатель.
+
+## DoD
+
+- Контакт-карточка использует новый резолвер next_charge_at (Stripe meta → bePaid → null), `access_end_at` НЕ маскируется под дату списания.
+- `Следующее списание: —` корректно показывается, когда нет ни одного из источников.
+- `Доступ до …` рисуется отдельно как и раньше.
+- PublicPayPage Stripe-subscription чист — proof со скрином.
+- В proof зафиксированы Stripe `interval` / `interval_count` / `collection_method` как есть.
+- В proof файл `stripe_ui_provider_parity_cleanup_v1.md` помечен Stage 2D = PASS; добавлен Final Proof: Stages 1, 2A, 2B, 2C, 2D = PASS.
+- bePaid карточка контакта не сломана (regression-скрин bePaid-подписки).
+- Никаких изменений в edge functions, в `cancel`-логике Stripe, в публичной checkout-схеме.
+
+## Файлы
+
+- edit: `src/components/admin/ContactDetailSheet.tsx` (резолвер next_charge_at + расширение select при необходимости)
+- new (опц.): `src/utils/resolveStripeNextChargeAt.ts` (тонкий helper)
+- edit: `.lovable/proofs/stripe_ui_provider_parity_cleanup_v1.md` (Stage 2D + Final proof)
+- new: `.lovable/backlog/stripe_billing_period_mode_v2.md` (one-pager)
