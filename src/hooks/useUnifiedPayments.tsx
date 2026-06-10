@@ -538,8 +538,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           stripe_subscription_id,
           stripe_hosted_invoice_url,
           stripe_invoice_pdf,
-          document_url: resolveDocumentUrl(p, provider).url,
-          document_url_source: resolveDocumentUrl(p, provider).source,
+          document_url: docResolved.url,
+          document_url_source: docResolved.source,
+
 
           search_index,
         };
