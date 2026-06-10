@@ -657,74 +657,27 @@ export default function PaymentsTable({
       }
 
       case 'receipt': {
-        // Phase 9-B — единая ячейка «Документы»:
-        // bePaid:            receipt_url → «Чек»
-        // Stripe one-time:   receipt_url → «Stripe receipt»
-        // Stripe subscription: hosted_invoice_url → «Invoice», invoice_pdf → «PDF»
-        const isStripe = (payment.provider || '').toLowerCase() === 'stripe';
-        const hasReceipt = !!payment.receipt_url;
-        const hasInvoice = !!payment.stripe_hosted_invoice_url;
-        const hasPdf = !!payment.stripe_invoice_pdf;
-
-        if (isStripe && (hasInvoice || hasPdf)) {
-          return (
-            <div className="flex flex-wrap items-center gap-1">
-              {hasInvoice && (
-                <a
-                  href={payment.stripe_hosted_invoice_url!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[10px] underline text-indigo-600 dark:text-indigo-300"
-                >
-                  <ExternalLink className="h-3 w-3" /> Invoice
-                </a>
-              )}
-              {hasPdf && (
-                <a
-                  href={payment.stripe_invoice_pdf!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[10px] underline text-indigo-600 dark:text-indigo-300"
-                >
-                  <ExternalLink className="h-3 w-3" /> PDF
-                </a>
-              )}
-            </div>
-          );
-        }
-
-        if (hasReceipt) {
-          return (
-            <ReceiptStatusBadge
-              receiptUrl={payment.receipt_url}
-              paymentId={payment.id}
-              orderId={payment.order_id}
-              isQueueItem={payment.rawSource === 'queue'}
-              statusNormalized={payment.status_normalized}
-              providerUid={payment.uid}
-              provider={payment.provider}
-              onRefetch={onRefetch}
-            />
-          );
-        }
-
-        // Fallback — bePaid pending receipt / Stripe без docs
-        if (!isStripe) {
-          return (
-            <ReceiptStatusBadge
-              receiptUrl={payment.receipt_url}
-              paymentId={payment.id}
-              orderId={payment.order_id}
-              isQueueItem={payment.rawSource === 'queue'}
-              statusNormalized={payment.status_normalized}
-              providerUid={payment.uid}
-              provider={payment.provider}
-              onRefetch={onRefetch}
-            />
-          );
-        }
-        return <span className="text-[10px] text-muted-foreground">Документ ещё не получен</span>;
+        // Stage 2C — единая кнопка документа для bePaid и Stripe.
+        // SOT: useUnifiedPayments резолвит document_url + document_url_source.
+        // Сырые ссылки Invoke/PDF убраны — детализация уходит в drawer (backlog).
+        const docUrl = (payment as any).document_url ?? payment.receipt_url ?? null;
+        const docSource = (payment as any).document_url_source ?? null;
+        return (
+          <ReceiptStatusBadge
+            receiptUrl={docUrl}
+            paymentId={payment.id}
+            orderId={payment.order_id}
+            isQueueItem={payment.rawSource === 'queue'}
+            statusNormalized={payment.status_normalized}
+            providerUid={payment.uid}
+            provider={payment.provider}
+            transactionType={payment.transaction_type}
+            documentSource={docSource}
+            onRefetch={onRefetch}
+          />
+        );
       }
+
         
       case 'actions':
         return (
