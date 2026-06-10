@@ -312,30 +312,40 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       const processedKeys = new Set<string>();
 
       // Stage 2C — Parent index для Stripe refund → parent charge receipt fallback.
+      // Stage 2E — расширен: индексирует payer card (brand/last4/wallet) для наследования
+      //            refund-строкой карточных данных родительского платежа.
       // Ключи: payments_v2.id (UUID) и provider_payment_id (pi_*/ch_*).
       type StripeParentDoc = {
         receipt_url: string | null;
         charge_receipt_url: string | null;
         hosted_invoice_url: string | null;
         invoice_pdf: string | null;
+        card_brand: string | null;
+        card_last4: string | null;
+        card_wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
       };
       const stripeParentIndex = new Map<string, StripeParentDoc>();
       for (const p of paymentsData) {
         if ((p.provider || '').toLowerCase() !== 'stripe') continue;
         const meta = (p.meta || {}) as any;
         const sm = (meta?.stripe || {}) as any;
+        const cardFromMeta = extractStripeCardFromMeta(meta);
         const doc: StripeParentDoc = {
           receipt_url: p.receipt_url ?? null,
           charge_receipt_url: sm?.charge?.receipt_url ?? null,
           hosted_invoice_url:
             sm?.hosted_invoice_url ?? sm?.invoice?.hosted_invoice_url ?? null,
           invoice_pdf: sm?.invoice_pdf ?? sm?.invoice?.invoice_pdf ?? null,
+          card_brand: cardFromMeta.brand ?? p.card_brand ?? null,
+          card_last4: cardFromMeta.last4 ?? p.card_last4 ?? null,
+          card_wallet: cardFromMeta.wallet,
         };
         if (p.id) stripeParentIndex.set(p.id, doc);
         if (p.provider_payment_id) stripeParentIndex.set(p.provider_payment_id, doc);
         if (sm?.charge_id) stripeParentIndex.set(sm.charge_id, doc);
         if (sm?.payment_intent_id) stripeParentIndex.set(sm.payment_intent_id, doc);
       }
+
 
       function resolveDocumentUrl(
         p: any,
