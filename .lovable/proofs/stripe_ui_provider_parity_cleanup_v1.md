@@ -162,3 +162,73 @@ Backlog: `PATCH-STRIPE-BILLING-PERIOD-MODE-V2` (calendar_month vs every_N_days c
 - bePaid подписки/автопродления/документы — без изменений (touch только указанные файлы).
 - bePaid cancel в той же карточке — без изменений (`cancelProviderSubAdminMutation` не тронут).
 - Route `/admin/payments/payment-issues` остаётся доступен (legacy hidden).
+
+---
+
+## Stage 2B — AutoRenewals provider-aware + layout fix
+
+**Status:** PASS (UI proof pending)
+
+### Изменения
+
+1. **Provider-aware data source.** В `AutoRenewalsTabContent` запрос `provider_subscriptions` теперь читает поле `provider` и пробрасывает его в каждую строку:
+   - linked subs → `provider = linkedPs.provider === 'stripe' ? 'stripe' : (linkedPs ? 'bepaid' : 'local')`
+   - orphan PS → `provider = ps.provider === 'stripe' ? 'stripe' : 'bepaid'` (раньше всегда было `bepaid`)
+   - `is_bepaid` для orphan теперь корректно `false` для Stripe.
+
+2. **Колонка «Провайдер».** Добавлена `provider` колонка с badge:
+   - bePaid — синий
+   - Stripe — фиолетовый
+   - Локально — серый
+
+3. **Фильтр «Stripe подписки».** Добавлен `FilterType='stripe'`: показывает `provider === 'stripe' && provider_subscription_id starts with sub_`.
+
+4. **Layout fix.**
+   - Bumped widths во всех колонках (Контакт 160→200, Продукт 130→180, Сумма 90→110, След. списание 100→130, Last Attempt 100→130, PM 80→110 и т.д.).
+   - Table стиль `width: '100%', minWidth: totalColumnsWidth` — таблица растягивается на ширину контейнера, горизонтальный скролл только при реальном переполнении.
+   - `STORAGE_KEY` повышен до `v2` → сбрасывает сохранённые ширины колонок у всех пользователей.
+
+### Discovery: текущая когорта Stripe в AutoRenewals
+
+```sql
+SELECT sv.id, sv.status, sv.auto_renew, sv.next_charge_at,
+       ps.provider, ps.provider_subscription_id, ps.state
+FROM subscriptions_v2 sv
+JOIN provider_subscriptions ps ON ps.subscription_v2_id = sv.id
+WHERE ps.provider='stripe';
+```
+
+| sub_id (subv2)                       | status   | auto_renew | next_charge_at | ps.state | provider_subscription_id          |
+| ------------------------------------ | -------- | ---------- | -------------- | -------- | --------------------------------- |
+| ac24c459-…cb13 (Сергей)              | canceled | false      | NULL           | canceled | sub_1TgWoO6UYJj2vm0Gjc9P0jxH      |
+| 95cb5a92-… / 92501c92-… / 4cf54f2d-… | pending  | false      | NULL           | pending  | pending:… (draft, не реальный sub)|
+
+**Вывод:** на момент Stage 2B в БД нет Stripe-подписок, удовлетворяющих когорте AutoRenewals (status active/trial/past_due + provider_subscription_id starts with `sub_` + next_charge_at не NULL):
+
+- Сергей `sub_1TgWoO...` — `canceled` (immediate cancel из Stage 1 сработал), `ps.state=canceled` → исключена фильтром `state='active'`, что корректно.
+- Остальные три — pending-черновики без реального `sub_` ID.
+
+Как только в Stripe появится живая active recurring подписка с next_charge_at, она появится в таблице автоматически с badge **Stripe** в колонке «Провайдер».
+
+### Stripe row будет НЕ виден если
+
+- `subscriptions_v2.status` ∉ {active, trial, past_due};
+- `provider_subscriptions.state` ≠ `active`;
+- `provider_subscription_id` начинается с `pending:` (draft);
+- `next_charge_at` NULL (отображается в фильтре «Нет даты списания»).
+
+### Не сломано
+
+- bePaid bulk cancel, bePaid фильтр, bePaid строки — без изменений (provider='bepaid' маршрутом по умолчанию).
+- Колонки `card`, `pm`, `attempts`, `tg_status`, `email_status` остались.
+- DnD/resize/sort сохранены, ширины пересчитаны через bump default + `v2` storage key.
+
+### DoD Stage 2B
+
+- [x] AutoRenewals layout исправлен (bumped widths + `width:100%`).
+- [x] bePaid строки не сломаны.
+- [x] Stripe active recurring с next charge date будет отображаться (когорта пустая — proof через discovery SQL).
+- [x] Provider badge добавлен.
+- [x] Строки без `next_charge_at` не ломают таблицу (existing `chargeStatus` логика).
+- [x] Proof обновлён.
+
