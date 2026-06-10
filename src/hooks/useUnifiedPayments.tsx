@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyPayment } from "@/lib/paymentClassification";
 import { buildSearchIndex } from "@/lib/multiTermSearch";
+import { extractStripeCardFromMeta } from "@/utils/extractStripeCardFromMeta";
 export interface DateFilter {
   from: string;
   to?: string;
@@ -36,6 +37,17 @@ export interface UnifiedPayment {
   card_holder: string | null;
   card_last4: string | null;
   card_brand: string | null;
+  // Stage 2E: derived payer view (Stripe-aware + refund→parent inheritance).
+  payer_card_brand: string | null;
+  payer_card_last4: string | null;
+  payer_card_wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
+  payer_card_source:
+    | 'db_columns'
+    | 'stripe_meta'
+    | 'stripe_provider_response'
+    | 'parent_payment'
+    | 'parent_db_columns'
+    | null;
   
   // Linked contact
   profile_id: string | null;
@@ -301,30 +313,40 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       const processedKeys = new Set<string>();
 
       // Stage 2C — Parent index для Stripe refund → parent charge receipt fallback.
+      // Stage 2E — расширен: индексирует payer card (brand/last4/wallet) для наследования
+      //            refund-строкой карточных данных родительского платежа.
       // Ключи: payments_v2.id (UUID) и provider_payment_id (pi_*/ch_*).
       type StripeParentDoc = {
         receipt_url: string | null;
         charge_receipt_url: string | null;
         hosted_invoice_url: string | null;
         invoice_pdf: string | null;
+        card_brand: string | null;
+        card_last4: string | null;
+        card_wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
       };
       const stripeParentIndex = new Map<string, StripeParentDoc>();
       for (const p of paymentsData) {
         if ((p.provider || '').toLowerCase() !== 'stripe') continue;
         const meta = (p.meta || {}) as any;
         const sm = (meta?.stripe || {}) as any;
+        const cardFromMeta = extractStripeCardFromMeta(meta);
         const doc: StripeParentDoc = {
           receipt_url: p.receipt_url ?? null,
           charge_receipt_url: sm?.charge?.receipt_url ?? null,
           hosted_invoice_url:
             sm?.hosted_invoice_url ?? sm?.invoice?.hosted_invoice_url ?? null,
           invoice_pdf: sm?.invoice_pdf ?? sm?.invoice?.invoice_pdf ?? null,
+          card_brand: cardFromMeta.brand ?? p.card_brand ?? null,
+          card_last4: cardFromMeta.last4 ?? p.card_last4 ?? null,
+          card_wallet: cardFromMeta.wallet,
         };
         if (p.id) stripeParentIndex.set(p.id, doc);
         if (p.provider_payment_id) stripeParentIndex.set(p.provider_payment_id, doc);
         if (sm?.charge_id) stripeParentIndex.set(sm.charge_id, doc);
         if (sm?.payment_intent_id) stripeParentIndex.set(sm.payment_intent_id, doc);
       }
+
 
       function resolveDocumentUrl(
         p: any,
@@ -381,6 +403,85 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         return { url: null, source: null };
       }
 
+      // Stage 2E — payer card resolver. Stripe-aware + refund→parent inheritance.
+      function resolvePayerCard(p: any): {
+        brand: string | null;
+        last4: string | null;
+        wallet: 'apple_pay' | 'google_pay' | 'samsung_pay' | null;
+        source:
+          | 'db_columns'
+          | 'stripe_meta'
+          | 'stripe_provider_response'
+          | 'parent_payment'
+          | 'parent_db_columns'
+          | null;
+      } {
+        const prov = String(p.provider || '').toLowerCase();
+        const isRefund = String(p.transaction_type || '').toLowerCase() === 'refund';
+        const meta = (p.meta || {}) as any;
+
+        if (prov !== 'stripe') {
+          if (p.card_brand || p.card_last4) {
+            return {
+              brand: p.card_brand ?? null,
+              last4: p.card_last4 ?? null,
+              wallet: null,
+              source: 'db_columns',
+            };
+          }
+          return { brand: null, last4: null, wallet: null, source: null };
+        }
+
+        // Stripe: prefer DB columns (already populated by targeted card fetch).
+        if (p.card_brand || p.card_last4) {
+          return {
+            brand: p.card_brand ?? null,
+            last4: p.card_last4 ?? null,
+            wallet: null,
+            source: 'db_columns',
+          };
+        }
+
+        // Stripe meta extraction.
+        const fromMeta = extractStripeCardFromMeta(meta);
+        if (fromMeta.brand || fromMeta.last4 || fromMeta.wallet) {
+          return { ...fromMeta, source: 'stripe_meta' };
+        }
+
+        // Refund → parent payment lookup.
+        if (isRefund) {
+          const sm = (meta?.stripe || {}) as any;
+          const pr = (meta?.provider_response?.stripe || {}) as any;
+          const refundResp = pr?.refund ?? sm?.refund ?? null;
+          const parentKeys: (string | null | undefined)[] = [
+            meta?.parent_payment_id,
+            meta?.parent_payment_uid,
+            refundResp?.payment_intent,
+            refundResp?.charge,
+            pr?.payment_intent,
+            pr?.charge_id,
+            sm?.payment_intent_id,
+            sm?.charge_id,
+          ];
+          for (const k of parentKeys) {
+            if (!k) continue;
+            const parent = stripeParentIndex.get(k);
+            if (!parent) continue;
+            if (parent.card_brand || parent.card_last4 || parent.card_wallet) {
+              return {
+                brand: parent.card_brand,
+                last4: parent.card_last4,
+                wallet: parent.card_wallet,
+                source: 'parent_payment',
+              };
+            }
+          }
+        }
+
+        return { brand: null, last4: null, wallet: null, source: null };
+      }
+
+
       // Transform payments_v2 data
       const transformedPayments: UnifiedPayment[] = paymentsData.map(p => {
         const order = p.orders as any;
@@ -395,6 +496,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const providerResponse = p.provider_response as any;
         const refunds = (p.refunds || []) as any[];
         const docResolved = resolveDocumentUrl(p, p.provider || 'bepaid');
+        const payerCard = resolvePayerCard(p);
+
 
         
         // Extract card holder from provider_response
@@ -502,6 +605,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           card_holder,
           card_last4: p.card_last4,
           card_brand: p.card_brand,
+          payer_card_brand: payerCard.brand,
+          payer_card_last4: payerCard.last4,
+          payer_card_wallet: payerCard.wallet,
+          payer_card_source: payerCard.source,
           profile_id: effectiveProfileId,
           profile_name: profile?.full_name || null,
           profile_email: profile?.email || null,
@@ -622,6 +729,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             card_holder: q.card_holder,
             card_last4: q.card_last4,
             card_brand: q.card_brand,
+            payer_card_brand: q.card_brand ?? null,
+            payer_card_last4: q.card_last4 ?? null,
+            payer_card_wallet: null,
+            payer_card_source: (q.card_brand || q.card_last4) ? 'db_columns' : null,
             profile_id: effectiveProfileId,
             profile_name: profile?.full_name || null,
             profile_email: profile?.email || null,

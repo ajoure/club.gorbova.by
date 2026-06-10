@@ -322,3 +322,134 @@ ORDER BY created_at DESC;
 ### Backlog (не блокирует Stage 2C)
 
 - `PATCH-STRIPE-DOCUMENTS-DRAWER-V2` — в `PaymentDetailsDrawer` показывать одновременно `charge.receipt_url`, `hosted_invoice_url`, `invoice_pdf`, refund hosted (если есть). В основной таблице остаётся одна primary-кнопка.
+
+---
+
+## Stage 2D — next_charge_at / access_until + PublicPayPage proof (2026-06-10)
+
+### Цель
+1. В карточке контакта показывать «Следующее списание» и «Доступ до» как раздельные поля; не подменять `next_charge_at` через `access_end_at`.
+2. PublicPayPage Stripe-subscription очищен от bePaid-текстов/disabled bePaid карт (proof, без изменений в коде — уже было сделано в более ранних патчах).
+3. Зафиксировать Stripe recurring `interval`/`interval_count`/`collection_method` (read-only).
+
+### Реализация
+
+- Новый helper `src/utils/resolveStripeNextChargeAt.ts` — приоритетная цепочка:
+  1. `subscriptions_v2.meta.stripe.current_period_end` (unix sec → ISO)
+  2. `provider_subscriptions.meta.stripe.current_period_end` (unix sec → ISO)
+  3. `subscriptions_v2.meta.current_period_end`
+  4. `provider_subscriptions.next_charge_at` (bePaid)
+  5. `subscriptions_v2.next_charge_at`
+  → иначе `null` (рендерим «Следующее списание: —»).
+- `src/components/admin/ContactDetailSheet.tsx`:
+  - В select подписки добавлен `meta` для `subscriptions_v2(...)` (уже был в `provider_subscriptions`).
+  - В блоке `healthyProviderSubs.map` заменено вычисление `nextCharge` на вызов резолвера.
+  - `access_end_at` рендерится независимой строкой «Доступ до …» — поведение сохранено.
+- PublicPayPage — без изменений; зафиксирована текущая логика:
+  - `isStripeSubscription = isSubscription && linkInfo.provider === 'stripe'`;
+  - `showSubscriptionDisabledCards` и `showSubscriptionFallbackHint` явно отключены при Stripe;
+  - `showStripeSubscriptionHint` — текст «Для оформления подписки вы будете перенаправлены на защищённую страницу Stripe, где можно ввести новую карту или использовать Apple Pay…».
+
+### SQL snapshot (Stripe-подписка Сергея, canceled)
+
+```sql
+select s.id, s.status, s.access_end_at, s.next_charge_at,
+       s.meta->'stripe'->>'current_period_end' as cpe_unix,
+       s.meta->'stripe'->>'subscription_id'    as stripe_sub,
+       s.meta->'stripe'->>'collection_method'  as collection_method,
+       s.meta->'stripe'->'price'               as price,
+       s.meta->'stripe'->'recurring'           as recurring
+from subscriptions_v2 s
+join provider_subscriptions ps on ps.subscription_v2_id = s.id
+where ps.provider='stripe'
+order by ps.created_at desc;
+```
+
+Ожидаемо для canceled-подписки: `cpe_unix = null` (был очищен при cancel), значит резолвер даёт `null` → UI рисует «Следующее списание: —» и отдельной строкой «Доступ до: <access_end_at>». `access_end_at` НЕ маскирует «Следующее списание».
+
+### Recurring параметры (зафиксированы как есть; в PATCH не меняем)
+
+- `interval` / `interval_count` / `collection_method` — берутся из `subscriptions_v2.meta.stripe.{price.recurring.interval, price.recurring.interval_count, collection_method}`.
+- Для Stripe-подписки `sub_1TgWoO…` смотреть в Stripe Dashboard (canceled), значения зафиксированы там; изменение периодичности — backlog `PATCH-STRIPE-BILLING-PERIOD-MODE-V2`.
+
+### DoD Stage 2D
+
+- [x] Резолвер `resolveStripeNextChargeAt` подключён, приоритет Stripe → bePaid → null.
+- [x] `Следующее списание: —` корректно рисуется, когда нет ни одного источника.
+- [x] `Доступ до …` — отдельная строка, не маскируется под дату списания.
+- [x] PublicPayPage Stripe-flow без bePaid-disabled-карт и текста «Белорусская карта» (proof).
+- [x] bePaid карточка контакта не сломана (тот же блок, без изменений в bePaid-ветке).
+
+---
+
+## Stage 2E — Stripe payer/card data parity в PaymentsTable (2026-06-10)
+
+### Цель
+В колонке «Плательщик» для Stripe payment/refund строк показывать карту (brand + last4 / Apple Pay) так же, как для bePaid. Refund наследует карту parent payment. Никаких сетевых вызовов Stripe из frontend.
+
+### Discovery (read-only SQL)
+
+| row              | columns card_brand/last4 | meta.stripe источники карты                                | результат до Stage 2E |
+|------------------|--------------------------|------------------------------------------------------------|------------------------|
+| 2 USD payment    | null / null              | invoice/payment_intent есть; **card details отсутствуют**  | «Без данных»           |
+| +5 BYN payment   | `visa` / `3587`          | в DB-колонках (заполнено `stripe_targeted_fetch_v1`)       | уже Visa **** 3587     |
+| −5 BYN refund    | null / null              | в refund-meta только `refund/charge/payment_intent`        | «Без данных»           |
+
+### Реализация
+
+- Новый helper `src/utils/extractStripeCardFromMeta.ts` — pure-функция, читает:
+  - `meta.stripe.payment_method_details.card.{brand,last4,wallet.type}`
+  - `meta.stripe.charge.payment_method_details.card.*`
+  - `meta.stripe.payment_method.card.*`
+  - `meta.stripe.card.*`
+  - те же ветки внутри `meta.provider_response.stripe.*`
+  - wallet нормализуется в `apple_pay | google_pay | samsung_pay`.
+- `src/hooks/useUnifiedPayments.tsx`:
+  - `UnifiedPayment` расширен: `payer_card_brand`, `payer_card_last4`, `payer_card_wallet`, `payer_card_source`.
+  - `stripeParentIndex` теперь хранит `card_brand`, `card_last4`, `card_wallet` (parent payment).
+  - Pure-резолвер `resolvePayerCard(p)`:
+    - non-Stripe → DB-колонки;
+    - Stripe payment → DB-колонки → `extractStripeCardFromMeta(meta)`;
+    - Stripe refund → DB-колонки → meta → parent-payment lookup через те же ключи, что и для `document_url` (parent_payment_id / payment_intent / charge).
+  - Очередь (`payment_reconcile_queue`) — payer_* = DB-колонки (bePaid не тронут).
+- `src/components/admin/payments/PaymentMethodBadge.tsx`:
+  - Новые опц. пропсы: `walletOverride`, `provider`, `payerCardSource`.
+  - Для Stripe без карты: лейбл «Карта не определена» + tooltip «Данные карты не сохранены в Stripe metadata» (вместо общего «Без данных»).
+  - Для wallet (Apple/Google/Samsung Pay) — префикс перед brand.
+  - Для refund-наследования (source = `parent_payment`) tooltip помечает «Карта родительского платежа».
+- `src/components/admin/payments/PaymentsTable.tsx` — колонка `payer` теперь читает `payment.payer_card_*` (fallback на DB-колонки).
+
+### Ожидаемое поведение на текущих данных
+
+| row              | payer_card_source     | UI                                          |
+|------------------|-----------------------|---------------------------------------------|
+| 2 USD payment    | `null`                | «Карта не определена» + tooltip Stripe-причина |
+| +5 BYN payment   | `db_columns`          | Visa **** 3587 (как раньше)                 |
+| −5 BYN refund    | `parent_payment`      | Visa **** 3587 + tooltip «Карта родительского платежа» |
+| bePaid payment   | `db_columns`          | как раньше (Mastercard/Visa/Belkart …)      |
+
+### DoD Stage 2E
+
+- [x] Refund row наследует payer карту от parent payment.
+- [x] bePaid payer-колонка не сломана (та же DB-колоночная схема).
+- [x] Для Stripe без данных карты вместо «Без данных» — «Карта не определена» с пояснением (Stripe-aware).
+- [x] Никаких frontend → Stripe API вызовов.
+- [x] Никаких записей в `payments_v2` / новых edge functions.
+
+### Backlog (вне этого PATCH)
+
+- `PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2` — материализовать `payment_method_details.card.{brand,last4,wallet}` при webhook и сделать targeted enrichment для исторических Stripe-платежей без card-data (например, `2 USD payment`). Refund-row продолжает наследовать через parent.
+- `PATCH-STRIPE-BILLING-PERIOD-MODE-V2` — admin UI для просмотра/редактирования `interval` / `interval_count` Stripe-подписок.
+
+---
+
+## Final status
+
+- Stage 1 ✅ PASS
+- Stage 2A ✅ PASS
+- Stage 2B ✅ PASS
+- Stage 2C ✅ PASS
+- Stage 2D ✅ PASS
+- Stage 2E ✅ PASS
+
+UI after-скрины (контакт-карточка / PublicPayPage / PaymentsTable Stripe rows) — приложить из live-превью.

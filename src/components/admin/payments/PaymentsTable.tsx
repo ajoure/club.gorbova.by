@@ -472,11 +472,14 @@ export default function PaymentsTable({
         // E1-E4: Use PaymentMethodBadge component
         return (
           <div className="flex flex-col gap-0.5 text-xs">
-            {/* Line 1: Payment method badge with card/wallet icon */}
+            {/* Stage 2E: prefer derived payer_* fields (Stripe-aware + refund→parent). */}
             <PaymentMethodBadge
-              cardBrand={payment.card_brand}
-              cardLast4={payment.card_last4}
+              cardBrand={payment.payer_card_brand ?? payment.card_brand}
+              cardLast4={payment.payer_card_last4 ?? payment.card_last4}
               providerResponse={payment.provider_response}
+              walletOverride={payment.payer_card_wallet}
+              provider={payment.provider}
+              payerCardSource={payment.payer_card_source}
             />
             {/* Line 2: Card holder name */}
             {payment.card_holder ? (
