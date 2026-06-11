@@ -3,7 +3,7 @@ import { AnimatedSection } from "./AnimatedSection";
 const stats = [{
   icon: Award,
   value: "400+",
-  label: "проверок проведено"
+  label: "проверок пройдено"
 }, {
   icon: Users,
   value: "1000+",
