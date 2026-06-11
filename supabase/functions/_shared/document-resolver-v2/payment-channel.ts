@@ -6,8 +6,9 @@
 // Discovery (2026-05-11):
 //   distinct meta.payment_method: '', 'credit_card', 'erip'
 //   distinct meta.is_erip: '', 'false', 'true'
-//   provider: 'bepaid' | 'admin' | 'admin_test'
+//   provider: 'bepaid' | 'stripe' | 'admin' | 'admin_test'
 //   bePaid не размечает Apple Pay / Google Pay — они выглядят как card.
+//   Stripe-эквайринг по умолчанию маппится в card (см. ниже).
 // ============================================================================
 
 export type PaymentChannel =
@@ -37,6 +38,10 @@ export function derivePaymentChannel(row: PaymentRowLike | null | undefined): Pa
   if (pm === 'bank_transfer' || explicitChannel === 'bank_transfer') return 'bank_transfer';
   if (pm === 'credit_card' || pm === 'card' || explicitChannel === 'card') return 'card';
   if (row.card_last4 && row.card_last4.length > 0) return 'card';
+  // Stripe-эквайринг = карта по умолчанию. Apple Pay / Google Pay в будущем
+  // определим через явный meta.payment_method_details.type (Stripe знает их),
+  // но любой явный method/channel выше уже имеет приоритет над этой веткой.
+  if (row.provider === 'stripe') return 'card';
   // Тестовая оплата через сайт (admin_test / admin_test_direct + test_payment marker
   // и без явного method) симулирует card-checkout. Без этого маппинга
   // document scenario для individual+card не матчится. Любой явный method/channel

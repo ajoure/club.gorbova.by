@@ -36,6 +36,10 @@ export function derivePaymentChannel(row: PaymentRowLike | null | undefined): Pa
   if (pm === 'bank_transfer' || explicitChannel === 'bank_transfer') return 'bank_transfer';
   if (pm === 'credit_card' || pm === 'card' || explicitChannel === 'card') return 'card';
   if (row.card_last4 && row.card_last4.length > 0) return 'card';
+  // Stripe-эквайринг = карта по умолчанию (Apple Pay / Google Pay в будущем
+  // определим явным meta.payment_method_details.type). Keep in sync with
+  // supabase/functions/_shared/document-resolver-v2/payment-channel.ts.
+  if (row.provider === 'stripe') return 'card';
   // Тестовая оплата через сайт (admin_test/admin_test_direct + test_payment marker
   // и без явного method) симулирует card-checkout. Keep in sync with
   // supabase/functions/_shared/document-resolver-v2/payment-channel.ts.
