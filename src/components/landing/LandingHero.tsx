@@ -48,7 +48,7 @@ export function LandingHero() {
 
           <AnimatedSection animation="fade-up" delay={200}>
             <p className="text-xl sm:text-2xl text-muted-foreground mb-4">
-              Уверенность в знаниях и рост дохода за 3 месяца
+              Уверенность в знаниях и эффективные инструменты для роста дохода
             </p>
           </AnimatedSection>
 
