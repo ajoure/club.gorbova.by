@@ -449,7 +449,10 @@ export async function resolveCanonicalPayload(
       erip: 'ЕРИП', bank_transfer: 'Банковский перевод',
     };
     const provider = row.provider || null;
-    const method = provider === 'bepaid' ? 'card' : (provider || 'unknown');
+    // PATCH-STRIPE-DOCUMENT-ACT-CHECK-V1: provider→channel единым списком,
+    // Stripe маппится в card так же, как bePaid.
+    const CARD_PROVIDERS = new Set(['bepaid', 'stripe']);
+    const method = provider && CARD_PROVIDERS.has(provider) ? 'card' : (provider || 'unknown');
     const methodLabel = channelLabels[method] || method;
     const brand = row.card_brand || null;
     const brandNorm = brand ? String(brand).toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;

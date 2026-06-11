@@ -353,9 +353,11 @@ export async function snapshotOrderDocumentData(
         bank_transfer: 'Банковский перевод',
       };
       const isAdminTest = p.provider === 'admin_test' || p.provider === 'admin_test_direct';
+      // PATCH-STRIPE-DOCUMENT-ACT-CHECK-V1: единый список card-провайдеров.
+      const CARD_PROVIDERS = new Set(['bepaid', 'stripe']);
       const methodCode = isAdminTest
         ? 'test'
-        : (channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown')));
+        : (channel || (p.provider && CARD_PROVIDERS.has(p.provider) ? 'card' : (p.provider || 'unknown')));
       const methodLabel = isAdminTest
         ? 'Тестовый платёж'
         : (channelLabels[methodCode] || methodCode);
