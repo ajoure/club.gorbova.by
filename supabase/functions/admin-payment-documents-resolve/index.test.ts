@@ -294,7 +294,7 @@ Deno.test('14. Refund parent missing → REFUND_PARENT_NOT_RESOLVED warning', as
 Deno.test('15. Duplicate local/provider document → single card (exact identity)', async () => {
   const ops = freshOps({
     payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-      meta: { stripe: { account_code: 'stripe_poland', charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
+      meta: { stripe: { account_code: 'stripe_poland', livemode: false, charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
       receipt_url: null, provider_payment_id: null }],
     stripeRetrieves: {
       'charges:ch_a': { ok: true, data: { receipt_url: 'https://pay.stripe.com/r/x' } },
@@ -322,7 +322,7 @@ Deno.test('16. View-only role cannot refresh (capability false)', async () => {
 Deno.test('17. Provider API timeout does not hide internal documents', async () => {
   const ops = freshOps({
     payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-      meta: { stripe: { account_code: 'stripe_poland', invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
+      meta: { stripe: { account_code: 'stripe_poland', livemode: false, invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
     stripeRetrieves: { 'invoices:in_a': { ok: false, data: null, error: { code: 'timeout' } } },
     docs: [{ id: 'd9', order_id: OID, document_type: 'act', status: 'ready', number: 'N', storage_path: 'docs/d.pdf', file_name: null, created_at: '2026-06-01T00:00:00Z' }],
   });
@@ -370,7 +370,7 @@ Deno.test('A1. Non-privileged user (no roles) → 403 via HTTP layer; resolver i
 
 Deno.test('A2. Refresh does not mutate payments_v2 (no insert/update/upsert/delete on payments_v2)', async () => {
   const ops = freshOps({ payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-    meta: { stripe: { account_code: 'stripe_poland', charge_id: 'ch_a', invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
+    meta: { stripe: { account_code: 'stripe_poland', livemode: false, charge_id: 'ch_a', invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
     stripeRetrieves: {
       'charges:ch_a': { ok: true, data: { receipt_url: 'https://pay.stripe.com/r/x' } },
       'invoices:in_a': { ok: true, data: { hosted_invoice_url: 'https://invoice.stripe.com/i/x', invoice_pdf: 'https://files.stripe.com/i.pdf', id: 'in_a' } },
@@ -382,7 +382,7 @@ Deno.test('A2. Refresh does not mutate payments_v2 (no insert/update/upsert/dele
 
 Deno.test('A3. Exact retrieve only — no list/search ever invoked', async () => {
   const ops = freshOps({ payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-    meta: { stripe: { account_code: 'stripe_poland', invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
+    meta: { stripe: { account_code: 'stripe_poland', livemode: false, invoice_id: 'in_a' } }, receipt_url: null, provider_payment_id: null }],
     stripeRetrieves: { 'invoices:in_a': { ok: true, data: { id: 'in_a', hosted_invoice_url: 'https://invoice.stripe.com/i' } } },
   });
   await resolvePaymentDocuments(PID, true, makeDeps(ops));
@@ -400,7 +400,7 @@ Deno.test('A4. Diagnostics hidden for non-super_admin', async () => {
 
 Deno.test('A5. PCI forbidden fields absent from response and audit payload', async () => {
   const ops = freshOps({ payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-    meta: { stripe: { account_code: 'stripe_poland', charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x', billing_details: 'should-not-leak', card: { last4: '4242' } } } },
+    meta: { stripe: { account_code: 'stripe_poland', livemode: false, charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x', billing_details: 'should-not-leak', card: { last4: '4242' } } } },
     receipt_url: null, provider_payment_id: null }] });
   const r = await resolvePaymentDocuments(PID, true, makeDeps(ops));
   noPCI(r.body);
