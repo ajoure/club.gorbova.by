@@ -75,15 +75,24 @@ function makeDeps(ops: MockOps, overrides: Partial<ResolverDeps> = {}): Resolver
     supabase: makeSupabase(ops),
     actor: { user_id: '00000000-0000-0000-0000-000000000001', email: 'a@b.c' },
     capabilities: { canRefresh: true, canSeeDiagnostics: false },
-    async buildStripeClient(_code) {
-      return {
-        async retrieve(resource, id) {
+    async buildStripeClient(_args) {
+      const client = {
+        async retrieve(resource: string, id: string) {
           ops.stripeCalls.push({ resource, id });
           const key = `${resource}:${id}`;
           const r = ops.stripeRetrieves?.[key];
           if (!r) return { ok: false, status: 404, data: null, error: { code: 'not_found' } };
           return { ok: r.ok, status: r.ok ? 200 : 500, data: r.data, error: r.error };
         },
+      };
+      return {
+        ok: true as const,
+        client: client as unknown as ResolverDeps['buildStripeClient'] extends (a: unknown) => Promise<infer R>
+          ? R extends { ok: true; client: infer C } ? C : never
+          : never,
+        accountCode: 'stripe_poland',
+        mode: 'test' as const,
+        connectionId: 'conn-test',
       };
     },
     internalDocs: {
