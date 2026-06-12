@@ -1,9 +1,28 @@
 # Backlog: Lovable agent-deploy ignores per-function verify_jwt=false
 
-**Status:** ESCALATED, awaiting Lovable response
+**Status:** UNDER RE-VERIFICATION (2026-06-12)
+**Previous status:** ESCALATED, awaiting Lovable response (2026-06-06)
 **Created:** 2026-06-06
 **Blocks:** Phase 3.4 Runtime G33–G40 (Stripe replay + dunning runtime), any
             webhook redeploy via agent-deploy.
+
+## 2026-06-12 update
+
+External read-only probe (see
+`.lovable/discovery/public_webhook_deploy_layer_v1.md`) shows that all 8
+public webhook functions, including `stripe-webhook`, currently respond
+with application-level errors — no `UNAUTHORIZED_NO_AUTH_HEADER`. The
+2026-06-06 regression either self-resolved or the conditions for its
+reproduction have changed. Repository now declares explicit
+`[functions.<fn>] verify_jwt = false` blocks for all 8 webhooks (EXPECTED
+config contract).
+
+This is NOT proof that current agent-deploy honours `verify_jwt = false`
+on redeploy. Controlled canary redeploy is required
+(PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1, Approve C) before the moratorium
+can be revisited. Until then, no webhook function may be redeployed via
+the agent.
+
 
 ## Summary
 
