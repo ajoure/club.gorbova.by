@@ -55,3 +55,11 @@ verify_jwt = true
 
 [functions.stripe-card-data-fetch-bulk]
 verify_jwt = true
+
+# ============================================================
+# Admin-only read-only documents drawer resolver
+# (PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B — config only;
+# deployment is reserved for Approve D)
+# ============================================================
+[functions.admin-payment-documents-resolve]
+verify_jwt = true
