@@ -33,7 +33,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { UnifiedPayment as UnifiedPaymentType } from "@/hooks/useUnifiedPayments";
-import { StripeEnrichmentHarness } from "./_StripeEnrichmentHarness";
 
 // P0-guard: Sum by currency helper (one pass O(n))
 function sumByCurrency(payments: UnifiedPaymentType[]): Map<string, number> {
@@ -397,8 +396,6 @@ export function PaymentsTabContent() {
 
   return (
     <div className="space-y-3">
-      {/* TEMP: PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 runtime harness — удалить после сбора proof */}
-      <StripeEnrichmentHarness />
       {/* 1. Stats Panel - PATCH-2: uses filteredPayments for unified source */}
       <div className="pt-1">
         <PaymentsStatsPanel 
