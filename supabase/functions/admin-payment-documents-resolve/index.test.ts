@@ -258,14 +258,14 @@ Deno.test('11. Payment without scenario → NO_DOCUMENT_SCENARIO', async () => {
 Deno.test('12. Stripe account not resolved on refresh → warning + locals still shown', async () => {
   const ops = freshOps({ payments: [{
     id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-    meta: { stripe: { charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
+    meta: { stripe: { livemode: false, charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
     receipt_url: null, provider_payment_id: null,
   }] });
-  const deps = makeDeps(ops, { buildStripeClient: async () => null });
-  const r = await resolvePaymentDocuments(PID, true, deps);
+  // No account_code → factory returns STRIPE_ACCOUNT_NOT_RESOLVED (without being called for null code; entrypoint emits directly).
+  const r = await resolvePaymentDocuments(PID, true, makeDeps(ops));
   const b = r.body as ResolverResponse;
   assertEquals(b.provider_documents.length, 1);
-  assert(b.warnings.find((w) => w.code === 'PROVIDER_DOCUMENT_RETRIEVE_FAILED'));
+  assert(b.warnings.find((w) => w.code === 'PROVIDER_DOCUMENT_RETRIEVE_FAILED' && w.detail === 'STRIPE_ACCOUNT_NOT_RESOLVED'));
 });
 
 Deno.test('13. Unsafe URL is not returned to client', async () => {
