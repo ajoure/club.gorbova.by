@@ -14,7 +14,7 @@
 //   - bePaid: read-only local extract; no bepaid-get-payment-docs invocation
 //   - refund: parent via meta.parent_payment_id only; no heuristics
 
-import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { corsHeaders } from '../_shared/cors.ts';
 import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 import type {
