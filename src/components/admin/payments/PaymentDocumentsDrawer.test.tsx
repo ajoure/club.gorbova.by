@@ -113,13 +113,16 @@ describe("PaymentDocumentsDrawer — read-only behaviour", () => {
           can_open: true, can_download: true, can_copy: true,
           expires_at: null,
         }],
+        internal_documents: [],
       }),
       error: null,
     });
     render(<PaymentDocumentsDrawer paymentId={PID} open={true} onOpenChange={() => {}} />);
     await screen.findByText("Чек");
-    // No "Открыть" / "Копировать" rendered for unsafe URL
+    // No "Открыть" / "Копировать" / "Скачать" rendered for unsafe URL
     expect(screen.queryAllByText("Открыть").length).toBe(0);
+    expect(screen.queryAllByText("Скачать").length).toBe(0);
+    expect(screen.queryAllByText("Копировать").length).toBe(0);
   });
 
   it("empty provider_documents shows safe empty state", async () => {
@@ -161,7 +164,7 @@ describe("PaymentDocumentsDrawer — read-only behaviour", () => {
       error: null,
     });
     render(<PaymentDocumentsDrawer paymentId={PID} open={true} onOpenChange={() => {}} />);
-    await screen.findByText(/Не удалось определить исходный платёж возврата/);
+    await screen.findAllByText(/Не удалось определить исходный платёж возврата/);
   });
 
   it("refresh button hidden for view-only users", async () => {
