@@ -1,9 +1,13 @@
-name: Verify webhook functions are public (verify_jwt=false)
+name: Verify expected public webhook configuration (config.toml)
 
-# Guard against D2-style regression: after a redeploy, webhook endpoints must
-# remain publicly reachable (the platform must NOT inject JWT verification).
-# We assert this by reading supabase/config.toml — every `*-webhook` function
-# block, plus stripe-* webhook endpoints, MUST have `verify_jwt = false`.
+# STATIC guard over supabase/config.toml. This workflow does NOT deploy
+# anything, does NOT call Supabase, and does NOT verify runtime state.
+# It asserts that every required public webhook function has an explicit
+# `[functions.<fn>] verify_jwt = false` block declared in the repository
+# (EXPECTED configuration contract — see PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1
+# and .lovable/discovery/public_webhook_deploy_layer_v1.md).
+#
+# Runtime verification lives in verify-webhook-runtime.yml (external probe).
 
 on:
   push:

@@ -1,1 +1,46 @@
 project_id = "hdjgkjceownmmnrqqtuz"
+
+# ============================================================
+# Expected public-webhook configuration (PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1)
+# ------------------------------------------------------------
+# These blocks declare expected auth-mode for public webhook functions:
+# verify_jwt = false  →  function must be reachable WITHOUT Supabase JWT.
+# Signature verification is done INSIDE each function using provider-specific
+# headers (Stripe-Signature, bePaid signature, Telegram secret token, etc.).
+#
+# Status: EXPECTED CONFIG ONLY. Lovable agent-deploy behavior with regard
+# to these blocks is UNDER RE-VERIFICATION — see:
+#   .lovable/discovery/public_webhook_deploy_layer_v1.md
+#   .lovable/architecture/canonical_infrastructure_v1.md §8
+#
+# Static guard: .github/workflows/verify-webhook-public.yml
+# ============================================================
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.bepaid-webhook]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.payment-methods-webhook]
+verify_jwt = false
+
+[functions.auth-email-hook]
+verify_jwt = false
+
+[functions.getcourse-webhook]
+verify_jwt = false
+
+[functions.amocrm-webhook]
+verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+# Canary probe for controlled redeploy testing (see Approve C).
+# No DB, no secrets, no business logic — see supabase/functions/public-webhook-deploy-probe/.
+[functions.public-webhook-deploy-probe]
+verify_jwt = false
