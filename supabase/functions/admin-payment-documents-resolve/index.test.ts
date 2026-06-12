@@ -85,15 +85,8 @@ function makeDeps(ops: MockOps, overrides: Partial<ResolverDeps> = {}): Resolver
           return { ok: r.ok, status: r.ok ? 200 : 500, data: r.data, error: r.error };
         },
       };
-      return {
-        ok: true as const,
-        client: client as unknown as ResolverDeps['buildStripeClient'] extends (a: unknown) => Promise<infer R>
-          ? R extends { ok: true; client: infer C } ? C : never
-          : never,
-        accountCode: 'stripe_poland',
-        mode: 'test' as const,
-        connectionId: 'conn-test',
-      };
+      // deno-lint-ignore no-explicit-any
+      return { ok: true, client: client as any, accountCode: 'stripe_poland', mode: 'test', connectionId: 'conn-test' };
     },
     internalDocs: {
       async list(orderId) {
