@@ -32,6 +32,9 @@ import {
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materialize.ts';
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
+// PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
+import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
+
 
 
 function svc() {
