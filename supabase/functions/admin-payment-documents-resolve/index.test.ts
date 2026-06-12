@@ -292,7 +292,7 @@ Deno.test('14. Refund parent missing → REFUND_PARENT_NOT_RESOLVED warning', as
 Deno.test('15. Duplicate local/provider document → single card (exact identity)', async () => {
   const ops = freshOps({
     payments: [{ id: PID, provider: 'stripe', status: 'succeeded', amount: 5, currency: 'BYN', order_id: OID,
-      meta: { stripe: { charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
+      meta: { stripe: { account_code: 'stripe_poland', charge_id: 'ch_a', charge: { receipt_url: 'https://pay.stripe.com/r/x' } } },
       receipt_url: null, provider_payment_id: null }],
     stripeRetrieves: {
       'charges:ch_a': { ok: true, data: { receipt_url: 'https://pay.stripe.com/r/x' } },
