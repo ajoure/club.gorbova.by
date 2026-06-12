@@ -1,27 +1,55 @@
-# Backlog: Lovable agent-deploy ignores per-function verify_jwt=false
+# Backlog: Lovable agent-deploy / per-function verify_jwt = false
 
-**Status:** UNDER RE-VERIFICATION (2026-06-12)
-**Previous status:** ESCALATED, awaiting Lovable response (2026-06-06)
+**Status:** CONDITIONAL CONTROLLED DEPLOYMENT (2026-06-12, Approve D)
+**Previous statuses:**
+- UNDER RE-VERIFICATION (2026-06-12, Approve A)
+- ESCALATED, awaiting Lovable response (2026-06-06)
 **Created:** 2026-06-06
-**Blocks:** Phase 3.4 Runtime G33–G40 (Stripe replay + dunning runtime), any
-            webhook redeploy via agent-deploy.
+**Affects:** all 8 public webhook functions (per-function gate).
 
-## 2026-06-12 update
+## 2026-06-12 update (Approve D)
+
+Canary `public-webhook-deploy-probe` controlled redeploy proved on
+2026-06-12 (PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1 / Approve C1):
+
+```
+first deploy   = PASS
+redeploy       = PASS
+source recovery = PASS
+verify_jwt=false preserved in all 9 external smoke probes
+verdict        = D-STABLE-CANDIDATE
+```
+
+Proof: `.lovable/proofs/public_webhook_deploy_layer_v1_controlled_redeploy.md`.
+
+The global unconditional moratorium is replaced by **CONDITIONAL
+CONTROLLED DEPLOYMENT**:
+
+- Mass / bulk webhook redeploy is still FORBIDDEN.
+- Each webhook function may be redeployed only individually, only via
+  the canonical protocol in
+  `.lovable/architecture/public_webhook_controlled_redeploy_protocol_v1.md`,
+  and only after an explicit per-function approve.
+- Failed post-smoke returns that specific function to a local moratorium
+  recorded in this file; global state for other functions is unchanged.
+- This canary verdict does NOT pre-approve any production webhook —
+  Stripe in particular requires Approve E.
+
+## 2026-06-12 update (Approve A, historical)
 
 External read-only probe (see
-`.lovable/discovery/public_webhook_deploy_layer_v1.md`) shows that all 8
-public webhook functions, including `stripe-webhook`, currently respond
-with application-level errors — no `UNAUTHORIZED_NO_AUTH_HEADER`. The
-2026-06-06 regression either self-resolved or the conditions for its
-reproduction have changed. Repository now declares explicit
-`[functions.<fn>] verify_jwt = false` blocks for all 8 webhooks (EXPECTED
-config contract).
+`.lovable/discovery/public_webhook_deploy_layer_v1.md`) showed that all
+8 public webhook functions, including `stripe-webhook`, currently
+respond with application-level errors — no `UNAUTHORIZED_NO_AUTH_HEADER`.
+The 2026-06-06 regression either self-resolved or its repro conditions
+have changed. Repository now declares explicit
+`[functions.<fn>] verify_jwt = false` blocks for all 8 webhooks
+(EXPECTED config contract).
 
-This is NOT proof that current agent-deploy honours `verify_jwt = false`
-on redeploy. Controlled canary redeploy is required
-(PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1, Approve C) before the moratorium
-can be revisited. Until then, no webhook function may be redeployed via
-the agent.
+## Local moratorium register (per-function)
+
+Empty as of 2026-06-12. Append entries here when a controlled redeploy
+returns FAIL-RECOVERED or D-BROKEN for a specific function.
 
 
 ## Summary

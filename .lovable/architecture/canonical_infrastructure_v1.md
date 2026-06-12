@@ -93,37 +93,63 @@ Supabase`. Full reproduction, proof, and copy-paste issue text live in:
 - Do not request these secrets from the operator. Do not add new workflows
   that consume them.
 
-## 8. Webhook deploy moratorium
+## 8. Webhook deploy: conditional controlled deployment
 
-**Status: UNDER RE-VERIFICATION** (2026-06-12,
-see `.lovable/discovery/public_webhook_deploy_layer_v1.md`).
+**Status: CONDITIONAL CONTROLLED DEPLOYMENT** (2026-06-12,
+PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1 / Approve D).
 
-External read-only probe on 2026-06-12 shows all 8 public webhook functions
-(including `stripe-webhook`) currently respond with application-level
-errors, NOT platform `UNAUTHORIZED_NO_AUTH_HEADER`. The 2026-06-06 regression
-either self-resolved or its repro conditions have changed. This does NOT
-mean the moratorium can be lifted — the current agent-deploy behavior on
-redeploy has not been re-tested.
+### Canary verdict (Approve C1, 2026-06-12)
 
-Until controlled canary redeploy proves agent-deploy honours
-`verify_jwt = false` (PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1, Approve C),
-the binding rules remain:
+`public-webhook-deploy-probe` controlled canary on Lovable agent-deploy:
 
-- **No agent-redeploy of any webhook function.** Affected names:
-  `stripe-webhook`, `bepaid-webhook`, `telegram-webhook`,
-  `payment-methods-webhook`, `auth-email-hook`, `instagram-webhook`,
-  `getcourse-webhook`, `amocrm-webhook`.
-- All 8 webhook functions currently PASS external probe (application-level
-  responses). Do not touch.
-- `verify-webhook-runtime.yml` continues to monitor.
-- Canary function `public-webhook-deploy-probe` exists in the repo but is
-  NOT deployed yet (Approve C scope).
+```
+first deploy   = PASS
+redeploy       = PASS
+source recovery = PASS
+verify_jwt=false preserved across 9/9 external smoke probes (no Supabase JWT)
+verdict        = D-STABLE-CANDIDATE
+```
+
+Proof: `.lovable/proofs/public_webhook_deploy_layer_v1_controlled_redeploy.md`.
+
+The canary proves that the current Lovable agent-deploy mechanism, when an
+explicit `[functions.<fn>] verify_jwt = false` block is present in
+`supabase/config.toml`, publishes the function without a platform JWT wall
+on first deploy, on redeploy, and on a recovery redeploy of a previous
+source. It does NOT prove that every production webhook can be safely
+redeployed — each one passes its own controlled gate.
+
+### Binding rules under CONDITIONAL CONTROLLED DEPLOYMENT
+
+- **Global unconditional moratorium is lifted.**
+- **Mass / bulk redeploy of webhook functions is still forbidden.** No
+  multi-function `supabase--deploy_edge_functions` calls.
+- Each production webhook (`stripe-webhook`, `bepaid-webhook`,
+  `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`,
+  `getcourse-webhook`, `amocrm-webhook`, `instagram-webhook`) is
+  redeployable **only individually**, only after explicit per-function
+  approve, and only via the canonical protocol:
+  `.lovable/architecture/public_webhook_controlled_redeploy_protocol_v1.md`.
+  Required steps: explicit config block check, source snapshot, external
+  pre-smoke, scoped diff, single-function deploy, post-smoke at
+  t=0/30s/2m, provider signature regression, lifecycle regression,
+  proof artifact.
+- **Failed post-smoke returns that specific function to a local
+  moratorium** (recovery via redeploy of previous source, entry in
+  `lovable_agent_deploy_verify_jwt_regression.md`). The global state for
+  other functions does not change.
+- `verify-webhook-public.yml` and `verify-webhook-runtime.yml` remain
+  read-only guards; GitHub Actions is still NOT a deploy channel.
+- Canary `public-webhook-deploy-probe` remains in v1 state as a safe
+  baseline; cleanup is a separate approve after PATCH closure.
 
 Current infrastructure status:
 
 ```
 Infrastructure model     = CLEAN
 GitHub deploy            = DISABLED (no-op stub)
-Lovable webhook deploy   = UNDER RE-VERIFICATION (canary pending)
-Phase 3.4 Runtime        = FROZEN
+Lovable webhook deploy   = CONDITIONAL CONTROLLED DEPLOYMENT (per-function gate)
+Canary baseline          = D-STABLE-CANDIDATE (probe v1, 2026-06-12)
+Phase 3.4 Runtime        = unfrozen on a per-function basis after individual gate
 ```
+
