@@ -148,6 +148,34 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   if (STRIPE_SUBSCRIPTION_EVENT_TYPES.has(event.type)) {
     const out = await resolveStripeSubscriptionEvent(supabase, event, account_code);
     if (out) {
+      // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: после того как существующий
+      // onInvoicePaid lifecycle материализовал payment_id, обогащаем card snapshot.
+      // НЕ создаём payment row, НЕ повторяем lifecycle, НЕ меняем access.
+      // Никогда не падаем — enrichment не должен ломать activation.
+      if (event.type === 'invoice.paid' && out.payment_id && !out.manual_review) {
+        try {
+          const { data: paymentRow } = await supabase
+            .from('payments_v2')
+            .select('provider_payment_id, meta')
+            .eq('id', out.payment_id)
+            .maybeSingle();
+          const piFromRow = (typeof paymentRow?.provider_payment_id === 'string'
+            && /^pi_[A-Za-z0-9_]+$/.test(paymentRow.provider_payment_id))
+            ? paymentRow.provider_payment_id
+            : (paymentRow?.meta?.stripe?.payment_intent_id ?? null);
+          if (piFromRow && /^pi_[A-Za-z0-9_]+$/.test(piFromRow)) {
+            await enrichStripePaymentCardData({
+              supabase,
+              paymentId: out.payment_id,
+              paymentIntentId: piFromRow,
+              accountCode: account_code,
+              source: 'invoice.paid',
+              actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+              fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+            });
+          }
+        } catch { /* never re-throw — invoice.paid activation already committed */ }
+      }
       // Map resolver result → webhook output shape.
       // manual_review остаётся в note, чтобы processing_status выставился ниже.
       const note = out.manual_review
@@ -156,6 +184,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       return { order_id: out.order_id, payment_id: out.payment_id, note };
     }
   }
+
 
   const obj = event.data.object as Record<string, unknown>;
   const md = (obj.metadata ?? {}) as Record<string, string>;
