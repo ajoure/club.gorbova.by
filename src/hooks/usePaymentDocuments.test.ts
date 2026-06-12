@@ -27,20 +27,20 @@ const pid2 = "22222222-2222-2222-2222-222222222222";
 
 describe("usePaymentDocuments", () => {
   it("first resolve sends refresh_provider=false", async () => {
-    const invoke = vi.fn(async (_b: { payment_id: string; refresh_provider: boolean }) => ({
+    const invoke = vi.fn<(b: { payment_id: string; refresh_provider: boolean }) => Promise<{ data: unknown; error: unknown }>>(async (_b) => ({
       data: baseCanonical, error: null,
     }));
     const { result } = renderHook(() => usePaymentDocuments(pid1, { invoke }));
     await act(async () => { await result.current.resolveDocuments(); });
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke.mock.calls[0][0]).toEqual({ payment_id: pid1, refresh_provider: false });
+    expect((invoke.mock.calls[0] as unknown[])[0]).toEqual({ payment_id: pid1, refresh_provider: false });
     expect(result.current.data).toBeTruthy();
     expect(result.current.error).toBeNull();
   });
 
   it("refreshProviderDocuments sends refresh_provider=true and fully replaces data", async () => {
     let nth = 0;
-    const invoke = vi.fn(async () => {
+    const invoke = vi.fn<(b: { payment_id: string; refresh_provider: boolean }) => Promise<{ data: unknown; error: unknown }>>(async () => {
       nth++;
       return {
         data: { ...baseCanonical, warnings: nth === 1 ? [] : [{ code: "REFUND_PARENT_NOT_RESOLVED" }] },
@@ -51,7 +51,8 @@ describe("usePaymentDocuments", () => {
     await act(async () => { await result.current.resolveDocuments(); });
     expect(result.current.data?.warnings).toEqual([]);
     await act(async () => { await result.current.refreshProviderDocuments(); });
-    expect(invoke.mock.calls[1][0].refresh_provider).toBe(true);
+    const secondCall = invoke.mock.calls[1] as unknown as [{ refresh_provider: boolean }];
+    expect(secondCall[0].refresh_provider).toBe(true);
     expect(result.current.data?.warnings).toEqual([{ code: "REFUND_PARENT_NOT_RESOLVED" }]);
   });
 

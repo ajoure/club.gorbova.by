@@ -81,8 +81,8 @@ describe("PaymentDocumentsDrawer — read-only behaviour", () => {
     mockInvoke = invokeSpy;
     render(<PaymentDocumentsDrawer paymentId={PID} open={true} onOpenChange={() => {}} />);
     await waitFor(() => expect(invokeSpy).toHaveBeenCalled());
-    const body = (invokeSpy.mock.calls[0][1] as { body: { refresh_provider: boolean } }).body;
-    expect(body.refresh_provider).toBe(false);
+    const firstCall = invokeSpy.mock.calls[0] as unknown as [string, { body: { refresh_provider: boolean } }];
+    expect(firstCall[1].body.refresh_provider).toBe(false);
   });
 
   it("renders Stripe receipt and internal document", async () => {
