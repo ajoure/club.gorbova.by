@@ -1,525 +1,832 @@
+## да, согласен, с учетом правок:
+
+План в целом готов к **Approve A**, но перед кодом нужно исправить два критичных момента: sanitizer не должен падать на обычном Stripe-объекте из-за наличия `exp_month/fingerprint`, а формат `payment_method_details` должен точно совпадать с уже существующими путями чтения в UI.
+
 да, согласен, с учетом правок:
 
-# **План принят**
+# **Approve A — код и локальные тесты**
 
-Правильная архитектура:
+Разрешаю выполнить только:
 
-```text
-Stripe = платёжный провайдер
-document_scenarios + templates + executors = SOT документов
-```
+- shared sanitizer;
+- единый enrichment writer;
+- интеграцию writer в существующие webhook lifecycle;
+- refactor single-fetch;
+- создание bulk-fetch;
+- локальные unit/integration tests;
+- proof кода и тестов.
 
-Новые executor, шаблоны и отдельную Stripe-document архитектуру не создавать.
-
-Однако execute разделить на последовательные этапы.
-
----
-
-# **Порядок выполнения**
-
-## **Этап I — Runtime deployment gate**
-
-Сначала задеплоить уже выполненный mapping:
+Не разрешаю на этом этапе:
 
 ```text
-stripe → card
-bepaid → card
-```
-
-Только после runtime PASS настраивать pilot-сценарий.
-
-Причина: если сначала записать `document_scenarios`, production backend со старой версией shared-кода может продолжить определять Stripe не как `card`, и сценарий не сматчится.
-
-### **Разрешённый deploy scope**
-
-Только подтверждённые consumers:
-
-```text
-canonical-document-generate-strict
-canonical-document-payment-hook
-canonical-document-regenerate
-canonical-document-generate
-canonical-deal-document-overrides
-document-field-resolver-v2
-document-field-resolver-v2-snapshot
-```
-
-Перед deploy повторно проверить dependency graph. Если какая-либо функция фактически не импортирует изменённый код — не деплоить её без причины.
-
-Frontend:
-
-```text
-src/utils/derivePaymentChannel.ts
-```
-
-опубликовать через штатный Lovable Publish в рамках того же runtime gate.
-
-### **Runtime DoD**
-
-Подтвердить фактическими вызовами:
-
-```text
-stripe → card
-bepaid card → card
-bepaid ERIP → erip
-admin → other
-admin_test/test_payment → card
-```
-
-Также:
-
-- build clean;
-- frontend/backend mirror совпадают;
-- версии/timestamps 7 функций зафиксированы;
-- `ai_generated_documents` до/после не изменился;
-- bePaid regression PASS.
-
-Proof:
-
-```text
-.lovable/proofs/stripe_document_payment_channel_runtime_v1.md
+deploy
+historical backfill
+Stripe live/test runtime events
+UPDATE существующих payments_v2
+изменение bePaid
+миграции/RPC/новые таблицы
 ```
 
 ---
 
-# **Этап II — Pilot document_scenarios**
+# **1. Исправить sanitizer: raw Stripe input может содержать forbidden fields**
 
-После runtime gate настроить только один оффер:
-
-```text
-f71b5ed3-27dd-419d-b922-ad529192b58a
-Несрочная консультация
-```
-
-## **Использовать штатный admin UI**
-
-Приоритетный способ настройки:
+Нельзя делать `pci_violation` только потому, что входной Stripe Charge содержит:
 
 ```text
-OfferDocumentScenariosCard.tsx
+exp_month
+exp_year
+fingerprint
 ```
 
-Не делать прямой SQL, если UI позволяет сохранить тот же канонический JSON.
+Это штатные поля Stripe API, поэтому такой hard reject заблокирует enrichment практически для каждой карты.
 
-SQL допустим только если UI технически недоступен, с отдельным объяснением и STOP-guards.
+Правильное правило:
+
+1. Raw Stripe object может содержать любые Stripe-поля.
+2. Sanitizer читает только whitelist.
+3. Forbidden fields полностью игнорируются.
+4. После формирования output выполнить post-condition scan.
+5. `pci_violation` бросать только если запрещённый ключ оказался:
+  - в sanitized output;
+  - в DB update payload;
+  - в audit payload.
+
+Canonical whitelist:
+
+```text
+brand
+last4
+wallet.type
+funding
+country
+```
+
+Запрещены в выходе:
+
+```text
+number
+pan
+cvc
+cvv
+exp_month
+exp_year
+fingerprint
+```
+
+Unit test должен доказать:
+
+```text
+raw input содержит exp_month/exp_year/fingerprint
+→ enrichment не падает
+→ sanitized output не содержит эти поля
+```
+
+И отдельный negative test:
+
+```text
+запрещённый ключ искусственно попал в output payload
+→ pci_violation
+→ DB update не выполняется
+```
 
 ---
 
-# **Коррекция pilot JSON**
 
-Не придумывать отличия от рабочего BPiZ без доказанной необходимости.
 
-## **Individual**
+# **2. Зафиксировать каноническую структуру**
 
-В BPiZ используется:
+`payment_method_details`
+
+Перед реализацией выполнить code search по всем существующим reader-path:
 
 ```text
-requires_required_requisites = true
+meta.stripe.payment_method_details
+meta.stripe.payment_method_details.card
+meta.stripe.card
+provider_response.stripe.payment_method_details
 ```
 
-В proposed JSON указано `false`.
+Writer должен сохранять структуру, которую уже читает `PaymentsTable` и `useUnifiedPayments`.
 
-Перед записью проверить, какие реквизиты реально нужны шаблону `7caee05d`.
-
-Если шаблон использует ФИО, адрес или иные обязательные данные клиента, оставить:
+Ожидаемый канонический формат:
 
 ```json
-"requires_required_requisites": true
-```
-
-Не ослаблять требования только потому, что платёж прошёл через Stripe.
-
-## **Legal entity**
-
-Для Stripe card payment нужен матч:
-
-```text
-payer_type = legal_entity
-payment_channels содержит card
-```
-
-`bank_transfer` добавлять только если этот оффер действительно поддерживает банковский перевод. Сейчас offer Stripe-only, поэтому базовый pilot:
-
-```json
-"payment_channels": ["card"]
-```
-
-Не добавлять несуществующий способ оплаты «на будущее».
-
----
-
-# **Exact pilot JSON**
-
-После проверки required requisites использовать канонический вариант:
-
-```json
-[
-  {
-    "id": "<NEW_UUID_V4>",
-    "is_enabled": true,
-    "payer_type": "individual",
-    "payment_channels": ["card"],
-    "template_id": "7caee05d-0410-4b2f-85b7-f7af1463cac5",
-    "executor_id": "d0c7fe75-1192-40a9-bbae-b652b69e6882",
-    "requires_required_requisites": true
-  },
-  {
-    "id": "<NEW_UUID_V4>",
-    "is_enabled": true,
-    "payer_type": "legal_entity",
-    "payment_channels": ["card"],
-    "template_id": "4fa3160f-f979-4dbe-b069-5b0cb2c7bb05",
-    "executor_id": "d0c7fe75-1192-40a9-bbae-b652b69e6882",
-    "requires_required_requisites": true
+{
+  "type": "card",
+  "card": {
+    "brand": "visa",
+    "last4": "4242",
+    "wallet": {
+      "type": "apple_pay"
+    },
+    "funding": "credit",
+    "country": "PL"
   }
-]
+}
 ```
 
-Если фактический анализ шаблона докажет, что для ФЛ обязательные реквизиты не нужны, это отдельно отразить в proof и только тогда поставить `false`.
+Не сохранять плоско:
 
-`document_defaults` не добавлять.
+```json
+{
+  "brand": "visa",
+  "last4": "4242"
+}
+```
+
+если текущий UI читает путь:
+
+```text
+payment_method_details.card.brand
+payment_method_details.card.last4
+```
+
+В proof указать:
+
+- фактический canonical writer path;
+- все существующие readers;
+- подтверждение совместимости без отдельного UI-патча.
+
+Если readers сейчас поддерживают несколько legacy-форматов, writer всё равно должен писать один канонический формат.
 
 ---
 
-# **Pilot STOP-guards**
 
-Перед сохранением подтвердить:
+
+# **3.**
+
+`card_holder`
+
+Разрешено сохранять:
 
 ```text
-offer_id точный
-offer is_active = true
-document_scenarios отсутствует
-template FL active
-template UL active
-executor active
-document_type = act
-meta.acquiring сохранён
-Stripe settings сохранены
+payments_v2.card_holder
 ```
 
-После сохранения:
+из `billing_details.name`, но:
 
-- повторное применение не создаёт дубли сценариев;
-- `meta.acquiring` и остальные ключи не изменены;
-- SYSTEM ACTOR audit создан;
-- before/after snapshot зафиксирован.
+- не сохранять его в `meta.stripe.payment_method_details`;
+- не сохранять в audit;
+- не перезаписывать существующее непустое значение пустым/NULL;
+- отсутствие card holder не делает snapshot incomplete.
 
-Proof:
+Complete snapshot определяется без обязательного `card_holder`.
+
+---
+
+
+
+# **4. Resolver**
+
+`payment_intent_id`
+
+Не ограничивать inventory и enrichment только полем:
 
 ```text
-.lovable/proofs/stripe_consultation_document_scenarios_pilot_v1.md
+provider_payment_id LIKE 'pi_%'
+```
+
+Канонический resolver PI должен проверить по приоритету:
+
+```text
+meta.stripe.payment_intent_id
+provider_payment_id, если соответствует ^pi_
+meta.stripe.invoice.payment_intent
+meta.provider_response.stripe.payment_intent_id
+```
+
+Использовать только однозначный результат.
+
+Если источники содержат разные PI:
+
+```text
+STOP
+verdict = conflicting_payment_intent_ids
+```
+
+Если одному PI соответствуют несколько положительных payment rows:
+
+```text
+STOP
+verdict = manual_review_duplicate_payment_intent
+```
+
+Inventory Approve C должен учитывать все источники PI, а не только `provider_payment_id`.
+
+---
+
+# **5. Webhook должен вызывать enrichment после materialization**
+
+Для каждого события указать точную точку вызова.
+
+## `checkout.session.completed`
+
+```text
+existing checkout materialization/resolution
+→ однозначный payments_v2.id
+→ enrichment
+```
+
+## `payment_intent.succeeded`
+
+```text
+найден существующий payments_v2.id
+→ enrichment
+```
+
+Если payment row ещё не создана:
+
+```text
+retryable_no_payment_row
+```
+
+Не создавать payment row внутри enrichment writer.
+
+## `invoice.paid`
+
+```text
+existing onInvoicePaid lifecycle
+→ payment materialized/resolved
+→ получен payments_v2.id
+→ enrichment
+```
+
+Если текущий `onInvoicePaid` не возвращает `payment_id`, допускается минимально расширить его result contract, но не создавать второй lifecycle и не менять бизнес-результат обработчика.
+
+Enrichment failure не должен откатывать:
+
+```text
+order
+payment
+subscription
+entitlement
+access
+payment_link usage
 ```
 
 ---
 
-# **Pilot verify**
+# **6. Один writer и одна Stripe-fetch логика**
 
-На тестовом заказе 2 USD разрешено только:
-
-1. фактический backend resolver output;
-2. frontend resolver output;
-3. UI availability proof.
-
-Ожидаемо:
+Подтверждаю архитектуру:
 
 ```text
-resolved_offer_id = f71b5ed3-...
-payment_channel = card
-source = scenario
-matched_scenario != null
-template_id != null
-can_generate = true
+card-extract.ts
+card-enrichment.ts
 ```
 
-Реальный документ не создавать.
+Но `card-enrichment.ts` должен разделять:
 
-Не вызывать writer, не присваивать номер, не создавать запись в `ai_generated_documents`.
+1. `resolveStripeCardSource()` — чтение PI/Charge/PaymentMethod;
+2. `buildSanitizedCardSnapshot()` — sanitizer;
+3. `persistStripeCardSnapshot()` — единственный DB writer;
+4. `enrichStripePaymentCardData()` — orchestration.
 
-Также подтвердить:
+Webhook, single и bulk используют этот orchestration.
 
-- сумма резолвится как `2.00`;
-- валюта резолвится как `USD`;
-- значения берутся из order/payment;
-- `products_v2.currency='BYN'` не подменяет фактическую валюту заказа.
+Не оставлять старые inline PATCH-LIVE-CARD update-блоки после refactor.
+
+Proof должен содержать code search:
+
+```text
+payments_v2 card_brand/card_last4 update
+```
+
+и доказать, что Stripe card enrichment writer остался один.
 
 ---
 
-# **Этап III — Rollout на остальные четыре оффера**
+# **7. Idempotency и race guard**
 
-Сейчас:
+Complete snapshot:
 
 ```text
-NOT APPROVED
+card_brand
+card_last4
+meta.stripe.payment_method_details.card
+meta.stripe.payment_method_id
+meta.stripe.charge_id
+meta.stripe.payment_intent_id
 ```
 
-Approve на rollout выдаётся только после pilot PASS.
+`wallet.type` не обязателен: обычная карта может быть без wallet.
 
-Перед rollout вернуть отчёт:
+Правила:
 
-- runtime gate PASS;
-- pilot scenario сохранён;
-- backend/frontend resolver PASS;
-- `USD` и сумма резолвятся корректно;
-- шаблоны и реквизиты разрешаются без ошибок;
-- bePaid regression PASS;
-- production-документ по 2 USD не создан.
+- complete + `forceRefresh=false` → `skipped_complete`;
+- частичный snapshot → merge недостающих полей;
+- не затирать wallet;
+- не затирать непустые значения NULL;
+- sources_seen — dedup;
+- concurrent event не должен создавать destructive last-write-wins.
 
-После этого подготовить точный список четырёх офферов и per-offer before/after.
-
-Для каждого оффера создавать новые уникальные `scenario.id`, не копировать одинаковый UUID между офферами.
+60-секундный guard использовать только как дополнительную защиту от параллельных fetch.
 
 ---
 
-# **Дополнительный guard**
+# **8. Исправить SQL PCI scan**
 
-Проверить, не активирует ли наличие `document_scenarios` автоматическую генерацию через:
+В audit SQL обязательны скобки:
 
-```text
-canonical-document-payment-hook
+```sql
+SELECT id
+FROM audit_logs
+WHERE
+  (
+    action LIKE 'stripe.%'
+    OR action LIKE 'admin.stripe.%'
+  )
+  AND meta::text ~* '"(number|pan|cvc|cvv|exp_month|exp_year|fingerprint)"\s*:';
 ```
 
-Для консультаций должен остаться только ручной режим.
+Без скобок логика `AND/OR` будет неверной.
 
-Если payment hook автоматически генерирует документ по любому enabled scenario, до pilot добавить явный guard существующей конфигурацией, а не новой архитектурой.
-
-Нельзя случайно включить автогенерацию актов для консультаций.
+Также проверить не только ключи верхнего уровня, а весь вложенный JSON.
 
 ---
 
-# **Статусы approve**
+# **9. Approve A tests**
+
+До возврата отчёта выполнить локально:
+
+## **Sanitizer tests**
+
+- Visa без wallet;
+- Apple Pay;
+- Google Pay;
+- отсутствующий card object;
+- raw object с expiry/fingerprint;
+- искусственная PCI-утечка в output;
+- NULL/partial data.
+
+## **Writer tests**
+
+- Stripe positive payment → update;
+- refund → reject/skip;
+- bePaid → reject/skip;
+- complete snapshot → skip;
+- partial snapshot → non-destructive merge;
+- conflicting PI → stop;
+- duplicate positive rows per PI → ambiguous;
+- повторный source event → sources_seen dedup;
+- событие без wallet не удаляет Apple Pay wallet.
+
+## **Lifecycle tests**
+
+- `invoice.paid` не вызывает повторную materialization;
+- enrichment error не ломает lifecycle result;
+- не создаются orders/payments/access/entitlements.
+
+## **Bulk tests**
+
+- `dry_run=true` по умолчанию;
+- dry-run выполняет 0 updates;
+- limit max 200;
+- account isolation;
+- concurrency ≤3;
+- actor = фактический super_admin JWT;
+- повторный execute → skipped_complete.
+
+---
+
+# **10. Proof Approve A**
+
+Создать:
 
 ```text
-I. Runtime deployment gate = APPROVED
-II. Pilot document_scenarios на f71b5ed3 = APPROVED после runtime PASS
-III. Rollout на остальные 4 оффера = NOT APPROVED до pilot proof
+.lovable/proofs/stripe_card_enrichment_v2_code_and_tests.md
 ```
 
-Выполняй сначала runtime deployment gate. После PASS переходи к pilot. Rollout не начинать.
+Proof должен содержать:
+
+1. Before architecture.
+2. Final dependency graph.
+3. Canonical JSON storage shape.
+4. Удалённые inline write-path.
+5. Список файлов.
+6. Unit/integration test results.
+7. Code-level PCI proof.
+8. Подтверждение отсутствия deploy.
+9. Подтверждение отсутствия исторических UPDATE.
+10. Точный proposed deploy scope для Approve B.
+
+---
+
+# **Статусы**
+
+```text
+Approve A — APPROVED
+Approve B — NOT APPROVED
+Approve C — NOT APPROVED
+```
+
+После выполнения Approve A остановиться.
+
+Вернуть отчёт с:
+
+- diff-summary;
+- тестами;
+- canonical storage path;
+- единственным write-path;
+- dependency graph;
+- deploy-list;
+- proof.
+
+Deploy и historical backfill не начинать.
 
 &nbsp;
 
-План (revised): PATCH-STRIPE-CONSULTATION-DOCUMENT-SCENARIOS-V1 + RUNTIME-DEPLOYMENT-GATE
+План: PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 (rev. с правками)
 
-Архитектурный реcет: Stripe = только платёжный провайдер. SOT документа = `tariff_offers.meta.document_scenarios[]` + `document_templates` + `executors`, уже используемые в BPiZ. Никаких новых executor / шаблонов / PL-логики в этом патче. Discovery только; execute не начинать.
+Diagnose → Plan → Dry-run → Execute → Verify. Approve поэтапный (A → B → C). Execute и deploy пока не начинать.
 
-================================================================
+### Цель
 
-1. Архитектурный принцип (фиксируется в плане)
+1. Новые Stripe-платежи в момент webhook получают единый sanitized card snapshot через **один общий writer**.
+2. Исторические Stripe-платежи без card data безопасно обогащаются через тот же writer (targeted, idempotent).
+3. Refund-row не дублирует card snapshot, наследование parent остаётся UI-only (`stripeParentIndex`, без изменений).
+4. PCI: запрещённые поля никогда не попадают в DB и audit.
+5. bePaid не трогаем.
+6. Никакого второго конкурирующего write-path.
 
-================================================================
+---
 
-- bePaid payment → existing document flow.
-- Stripe payment → ровно тот же existing document flow.
-- Единственная техническая разница для документа: `provider='stripe'`, `payment_channel='card'` (уже закрыто в коде PATCH-STRIPE-DOCUMENT-ACT-CHECK-V1; ждёт runtime gate).
-- Источник истины для исполнителя/реквизитов/шаблона/нумерации — `tariff_offers.meta.document_scenarios[].{template_id, executor_id, …}`, а НЕ Stripe account.
-- Сравнение `acquiring_connections.business_name` ↔ `executors.full_name` из текущего scope **исключено**.
-- `PATCH-STRIPE-EXECUTOR-V1` и `PATCH-STRIPE-CONSULTATION-TEMPLATE-V1` из обязательных блокеров **сняты**. Появятся только если discovery докажет технический дефицит существующего канона.
+### Архитектурные инварианты
 
-================================================================
-2. Что НЕ создаём в этом патче
-================================================================
+**Один writer, ноль дублей логики:**
 
-- новые `executors`;
-- новые `document_templates`;
-- новые банковские реквизиты / юр. сущности;
-- новые правила нумерации;
-- новый workflow «момент оказания услуги»;
-- никакой Stripe-специфичной document-архитектуры.
-
-================================================================
-3. Existing BPiZ document flow — рабочий пример
-================================================================
-
-3.1 Рабочий BPiZ-оффер (product_id=11c9f1b8-0355-4753-bd74-40b42aa53616):
-
-```
-offer_id (FULL)     : c5781abf-0376-4e1f-91dc-99773906ee77
-offer_id (BUSINESS) : bc0f7a90-df41-4a86-b2ea-2a1234d0d534
-
-document_scenarios (одинаковая структура у обоих):
-  [
-    { id, is_enabled:true, payer_type:"individual",
-      payment_channels:["card","erip","apple_pay","google_pay"],
-      template_id : 7caee05d-0410-4b2f-85b7-f7af1463cac5,   // Счёт-акт ФЛ
-      executor_id : d0c7fe75-1192-40a9-bbae-b652b69e6882,   // ЗАО "АЖУР инкам"
-      requires_required_requisites:true },
-    { id, is_enabled:true, payer_type:"legal_entity",
-      payment_channels:["bank_transfer"],
-      template_id : 4fa3160f-f979-4dbe-b069-5b0cb2c7bb05,   // Счёт-акт ЮЛ
-      executor_id : d0c7fe75-1192-40a9-bbae-b652b69e6882,
-      requires_required_requisites:true }
-  ]
-document_defaults: { generate_act:true, service_name, unit, … }   // не обязательно для consultation
+```text
+_shared/stripe/card-extract.ts     ← pure sanitizer + PCI denylist
+_shared/stripe/card-enrichment.ts  ← единственный writer payments_v2 card fields
 ```
 
-Оба шаблона активны (`document_templates.is_active=true`, `document_type='act'`, scope='act') и используют `file_name_template` с `{{field:FLD-…}}` (биллинговые токены, скоп `billing`).
+`stripe-webhook`, `stripe-card-data-fetch`, новый `stripe-card-data-fetch-bulk` — **все** идут через `card-enrichment.ts`. Запрещены:
 
-3.2 UI/SOT, которым это настраивается:
+- HTTP-вызов одной edge function из другой;
+- импорт `index.ts` чужой edge function;
+- параллельный второй Stripe-fetch/update алгоритм.
 
-- компонент: `src/components/admin/product/OfferDocumentScenariosCard.tsx` (Sprint 12);
-- путь: страница редактирования тарифа/оффера в админке продукта;
-- storage: `tariff_offers.meta.document_scenarios[]` (массив) + опционально `document_defaults`;
-- writer: тот же admin-UI через стандартный update `tariff_offers.meta` (см. `useTariffOffers`);
-- frontend mirror: `src/utils/resolveDocumentScenario.ts` + `src/lib/documents/purchaseDocumentRules.ts`;
-- backend mirror: `supabase/functions/_shared/document-scenario-resolver.ts` + `supabase/functions/_shared/purchase-document-rules.ts`.
+---
 
-3.3 Путь «Сформировать документ» (как сейчас в /purchases для BPiZ):
+### 1. `_shared/stripe/card-extract.ts` (pure sanitizer)
 
-- кнопка `canGenerateDocument(order, payments, tariffOffers, ctx)` → `isOfferDocumentEnabled` → `resolveDocumentScenario(meta, payment_channel, payer_type)`;
-- если scenario найден → вызов `canonical-document-generate-strict` с `order_id`;
-- внутри функции: `snapshotOrderDocumentData(order)` (сумма/валюта/клиент/payment_channel) + `derivePaymentChannel(payment_row)` → выбор scenario → рендер по `template_id` + `executor_id` → запись в `ai_generated_documents`.
+Whitelist полей в snapshot:
 
-Для Stripe-оплаты этот же путь работает, потому что `derivePaymentChannel({provider:'stripe',…})` уже возвращает `'card'` (после Phase 1 кода). Ждёт только runtime gate (часть B).
-
-================================================================
-4. Валюта документа — берётся из order/payment, не из products_v2
-================================================================
-
-- `products_v2.currency='BYN'` для «Платной консультации» — это лендинг-валюта, НЕ обязательная валюта документа.
-- Документ должен использовать фактическую `orders_v2.currency` + `orders_v2.final_price` / `paid_amount`, а также `payments_v2.amount` / `payments_v2.currency`.
-- Текущий шаблон `7caee05d` (Счёт-акт ФЛ) использует `{{field:FLD-…}}` для суммы/валюты, которые резолвятся из заказа (см. `document-resolver-v2/resolver.ts` + `_shared/typed-fld-mapping.ts`). Это означает: USD/EUR/PLN/BYN — динамические значения.
-- **Дефицит шаблона по валюте заранее НЕ предполагаем.** Доказательство достаточности существующих FLD-полей выполняется в pilot (см. §6) на реальной первой Stripe-оплате — не на технической 2 USD.
-- Если pilot покажет фактический дефицит (нет FLD для валюты, неверный формат числа, отсутствует НДС/налоги PL, и т.д.) → отдельный backlog PATCH-CONSULT-TEMPLATE-CURRENCY-V1. До этого момента **доп. шаблон не создаём**.
-
-================================================================
-5. Discovery Step B по-новому (без Stripe-юр. вопросов)
-================================================================
-
-5.1 Рабочий пример BPiZ — см. §3.1. Шаблоны `7caee05d` (FL) и `4fa3160f` (UL) + исполнитель `d0c7fe75` — действующая комбинация продакшна.
-
-5.2 UI/SOT настройки — см. §3.2. Тот же `OfferDocumentScenariosCard.tsx` будет открыт для каждого консультационного оффера через стандартный admin-путь редактирования тарифа.
-
-5.3 Техническая применимость к консультациям (НЕ юридическая):
-
-- `document_type='act'` доступен ✅;
-- `template_id` выбирается из списка активных шаблонов ✅;
-- сумма динамическая (из `orders_v2.final_price`) ✅;
-- валюта динамическая (из `orders_v2.currency`) ✅ (см. §4 — подтверждается pilot-проверкой);
-- реквизиты исполнителя берутся из `executors` по `executor_id` сценария ✅;
-- клиентские реквизиты — из заказа/профиля / `client_legal_details` ✅;
-- `payment_channel='card'` поддерживается scenario с `payment_channels:["card",…]` ✅.
-
-5.4 Exact JSON для pilot-оффера (`f71b5ed3-…`, «Несрочная консультация»):
-
-```jsonc
-// tariff_offers.meta.document_scenarios (полная замена, write-only-canonical)
-[
-  {
-    "id": "<uuid v4>",
-    "is_enabled": true,
-    "payer_type": "individual",
-    "payment_channels": ["card"],
-    "template_id": "7caee05d-0410-4b2f-85b7-f7af1463cac5",
-    "executor_id": "d0c7fe75-1192-40a9-bbae-b652b69e6882",
-    "requires_required_requisites": false
-  },
-  {
-    "id": "<uuid v4>",
-    "is_enabled": true,
-    "payer_type": "legal_entity",
-    "payment_channels": ["card", "bank_transfer"],
-    "template_id": "4fa3160f-f979-4dbe-b069-5b0cb2c7bb05",
-    "executor_id": "d0c7fe75-1192-40a9-bbae-b652b69e6882",
-    "requires_required_requisites": true
-  }
-]
+```json
+{
+  "brand": "visa",
+  "last4": "4242",
+  "wallet": { "type": "apple_pay" },
+  "funding": "credit",
+  "country": "PL"
+}
 ```
 
-`document_defaults` для pilot НЕ устанавливаем (сценарий имеет приоритет, defaults — fallback).
+**Denylist (hard reject → throw `pci_violation`):**
+`number, pan, cvc, cvv, exp_month, exp_year, fingerprint`.
 
-================================================================
-6. Pilot → Rollout на 5 офферов
-================================================================
+`fingerprint` исключён намеренно — устойчивый идентификатор карты не нужен для отображения плательщика.
 
-Все 5 офферов идентичны по природе (pay_now, full_payment, one-time, consultation, acquiring=stripe_poland) → одинаковый сценарий применим ко всем.
+Также возвращает:
 
-Pilot:
+- `card_brand`, `card_last4` (DB-колонки);
+- `card_holder` ← `billing_details.name` (только для DB-колонки `card_holder`, **не** в audit и **не** в snapshot);
+- `payment_method_id` (`pm_*`), `charge_id` (`ch_*`), `payment_intent_id` (`pi_*`).
 
-- 1 оффер: `f71b5ed3-27dd-419d-b922-ad529192b58a` (Несрочная консультация).
-- Способ настройки: штатный admin-UI (`OfferDocumentScenariosCard`) либо точечный SQL-патч (если UI-путь не доступен текущему оператору).
-- Resolver proof:
-  - `canGenerateDocument(...)` для тестового payload (provider='stripe', card) → `enabled=true, source='scenario'`;
-  - bePaid regression: офферы FULL/BUSINESS по-прежнему дают тот же scenario.
-- Без production-номера: на технической 2 USD операции номер не присваиваем (§8).
+Unit test: input с `number/cvc/exp_month` → output без запрещённых ключей и `pci_violation` throw.
 
-Rollout (после pilot PASS на первой реальной Stripe-оплате или подтверждённом resolver-доказательстве):
+---
 
-- остальные 4 оффера: 25880f13, c244bbd4, 7a333f66, 369c911a;
-- единый идентичный JSON;
-- per-offer UPDATE с STOP-guards: `meta NOT containing 'document_scenarios'` (идемпотентность), `offer.is_active=true`, `template_id/executor_id exist & active`.
+### 2. `_shared/stripe/card-enrichment.ts` (единственный writer)
 
-================================================================
-7. Момент формирования — manual (как сейчас в BPiZ)
-================================================================
-
-Используем существующий ручной режим:
-
-- пользователь жмёт «Сформировать документ» в `/purchases` после оплаты;
-- никакого нового статуса услуги, CRM-триггера, payment-hook automation для консультаций НЕ вводим;
-- если в будущем владелец проекта решит автоматизировать через `canonical-document-payment-hook` — отдельный патч, не в этом scope.
-
-================================================================
-8. Операция 2 USD (Stripe test order 849c68b7-…)
-================================================================
-
-- Техническая тестовая операция, остаётся таковой.
-- НЕ присваивать production-номер.
-- НЕ создавать реальный бухгалтерский документ.
-- Использовать только:
-  - resolver proof (frontend+backend: `canGenerateDocument` → enabled=true);
-  - UI availability proof (кнопка «Сформировать» появилась в /purchases для этого заказа после A-patch).
-- Если безопасного preview без записи нет в `canonical-document-generate-strict` (по текущему коду — не подтверждено) → дождаться первой реальной Stripe-оплаты консультации.
-
-================================================================
-9. Runtime deployment gate (часть B, независимый блок)
-================================================================
-
-Не зависит от executor/template работы. Только редеплой потребителей уже изменённых shared-файлов.
-
-9.1 Минимальный deploy scope (7 функций, подтверждённые consumers):
-
-```
-canonical-document-generate-strict
-canonical-document-payment-hook
-canonical-document-regenerate
-canonical-document-generate
-canonical-deal-document-overrides
-document-field-resolver-v2
-document-field-resolver-v2-snapshot
+```ts
+enrichStripePaymentCardData({
+  supabase, stripeClient, paymentId,
+  paymentIntentId, accountCode,
+  source,           // 'checkout.session.completed' | 'payment_intent.succeeded' | 'invoice.paid' | 'targeted_fetch' | 'bulk_fetch'
+  actor,            // { type:'system'|'user', user_id?:uuid, label:string }
+  forceRefresh: false,
+})
 ```
 
-9.2 Frontend (`src/utils/derivePaymentChannel.ts`) попадёт в production через штатный Publish Lovable; отдельного релиз-канала нет.
+**Pre-conditions (hard reject):**
 
-9.3 Runtime verify (proof `.lovable/proofs/stripe_document_payment_channel_runtime_v1.md`, после approve и deploy):
+- payment существует, `provider='stripe'`, `amount > 0`;
+- `provider_payment_id` matches `^pi_[A-Za-z0-9]+$` и равен `paymentIntentId`;
+- `account_code` совпадает с meta;
+- если по PI больше одной положительной строки → STOP, audit `manual_review_duplicate_payment_intent`, без update.
 
-1. Build clean.
-2. 7 функций задеплоены с timestamp.
-3. Runtime-вызов `document-field-resolver-v2` (не grep):
-  - stripe / no method → `card`;
-  - bepaid / last4 → `card`;
-  - bepaid / is_erip=true → `erip`;
-  - admin без test_payment → `other` (regression);
-  - admin_test + test_payment=true → `card` (regression).
-4. Frontend resolver = backend resolver (shared cases, diff пуст).
-5. bePaid regression на реальной оплате — канал тот же.
-6. `ai_generated_documents` count до/после совпадает (gate не пишет ничего).
+**Idempotency (main guard):**
 
-================================================================
-10. Что возвращается этим планом
-================================================================
+«Complete snapshot» = одновременно есть:
 
-- Точный рабочий пример BPiZ (offer + scenarios + template + executor).
-- Существующий UI/SOT подключения документов к офферу (`OfferDocumentScenariosCard`).
-- Exact `document_scenarios` JSON для pilot-оффера консультации.
-- Подтверждение: сумма и валюта берутся из `orders_v2` / `payments_v2`, а не из `products_v2.currency`.
-- Подтверждение: существующий шаблон использует реквизиты исполнителя из `executors` (`d0c7fe75`) и клиентские реквизиты из заказа/профиля.
-- Pilot → rollout план на остальные 4 оффера через тот же канонический механизм.
-- Отдельный минимальный runtime deployment gate (7 функций) без зависимости от executor/template работы.
-- PATCH-STRIPE-EXECUTOR-V1 и PATCH-STRIPE-CONSULTATION-TEMPLATE-V1 — НЕ создаются. Появятся только если pilot докажет технический дефицит.
+- `card_brand`, `card_last4`,
+- `meta.stripe.payment_method_details`,
+- `meta.stripe.payment_method_id`,
+- `meta.stripe.charge_id`.
 
-Execute не начинать. Ожидается approve на:
-(I) точечный patch document_scenarios pilot-оффера `f71b5ed3-…` (точный JSON в §5.4);
-(II) runtime deployment gate на 7 функций;
-(III) rollout на оставшиеся 4 оффера после pilot PASS.
+Если complete и `forceRefresh=false` → skip с verdict `already_complete`. 60-секундный lock остаётся как **anti-concurrency**, не как primary idempotency.
 
-Эти три approve можно дать одним сообщением или по отдельности.
+`force_refresh=true` разрешён только super_admin и помечается в audit отдельно.
+
+**Merge правила (non-destructive):**
+
+- никогда не перезаписывать non-null достоверным NULL;
+- merge только non-null whitelisted полей;
+- не затирать Apple Pay `wallet.type` событием без wallet;
+- DB-колонки `card_brand/card_last4/card_holder` обновляются по тому же принципу.
+
+**Unified meta-путь (единый, без вариантов):**
+
+```text
+meta.stripe.payment_method_details
+meta.stripe.payment_method_id
+meta.stripe.charge_id
+meta.stripe.payment_intent_id
+meta.stripe.card_data_source          ← последний источник
+meta.stripe.card_data_sources_seen[]  ← все источники, dedup
+meta.stripe.card_data_fetched_at      ← timestamp последней успешной enrichment
+```
+
+Запрещено использовать `meta.card_data_fetched_at` / `meta.card_data_source` (legacy).
+
+**Atomic update:** один `UPDATE payments_v2 ... WHERE id=$1 AND provider='stripe' AND amount>0 AND provider_payment_id=$2` с jsonb merge.
+
+---
+
+### 3. Webhook integration (`supabase/functions/stripe-webhook/index.ts`)
+
+Три события сходятся в один writer:
+
+```text
+checkout.session.completed → resolved payment_id → enrichStripePaymentCardData(source='checkout.session.completed')
+payment_intent.succeeded   → resolved payment_id → enrichStripePaymentCardData(source='payment_intent.succeeded')
+invoice.paid               → existing lifecycle → resolved payment_id → enrichStripePaymentCardData(source='invoice.paid')
+```
+
+**Критично по `invoice.paid`:**
+
+- Использовать **существующий** lifecycle-обработчик `onInvoicePaid`. Не создавать параллельную ветку.
+- Enrichment вызывается **после** того, как существующий handler однозначно вернул/нашёл `payments_v2.id`.
+- Enrichment **не имеет права**:
+  - создавать новую `payments_v2` row;
+  - повторно вызывать `onInvoicePaid` или lifecycle-функции;
+  - выдавать доступ;
+  - менять subscription lifecycle;
+  - инкрементировать `payment_links.current_uses`.
+
+**Invoice → Charge resolver** (до реализации проверить актуальный payload):
+
+```text
+invoice.payment_intent → PaymentIntent (expand=latest_charge) → Charge.payment_method_details
+```
+
+Не предполагать, что `invoice.latest_charge` всегда заполнен. Если Charge ещё недоступен → `no_data / retryable`, webhook lifecycle не падает, payment не откатывается.
+
+**Existing inline-блоки PATCH-LIVE-CARD** (строки 348-362, 447-461 в `stripe-webhook/index.ts`) **удаляются** и заменяются вызовом единого writer.
+
+**Audit для webhook-source enrichment:**
+
+```text
+actor_type = system
+actor_user_id = NULL
+actor_label = 'Stripe webhook card enrichment'
+```
+
+При ошибке fetch/secret — `audit_logs.insert({action:'stripe.webhook.card_enrichment_failed', meta:{ safe error snapshot, см. §5 }})`. Webhook lifecycle не падает.
+
+---
+
+### 4. Refactor `stripe-card-data-fetch`
+
+Вынести внутреннюю логику в `_shared/stripe/card-enrichment.ts`. В `index.ts` остаётся только:
+
+1. CORS / `requireSuperAdmin` auth;
+2. body validation (`payment_intent`, опц. `account_code`, опц. `force_refresh`);
+3. вызов `enrichStripePaymentCardData(..., actor={type:'user', user_id, label:'admin single fetch'})`;
+4. HTTP response.
+
+Никакого собственного Stripe fetch / DB update внутри `index.ts`.
+
+---
+
+### 5. Новая edge function `stripe-card-data-fetch-bulk`
+
+`requireSuperAdmin`. Body:
+
+```json
+{
+  "dry_run": true,
+  "payment_intents": ["pi_..."],
+  "account_code": "stripe_poland",
+  "limit": 50,
+  "force_refresh": false
+}
+```
+
+- `dry_run=true` по умолчанию, execute требует явного `false`;
+- `limit` max 200, рекомендуемо 50;
+- concurrency ≤ 3 (последовательно или ограниченно);
+- timeout-safe batching;
+- exact account isolation (один `account_code` за call);
+- без `payment_intents` — подбирает кандидатов через SQL (см. §10).
+
+Per-PI verdict:
+
+```
+updated | skipped_complete | no_data | invalid | ambiguous | error
+```
+
+Использует **тот же** `enrichStripePaymentCardData`.
+
+**Audit:**
+
+- per-PI: `admin.stripe.card_data_fetch_{ok|empty|error|skipped_complete|ambiguous}` с актором = JWT user_id;
+- summary: `admin.stripe.card_data_bulk_run` с inventory before/after, **без** card data, **без** stripe response bodies;
+- не записывать bulk admin run как SYSTEM actor.
+
+---
+
+### 6. Safe audit snapshot
+
+**Разрешённые поля в `audit_logs.meta` при error/skip:**
+
+```
+payment_id, payment_intent_id, account_code, http_status,
+stripe_error_type, stripe_error_code, decline_code,
+request_id, source, retryable, verdict
+```
+
+**Запрещено:**
+
+```
+card_holder, full Stripe response, payment_method_details целиком,
+PAN, CVC, CVV, exp_*, fingerprint, authorization data, billing_details
+```
+
+---
+
+### 7. Inventory (Stage B.1 dry-run, read-only)
+
+До execute вернуть отдельной таблицей:
+
+```text
+total_stripe_rows
+positive_payments (amount>0)
+refund_rows (amount<0)
+positive_with_pi  (provider_payment_id ~ '^pi_')
+positive_with_last4
+positive_with_complete_snapshot
+positive_without_pi
+```
+
+Каждому положительному кандидату присвоить verdict:
+
+```
+ENRICHABLE             — pi_*, snapshot не complete
+ALREADY_COMPLETE       — пропуск
+NO_PAYMENT_INTENT      — нет pi_*
+REFUND_INHERITS_PARENT — amount<0
+AMBIGUOUS              — несколько positive rows на один pi_*
+```
+
+Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (числа пересчитать на момент execute, не фиксировать заранее «3 строки»).
+
+---
+
+### 8. PCI proof
+
+Не ограничиваться grep по dump. Proof включает:
+
+**Code-level:**
+
+- unit test на sanitizer: input с `number/cvc/exp_month/fingerprint` → output без запрещённых ключей + `pci_violation` throw.
+
+**DB-level (read-only):**
+
+```text
+SELECT id FROM payments_v2
+WHERE provider='stripe'
+  AND (meta::text ~* '"(number|pan|cvc|cvv|exp_month|exp_year|fingerprint)"\s*:');
+-- expected: 0 rows
+```
+
+**Audit-level:**
+
+```text
+SELECT id FROM audit_logs
+WHERE action LIKE 'stripe.%' OR action LIKE 'admin.stripe.%'
+  AND meta::text ~* '"(number|pan|cvc|cvv|exp_month|exp_year|fingerprint)"\s*:';
+-- expected: 0 rows
+```
+
+Значения чувствительных полей в proof не публикуются.
+
+---
+
+### 9. Verify без загрязнения production
+
+`stripe trigger` НЕ запускать так, чтобы тестовый event касался live-аккаунта или production-rows без изоляции. Допустимо:
+
+1. Stripe **test mode** с отдельным `account_code` (test connection в `acquiring_connections`);
+2. изолированный fixture payment с `meta.test_payment=true` и без access-grant;
+3. runtime integration-fixture без создания production order/entitlement.
+
+Никаких access/entitlement grants ради card enrichment test.
+
+bePaid regression: выборочные 3 строки `provider='bepaid'`, diff до/после = 0.
+
+---
+
+### 10. Deploy scope (минимальный)
+
+```text
+supabase/functions/stripe-webhook/             ← integration call + удаление inline PATCH-LIVE-CARD
+supabase/functions/stripe-card-data-fetch/     ← thin refactor
+supabase/functions/stripe-card-data-fetch-bulk/ ← new
+supabase/functions/_shared/stripe/card-extract.ts      ← new (deploy as part of webhook bundle)
+supabase/functions/_shared/stripe/card-enrichment.ts   ← new (deploy as part of webhook bundle)
+```
+
+Dependency graph фиксируется в proof. Несвязанные edge functions не деплоить.
+
+---
+
+### 11. Out of scope
+
+- bePaid webhook / sync;
+- UI refund-row (наследование через `stripeParentIndex` уже работает);
+- любые архивные правки `orders_v2` / access / entitlements;
+- backup-таблицы `_stripe_cleanup_2026_06_backup_*` (отдельный discovery-only пункт, retention не исполняется в этом патче).
+
+---
+
+### 12. Обновлённый порядок approve
+
+**Approve A — код и test fixture (без deploy, без execute):**
+
+- `_shared/stripe/card-extract.ts` + unit test;
+- `_shared/stripe/card-enrichment.ts`;
+- `stripe-webhook` integration (удаление inline PATCH-LIVE-CARD, добавление вызовов в 3 events через resolved `payment_id`);
+- refactor `stripe-card-data-fetch` (thin);
+- новая `stripe-card-data-fetch-bulk`;
+- integration test без historical execute.
+
+**Approve B — deployment + webhook runtime proof:**
+
+- точечный deploy 3 функций + 2 shared модулей;
+- изолированный test event (Stripe test mode / fixture);
+- runtime proof для всех 3 source-событий;
+- bePaid regression;
+- PCI proof (code + DB + audit).
+
+**Approve C — historical backfill:**
+
+- финальный inventory с verdicts;
+- dry-run;
+- отдельный owner approve;
+- targeted execute (per-account, ограниченный limit);
+- второй запуск даёт `updated=0, skipped_complete=N`;
+- UI proof (`/admin/payments` показывает brand/last4/wallet там, где Stripe реально вернул данные; `no_data` — честно «Карта не определена»).
+
+**Stage D backup retention** — discovery-only, не смешивается с card-data execute.
+
+---
+
+### Финальный DoD
+
+PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 = PASS, если:
+
+1. Один общий enrichment writer используется webhook / single / bulk; второй write-path отсутствует.
+2. Новые Stripe payments получают sanitized card snapshot (brand, last4, wallet, funding, country, pm_id, charge_id, pi_id).
+3. `invoice.paid` enrichment встроен в существующий lifecycle без повторной материализации payment/order/access.
+4. Исторические `ENRICHABLE` rows обработаны.
+5. Refund rows не дублируют snapshot, наследуют parent через UI.
+6. Повторный backfill даёт 0 updates.
+7. `PAN/CVC/expiry/fingerprint` отсутствуют в `payments_v2` и `audit_logs` (3 proof: code + DB + audit).
+8. bePaid rows не изменены.
+9. Audit actor: webhook = system+NULL, single/bulk admin = JWT user_id.
+10. UI показывает brand/last4/wallet там, где Stripe вернул данные; иначе «Карта не определена» + `no_data` audit verdict.
+11. Proof содержит runtime, SQL, audit, PCI и UI-факты.
+
+---
+
+### Артефакты на approve-этапах
+
+- `.lovable/plan.md` — этот блок.
+- `.lovable/proofs/stripe_card_enrichment_v2_code_and_tests.md` (Approve A).
+- `.lovable/proofs/stripe_card_enrichment_v2_webhook_runtime.md` (Approve B).
+- `.lovable/proofs/stripe_card_enrichment_v2_pci.md` (Approve B).
+- `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (Approve C dry-run).
+- `.lovable/proofs/stripe_card_enrichment_v2_backfill.md` (Approve C execute).
+- `.lovable/discovery/stripe_cleanup_backup_tables_retention_v1.md` (Stage D, отдельно).
+
+### После card enrichment — последовательность (без execute сейчас)
+
+1. PATCH-STRIPE-DOCUMENTS-DRAWER-V2
+2. PATCH-STRIPE-BILLING-PERIOD-MODE-V2
+3. PATCH-STRIPE-BULK-CANCEL-V2
+4. Backup tables retention decision
+
+Жду **Approve A** перед началом любых code-изменений. Deploy и execute не начинать.
