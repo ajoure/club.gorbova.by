@@ -29,7 +29,8 @@ jobs:
         run: |
           set -euo pipefail
           CONFIG=supabase/config.toml
-          # Functions that MUST be publicly reachable (no JWT)
+          # Functions that MUST be publicly reachable (no Supabase JWT).
+          # Signature verification is done inside each function.
           REQUIRED=(
             stripe-webhook
             bepaid-webhook
@@ -39,13 +40,15 @@ jobs:
             amocrm-webhook
             auth-email-hook
             payment-methods-webhook
+            public-webhook-deploy-probe
           )
           FAIL=0
           for fn in "${REQUIRED[@]}"; do
-            # Locate the block for this function and check verify_jwt value
+            # Locate the [functions.<fn>] block and stop at the next [...]
+            # header (works regardless of indentation).
             block=$(awk -v fn="[functions.${fn}]" '
               $0==fn {found=1; next}
-              found && /^  \[functions\./ {exit}
+              found && /^\[/ {exit}
               found {print}
             ' "$CONFIG")
             if [ -z "$block" ]; then
@@ -54,7 +57,7 @@ jobs:
               continue
             fi
             if ! echo "$block" | grep -qE 'verify_jwt\s*=\s*false'; then
-              echo "FAIL: ${fn} must declare verify_jwt = false (D2 guard)"
+              echo "FAIL: ${fn} must declare verify_jwt = false (EXPECTED config contract)"
               echo "Block content:"
               echo "$block"
               FAIL=1
