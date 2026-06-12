@@ -148,3 +148,20 @@ PASS — все 16 пунктов исходного §12 + соответств
 Выполнить read-only discovery (rg по кодовой базе, SELECT-only к БД, inventory matrix) и собрать один consolidated отчёт `Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve A` со всеми пунктами A1–A11 + terminal verdict таблица + canonical recommendation + proposed exact scope Approve B. Код / config / DB не изменять. Файл discovery-md создаётся в build-режиме (это сам артефакт отчёта, не правка прод-кода).
 
 Жду переключения в build mode для исполнения Approve A.
+
+---
+
+## Approve A — выполнен (read-only discovery)
+
+См. отчёт: `.lovable/discovery/stripe_documents_drawer_v2.md`
+
+Verdict: **Approve A = PASS**
+
+- 3 Stripe rows + 5 bePaid sampled, ARCHITECTURE_CONFLICT не найден.
+- Canonical resolver «документы платежа» отсутствует → рекомендация создать новую `admin-payment-documents-resolve` (read-only orchestrator).
+- Refund parent mapping каноничен через `meta.parent_payment_id` (UUID).
+- Technical payment marker отсутствует → отдельный backlog-PATCH, drawer не блокируется.
+- RBAC — без миграций, используем существующие role-checks (admin/super_admin/accountant + `requireSuperAdmin` для diagnostics).
+- Private bucket `documents` → drawer отдаёт ТОЛЬКО short-lived signed URL on-the-fly.
+
+Approve B / C / D — NOT APPROVED. Жду подтверждения Approve B.
