@@ -95,27 +95,35 @@ Supabase`. Full reproduction, proof, and copy-paste issue text live in:
 
 ## 8. Webhook deploy moratorium
 
-Until Lovable platform answers the issue in §5, the following rule is
-binding:
+**Status: UNDER RE-VERIFICATION** (2026-06-12,
+see `.lovable/discovery/public_webhook_deploy_layer_v1.md`).
+
+External read-only probe on 2026-06-12 shows all 8 public webhook functions
+(including `stripe-webhook`) currently respond with application-level
+errors, NOT platform `UNAUTHORIZED_NO_AUTH_HEADER`. The 2026-06-06 regression
+either self-resolved or its repro conditions have changed. This does NOT
+mean the moratorium can be lifted — the current agent-deploy behavior on
+redeploy has not been re-tested.
+
+Until controlled canary redeploy proves agent-deploy honours
+`verify_jwt = false` (PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1, Approve C),
+the binding rules remain:
 
 - **No agent-redeploy of any webhook function.** Affected names:
   `stripe-webhook`, `bepaid-webhook`, `telegram-webhook`,
   `payment-methods-webhook`, `auth-email-hook`, `instagram-webhook`,
   `getcourse-webhook`, `amocrm-webhook`.
-- `stripe-webhook` is currently in platform-401 state from a prior
-  controlled-redeploy regression. **Status: BLOCKED-BY-PLATFORM. Do not
-  attempt to "fix" via redeploy** — that is the action that caused it.
-- Other 7 webhook functions: PASS (snapshot in
-  `.lovable/discovery/stripe_webhook_redeploy_d2_bis_v1.md` section A).
-  Do not touch.
-- `verify-webhook-runtime.yml` continues to monitor. A FAIL on
-  `stripe-webhook` is interpreted as known-blocked, not a new regression.
+- All 8 webhook functions currently PASS external probe (application-level
+  responses). Do not touch.
+- `verify-webhook-runtime.yml` continues to monitor.
+- Canary function `public-webhook-deploy-probe` exists in the repo but is
+  NOT deployed yet (Approve C scope).
 
 Current infrastructure status:
 
 ```
 Infrastructure model     = CLEAN
 GitHub deploy            = DISABLED (no-op stub)
-Lovable webhook deploy   = BLOCKED-BY-PLATFORM
+Lovable webhook deploy   = UNDER RE-VERIFICATION (canary pending)
 Phase 3.4 Runtime        = FROZEN
 ```
