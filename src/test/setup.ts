@@ -23,10 +23,8 @@ class ResizeObserverStub {
 (globalThis as any).ResizeObserver = (globalThis as any).ResizeObserver ?? ResizeObserverStub;
 
 if (!Element.prototype.hasPointerCapture) {
-  // @ts-expect-error stub
-  Element.prototype.hasPointerCapture = () => false;
+  (Element.prototype as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => false;
 }
 if (!Element.prototype.scrollIntoView) {
-  // @ts-expect-error stub
-  Element.prototype.scrollIntoView = () => {};
+  (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
 }
