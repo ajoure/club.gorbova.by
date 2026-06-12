@@ -441,3 +441,12 @@ Deploy, backend-изменения и production runtime не выполнять
 ### 9. Gate
 
 После реализации остановиться и вернуть «Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve C». Deploy и production runtime не запускаем.
+---
+
+## Approve C — DONE (2026-06-12)
+
+- 56/56 новых frontend-тестов PASS; полный прогон 189/189 PASS.
+- Backend / config.toml / functions.registry.txt / DB / RPC / миграции — без изменений.
+- Existing receipt column / `ReceiptStatusBadge` / `useUnifiedPayments` / `resolveDocumentUrl` — не тронуты (add-only `DropdownMenuItem` + новый `<PaymentDocumentsDrawer/>`).
+- Proof: `.lovable/proofs/stripe_documents_drawer_v2_ui.md`.
+- Gate: Approve C = DONE. Approve D = NOT APPROVED — ждём отдельного approve на deploy.
