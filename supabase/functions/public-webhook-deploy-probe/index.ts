@@ -30,7 +30,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-const PROBE_MARKER = "public-webhook-deploy-v2";
+const PROBE_MARKER = "public-webhook-deploy-v1";
 
 Deno.serve((req: Request) => {
   if (req.method === "OPTIONS") {
