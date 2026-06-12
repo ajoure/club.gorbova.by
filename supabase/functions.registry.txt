@@ -30,6 +30,8 @@ admin-manual-charge
 admin-create-payment-link
 admin-create-public-link
 admin-payments-diagnostics
+# PATCH-STRIPE-DOCUMENTS-DRAWER-V2 — registry-only entry (deploy reserved for Approve D)
+admin-payment-documents-resolve
 auth-actions
 auth-check-email
 bepaid-create-token
