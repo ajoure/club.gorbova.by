@@ -32,6 +32,9 @@ import {
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materialize.ts';
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
+// PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
+import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
+
 
 
 function svc() {
@@ -145,6 +148,34 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   if (STRIPE_SUBSCRIPTION_EVENT_TYPES.has(event.type)) {
     const out = await resolveStripeSubscriptionEvent(supabase, event, account_code);
     if (out) {
+      // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: после того как существующий
+      // onInvoicePaid lifecycle материализовал payment_id, обогащаем card snapshot.
+      // НЕ создаём payment row, НЕ повторяем lifecycle, НЕ меняем access.
+      // Никогда не падаем — enrichment не должен ломать activation.
+      if (event.type === 'invoice.paid' && out.payment_id && !out.manual_review) {
+        try {
+          const { data: paymentRow } = await supabase
+            .from('payments_v2')
+            .select('provider_payment_id, meta')
+            .eq('id', out.payment_id)
+            .maybeSingle();
+          const piFromRow = (typeof paymentRow?.provider_payment_id === 'string'
+            && /^pi_[A-Za-z0-9_]+$/.test(paymentRow.provider_payment_id))
+            ? paymentRow.provider_payment_id
+            : (paymentRow?.meta?.stripe?.payment_intent_id ?? null);
+          if (piFromRow && /^pi_[A-Za-z0-9_]+$/.test(piFromRow)) {
+            await enrichStripePaymentCardData({
+              supabase,
+              paymentId: out.payment_id,
+              paymentIntentId: piFromRow,
+              accountCode: account_code,
+              source: 'invoice.paid',
+              actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+              fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+            });
+          }
+        } catch { /* never re-throw — invoice.paid activation already committed */ }
+      }
       // Map resolver result → webhook output shape.
       // manual_review остаётся в note, чтобы processing_status выставился ниже.
       const note = out.manual_review
@@ -153,6 +184,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       return { order_id: out.order_id, payment_id: out.payment_id, note };
     }
   }
+
 
   const obj = event.data.object as Record<string, unknown>;
   const md = (obj.metadata ?? {}) as Record<string, string>;
@@ -345,21 +377,23 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'checkout.session.completed.api_latest_charge' },
             );
-            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: единый writer card snapshot.
+            // Preloaded charge — повторного Stripe fetch нет.
             try {
-              if (latest && typeof latest === 'object') {
-                const card = latest?.payment_method_details?.card ?? null;
-                const card_brand = card?.brand ?? null;
-                const card_last4 = card?.last4 ?? null;
-                const card_holder = latest?.billing_details?.name ?? null;
-                if (card_brand || card_last4 || card_holder) {
-                  await supabase
-                    .from('payments_v2')
-                    .update({ card_brand, card_last4, card_holder })
-                    .eq('id', payment_id);
-                }
+              if (payment_id && pi_id && latest && typeof latest === 'object') {
+                await enrichStripePaymentCardData({
+                  supabase,
+                  paymentId: payment_id,
+                  paymentIntentId: pi_id,
+                  accountCode: account_code,
+                  source: 'checkout.session.completed',
+                  actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+                  preloadedCharge: latest,
+                  fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+                });
               }
-            } catch { /* never re-throw */ }
+            } catch { /* never re-throw — webhook lifecycle must not fail */ }
+
           }
         }
       }
@@ -444,21 +478,22 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'pi.succeeded.api_latest_charge' },
             );
-            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: единый writer card snapshot.
             try {
-              if (latest && typeof latest === 'object') {
-                const card = latest?.payment_method_details?.card ?? null;
-                const card_brand = card?.brand ?? null;
-                const card_last4 = card?.last4 ?? null;
-                const card_holder = latest?.billing_details?.name ?? null;
-                if (card_brand || card_last4 || card_holder) {
-                  await supabase
-                    .from('payments_v2')
-                    .update({ card_brand, card_last4, card_holder })
-                    .eq('id', payment_id);
-                }
+              if (payment_id && pi_id && latest && typeof latest === 'object') {
+                await enrichStripePaymentCardData({
+                  supabase,
+                  paymentId: payment_id,
+                  paymentIntentId: pi_id,
+                  accountCode: account_code,
+                  source: 'payment_intent.succeeded',
+                  actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+                  preloadedCharge: latest,
+                  fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+                });
               }
-            } catch { /* never re-throw */ }
+            } catch { /* never re-throw — webhook lifecycle must not fail */ }
+
           }
         }
       }
