@@ -44,3 +44,14 @@ verify_jwt = false
 # No DB, no secrets, no business logic — see supabase/functions/public-webhook-deploy-probe/.
 [functions.public-webhook-deploy-probe]
 verify_jwt = false
+
+# ============================================================
+# Admin-only Stripe card enrichment functions (PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 / F1)
+# verify_jwt = true  →  require Supabase JWT; super_admin check is enforced in code
+# via requireSuperAdmin (has_role_v2).
+# ============================================================
+[functions.stripe-card-data-fetch]
+verify_jwt = true
+
+[functions.stripe-card-data-fetch-bulk]
+verify_jwt = true

@@ -1,411 +1,560 @@
 да, согласен, с учетом правок:
 
-Все пункты плана сохраняются. Ниже — обязательные add-only уточнения перед выполнением Approve E.
+Все пункты плана сохраняются. Ниже — обязательные уточнения перед выполнением F1–F4.
 
-**1. Recovery artifact нельзя хранить только в**
+**1. Явно зафиксировать JWT-режим admin-функций**
 
-**/tmp**
+Не полагаться на неявный default.
 
-/tmp/stripe-webhook_recovery/ допустим только как рабочая копия текущего запуска. Он не является надёжным recovery source: окружение может очиститься или смениться между deploy и восстановлением.
+Добавить в supabase/config.toml:
 
-До deploy сохранить полный предыдущий dependency closure также в постоянный repo-artifact, например:
+[functions.stripe-card-data-fetch]
 
-.lovable/recovery/stripe-webhook/2026-06-12/
-
-Включить:
-
-- stripe-webhook/index.ts;
-- все рекурсивно импортируемые локальные _shared/*;
-- supabase/config.toml;
-- import map / deno.json / lockfile, если они влияют на сборку;
-- manifest с SHA-256 каждого файла и aggregate hash;
-- подтверждённый source commit/reference.
-
-Recovery source не должен содержать secrets и не должен попадать в bundle функции.
-
-Если точный предыдущий production dependency closure не найден:
-
-Approve E = BLOCKED_NO_RECOVERY_SOURCE
+verify_jwt = true
 
 &nbsp;
 
-**2. Текущий HEAD и Approve A proof не доказывают previous production bundle**
+[functions.stripe-card-data-fetch-bulk]
 
-Previous manifest нельзя строить из текущего HEAD, потому что в нём уже находится новый card-enrichment код.
+verify_jwt = true
 
-Нужно доказать соответствие предыдущей production-версии через один или несколько независимых источников:
+Это expected config для admin-only функций.
 
-- deployment/version metadata;
-- точный git commit последнего deploy;
-- предыдущий proof с file hashes;
-- сохранённый source snapshot;
-- Lovable/Supabase deployment history.
+Перед deploy подтвердить:
 
-Если доказан только index.ts, но не соответствующие ему shared dependencies, recovery gate не пройден.
+public webhook functions → verify_jwt=false
 
-&nbsp;
+admin card functions → verify_jwt=true
 
-**3. Runtime fixture должен быть доказуемо test-mode**
-
-До отправки событий зафиксировать:
-
-Stripe event.livemode = false
-
-account_code = test connection
-
-fixture marker присутствует в metadata
-
-созданные DB rows однозначно связаны с test event IDs
-
-Маркер meta.test_payment=true должен фактически переноситься в локальные строки. Нельзя только предполагать его наличие.
-
-Перед runtime убедиться, что fixture:
-
-- не связан с production offer/payment link;
-- не выдаёт entitlements/access;
-- не создаёт production-документы;
-- не увеличивает production payment_links.current_uses;
-- не смешивается с live Stripe account.
-
-Если изоляция конкретного события не доказана — событие не запускать и фиксировать NOT EXECUTED.
+stripe-webhook и другие webhook не деплоить.
 
 &nbsp;
 
-**4. Разделить два уровня идемпотентности корректно**
+**2. Исправить критерии auth-probes F1**
 
-Повтор одного и того же event_id доказывает только:
+Для stripe-card-data-fetch запрос без обязательного payment_intent может корректно вернуть 400 validation_error, а не 200. Это не является провалом авторизации.
 
-event-level idempotency
+Проверять отдельно:
 
-Такой event может быть остановлен в provider_events до вызова card writer, поэтому он не доказывает writer-level skipped_complete.
+**Unauthenticated**
 
-Writer-level идемпотентность подтвердить отдельным способом:
+401 platform/auth rejection
 
-- двумя разными Stripe event IDs, относящимися к одному PaymentIntent/payment row, например:
-- либо другим безопасным повторным source-event по той же оплате.
+**JWT обычного пользователя**
 
-Ожидание:
+403 RBAC rejection
 
-первый distinct event → updated
+**Super admin — single function**
 
-второй distinct event → skipped_complete или non-destructive merge
+Отправить валидный по схеме, но заведомо отсутствующий технический pi_*.
 
-replay того же event_id → event duplicate guard
+Допустимый результат:
 
-В proof эти результаты показать раздельно.
+200 с verdict no_data/not_found
 
-&nbsp;
+или
 
-**5. Failure injection для**
+404/422 application-level response
 
-**invoice.paid**
+Главное:
 
-**не должна создавать новый риск**
+- запрос прошёл JWT и RBAC;
+- actor_user_id соответствует JWT администратора;
+- payments_v2 не изменена;
+- нет Stripe commercial side effects.
 
-Не подделывать Stripe-signed event и не менять secrets/runtime-конфигурацию ради искусственного падения enrichment.
+**Super admin — bulk function**
 
-Runtime failure test разрешён только при наличии полностью изолированного test-mode fixture, который гарантированно не затрагивает коммерческий lifecycle.
+Использовать только:
 
-Если безопасно создать invoice.paid с недоступным PaymentMethod невозможно:
+{
 
-- подтвердить non-fatal поведение integration/unit test;
-- в runtime proof указать:
-- не фабриковать runtime PASS.
+  "dry_run": true,
 
-Успешный runtime invoice.paid по-прежнему обязателен для общего Approve E = PASS.
+  "account_code": "stripe_poland",
 
-&nbsp;
+  "limit": 50,
 
-**6. Привести проверки**
+  "force_refresh": false
 
-**network**
-
-**к единому контракту**
-
-network не является PCI-полем, но оно запрещено утверждённым canonical snapshot.
-
-Поэтому выполнить две разные проверки:
-
-**PCI denylist**
-
-number
-
-pan
-
-cvc
-
-cvv
-
-exp_month
-
-exp_year
-
-fingerprint
-
-**Canonical-shape guard**
-
-network
-
-card_holder внутри meta/audit
-
-любые поля вне утверждённого whitelist
+}
 
 Ожидаемо:
 
-0 PCI forbidden keys
+HTTP 200
 
-0 network keys в card snapshot
+updated = 0
 
-0 card_holder в meta/audit
-
-&nbsp;
-
-**7. Deployment metadata не выдумывать**
-
-Если supabase--deploy_edge_functions не возвращает deployment ID или version, в proof записать:
-
-- полный фактический ответ deploy tool;
-- timestamp;
-- source aggregate hash;
-- function name;
-- post-deploy runtime evidence.
-
-Не создавать искусственный deployment ID.
-
-Новый bundle считать подтверждённым только совокупностью:
-
-deploy tool success
-
-+ proposed source hash
-
-+ post-deploy public smoke
-
-+ фактическое новое card-enrichment поведение
+UI/runtime proofs выполнять из основной admin-учётной записи [7500084@gmail.com](mailto:7500084@gmail.com).
 
 &nbsp;
 
-**Итоговый gate**
+**3. Inventory должен использовать тот же PI resolver, что и writer**
 
-PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1 / Approve D = PASS
+Нельзя создавать упрощённую SQL-классификацию, расходящуюся с _shared/stripe/card-enrichment.ts.
 
-Approve E controlled stripe-webhook redeploy = APPROVED с указанными условиями
+Для каждой строки PI определяется тем же приоритетом:
 
-Historical card backfill = NOT APPROVED
+meta.stripe.payment_intent_id
 
-Admin single/bulk deploy = NOT APPROVED в рамках Approve E
+provider_payment_id, если ^pi_
 
-После выполнения остановиться и вернуть только фактический verdict:
+meta.stripe.invoice.payment_intent
 
-Approve E = PASS
+meta.provider_response.stripe.payment_intent_id
 
-Approve E = PARTIAL
+Если источники различаются:
 
-Approve E = FAIL-RECOVERED
+CONFLICTING_PAYMENT_INTENT_IDS
 
-Approve E = FAIL-NOT-RECOVERED
+Если одному PI соответствуют несколько положительных Stripe payments:
 
-Approve E = BLOCKED_NO_RECOVERY_SOURCE
+AMBIGUOUS
+
+Добавить обязательную сверку:
+
+SQL inventory counts
+
+=
+
+bulk dry-run verdict counts
+
+При расхождении:
+
+STOP
+
+F2 = INVENTORY_RESOLVER_MISMATCH
+
+F3 не запускать.
 
 &nbsp;
 
-# План: PATCH-LOVABLE-PUBLIC-WEBHOOK-DEPLOY-V1 / Approve E — controlled redeploy `stripe-webhook`
+**4. Исправить ожидаемый результат F3**
 
-Scope: ровно одна функция — `stripe-webhook`. Никакие другие функции, миграции, RPC, schema, secrets, Stripe endpoint URL/events, historical backfill — не трогаются. Канонический протокол: `.lovable/architecture/public_webhook_controlled_redeploy_protocol_v1.md`.
+ENRICHABLE означает, что строка подходит для попытки enrichment, но не гарантирует, что Stripe API вернёт card data.
 
-## Шаг 0 — Recovery source gate (BLOCKING)
+Поэтому нельзя требовать:
 
-До любых действий доказать, что recoverable source текущего deployed production bundle существует.
+run #1 updated = N
 
-- Прочитать текущий `supabase/functions/stripe-webhook/index.ts` и весь импортируемый closure (`_shared/stripe/card-enrichment.ts`, `_shared/stripe/card-extract.ts`, любые другие `_shared/*` импорты), `supabase/config.toml` block `[functions.stripe-webhook]`.
-- Построить **Previous bundle manifest** (фиксирует прежний production state — то, что задеплоено сейчас, ДО Approve B-кода):
-  - список файлов dependency closure;
-  - sha256 каждого файла;
-  - aggregate sha256;
-  - git commit reference последнего production deploy `stripe-webhook` (из chat/proofs PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 Approve A baseline);
-  - подтверждение, что эти исходники соответствуют текущему deployed bundle (через сопоставление с baseline Approve A, не через blind trust текущего HEAD).
-- Сохранить immutable artifact: копии файлов в `/tmp/stripe-webhook_recovery/<file>` + manifest `.lovable/proofs/stripe_webhook_recovery_manifest_2026_06_12.md` с hash-ами и путями.
-- Если соответствие previous deployed bundle не доказывается → **STOP, Approve E = BLOCKED_NO_RECOVERY_SOURCE**, deploy не выполнять.
+run #2 skipped_complete = N
 
-## Шаг 1 — Sanitizer audit (правка к плану)
+Для каждого account_code должно выполняться:
 
-Read-only проверка `_shared/stripe/card-enrichment.ts` / `card-extract.ts`:
+N = updated + no_data + skipped_complete + error
 
-- whitelist sanitizer = ровно `{brand, last4, wallet.type, funding, country}`;
-- поле `network` НЕ присутствует в whitelist, writer, tests, types;
-- если найдено `network` — удалить из sanitizer/tests до deploy (минимальный code change, без бизнес-логики), повторно гонять tests;
-- canonical snapshot shape:
-  ```
-  { type: "card", card: { brand, last4, wallet: {type}, funding, country } }
-  ```
+На первом запуске допустимо:
 
-## Шаг 2 — Proposed bundle manifest и diff
+updated = U
 
-- **Proposed bundle manifest**: те же поля, что и previous, но для текущего HEAD после Шаг 1.
-- В proof — exact file-by-file diff между previous и proposed manifests (имена файлов, hash before/after, минимальный текстовый diff по изменённым файлам).
-- Подтверждение: единственный card writer = `_shared/stripe/card-enrichment.ts`, inline card writers в `stripe-webhook/index.ts` отсутствуют.
+no_data = D
 
-## Шаг 3 — Pre-deploy gate
+skipped_complete = 0
 
-- `supabase/config.toml` содержит `[functions.stripe-webhook]` `verify_jwt = false`;
-- `bunx vitest run` для затронутых тестов = 20/20 PASS (или эквивалент скоупа Approve B);
-- build/typecheck clean (через harness);
-- migrations/RPC/schema/secrets не менялись (grep по `supabase/migrations` — пусто за период патча);
-- Stripe endpoint URL и enabled_events не менялись (read `stripe-ensure-webhook` canonical events, без модификации);
-- deployment scope ровно `["stripe-webhook"]`.
+error = 0
 
-## Шаг 4 — Pre-smoke текущего bundle (×3)
+U + D = N
 
-POST без Supabase JWT в `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/stripe-webhook` в `t=0 / 30s / 2m`. Зафиксировать HTTP, body, headers, `sb-request-id`, `x-deno-execution-id`. PASS = application-level `signature_verification_failed`, отсутствие `UNAUTHORIZED_NO_AUTH_HEADER` / `Missing authorization header` / `Invalid JWT`. На FAIL — STOP, deploy не выполнять.
+На втором запуске:
 
-## Шаг 5 — Deploy
+updated = 0
 
-`supabase--deploy_edge_functions(["stripe-webhook"])`. Зафиксировать deployment id, `deployed_at`, proposed aggregate hash, expected `verify_jwt=false`.
+skipped_complete = U
 
-## Шаг 6 — Post-deploy auth smoke (×3)
+no_data = D либо skipped_no_data = D
 
-Те же три точки. PASS только при:
+error = 0
 
-- application-level signature error от функции;
-- отсутствие platform JWT markers во всех трёх probes;
-- невалидная `Stripe-Signature` отклоняется самой функцией.
+Для no_data:
 
-На FAIL → Шаг 14 (recovery).
+- payment row не обновляется фиктивными значениями;
+- сохраняется безопасный audit verdict;
+- не создаётся бесконечная серия одинаковых audit-записей;
+- допускается cooldown/последний no_data_checked_at, только если он не содержит card data и не меняет бизнес-поля.
 
-## Шаг 7 — Stripe Dashboard delivery (раздельно)
+Hard STOP:
 
-Два независимых proof:
+error > 0
 
-1. **Synthetic invalid-signature smoke** — ожидаемо `400 signature_verification_failed`.
-2. **Real signed Stripe delivery** — через Stripe Dashboard `Send test webhook` (test mode) на live endpoint. PASS: 2xx (предпочт. 200), не 401, не signature error, Stripe Dashboard статус delivery = success.
+updated > 0 на втором запуске
 
-## Шаг 8 — Runtime proof на изолированных test-mode событиях
+повторное destructive изменение snapshot
 
-Использовать Stripe test mode и подготовленные fixtures (с маркером `meta.test_payment=true`, без выдачи коммерческого access). Для каждого source path — отдельный event с фиксацией `event_id`:
+&nbsp;
 
-- `checkout.session.completed`
-- `payment_intent.succeeded`
-- `invoice.paid`
+**5. Уточнить критерий исторического PASS**
 
-Допустима одна контролируемая test subscription chain, покрывающая все три handler. Если какой-то event безопасно получить нельзя — фиксировать `NOT EXECUTED`, объявлять **Approve E = PARTIAL**.
+HISTORICAL ENRICHMENT = PASS не означает, что у каждой старой операции обязательно найдена карта.
 
-Запрещено: реальные entitlements/access, production-документы, инкремент `payment_links.current_uses`, смешение test/live, code-inspection вместо runtime.
+PASS, если каждая строка получила доказанный конечный verdict:
 
-## Шаг 9 — Runtime card snapshot (read-only)
+ALREADY_COMPLETE
 
-Через `supabase--read_query` показать для каждого test payment row:
+UPDATED
 
-- `payments_v2.card_brand / card_last4 / card_holder`;
-- `meta.stripe.payment_method_details.{type, card.brand, card.last4, card.wallet.type, card.funding, card.country}`;
-- `meta.stripe.{payment_method_id, charge_id, payment_intent_id, card_data_source, card_data_sources_seen, card_data_fetched_at}`.
+NO_DATA_FROM_STRIPE
 
-Проверки:
+NO_PAYMENT_INTENT
 
-- запрещённых полей (`number/pan/cvc/cvv/exp_month/exp_year/fingerprint/network`) нет;
-- event без wallet не стёр существующий wallet;
-- `card_data_sources_seen` дедуплицирован;
-- NULL не затёр непустые значения;
-- `card_holder` не попал в `meta` или `audit_logs`.
+REFUND_INHERITS_PARENT
 
-В proof маскировать last4 и ФИО (`*1234`, `И. И.`).
+И одновременно:
 
-## Шаг 10 — Idempotency (двухуровневый)
+AMBIGUOUS = 0
 
-Повторная доставка того же `event_id` для каждого из трёх handler. Проверить:
+CONFLICTING_PAYMENT_INTENT_IDS = 0
 
-- **Event-level**: дубликат payment row не создан, дубликат order не создан, access/grant не выдан повторно;
-- **Writer-level**: card writer возвращает `skipped_complete` (или эквивалент), snapshot не переписан без необходимости.
+ERROR = 0
 
-Зафиксировать оба уровня раздельно в proof.
+Строки NO_DATA_FROM_STRIPE остаются в UI как:
 
-## Шаг 11 — `invoice.paid` lifecycle proof
+Карта не определена
 
-Отдельный блок proof:
+Без искусственного заполнения brand/last4.
 
-- `onInvoicePaid` resolved/materialized `payment_id`;
-- card enrichment отработал;
-- payment не материализован повторно;
-- order не создан повторно;
-- subscription lifecycle не изменён повторно;
-- entitlement/access не выданы повторно;
-- `payment_links.current_uses` не увеличился;
-- enrichment failure (имитировать через test event с PM, недоступным для retrieve) НЕ откатывает основной successful lifecycle.
+&nbsp;
 
-## Шаг 12 — Targeted lifecycle invariants (before/after)
+**6. Audit и SYSTEM ACTOR**
 
-Diff только по test fixture IDs / event IDs / временному окну / `meta.test_payment=true`:
+Для F1–F3 admin-операций:
 
-`orders_v2`, `payments_v2`, `subscriptions_v2`, `provider_subscriptions`, `entitlements`, `access_rules`, `payment_links.current_uses`, `ai_generated_documents`.
+actor_type = user/admin
 
-Разрешены только ожидаемые fixture rows и card snapshot updates. Глобальные counts не требуются.
+actor_user_id = фактический JWT sub
 
-## Шаг 13 — bePaid regression
+Не использовать SYSTEM ACTOR для ручного single/bulk запуска.
 
-- `bepaid-webhook` НЕ деплоится;
-- внешний POST без JWT → application-level signature/auth response (smoke);
-- bundle/version `bepaid-webhook` не менялся;
-- контрольный bePaid payment row не обновлялся в окне теста;
-- Stripe card writer не вызывается для `provider='bepaid'` (code-level grep + runtime check по `audit_logs`).
+SYSTEM ACTOR остаётся только для будущих webhook-triggered enrichment событий.
 
-Фиктивные bePaid events не отправлять.
+Proof должен показать:
 
-## Шаг 14 — PCI scans
+- audit action;
+- actor type;
+- actor user ID;
+- безопасный verdict;
+- отсутствие full Stripe response и card snapshot в audit.
 
-SQL запросы (`->`-pathing, корректные скобки) по denylisted JSON keys в:
+&nbsp;
 
-- `payments_v2.meta` where `provider='stripe'`;
-- `audit_logs.meta` для `stripe/admin.stripe.*` actions;
-- `provider_subscriptions.meta` where `provider='stripe'`.
+**7. Lifecycle diff должен охватывать весь execute window**
 
-Keys: `number, pan, cvc, cvv, exp_month, exp_year, fingerprint`. Ожидание: 0 rows на каждый ключ. PAN-regex — supplementary, основное доказательство = key-denylist + sanitizer unit tests.
+Кроме fixture-scoped проверки, добавить временной targeted diff:
 
-## Шаг 15 — Recovery procedure (если потребуется)
+provider = stripe
 
-При platform JWT failure или критической runtime regression:
+account_code = текущий run
 
-1. STOP, не деплоить другие функции.
-2. Восстановить полный previous manifest из `/tmp/stripe-webhook_recovery/` в репозиторий (все файлы closure, не только `index.ts`).
-3. `supabase--deploy_edge_functions(["stripe-webhook"])`.
-4. Повторить smoke `t=0/30s/2m` + real Stripe Dashboard delivery.
-5. На PASS recovery → запись в local moratorium register (`lovable_agent_deploy_verify_jwt_regression.md`), статус **Approve E = FAIL-RECOVERED**.
-6. На FAIL recovery → **Approve E = FAIL-NOT-RECOVERED**, эскалировать.
+updated_at в окне F3
 
-## Шаг 16 — Proof artifact
+Разрешённые изменения:
 
-`.lovable/proofs/stripe_webhook_controlled_redeploy_2026_06_12.md` содержит:
+payments_v2.card_brand
 
-1. Previous bundle manifest (+ ссылка на `stripe_webhook_recovery_manifest_2026_06_12.md`).
-2. Proposed bundle manifest.
-3. Exact diff (file-by-file).
-4. Config proof (`verify_jwt=false`, tests, build, scope).
-5. Pre-smoke ×3.
-6. Deployment metadata.
-7. Post-smoke ×3.
-8. Synthetic invalid-signature result.
-9. Real signed Stripe Dashboard delivery (2xx).
-10. Runtime event IDs по трём source-path (или `NOT EXECUTED`).
-11. Before/after card snapshot (masked).
-12. Event-level + writer-level idempotency.
-13. `invoice.paid` lifecycle proof.
-14. Targeted lifecycle invariants (fixture-scoped diff).
-15. bePaid regression.
-16. PCI scans (0 forbidden keys).
-17. Recovery readiness/result.
-18. Подтверждение отсутствия historical backfill.
+payments_v2.card_last4
 
-## Возможные verdict'ы
+payments_v2.card_holder
 
-- **Approve E = PASS** — все шаги PASS, три source-path покрыты runtime.
-- **Approve E = PARTIAL** — какой-то из source-path помечен `NOT EXECUTED` (нельзя безопасно сгенерировать test event).
-- **Approve E = FAIL-RECOVERED** — post-smoke/runtime FAIL, recovery успешен, функция в local moratorium register.
-- **Approve E = FAIL-NOT-RECOVERED** — recovery не удался, эскалация Lovable.
-- **Approve E = BLOCKED_NO_RECOVERY_SOURCE** — Шаг 0 не пройден, deploy не выполнялся.
+payments_v2.meta.stripe card-enrichment поля
 
-## Out of scope (явно)
+audit_logs
 
-- `bepaid-webhook`, `telegram-webhook`, `payment-methods-webhook`, `auth-email-hook`, `getcourse-webhook`, `amocrm-webhook`, `instagram-webhook`, `public-webhook-deploy-probe` — не деплоятся.
-- `stripe-card-data-fetch`, `stripe-card-data-fetch-bulk` — не деплоятся (Approve C, отдельный gate).
-- Historical card backfill — запрещён.
-- Migrations, RPC, schema, secrets, Stripe endpoint config — не менять.
-- Global moratorium lift — не выполняется, остаётся CONDITIONAL CONTROLLED DEPLOYMENT.
+Любые изменения в:
 
-После выполнения — остановиться и вернуть один из verdict'ов выше.
+amount
+
+currency
+
+status
+
+order_id
+
+subscription_id
+
+orders_v2
+
+subscriptions_v2
+
+provider_subscriptions lifecycle
+
+entitlements
+
+access_rules
+
+payment_links.current_uses
+
+ai_generated_documents
+
+→ F4 = FAIL.
+
+&nbsp;
+
+**8. UI proof**
+
+Зафиксировать минимум:
+
+- одну Stripe-строку после успешного enrichment;
+- Stripe refund, наследующий отображение карты parent payment;
+- одну NO_DATA_FROM_STRIPE, если такая есть;
+- пять контрольных bePaid-строк.
+
+Проверить, что UI не показывает:
+
+undefined
+
+*null
+
+неверную маску
+
+данные карты refund как собственный snapshot
+
+Frontend-код в этом патче не менять. Если UI не читает уже сохранённый canonical shape, зафиксировать отдельный PATCH, но не смешивать его с enrichment execute.
+
+&nbsp;
+
+**9. Финальные статусы**
+
+При успешных F1–F4:
+
+PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2
+
+= IMPLEMENTATION COMPLETE
+
+&nbsp;
+
+HISTORICAL ENRICHMENT
+
+= PASS WITH TERMINAL VERDICTS
+
+&nbsp;
+
+LIVE WEBHOOK UAT
+
+= DEFERRED
+
+&nbsp;
+
+SPRINT
+
+= CLOSED WITH DEFERRED LIVE UAT
+
+Полный webhook runtime PASS не объявлять до реальных событий:
+
+checkout.session.completed
+
+payment_intent.succeeded
+
+invoice.paid
+
+&nbsp;
+
+**10. Разрешённый scope**
+
+Разрешаю последовательно выполнить:
+
+F1 → F2 → F3 → F4 → создать F5 backlog
+
+с остановкой на первом FAIL/BLOCKED.
+
+Deploy-list F1:
+
+stripe-card-data-fetch
+
+stripe-card-data-fetch-bulk
+
+Запрещено:
+
+redeploy stripe-webhook
+
+deploy других webhook
+
+force_refresh=true
+
+historical update refund rows
+
+изменение migrations/RPC/schema/secrets/frontend
+
+изменение payment lifecycle
+
+После завершения вернуть один consolidated отчёт с фактическими verdict F1–F4 и итоговым статусом патча.
+
+&nbsp;
+
+# План: PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 / Finalization without test-mode fixtures
+
+## Контекст и гейты
+
+Подтверждённые статусы (не пересматриваются):
+
+- Approve A code/tests = PASS
+- stripe-webhook controlled deploy = PASS, verify_jwt=false smoke = PASS, PCI = PASS, bePaid regression = PASS
+- Webhook source-path live runtime proof = DEFERRED → перенесено в F5 live UAT
+- stripe-webhook повторно НЕ деплоится ни на одном из этапов F1–F4
+
+Out of scope на весь патч: migrations, RPC, schema, secrets, frontend-код, изменение amount/currency/status/order/subscription/access, force_refresh=true, full Stripe response persistence, bepaid-webhook, любые webhook-функции.
+
+---
+
+## F1 — deploy admin enrichment functions
+
+Pre-deploy gate:
+
+- tests 20/20 PASS
+- dependency scope: оба функции зависят только от `_shared/stripe/*` (writer один — `card-enrichment.ts`), `_shared/cors.ts`, `_shared/acquiring/vault.ts`
+- diff vs. предыдущая версия: только enrichment-логика, никакого Stripe-webhook кода
+- deploy-list строго `["stripe-card-data-fetch", "stripe-card-data-fetch-bulk"]` — `stripe-webhook` отсутствует
+- `supabase/config.toml`: оба admin-функции БЕЗ блока `verify_jwt = false` (default = JWT required)
+
+Post-deploy runtime probes:
+
+1. unauthenticated POST → 401
+2. JWT обычного пользователя → 403 (RBAC отказ)
+3. JWT super_admin → 200, без модификации payment rows (probe без `payment_id` или с заведомо отсутствующим)
+4. audit-row: `actor_user_id` совпадает с JWT `sub` реального админа
+5. SQL-snapshot до/после: 0 изменений в `payments_v2`, `audit_logs` содержит только probe-записи
+
+Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_admin_runtime.md` (deploy-list, hash, 5 probe-результатов, SQL-diff).
+
+---
+
+## F2 — final historical inventory (read-only)
+
+Read-only SQL по `payments_v2 WHERE provider='stripe'`:
+
+- столбцы: `payment_id`, `account_code`, sign(amount), `meta.stripe.payment_intent_id` (резолв из `meta.stripe.*` и `meta.provider_response.stripe.*`), текущий card snapshot status, verdict
+- verdict ∈ { ENRICHABLE, ALREADY_COMPLETE, NO_PAYMENT_INTENT, REFUND_INHERITS_PARENT, AMBIGUOUS, CONFLICTING_PAYMENT_INTENT_IDS }
+
+Итоги (counts):
+
+- total Stripe rows
+- positive payments
+- refund rows
+- enrichable
+- already complete
+- without PI
+- ambiguous / conflicting
+
+Bulk dry-run вызов:
+
+```json
+{ "dry_run": true, "account_code": "stripe_poland", "limit": 50, "force_refresh": false }
+```
+
+Обязательный результат: `updated = 0`, ни одна payment row не изменена.
+
+Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (полный inventory, counts, dry-run response, account_code distribution).
+
+HARD STOP: при наличии ≥1 строки `AMBIGUOUS` или `CONFLICTING_PAYMENT_INTENT_IDS` — остановиться, F3 НЕ запускать, вернуть verdict `INVENTORY_BLOCKED`.
+
+---
+
+## F3 — targeted historical execute
+
+Условие входа: F2 без ambiguous/conflicting.
+
+Скоуп execute:
+
+- только `provider='stripe'`
+- только положительные payment rows (refund — пропуск, наследует от parent)
+- один `account_code` за запуск (итерация по account_code, отдельный run на каждый)
+- `force_refresh=false`
+- audit `actor_user_id` = реальный super_admin JWT
+
+Запрещено: менять amount/currency/status, трогать orders_v2/subscriptions_v2/entitlements/access_rules/payment_links/documents; сохранять полный Stripe response (только whitelist `{brand, last4, wallet.type, funding, country}` + service-поля).
+
+Двойной запуск (idempotency proof):
+
+- run #1 expected: `updated = N` (N = enrichable count из F2 для account_code)
+- run #2 expected: `updated = 0`, `skipped_complete = N`
+- `no_data` rows: только безопасный audit verdict, payment row не изменена
+
+Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_backfill.md` (по account_code: run #1 / run #2, SQL-diff payments_v2, audit-выборка).
+
+---
+
+## F4 — финальная проверка
+
+### Card snapshot (по обновлённым rows)
+
+Поля в `meta.stripe` / DB columns: `card_brand`, `card_last4`, `card_holder` (если есть), canonical `payment_method_details.card`, `payment_method_id`, `charge_id`, `payment_intent_id`, `card_data_source`, `card_data_sources_seen`, `card_data_fetched_at`.
+
+### UI (`/admin/payments`)
+
+- положительный Stripe payment: brand + masked last4
+- refund: наследует card display от parent (через `stripeParentIndex`)
+- no_data: «Карта не определена» (без маскировки)
+- bePaid payment display не изменился (визуальный diff на 5 контрольных bePaid rows)
+
+### PCI scans (SQL по `payments_v2.meta`, `audit_logs.meta`, `provider_subscriptions.meta`)
+
+Запрещённые ключи: `number`, `pan`, `cvc`, `cvv`, `exp_month`, `exp_year`, `fingerprint`. Expected = 0 hits каждый.
+
+### Lifecycle invariants (before/after по фикстурам F3)
+
+Без изменений: `orders_v2`, `subscriptions_v2`, `provider_subscriptions` lifecycle, `entitlements`, `access_rules`, `payment_links.current_uses`, `ai_generated_documents`. Разрешено только: card snapshot в `payments_v2.meta` + соответствующие audit rows.
+
+Артефакт: добавить раздел F4 в `stripe_card_enrichment_v2_backfill.md`.
+
+---
+
+## F5 — deferred live UAT (чек-лист, без выполнения)
+
+Создать `.lovable/backlog/stripe_card_enrichment_live_uat_v1.md` со сценариями:
+
+1. **Первая реальная разовая Stripe-оплата:**
+  - `checkout.session.completed` → 2xx
+  - `payment_intent.succeeded` → 2xx
+  - `payments_v2` создан ровно один раз
+  - card snapshot заполнен
+  - order/access без дублей
+2. **Первая реальная Stripe-подписка:**
+  - `invoice.paid` → 2xx
+  - payment materialized один раз
+  - subscription lifecycle корректен
+  - card snapshot заполнен
+  - access не выдан повторно
+3. **Повторная доставка события (Stripe Dashboard resend):**
+  - event-level duplicate guard
+  - writer-level `skipped_complete` guard
+  - 0 duplicate payments/orders/access
+
+Условие: live UAT не требует нового deploy, если bundle не изменился. При изменении кода — отдельный controlled redeploy по протоколу `.lovable/architecture/public_webhook_controlled_redeploy_protocol_v1.md`.
+
+---
+
+## Финальный статус
+
+При PASS по F1–F4:
+
+- PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 = **IMPLEMENTATION COMPLETE**
+- HISTORICAL ENRICHMENT = **PASS**
+- LIVE WEBHOOK UAT = **DEFERRED**
+- Спринт закрыт как **CLOSED WITH DEFERRED LIVE UAT**
+
+Полный runtime PASS по трём webhook source-path (`checkout.session.completed` / `payment_intent.succeeded` / `invoice.paid`) НЕ объявляется до первой реальной оплаты.
+
+Следующий патч после закрытия: **PATCH-STRIPE-DOCUMENTS-DRAWER-V2**. Повторный redeploy `stripe-webhook` без новых изменений кода запрещён.
+
+---
+
+## Артефакты (итог)
+
+- `.lovable/proofs/stripe_card_enrichment_v2_admin_runtime.md` (F1)
+- `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (F2)
+- `.lovable/proofs/stripe_card_enrichment_v2_backfill.md` (F3 + F4)
+- `.lovable/backlog/stripe_card_enrichment_live_uat_v1.md` (F5)
+
+## Verdicts (возможные)
+
+- F1: PASS / FAIL
+- F2: PASS / INVENTORY_BLOCKED (ambiguous/conflicting)
+- F3: PASS / PARTIAL (часть account_code не отработала) / FAIL
+- F4: PASS / FAIL
+- Итог: IMPLEMENTATION COMPLETE + HISTORICAL ENRICHMENT PASS + LIVE UAT DEFERRED, либо остановка на первом FAIL/BLOCKED с возвратом фактического verdict.
+
+## Стоп-условия
+
+- F2 ambiguous/conflicting → стоп, без F3
+- F3 run #2 `updated ≠ 0` или `skipped_complete ≠ N` → стоп, FAIL
+- F4 PCI scan > 0 hits → стоп, FAIL
+- F4 lifecycle invariant нарушен → стоп, FAIL
+- Любой stripe-webhook deploy в ходе F1–F4 → стоп, протокольное нарушение
