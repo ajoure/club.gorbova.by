@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink, FileText } from "lucide-react";
+import { PaymentDocumentsDrawer } from "./PaymentDocumentsDrawer";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -178,6 +179,15 @@ export default function PaymentsTable({
   const [selectedDeal, setSelectedDeal] = useState<any>(null);
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedDealProfile, setSelectedDealProfile] = useState<any>(null);
+
+  // PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve C — new "Документы" action.
+  // Add-only: existing receipt column / ReceiptStatusBadge remain unchanged.
+  const [documentsDrawerOpen, setDocumentsDrawerOpen] = useState(false);
+  const [documentsPaymentId, setDocumentsPaymentId] = useState<string | null>(null);
+  const openDocumentsDrawer = (payment: UnifiedPayment) => {
+    setDocumentsPaymentId(payment.id);
+    setDocumentsDrawerOpen(true);
+  };
   
   // Use external columns if provided, otherwise use internal state
   const columns = externalColumns || DEFAULT_COLUMNS;
@@ -691,6 +701,11 @@ export default function PaymentsTable({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem data-testid="payment-docs-action" onClick={() => openDocumentsDrawer(payment)}>
+                <FileText className="h-3 w-3 mr-2" />
+                Документы
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => copyUid(payment.uid)}>
                 <Copy className="h-3 w-3 mr-2" />
                 Копировать UID
@@ -894,6 +909,17 @@ export default function PaymentsTable({
             if (!open) {
               onRefetch();
             }
+          }}
+        />
+
+        {/* Approve C — read-only documents drawer. Mount survives row changes;
+            paymentId switch triggers internal state reset in the hook. */}
+        <PaymentDocumentsDrawer
+          paymentId={documentsPaymentId}
+          open={documentsDrawerOpen}
+          onOpenChange={(o) => {
+            setDocumentsDrawerOpen(o);
+            if (!o) setDocumentsPaymentId(null);
           }}
         />
       </div>
