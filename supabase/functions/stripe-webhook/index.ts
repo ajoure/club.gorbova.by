@@ -348,21 +348,23 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'checkout.session.completed.api_latest_charge' },
             );
-            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: единый writer card snapshot.
+            // Preloaded charge — повторного Stripe fetch нет.
             try {
-              if (latest && typeof latest === 'object') {
-                const card = latest?.payment_method_details?.card ?? null;
-                const card_brand = card?.brand ?? null;
-                const card_last4 = card?.last4 ?? null;
-                const card_holder = latest?.billing_details?.name ?? null;
-                if (card_brand || card_last4 || card_holder) {
-                  await supabase
-                    .from('payments_v2')
-                    .update({ card_brand, card_last4, card_holder })
-                    .eq('id', payment_id);
-                }
+              if (payment_id && pi_id && latest && typeof latest === 'object') {
+                await enrichStripePaymentCardData({
+                  supabase,
+                  paymentId: payment_id,
+                  paymentIntentId: pi_id,
+                  accountCode: account_code,
+                  source: 'checkout.session.completed',
+                  actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+                  preloadedCharge: latest,
+                  fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+                });
               }
-            } catch { /* never re-throw */ }
+            } catch { /* never re-throw — webhook lifecycle must not fail */ }
+
           }
         }
       }
@@ -447,21 +449,22 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'pi.succeeded.api_latest_charge' },
             );
-            // PATCH-LIVE-CARD: capture card brand/last4/holder from Stripe charge.
+            // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: единый writer card snapshot.
             try {
-              if (latest && typeof latest === 'object') {
-                const card = latest?.payment_method_details?.card ?? null;
-                const card_brand = card?.brand ?? null;
-                const card_last4 = card?.last4 ?? null;
-                const card_holder = latest?.billing_details?.name ?? null;
-                if (card_brand || card_last4 || card_holder) {
-                  await supabase
-                    .from('payments_v2')
-                    .update({ card_brand, card_last4, card_holder })
-                    .eq('id', payment_id);
-                }
+              if (payment_id && pi_id && latest && typeof latest === 'object') {
+                await enrichStripePaymentCardData({
+                  supabase,
+                  paymentId: payment_id,
+                  paymentIntentId: pi_id,
+                  accountCode: account_code,
+                  source: 'payment_intent.succeeded',
+                  actor: { type: 'system', label: 'Stripe webhook card enrichment' },
+                  preloadedCharge: latest,
+                  fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
+                });
               }
-            } catch { /* never re-throw */ }
+            } catch { /* never re-throw — webhook lifecycle must not fail */ }
+
           }
         }
       }
