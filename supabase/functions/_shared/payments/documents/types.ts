@@ -110,3 +110,20 @@ export const PCI_FORBIDDEN_KEYS = [
   'expiry', 'expiration', 'payment_method_data', 'pan',
   'card_holder', 'billing_details', 'customer',
 ] as const;
+
+// ── Approve B.1 — Stripe client resolution (factory result) ─────────────────
+// Safe machine codes surfaced via warning.detail; warning.code stays
+// PROVIDER_DOCUMENT_RETRIEVE_FAILED so existing clients keep working.
+export type StripeClientResolutionError =
+  | 'STRIPE_ACCOUNT_NOT_RESOLVED'
+  | 'STRIPE_ACCOUNT_CODE_CONFLICT'
+  | 'STRIPE_CONNECTION_AMBIGUOUS'
+  | 'STRIPE_MODE_NOT_RESOLVED'
+  | 'STRIPE_MODE_CONFLICT'
+  | 'STRIPE_MODE_MISMATCH'
+  | 'STRIPE_SECRET_UNAVAILABLE'
+  | 'INVALID_STRIPE_RESOURCE'
+  | 'INVALID_STRIPE_ID'
+  | 'STRIPE_HTTP_ERROR'
+  | 'NETWORK_ERROR'
+  | 'REQUEST_TIMEOUT';
