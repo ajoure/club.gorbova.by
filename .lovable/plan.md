@@ -1,560 +1,150 @@
-да, согласен, с учетом правок:
+План: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 (v2, с правками 1–17, add-only)
 
-Все пункты плана сохраняются. Ниже — обязательные уточнения перед выполнением F1–F4.
+Все ранее утверждённые пункты сохраняются. Ниже только дополнения и точечные mapping'и старых пунктов.
 
-**1. Явно зафиксировать JWT-режим admin-функций**
+## 0. Правила (без изменений)
 
-Не полагаться на неявный default.
+DIAGNOSE → PLAN → DRY-RUN → EXECUTE → VERIFY. Add-only / no-loss. UUID-only связи. Не менять lifecycle/webhooks/scenarios/templates/secrets. Каждый approve — STOP + отчёт.
 
-Добавить в supabase/config.toml:
+## 1. Mapping старых deploy-gates → новые (правка №1)
 
-[functions.stripe-card-data-fetch]
+- Старо: «Approve B — resolver задеплоен» → Ново: **Approve B = backend code + tests, deploy НЕ выполняется**.
+- Старо: «Approve D — deploy resolver + frontend» → Ново: **Approve D = один совместный точечный deploy backend resolver + frontend + runtime/security/regression proof**.
+- Approve A = read-only discovery. Approve C = frontend code + tests, без deploy.
 
-verify_jwt = true
+Это исключает промежуточное prod-состояние «resolver есть, UI нет».
 
-&nbsp;
+## 2. Approve A — Read-only discovery (APPROVED)
 
-[functions.stripe-card-data-fetch-bulk]
+Артефакт: `.lovable/discovery/stripe_documents_drawer_v2.md` (read-only к коду/БД, но сам discovery-md создаётся в режиме build после переключения; код/config/DB не менять).
 
-verify_jwt = true
+A1. **Exact file map** — таблица /admin/payments, существующий drawer/modal payment details, кнопки «Чек / Документ / Сформировать / Скачать / Открыть», все readers (`receipt_url`, `invoice_url`, `hosted_invoice_url`, `invoice_pdf`, `document_url`, `ai_generated_documents`, signed-URL helpers). Точные пути.
 
-Это expected config для admin-only функций.
+A2. **Existing resolver/drawer inventory (правка №2)** — полный поиск перед предложением новой функции:
+- `payment documents`, `payment details drawer`, `receipt resolver`, `document resolver`, `canonical-document-*`, `ai_generated_documents readers`, `signed URL helpers`, provider receipt adapters.
+- Если канонический resolver можно расширить без нарушения контракта — **расширяем**, новую функцию не создаём.
+- При двух действующих resolver-path → `STOP ARCHITECTURE_CONFLICT` + mapping `текущий reader/action → canonical` + способ сохранения обратной совместимости.
 
-Перед deploy подтвердить:
+A3. **DB relationship map** — `payments_v2` ↔ `orders_v2` ↔ `ai_generated_documents` ↔ `provider_subscriptions` ↔ refund relations. Только UUID-связи.
 
-public webhook functions → verify_jwt=false
+A4. **Stripe/bePaid document-source matrix** — какие документы лежат локально (`meta.stripe.*`, `meta.bepaid.*`, `receipt_url`, `provider_response`), какие требуют provider retrieve.
 
-admin card functions → verify_jwt=true
+A5. **Refund parent mapping (правка №6)** — фактический канонический источник связи refund row → parent positive. Допустимо: local parent UUID, точный provider parent object ID, существующая canonical refund relation. Запрещены: amount/date/email/last4/order title/nearest payment. Если не найден — `source = unavailable`, warning `REFUND_PARENT_NOT_RESOLVED`. Никакого наследования чужого receipt.
 
-stripe-webhook и другие webhook не деплоить.
+A6. **Technical payment marker (правка №7)** — какой canonical marker помечает техническую Stripe-оплату 2 USD (`meta.test_payment` / fixture marker / test order marker). Запрещено определять по сумме. Если marker отсутствует — `STOP` для generation-action этой строки + backlog отдельным PATCH'ем; не хардкодить сумму/UUID.
 
-&nbsp;
+A7. **RBAC mapping (правка №10)** — сопоставить логические capability с действующими permissions:
+- просмотр платежей → просмотр документов;
+- edit/admin → provider refresh;
+- существующий document-generation permission → generate;
+- существующий regeneration permission → regenerate;
+- super_admin → diagnostics.
+- Новые DB permissions / role tables / migrations в этом патче **запрещены**. При отсутствии granular permission — использовать существующий более строгий guard.
 
-**2. Исправить критерии auth-probes F1**
+A8. **URL/domain inventory (правка №11)** — фактический allowlist доменов provider URL (Stripe billing/files, bePaid receipt), какие bucket'ы используются для внутренних PDF, поведение signed URL helper'ов.
 
-Для stripe-card-data-fetch запрос без обязательного payment_intent может корректно вернуть 400 validation_error, а не 200. Это не является провалом авторизации.
+A9. **Inventory с terminal verdict (правка №14)** — для каждой Stripe row и 5 контрольных bePaid:
+`payment_id, provider, positive/refund, parent_payment_resolution, account_code, mode, payment_intent_id, charge_id, invoice_id, refund_id, credit_note_id, local provider documents, refreshable provider documents, internal document relation, internal documents count, scenario source, can_generate, blocked_reason, technical/test marker, final verdict`.
+Verdict ∈ { `READY_LOCAL_ONLY`, `READY_PROVIDER_REFRESH`, `READY_INTERNAL_DOCUMENTS`, `READY_GENERATION`, `NO_PROVIDER_DOCUMENTS`, `NO_INTERNAL_DOCUMENTS`, `REFUND_PARENT_RESOLVED`, `REFUND_PARENT_NOT_RESOLVED`, `TEST_PAYMENT_GENERATION_BLOCKED`, `ARCHITECTURE_CONFLICT` }.
 
-Проверять отдельно:
+A10. **Canonical recommendation + proposed exact scope Approve B** — расширять существующий resolver vs создать `admin-payment-documents-resolve`, список файлов adapters, точный response contract, перечень тестов.
 
-**Unauthenticated**
+A11. **Conflicts / STOP conditions** — собрать всё найденное.
 
-401 platform/auth rejection
+DoD Approve A: один consolidated отчёт `Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve A` со всеми пунктами A1–A11. Код/config/DB не изменены.
 
-**JWT обычного пользователя**
+## 3. Approve B — Backend code + tests, БЕЗ deploy (NOT APPROVED)
 
-403 RBAC rejection
+Артефакт: `.lovable/proofs/stripe_documents_drawer_v2_resolver.md`.
 
-**Super admin — single function**
+B1. Resolver (расширение существующего или новый `admin-payment-documents-resolve` — по итогам A2). При создании новой функции — добавить блок `[functions.admin-payment-documents-resolve] verify_jwt = true`.
 
-Отправить валидный по схеме, но заведомо отсутствующий технический pi_*.
+B2. **Read-only contract (правка №9, №3)**: resolver НЕ генерирует/перегенерирует документ, НЕ выделяет номер, НЕ сохраняет signed URL, НЕ меняет payment/order, НЕ меняет document scenario. `refresh_provider=true` разрешает только server-side retrieve и возврат whitelisted документов в текущем response. Запрещено обновлять `payments_v2.meta`, менять provider IDs / status / amount / currency, создавать order/payment/document, сохранять полный provider response, кэшировать URL в БД. Разрешено только `audit_logs: admin.payment_documents.provider_refresh`. `last_provider_refresh` — timestamp текущего запроса или из audit, без записи в payment row. Постоянное кэширование — отдельный PATCH.
 
-Допустимый результат:
+B3. **Stripe adapter — account-aware и mode-aware (правка №4)**: client выбирается ТОЛЬКО через существующий canonical resolver по `account_code` + `mode/test-live` платежа. Запрещены глобальный default, live fallback, поиск аккаунта по валюте/названию. При неоднозначности — `status=error, blocked_reason=STRIPE_ACCOUNT_NOT_RESOLVED`, provider API не вызывать.
 
-200 с verdict no_data/not_found
+B4. **Только exact retrieve (правка №5)**: разрешённые ID — `pi_*, ch_*, in_*, re_*, cn_*, sub_*`. Запрещены search/list invoice по customer, поиск по email/сумме/дате, перечисление всех invoices/credit notes. `credit_note` — только при точном CN ID или доказанной связи через точный invoice ID; не обещать credit note для обычного refund.
 
-или
+B5. Whitelisted Stripe-поля: `charge.receipt_url, invoice.hosted_invoice_url, invoice.invoice_pdf, invoice.id, credit_note.pdf, refund.id/status`. Не сохранять PAN/CVC/expiry/fingerprint, full charge/invoice, billing_details, payment_method_details, customer, full webhook payload. Provider API failure → `status=error + retryable`, drawer не ломается.
 
-404/422 application-level response
+B6. bePaid adapter — тонкая обёртка над существующим receipt workflow в общий response contract. Не переписывать.
 
-Главное:
+B7. Refund — по канонической связи из A5. Provider receipt parent_payment'а отображается как `source: parent_payment` + refund metadata. Без фиктивных receipt'ов.
 
-- запрос прошёл JWT и RBAC;
-- actor_user_id соответствует JWT администратора;
-- payments_v2 не изменена;
-- нет Stripe commercial side effects.
+B8. **Provider document contract без дублей (правка №13)**: canonical identity = `provider + type + external_id` для provider docs, `document UUID` для internal. Если ссылка найдена и локально, и через provider API — одна карточка; приоритет `provider_api > local_meta` только при совпадении exact external ID; источник может быть `local_meta+provider_api`. Две одинаковые карточки запрещены.
 
-**Super admin — bulk function**
+B9. Internal documents — lookup `payment_id → order_id → ai_generated_documents` (UUID-only). По итогам A — определить: как отличаются версии, какой документ актуален, показывать ли историю, как исключаются дубли одного файла, какой status = `generated|pending|failed`. Frontend дедупликацию по названию/номеру НЕ делает.
 
-Использовать только:
+B10. **Generation status — стабильные machine codes (правка №12)**: `NO_DOCUMENT_SCENARIO, MISSING_REQUIRED_REQUISITES, TEST_PAYMENT_DOCUMENT_BLOCKED, DOCUMENT_ALREADY_GENERATED, GENERATION_IN_PROGRESS, GENERATION_FAILED, PAYMENT_NOT_LINKED_TO_ORDER, REFUND_USES_PARENT_DOCUMENTS`. Никакого raw SQL/Stripe/error text в `blocked_reason`. Frontend только локализует.
 
-{
+B11. **URL security contract (правка №11)** в response: `{ url, url_kind: "external_provider"|"signed_storage", can_open, can_download, can_copy, expires_at }`. Только `https:`; `javascript:/data:/file:` и неизвестные схемы отклоняются; provider URL проверяется по allowlist из A8; внутренний файл — short-lived signed URL, не сохраняется в БД/audit; storage path / service-role URL / private bucket URL напрямую не выдаются; чувствительные query parameters не логируются. «Скачать» не показывать, если external URL поддерживает только открытие.
 
-  "dry_run": true,
+B12. **Test matrix (правка №16, минимум 20 кейсов)** — 10 из исходного G1 + 10 security/edge:
+1. Stripe receipt; 2. Stripe invoice; 3. Stripe без provider docs; 4. Stripe refund; 5. Stripe consultation `can_generate=true`; 6. bePaid с receipt; 7. bePaid без receipt; 8. Payment без order; 9. Payment с сформированным internal; 10. Payment без сценария;
+11. Stripe account не определён; 12. Unsafe URL scheme; 13. Refund parent не найден; 14. Дубликат local/provider document; 15. Technical payment generation blocked; 16. View-only refresh denied; 17. Provider API timeout/error не ломает internal; 18. Signed URL не сохраняется; 19. Resolver не создаёт document/audit generation action; 20. bePaid adapter выдаёт прежний receipt без изменения workflow.
 
-  "account_code": "stripe_poland",
+DoD B: код написан, tests PASS локально, **deploy не выполнен**.
 
-  "limit": 50,
+## 4. Approve C — Frontend code + tests, БЕЗ deploy (NOT APPROVED)
 
-  "force_refresh": false
+Действие «Документы» в /admin/payments. Drawer:
+- Header: provider badge, amount/currency, status, date, masked payment ID, linked order.
+- Секция 1 «Документы эквайринга»: Stripe receipt / hosted invoice / invoice PDF, bePaid receipt. Actions: Открыть / Скачать (если `can_download`) / Скопировать (если `can_copy`) / Обновить данные provider (super_admin, отдельный confirm, не авто).
+- Секция 2 «Внутренние документы»: счёт-акт / акт / счёт / договор. Actions: Открыть / Скачать / Сформировать / Перегенерировать — только через **существующие canonical endpoints** с их текущим RBAC и audit. Новых generation flow нет.
+- Секция 3 «Диагностика» (super_admin): masked provider object IDs, scenario source, masked template/executor ID, `can_generate`, `blocked_reason`, last provider refresh.
+- Empty states точно по ТЗ. Никаких undefined/null/сломанных ссылок.
+- Локализация machine codes из B10 — единственная работа frontend по статусам.
 
-}
+Frontend tests: рендер каждого state (Stripe/bePaid/refund/empty/view-only/super_admin diagnostics).
 
-Ожидаемо:
+DoD C: UI готов, tests PASS, deploy не выполнен.
 
-HTTP 200
+## 5. Approve D — Совместный deploy + runtime proof (NOT APPROVED)
 
-updated = 0
+Артефакты: `.lovable/proofs/stripe_documents_drawer_v2_ui.md`, `.lovable/proofs/stripe_documents_drawer_v2_security.md`.
 
-UI/runtime proofs выполнять из основной admin-учётной записи [7500084@gmail.com](mailto:7500084@gmail.com).
+D1. Точечный deploy: только новый/изменённый admin resolver + frontend. stripe-webhook / bepaid-webhook НЕ трогаем.
 
-&nbsp;
+D2. Runtime UI proof под `7500084@gmail.com`: screenshots Stripe (с документами и без) / bePaid / refund (parent reference) / internal / empty.
 
-**3. Inventory должен использовать тот же PI resolver, что и writer**
+D3. **View-only runtime proof (правка №15)**: если есть готовый безопасный view-only fixture — browser proof. Если нет — НЕ создаём новую роль/миграцию ради теста; достаточно: frontend component test + server invocation пользователем без write permission → 403 + подтверждение отсутствия write actions в rendered state. Это не блокирует PASS.
 
-Нельзя создавать упрощённую SQL-классификацию, расходящуюся с _shared/stripe/card-enrichment.ts.
+D4. Security proof: RBAC matrix (соответствие capability → существующим permissions из A7); URL safety per B11; audit safe meta; PCI scan = 0 forbidden keys.
 
-Для каждой строки PI определяется тем же приоритетом:
+D5. Regression: SQL diff before/after — 0 изменений payments_v2 / orders_v2 / subscriptions_v2 / entitlements / access_rules / payment_links.current_uses / document numbers; 0 авто-генераций при открытии drawer; 0 redeploy webhooks; bePaid receipt по 5 контрольным rows работает идентично прежнему.
 
-meta.stripe.payment_intent_id
+## 6. Stop-conditions (расширены, правка №17)
 
-provider_payment_id, если ^pi_
+К исходным добавлены немедленные STOP:
+- refresh пишет Stripe URL / provider response в `payments_v2`;
+- Stripe account выбран не по `account_code/mode`;
+- Stripe `list/search` вместо exact retrieve;
+- refund parent определён эвристически;
+- technical 2 USD получил production document number;
+- signed URL сохранён в БД/audit;
+- resolver зовёт generation при открытии drawer;
+- новый RBAC permission требует migration;
+- один документ показан дважды из разных источников.
 
-meta.stripe.invoice.payment_intent
+## 7. DoD финальный
 
-meta.provider_response.stripe.payment_intent_id
+PASS — все 16 пунктов исходного §12 + соответствие правкам 1–17 (mapping deploy-gates, отсутствие нового resolver при наличии канонического, read-through refresh, account/mode-aware Stripe, exact retrieve, canonical refund parent, technical marker, internal dedup-правила, read-only resolver, RBAC без миграций, URL contract, machine codes, no-duplicate карточки, terminal verdict в inventory, view-only proof, расширенный test matrix, расширенные stop-conditions).
 
-Если источники различаются:
+## 8. Артефакты
 
-CONFLICTING_PAYMENT_INTENT_IDS
+- `.lovable/discovery/stripe_documents_drawer_v2.md` (Approve A)
+- `.lovable/proofs/stripe_documents_drawer_v2_resolver.md` (Approve B)
+- `.lovable/proofs/stripe_documents_drawer_v2_ui.md` (Approve C/D)
+- `.lovable/proofs/stripe_documents_drawer_v2_security.md` (Approve D)
+- Обновить `.lovable/plan.md`.
 
-Если одному PI соответствуют несколько положительных Stripe payments:
+## 9. Gate status
 
-AMBIGUOUS
+- Approve A = APPROVED → выполняем сейчас.
+- Approve B / C / D = NOT APPROVED.
 
-Добавить обязательную сверку:
+## 10. Действие сейчас
 
-SQL inventory counts
+Выполнить read-only discovery (rg по кодовой базе, SELECT-only к БД, inventory matrix) и собрать один consolidated отчёт `Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve A` со всеми пунктами A1–A11 + terminal verdict таблица + canonical recommendation + proposed exact scope Approve B. Код / config / DB не изменять. Файл discovery-md создаётся в build-режиме (это сам артефакт отчёта, не правка прод-кода).
 
-=
-
-bulk dry-run verdict counts
-
-При расхождении:
-
-STOP
-
-F2 = INVENTORY_RESOLVER_MISMATCH
-
-F3 не запускать.
-
-&nbsp;
-
-**4. Исправить ожидаемый результат F3**
-
-ENRICHABLE означает, что строка подходит для попытки enrichment, но не гарантирует, что Stripe API вернёт card data.
-
-Поэтому нельзя требовать:
-
-run #1 updated = N
-
-run #2 skipped_complete = N
-
-Для каждого account_code должно выполняться:
-
-N = updated + no_data + skipped_complete + error
-
-На первом запуске допустимо:
-
-updated = U
-
-no_data = D
-
-skipped_complete = 0
-
-error = 0
-
-U + D = N
-
-На втором запуске:
-
-updated = 0
-
-skipped_complete = U
-
-no_data = D либо skipped_no_data = D
-
-error = 0
-
-Для no_data:
-
-- payment row не обновляется фиктивными значениями;
-- сохраняется безопасный audit verdict;
-- не создаётся бесконечная серия одинаковых audit-записей;
-- допускается cooldown/последний no_data_checked_at, только если он не содержит card data и не меняет бизнес-поля.
-
-Hard STOP:
-
-error > 0
-
-updated > 0 на втором запуске
-
-повторное destructive изменение snapshot
-
-&nbsp;
-
-**5. Уточнить критерий исторического PASS**
-
-HISTORICAL ENRICHMENT = PASS не означает, что у каждой старой операции обязательно найдена карта.
-
-PASS, если каждая строка получила доказанный конечный verdict:
-
-ALREADY_COMPLETE
-
-UPDATED
-
-NO_DATA_FROM_STRIPE
-
-NO_PAYMENT_INTENT
-
-REFUND_INHERITS_PARENT
-
-И одновременно:
-
-AMBIGUOUS = 0
-
-CONFLICTING_PAYMENT_INTENT_IDS = 0
-
-ERROR = 0
-
-Строки NO_DATA_FROM_STRIPE остаются в UI как:
-
-Карта не определена
-
-Без искусственного заполнения brand/last4.
-
-&nbsp;
-
-**6. Audit и SYSTEM ACTOR**
-
-Для F1–F3 admin-операций:
-
-actor_type = user/admin
-
-actor_user_id = фактический JWT sub
-
-Не использовать SYSTEM ACTOR для ручного single/bulk запуска.
-
-SYSTEM ACTOR остаётся только для будущих webhook-triggered enrichment событий.
-
-Proof должен показать:
-
-- audit action;
-- actor type;
-- actor user ID;
-- безопасный verdict;
-- отсутствие full Stripe response и card snapshot в audit.
-
-&nbsp;
-
-**7. Lifecycle diff должен охватывать весь execute window**
-
-Кроме fixture-scoped проверки, добавить временной targeted diff:
-
-provider = stripe
-
-account_code = текущий run
-
-updated_at в окне F3
-
-Разрешённые изменения:
-
-payments_v2.card_brand
-
-payments_v2.card_last4
-
-payments_v2.card_holder
-
-payments_v2.meta.stripe card-enrichment поля
-
-audit_logs
-
-Любые изменения в:
-
-amount
-
-currency
-
-status
-
-order_id
-
-subscription_id
-
-orders_v2
-
-subscriptions_v2
-
-provider_subscriptions lifecycle
-
-entitlements
-
-access_rules
-
-payment_links.current_uses
-
-ai_generated_documents
-
-→ F4 = FAIL.
-
-&nbsp;
-
-**8. UI proof**
-
-Зафиксировать минимум:
-
-- одну Stripe-строку после успешного enrichment;
-- Stripe refund, наследующий отображение карты parent payment;
-- одну NO_DATA_FROM_STRIPE, если такая есть;
-- пять контрольных bePaid-строк.
-
-Проверить, что UI не показывает:
-
-undefined
-
-*null
-
-неверную маску
-
-данные карты refund как собственный snapshot
-
-Frontend-код в этом патче не менять. Если UI не читает уже сохранённый canonical shape, зафиксировать отдельный PATCH, но не смешивать его с enrichment execute.
-
-&nbsp;
-
-**9. Финальные статусы**
-
-При успешных F1–F4:
-
-PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2
-
-= IMPLEMENTATION COMPLETE
-
-&nbsp;
-
-HISTORICAL ENRICHMENT
-
-= PASS WITH TERMINAL VERDICTS
-
-&nbsp;
-
-LIVE WEBHOOK UAT
-
-= DEFERRED
-
-&nbsp;
-
-SPRINT
-
-= CLOSED WITH DEFERRED LIVE UAT
-
-Полный webhook runtime PASS не объявлять до реальных событий:
-
-checkout.session.completed
-
-payment_intent.succeeded
-
-invoice.paid
-
-&nbsp;
-
-**10. Разрешённый scope**
-
-Разрешаю последовательно выполнить:
-
-F1 → F2 → F3 → F4 → создать F5 backlog
-
-с остановкой на первом FAIL/BLOCKED.
-
-Deploy-list F1:
-
-stripe-card-data-fetch
-
-stripe-card-data-fetch-bulk
-
-Запрещено:
-
-redeploy stripe-webhook
-
-deploy других webhook
-
-force_refresh=true
-
-historical update refund rows
-
-изменение migrations/RPC/schema/secrets/frontend
-
-изменение payment lifecycle
-
-После завершения вернуть один consolidated отчёт с фактическими verdict F1–F4 и итоговым статусом патча.
-
-&nbsp;
-
-# План: PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 / Finalization without test-mode fixtures
-
-## Контекст и гейты
-
-Подтверждённые статусы (не пересматриваются):
-
-- Approve A code/tests = PASS
-- stripe-webhook controlled deploy = PASS, verify_jwt=false smoke = PASS, PCI = PASS, bePaid regression = PASS
-- Webhook source-path live runtime proof = DEFERRED → перенесено в F5 live UAT
-- stripe-webhook повторно НЕ деплоится ни на одном из этапов F1–F4
-
-Out of scope на весь патч: migrations, RPC, schema, secrets, frontend-код, изменение amount/currency/status/order/subscription/access, force_refresh=true, full Stripe response persistence, bepaid-webhook, любые webhook-функции.
-
----
-
-## F1 — deploy admin enrichment functions
-
-Pre-deploy gate:
-
-- tests 20/20 PASS
-- dependency scope: оба функции зависят только от `_shared/stripe/*` (writer один — `card-enrichment.ts`), `_shared/cors.ts`, `_shared/acquiring/vault.ts`
-- diff vs. предыдущая версия: только enrichment-логика, никакого Stripe-webhook кода
-- deploy-list строго `["stripe-card-data-fetch", "stripe-card-data-fetch-bulk"]` — `stripe-webhook` отсутствует
-- `supabase/config.toml`: оба admin-функции БЕЗ блока `verify_jwt = false` (default = JWT required)
-
-Post-deploy runtime probes:
-
-1. unauthenticated POST → 401
-2. JWT обычного пользователя → 403 (RBAC отказ)
-3. JWT super_admin → 200, без модификации payment rows (probe без `payment_id` или с заведомо отсутствующим)
-4. audit-row: `actor_user_id` совпадает с JWT `sub` реального админа
-5. SQL-snapshot до/после: 0 изменений в `payments_v2`, `audit_logs` содержит только probe-записи
-
-Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_admin_runtime.md` (deploy-list, hash, 5 probe-результатов, SQL-diff).
-
----
-
-## F2 — final historical inventory (read-only)
-
-Read-only SQL по `payments_v2 WHERE provider='stripe'`:
-
-- столбцы: `payment_id`, `account_code`, sign(amount), `meta.stripe.payment_intent_id` (резолв из `meta.stripe.*` и `meta.provider_response.stripe.*`), текущий card snapshot status, verdict
-- verdict ∈ { ENRICHABLE, ALREADY_COMPLETE, NO_PAYMENT_INTENT, REFUND_INHERITS_PARENT, AMBIGUOUS, CONFLICTING_PAYMENT_INTENT_IDS }
-
-Итоги (counts):
-
-- total Stripe rows
-- positive payments
-- refund rows
-- enrichable
-- already complete
-- without PI
-- ambiguous / conflicting
-
-Bulk dry-run вызов:
-
-```json
-{ "dry_run": true, "account_code": "stripe_poland", "limit": 50, "force_refresh": false }
-```
-
-Обязательный результат: `updated = 0`, ни одна payment row не изменена.
-
-Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (полный inventory, counts, dry-run response, account_code distribution).
-
-HARD STOP: при наличии ≥1 строки `AMBIGUOUS` или `CONFLICTING_PAYMENT_INTENT_IDS` — остановиться, F3 НЕ запускать, вернуть verdict `INVENTORY_BLOCKED`.
-
----
-
-## F3 — targeted historical execute
-
-Условие входа: F2 без ambiguous/conflicting.
-
-Скоуп execute:
-
-- только `provider='stripe'`
-- только положительные payment rows (refund — пропуск, наследует от parent)
-- один `account_code` за запуск (итерация по account_code, отдельный run на каждый)
-- `force_refresh=false`
-- audit `actor_user_id` = реальный super_admin JWT
-
-Запрещено: менять amount/currency/status, трогать orders_v2/subscriptions_v2/entitlements/access_rules/payment_links/documents; сохранять полный Stripe response (только whitelist `{brand, last4, wallet.type, funding, country}` + service-поля).
-
-Двойной запуск (idempotency proof):
-
-- run #1 expected: `updated = N` (N = enrichable count из F2 для account_code)
-- run #2 expected: `updated = 0`, `skipped_complete = N`
-- `no_data` rows: только безопасный audit verdict, payment row не изменена
-
-Артефакт: `.lovable/proofs/stripe_card_enrichment_v2_backfill.md` (по account_code: run #1 / run #2, SQL-diff payments_v2, audit-выборка).
-
----
-
-## F4 — финальная проверка
-
-### Card snapshot (по обновлённым rows)
-
-Поля в `meta.stripe` / DB columns: `card_brand`, `card_last4`, `card_holder` (если есть), canonical `payment_method_details.card`, `payment_method_id`, `charge_id`, `payment_intent_id`, `card_data_source`, `card_data_sources_seen`, `card_data_fetched_at`.
-
-### UI (`/admin/payments`)
-
-- положительный Stripe payment: brand + masked last4
-- refund: наследует card display от parent (через `stripeParentIndex`)
-- no_data: «Карта не определена» (без маскировки)
-- bePaid payment display не изменился (визуальный diff на 5 контрольных bePaid rows)
-
-### PCI scans (SQL по `payments_v2.meta`, `audit_logs.meta`, `provider_subscriptions.meta`)
-
-Запрещённые ключи: `number`, `pan`, `cvc`, `cvv`, `exp_month`, `exp_year`, `fingerprint`. Expected = 0 hits каждый.
-
-### Lifecycle invariants (before/after по фикстурам F3)
-
-Без изменений: `orders_v2`, `subscriptions_v2`, `provider_subscriptions` lifecycle, `entitlements`, `access_rules`, `payment_links.current_uses`, `ai_generated_documents`. Разрешено только: card snapshot в `payments_v2.meta` + соответствующие audit rows.
-
-Артефакт: добавить раздел F4 в `stripe_card_enrichment_v2_backfill.md`.
-
----
-
-## F5 — deferred live UAT (чек-лист, без выполнения)
-
-Создать `.lovable/backlog/stripe_card_enrichment_live_uat_v1.md` со сценариями:
-
-1. **Первая реальная разовая Stripe-оплата:**
-  - `checkout.session.completed` → 2xx
-  - `payment_intent.succeeded` → 2xx
-  - `payments_v2` создан ровно один раз
-  - card snapshot заполнен
-  - order/access без дублей
-2. **Первая реальная Stripe-подписка:**
-  - `invoice.paid` → 2xx
-  - payment materialized один раз
-  - subscription lifecycle корректен
-  - card snapshot заполнен
-  - access не выдан повторно
-3. **Повторная доставка события (Stripe Dashboard resend):**
-  - event-level duplicate guard
-  - writer-level `skipped_complete` guard
-  - 0 duplicate payments/orders/access
-
-Условие: live UAT не требует нового deploy, если bundle не изменился. При изменении кода — отдельный controlled redeploy по протоколу `.lovable/architecture/public_webhook_controlled_redeploy_protocol_v1.md`.
-
----
-
-## Финальный статус
-
-При PASS по F1–F4:
-
-- PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 = **IMPLEMENTATION COMPLETE**
-- HISTORICAL ENRICHMENT = **PASS**
-- LIVE WEBHOOK UAT = **DEFERRED**
-- Спринт закрыт как **CLOSED WITH DEFERRED LIVE UAT**
-
-Полный runtime PASS по трём webhook source-path (`checkout.session.completed` / `payment_intent.succeeded` / `invoice.paid`) НЕ объявляется до первой реальной оплаты.
-
-Следующий патч после закрытия: **PATCH-STRIPE-DOCUMENTS-DRAWER-V2**. Повторный redeploy `stripe-webhook` без новых изменений кода запрещён.
-
----
-
-## Артефакты (итог)
-
-- `.lovable/proofs/stripe_card_enrichment_v2_admin_runtime.md` (F1)
-- `.lovable/proofs/stripe_card_enrichment_v2_inventory.md` (F2)
-- `.lovable/proofs/stripe_card_enrichment_v2_backfill.md` (F3 + F4)
-- `.lovable/backlog/stripe_card_enrichment_live_uat_v1.md` (F5)
-
-## Verdicts (возможные)
-
-- F1: PASS / FAIL
-- F2: PASS / INVENTORY_BLOCKED (ambiguous/conflicting)
-- F3: PASS / PARTIAL (часть account_code не отработала) / FAIL
-- F4: PASS / FAIL
-- Итог: IMPLEMENTATION COMPLETE + HISTORICAL ENRICHMENT PASS + LIVE UAT DEFERRED, либо остановка на первом FAIL/BLOCKED с возвратом фактического verdict.
-
-## Стоп-условия
-
-- F2 ambiguous/conflicting → стоп, без F3
-- F3 run #2 `updated ≠ 0` или `skipped_complete ≠ N` → стоп, FAIL
-- F4 PCI scan > 0 hits → стоп, FAIL
-- F4 lifecycle invariant нарушен → стоп, FAIL
-- Любой stripe-webhook deploy в ходе F1–F4 → стоп, протокольное нарушение
+Жду переключения в build mode для исполнения Approve A.
