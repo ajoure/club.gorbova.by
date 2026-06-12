@@ -25,6 +25,16 @@ import { resolveStripeDocuments, type StripeRetrieve, isExactStripeId } from '..
 import { resolveBePaidDocuments } from '../_shared/payments/documents/bepaid-documents.ts';
 import { resolveInternalDocuments, type InternalDocRow, type InternalDocSource, type SignedUrlSigner } from '../_shared/payments/documents/internal-documents.ts';
 import { classifyGeneration } from '../_shared/payments/documents/generation-status.ts';
+import {
+  createStripeClientForPayment,
+  makeStripeRetrieveOverHttp,
+  normalizeStripeMode,
+  resolveStripeAccountCode,
+  type ConnectionLookup,
+  type ReadSecret,
+  type StripeClientResolution,
+} from '../_shared/payments/documents/stripe-client-factory.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 // ── Capability matrix (uses existing roles only; no new permissions) ─────────
 const VIEW_ROLES = ['super_admin', 'admin', 'accountant'] as const;
@@ -47,8 +57,13 @@ export interface ResolverDeps {
   supabase: SupabaseClient;
   actor: { user_id: string; email: string | null };
   capabilities: { canRefresh: boolean; canSeeDiagnostics: boolean };
-  /** null → no stripe account resolved; resolveStripeDocuments will skip refresh */
-  buildStripeClient: (account_code: string) => Promise<StripeRetrieve | null>;
+  /** Canonical account+mode-aware factory. Lazy: called ONLY when refresh=true
+   *  AND canRefresh=true. Returns discriminated result; no null ambiguity. */
+  buildStripeClient: (args: {
+    accountCode: string | null;
+    livemode: boolean | null;
+    testMode: boolean | null;
+  }) => Promise<StripeClientResolution>;
   internalDocs: InternalDocSource;
   signer: SignedUrlSigner;
   auditWrite: (entry: { action: string; meta: Record<string, unknown> }) => Promise<void>;
