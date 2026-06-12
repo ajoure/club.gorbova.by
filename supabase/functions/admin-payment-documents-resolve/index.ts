@@ -25,6 +25,16 @@ import { resolveStripeDocuments, type StripeRetrieve, isExactStripeId } from '..
 import { resolveBePaidDocuments } from '../_shared/payments/documents/bepaid-documents.ts';
 import { resolveInternalDocuments, type InternalDocRow, type InternalDocSource, type SignedUrlSigner } from '../_shared/payments/documents/internal-documents.ts';
 import { classifyGeneration } from '../_shared/payments/documents/generation-status.ts';
+import {
+  createStripeClientForPayment,
+  makeStripeRetrieveOverHttp,
+  normalizeStripeMode,
+  resolveStripeAccountCode,
+  type ConnectionLookup,
+  type ReadSecret,
+  type StripeClientResolution,
+} from '../_shared/payments/documents/stripe-client-factory.ts';
+import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
 // ── Capability matrix (uses existing roles only; no new permissions) ─────────
 const VIEW_ROLES = ['super_admin', 'admin', 'accountant'] as const;
@@ -47,8 +57,13 @@ export interface ResolverDeps {
   supabase: SupabaseClient;
   actor: { user_id: string; email: string | null };
   capabilities: { canRefresh: boolean; canSeeDiagnostics: boolean };
-  /** null → no stripe account resolved; resolveStripeDocuments will skip refresh */
-  buildStripeClient: (account_code: string) => Promise<StripeRetrieve | null>;
+  /** Canonical account+mode-aware factory. Lazy: called ONLY when refresh=true
+   *  AND canRefresh=true. Returns discriminated result; no null ambiguity. */
+  buildStripeClient: (args: {
+    accountCode: string | null;
+    livemode: boolean | null;
+    testMode: boolean | null;
+  }) => Promise<StripeClientResolution>;
   internalDocs: InternalDocSource;
   signer: SignedUrlSigner;
   auditWrite: (entry: { action: string; meta: Record<string, unknown> }) => Promise<void>;
@@ -110,24 +125,59 @@ export async function resolvePaymentDocuments(
       payment_intent_id?: string; charge_id?: string; invoice_id?: string;
       refund_id?: string; credit_note_id?: string; subscription_id?: string;
       account_code?: string;
+      livemode?: boolean; test_mode?: boolean;
       charge?: { receipt_url?: string | null };
       hosted_invoice_url?: string | null;
       invoice_pdf?: string | null;
       invoice?: { hosted_invoice_url?: string | null; invoice_pdf?: string | null };
       credit_note?: { pdf?: string | null };
     };
-    const accountCode = sm.account_code ?? (effectiveMeta as { account_code?: string }).account_code ?? null;
+
+    // Account code resolution with conflict detection.
+    const acctRes = resolveStripeAccountCode({
+      stripeAccountCode: sm.account_code ?? null,
+      rootAccountCode: (effectiveMeta as { account_code?: string }).account_code ?? null,
+    });
+    const accountCode = acctRes.ok ? acctRes.accountCode : null;
+
+    // Mode normalization (livemode | test_mode | both).
+    const modeRes = normalizeStripeMode({
+      livemode: typeof sm.livemode === 'boolean' ? sm.livemode : null,
+      testMode: typeof sm.test_mode === 'boolean' ? sm.test_mode : null,
+    });
 
     let stripeClient: StripeRetrieve | null = null;
+    let stripeMode: 'test' | 'live' | null = modeRes.ok ? modeRes.mode : null;
+    let factoryResolution: StripeClientResolution | null = null;
+
     if (refreshProvider && deps.capabilities.canRefresh) {
-      if (accountCode) {
-        try { stripeClient = await deps.buildStripeClient(accountCode); }
-        catch { stripeClient = null; }
+      if (!acctRes.ok) {
+        warnings.push({ code: 'PROVIDER_DOCUMENT_RETRIEVE_FAILED', retryable: false, detail: acctRes.code });
+        stripeAccountResolved = false;
+      } else if (!modeRes.ok) {
+        warnings.push({ code: 'PROVIDER_DOCUMENT_RETRIEVE_FAILED', retryable: false, detail: modeRes.code });
+        stripeAccountResolved = false;
+      } else {
+        factoryResolution = await deps.buildStripeClient({
+          accountCode,
+          livemode: typeof sm.livemode === 'boolean' ? sm.livemode : null,
+          testMode: typeof sm.test_mode === 'boolean' ? sm.test_mode : null,
+        });
+        if (factoryResolution.ok) {
+          stripeClient = factoryResolution.client;
+          stripeMode = factoryResolution.mode;
+          stripeAccountResolved = true;
+        } else {
+          warnings.push({
+            code: 'PROVIDER_DOCUMENT_RETRIEVE_FAILED',
+            retryable: factoryResolution.retryable,
+            detail: factoryResolution.code,
+          });
+          stripeAccountResolved = false;
+        }
       }
-      stripeAccountResolved = !!stripeClient;
-      if (!stripeClient) warnings.push({ code: 'PROVIDER_DOCUMENT_RETRIEVE_FAILED', retryable: true, detail: 'STRIPE_ACCOUNT_NOT_RESOLVED' });
     } else {
-      // No refresh requested → not applicable, leave as null (drawer still shows locals).
+      // No refresh requested → not applicable; leave as null/ok signal for drawer.
       stripeAccountResolved = accountCode ? true : null;
     }
 
@@ -154,7 +204,7 @@ export async function resolvePaymentDocuments(
     });
     providerDocs = r.documents;
     for (const w of r.warnings) warnings.push(w);
-    diag.stripe = r.diagnostics;
+    diag.stripe = { ...r.diagnostics, mode: stripeMode, account_resolved: stripeAccountResolved };
   } else if (provider === 'bepaid') {
     const transaction = (effectiveMeta as { provider_response?: { transaction?: { uid?: string; receipt_url?: string } } })
       .provider_response?.transaction ?? {};
@@ -283,9 +333,36 @@ Deno.serve(async (req) => {
     },
   };
 
-  // Stripe client builder — Approve B leaves provider HTTP unwired (read-only stub).
-  // Production wiring lands in Approve D (canonical secret resolver + stripeFetch).
-  const buildStripeClient = async (_account_code: string): Promise<StripeRetrieve | null> => null;
+  // ── Canonical Stripe client wiring (B.1) ───────────────────────────────────
+  // Lookup acquiring_connections via service-role client (super_admin RLS bypass
+  // via service role; we never expose connection rows to the client).
+  const lookupConnection: ConnectionLookup = {
+    async list(account_code: string) {
+      const { data, error } = await supabase
+        .from('acquiring_connections')
+        .select('id, provider, account_code, test_mode, status')
+        .eq('provider', 'stripe')
+        .eq('account_code', account_code)
+        .eq('status', 'active');
+      if (error || !Array.isArray(data)) return [];
+      return data.map((r) => ({
+        id: String((r as { id: string }).id),
+        provider: 'stripe' as const,
+        account_code: String((r as { account_code: string }).account_code),
+        test_mode: !!(r as { test_mode: boolean }).test_mode,
+        status: String((r as { status: string }).status),
+      }));
+    },
+  };
+  const readSecret: ReadSecret = (provider, account_code, kind) =>
+    readAcquiringSecret(provider, account_code, kind);
+
+  const buildStripeClient = (args: { accountCode: string | null; livemode: boolean | null; testMode: boolean | null }) =>
+    createStripeClientForPayment(args, {
+      lookupConnection,
+      readSecret,
+      makeRetrieve: (secret) => makeStripeRetrieveOverHttp(secret),
+    });
 
   const auditWrite = async (entry: { action: string; meta: Record<string, unknown> }) => {
     await supabase.from('audit_logs').insert({

@@ -285,3 +285,241 @@ Code-search proof (см. § 6, § 7, § 11 выше): нет `payments_v2` write
 - Backlog: `PATCH-STRIPE-TEST-FIXTURE-MARKER-V1` сохранён.
 
 STOP. Жду решения по Approve C.
+
+---
+
+## Approve B.1 — Production wiring (canonical account+mode-aware Stripe client)
+
+Дата: 2026-06-12. Статус: **B.1 = DONE (local)**, deploy НЕ выполнен.
+
+### 1. Файлы, реально изменённые в B.1
+
+| Файл | Назначение |
+|---|---|
+| `supabase/functions/_shared/payments/documents/types.ts` | Добавлен `StripeClientResolutionError` (12 безопасных кодов). |
+| `supabase/functions/_shared/payments/documents/stripe-client-factory.ts` | **НОВЫЙ.** Канонический factory + чистые helpers + HTTP retrieve. |
+| `supabase/functions/admin-payment-documents-resolve/index.ts` | Заменён stub `= () => null` на реальную lazy factory через `_shared/acquiring/vault.ts` + `acquiring_connections`. Сигнатура `ResolverDeps.buildStripeClient` → discriminated `StripeClientResolution`. |
+| `supabase/functions/admin-payment-documents-resolve/index.test.ts` | +28 новых assertions (B1.1–B1.28). Существующие fixtures: добавлен `livemode: false` к stripe-сценариям. |
+| `.lovable/proofs/stripe_documents_drawer_v2_resolver.md` | Этот раздел. |
+
+Никаких других изменений: 0 миграций, 0 правок `config.toml` / `functions.registry.txt`, 0 правок frontend, 0 правок `bepaid-documents.ts` / `internal-documents.ts` / `url-security.ts` / `generation-status.ts`, 0 deploy.
+
+### 2. Фактическая схема `acquiring_connections` (read-only discovery)
+
+```
+provider              text   not null  CHECK in ('stripe','bepaid')
+account_code          text   not null
+account_name          text   not null
+is_default            bool   not null  default false
+test_mode             bool   not null  default true
+status                text   not null  CHECK in ('pending','active','disabled','invalid')
+capabilities_snapshot jsonb  not null  default '{}'
+…
+UNIQUE (provider, account_code)
+```
+
+Фактические записи (production): `provider=stripe, account_code=stripe_poland, test_mode=true, status=active`.
+
+### 3. Фактическая сигнатура vault helper
+
+`_shared/acquiring/vault.ts`:
+```ts
+readAcquiringSecret(provider: 'stripe'|'bepaid', account_code: string, kind: 'secret_key'|'webhook_signing_secret'): Promise<string>
+```
+Чтение через SECURITY DEFINER RPC `get_acquiring_secret`. Прямой `Deno.env.get('STRIPE_SECRET_KEY*')` в factory/resolver/adapter отсутствует (grep clean).
+
+Существующий Stripe HTTP helper `_shared/acquiring/stripe-client.ts` использует `Stripe-Version: '2024-06-20'`. **Тот же pinned version** воспроизведён в `makeStripeRetrieveOverHttp` (дублирование оправдано добавлением AbortController/timeout + строгой санитизацией ошибок, и тем самым сохранён узкий SOT factory). Если базовая версия будет когда-либо бампнута — оба места меняются вместе.
+
+### 4. Production composition graph
+
+```
+HTTP entrypoint (Deno.serve)
+  ├─ JWT auth (supabase.auth.getUser)
+  ├─ RBAC: has_role_v2 × VIEW_ROLES
+  ├─ canRefresh = ∃ role ∈ {super_admin, admin}
+  ├─ load payments_v2 row (SELECT-only)
+  ├─ extract from payment.meta:
+  │     account_code      = meta.stripe.account_code  ∥  meta.account_code  (с детекцией конфликта)
+  │     livemode          = meta.stripe.livemode
+  │     test_mode         = meta.stripe.test_mode
+  ├─ resolveStripeAccountCode → ok | NOT_RESOLVED | CODE_CONFLICT
+  ├─ normalizeStripeMode      → ok | NOT_RESOLVED | CONFLICT
+  └─ if refresh && canRefresh && both ok:
+        deps.buildStripeClient({ accountCode, livemode, testMode })
+            ↓
+        createStripeClientForPayment(args, {
+            lookupConnection: SELECT id,provider,account_code,test_mode,status
+                              FROM acquiring_connections
+                              WHERE provider='stripe' AND account_code=$1 AND status='active'
+            readSecret:       readAcquiringSecret('stripe', code, 'secret_key')   // Vault RPC
+            makeRetrieve:     makeStripeRetrieveOverHttp(secret)                  // GET only
+        })
+            ↓
+        StripeClientResolution =
+          | { ok:true, client, accountCode, mode:'test'|'live', connectionId }
+          | { ok:false, code: <safe machine code>, retryable }
+            ↓
+        ok → resolveStripeDocuments({ stripe: client, refresh: true, ... })
+        !ok → warnings += { code:'PROVIDER_DOCUMENT_RETRIEVE_FAILED', detail:<code>, retryable }
+              providerDocs остаются local-only
+```
+
+### 5. Account-code conflict matrix
+
+| `meta.stripe.account_code` | `meta.account_code` | Verdict |
+|---|---|---|
+| `null` | `null` | `STRIPE_ACCOUNT_NOT_RESOLVED` |
+| `'a'`  | `null` | `'a'` |
+| `null` | `'b'`  | `'b'` |
+| `'a'`  | `'a'`  | `'a'` |
+| `'a'`  | `'b'`  | `STRIPE_ACCOUNT_CODE_CONFLICT` |
+
+Молчаливый приоритет одного поля над другим **отсутствует**.
+
+### 6. Mode normalization matrix
+
+| `livemode` | `test_mode` | Verdict |
+|---|---|---|
+| `null` | `null` | `STRIPE_MODE_NOT_RESOLVED` |
+| `true` | `null` | `live` |
+| `false`| `null` | `test` |
+| `null` | `true` | `test` |
+| `null` | `false`| `live` |
+| `true` | `false`| `live` (consistent) |
+| `false`| `true` | `test` (consistent) |
+| `true` | `true` | `STRIPE_MODE_CONFLICT` |
+| `false`| `false`| `STRIPE_MODE_CONFLICT` |
+
+### 7. Test/live isolation matrix
+
+| Payment mode | Connection `test_mode` | Verdict |
+|---|---|---|
+| `test` | `true`  | ok |
+| `test` | `false` | `STRIPE_MODE_MISMATCH` (no fallback) |
+| `live` | `false` | ok |
+| `live` | `true`  | `STRIPE_MODE_MISMATCH` (no fallback) |
+
+### 8. Exact retrieve resource matrix
+
+| Resource | ID regex | Indirect via |
+|---|---|---|
+| `payment_intents` | `^pi_[A-Za-z0-9]+$` | — |
+| `charges`         | `^ch_[A-Za-z0-9]+$` | `payment_intents.latest_charge` (только exact `ch_*` после strict regex) |
+| `invoices`        | `^in_[A-Za-z0-9]+$` | — |
+| `refunds`         | `^re_[A-Za-z0-9]+$` | — |
+| `credit_notes`    | `^cn_[A-Za-z0-9]+$` | НИКОГДА через `invoices.creditNotes.list` |
+| `subscriptions`   | `^sub_[A-Za-z0-9]+$` | — |
+
+Pre-flight regex выполняется **до** сети → 0 network на mismatch (тесты B1.21/22/23). Любой невалидный prefix или path-injection (`ch_x/../../delete`) отбрасывается без вызова fetch. Кроме regex применяется `encodeURIComponent`.
+
+### 9. Safe failure matrix (что НЕ попадает в response / audit)
+
+| Code | retryable | Что **не** утекает |
+|---|---|---|
+| `STRIPE_ACCOUNT_NOT_RESOLVED`     | false | — |
+| `STRIPE_ACCOUNT_CODE_CONFLICT`    | false | конкретные значения метаданных не пересылаются как detail |
+| `STRIPE_CONNECTION_AMBIGUOUS`     | false | id строк не возвращаются |
+| `STRIPE_MODE_NOT_RESOLVED`        | false | — |
+| `STRIPE_MODE_CONFLICT`            | false | — |
+| `STRIPE_MODE_MISMATCH`            | false | `connection.id` не возвращается клиенту |
+| `STRIPE_SECRET_UNAVAILABLE`       | true  | secret value, vault path, error message (тест B1.19) |
+| `INVALID_STRIPE_RESOURCE`         | false | путь URL не строится; 0 network |
+| `INVALID_STRIPE_ID`               | false | id не уходит наружу; 0 network |
+| `STRIPE_HTTP_ERROR`               | true  | response body, `doc_url`, `error.message` (тест B1.24) |
+| `NETWORK_ERROR`                   | true  | stack trace, secret в exception text (тест B1.26) |
+| `REQUEST_TIMEOUT`                 | true  | — (тест B1.25) |
+
+Authorization header не логируется. Full Stripe object не сохраняется (в `stripe-documents.ts` адаптер уже whitelist-ит поля).
+
+### 10. Lazy resolution (фактический порядок)
+
+```
+JWT auth
+  → RBAC refresh permission
+  → payment UUID load
+  → provider === 'stripe'
+  → refresh_provider === true
+  → account-code resolution (pure)
+  → mode normalization (pure)
+  → factory call (DI)
+       → acquiring_connections SELECT
+       → readAcquiringSecret (Vault RPC)
+       → makeStripeRetrieveOverHttp(secret)
+  → exact Stripe retrieve
+```
+
+При `refresh_provider=false` factory НЕ вызывается → vault НЕ читается → `acquiring_connections` НЕ запрашивается → 0 network (тест B1.1). При `provider !== 'stripe'` factory НЕ вызывается.
+
+### 11. Audit (без изменений контракта)
+
+При `refresh_provider=true` пишется `admin.payment_documents.provider_refresh` в `audit_logs` с полями: `payment_id`, `provider`, `actor_user_id`, `document_types_found`, `source`, `verdict`, `safe_error_code`, `retryable`. **Не пишутся**: secret, vault error text, full Stripe object, Stripe response body, Authorization header, `connection.id`. Тест B1.8 / A5 покрывают.
+
+### 12. Code-search proof (B.1)
+
+```
+$ rg -n '= \(\) => null' supabase/functions/admin-payment-documents-resolve/index.ts
+→ 0 matches (только упоминания в .test.ts как assertion)
+
+$ rg -n 'createStripeClientForPayment' supabase/functions/admin-payment-documents-resolve/index.ts
+→ 2 matches (import + call)
+
+$ rg -n '\.list\(|\.search\(|autoPaging' supabase/functions/_shared/payments/documents/stripe-documents.ts \
+                                          supabase/functions/_shared/payments/documents/stripe-client-factory.ts \
+                                          supabase/functions/admin-payment-documents-resolve/index.ts
+→ 0 Stripe .list/.search/autoPaging matches
+  (единственный `.list(` в shared — это `lookupConnection.list()` контракт для acquiring_connections и `InternalDocSource.list()` — не Stripe API)
+
+$ rg -n 'payments_v2.*(insert|update|upsert|delete)' supabase/functions/admin-payment-documents-resolve/ \
+                                                      supabase/functions/_shared/payments/documents/
+→ 0 matches (только assertion в test)
+
+$ rg -n 'bepaid-get-payment-docs' supabase/functions/admin-payment-documents-resolve/ \
+                                   supabase/functions/_shared/payments/documents/
+→ 0 invocation matches (только комментарии-маркеры)
+
+$ rg -n "Deno\.env\.get\(['\"]STRIPE_SECRET_KEY" supabase/functions/admin-payment-documents-resolve/ \
+                                                  supabase/functions/_shared/payments/documents/
+→ 0 matches (только doc-comment в factory)
+
+$ rg -n 'createSignedUrl' supabase/functions/admin-payment-documents-resolve/
+→ 1 match (per-request, не сохраняется в БД)
+```
+
+### 13. Тесты (итого)
+
+Запуск: `deno test --allow-net --allow-env --allow-read admin-payment-documents-resolve/index.test.ts`
+
+```
+ok | 56 passed | 0 failed (36ms)
+```
+
+Новые B.1 тесты:
+- B1.1 — `refresh_provider=false` → 0 factory / 0 vault / 0 network
+- B1.2 — happy path: account+mode ok → exact retrieve вызван
+- B1.3 — account_code отсутствует → NOT_RESOLVED, 0 network
+- B1.4 — account-code conflict
+- B1.5 — livemode отсутствует
+- B1.6 — livemode/test_mode conflict
+- B1.7 — MODE_MISMATCH из factory
+- B1.8 — SECRET_UNAVAILABLE: secret/vault не утекают
+- B1.9 — exact Charge retrieve → receipt с `source=provider_api`
+- B1.10 — production composition guard (static read of index.ts)
+- B1.11/12 — `resolveStripeAccountCode` (single/conflict)
+- B1.13 — `normalizeStripeMode` (все ветки)
+- B1.14–B1.20 — Factory contract: account null, 0 active, ambiguous, test↔live mismatch (×2), vault throw, happy path
+- B1.21–B1.27 — HTTP retrieve safety: invalid resource, wrong-prefix ID, path-injection, sanitized non-2xx, REQUEST_TIMEOUT, NETWORK_ERROR, happy path + pinned Stripe-Version assertion
+- B1.28 — Runtime composition: factory + mock lookup + mock vault + mock fetch → drawer surfaces provider_api receipt
+
+Все 0 network вызовов, 0 production DB calls — DI mocks.
+
+### 14. Gate
+
+| Approve | Status |
+|---|---|
+| A | PASS |
+| B | PARTIAL → закрыт B.1 |
+| **B.1** | **DONE (local)** |
+| C | NOT APPROVED |
+| D | NOT APPROVED |
+
+Deploy / frontend / production runtime НЕ начаты. После B.1 — STOP, ожидание решения по Approve C.

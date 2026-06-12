@@ -1,532 +1,634 @@
 да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Approve B разрешён после следующих уточнений.
+Все пункты плана сохраняются по принципу add-only/no-loss. Approve B.1 разрешён после следующих уточнений.
 
-**1. Config и registry не означают deploy**
+**1. Расширить точный scope на два существующих contract-файла**
 
-В Approve B разрешены repo-only изменения:
+Текущий scope из четырёх файлов недостаточен, потому что меняются:
 
-supabase/config.toml
+- сигнатура ResolverDeps.buildStripeClient;
+- набор machine codes;
+- формат результата factory.
 
-supabase/functions.registry.txt
+Mapping:
 
-Добавить:
+старый scope
 
-[functions.admin-payment-documents-resolve]
+→ новый scope add-only
 
-verify_jwt = true
+Дополнительно разрешить изменения только в:
 
-Но зафиксировать в proof:
+supabase/functions/_shared/payments/documents/types.ts
 
-function deployed = false
+supabase/functions/_shared/payments/documents/stripe-documents.ts
 
-runtime production unchanged = true
+Причина:
 
-Shared-файлы входят в bundle будущей функции и отдельно не деплоятся.
+- types.ts должен содержать новый discriminated result и безопасные коды;
+- stripe-documents.ts должен принимать новую factory-сигнатуру и корректно обрабатывать причины отказа.
+
+Итоговый максимальный scope B.1:
+
+admin-payment-documents-resolve/index.ts
+
+admin-payment-documents-resolve/index.test.ts
+
+_shared/payments/documents/stripe-client-factory.ts
+
+_shared/payments/documents/stripe-documents.ts
+
+_shared/payments/documents/types.ts
+
+.lovable/proofs/stripe_documents_drawer_v2_[resolver.md](http://resolver.md)
+
+Другие файлы не менять.
 
 &nbsp;
 
-**2. Использовать канонический RBAC-helper, а не проверять названия ролей вручную**
+**2. Не предполагать схему**
 
-Не реализовывать разрозненные проверки вида:
+**acquiring_connections**
 
-role === admin || role === accountant
+**и сигнатуру vault**
 
-Использовать существующий канонический helper/guard, найденный в Approve A.
+Перед реализацией выполнить read-only code/schema discovery:
 
-Правила:
+фактические колонки acquiring_connections
 
-- просмотр разрешён только пользователю, который уже имеет действующее право просмотра платежей;
-- accountant получает просмотр только в том случае, если существующий payment-RBAC уже это разрешает;
-- refresh_provider=true — только существующий строгий edit/admin guard;
-- diagnostics — только super_admin;
-- обычный пользователь — 403.
+фактическая сигнатура readAcquiringSecret
 
-Новые permission names, роли, таблицы и migrations не создавать.
+существующие account/mode helpers
+
+существующий Stripe HTTP helper
+
+текущая Stripe API version
+
+Не хардкодить заранее:
+
+test_mode
+
+status
+
+readAcquiringSecret('stripe', account_code, 'secret_key')
+
+если фактический контракт проекта отличается.
+
+Использовать существующий canonical helper 1:1. В proof указать реальную цепочку и реальные поля.
+
+Если в проекте уже существует безопасный Stripe HTTP client с exact retrieve, переиспользовать его. Не создавать второй конкурентный Stripe transport.
+
+Новый makeHttpStripeClient создавать только при доказанном отсутствии пригодного канонического helper.
 
 &nbsp;
 
-**3. Зафиксировать HTTP-контракт функции**
+**3. Factory должна возвращать структурированный результат, а не**
 
-Минимальные ответы:
+**client | null**
 
-400 INVALID_REQUEST
+Сигнатура:
 
-401 UNAUTHORIZED
+type StripeClientResolution =
 
-403 FORBIDDEN
+  | {
 
-404 PAYMENT_NOT_FOUND
+      ok: true;
 
-200 RESOLVED
+      client: StripeRetrieve;
 
-Ошибка одного provider adapter не должна превращать весь resolve в 500.
+      accountCode: string;
 
-При Stripe/bePaid API failure функция возвращает:
+      mode: "test" | "live";
 
-{
-
-  "provider_documents": [
-
-    {
-
-      "status": "error"
+      connectionId: string;
 
     }
 
-  ],
+  | {
 
-  "warnings": [
+      ok: false;
 
-    {
+      code: StripeClientResolutionError;
 
-      "code": "PROVIDER_DOCUMENT_RETRIEVE_FAILED",
+      retryable: boolean;
 
-      "retryable": true
-
-    }
-
-  ]
-
-}
-
-Raw provider error text клиенту не возвращать.
-
-500 допустим только для необработанной внутренней ошибки resolver.
-
-&nbsp;
-
-**4. Устранить противоречие по Stripe Credit Note**
-
-В этом патче запрещены Stripe list/search.
-
-Поэтому credit note разрешено получать только при наличии точного доказанного:
-
-cn_*
-
-Наличие только invoice_id не разрешает выполнять:
-
-creditNotes.list({ invoice })
-
-Если точного credit_note_id нет:
-
-credit note = unavailable
-
-Не искать credit note по customer, invoice history, refund, сумме или дате.
-
-&nbsp;
-
-**5. Exact retrieve chain**
-
-Допустима только цепочка по точным ID, уже связанным с payment:
-
-payment_intent_id → retrieve PI
-
-charge_id → retrieve Charge
-
-invoice_id → retrieve Invoice
-
-refund_id → retrieve Refund
-
-credit_note_id → retrieve Credit Note
-
-subscription_id → retrieve Subscription
-
-Разрешено использовать точный ID, полученный из exact-retrieved объекта, например:
-
-PaymentIntent.latest_charge = ch_*
-
-Invoice.payment_intent = pi_*
-
-При этом запрещены:
-
-list
-
-search
-
-поиск по customer
-
-поиск по email
-
-поиск по сумме
-
-поиск по дате
-
-В тестах отдельно доказать отсутствие вызовов list/search.
-
-&nbsp;
-
-**6. Определить canonical external_id для каждого provider document**
-
-Дедупликация невозможна без стабильного external_id.
+    };
 
 Использовать:
 
-Stripe receipt       → charge_id
+buildStripeClient(args: {
 
-Stripe hosted invoice → invoice_id
+  accountCode: string | null;
 
-Stripe invoice PDF    → invoice_id
+  livemode: boolean | null;
 
-Stripe credit note    → credit_note_id
+  testMode: boolean | null;
 
-bePaid receipt        → transaction.uid или provider_payment_id
+}): Promise<StripeClientResolution>
 
-Canonical identity:
+null запрещён, поскольку он не позволяет различить:
 
-provider + document_type + external_id
+account не найден
 
-URL не является identity и не используется для дедупликации.
+mode не найден
 
-Если bePaid receipt URL существует, но отсутствуют и transaction UID, и provider payment ID:
+mode конфликтует
 
-status = unavailable
+connection неоднозначен
 
-warning = PROVIDER_DOCUMENT_ID_NOT_RESOLVED
-
-Не дедуплицировать по URL.
+vault недоступен
 
 &nbsp;
 
-**7. bePaid refresh остаётся строго read-only**
+**4. Account code resolver должен выявлять конфликт**
 
-Если существующая bePaid retrieval-логика неотделима от записи в:
+Источники:
 
-payments_v2
+meta.stripe.account_code
 
-orders_v2
-
-provider_response
-
-receipt_url
-
-её не вызывать.
-
-Тогда поведение:
-
-локальный receipt найден → показать
-
-локальный receipt отсутствует → BEPAID_REFRESH_NOT_AVAILABLE_READ_ONLY
-
-Не считать это ошибкой всего drawer.
-
-bepaid-get-payment-docs не вызывать, если он имеет write-side-effects.
-
-&nbsp;
-
-**8. Generation status — только через доказанно read-only entrypoint**
-
-Нельзя вызывать существующий endpoint только потому, что он называется resolver, если внутри возможны:
-
-document generation
-
-document number allocation
-
-audit generation action
-
-DB update
-
-Допустимо:
-
-- использовать существующий pure/read-only shared resolver;
-- вынести из канонического resolver чистую read-only функцию без изменения правил;
-- вызвать существующий endpoint только после доказательства отсутствия write-side-effects.
-
-Если pure read-only entrypoint отсутствует и его нельзя безопасно выделить:
-
-STOP
-
-GENERATION_RESOLVER_NOT_READ_ONLY
-
-Не копировать document_scenarios и generation-правила в новый resolver.
-
-&nbsp;
-
-**9. Internal documents: не угадывать версии**
-
-Использовать только:
-
-payment.order_id
-
-→ ai_generated_documents.order_id
+meta.account_code
 
 Правила:
 
-- identity каждого документа = его UUID;
-- если схема содержит канонические version, supersedes_id, parent_document_id или аналог — использовать их;
-- если канонического поля версии нет, документы не склеивать;
-- не определять «последнюю версию» по имени файла, номеру или URL;
-- сортировка — детерминированно по created_at DESC, затем UUID;
-- status маппится только из фактического DB status.
+- если заполнен только один — использовать его;
+- если заполнены оба и совпадают — использовать значение;
+- если заполнены оба и различаются:
 
-Если есть несколько документов с разными UUID, они не считаются дублями без канонической version relation.
+STRIPE_ACCOUNT_CODE_CONFLICT
 
-&nbsp;
+Никакого молчаливого приоритета одного поля над другим.
 
-**10. URL allowlist проверять строго**
+Для acquiring_connections:
 
-Hostname matching:
+- 0 активных строк → STRIPE_ACCOUNT_NOT_RESOLVED;
+- 1 активная строка → продолжить;
+- >1 активных строк для одного provider/account_code → STRIPE_CONNECTION_AMBIGUOUS.
 
-[pay.stripe.com](http://pay.stripe.com)
-
-[invoice.stripe.com](http://invoice.stripe.com)
-
-[files.stripe.com](http://files.stripe.com)
-
-[bepaid.by](http://bepaid.by)
-
-*.[bepaid.by](http://bepaid.by)
-
-Для wildcard принимать только boundary-safe subdomain:
-
-host === "[bepaid.by](http://bepaid.by)"
-
-или
-
-host.endsWith(".[bepaid.by](http://bepaid.by)")
-
-Не принимать:
-
-[evilbepaid.by](http://evilbepaid.by)
-
-[bepaid.by.evil.com](http://bepaid.by.evil.com)
-
-Правила:
-
-- только https:;
-- username/password в URL запрещены;
-- javascript:, data:, file:, blob: запрещены;
-- unsafe URL не возвращать клиенту;
-- query string не писать в audit;
-- external provider URL по умолчанию:
-- signed storage URL:
-
-can_open = true
-
-can_download = true
-
-expires_at заполнен
-
-Signed URL создаётся только на текущий resolve и нигде не сохраняется.
+Нельзя использовать .single() без явной обработки неоднозначности.
 
 &nbsp;
 
-**11. Provider refresh audit**
+**5. Нормализация test/live marker**
 
-Audit создаётся для каждой попытки:
+Использовать оба возможных marker:
 
-refresh_provider=true
+meta.stripe.livemode
 
-включая:
+meta.stripe.test_mode
 
-SUCCESS
+Алгоритм:
 
-NO_DOCUMENTS
+только livemode:
 
-PROVIDER_ERROR
+  true  → live
 
-ACCOUNT_NOT_RESOLVED
+  false → test
 
-READ_ONLY_REFRESH_UNAVAILABLE
+&nbsp;
 
-Actor хранить в канонических колонках audit:
+только test_mode:
 
-actor_type = user/admin
+  true  → test
 
-actor_user_id = JWT sub
+  false → live
 
-Safe meta:
+&nbsp;
 
-payment_id
+оба присутствуют:
 
-provider
+  test_mode должен равняться !livemode
 
-document_types_found
+При противоречии:
 
-source
+STRIPE_MODE_CONFLICT
 
-verdict
+Если оба отсутствуют:
+
+STRIPE_MODE_NOT_RESOLVED
+
+После этого сравнить нормализованный payment mode с фактическим mode подключения.
+
+При несовпадении:
+
+STRIPE_MODE_MISMATCH
+
+Никакого fallback на live/test connection.
+
+&nbsp;
+
+**6. Дополнить safe machine codes**
+
+Добавить в canonical types:
+
+STRIPE_ACCOUNT_NOT_RESOLVED
+
+STRIPE_ACCOUNT_CODE_CONFLICT
+
+STRIPE_CONNECTION_AMBIGUOUS
+
+STRIPE_MODE_NOT_RESOLVED
+
+STRIPE_MODE_CONFLICT
+
+STRIPE_MODE_MISMATCH
+
+STRIPE_SECRET_UNAVAILABLE
+
+INVALID_STRIPE_RESOURCE
+
+INVALID_STRIPE_ID
+
+STRIPE_HTTP_ERROR
+
+NETWORK_ERROR
+
+REQUEST_TIMEOUT
+
+Клиенту и audit передаётся только machine code и retryable.
+
+Не передавать:
+
+vault error message
+
+Stripe response body
+
+Stripe error message
+
+stack trace
+
+secret
+
+Authorization header
+
+&nbsp;
+
+**7. Resource-specific ID validation**
+
+Недостаточно общего isExactStripeId.
+
+Ввести строгую таблицу:
+
+payment_intents → ^pi_[A-Za-z0-9]+$
+
+charges         → ^ch_[A-Za-z0-9]+$
+
+invoices        → ^in_[A-Za-z0-9]+$
+
+refunds         → ^re_[A-Za-z0-9]+$
+
+credit_notes    → ^cn_[A-Za-z0-9]+$
+
+subscriptions   → ^sub_[A-Za-z0-9]+$
+
+Несовпадение resource и ID:
+
+INVALID_STRIPE_ID
+
+0 network calls
+
+ID обязательно пропускать через encodeURIComponent, даже после regex validation.
+
+Произвольный resource string запрещён — только enum.
+
+&nbsp;
+
+**8. Stripe API version и timeout**
+
+Stripe-Version не выбирать заново.
+
+Использовать ту же pinned version, которая уже применяется каноническим Stripe webhook/client в проекте.
+
+В proof указать источник версии.
+
+Каждый HTTP retrieve должен иметь AbortController/timeout.
+
+При timeout:
+
+REQUEST_TIMEOUT
+
+retryable = true
+
+При сетевой ошибке:
+
+NETWORK_ERROR
+
+retryable = true
+
+При Stripe 4xx/5xx:
+
+- не возвращать body;
+- разрешено безопасно извлечь только:
+- не включать message или full response.
+
+&nbsp;
+
+**9. Server-side connection lookup**
+
+Lookup acquiring_connections и vault выполняются через существующий канонический server-side service client/helper.
+
+Запрещено:
+
+- передавать service-role или secret во frontend;
+- использовать пользовательские значения connection ID;
+- принимать account_code или mode из request body;
+- доверять чему-либо кроме загруженной payments_v2 row.
+
+Все account/mode данные определяются только из конкретного payment.
+
+&nbsp;
+
+**10. Lazy resolution**
+
+Подтвердить фактическую последовательность:
+
+JWT auth
+
+→ RBAC refresh permission
+
+→ payment UUID load
+
+→ provider=stripe
+
+→ refresh_provider=true
+
+→ resolve account/mode
+
+→ lookup active connection
+
+→ vault read
+
+→ exact Stripe retrieve
+
+При refresh_provider=false:
+
+0 acquiring_connections lookup
+
+0 vault calls
+
+0 Stripe HTTP calls
+
+При provider не stripe:
+
+0 Stripe factory calls
+
+&nbsp;
+
+**11. Production composition guard**
+
+Статический тест на отсутствие строки () => null сохранить, но он не является единственным доказательством.
+
+Добавить runtime composition test:
+
+- импортировать production factory/composition;
+- передать mock canonical connection lookup;
+- передать mock vault;
+- подтвердить, что factory реально строит StripeRetrieve;
+- выполнить exact retrieve через mock fetch;
+- получить whitelisted provider document.
+
+Production entrypoint не должен иметь скрытого fallback stub.
+
+&nbsp;
+
+**12. Дополнить тесты**
+
+К заявленным десяти добавить:
+
+1. meta.stripe.account_code и meta.account_code различаются → conflict, 0 network.
+2. Две active connections для одного account → ambiguous, 0 vault.
+3. livemode и test_mode противоречат → mode conflict.
+4. Connection mode отсутствует/невалиден → safe failure.
+5. Resource charges + pi_* → invalid ID, 0 network.
+6. Path-injection ID отклоняется.
+7. Неизвестный resource отклоняется.
+8. Stripe non-2xx не раскрывает response body.
+9. Timeout → REQUEST_TIMEOUT.
+10. Network throw → NETWORK_ERROR.
+11. Request body не может подменить account/mode.
+12. bePaid/local-only resolve не вызывает Stripe factory.
+
+Итоговая цель:
+
+не менее 48 тестов
+
+0 failed
+
+0 real network
+
+0 production DB access
+
+Если фактическое число выше — зафиксировать реальное.
+
+&nbsp;
+
+**13. Audit**
+
+При refresh_provider=true audit должен отражать фактический итог factory:
+
+stripe_account_resolved
+
+stripe_mode
 
 safe_error_code
 
 retryable
 
-Не дублировать в meta:
+Но не включать:
 
-- URL;
-- card data;
-- ФИО;
-- customer;
-- полный provider response;
-- secret/account credentials.
+connectionId
 
-При refresh_provider=false отдельный audit открытия drawer не создавать.
+secret name
 
-&nbsp;
+secret value
 
-**12. Тесты должны быть полностью изолированными**
+vault path
 
-Все provider clients, Supabase client, clock и signed-URL generator передавать через dependency injection/mocks.
+Stripe URL
 
-Локальные тесты не должны:
+Stripe response body
 
-- обращаться к production DB;
-- обращаться к Stripe;
-- обращаться к bePaid;
-- создавать реальные signed URLs;
-- писать реальные audit rows.
-
-Дополнительно к утверждённой матрице проверить:
-
-0 network calls
-
-0 DB writes при refresh_provider=false
-
-ровно 1 safe audit attempt при refresh_provider=true
-
-0 generation calls
-
-0 document number allocations
-
-0 unsafe URLs в response
-
-Тест refresh не меняет payments_v2 должен проверять не только итоговое состояние mock, но и отсутствие вызова update/insert/upsert/delete для payments_v2.
+connectionId допускается только в server-side diagnostics для super_admin, если это уже предусмотрено contract, и только masked. В audit его не писать.
 
 &nbsp;
 
-**13. Technical payment marker**
+**14. Proof**
 
-Создать или обновить отдельный backlog-артефакт:
+В обновлённом proof дополнительно показать:
 
-.lovable/backlog/stripe_test_fixture_marker_[v1.md](http://v1.md)
-
-В текущем resolver:
-
-- не определять fixture по сумме;
-- не хардкодить UUID;
-- не возвращать TEST_PAYMENT_DOCUMENT_BLOCKED;
-- не запускать generation;
-- только показывать существующие provider/internal documents.
-
-&nbsp;
-
-**14. Proof должен подтвердить отсутствие второго write-path**
-
-В:
-
-.lovable/proofs/stripe_documents_drawer_v2_[resolver.md](http://resolver.md)
-
-добавить code-search proof:
-
-payments_v2 insert/update/delete/upsert → отсутствует в новом resolver
-
-document generate/regenerate → отсутствует
-
-document number allocation → отсутствует
-
-Stripe list/search → отсутствует
-
-bepaid-get-payment-docs invocation → отсутствует
-
-signed URL persistence → отсутствует
-
-Также указать полный будущий deploy scope Approve D:
-
-admin-payment-documents-resolve
-
-frontend bundle
-
-Shared-модули входят только в bundle resolver.
+- фактическую схему acquiring_connections;
+- фактическую сигнатуру canonical vault helper;
+- найденный/переиспользованный Stripe HTTP helper либо доказательство его отсутствия;
+- account-code conflict matrix;
+- mode normalization matrix;
+- ambiguous connection guard;
+- resource-prefix matrix;
+- timeout/error sanitization;
+- production composition runtime test;
+- итоговое число тестов;
+- полный список реально изменённых файлов;
+- подтверждение отсутствия deploy/config/registry/frontend/DB изменений.
 
 &nbsp;
 
-**15. Gate status**
+**Gate status**
 
 PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve A = PASS
 
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B = APPROVED
+PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B = PARTIAL
+
+PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B.1 = APPROVED
 
 Approve C = NOT APPROVED
 
 Approve D = NOT APPROVED
 
-После реализации Approve B остановиться и вернуть один consolidated отчёт.
+После выполнения B.1 остановиться.
 
-Deploy, frontend-разработку и production runtime не начинать.
+Deploy, frontend и production runtime не начинать.
 
 &nbsp;
 
-План: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B
+## Approve B.1 — Production wiring Stripe client в admin-payment-documents-resolve
 
-Approve A = PASS, Approve B = APPROVED. Реализую только backend-код и локальные тесты. Deploy, миграции, frontend, изменение lifecycle/payments_v2 — запрещены.
+Цель: устранить блокирующий недостаток `buildStripeClient = () => null` в production composition. Подключить канонический account+mode-aware Stripe client через существующие `_shared/acquiring/vault.ts` и `acquiring_connections`. Deploy и frontend запрещены.
 
-## Scope
+### Scope (только эти файлы)
 
-1. Edge Function (НЕ деплоить):
-  - `supabase/functions/admin-payment-documents-resolve/index.ts`
-  - `supabase/functions/admin-payment-documents-resolve/index.test.ts`
-2. Shared layer (exact paths из Approve B §3):
-  - `_shared/payments/documents/types.ts` — Canonical contract, machine codes, URL kinds.
-  - `_shared/payments/documents/url-security.ts` — https-only, allowlist (`pay.stripe.com`, `invoice.stripe.com`, `files.stripe.com`, `*.bepaid.by`), `url_kind`, `can_open/download/copy`.
-  - `_shared/payments/documents/stripe-documents.ts` — account+mode-aware adapter, exact retrieve по pi_/ch_/in_/re_/cn_/sub_, whitelist полей, без list/search и без fallback на live/default.
-  - `_shared/payments/documents/bepaid-documents.ts` — read-only извлечение из локального `receipt_url` и `provider_response.transaction.receipt_url`; без write-side-effects; при невозможности чистого refresh → `BEPAID_REFRESH_NOT_AVAILABLE_READ_ONLY`.
-  - `_shared/payments/documents/internal-documents.ts` — связь по `payment.order_id → ai_generated_documents.order_id`, identity = UUID, signed URL короткоживущий, не сохраняется.
-  - `_shared/payments/documents/generation-status.ts` — обёртка над существующим canonical document resolver, только resolve статуса (read-only), без вызова generation.
-3. Config:
-  - `supabase/config.toml`: добавить
-4. Registry:
-  - `supabase/functions.registry.txt`: добавить `admin-payment-documents-resolve` (P1, deploy выполняется только в Approve D).
-5. Proof: `.lovable/proofs/stripe_documents_drawer_v2_resolver.md` — по структуре §15.
+1. `supabase/functions/admin-payment-documents-resolve/index.ts` — заменить stub-фабрику на реальную lazy factory.
+2. `supabase/functions/_shared/payments/documents/stripe-client-factory.ts` — НОВЫЙ shared-модуль: `createStripeClientForPayment(payment, deps)` + `StripeRetrieve` HTTP-реализация поверх `fetch` (только `*.retrieve(resource, id)`, exact ID).
+3. `supabase/functions/admin-payment-documents-resolve/index.test.ts` — добавить ≥10 новых тестов (см. §6).
+4. `.lovable/proofs/stripe_documents_drawer_v2_resolver.md` — обновить proof.
 
-## Contract (фикс)
+Никакие другие файлы, миграции, config.toml, registry, frontend, deploy — не трогаем.
 
-Input: `{ payment_id: uuid, refresh_provider: boolean }`.
-Output: canonical response из §4 с полями `payment`, `provider_documents[]`, `internal_documents[]`, `generation`, `diagnostics`, `warnings[]`.
-Каждый документ содержит `url`, `url_kind`, `can_open`, `can_download`, `can_copy`, `expires_at`. Unsafe URL → `status=unavailable` + warning `UNSAFE_DOCUMENT_URL`, не отдаётся клиенту.
+### 1. Canonical chain (read-only)
 
-## RBAC
+```
+payment.provider === 'stripe'
+  ↓
+account_code = payment.meta.stripe.account_code
+            ?? payment.meta.account_code        (legacy fallback, тот же payment)
+  ↓ (если null → STRIPE_ACCOUNT_NOT_RESOLVED, 0 network)
+SELECT id, provider, account_code, test_mode, status
+  FROM acquiring_connections
+  WHERE provider='stripe' AND account_code=$1 AND status='active'
+  ↓ (если 0 строк или status≠active → STRIPE_ACCOUNT_NOT_RESOLVED)
+mode_marker = payment.meta.stripe.livemode (bool) ?? payment.meta.stripe.test_mode
+  ↓ (если null/undefined → STRIPE_MODE_NOT_RESOLVED, 0 network)
+assert: connection.test_mode === !mode_marker_live
+  (mismatch → STRIPE_MODE_MISMATCH, 0 network, без раскрытия деталей)
+  ↓
+secret = readAcquiringSecret('stripe', account_code, 'secret_key')   // _shared/acquiring/vault.ts
+  ↓ (throw → STRIPE_SECRET_UNAVAILABLE, secret/error message НЕ в response/audit)
+StripeRetrieve = makeHttpStripeClient(secret)
+```
 
-`has_role_v2` для существующих ролей:
+Жёсткие запреты в factory:
 
-- view (admin/super_admin/accountant с правом просмотра платежей) → resolve без refresh;
-- edit/admin → refresh_provider=true;
-- super_admin → diagnostics;
-- остальные → 403.
-Новых ролей/прав/миграций нет.
+- нет global default Stripe client;
+- нет fallback на live при отсутствии test-секрета (и наоборот);
+- нет выбора аккаунта по валюте/продукту/офферу/email/customer;
+- нет прямого `Deno.env.get('STRIPE_SECRET_KEY')` (только через `readAcquiringSecret`).
 
-## Запрещено в Approve B
+### 2. HTTP Stripe client (whitelist API)
 
-INSERT/UPDATE/DELETE `payments_v2`; создание документа; выделение номера; изменение order/payment/subscription/access; авто-вызов generation; сохранение provider/signed URL; вызов `bepaid-get-payment-docs` с записью; Stripe list/search; fallback на live/default account; refund по эвристике; новая таблица/RPC/migration; дубликат provider-документа; возврат unsafe URL.
+`makeHttpStripeClient(secret): StripeRetrieve` реализует ровно один метод:
 
-## Audit (только при refresh_provider=true)
+```
+retrieve(resource, id) → fetch(`https://api.stripe.com/v1/${resource}/${id}`,
+  { headers: { Authorization: `Bearer ${secret}`, 'Stripe-Version': '<pinned>' } })
+```
 
-`audit_logs.action = admin.payment_documents.provider_refresh`. Safe meta: `payment_id, provider, actor_user_id, document_types_found, source, verdict, safe_error_code, retryable`. PCI/PII/URL/secrets — не логируются.
+- pre-flight regex (повторно использует `isExactStripeId`), иначе `{ ok:false, error:{ code:'INVALID_ID' } }` без network;
+- ресурс из enum: `payment_intents | charges | invoices | refunds | credit_notes | subscriptions`;
+- ответ нормализуется в `{ok,status,data,error}`; **никаких полей карты/PII** не пробрасывается дальше (адаптер уже whitelist-ит, factory просто отдаёт `data`);
+- сетевые ошибки → `{ok:false, error:{code:'NETWORK_ERROR'}}` без stack/secret.
 
-## Generation status
+### 3. Lazy resolution в entrypoint
 
-Допустимые коды: `NO_DOCUMENT_SCENARIO`, `MISSING_REQUIRED_REQUISITES`, `DOCUMENT_ALREADY_GENERATED`, `GENERATION_IN_PROGRESS`, `GENERATION_FAILED`, `PAYMENT_NOT_LINKED_TO_ORDER`, `REFUND_USES_PARENT_DOCUMENTS`, `STRIPE_ACCOUNT_NOT_RESOLVED`. `TEST_PAYMENT_DOCUMENT_BLOCKED` — НЕ выставлять (нет canonical marker; backlog `PATCH-STRIPE-TEST-FIXTURE-MARKER-V1` сохраняется).
+В `index.ts`:
 
-## Refund
+- удалить `buildStripeClient = async (_) => null`;
+- объявить `buildStripeClient(account_code)` **без** реального построения здесь — фактически делегировать в `createStripeClientForPayment(payment, { supabase, readSecret })`;
+- но т.к. текущий контракт `ResolverDeps.buildStripeClient(account_code)` берёт только `account_code`, расширяем до `buildStripeClient(payment): Promise<StripeRetrieve | null>` ИЛИ оставляем сигнатуру и резолвим mode внутри factory через дополнительный lookup payment.meta (передаём payment.meta как замыкание).
+  - Решение: меняем сигнатуру deps на `buildStripeClient(args: { account_code: string; livemode: boolean | null }) => Promise<StripeRetrieve | null>` — payment.meta уже распаршен в основном flow, livemode извлекается там же и передаётся как аргумент. Это сохраняет DI-чистоту.
+- factory вызывается **только** при `refresh && canRefresh && account_code`;
+- при `refresh_provider=false` factory не вызывается → vault не читается → 0 network.
 
-Только `payments_v2.meta.parent_payment_id` + подтверждённые exact provider relations. Parent найден → `source=parent_payment`, `REFUND_USES_PARENT_DOCUMENTS`. Нет → warning `REFUND_PARENT_NOT_RESOLVED`. Эвристики запрещены.
+### 4. Безопасные коды отказа (machine codes, warning.detail)
 
-## Дедупликация
+Все возвращаются как `warnings: [{ code: 'PROVIDER_DOCUMENT_RETRIEVE_FAILED', retryable, detail: <code> }]`, без раскрытия секрета / vault error / Stripe HTTP body:
 
-Provider identity = `provider + type + external_id`. Internal identity = UUID. Слияние local+API только при exact identity → `source=local_meta+provider_api`. Не по URL/имени/номеру.
+- `STRIPE_ACCOUNT_NOT_RESOLVED` — account_code пуст или нет active connection;
+- `STRIPE_MODE_NOT_RESOLVED` — нет livemode-маркера в payment.meta;
+- `STRIPE_MODE_MISMATCH` — connection.test_mode противоречит payment livemode;
+- `STRIPE_SECRET_UNAVAILABLE` — vault throw;
+- `NETWORK_ERROR`, `INVALID_ID`, плюс уже существующие Stripe error codes (передаются как есть из `error.code`, но без message).
 
-## Тесты (минимум 20 + дополнительные)
+### 5. Audit (без изменений контракта)
 
-20 кейсов из §14 + 5 дополнительных (обычный пользователь → 403; refresh не меняет `payments_v2`; exact retrieve без list/search; diagnostics скрыты не-super_admin; PCI forbidden fields отсутствуют). Запуск через Deno test локально, без deploy.
+`admin.payment_documents.provider_refresh` пишется только при `refresh_provider=true`. В meta добавляется:
 
-## Stop-conditions
+- `stripe_account_resolved: boolean | null`;
+- `stripe_mode: 'test' | 'live' | null`;
+- `safe_error_code` (уже есть) — пополняется новыми кодами.
+Никогда не пишется: secret, vault error text, Stripe HTTP body, account secret key, full Stripe object.
 
-Реализация немедленно останавливается при любом из условий §Stop-conditions сообщения.
+### 6. Новые тесты (минимум 10, к существующим 28)
 
-## Gate status после Approve B
+В `index.test.ts` (или новом `stripe-client-factory.test.ts` рядом):
 
-- A = PASS
-- B = выполнено локально, deploy НЕ выполнен
-- C = NOT APPROVED
-- D = NOT APPROVED
+1. `refresh_provider=false` → spy на factory: 0 вызовов; spy на vault: 0 вызовов; 0 network.
+2. Stripe payment, валидный `account_code` + `livemode=false` + active test connection → factory вернула client, retrieve вызван exact, доки появились.
+3. `account_code` отсутствует → `STRIPE_ACCOUNT_NOT_RESOLVED`, 0 network, 0 vault.
+4. `account_code` есть, connection не найдена → `STRIPE_ACCOUNT_NOT_RESOLVED`, 0 vault.
+5. `livemode` отсутствует → `STRIPE_MODE_NOT_RESOLVED`, 0 vault, 0 network.
+6. test payment (livemode=false) против connection.test_mode=false → `STRIPE_MODE_MISMATCH`, 0 vault, 0 network.
+7. live payment (livemode=true) против connection.test_mode=true → `STRIPE_MODE_MISMATCH`, 0 vault, 0 network.
+8. Vault throw → `STRIPE_SECRET_UNAVAILABLE`; secret/error message отсутствуют в response и audit meta (assert по сериализованному JSON).
+9. Exact charge retrieve → receipt URL появился, `source` содержит `provider_api`.
+10. Exact invoice retrieve → hosted + pdf docs, dedup с локальными.
+11. Production composition guard (статический тест): чтение исходника `index.ts`, assert что строка `= () => null` отсутствует и есть импорт `createStripeClientForPayment`.
 
-После реализации — STOP и `Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B` с разделами из §15 (файлы, diff-summary, dependency graph, contract, RBAC, Stripe account/mode resolution, exact retrieve proof, bePaid read-only proof, refund parent, internal document relation, URL-security, dedup, тесты и результаты, подтверждение no-deploy/no-DB/no-lifecycle changes, proposed deploy scope для Approve D).
+Все тесты — без сети и без БД (через DI mocks). Цель: ≥38 тестов всего, 100% PASS, локально `supabase--test_edge_functions`.
+
+### 7. Code-search proof (в обновлённом .md)
+
+Команды и ожидаемые результаты:
+
+```
+rg -n '= \(\) => null' supabase/functions/admin-payment-documents-resolve/   → 0 matches
+rg -n 'createStripeClientForPayment' supabase/functions/admin-payment-documents-resolve/index.ts   → ≥1
+rg -n '\.list\(|\.search\(|autoPaging' supabase/functions/_shared/payments/documents/ supabase/functions/admin-payment-documents-resolve/   → 0
+rg -n 'payments_v2' supabase/functions/admin-payment-documents-resolve/ supabase/functions/_shared/payments/documents/   → только SELECT, 0 INSERT/UPDATE/DELETE/upsert
+rg -n 'bepaid-get-payment-docs' supabase/functions/admin-payment-documents-resolve/ supabase/functions/_shared/payments/documents/   → 0
+rg -n "Deno\.env\.get\('STRIPE_SECRET_KEY" supabase/functions/admin-payment-documents-resolve/ supabase/functions/_shared/payments/documents/   → 0 (только vault path)
+rg -n 'createSignedUrl' supabase/functions/admin-payment-documents-resolve/   → 1 (per-request, не сохраняется в БД)
+```
+
+### 8. Proof update
+
+В `.lovable/proofs/stripe_documents_drawer_v2_resolver.md` добавить разделы:
+
+- production composition graph (text ASCII);
+- canonical vault/account/mode resolver chain (см. §1);
+- test/live isolation matrix (4 кейса);
+- exact retrieve calls (5 ресурсов + payment_intent.latest_charge);
+- safe failure matrix (5 кодов × что НЕ попадает в response/audit);
+- список новых тестов и итог (38+);
+- подтверждение: `supabase--test_edge_functions` PASS, deploy НЕ выполнен.
+
+### Gate
+
+После B.1 — STOP. Approve C не начинать. Отчёт: `PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B.1`.
+
+### Жёсткие запреты
+
+- deploy любой функции;
+- любые миграции / RPC / новые таблицы;
+- любые правки frontend / config.toml / registry;
+- глобальный Stripe client, fallback на live, выбор аккаунта по валюте/продукту;
+- запись secret/vault error/full Stripe object в response/audit/logs;
+- любые `*.list/*.search/autoPaging/customer lookup/email lookup`;
+- любые write-операции в `payments_v2`, `orders_v2`, `subscriptions_v2`, `ai_generated_documents`;
+- запуск генерации документов;
+- сохранение signed URL или provider URL в БД.
