@@ -333,9 +333,36 @@ Deno.serve(async (req) => {
     },
   };
 
-  // Stripe client builder — Approve B leaves provider HTTP unwired (read-only stub).
-  // Production wiring lands in Approve D (canonical secret resolver + stripeFetch).
-  const buildStripeClient = async (_account_code: string): Promise<StripeRetrieve | null> => null;
+  // ── Canonical Stripe client wiring (B.1) ───────────────────────────────────
+  // Lookup acquiring_connections via service-role client (super_admin RLS bypass
+  // via service role; we never expose connection rows to the client).
+  const lookupConnection: ConnectionLookup = {
+    async list(account_code: string) {
+      const { data, error } = await supabase
+        .from('acquiring_connections')
+        .select('id, provider, account_code, test_mode, status')
+        .eq('provider', 'stripe')
+        .eq('account_code', account_code)
+        .eq('status', 'active');
+      if (error || !Array.isArray(data)) return [];
+      return data.map((r) => ({
+        id: String((r as { id: string }).id),
+        provider: 'stripe' as const,
+        account_code: String((r as { account_code: string }).account_code),
+        test_mode: !!(r as { test_mode: boolean }).test_mode,
+        status: String((r as { status: string }).status),
+      }));
+    },
+  };
+  const readSecret: ReadSecret = (provider, account_code, kind) =>
+    readAcquiringSecret(provider, account_code, kind);
+
+  const buildStripeClient = (args: { accountCode: string | null; livemode: boolean | null; testMode: boolean | null }) =>
+    createStripeClientForPayment(args, {
+      lookupConnection,
+      readSecret,
+      makeRetrieve: (secret) => makeStripeRetrieveOverHttp(secret),
+    });
 
   const auditWrite = async (entry: { action: string; meta: Record<string, unknown> }) => {
     await supabase.from('audit_logs').insert({
