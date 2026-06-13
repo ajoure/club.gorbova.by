@@ -1952,6 +1952,50 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
+
+        // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR
+        // Close the corresponding payment_reconcile_queue row ONLY after the
+        // full provider-managed cycle succeeded:
+        //   1) payments_v2 upserted in STEP E (subPayResult.action !== 'error')
+        //   2) grant-access-for-order ok OR REBILL flow handled the cycle.
+        // On grant skip/error we MUST leave the queue row as-is so manual
+        // review still sees it.
+        if (
+          transactionUid &&
+          (grantOutcome === 'ok' || rebillHandled) &&
+          subPayResult?.action !== 'error'
+        ) {
+          try {
+            const queueOrderId =
+              (rebillHandled && rebillOrderIdFromFlow) ? rebillOrderIdFromFlow : orderV2Id;
+            const { data: queueOrder } = await supabase
+              .from('orders_v2')
+              .select('id, product_id, tariff_id, profile_id, user_id')
+              .eq('id', queueOrderId)
+              .maybeSingle();
+
+            await supabase
+              .from('payment_reconcile_queue')
+              .update({
+                status: 'materialized',
+                processed_at: new Date().toISOString(),
+                processed_order_id: queueOrderId,
+                matched_order_id: queueOrderId,
+                matched_profile_id: queueOrder?.profile_id ?? null,
+                matched_product_id: queueOrder?.product_id ?? null,
+                matched_tariff_id: queueOrder?.tariff_id ?? null,
+                last_error: null,
+              })
+              .eq('bepaid_uid', transactionUid)
+              .in('status', ['pending', 'error']);
+          } catch (queueCloseErr) {
+            // Non-fatal — queue closure is bookkeeping. Webhook already
+            // succeeded; we just leave the row for the next reconcile pass.
+            console.error('[WEBHOOK-SUBSCRIPTION] queue materialize non-fatal:', queueCloseErr);
+          }
+        }
+
+
         
         return new Response(JSON.stringify({ 
           ok: true, 
