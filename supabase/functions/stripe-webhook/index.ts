@@ -499,6 +499,19 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         .select('id')
         .maybeSingle();
       payment_id = ins?.id;
+      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+      // New payments_v2 row created → one notify per pi_id (race-safe with
+      // checkout.session.completed; whichever branch inserts first notifies).
+      if (payment_id) {
+        notifyAdminPaymentEvent(supabase, {
+          op: 'payment_succeeded',
+          order_id: order_id_meta,
+          payment_id,
+          provider_object_id: pi_id,
+          amount: amount_major,
+          currency,
+        });
+      }
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
