@@ -34,8 +34,48 @@ import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materi
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
 // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
 import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
-// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-import { notifyAdminPaymentEvent } from '../_shared/stripe-admin-notify.ts';
+// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V2
+import {
+  notifyAdminPaymentEvent,
+  resolveInvoiceNotifyDecision,
+  orderedRefundCandidates,
+  type RefundRecord,
+} from '../_shared/stripe-admin-notify.ts';
+
+// PATCH-V2: atomic insert-winner for Stripe single-charge payments.
+// Relies on existing partial UNIQUE `(provider, provider_payment_id)` on payments_v2.
+// Returns inserted=true ONLY when this call created the row. Race between
+// checkout.session.completed and payment_intent.succeeded carrying the same pi_*
+// is decided by the database constraint (23505). Notify caller is gated on inserted=true.
+async function persistStripePaymentIfAbsent(
+  supabase: ReturnType<typeof svc>,
+  pi_id: string,
+  row: Record<string, unknown>,
+): Promise<{ payment_id: string | null; inserted: boolean }> {
+  const insertRes = await supabase
+    .from('payments_v2')
+    .insert(row)
+    .select('id')
+    .maybeSingle();
+  if (!insertRes.error && insertRes.data?.id) {
+    return { payment_id: insertRes.data.id, inserted: true };
+  }
+  // 23505 = unique_violation → another branch / delivery already inserted this pi_*.
+  const isUniqueViolation = insertRes.error?.code === '23505'
+    || /duplicate key|unique constraint/i.test(insertRes.error?.message ?? '');
+  if (isUniqueViolation) {
+    const { data: existing } = await supabase
+      .from('payments_v2')
+      .select('id')
+      .eq('provider', 'stripe')
+      .eq('provider_payment_id', pi_id)
+      .maybeSingle();
+    return { payment_id: existing?.id ?? null, inserted: false };
+  }
+  // Real DB error — surface as not-inserted, do not notify.
+  console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, insertRes.error?.message);
+  return { payment_id: null, inserted: false };
+}
 
 
 
@@ -178,34 +218,40 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           }
         } catch { /* never re-throw — invoice.paid activation already committed */ }
       }
-      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-      // Notify admins on subscription invoice.paid (covers BOTH first invoice
-      // and renewals). Gated on: non-manual, NOT duplicate, payment_id resolved.
-      // Stripe event-level dedup is enforced upstream by provider_events.
-      if (
-        event.type === 'invoice.paid'
-        && !out.manual_review
-        && out.payment_id
-        && out.order_id
-        && out.note !== 'invoice_paid_duplicate'
-      ) {
-        try {
-          const inv = event.data.object as Record<string, unknown>;
-          const amount_minor = Number(inv.amount_paid ?? inv.amount_due ?? 0);
-          const inv_currency = String(inv.currency ?? 'usd').toUpperCase();
-          const inv_amount_major = toMajorUnits(amount_minor, inv_currency);
-          const period_end = typeof inv.period_end === 'number' ? inv.period_end : null;
-          const next_charge_at = period_end ? new Date(period_end * 1000).toISOString() : null;
-          notifyAdminPaymentEvent(supabase, {
-            op: 'subscription_renewal',
-            order_id: out.order_id,
-            payment_id: out.payment_id,
-            provider_object_id: (inv.id as string) ?? null,
-            amount: inv_amount_major,
-            currency: inv_currency,
-            next_charge_at,
-          });
-        } catch { /* notify is best-effort */ }
+      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V2
+      // Decision table (canonical):
+      //   subscription_create  → NO notify (first charge already covered by PI/checkout)
+      //   subscription_cycle   → recurring notify
+      //   subscription_update / manual / null / unknown → NO notify (+ safe log)
+      if (event.type === 'invoice.paid') {
+        const inv = event.data.object as Record<string, unknown>;
+        const billing_reason = typeof inv.billing_reason === 'string' ? inv.billing_reason : null;
+        const decision = resolveInvoiceNotifyDecision({
+          billing_reason,
+          manual_review: !!out.manual_review,
+          payment_id: out.payment_id ?? null,
+          resolver_note: out.note ?? null,
+        });
+        if (decision.notify) {
+          try {
+            const amount_minor = Number(inv.amount_paid ?? inv.amount_due ?? 0);
+            const inv_currency = String(inv.currency ?? 'usd').toUpperCase();
+            const inv_amount_major = toMajorUnits(amount_minor, inv_currency);
+            const period_end = typeof inv.period_end === 'number' ? inv.period_end : null;
+            const next_charge_at = period_end ? new Date(period_end * 1000).toISOString() : null;
+            notifyAdminPaymentEvent(supabase, {
+              op: 'subscription_renewal',
+              order_id: out.order_id!,
+              payment_id: out.payment_id!,
+              provider_object_id: (inv.id as string) ?? null,
+              amount: inv_amount_major,
+              currency: inv_currency,
+              next_charge_at,
+            });
+          } catch { /* notify is best-effort */ }
+        } else {
+          console.log(`[stripe-webhook] invoice.paid notify skipped: ${decision.reason} (billing_reason=${billing_reason})`);
+        }
       }
       // Map resolver result → webhook output shape.
       // manual_review остаётся в note, чтобы processing_status выставился ниже.
@@ -318,62 +364,43 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await supabase.functions.invoke('grant-access-for-order', {
       body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
     });
-    // Insert payments_v2 if not exists
+    // Insert payments_v2 if not exists — V2: atomic insert-winner via UNIQUE(provider, provider_payment_id)
     const amount_total_minor = Number(obj.amount_total ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
     const amount_major = toMajorUnits(amount_total_minor, currency);
     let payment_id: string | undefined;
     if (pi_id) {
-      const { data: existing } = await supabase
-        .from('payments_v2')
-        .select('id')
-        .eq('provider_payment_id', pi_id)
+      const { data: ordRow } = await supabase
+        .from('orders_v2')
+        .select('user_id, profile_id')
+        .eq('id', order_id_meta)
         .maybeSingle();
-      if (!existing) {
-        // PATCH-LIVE-2: подтягиваем user_id/profile_id из связанного orders_v2,
-        // чтобы Stripe-платёж был виден в карточке контакта и в фильтрах "Контакт=Есть".
-        const { data: ordRow } = await supabase
-          .from('orders_v2')
-          .select('user_id, profile_id')
-          .eq('id', order_id_meta)
-          .maybeSingle();
-        const { data: ins } = await supabase
-          .from('payments_v2')
-          .insert({
-            order_id: order_id_meta,
-            user_id: ordRow?.user_id ?? null,
-            profile_id: ordRow?.profile_id ?? null,
-            provider: 'stripe',
-            provider_payment_id: pi_id,
-            amount: amount_major,
-            currency,
-            status: 'succeeded',
-            paid_at: new Date().toISOString(),
-            meta: {
-              business_stream: md_business_stream,
-              stripe: { checkout_session_id: session_id, payment_intent_id: pi_id, account_code, customer: session_customer, business_stream: md_business_stream },
-            },
-          })
-          .select('id')
-          .maybeSingle();
-        payment_id = ins?.id;
-        // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-        // New payments_v2 row created → first time we see this pi_id.
-        // Guarantees one admin notification per payment intent regardless of
-        // whether checkout.session.completed or payment_intent.succeeded wins
-        // the race (the other branch will see `existing` and skip).
-        if (payment_id) {
-          notifyAdminPaymentEvent(supabase, {
-            op: 'payment_succeeded',
-            order_id: order_id_meta,
-            payment_id,
-            provider_object_id: pi_id,
-            amount: amount_major,
-            currency,
-          });
-        }
-      } else {
-        payment_id = existing.id;
+      const { payment_id: pid, inserted } = await persistStripePaymentIfAbsent(supabase, pi_id, {
+        order_id: order_id_meta,
+        user_id: ordRow?.user_id ?? null,
+        profile_id: ordRow?.profile_id ?? null,
+        provider: 'stripe',
+        provider_payment_id: pi_id,
+        amount: amount_major,
+        currency,
+        status: 'succeeded',
+        paid_at: new Date().toISOString(),
+        meta: {
+          business_stream: md_business_stream,
+          stripe: { checkout_session_id: session_id, payment_intent_id: pi_id, account_code, customer: session_customer, business_stream: md_business_stream },
+        },
+      });
+      payment_id = pid ?? undefined;
+      // PATCH-V2: notify ONLY when we were the atomic insert-winner.
+      if (inserted && payment_id) {
+        notifyAdminPaymentEvent(supabase, {
+          op: 'payment_succeeded',
+          order_id: order_id_meta,
+          payment_id,
+          provider_object_id: pi_id,
+          amount: amount_major,
+          currency,
+        });
       }
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
@@ -464,54 +491,38 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       account_code,
       business_stream: md_business_stream,
     });
-    const { data: existing } = await supabase
-      .from('payments_v2')
-      .select('id')
-      .eq('provider_payment_id', pi_id)
+    // V2: atomic insert-winner via UNIQUE(provider, provider_payment_id).
+    const { data: ordRow } = await supabase
+      .from('orders_v2')
+      .select('user_id, profile_id')
+      .eq('id', order_id_meta)
       .maybeSingle();
-    let payment_id: string | undefined;
-    if (existing) {
-      payment_id = existing.id;
-    } else {
-      // PATCH-LIVE-2: см. checkout.session.completed — копируем user_id/profile_id из orders_v2.
-      const { data: ordRow } = await supabase
-        .from('orders_v2')
-        .select('user_id, profile_id')
-        .eq('id', order_id_meta)
-        .maybeSingle();
-      const { data: ins } = await supabase
-        .from('payments_v2')
-        .insert({
-          order_id: order_id_meta,
-          user_id: ordRow?.user_id ?? null,
-          profile_id: ordRow?.profile_id ?? null,
-          provider: 'stripe',
-          provider_payment_id: pi_id,
-          amount: amount_major,
-          currency,
-          status: 'succeeded',
-          paid_at: new Date().toISOString(),
-          meta: {
-            business_stream: md_business_stream,
-            stripe: { payment_intent_id: pi_id, charge_id, account_code, customer: pi_customer, business_stream: md_business_stream, source: 'payment_intent.succeeded' },
-          },
-        })
-        .select('id')
-        .maybeSingle();
-      payment_id = ins?.id;
-      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-      // New payments_v2 row created → one notify per pi_id (race-safe with
-      // checkout.session.completed; whichever branch inserts first notifies).
-      if (payment_id) {
-        notifyAdminPaymentEvent(supabase, {
-          op: 'payment_succeeded',
-          order_id: order_id_meta,
-          payment_id,
-          provider_object_id: pi_id,
-          amount: amount_major,
-          currency,
-        });
-      }
+    const { payment_id: pid, inserted } = await persistStripePaymentIfAbsent(supabase, pi_id, {
+      order_id: order_id_meta,
+      user_id: ordRow?.user_id ?? null,
+      profile_id: ordRow?.profile_id ?? null,
+      provider: 'stripe',
+      provider_payment_id: pi_id,
+      amount: amount_major,
+      currency,
+      status: 'succeeded',
+      paid_at: new Date().toISOString(),
+      meta: {
+        business_stream: md_business_stream,
+        stripe: { payment_intent_id: pi_id, charge_id, account_code, customer: pi_customer, business_stream: md_business_stream, source: 'payment_intent.succeeded' },
+      },
+    });
+    const payment_id: string | undefined = pid ?? undefined;
+    // PATCH-V2: notify ONLY when we were the atomic insert-winner.
+    if (inserted && payment_id) {
+      notifyAdminPaymentEvent(supabase, {
+        op: 'payment_succeeded',
+        order_id: order_id_meta,
+        payment_id,
+        provider_object_id: pi_id,
+        amount: amount_major,
+        currency,
+      });
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
@@ -578,18 +589,26 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
   }
 
   if (event.type === 'charge.refunded' || event.type === 'refund.created' || event.type === 'refund.updated') {
-    let refund: { id: string; amount: number; currency: string; reason?: string | null; payment_intent?: string; charge?: string } | null = null;
+    // PATCH-V2: collect ALL refunds (not just data[0]) so that multiple partial
+    // refunds within a single charge.refunded delivery are each processed and
+    // notified exactly once (per re_*). The RPC `record_refund_atomic_multi`
+    // returns `{idempotent: bool}` per refund_uid — that's the SOT for notify gate.
+    const refunds: Array<{ id: string; amount: number; currency: string; reason?: string | null; created?: number | null }> = [];
     let pi_id: string | null = null;
     let charge_id: string | null = null;
 
     if (event.type === 'charge.refunded') {
       charge_id = (obj as { id?: string }).id ?? null;
       pi_id = (obj as { payment_intent?: string }).payment_intent ?? null;
-      const inline = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string; reason?: string | null }> } | undefined)?.data?.[0];
-      if (inline) {
-        refund = { ...inline, payment_intent: pi_id ?? undefined, charge: charge_id ?? undefined };
+      const inlineList = (obj.refunds as { data?: Array<{ id: string; amount: number; currency: string; reason?: string | null; created?: number }> } | undefined)?.data ?? [];
+      if (inlineList.length > 0) {
+        for (const r of inlineList) {
+          if (r?.id && typeof r.amount === 'number' && r.currency) {
+            refunds.push({ id: r.id, amount: r.amount, currency: r.currency, reason: r.reason ?? null, created: r.created ?? null });
+          }
+        }
       } else if (charge_id) {
-        // Stripe (API >= 2024) no longer embeds refunds.data in charge.refunded payload. Fetch via API.
+        // Stripe API >= 2024: refunds.data not embedded — fetch via API.
         let sk: string | null = null;
         try { sk = await readAcquiringSecret('stripe', account_code, 'secret_key'); }
         catch (e) {
@@ -604,31 +623,37 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             headers: { 'Authorization': `Bearer ${sk}` },
           });
           const data = await resp.json();
-          const r = data?.refunds?.data?.[0];
-          if (r) refund = { id: r.id, amount: r.amount, currency: r.currency, reason: r.reason, payment_intent: data?.payment_intent ?? pi_id ?? undefined, charge: charge_id };
-          else {
+          const list = data?.refunds?.data ?? [];
+          for (const r of list) {
+            if (r?.id && typeof r.amount === 'number' && r.currency) {
+              refunds.push({ id: r.id, amount: r.amount, currency: r.currency, reason: r.reason ?? null, created: r.created ?? null });
+            }
+          }
+          if (refunds.length === 0) {
             await supabase.from('audit_logs').insert({
               action: 'stripe.refund.api_fetch_no_refund',
               entity_type: 'orders_v2', entity_id: order_id_meta,
-              meta: { charge_id, api_status: resp.status, api_data_summary: { has_refunds: !!data?.refunds, count: data?.refunds?.data?.length ?? 0 } },
+              meta: { charge_id, api_status: resp.status, api_data_summary: { has_refunds: !!data?.refunds, count: list.length } },
             });
           }
+          if (!pi_id && data?.payment_intent) pi_id = data.payment_intent;
         }
       }
     } else {
-      // refund.created / refund.updated → obj IS the refund
-      const r = obj as { id?: string; amount?: number; currency?: string; reason?: string | null; payment_intent?: string; charge?: string; status?: string };
+      // refund.created / refund.updated → obj IS the refund. NOT a notify trigger,
+      // but still routed through RPC for ledger idempotency.
+      const r = obj as { id?: string; amount?: number; currency?: string; reason?: string | null; payment_intent?: string; charge?: string; status?: string; created?: number };
       if (r.status && r.status !== 'succeeded') {
         return { order_id: order_id_meta, note: `refund_skip_status_${r.status}` };
       }
       if (r.id && typeof r.amount === 'number' && r.currency) {
-        refund = { id: r.id, amount: r.amount, currency: r.currency, reason: r.reason ?? null, payment_intent: r.payment_intent, charge: r.charge };
+        refunds.push({ id: r.id, amount: r.amount, currency: r.currency, reason: r.reason ?? null, created: r.created ?? null });
         pi_id = r.payment_intent ?? null;
         charge_id = r.charge ?? null;
       }
     }
 
-    if (!refund) {
+    if (refunds.length === 0) {
       await supabase.from('audit_logs').insert({
         action: 'stripe.refund.no_data',
         entity_type: 'orders_v2', entity_id: order_id_meta,
@@ -637,7 +662,6 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       return { order_id: order_id_meta, note: 'refund_no_data' };
     }
 
-    const refund_currency = refund.currency.toUpperCase();
     let parent_payment_id: string | null = null;
     if (pi_id) {
       const { data: parent } = await supabase
@@ -651,37 +675,57 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     if (!parent_payment_id) {
       await supabase.from('audit_logs').insert({
         action: 'stripe.refund.parent_payment_not_found',
-        entity_type: 'orders_v2',
-        entity_id: order_id_meta,
-        meta: { refund_id: refund.id, payment_intent: pi_id, charge_id, account_code },
+        entity_type: 'orders_v2', entity_id: order_id_meta,
+        meta: { refund_ids: refunds.map(r => r.id), payment_intent: pi_id, charge_id, account_code },
       });
       return { order_id: order_id_meta, note: 'refund_parent_not_found' };
     }
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('record_refund_atomic_multi', {
-      p_order_id: order_id_meta,
-      p_parent_payment_id: parent_payment_id,
-      p_refund_amount: toMajorUnits(Number(refund.amount), refund_currency),
-      p_refund_uid: refund.id,
-      p_provider: 'stripe',
-      p_refund_reason: refund.reason ?? 'stripe_refund',
-      p_actor_user_id: null,
-      p_target_user_id: null,
-      p_provider_response: { stripe: { charge_id, payment_intent: pi_id, account_code, event_type: event.type, refund } },
-      p_meta_extra: {},
-    });
-    if (rpcErr) {
-      await supabase.from('audit_logs').insert({
-        action: 'stripe.refund.record_failed',
-        entity_type: 'orders_v2',
-        entity_id: order_id_meta,
-        meta: { error: rpcErr.message, refund_id: refund.id, parent_payment_id },
+
+    // PATCH-V2: process refunds in stable order (oldest first), notify ONLY for
+    // those where the atomic RPC reports `idempotent: false` (new insert).
+    const ordered = orderedRefundCandidates(refunds as ReadonlyArray<RefundRecord>);
+    const results: Array<{ refund_id: string; inserted: boolean; error?: string }> = [];
+    for (const refund of ordered) {
+      const refund_currency = refund.currency.toUpperCase();
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('record_refund_atomic_multi', {
+        p_order_id: order_id_meta,
+        p_parent_payment_id: parent_payment_id,
+        p_refund_amount: toMajorUnits(Number(refund.amount), refund_currency),
+        p_refund_uid: refund.id,
+        p_provider: 'stripe',
+        p_refund_reason: refund.reason ?? 'stripe_refund',
+        p_actor_user_id: null,
+        p_target_user_id: null,
+        p_provider_response: { stripe: { charge_id, payment_intent: pi_id, account_code, event_type: event.type, refund } },
+        p_meta_extra: {},
       });
-      return { order_id: order_id_meta, note: 'refund_record_failed', error: rpcErr.message };
+      if (rpcErr) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe.refund.record_failed',
+          entity_type: 'orders_v2', entity_id: order_id_meta,
+          meta: { error: rpcErr.message, refund_id: refund.id, parent_payment_id },
+        });
+        results.push({ refund_id: refund.id, inserted: false, error: rpcErr.message });
+        continue;
+      }
+      const rpcObj = (rpcData ?? {}) as { idempotent?: boolean };
+      const inserted = rpcObj.idempotent === false;
+      results.push({ refund_id: refund.id, inserted });
+
+      // PATCH-V2: notify ONLY for `charge.refunded` AND only when RPC inserted a new row.
+      if (event.type === 'charge.refunded' && inserted) {
+        notifyAdminPaymentEvent(supabase, {
+          op: 'refund_succeeded',
+          order_id: order_id_meta,
+          payment_id: parent_payment_id,
+          provider_object_id: refund.id,
+          amount: toMajorUnits(Number(refund.amount), refund_currency),
+          currency: refund_currency,
+        });
+      }
     }
-    // Phase 8-C: opportunistically materialize parent payment's receipt_url from
-    // charge.refunded payload (charge.receipt_url is the canonical Stripe receipt
-    // page for the original charge). COALESCE — never overwrites existing value.
-    // refunds[] structure update is INTENTIONALLY skipped (ambiguous structure).
+
+    // Phase 8-C: materialize parent receipt_url (COALESCE — never overwrites).
     if (event.type === 'charge.refunded') {
       const rcpt = (obj as { receipt_url?: string | null }).receipt_url ?? null;
       await materializeStripeDocumentLinks(
@@ -690,35 +734,10 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         { receipt_url: rcpt },
         { event_id: event.id, event_type: event.type, account_code, source: 'charge.refunded.payload' },
       );
-      await supabase.from('audit_logs').insert({
-        action: 'stripe.receipt_materialization.skipped_refund_structure_ambiguous',
-        entity_type: 'payments_v2',
-        entity_id: parent_payment_id,
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'stripe-webhook',
-        meta: { event_id: event.id, refund_id: refund.id, note: 'refunds[] per-entry receipt_url not materialized in Phase 8' },
-      });
     }
-    // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-    // Notify only on `charge.refunded` (canonical event carrying a definitive
-    // `re_*` id). `refund.created` / `refund.updated` deliveries for the SAME
-    // refund_id are intentionally skipped here to avoid duplicate Telegram
-    // messages. `record_refund_atomic_multi` is idempotent by refund_uid, so
-    // re-delivery of `charge.refunded` itself is already blocked upstream by
-    // `provider_events.idempotency_key`.
-    if (event.type === 'charge.refunded') {
-      notifyAdminPaymentEvent(supabase, {
-        op: 'refund_succeeded',
-        order_id: order_id_meta,
-        payment_id: parent_payment_id,
-        provider_object_id: refund.id,
-        amount: toMajorUnits(Number(refund.amount), refund_currency),
-        currency: refund_currency,
-      });
-    }
-    return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
+    return { order_id: order_id_meta, note: 'refund_recorded', rpc: { processed: results.length, results } };
   }
+
 
 
   if (event.type === 'checkout.session.expired') {
