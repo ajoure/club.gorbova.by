@@ -102,33 +102,34 @@ Deno.test('dispatch: HTTP 500 → swallowed, no throw, lifecycle unaffected', as
   assertEquals(threw, false, 'HTTP 500 must not throw out of notifyAdminPaymentEvent');
 });
 
-Deno.test('dispatch: timeout (AbortController) → swallowed', async () => {
-  let threw = false;
-  try {
-    await withMockFetch(
-      async (_u, init) => {
-        // Honor abort signal — simulate a hanging server.
-        return await new Promise<Response>((resolve, reject) => {
-          const sig = init.signal as AbortSignal | undefined;
-          if (sig) sig.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
-          // Never resolve naturally.
-        });
-      },
-      async () => {
-        // deno-lint-ignore no-explicit-any
-        notifyAdminPaymentEvent(makeMockSupabase() as any, {
-          op: 'subscription_renewal', order_id: 'o-3', payment_id: 'p-3',
-          amount: 10, currency: 'USD', next_charge_at: new Date().toISOString(),
-        });
-        // The helper hard-caps at 8s; force abort early by waiting briefly then resolving via fake timer is hard.
-        // Instead, just verify the helper does not synchronously throw and the test process doesn't crash.
-        await flush();
-      },
-    );
-  } catch {
-    threw = true;
-  }
-  assertEquals(threw, false, 'timeout path must not surface as unhandled rejection');
+Deno.test({
+  name: 'dispatch: timeout (AbortController) → swallowed, never throws synchronously',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    let threw = false;
+    try {
+      await withMockFetch(
+        async (_u, init) => {
+          return await new Promise<Response>((_resolve, reject) => {
+            const sig = init.signal as AbortSignal | undefined;
+            if (sig) sig.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          });
+        },
+        async () => {
+          // deno-lint-ignore no-explicit-any
+          notifyAdminPaymentEvent(makeMockSupabase() as any, {
+            op: 'subscription_renewal', order_id: 'o-3', payment_id: 'p-3',
+            amount: 10, currency: 'USD', next_charge_at: new Date().toISOString(),
+          });
+          await flush();
+        },
+      );
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, false, 'timeout path must not surface as unhandled rejection');
+  },
 });
 
 Deno.test('dispatch: refund_succeeded → one POST, op-specific source label', async () => {
