@@ -47,7 +47,13 @@ import {
 // Returns inserted=true ONLY when this call created the row. Race between
 // checkout.session.completed and payment_intent.succeeded carrying the same pi_*
 // is decided by the database constraint (23505). Notify caller is gated on inserted=true.
-async function persistStripePaymentIfAbsent(
+//
+// Strict 23505 handling (PARITY-V2 fix-to-patch):
+//   - 23505 is interpreted as "another writer won" ONLY when a matching row with the
+//     same (provider='stripe', provider_payment_id=pi_id) actually exists.
+//   - If no matching row is found after 23505, the original DB error is re-thrown.
+//     This prevents masking unrelated unique violations as a duplicate payment.
+export async function persistStripePaymentIfAbsent(
   supabase: ReturnType<typeof svc>,
   pi_id: string,
   row: Record<string, unknown>,
@@ -60,9 +66,9 @@ async function persistStripePaymentIfAbsent(
   if (!insertRes.error && insertRes.data?.id) {
     return { payment_id: insertRes.data.id, inserted: true };
   }
-  // 23505 = unique_violation → another branch / delivery already inserted this pi_*.
-  const isUniqueViolation = insertRes.error?.code === '23505'
-    || /duplicate key|unique constraint/i.test(insertRes.error?.message ?? '');
+  const err = insertRes.error;
+  const isUniqueViolation = err?.code === '23505'
+    || /duplicate key|unique constraint/i.test(err?.message ?? '');
   if (isUniqueViolation) {
     const { data: existing } = await supabase
       .from('payments_v2')
@@ -70,10 +76,16 @@ async function persistStripePaymentIfAbsent(
       .eq('provider', 'stripe')
       .eq('provider_payment_id', pi_id)
       .maybeSingle();
-    return { payment_id: existing?.id ?? null, inserted: false };
+    if (existing?.id) {
+      return { payment_id: existing.id, inserted: false };
+    }
+    // 23505 but no row with this pi_* — some other unique constraint fired.
+    // Re-throw so caller does NOT treat this as a duplicate Stripe payment.
+    throw new Error(`payments_v2 unique_violation without matching pi_*: ${err?.message ?? 'unknown'}`);
   }
-  // Real DB error — surface as not-inserted, do not notify.
-  console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, insertRes.error?.message);
+  if (err) {
+    console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, err.message);
+  }
   return { payment_id: null, inserted: false };
 }
 
