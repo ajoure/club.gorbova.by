@@ -1,452 +1,601 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Approve C разрешён после следующих уточнений.
+Все пункты плана сохраняются по принципу add-only/no-loss. Approve D разрешён с уточнениями ниже.
 
-**1. Исправить будущий deploy scope**
+**1. Не требовать искусственного создания runtime-fixtures**
 
-В proof сейчас указано:
+Runtime-проверка выполняется только на уже существующих безопасных данных.
 
-две edge functions + frontend bundle
+Если в production отсутствует подходящий фактический пример:
 
-Фактически в рамках этого патча создана одна новая Edge Function:
+- Stripe hosted invoice;
+- Stripe invoice PDF;
+- credit note;
+- refund без parent;
+- payment с внутренними документами определённого типа;
+- готовая view-only admin-учётная запись,
 
-admin-payment-documents-resolve
+не создавать ради proof:
 
-Shared-модули входят в её bundle и отдельно не деплоятся.
+- новый платёж;
+- новый refund;
+- новый документ;
+- новую роль;
+- новую подписку;
+- новый заказ.
 
-Корректный proposed deploy scope Approve D:
+В отчёте ставить:
 
-admin-payment-documents-resolve
+NOT AVAILABLE IN CURRENT FIXTURES
 
-frontend bundle
+и подтверждать соответствующий код-путь локальными тестами.
 
-Если в ходе Approve C выяснится необходимость второй Edge Function:
+Отсутствие необязательного production-fixture не блокирует PASS, если:
 
-STOP
-
-SCOPE_EXPANSION_REQUIRED
-
-Без отдельного approve её не создавать.
-
-&nbsp;
-
-**2. Использовать существующий UI/RBAC-паттерн**
-
-Не вводить параллельные проверки:
-
-useRbac()
-
-useSuperAdmin()
-
-isAdmin
-
-canWrite('payments')
-
-если проект уже имеет один канонический payments-RBAC helper.
-
-Нужно найти и использовать тот же guard, который применяется для существующих write-действий в /admin/payments.
-
-Правила:
-
-- просмотр drawer — действующее право просмотра платежей;
-- refresh — действующее право редактирования платежей;
-- diagnostics — фактический isSuperAdmin из канонического RBAC;
-- никаких проверок по email;
-- никаких ручных сравнений строк ролей;
-- frontend RBAC только скрывает действия, backend остаётся обязательной границей безопасности.
+- реализация покрыта тестами;
+- основной drawer работает на доступных реальных платежах;
+- архитектурная функция не заявляется как runtime-проверенная без факта.
 
 &nbsp;
 
-**3. Generation/Regeneration не добавлять без полностью подтверждённого flow**
+**2. Frontend deploy не перекладывать на пользователя без необходимости**
 
-В Approve C выполнить code discovery существующих frontend actions:
+Lovable должен самостоятельно выполнить доступный ему publish/deploy workflow.
 
-generate document
+Фраза:
 
-canonical-document-generate
+уведомить пользователя нажать Update
 
-canonical-document-regenerate
+допустима только если платформа технически требует подтверждения владельца и агент действительно не может завершить публикацию самостоятельно.
 
-existing document action hooks
+В таком случае:
 
-Кнопку «Сформировать» или «Перегенерировать» разрешено добавить только если одновременно доказаны:
+backend deploy = выполнен
 
-- существующий production endpoint;
-- существующий frontend invocation pattern;
-- действующий RBAC;
-- понятный loading/result flow;
-- отсутствие необходимости менять backend.
+frontend deploy = WAITING_FOR_OWNER_PUBLISH_CONFIRMATION
 
-Если хотя бы одного элемента нет:
+Approve D = PARTIAL
 
-- кнопки не добавлять;
-- показывать только read-only generation status;
-- deferred-пункт записать в proof Approve C;
-- отдельный backlog-файл в этом gate не создавать, если он выходит за утверждённый file scope.
+До фактической публикации frontend и browser runtime proof нельзя заявлять финальный PASS.
 
-Это не блокирует PASS read-only drawer.
+Не просить пользователя выполнять:
+
+- консольные команды;
+- SQL;
+- JWT-вызовы;
+- ручные технические smoke-тесты.
 
 &nbsp;
 
-**4. Runtime contract нельзя считать доверенным только из TypeScript types**
+**3. Baseline должен быть транзакционно привязан к тестовому окну**
 
-Ответ Edge Function приходит как runtime unknown.
+Глобальные counts могут измениться из-за обычной работы сайта.
 
-Добавить структурную безопасную проверку DTO без копирования бизнес-правил:
+Перед runtime proof зафиксировать:
 
-isPaymentDocumentsResponse()
+baseline_started_at
 
-или существующий schema validator проекта
+runtime_actor_user_id
 
-Проверять минимум:
+контрольные payment_id
 
-- payment;
-- массивы provider_documents, internal_documents, warnings;
-- объект generation;
-- допустимые типы capability и URL fields.
+runtime_correlation_id
 
-При malformed response:
+После proof сравнивать:
 
-Не удалось загрузить документы платежа
+1. конкретные контрольные строки;
+2. записи, созданные или изменённые в интервале теста;
+3. audit rows с данным actor/correlation;
+4. глобальные counts только как дополнительный сигнал.
 
-Не допускать runtime crash и [object Object].
+Естественные изменения других пользователей не считать регрессией без доказанной связи с drawer.
 
-Не добавлять новую dependency ради schema validation, если в проекте уже есть подходящий validator.
+Для каждого обнаруженного delta указать:
 
-&nbsp;
+entity
 
-**5. Локализация должна покрывать весь backend contract**
+row UUID
 
-Не ограничиваться только перечисленными generation codes.
+created_at / updated_at
 
-Frontend должен безопасно обрабатывать все machine codes, объявленные в backend types.ts, включая provider-resolution и warning codes:
+actor/source
 
-STRIPE_ACCOUNT_NOT_RESOLVED
+связь с runtime test
 
-STRIPE_ACCOUNT_CODE_CONFLICT
-
-STRIPE_CONNECTION_AMBIGUOUS
-
-STRIPE_MODE_NOT_RESOLVED
-
-STRIPE_MODE_CONFLICT
-
-STRIPE_MODE_MISMATCH
-
-STRIPE_SECRET_UNAVAILABLE
-
-INVALID_STRIPE_RESOURCE
-
-INVALID_STRIPE_ID
-
-STRIPE_HTTP_ERROR
-
-NETWORK_ERROR
-
-REQUEST_TIMEOUT
-
-PROVIDER_DOCUMENT_RETRIEVE_FAILED
-
-BEPAID_REFRESH_NOT_AVAILABLE_READ_ONLY
-
-REFUND_PARENT_NOT_RESOLVED
-
-UNSAFE_DOCUMENT_URL
-
-Необязательно давать каждому техническому коду отдельный длинный текст. Допустима категоризация:
-
-provider temporarily unavailable
-
-provider configuration unavailable
-
-document unavailable
-
-permission denied
-
-Но raw code/error пользователю не показывать. Неизвестный код получает безопасный fallback.
+verdict: expected | unrelated activity | regression
 
 &nbsp;
 
-**6. Hook: строгая защита от stale response**
+**4. Нулевая регрессия должна проверяться по конкретным полям**
 
-usePaymentDocuments должен иметь request-sequence guard.
+Для контрольных payment rows сохранить before/after snapshot минимум:
 
-Обязательная модель:
+id
 
-requestId++
+status
 
-запомнить paymentId для запроса
+order_id
 
-применять response только если:
+subscription_id
 
-  requestId всё ещё последний
+amount
 
-  drawer открыт
+currency
 
-  текущий paymentId совпадает
+receipt_url
 
-При закрытии drawer:
+meta
 
-- увеличить sequence/invalidate request;
-- очистить response;
-- очистить error;
-- удалить signed URL из памяти компонента.
+provider_response
 
-Если Supabase invoke не поддерживает реальный AbortController, request-sequence guard обязателен.
+updated_at
 
-&nbsp;
+Для связанных сущностей:
 
-**7. Не выполнять resolve до фактического открытия drawer**
+orders_v2.id/status/updated_at
 
-Действие в таблице должно сначала установить:
+subscriptions_v2.id/status/updated_at
 
-selectedPaymentId
+provider_subscriptions.id/status/updated_at
 
-drawerOpen = true
+entitlements.id/status/expires_at/updated_at
 
-И только открытый drawer запускает:
+ai_generated_documents.id/status/document_number/created_at
+
+При обычном открытии drawer:
 
 refresh_provider=false
 
-Запрещено:
+обязательный результат:
 
-- prefetch документов для всех строк таблицы;
-- resolve при каждом render таблицы;
-- resolve при hover;
-- автоматический provider refresh.
+0 DB writes
 
-Это исключает массовые вызовы resolver и создание лишних signed URL.
+0 audit rows provider_refresh
+
+0 document creation
+
+0 document number allocation
+
+При ручном refresh допускается только утверждённая safe audit row.
 
 &nbsp;
 
-**8. Confirm использовать через существующий UI-компонент**
+**5. Audit proof использовать по фактической схеме**
 
-Предпочтительно использовать существующий проектный:
+Не хардкодить значение:
 
-AlertDialog / ConfirmDialog
+actor_type = admin
 
-Не применять window.confirm, если в проекте уже есть канонический dialog pattern.
+если такого значения нет в действующем contract.
 
-Confirm должен отображаться только для ручного:
+Проверить фактические допустимые значения audit_[logs.actor](http://logs.actor)_type и использовать каноническое значение проекта.
+
+Обязательно доказать:
+
+actor_user_id = JWT sub пользователя [7500084@gmail.com](mailto:7500084@gmail.com)
+
+actor_user_id IS NOT NULL
+
+payment_id заполнен
+
+provider заполнен
+
+action = admin.payment_documents.provider_refresh
+
+В audit отсутствуют:
+
+полные URL
+
+query parameters
+
+Stripe response body
+
+vault error
+
+secret
+
+connection credentials
+
+card data
+
+ФИО владельца карты
+
+customer object
+
+&nbsp;
+
+**6. Smoke без JWT не заменяет authenticated runtime**
+
+После deploy проверить два отдельных сценария:
+
+**Без JWT**
+
+admin-payment-documents-resolve
+
+→ 401
+
+**С реальным JWT пользователя с правом просмотра**
+
+refresh_provider=false
+
+→ 200
+
+→ canonical DTO проходит runtime validation
+
+**Без права refresh**
 
 refresh_provider=true
 
-Открытие drawer и обычный resolve подтверждения не требуют.
+→ 403
+
+если существует безопасный готовый fixture пользователя.
+
+Если готового view-only fixture нет, сохранить ранее утверждённый fallback:
+
+backend RBAC unit/integration test
+
++
+
+frontend component test
+
++
+
+отсутствие write-action в rendered state
+
+Новую роль ради proof не создавать.
 
 &nbsp;
 
-**9. URL actions**
+**7. Не запускать provider refresh на произвольной Stripe-строке**
 
-Для Открыть использовать:
+Для ручного Stripe refresh сначала read-only подтвердить:
 
-[window.open](http://window.open)(url, "_blank", "noopener,noreferrer")
+provider = stripe
 
-либо безопасную ссылку:
+account_code определён
 
-target="_blank"
+mode определён
 
-rel="noopener noreferrer"
+active acquiring connection однозначна
 
-Для Скачать:
+есть exact provider object ID
 
-- не выполнять fetch внешнего Stripe/bePaid URL;
-- использовать capability backend;
-- для signed storage URL допускается безопасная ссылка с download только когда can_download=true.
+Если хотя бы одно условие не выполнено, refresh не запускать ради эксперимента.
 
-Для Скопировать:
+Зафиксировать безопасный verdict resolver:
 
-- обработать отказ Clipboard API;
-- не выводить URL в console/toast;
-- toast содержит только:  
-Ссылка скопирована  
-либо безопасную ошибку.
+STRIPE_ACCOUNT_NOT_RESOLVED
 
-&nbsp;
+STRIPE_MODE_NOT_RESOLVED
 
-**10. Existing receipt regression**
+STRIPE_MODE_MISMATCH
 
-Поскольку изменяется PaymentsTable.tsx, proof должен содержать file-level diff, подтверждающий:
+NO_PROVIDER_DOCUMENTS
 
-- существующая колонка receipt не удалена;
-- ReceiptStatusBadge не изменён;
-- старый обработчик чека остаётся;
-- новое действие «Документы» добавлено отдельно;
-- sorting/filtering/selection/pagination не изменены.
-
-Добавить тест:
-
-клик по существующему receipt action
-
-→ прежний handler вызывается
-
-→ PaymentDocumentsDrawer не открывается
-
-И отдельный тест:
-
-клик по «Документы»
-
-→ открывается новый drawer
-
-→ старый receipt handler не вызывается
+Не менять payment metadata для подготовки fixture.
 
 &nbsp;
 
-**11. Provider refresh response не merge-ить вручную**
+**8. bePaid refresh не должен вызывать legacy write-flow**
 
-После успешного refresh hook полностью заменяет текущий DTO ответом resolver:
+Для bePaid без локального receipt ожидаемое безопасное поведение может быть:
 
-setData(refreshedCanonicalResponse)
+BEPAID_REFRESH_NOT_AVAILABLE_READ_ONLY
 
-Запрещено:
+Это считается PASS, если подтверждено:
 
-- соединять старые и новые provider documents;
-- дедуплицировать во frontend;
-- сохранять старые signed URLs;
-- сохранять прошлые warnings после нового response.
+bepaid-get-payment-docs не вызван
 
-Backend является единственным источником canonical response.
+payments_v2 не изменён
 
-&nbsp;
+provider_response не изменён
 
-**12. Diagnostics**
+receipt_url не записан
 
-Diagnostics показываются только при двух условиях одновременно:
+drawer остаётся рабочим
 
-backend response содержит diagnostics
-
-AND
-
-frontend canonical RBAC подтверждает super_admin
-
-Frontend не должен выводить diagnostics, если backend ошибочно вернул их обычному admin.
-
-Masked IDs отображаются только в уже замаскированном виде из DTO. Не маскировать raw secret/provider data самостоятельно, поскольку raw данные вообще не должны приходить.
+Не требовать появления bePaid receipt ценой вызова старого writer.
 
 &nbsp;
 
-**13. Test scope дополнить**
+**9. Внутренние документы проверять только read-only**
 
-К утверждённым тестам добавить:
+Для payment, связанного с существующим order:
 
-1. Malformed resolver response → безопасная глобальная ошибка.
-2. Старый resolve завершился после смены paymentId → response проигнорирован.
-3. Старый resolve завершился после закрытия drawer → response проигнорирован.
-4. Refresh полностью заменяет canonical response, без frontend merge.
-5. Clipboard rejection → безопасный toast, URL не логируется.
-6. Existing receipt action и новое Documents action не конфликтуют.
-7. Drawer не делает prefetch для остальных payment rows.
-8. Backend diagnostics скрываются, если frontend user не super_admin.
-9. Malformed/unknown warning object не вызывает crash.
-10. Signed URL предыдущего payment не остаётся после переключения строки.
+- зафиксировать список ai_generated_documents до открытия drawer;
+- открыть drawer;
+- открыть или скачать существующий документ;
+- повторить SELECT после проверки.
 
-Итоговое количество тестов может быть выше 35; в отчёте указать фактическое число.
+Обязательный результат:
+
+document count delta = 0
+
+document number delta = 0
+
+document status delta = 0
+
+generation audit delta = 0
+
+Нельзя нажимать или временно добавлять generation/regeneration controls ради proof.
 
 &nbsp;
 
-**14. Proof Approve C**
+**10. Проверка webhook-регрессии**
 
-В .lovable/proofs/stripe_documents_drawer_v2_[ui.md](http://ui.md) дополнительно включить:
+Подтвердить не только совпадение версий:
 
-- exact future deploy scope:
-- runtime DTO validation;
-- request sequence/stale response guard;
-- отсутствие prefetch;
-- existing receipt regression diff;
-- подтверждение отсутствия generation/regeneration flow, если он не найден;
-- подтверждение отсутствия backend/config/registry изменений;
-- полный список реально изменённых frontend-файлов;
-- тесты и фактический результат.
+stripe-webhook version before = after
+
+bepaid-webhook version before = after
+
+но и отсутствие этих функций в deploy command/result Approve D.
+
+Не отправлять новые тестовые webhook events в рамках этого патча.
+
+Достаточно:
+
+- version/deployment inventory;
+- отсутствие webhook в deploy scope;
+- ранее подтверждённые webhook proofs;
+- отсутствие изменений связанных файлов.
+
+&nbsp;
+
+**11. PCI scan выполнять по фактическим данным, созданным патчем**
+
+Проверить:
+
+resolver response
+
+audit_logs новых refresh-attempts
+
+новые frontend logs — должны отсутствовать
+
+изменённые backend/shared files
+
+Forbidden keys минимум:
+
+pan
+
+card_number
+
+cvc
+
+cvv
+
+exp_month
+
+exp_year
+
+fingerprint
+
+authorization
+
+secret_key
+
+client_secret
+
+Наличие допустимого слова в исходном тесте или type guard не считать утечкой. Verdict строить по runtime response/audit и фактическому persistence.
+
+&nbsp;
+
+**12. Runtime screenshots не должны содержать чувствительные данные**
+
+Перед сохранением proof проверить отсутствие на скриншотах:
+
+- полного email клиента;
+- полного телефона;
+- Stripe customer ID без маскирования;
+- полного provider object ID, если diagnostics требует masking;
+- signed URL;
+- card holder;
+- внутренних storage paths;
+- секретов.
+
+Admin email [7500084@gmail.com](mailto:7500084@gmail.com) допускается только как подтверждение actor/account, если это необходимо для proof.
+
+&nbsp;
+
+**13. Допустимые fixes**
+
+Фраза «код не меняем» остаётся основным правилом.
+
+Точечный fix-to-patch допускается только если runtime выявил реальный блокирующий дефект.
+
+Перед исправлением:
+
+описать дефект
+
+указать root cause
+
+перечислить exact files
+
+подтвердить отсутствие scope expansion
+
+После исправления обязательно повторить:
+
+backend tests
+
+frontend tests
+
+deploy только изменённого утверждённого scope
+
+runtime scenario
+
+regression comparison
+
+Архитектурные улучшения и необязательные UI-доработки переносить в backlog и не задерживать закрытие Approve D.
+
+&nbsp;
+
+**14. Финальный verdict**
+
+**PASS**
+
+Только если:
+
+admin-payment-documents-resolve реально задеплоен
+
+frontend реально опубликован
+
+основной Stripe runtime PASS
+
+основной bePaid regression PASS
+
+internal documents read-only PASS
+
+refund available fixture PASS либо NOT AVAILABLE с test proof
+
+audit actor proof PASS
+
+security/PCI PASS
+
+lifecycle regression отсутствует
+
+webhooks не передеплоены
+
+**PARTIAL**
+
+Если backend задеплоен, но:
+
+- frontend не опубликован;
+- browser runtime не выполнен;
+- критичный доступный fixture не проверен;
+- audit runtime row не получена.
+
+**FAIL**
+
+Если обнаружены:
+
+- lifecycle write;
+- автоматическая генерация документа;
+- private Storage leak;
+- PCI/secret leak;
+- регрессия bePaid receipt;
+- несанкционированный webhook redeploy.
 
 &nbsp;
 
 **Gate status**
 
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve A = PASS
+PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D = APPROVED
 
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B = PASS
+Выполнить pre-deploy verification, точечный deploy, доступный runtime proof и один consolidated финальный отчёт.
 
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve B.1 = PASS
-
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve C = APPROVED
-
-Approve D = NOT APPROVED
-
-После реализации Approve C остановиться.
-
-Deploy, backend-изменения и production runtime не выполнять.
+Следующие Stripe-патчи автоматически не начинать.
 
 &nbsp;
 
-План: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve C — Frontend drawer + tests
+## План: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D
 
-Реализуем только frontend-потребителя canonical resolver `admin-payment-documents-resolve`. Backend, config.toml, registry, миграции, RPC, lifecycle, deploy — НЕ трогаем. Существующая колонка «Документы»/чек и `ReceiptStatusBadge` сохраняются как есть; новое действие добавляется add-only.
+Финальный deploy утверждённой архитектуры. Код не меняем, только верификация → deploy → runtime proof → отчёт.
 
-### 1. Новые файлы (frontend only)
+### Scope deploy (строго)
 
-- `src/types/paymentDocuments.ts` — TypeScript-зеркало DTO resolver-а (`payment`, `provider_documents[]`, `internal_documents[]`, `generation`, `diagnostics`, `warnings[]`, machine codes). Без бизнес-правил.
-- `src/hooks/usePaymentDocuments.ts` — hook(paymentId): `resolveDocuments()`, `refreshProviderDocuments()`, `reset()`. Defaults `refresh_provider=false`, race-guard по последнему paymentId, очистка state при close/смене id, никакого persist signed URL.
-- `src/utils/paymentDocumentUi.ts` — чистые helpers: локализация machine codes (таблица из п.10 ТЗ + safe fallback), `isSafeHttpsUrl(url)` (try/catch + `protocol === "https:"`), маскирование UUID, capability → action mapping. Никаких provider allowlist / refund / scenario логик.
-- `src/components/admin/payments/PaymentDocumentsDrawer.tsx` — основной Sheet/Drawer: header, секции «Документы эквайринга», «Внутренние документы», «Генерация», «Диагностика» (super_admin), кнопка «Обновить данные провайдера» (с confirm), loading/error/empty states.
-- `src/components/admin/payments/PaymentDocumentCard.tsx` — карточка одного документа (provider или internal): title/type/status/source/created_at, actions «Открыть»/«Скачать»/«Скопировать» строго по capability + secondary https-guard.
-- Тесты рядом: `PaymentDocumentsDrawer.test.tsx`, `usePaymentDocuments.test.ts`, `paymentDocumentUi.test.ts`, contract-fixture тест DTO.
+- Edge Function: `admin-payment-documents-resolve` (включает bundle shared `_shared/payments/documents/*`)
+- Frontend bundle (PaymentsTable + PaymentDocumentsDrawer + hook/utils/types)
 
-### 2. Изменения существующих файлов (минимум)
+Запрещено передеплоивать: `stripe-webhook`, `bepaid-webhook`, `public-checkout`, `grant-access-*`, document generation functions. Secrets и `acquiring_connections` не трогаются. Никаких новых функций / RPC / таблиц / миграций / drawers.
 
-- `src/components/admin/payments/PaymentsTable.tsx` — add-only: новый action «Документы» в action-меню каждой строки (Stripe, bePaid, refund), открывает `PaymentDocumentsDrawer` по `payment.id`. Колонка `receipt`, `ReceiptStatusBadge`, `useUnifiedPayments`, `resolveDocumentUrl` не трогаются. Sort/filter/selection/pagination не меняются.
+### Этап 1. Pre-deploy verification
 
-Других файлов не редактируем.
+1. Запустить Deno tests для `admin-payment-documents-resolve` (ожидание 56/56 PASS).
+  - Подтвердить: production Stripe client ≠ stub, account/mode-aware factory подключён, нет Stripe list/search, нет записи в `payments_v2`, нет вызова generation, signed/provider URL не сохраняются.
+2. Запустить `bunx vitest run` (ожидание 189/189 PASS).
+  - Подтвердить: PaymentDocumentsDrawer читает только canonical response; первое открытие `refresh_provider=false`; provider refresh только вручную; `isSafeHttpsUrl` блокирует unsafe action; существующая колонка receipt в `PaymentsTable.tsx` не изменена; нет generation/regeneration UI; stale-response guard (seqRef) работает.
+3. Если хоть один тест падает → STOP + `PRE_DEPLOY_TEST_FAILED`.
 
-### 3. Контракт с backend
+### Этап 2. Baseline (read-only SQL)
 
-- Hook вызывает `supabase.functions.invoke('admin-payment-documents-resolve', { body: { payment_id, refresh_provider } })`.
-- Первое открытие: `refresh_provider=false`. `true` — только из кнопки после `window.confirm`/AlertDialog.
-- Frontend не интерпретирует provider metadata, не ищет refund parent, не строит signed URLs, не дедуплицирует, не запускает generation/refresh автоматически.
+До deploy зафиксировать через `supabase--read_query`:
 
-### 4. RBAC
+- counts: `payments_v2`, `orders_v2`, `subscriptions_v2`, `provider_subscriptions`, `entitlements`, `ai_generated_documents`, `access_rules`
+- `payment_links.current_uses` (sum)
+- последние номера внутренних документов (счёт/акт/счёт-акт/договор)
+- контрольные Stripe и bePaid `payment.id` для runtime-проверки
+- текущие версии `stripe-webhook` и `bepaid-webhook` (для проверки «не передеплоены»)
 
-- Через существующий `useRbac()` / `useSuperAdmin()`. Никаких новых ролей/permissions.
-- Refresh provider: видим если `canWrite('payments')` или `isAdmin`.
-- Diagnostics-секция: только `isSuperAdmin`.
-- Generate/Regenerate кнопки: показываем ТОЛЬКО если найден существующий canonical action и RBAC разрешает; иначе — read-only статус + deferred sub-PATCH backlog файл.
+### Этап 3. Deploy
 
-### 5. URL безопасность
+1. `supabase--deploy_edge_functions(["admin-payment-documents-resolve"])`.
+2. Подтвердить `verify_jwt=true` через `supabase/config.toml` + smoke-вызов без JWT → 401.
+3. Frontend deploy: уведомить пользователя нажать «Update» в publish-диалоге (frontend deploy не автоматический).
 
-`isSafeHttpsUrl` обязателен перед каждым `window.open` / copy / download. `window.open(url, '_blank', 'noopener,noreferrer')`. URL не пишется в query/localStorage/sessionStorage/analytics/console.
+### Этап 4. Runtime proof (под `7500084@gmail.com` в реальном браузере)
 
-### 6. Тесты (≥35, локальные, 0 network/DB/provider)
+Матрица сценариев:
 
-Полный список из п.17 ТЗ покрывается:
 
-- Stripe (receipt / hosted invoice / invoice PDF / empty)
-- bePaid (receipt / empty / refresh read-only)
-- Refund (parent doc / parent unresolved)
-- Internal (generated / pending / failed)
-- Generation (`can_generate=true`, `NO_DOCUMENT_SCENARIO`, `MISSING_REQUIRED_REQUISITES`)
-- RBAC (refresh super_admin vs view-only, diagnostics super_admin only)
-- Security (`javascript:` URL, broken URL, capability=false скрывает action)
-- Lifecycle (loading, 403/404/500, close очищает state, смена paymentId игнорирует stale response, открытие НЕ вызывает refresh/generation)
-- Regression (receipt-колонка не меняется, нет undefined/null/[object Object], unknown machine code → fallback, дубли не создаются)
-- Contract fixture (frontend DTO ↔ canonical response из backend proof)
+| Кейс                                                      | Что проверяем                                                                                                              |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Stripe с local receipt                                    | drawer открывается, receipt отображается                                                                                   |
+| Stripe с hosted invoice / invoice PDF                     | provider documents отображаются после ручного refresh                                                                      |
+| Stripe без локальных документов                           | empty state корректный                                                                                                     |
+| Stripe ручной refresh                                     | срабатывает только по confirm                                                                                              |
+| Stripe открытие drawer                                    | НЕТ auto-refresh (`refresh_provider=false`)                                                                                |
+| bePaid с receipt                                          | существующая кнопка чека работает как раньше                                                                               |
+| bePaid без local receipt                                  | provider refresh НЕ вызывает старый write-flow                                                                             |
+| Refund row                                                | используется `meta.parent_payment_id`, отметка «Документ относится к исходному платежу»                                    |
+| Внутренние документы (заказ со счёт/акт/счёт-акт/договор) | отображаются read-only, открываются/скачиваются через canonical resolver, новый документ НЕ создаётся, номер не выделяется |
+| Empty states                                              | без provider docs / без internal / без order / provider API down / refund parent unknown                                   |
 
-Запуск: `bunx vitest run` (frontend only). Цель: все PASS.
 
-### 7. Proof
+### Этап 5. RBAC proof
 
-`.lovable/proofs/stripe_documents_drawer_v2_ui.md` со всеми разделами из п.18 ТЗ: file list, diff summary, component tree, resolver contract, RBAC map, machine-code localization table, URL safety proof, refund rendering, internal rendering, generation-action mapping, loading/error/empty matrix, тесты, подтверждение отсутствия deploy/backend/config/DB изменений, exact deploy scope для Approve D (две edge functions + frontend bundle).
+- Admin с view-only → видит документы, refresh скрыт.
+- Admin с write → refresh доступен.
+- Super_admin → diagnostics видны.
+- Без права просмотра → 403 от edge function.
+- Generation/regeneration отсутствуют во всех ролях.
 
-### 8. Stop-conditions
+### Этап 6. Security proof
 
-Любое из условий п.19 ТЗ → немедленный STOP и отчёт без продолжения.
+- Все URL = HTTPS (secondary guard `isSafeHttpsUrl`).
+- Private storage остаётся private; signed URL = short-lived, не сохраняется.
+- Provider URL не сохраняется.
+- URL не попадают в audit.
+- Secrets и connection credentials не в response/log/audit.
+- Raw Stripe/bePaid body не возвращается.
+- PCI forbidden keys = 0.
+- Реальный `audit_logs` row `admin.payment_documents.provider_refresh`: actor_user_id = JWT sub, actor_type ∈ {user, admin}, payment_id заполнен, provider заполнен, safe_error_code безопасный.
 
-### 9. Gate
+### Этап 7. Regression after deploy
 
-После реализации остановиться и вернуть «Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve C». Deploy и production runtime не запускаем.
----
+Повторный SQL и сравнение с baseline. Все дельты должны быть = 0 (с поправкой на естественную пользовательскую активность вне drawer):
 
-## Approve C — DONE (2026-06-12)
+- payments_v2 / orders_v2 / subscriptions_v2 / provider_subscriptions / entitlements / access_rules / payment_links.current_uses / ai_generated_documents (unexpected) / document numbering
+- 0 авто-документов при открытии drawer
+- 0 дублей provider documents
+- bePaid receipt regression = PASS
+- Stripe webhook regression = PASS
+- webhook-функции не передеплоены (версии совпадают)
 
-- 56/56 новых frontend-тестов PASS; полный прогон 189/189 PASS.
-- Backend / config.toml / functions.registry.txt / DB / RPC / миграции — без изменений.
-- Existing receipt column / `ReceiptStatusBadge` / `useUnifiedPayments` / `resolveDocumentUrl` — не тронуты (add-only `DropdownMenuItem` + новый `<PaymentDocumentsDrawer/>`).
-- Proof: `.lovable/proofs/stripe_documents_drawer_v2_ui.md`.
-- Gate: Approve C = DONE. Approve D = NOT APPROVED — ждём отдельного approve на deploy.
+### Этап 8. UI proof
+
+Скриншоты:
+
+1. Stripe + provider docs
+2. Stripe + internal docs
+3. bePaid
+4. Refund с parent-отметкой
+5. Empty state
+6. Super_admin diagnostics
+7. Существующая колонка чека
+8. Панель без кнопок generation/regeneration
+
+### Этап 9. Финальный отчёт
+
+`Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D` с: deployed functions + versions, изменённые файлы, diff-summary, результаты тестов, runtime matrix, screenshots, audit proof, SQL before/after, PCI proof, bePaid regression, webhook regression, deferred пункты, verdict PASS/PARTIAL/FAIL. STOP.
+
+### Допустимые fix-to-patch в ходе Approve D
+
+Только точечные правки в утверждённом scope (resolver, shared docs modules, drawer/card/hook/types/utils, add-only PaymentsTable, тесты, proof). Архитектурный рефакторинг запрещён. Каждый дефект — отдельный fix с DoD.
+
+### Stop conditions
+
+- любой pre-deploy test fail
+- любой PCI / private storage leak
+- любой lifecycle delta > 0 (вне естественной активности)
+- любой auto-create документа при открытии drawer
+- любая попытка передеплоить webhook
