@@ -1436,20 +1436,82 @@ Deno.serve(async (req) => {
         .maybeSingle();
       
       if (subError || !subV2) {
-        console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found:', subscriptionV2Id);
-        await supabase.from('provider_webhook_orphans').upsert({
-          provider: 'bepaid',
-          provider_subscription_id: subscriptionId,
-          provider_payment_id: transactionUid,
-          reason: 'subscription_not_found',
-          raw_data: createSafeOrphanData(body, rawTrackingId),
-          processed: false,
-        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
-        return new Response(JSON.stringify({ error: 'Subscription not found' }), {
-          status: 404,
-          headers: corsHeaders,
+        // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR — future-root guard.
+        // Tracking points to a subscription_v2 that no longer exists (orphan
+        // `subv2:{missing_sub_id}`). Try fallback through provider_subscriptions
+        // by provider_subscription_id so we don't silently fail and bePaid
+        // doesn't infinitely retry into the same dead row.
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.webhook.tracking_subscription_missing',
+          meta: {
+            provider_subscription_id: subscriptionId,
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            missing_subscription_v2_id: subscriptionV2Id,
+            severity: 'WARNING',
+          },
         });
+
+        let fallbackSubV2: any = null;
+        if (subscriptionId) {
+          const { data: ps } = await supabase
+            .from('provider_subscriptions')
+            .select('subscription_v2_id, user_id')
+            .eq('provider', 'bepaid')
+            .eq('provider_subscription_id', subscriptionId)
+            .maybeSingle();
+
+          if (ps?.subscription_v2_id && ps.subscription_v2_id !== subscriptionV2Id) {
+            const { data: candidate } = await supabase
+              .from('subscriptions_v2')
+              .select('*, tariffs(id, name, access_days, getcourse_offer_id), products_v2(id, name, code, telegram_club_id)')
+              .eq('id', ps.subscription_v2_id)
+              .maybeSingle();
+            if (candidate) {
+              fallbackSubV2 = candidate;
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.tracking_subscription_recovered_via_provider',
+                target_user_id: candidate.user_id,
+                meta: {
+                  provider_subscription_id: subscriptionId,
+                  transaction_uid: transactionUid,
+                  tracking_id: rawTrackingId,
+                  missing_subscription_v2_id: subscriptionV2Id,
+                  recovered_subscription_v2_id: candidate.id,
+                  recovered_order_id: candidate.order_id,
+                },
+              });
+              (subV2 as any) = candidate;
+              subscriptionV2Id = candidate.id;
+              if (candidate.order_id) orderV2Id = String(candidate.order_id);
+            }
+          }
+        }
+
+        if (!fallbackSubV2) {
+          console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found, no provider fallback:', subscriptionV2Id);
+          await supabase.from('provider_webhook_orphans').upsert({
+            provider: 'bepaid',
+            provider_subscription_id: subscriptionId,
+            provider_payment_id: transactionUid,
+            reason: 'subscription_not_found',
+            raw_data: createSafeOrphanData(body, rawTrackingId),
+            processed: false,
+          }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+          // 202 (not 404) — bePaid should not infinite-retry a permanent
+          // missing reference. Row stays in payment_reconcile_queue for
+          // manual review.
+          return new Response(JSON.stringify({ ok: false, status: 'orphan_subscription_not_found' }), {
+            status: 202,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
+
       
       const now = new Date();
       
