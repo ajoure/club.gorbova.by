@@ -1522,6 +1522,11 @@ export function BepaidSubscriptionsTabContent() {
           <TooltipContent>Обновить список</TooltipContent>
         </Tooltip>
 
+        {/* STRIPE-FINAL-CLOSURE-SPRINT-V1 / Workstream B — Bulk Stripe cancel */}
+        {isSuperAdmin && <StripeBulkCancelDialog />}
+
+
+
         {/* Advanced sync dropdown — admin/super_admin only */}
         {(isSuperAdmin || isAdmin) && (
           <DropdownMenu>
