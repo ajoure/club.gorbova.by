@@ -1429,11 +1429,14 @@ Deno.serve(async (req) => {
       }
       
       // Get subscription and order data
-      const { data: subV2, error: subError } = await supabase
+      // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: `let` so we can rebind via
+      // future-root fallback when tracking points at a missing subscription_v2.
+      let { data: subV2, error: subError } = await supabase
         .from('subscriptions_v2')
         .select('*, tariffs(id, name, access_days, getcourse_offer_id), products_v2(id, name, code, telegram_club_id)')
         .eq('id', subscriptionV2Id)
         .maybeSingle();
+
       
       if (subError || !subV2) {
         // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR — future-root guard.
