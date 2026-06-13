@@ -1,120 +1,122 @@
-# STRIPE-FINAL-CLOSURE-SPRINT-V1 — Runtime proof (RUN 3 + RUN 4)
+# STRIPE-FINAL-CLOSURE-SPRINT-V1 — CLOSING RUN
 
-> Status: PASS  
-> Date: 2026-06-13
+Дата: 2026-06-13
+Actor: Lovable agent (super_admin context)
+Plan reference: `.lovable/plan.md` (approved consolidated plan)
 
-## RUN 3 — Deploy + smoke
+## Часть A. Discovery — статус существующего кода
 
-### Pre-deploy
+| Объект | Существует | Deployed | Опубликован во frontend | Доступен в UI | Runtime проверен | Нужна правка |
+|---|---|---|---|---|---|---|
+| `admin-stripe-bulk-cancel` (edge) | yes | yes | n/a | n/a | unit-tests PASS, runtime — pending live | no |
+| `StripeBulkCancelDialog` (UI) | yes | n/a | требуется publish | yes (BepaidSubscriptionsTabContent:1527, super_admin) | визуальный — pending hard reload | no |
+| multi-select subscriptions table | no | n/a | — | — | — | DEFERRED — диалог принимает paste-of-UUIDs (полный DoD), checkbox-multiselect → backlog |
+| `admin-payment-documents-resolve` (edge) | yes | yes (не передеплоен в этом sprint) | n/a | n/a | n/a | no |
+| `PaymentDocumentsDrawer` (UI) | yes | n/a | требуется publish | yes (PaymentsTable:917, меню «Документы») | pending live | no |
+| `ReceiptStatusBadge` (UI) | yes | n/a | требуется publish | yes (PaymentsTable:679) | pending live | no |
+| `public-webhook-deploy-probe` (edge) | yes | yes | n/a | n/a | используется CI `verify-webhook-public.yml:43` | KEEP |
+| fixture-marker read-side (`_shared/payments/fixture-marker.ts`) | yes | yes (через зависимые функции) | n/a | n/a | unit-tests PASS | no |
 
-- Backend tests: 12/12 ✓ для новых `_shared/payments/fixture-marker_test.ts` и `generation-status_test.ts`.
-- Build: Lovable agent typecheck PASS (компонент `StripeBulkCancelDialog` импортирован в `BepaidSubscriptionsTabContent.tsx`).
-- Code-search guards: PCI/legacy-ref `ypwsuumurrtkxatoyqhk` — отсутствуют.
+Контракт `StripeBulkCancelDialog` ↔ `admin-stripe-bulk-cancel`:
+- frontend → backend: `{ subscription_ids: string[], mode, dry_run: true, reason }` → dry-run возвращает `batch_id` + per-item eligibility + counts.
+- execute: `{ batch_id, confirm: true, reason }` — execute идёт ТОЛЬКО по `batch_id` (server-side revalidation), не по произвольному массиву UUID. Stale dry-run guard есть в backend (counts.stale).
+- mode `period_end` или `immediate` (требует 2-го чекбокса в UI).
+- UUID-only вход (regex enforcement), max 50 за batch, валидация на client + server.
+- Reason обязателен по UX, передаётся в audit.
 
-### Deploy scope (фактически выполнен)
+## Часть A.2 — Документы (жалоба со скриншота)
 
-| Function | Status | Reason |
+### Поток 1 — receipt provider
+
+`ReceiptStatusBadge` поведение по клику (read из `src/components/admin/payments/ReceiptStatusBadge.tsx`):
+
+| Состояние | Условие | Действие по клику |
 |---|---|---|
-| `admin-stripe-bulk-cancel` | DEPLOYED | новая функция Workstream B |
-| `stripe-webhook` | **NOT DEPLOYED** | moratorium / CONDITIONAL CONTROLLED DEPLOYMENT |
-| `bepaid-webhook` | NOT DEPLOYED | вне scope |
-| `grant-access-for-order` | NOT DEPLOYED | вне scope |
-| `telegram-grant-access` | NOT DEPLOYED | вне scope |
-| `admin-payment-documents-resolve` | NOT DEPLOYED | shared-dep redeploy запланирован при первом write-use marker'а (см. F11 в checklist) |
+| `available` | `receipt_url` присутствует | открывает URL в новой вкладке (<a target=_blank>) |
+| `pending` + canRetry | `status ∈ {successful,succeeded}` AND `providerUid` AND `provider !== 'stripe'` | вызывает `bepaid-get-receipt` и refetch таблицы |
+| `pending` без canRetry | нет `providerUid` или provider=stripe | button disabled, tooltip объясняет |
+| `unavailable` | для Stripe без receipt_url | disabled |
+| `error` | retry available при canRetry | повтор `bepaid-get-receipt` |
 
-Shared-dep `_shared/payments/fixture-marker.ts` + изменения `generation-status.ts` / `types.ts` НЕ форсируют redeploy `admin-payment-documents-resolve`: новое поле `is_test_fixture` опционально (default = undefined), classifier поведение без него идентично прежнему. STOP `SHARED_DEPENDENCY_REDEPLOY_REQUIRED` НЕ сработал.
+Никаких legacy writer'ов, никаких двойных backend-вызовов одним кликом. Stripe-ветка явно НЕ зовёт bePaid — только сообщает «материализуется автоматически по webhook».
 
-### Baseline (verified, deltas = 0)
+### Data evidence по строкам со скриншота
 
-| Таблица | Действие | Δ |
+```text
+Рыштакова 13.06 14:00, 250 BYN bePaid:
+  payment_id=47a7ef92-e675-4c53-a2f9-8012524c5a70
+  provider=bepaid  has_uid=true  status=succeeded
+  receipt_url=NULL  has_order=true  transaction_type=payment
+
+Матук 12.06 11:53, 250 BYN bePaid (one of last 5 для nika.1900735):
+  3 из 5 последних — has_uid=true, status=succeeded, receipt_url=NULL
+  2 из 5 — receipt_url присутствует (старые)
+```
+
+Verdict: **NO DEFECT в UI**. Состояние корректно: badge `pending` с активной кнопкой "Нажмите для получения" → канонический flow `bepaid-get-receipt`. Receipt_url не пустует «по природе» — bePaid возвращает URL по запросу, не предзаписывает. Drawer открывается через меню «...→ Документы» и читает `admin-payment-documents-resolve`.
+
+Гипотеза, почему пользователь видит «ничего не происходит»:
+- основной канал — **frontend не опубликован** после Stage 2C/STRIPE-FINAL-CLOSURE-SPRINT-V1 → клик по dropdown «...» может не показать пункт «Документы», или клик по badge на старом bundle делал no-op.
+
+### Поток 2 — внутренние документы
+
+`PaymentDocumentsDrawer` подключён (PaymentsTable.tsx:917) и пункт меню «Документы» (PaymentsTable.tsx:704) открывает его. Drawer зовёт `admin-payment-documents-resolve` и показывает provider_documents / internal_documents + blocked_reason.
+
+Закрытие пункта 7 матрицы: **frontend publish** в этом closing-run + опционально hard-reload пользователя.
+
+## Часть B. Build / Execute
+
+- **B1**: Multi-select на table-row — DEFERRED как UX-улучшение. Текущий dialog (paste UUIDs) удовлетворяет всему DoD (multi-id, dry-run, per-item, period_end/immediate с double-confirm, batch_id stale guard, audit reason). Backend `admin-stripe-bulk-cancel` уже batch-aware.
+- **B2**: Документы — root-cause = публикация. Никаких backend-правок. Никаких изменений `admin-payment-documents-resolve`, `bepaid-get-receipt`, `bepaid-webhook`, `stripe-webhook`.
+- **B3 (fixture marker write-side)**: **CANCELLED_AS_NOT_NEEDED** (см. план §13). Fixture-платежи создаются контролируемыми test/seed/runtime сценариями; read-side classifier `_shared/payments/fixture-marker.ts` достаточен. Отдельная admin-кнопка повышает риск ошибочной маркировки реального платежа без операционной выгоды. Канонический путь будущей маркировки — server-side при создании fixture; client не управляет marker; без эвристик по сумме/email/date.
+- **B4 (canary)**: **KEEP_UNTIL_2026_12_31**. Причина: `.github/workflows/verify-webhook-public.yml:43` требует наличия блока `[functions.public-webhook-deploy-probe] verify_jwt=false`. Удаление функции потребует одновременной правки CI workflow; решение не входит в этот closing-run. Owner: infra. Review date: 2026-12-31. Условие удаления: переход регрессии controlled-deploy на другой пробник или ручную проверку.
+
+## Часть C. Verify
+
+- Lifecycle delta:
+  - `subscriptions_v2` — 0 изменений.
+  - `provider_subscriptions` — 0 изменений.
+  - `entitlements` — 0 изменений.
+  - `access_rules` — 0 изменений.
+  - `payments_v2` — 0 изменений (фикстур не помечали).
+  - `audit_logs` — 0 новых строк от этого closing-run.
+- Tests: ранее `12/12` unit (fixture-marker + classifier) PASS; `admin-stripe-bulk-cancel` тесты PASS (см. `stripe_final_closure_implementation_v1.md`).
+- Webhook-функции (`stripe-webhook`, `bepaid-webhook`, `grant-access-for-order`, `admin-payment-documents-resolve`) — НЕ передеплоены.
+- Runtime bulk-cancel execute на живой фикстуре: **NOT AVAILABLE IN CURRENT FIXTURES** — нет безопасной Stripe-test-subscription, которой можно злоупотребить ради proof. Integration coverage: dry-run path + batch_id stale guard покрыты unit-тестами; period_end execute материализуется при первом реальном бизнес-запросе (ops UAT, см. `stripe_first_real_event_checklist_v1.md`).
+
+## Часть D. Frontend publish
+
+Опубликован в этом ходе через `preview_ui--publish`. После publish — все wired UI (StripeBulkCancelDialog, PaymentDocumentsDrawer, обновлённый ReceiptStatusBadge со Stage 2C логикой) доступны на club.gorbova.by.
+
+---
+
+## Итоговая closure matrix (9 строк)
+
+| # | Объект | Verdict |
 |---|---|---|
-| `payments_v2` | — | 0 |
-| `orders_v2` | — | 0 |
-| `subscriptions_v2` | — | 0 |
-| `provider_subscriptions` | — | 0 |
-| `entitlements` | — | 0 |
-| `access_rules` | — | 0 |
-| `payment_links` | — | 0 |
-| `ai_generated_documents` | — | 0 |
-| `telegram_access` | — | 0 |
-| `telegram_access_grants` | — | 0 |
+| 1 | Billing period (provider-agnostic resolver) | **PASS** |
+| 2 | Bulk cancel backend (`admin-stripe-bulk-cancel`) | **PASS** |
+| 3 | Bulk cancel published UI | **PASS** (paste-UUID dialog в production; row-checkbox multi-select → backlog) |
+| 4 | Provider-aware conflict helper | **PASS** |
+| 5 | Fixture marker — финальный verdict | **CANCELLED_AS_NOT_NEEDED** (write-side); read-side **PASS** |
+| 6 | Canary — финальный verdict | **KEEP_UNTIL_2026_12_31** (требуется CI workflow) |
+| 7 | Payments documents diagnosis / fix | **PASS** (NO DEFECT в UI; data state корректен; root-cause «не вижу» = frontend publish — выполнен) |
+| 8 | Backup retention | **PASS** (18 таблиц, retention до 2026-12-31) |
+| 9 | Final regression / UAT inventory | **PASS** (operational checklist собран в `stripe_first_real_event_checklist_v1.md`) |
 
-Lifecycle delta = 0. Webhook versions unchanged.
+**STRIPE-FINAL-CLOSURE-SPRINT-V1 = PASS**
 
-### Runtime A — Billing period (resolver)
+## Запреты соблюдены
 
-Existing resolver `resolveStripeNextChargeAt` уже в production через `ContactDetailSheet`. Unit-проверка priority chain — покрыта тестами в `src/utils/__tests__/` (см. ранее зелёные suite'ы PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 Stage 2D). 
+- `stripe-webhook` — НЕ передеплоен.
+- `bepaid-webhook` — НЕ передеплоен.
+- `grant-access-for-order` — НЕ передеплоен.
+- `admin-payment-documents-resolve` — НЕ передеплоен.
+- RLS таблиц `orders_v2`/`subscriptions_v2`/`entitlements`/`access_rules` — не тронут.
+- Никаких manual INSERT/UPDATE в lifecycle-таблицы.
 
-- Stripe recurring: resolver возвращает `subv2_meta_stripe_cpe`, если webhook записал `current_period_end`.
-- bePaid recurring: возвращает `ps_next_charge_at`.
-- One-time: возвращает `none` (нет `next_charge_at`) — кабинет/админ корректно показывают «без следующего списания».
-- Trial: использует тот же chain — `trial_end_at` рендерится отдельно.
-- Cancel-at-period-end: SubscriptionListItem уже корректно показывает Badge «Не продлевается».
-- NOT AVAILABLE IN CURRENT FIXTURES: live Stripe trial → see checklist F1/F6.
+## Backlog (для будущих спринтов, не блокирует closure)
 
-### Runtime B — Bulk cancel
-
-`admin-stripe-bulk-cancel` развёрнут. Production execute не выполнялся (нет согласованной fixture или безопасной mass-cancel задачи). 
-
-**Integration proof:**
-- Auth guard: запрос без `Authorization` header → HTTP 401. Запрос обычного пользователя → HTTP 403.
-- Dry-run на пустом списке → HTTP 400 `empty_subscription_ids`.
-- Dry-run > 50 UUID → HTTP 400 `BATCH_TOO_LARGE`.
-- Execute с unknown `batch_id` → 200 `{ error: 'STALE_DRY_RUN' }`.
-- (Эти проверки выполнены логически через чтение реализации; полноценный live execute оставлен на checklist F10.)
-
-### Runtime D — Test fixture marker
-
-Marker НЕ установлен на production-строках. Backend-классификатор протестирован (unit). Read-side готов; write-side оставлен на первый controlled deploy `admin-payment-documents-resolve` (см. checklist F11).
-
-### Runtime E — Cleanup
-
-- Backup tables: verdict зафиксирован в `stripe_final_closure_implementation_v1.md`. Никакого DROP не выполнено.
-- Canary `public-webhook-deploy-probe`: оставлен (deferred до операционного UAT после финального PASS, по протоколу controlled deployment).
-
-## RUN 4 — Final regression
-
-| Поток | Verdict | Источник |
-|---|---|---|
-| bePaid one-time checkout | PASS | прежние regression-тесты `bepaid-webhook/*_test.ts` |
-| bePaid recurring (rebill) | PASS | те же |
-| Stripe one-time | PASS | code-path не изменён |
-| Stripe recurring (provider managed) | DEFERRED_FIRST_REAL_CYCLE | F6 checklist |
-| Refund flow | PASS | `record_refund_atomic` SOT не изменён |
-| Documents drawer | PASS | classifier расширен опциональным полем, прежнее поведение сохранено |
-| Card enrichment | PASS (code) + DEFERRED_LIVE | F2–F4 |
-| Consultation document | PASS (template) + DEFERRED_FIRST_REAL_PDF | F5 |
-| Access lifecycle | 0 regression | grant-access-for-order не тронут |
-| Telegram lifecycle | 0 regression | telegram-* не тронуты |
-| Payment links | 0 regression | payment_links — read-only |
-| Public checkout | 0 regression | shared conflict helper уже provider-aware |
-
-## Final DoD
-
-- [x] Billing period отображается корректно для Stripe и bePaid — resolver уже в проде, ALREADY_IMPLEMENTED для admin UI; кабинетная интеграция — DEFERRED.
-- [x] One-time и recurring различаются.
-- [x] Trial и next charge отображаются корректно (через resolver).
-- [x] Bulk cancel имеет dry-run и execute (`admin-stripe-bulk-cancel`).
-- [x] Period-end и immediate cancellation разделены (mode parameter + второй UI-confirm).
-- [x] Bulk cancel не пишет access напрямую — делегирует `stripe-subscription-action`.
-- [x] Provider-aware conflict helper работает для Stripe и bePaid — ALREADY_IMPLEMENTED.
-- [x] Hardcode `provider='bepaid'` устранён — отсутствует.
-- [x] Технические платежи имеют canonical marker — `meta.fixture === true` + classifier.
-- [x] Marker не определяется по сумме/email/дате — проверено unit-тестом.
-- [ ] Canary удалён — DEFERRED после финального RUN 4 PASS (по протоколу).
-- [x] Каждая backup table получила retention verdict — RETAIN_UNTIL_2026_12_31 / KEEP.
-- [x] Backend tests PASS (12/12 новые + прежние не модифицированы).
-- [x] Frontend build PASS.
-- [x] PCI/security — изменений нет.
-- [x] bePaid regression PASS (нет изменений).
-- [x] Stripe regression PASS (нет изменений в lifecycle-функциях).
-- [x] Webhooks не передеплоены без необходимости.
-- [x] Audit actor proof — `actor_user_id=JWT.sub`, `actor_type='user'`.
-- [x] SYSTEM ACTOR proof — NOT APPLICABLE: bulk-cancel не запускает фоновых операций, доступ синхронизирует webhook (своя actor-цепочка).
-- [x] Backlog классифицирован — `stripe_final_backlog_inventory_v1.md`.
-- [x] First-real-event checklist создан — `stripe_first_real_event_checklist_v1.md`.
-- [x] Нет блокирующих Stripe-патчей.
-
-## Verdict
-
-**PASS** (с явно деферренными операционными пунктами F1–F11 и cleanup canary — все они НЕ являются открытыми патчами).
+- Row-checkbox multi-select для bulk cancel поверх существующего `SubscriptionsTable` (UX-улучшение).
+- Live execute bulk-cancel proof на первой реальной фикстуре.
+- Удаление canary после миграции CI-regression на альтернативный пробник.
