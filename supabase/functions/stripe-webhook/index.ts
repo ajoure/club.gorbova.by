@@ -357,6 +357,21 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           .select('id')
           .maybeSingle();
         payment_id = ins?.id;
+        // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+        // New payments_v2 row created → first time we see this pi_id.
+        // Guarantees one admin notification per payment intent regardless of
+        // whether checkout.session.completed or payment_intent.succeeded wins
+        // the race (the other branch will see `existing` and skip).
+        if (payment_id) {
+          notifyAdminPaymentEvent(supabase, {
+            op: 'payment_succeeded',
+            order_id: order_id_meta,
+            payment_id,
+            provider_object_id: pi_id,
+            amount: amount_major,
+            currency,
+          });
+        }
       } else {
         payment_id = existing.id;
       }
