@@ -19,6 +19,9 @@ import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts'
 import { runRebillFlow } from './rebill_flow.ts';
 import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
+// PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
+import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
