@@ -1,797 +1,595 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Ниже — финальные уточнения к evidence pack. После этого новые требования не добавлять без нового фактического блокера.
-
-
+Все пункты плана сохраняются по принципу add-only/no-loss. Перед изменением `stripe-webhook` добавить следующие обязательные уточнения.
 
 
 
-## **1. Не считать**
+## **1. Сначала подтвердить фактический контракт**
 
-`Publishing is scheduled` **доказательством успешной публикации**
+`telegram-notify-admins`
 
-Для §4 нужны два разных факта:
+До реализации прочитать:
 
 ```text
-publish request accepted
-deployment completed successfully
+supabase/functions/telegram-notify-admins/index.ts
+supabase/functions/bepaid-webhook/index.ts
 ```
-
-Фраза:
-
-```text
-Publishing is scheduled
-```
-
-подтверждает только постановку в очередь.
-
-Финальный `PASS` допускается после подтверждения одного из следующих фактов:
-
-- publish tool вернул `success/completed`;
-- deployment/build log показывает успешное завершение;
-- опубликованный сайт отдаёт новую версию frontend bundle;
-- browser proof подтверждает появление нового UI, отсутствовавшего до публикации.
-
-Если публикация осталась только в статусе scheduled:
-
-```text
-BULK_CANCEL_UI = WAITING_FOR_PUBLISH_COMPLETION
-PAYMENTS_DOCUMENTS_UI = WAITING_FOR_PUBLISH_COMPLETION
-FINAL VERDICT = PARTIAL
-```
-
----
-
-## **2. Проверять deployed Edge Functions через фактический источник проекта**
-
-Не предполагать, что таблица:
-
-```text
-edge_functions_registry
-```
-
-обязательно существует и является каноническим реестром Supabase.
-
-Использовать фактические доступные источники:
-
-- список deployed functions через Supabase tooling;
-- `supabase/functions.registry.txt`;
-- `supabase/config.toml`;
-- директории `supabase/functions/<function>`;
-- deployment logs/version inventory;
-- при наличии реальной внутренней registry-таблицы — использовать её дополнительно.
-
-В proof указывать источник каждого вывода:
-
-```text
-source absent
-config absent
-registry absent
-deployment absent
-callers absent
-```
-
-Удаление source-файла само по себе не доказывает удаление deployed function.
-
----
-
-## **3. Полный mapping шести удалённых функций**
-
-Для каждой функции зафиксировать:
-
-```text
-function name
-production purpose
-последняя известная версия
-source before
-source after
-config before/after
-registry before/after
-deployed before/after
-frontend callers
-edge-function callers
-cron callers
-CI/workflow callers
-причина удаления
-recovery possibility
-```
-
-Если функция не была задеплоена, писать:
-
-```text
-SOURCE_REMOVED / NOT DEPLOYED
-```
-
-а не «удалена из production».
-
-Если была задеплоена:
-
-```text
-DEPLOYED FUNCTION DELETED
-```
-
-с фактическим tool result.
-
----
-
-## **4. Не помещать чувствительные raw security payload в proof**
-
-В `.lovable/proofs/stripe_final_closure_runtime_v1.md` запрещено вставлять полностью:
-
-- SMTP-пароли;
-- токены;
-- hardcoded passwords;
-- секретные значения;
-- SQL dump contents;
-- authorization headers;
-- scanner evidence, содержащее секрет.
-
-Для security scan сохранять только sanitised evidence:
-
-```text
-finding_id
-scanner
-severity
-affected resource
-safe description
-action
-status before
-status after
-verification timestamp
-```
-
-Секреты заменять:
-
-```text
-[REDACTED]
-```
-
-Raw tool payload допускается только если предварительно доказано, что он не содержит секретных данных.
-
----
-
-
-
-
-
-
-
-
-
-
-
-## **5. Security findings: различать**
-
-`gone`**,** `resolved` **и** `accepted risk`
-
-Финальная матрица должна использовать точные статусы:
-
-```text
-GONE_AFTER_RESCAN
-RESOLVED_AFTER_RESCAN
-ACCEPTED_RISK
-STILL_OPEN
-NOT_REPRODUCED
-```
-
-Нельзя писать `gone`, если finding вручную переведён в ignored.
-
-Для `SUPA_security_definer_view` обязательно указать:
-
-```text
-action = ACCEPTED_RISK
-owner
-business justification
-affected view
-почему SECURITY DEFINER требуется
-какие compensating controls существуют
-review date
-```
-
-Если обоснования или compensating controls нет, finding нельзя закрывать как accepted risk.
-
----
-
-## **6. Повторный scan должен быть действительно новым**
 
 Зафиксировать:
 
-```text
-baseline_scan_id / timestamp
-closing_scan_id / timestamp
-force_refresh = true
-```
+- точный request DTO;
+- обязательные и необязательные поля;
+- допустимые `source`;
+- допустимые `event_type`;
+- формат суммы и валюты;
+- способ определения админского Telegram-чата;
+- текущую дедупликацию;
+- audit/log actions;
+- поведение при отсутствии Telegram-конфигурации.
 
-Подтвердить, что closing scan выполнен после:
+Не отправлять предполагаемый JSON-контракт, пока он не сверен с фактическим обработчиком.
 
-- удаления функций;
-- применения RLS;
-- обновления policies;
-- публикации либо окончательного security execute.
-
-Нельзя использовать кэшированный scan как after-proof.
-
----
-
-## **7. RLS evidence по 13 backup-таблицам**
-
-Для каждой таблицы проверить фактические свойства:
-
-```text
-relrowsecurity = true
-relforcerowsecurity = true, если именно это было применено
-policies
-grants
-owner
-row count
-production references
-retention verdict
-```
-
-Не требовать искусственно одинаковых названий policies, если фактически применён другой безопасный contract.
-
-Главное доказательство:
-
-- `anon` не может SELECT/INSERT/UPDATE/DELETE;
-- `authenticated` не может SELECT/INSERT/UPDATE/DELETE;
-- обычный admin через пользовательский JWT также не получает доступ;
-- recovery доступен только доверенному server-side/service-role процессу;
-- production-код таблицы не читает.
-
-### **Важно**
-
-Не добавлять `GRANT ALL TO service_role` только ради proof, если service-role уже имеет необходимый доступ или обходит RLS по канонической модели проекта.
-
-Любые новые grants в рамках evidence-only run запрещены.
-
-Проверять фактическое состояние, а не менять его.
+Если bePaid использует shared helper, переиспользовать его. Не копировать восемь inline-вызовов в Stripe без необходимости.
 
 ---
 
-## **8. Service-role recovery proof должен быть безопасным**
 
-Для recovery proof достаточно:
 
-```sql
-SELECT count(*) FROM <backup_table>;
+
+
+
+
+## **2. Не уведомлять одновременно из**
+
+`payment_intent.succeeded` **и** `charge.succeeded`
+
+Один Stripe-платёж обычно порождает связанные события:
+
+```text
+payment_intent.succeeded
+charge.succeeded
+checkout.session.completed
 ```
 
-через канонический server-side/service-role connection.
+Если добавить уведомление в несколько веток, админы могут получить дубли.
+
+Для разовой успешной оплаты выбрать **один канонический бизнес-триггер**, соответствующий текущему payment lifecycle.
+
+Предпочтительный trigger определяется по фактическому коду:
+
+```text
+ветка, которая атомарно завершила:
+payment succeeded
+→ order paid
+→ grant-access completed/accepted
+```
+
+Остальные Stripe-события должны:
+
+- обновлять технические данные;
+- не создавать повторное админское уведомление;
+- либо проходить через общий idempotency guard.
+
+В отчёте указать выбранный trigger и почему остальные события не дублируют сообщение.
+
+---
+
+
+
+
+
+## **3.**
+
+`invoice.paid` **также может пересекаться с первым платежом подписки**
+
+Для первой subscription invoice Stripe может одновременно прислать:
+
+```text
+checkout.session.completed
+payment_intent.succeeded
+invoice.paid
+```
+
+Нужно различать:
+
+```text
+первичная покупка подписки
+повторное рекуррентное списание
+```
+
+`event_type='recurring_charge'` отправлять только если invoice действительно относится к последующему циклу, а не к первичной оплате.
+
+Использовать доказанный marker, например по фактической архитектуре:
+
+- billing reason;
+- subscription cycle;
+- уже существующая локальная подписка;
+- invoice sequence;
+- metadata contract.
+
+Не определять recurring только по наличию `subscription_id`.
+
+---
+
+## **4. Обязательная идемпотентность уведомлений**
+
+Добавить canonical notification key:
+
+```text
+stripe_admin_notify:
+<business_event_type>:
+<provider_object_id>
+```
+
+Примеры:
+
+```text
+stripe_admin_notify:payment_succeeded:pi_...
+stripe_admin_notify:refund:re_...
+stripe_admin_notify:recurring_charge:in_...
+```
+
+Повторная доставка того же Stripe event или другого Stripe event для того же бизнес-факта не должна создавать второе уведомление.
+
+Перед добавлением новой таблицы проверить существующие механизмы:
+
+```text
+provider_events
+audit_logs
+pending_telegram_notifications
+telegram notification dedup helpers
+```
+
+Новая таблица или migration в этом патче запрещена без доказанной необходимости.
+
+Если `telegram-notify-admins` уже принимает `idempotency_key`, использовать её.
+
+---
+
+## **5. Refund trigger должен использовать точный refund object**
+
+Для возврата не ограничиваться только `charge.refunded`, поскольку одно событие может отражать:
+
+- полный возврат;
+- частичный возврат;
+- несколько refund objects по одному charge;
+- повторную доставку события.
+
+Уведомление должно содержать и дедуплицироваться по точному:
+
+```text
+refund_id = re_*
+```
+
+Поля:
+
+```text
+refund amount
+currency
+parent payment/order
+refund status
+provider refund ID
+```
+
+Если из `charge.refunded` невозможно однозначно получить новый конкретный refund без Stripe list/search:
+
+```text
+STOP
+REFUND_NOTIFICATION_EXACT_ID_NOT_RESOLVED
+```
+
+Не выбирать refund по сумме или дате.
+
+Допускается использовать другую уже существующую Stripe webhook-ветку, где точный `re_*` известен.
+
+---
+
+## **6. Уведомлять только после подтверждённого бизнес-результата**
+
+Для successful payment уведомление вызывается после того, как подтверждены:
+
+```text
+payments_v2 succeeded
+orders_v2 paid
+canonical payment/order relation
+```
+
+`grant-access-for-order` может корректно завершиться `default-deny` для продукта без клубного доступа. Это не должно блокировать админское уведомление об оплате.
+
+Следовательно, критерий:
+
+```text
+платёж и заказ успешно зафиксированы
+```
+
+а не обязательное создание Telegram-access или entitlement.
+
+Если `grant-access-for-order` завершился технической ошибкой, определить по существующей политике:
+
+- уведомить об оплате с warning;
+- либо не уведомлять до reconcile.
+
+Это решение должно совпадать с bePaid parity.
+
+---
+
+## **7. Не передавать лишние персональные и карточные данные**
+
+В `telegram-notify-admins` передавать только поля, которые реально используются существующим шаблоном.
+
+Допустимо:
+
+```text
+имя клиента
+product name
+amount/currency
+provider
+masked card brand/last4
+order number
+```
 
 Запрещено:
 
-- выводить содержимое строк;
-- показывать PII;
-- показывать URL-токены;
-- выполнять UPDATE/DELETE;
-- создавать временные публичные endpoints для проверки.
-
-В proof хранить только:
-
 ```text
-table
-service-role SELECT succeeded
-row_count
-timestamp
+полный PAN
+email, если он не нужен шаблону
+телефон
+billing_details целиком
+Stripe customer object
+payment method object
+raw webhook payload
+client_secret
+receipt URL с query
 ```
+
+`provider_payment_id` в Telegram при необходимости показывать только маскированно либо хранить внутри технической metadata, не в основном сообщении.
 
 ---
 
-## **9. Dependency scan backup-таблиц**
+## **8. Вызов должен быть non-blocking, но контролируемым**
 
-Разделить найденные ссылки:
+Не использовать бесконтрольный fire-and-forget, который Edge runtime может завершить до отправки запроса.
 
-```text
-PRODUCTION_RUNTIME_REFERENCE
-MIGRATION_REFERENCE
-PROOF/DOCUMENTATION_REFERENCE
-RECOVERY_SCRIPT_REFERENCE
-```
+Использовать тот же надёжный pattern, что применяется в bePaid:
 
-Для verdict `production references = 0` допустимы migration/proof/recovery references, но они должны быть классифицированы.
+- bounded timeout;
+- `try/catch`;
+- безопасный лог результата;
+- ошибка Telegram не меняет HTTP-ответ Stripe;
+- ошибка Telegram не откатывает payment lifecycle.
 
-Проверить минимум:
+Если используется `await`, вызов должен иметь короткий timeout и не блокировать webhook надолго.
 
-- `src/`;
-- `supabase/functions/`;
-- активные SQL functions/views;
-- cron;
-- workflows;
-- RPC;
-- текущие migrations;
-- recovery scripts.
+Если проект использует `EdgeRuntime.waitUntil`, переиспользовать канонический pattern.
 
 ---
 
-## **10. Browser proof не заменять выводом из кода**
+## **9. Не дублировать код в трёх webhook-ветках**
 
-Для §5 нужен фактический browser runtime после публикации.
-
-Обязательно:
-
-- открыть published URL;
-- выполнить hard reload или cache-busting;
-- проверить актуальную UI-функцию;
-- сохранить screenshot;
-- зафиксировать network request/response для drawer;
-- подтвердить отсутствие console errors.
-
-### **Bulk cancel**
-
-Проверить:
+Создать один локальный/shared helper, если подходящего уже нет:
 
 ```text
-кнопка видна super_admin
-диалог открывается
-несколько UUID принимаются
-dry-run вызывается
-batch_id отображается/сохраняется в flow
-execute не запускать на клиентской подписке
+notifyAdminsAboutStripePayment(...)
 ```
 
-Если row-checkbox multi-select отсутствует, не называть это полноценным табличным multi-select. Финальный факт формулировать честно:
+или provider-agnostic:
 
 ```text
-bulk batch input через paste-of-UUIDs = PASS
-row-checkbox UX = backlog
+notifyAdminsAboutPaymentEvent(...)
 ```
 
-Это не блокирует PASS, если утверждённый рабочий batch-flow доступен пользователю.
+Helper отвечает за:
+
+- canonical DTO;
+- idempotency key;
+- timeout;
+- safe logging;
+- вызов `telegram-notify-admins`;
+- sanitization.
+
+Webhook-ветки только формируют доказанные бизнес-поля.
+
+Не выполнять глобальный рефакторинг `stripe-webhook` или `bepaid-webhook`.
 
 ---
 
-## **11. Payments documents proof по Рыштаковой и Матук**
+## **10. Scope событий**
 
-Для каждой строки вернуть отдельный фактический результат:
-
-```text
-contact
-payment_id
-provider
-receipt_url
-provider uid present
-ReceiptStatusBadge state
-badge click result
-Documents action result
-resolver HTTP status
-provider_documents count
-internal_documents count
-warnings
-blocked_reason
-final verdict
-```
-
-Не использовать формулировку «аудит-маркер `has_uid=true`», если это просто frontend diagnostic field, а не audit log.
-
-Для bePaid с `receipt_url=NULL` подтвердить:
-
-- является ли badge кликабельным;
-- какой endpoint вызывается;
-- создаётся ли receipt;
-- открывается ли drawer;
-- нет ли конфликта между legacy receipt handler и новым drawer.
-
-### **Допустимые финальные verdict**
+В рамках патча реализовать только:
 
 ```text
-WORKS_AS_DESIGNED
-DATA_MISSING
-LEGACY_RECEIPT_FLOW_REQUIRED
-FRONTEND_FIXED_AND_PUBLISHED
-BACKEND_DEFECT
+payment_succeeded
+refund_succeeded
+recurring_charge_succeeded
 ```
 
-Если backend defect обнаружен, resolver не передеплоивать в evidence-only run; вернуть отдельный STOP.
+Не добавлять автоматически:
+
+- payment failed;
+- invoice failed;
+- dispute;
+- cancellation;
+- chargeback;
+- access granted/revoked.
+
+Их parity проверить в discovery и вынести в backlog, если действительно нужны.
 
 ---
 
-## **12. Не считать отсутствие браузера не блокирующим автоматически**
+## **11. Тесты до deploy**
 
-План правильно предусматривает честный verdict.
+Добавить минимум:
 
-Если browser tooling недоступен и невозможно подтвердить новую опубликованную UI-версию:
-
-```text
-строка 3 Bulk cancel published UI = DEFERRED_MANUAL_UAT
-строка 7 Payments documents UI = DEFERRED_MANUAL_UAT
-финальный инженерный verdict = PARTIAL
-```
-
-`PASS` возможен только при фактическом browser proof либо другом равноценном runtime-доказательстве опубликованного bundle.
-
----
-
-## **13. Bundle/version proof**
-
-Git commit hash сам по себе не доказывает, что именно этот commit опубликован.
-
-Предпочтительный proof:
-
-```text
-publish/deploy ID
-completed timestamp
-published asset hash
-network JS bundle hash
-browser-visible feature
-```
-
-Сравнение pre/post bundle hash допустимо только если pre-publish hash был реально сохранён.
-
-Если baseline hash отсутствует, доказательством новой версии служат:
-
-- новый уникальный UI;
-- deployment ID;
-- completed deployment log;
-- актуальный asset timestamp/hash.
+1. Разовая Stripe-оплата → одно уведомление.
+2. `payment_intent.succeeded` + связанный `charge.succeeded` → одно уведомление.
+3. Повторная доставка Stripe event → одно уведомление.
+4. Первая subscription invoice не создаёт одновременно `payment_succeeded` и `recurring_charge`.
+5. Последующая invoice → `recurring_charge`.
+6. Полный refund → одно уведомление по `re_*`.
+7. Частичный refund → правильная сумма.
+8. Повторный refund event → без дубля.
+9. Telegram endpoint 500 → webhook lifecycle остаётся успешным.
+10. Telegram timeout → webhook lifecycle остаётся успешным.
+11. Продукт без Telegram access rules → admin notify всё равно отправляется.
+12. В payload отсутствуют forbidden card/Stripe fields.
+13. bePaid код и поведение не изменены.
+14. Никаких дополнительных записей в payments/orders/entitlements из notification helper.
 
 ---
 
-## **14. Regression после security fix**
+## **12. Deploy safety**
 
-Regression должен покрыть не только страницы, но и последствия удаления функций/RLS.
-
-Обязательно:
+Поскольку меняется критическая public webhook-функция:
 
 ```text
-site root = 200
-auth flow работает
-/admin/payments работает
-bulk cancel UI загружается
-documents drawer загружается
-Stripe checkout smoke без создания оплаты
-bePaid checkout smoke без создания оплаты
-public links открываются
-критические webhooks версии unchanged
+stripe-webhook
 ```
 
-Удалённые test/dev functions не должны возвращать рабочий business response:
+перед deploy выполнить controlled public webhook protocol:
+
+1. Сохранить recovery source текущей версии.
+2. Зафиксировать текущую deployed version.
+3. Подтвердить:
+4. Pre-deploy unsigned smoke:
+  - endpoint доступен;
+  - ответ — signature verification failure;
+  - нет Supabase JWT-wall.
+5. Deploy только:
+  &nbsp;
+  ```text
+  stripe-webhook
+  ```
+  и shared helper, входящий в его bundle.
+6. Post-deploy smoke на t=0, t=30s, t=2m:
+  - endpoint публично доступен;
+  - Stripe signature guard работает;
+  - `verify_jwt=false` сохранён.
+7. `bepaid-webhook` не передеплоивать.
+
+Если агентский deploy меняет JWT-доступность:
 
 ```text
-404 / function not found
+STOP
+PUBLIC_WEBHOOK_DEPLOY_REGRESSION
 ```
 
-но не требуется вызывать их с секретами или реальными payload.
+и восстановить recovery version.
 
 ---
 
-## **15. Lifecycle delta проверять по correlation и точным строкам**
+## **13. Runtime proof**
 
-Запрос:
+Не требовать нового реального платежа 7 BYN специально ради теста.
 
-```text
-updated_at > run_start
-```
+Допустимые варианты:
 
-может включать нормальный пользовательский трафик.
+### **Предпочтительно**
 
-Для каждого delta определить:
+Безопасная test-mode Stripe fixture с подписанными событиями:
 
 ```text
-row UUID
-timestamp
-actor/source
-correlation
-связь с closing run
-verdict
+payment succeeded
+recurring invoice
+refund
 ```
 
-Глобальные counts — дополнительный сигнал.
+### **Если test-mode больше не используется**
 
-Финальный regression FAIL только при доказанной связи изменения со closing run.
+- replay существующего provider event только через доказанно idempotent processing path;
+- либо integration proof с реальным signed Stripe fixture без создания нового заказа/доступа;
+- первый будущий реальный платёж — `DEFERRED_OPERATIONAL_UAT`.
+
+Нельзя повторно обработать существующий event так, чтобы создать:
+
+- второй payment;
+- второй order;
+- повторное продление;
+- повторный entitlement;
+- повторный CRM stage.
 
 ---
 
+## **14. Runtime DoD**
 
-
-
-
-## **16.**
-
-`cron.job` **и системные каталоги**
-
-Если direct SQL-доступ к `cron.job`, grants или системным каталогам недоступен:
-
-- не создавать новые privileged функции;
-- использовать доступный read-only tooling;
-- честно указать `NOT ACCESSIBLE`;
-- дополнить code/workflow search.
-
-Не выдавать предположение за проверенный факт.
-
----
-
-
-
-## **17. Обновление**
-
-`.lovable/plan.md`
-
-Разрешена только одна add-only строка:
+Для каждого доступного сценария подтвердить:
 
 ```text
-STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN:
-evidence pack зафиксирован, итоговый verdict <...>, proof <path>.
+одно Telegram admin notification
+один idempotency key
+actor/source = stripe webhook/system
+payment/order lifecycle delta ожидаемый либо 0 при replay
+0 дублей AGL
+0 повторных CRM actions
+0 повторной генерации документа
+0 Telegram client-access изменений
 ```
 
-Не переписывать существующий master plan и ранее зафиксированные статусы.
-
----
-
-## **18. Финальная closure matrix**
-
-Девять строк должны использовать только:
+Лог должен подтверждать вызов helper, но не обязательно содержать точную строку:
 
 ```text
-PASS
-CANCELLED_AS_NOT_NEEDED
-KEEP_UNTIL_DATE
-DEFERRED_OPERATIONAL_UAT
-FAIL
+[telegram-notify-admins] Starting notification
 ```
 
-Для строк 3 и 7 `DEFERRED_OPERATIONAL_UAT` допустим только при честно отсутствующем browser runtime. Тогда общий проект может считаться инженерно закрытым, но отчёт должен различать:
+Использовать фактические безопасные log markers проекта.
+
+---
+
+## **15. Audit и SYSTEM ACTOR**
+
+Если `telegram-notify-admins` или очередь создаёт audit:
 
 ```text
-ENGINEERING IMPLEMENTATION = PASS
-PUBLISHED UI VERIFICATION = DEFERRED_OPERATIONAL_UAT
+actor_type = system
+actor_user_id = NULL
+actor_label = stripe-webhook
+source_event_id/provider_object_id заполнен
 ```
 
-Не использовать `PASS`, если публикация не завершилась или UI не проверен.
+Если audit для admin-notify архитектурой не предусмотрен:
+
+```text
+SYSTEM ACTOR = NOT APPLICABLE
+```
+
+с доказательством фактического существующего контракта.
+
+Не создавать фиктивный audit только ради proof.
 
 ---
 
-## **19. Финальный verdict**
+## **16. Уточнённый итоговый DoD**
 
-### **Полный PASS**
+Патч закрывается как PASS, если:
 
-Только если:
+1. Канонический trigger разовой оплаты выбран.
+2. Нет дублей между `payment_intent.succeeded`, `charge.succeeded` и `checkout.session.completed`.
+3. Recurring notification не дублирует первую оплату.
+4. Refund привязан к точному `re_*`.
+5. Все уведомления идемпотентны.
+6. Ошибка Telegram не влияет на Stripe webhook response.
+7. Продукты без Telegram access rules всё равно создают admin payment notification.
+8. Payload безопасен.
+9. bePaid не изменён и не передеплоен.
+10. `stripe-webhook` controlled deploy PASS.
+11. Public endpoint после deploy не получил JWT-wall.
+12. Tests PASS.
+13. Доступные runtime-сценарии PASS.
+14. Отсутствующий первый реальный сценарий оформлен как `DEFERRED_OPERATIONAL_UAT`, а не как новый открытый спринт.
+15. Grant/access/AGL/orders/payments/CRM/documents regression отсутствует.
 
-- повторный security scan подтверждён;
-- удаление функций доказано source/config/registry/deployment;
-- backup RLS доказан;
-- publish завершён;
-- новая версия подтверждена;
-- browser proof выполнен;
-- regression PASS;
-- closure matrix не содержит FAIL или неподтверждённых PASS.
+## **Итоговый scope**
 
-### **PASS WITH DEFERRED OPERATIONAL UAT**
+Разрешено изменить только:
 
-Допустим только если:
+```text
+supabase/functions/stripe-webhook/index.ts
+существующий shared notification helper
+либо один новый узкий shared helper
+tests
+proof
+```
 
-- инженерные и security изменения доказаны;
-- publish завершён;
-- browser tooling объективно недоступен;
-- ручной UAT записан как operational checklist;
-- нет признаков runtime-дефекта.
+Запрещено изменять:
 
-### **PARTIAL**
+```text
+bepaid-webhook
+telegram access functions
+grant-access-for-order
+document generation
+CRM lifecycle
+payments/orders schema
+RLS
+```
 
-Если:
-
-- publish только scheduled;
-- повторный scan не выполнен;
-- deployed functions не проверены;
-- browser proof отсутствует без объективной причины;
-- RLS/recovery/dependency proof неполный.
-
----
-
-## **20. Финальный отчёт**
-
-В конце существующего proof добавить:
+После выполнения вернуть:
 
 ```text
 Отчёт о выполненной работе:
-STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN — EVIDENCE PACK
+PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
 ```
 
-С обязательными полями:
-
-```text
-Security fix-to-patch root cause
-Удалённые функции
-Security findings before/after
-Backup RLS/recovery
-Publish result
-Browser runtime
-Payments documents results
-Bulk cancel UI result
-Regression
-Closure matrix
-Final verdict
-Remaining operational checklist
-```
-
-После фиксации evidence pack — STOP. Новые исправления, migrations, deploy или security actions не выполнять в рамках этого этапа.
+Следующие Stripe-патчи автоматически не начинать.
 
 &nbsp;
 
-План: STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN — EVIDENCE PACK
+План: Аудит Stripe-платежа pi_3ThrF46UYJj2vm0G13OzIbVS и парити Telegram-уведомлений с bePaid
 
-Цель: дополнить существующий `.lovable/proofs/stripe_final_closure_runtime_v1.md` финальной секцией с доказуемыми фактами по 8 пунктам пользователя. Никакого нового плана/спринта/нового кода. Только сбор, верификация и фиксация фактов. Изменения RLS/удаление функций фиксируются как security fix-to-patch с явным root cause и regression proof.
+## Diagnose — что проверено по реальному платежу
 
-### Что будет добавлено в proof-файл
+Платёж: 7.00 BYN, Stripe, VISA ****3587, Сергей Федорчук, продукт «Платная консультация / Несрочная консультация», order_id `f230633f-30b9-441e-8433-5dab8b073471`.
 
-Новая секция «CLOSING RUN — EVIDENCE PACK» с 8 подсекциями строго в порядке требований пользователя.
+### Что работает корректно (PASS)
 
----
+1. **payments_v2** — запись создана: `status=succeeded`, `paid_at=13:05:01`, `receipt_url` от Stripe сохранён, `card_brand=visa`, `card_last4=3587`. PASS.
+2. **orders_v2** — `status=paid`, `provider_payment_id=pi_3ThrF...`, `final_price=7.00 BYN`. PASS.
+3. **grant-access-for-order** — отработал по канону: AGL запись `action_type=extend`, `reason_code=paid_order`, `source_event_key=gafo:webhook:f230633f...`, `source_window_rule=tariff_duration`, `window_days=30`. Подписка `0ea21015-...` продлена с 2026-07-10 до 2026-08-09 (tariffMatch + sbsMatch). Entitlement `44caec9c-...` обновлён. PASS.
+4. **CRM** — `crm_stage_applied_success` сработал дважды (success-stage воронки «Платная консультация»). PASS.
+5. **Документы** — `document_data.snapshot_created` в 13:05:15, в orders_v2.meta.document_data 97 типизированных b97-полей + executor + scenario `e28a9ea1-...` (payer=individual, channel=card), template `7caee05d-...`. В UI на скриншоте зелёная иконка «документ готов». PASS.
+6. **Возврат денег** — Stripe-канал поддерживается каноническим путём `record_refund_atomic` (RPC) + UI кнопка возврата в /admin/payments. Видны успешные возвраты (Julia Gr -100 BYN bePaid). Для Stripe refund-кнопка использует тот же RPC через `stripe-refund` функцию. PASS (требуется реальный смок-возврат вне аудита).
+7. **Public checkout link** — `system.payment_link.created` → `public_checkout.created` → `public_checkout.link_consumed`. Lifecycle чистый. PASS.
 
-#### §1. Полный список удалённых Edge Functions (6)
+### Что НЕ работает (FAIL — корневая причина найдена)
 
-Источник: история текущего спринта + verify через Supabase functions registry.
+**Telegram-уведомление админам о платеже отсутствует.**
 
-Список к подтверждению:
+Корень: `supabase/functions/bepaid-webhook/index.ts` вызывает `telegram-notify-admins` в 8 точках (charge.succeed, refund, recurring и т.д.). `supabase/functions/stripe-webhook/index.ts` — **0 вызовов** `telegram-notify-admins`. Это разрыв webhook parity. По мемори [bePaid Webhook Parity](mem://architecture/subscriptions/bepaid-webhook-parity-standard) Stripe должен делать те же операции, что и bePaid.
 
-1. `test-full-trial-flow` (root cause: hardcoded `test-flow-2024` секрет, создавал реальные orders/subscriptions/entitlements)
-2. `test-payment-direct` (root cause: hardcoded `test-direct-2024` секрет)
-3. `migrate-data-export` (root cause: unauth публичный SQL-dump 50+ таблиц с SMTP/токенами)
-4. `qa-seed-accounts` (root cause: hardcoded admin/user пароли в коде)
-5. `test-quiz-progress` (root cause: unauth + service_role, писал в auth.users)
-6. `test-getcourse-sync` (root cause: unauth + service_role, читал orders/profiles по orderId)
+Доказательство в логах:
 
-Verify: `supabase--read_query` к `edge_functions_registry` + `ls supabase/functions/` — обоих не должно быть.
+- `[telegram-process-access-queue] No pending items` — очередь пуста, потому что у продукта «Платная консультация» обе `access_rules` (club / product_access) `is_active=false` (отключены 2026-05-22, by-design — продукт не клубный, без TG-club).
+- В `pending_telegram_notifications` для user `05cd3754-...` после 12:50 — 0 записей.
+- Поток `grant-access → telegram-grant-access` корректно отработал `pending_downstream` → `[grant-access] No club rule found ... default-deny`. PASS (это правильное поведение — у консультаций нет TG-клуба).
 
----
+Итого: уведомления в TG-клуб клиенту по продукту правильно не отправлены (продукт без клуба). Но **админское уведомление «прошла оплата 7 BYN, продукт X»** не отправлено, потому что stripe-webhook не зовёт `telegram-notify-admins`.
 
-#### §2. Матрица 7 security findings
+## Plan — что сделать (одно небольшое изменение)
 
-Таблица: finding_id | scanner | level | action (deleted_source/resolved/ignored) | обоснование | финальный статус.
+Добавить в `supabase/functions/stripe-webhook/index.ts` вызов `telegram-notify-admins` с parity-полями относительно bePaid:
 
-Источник: цепочка `security--manage_security_finding` вызовов + повторный `security--get_scan_results` (force=true).
+1. После успешной обработки события `payment_intent.succeeded` / `charge.succeeded` (после того как `grant-access-for-order` отработал успешно) — выполнить fire-and-forget вызов:
+  ```ts
+   await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+     method: 'POST',
+     headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+     body: JSON.stringify({
+       source: 'stripe_webhook',
+       event_type: 'payment_succeeded',
+       order_id, order_number,
+       user_id, profile_id,
+       product_id, product_name,
+       amount, currency,
+       provider: 'stripe',
+       provider_payment_id,
+       card_brand, card_last4,
+       paid_at,
+     }),
+   }).catch(err => console.error('[stripe-webhook] notify-admins failed:', err));
+  ```
+2. Аналогично — для `charge.refunded` (parity с bePaid refund-уведомлением).
+3. Для `invoice.paid` (recurring) — отдельное уведомление с `event_type='recurring_charge'`.
 
-Ожидаемые строки (требуют верификации повторным сканом):
+Все три точки заворачиваются в try/catch так же, как в bePaid (никогда не блокируют ответ Stripe).
 
+## Verify (DoD)
 
-| #   | finding                                                       | action                            | статус |
-| --- | ------------------------------------------------------------- | --------------------------------- | ------ |
-| 1   | `agent_security/hardcoded_test_secrets`                       | deleted_source                    | gone   |
-| 2   | `agent_security/migrate_data_export_noauth`                   | deleted_source                    | gone   |
-| 3   | `agent_security/qa_hardcoded_passwords`                       | deleted_source                    | gone   |
-| 4   | `agent_security/test_funcs_no_auth`                           | deleted_source                    | gone   |
-| 5   | `supabase_lov/stripe_cleanup_backup_payment_links_url_tokens` | resolved (RLS+deny-all)           | gone   |
-| 6   | `supabase_lov/stripe_cleanup_backup_tables_no_rls`            | resolved (RLS+deny-all)           | gone   |
-| 7   | `supabase/SUPA_rls_disabled_in_public`                        | resolved (RLS на 5 legacy backup) | gone   |
+1. После деплоя — повторный реальный Stripe-платёж (или test-mode) → в админ-чате Telegram появляется сообщение «Stripe • 7.00 BYN • Платная консультация • Сергей Федорчук».
+2. Возврат через Stripe → в админ-чате сообщение о refund.
+3. Логи `stripe-webhook` содержат строки `[telegram-notify-admins] Starting notification, source=stripe_webhook`.
+4. Никаких регрессий в grant-access / AGL / orders_v2 / CRM.
 
+## Backlog (не входит в этот патч)
 
-Доп. (не в исходной семёрке, требует явной фиксации): `supabase/SUPA_security_definer_view` — **ignored** с обоснованием (см. security-memory). Включить в матрицу отдельной строкой "accepted risk".
+- Per-user TG-DM по факту оплаты (если когда-нибудь захочется) — отдельный модуль, не относится к админскому notify.
+- Smoke-возврат реальных 7 BYN через Stripe Dashboard / админ-UI — выполнит владелец после фикса.
+- Продукт «Платная консультация» намеренно без TG-клуба — никаких access-rule изменений не требуется.
 
-Verify: повторный `security--run_security_scan` + diff против baseline до миграций.
+## Технический раздел (для разработчика)
 
----
+Файл: `supabase/functions/stripe-webhook/index.ts`
+Точки вставки:
 
-#### §3. 13 backup-таблиц: точные имена, policies, recovery, deps
+- ветка `payment_intent.succeeded` (после `grant-access-for-order` invoke)
+- ветка `charge.refunded` (после `record_refund_atomic` RPC)
+- ветка `invoice.paid` (после продления subscription)
 
-Источник: `psql` против `pg_tables` + `pg_policies` + `information_schema.role_table_grants` + rg по кодовой базе.
-
-Stripe-cleanup (8):
-
-- `_stripe_cleanup_2026_06_backup_access_grant_ledger`
-- `_stripe_cleanup_2026_06_backup_entitlements`
-- `_stripe_cleanup_2026_06_backup_orders`
-- `_stripe_cleanup_2026_06_backup_payment_links`
-- `_stripe_cleanup_2026_06_backup_payments`
-- `_stripe_cleanup_2026_06_backup_provider_events`
-- `_stripe_cleanup_2026_06_backup_provider_subs`
-- `_stripe_cleanup_2026_06_backup_subscriptions`
-
-Legacy backup (5):
-
-- `_backup_entitlement_delete_byn_2026_05_shulyak`
-- `_backup_entitlement_tariff_id_backfill_2026_05`
-- `_microcorrection_rollback_2026_05_03_backup`
-- `_orders_cohort_b_cleanup_2026_05_backup`
-- `_orders_orphan_cleanup_2026_05_backup`
-
-По каждой подтвердить:
-
-- `rowsecurity=true` + `relforcerowsecurity=true`;
-- две policies: `deny_all_anon` RESTRICTIVE, `deny_all_authenticated` RESTRICTIVE, обе USING(false)/WITH CHECK(false);
-- `GRANT ALL ... TO service_role` присутствует, GRANT для anon/authenticated отсутствует;
-- Recovery proof: тестовый SELECT через service-role (psql или edge curl) возвращает строки → recovery возможен;
-- Dependency scan: `rg -F "_stripe_cleanup_2026_06_backup_" supabase/ src/` и аналогично legacy-префиксы — должен быть 0 production-ссылок (допустимы только миграции и proof-файлы).
-
----
-
-#### §4. Повторная публикация — артефакты деплоя
-
-Зафиксировать:
-
-- Точное UTC-время вызова `preview_ui--publish`;
-- URL: `https://gorbova.lovable.app`;
-- Статус из ответа tool: "Publishing is scheduled";
-- Сборка ID/коммит-хэш (через `git log -1` после публикации или из deploy_logs таблицы);
-- Hard-reload check: `browser--navigate_to_url` на published URL с cache-busting `?v=<ts>`, скрин 200 OK + актуальная версия (по хэшу JS-бандла в Network).
-
----
-
-#### §5. Browser proof новой версии
-
-Сценарий через browser-tools (после ~60s ожидания деплоя):
-
-1. `navigate_to_url` → `https://gorbova.lovable.app/admin/payments` (логин при необходимости).
-2. Открыть вкладку bePaid Subscriptions → подтвердить кнопку `StripeBulkCancelDialog` видна (скриншот).
-3. Открыть `/admin/payments` → строка Рыштаковой → кнопка «Документы» → `PaymentDocumentsDrawer` открывается, показывает корректный data-state (receipt_url=NULL → бейдж "Чек не сформирован" + аудит-маркер `has_uid=true`).
-4. То же для одной из строк Матук — корректное состояние по 2 из 5 receipt_url present.
-5. Hash JS-бандла из Network ≠ pre-publish snapshot (доказательство, что не кэш).
-
-Если browser недоступен — пометить как "browser unavailable, manual UAT required" и зафиксировать в backlog (не блокирует PASS, но снимает финальную галочку до ручной проверки).
-
----
-
-#### §6. Confirm удалённые функции не вызываются
-
-Поиск ссылок:
-
-- `rg -F "test-full-trial-flow|test-payment-direct|migrate-data-export|qa-seed-accounts|test-quiz-progress|test-getcourse-sync" supabase/ src/ .github/`
-- Допустимые матчи: исторические миграции (`supabase/migrations/*.sql`) и proof-файлы. Любые матчи в `src/`, активных edge functions, cron jobs, workflow YAML, `supabase/config.toml` → блокер.
-- DB-проверка: `SELECT name FROM edge_functions_registry WHERE name IN (...)` → пусто.
-- Cron: `SELECT jobname, command FROM cron.job WHERE command ILIKE ANY(ARRAY['%test-full-trial-flow%', ...])` → пусто.
-
----
-
-#### §7. Regression после security-изменений
-
-Smoke-чек:
-
-- `curl -I https://gorbova.lovable.app` → 200;
-- `/auth` рендерится, login flow жив (browser sanity);
-- `/admin/payments` загружается без 500 (browser);
-- Stripe/bePaid checkout не затронуты: `git diff` по `bepaid-*` и `stripe-*` функциям за этот ран → пусто; версии webhook-ов не менялись (`edge_functions_registry.version` snapshot до/после);
-- Lifecycle delta: `SELECT count(*) FROM orders_v2/subscriptions_v2/entitlements/access_rules/provider_subscriptions/payments_v2 WHERE updated_at > <run_start>` ⇒ ожидаем 0 строк, изменённых данным раном (изменения легитимного трафика игнорируются по actor != system).
-
----
-
-#### §8. Updated closure matrix (9 строк, без WAITING/PARTIAL)
-
-Финальная таблица в новой секции:
-
-
-| #   | Object                          | Verdict                 |
-| --- | ------------------------------- | ----------------------- |
-| 1   | Billing period display          | PASS                    |
-| 2   | Bulk cancel backend             | PASS                    |
-| 3   | Bulk cancel UI (published)      | PASS                    |
-| 4   | Provider-aware conflict         | PASS                    |
-| 5   | Fixture marker write-side       | CANCELLED_AS_NOT_NEEDED |
-| 6   | Canary                          | KEEP_UNTIL_2026-12-31   |
-| 7   | Payments documents UI           | PASS                    |
-| 8   | Backup retention + RLS lockdown | PASS                    |
-| 9   | Final regression/UAT            | PASS                    |
-
-
-Любая строка, которая по факту проверок останется WAITING (например, browser unavailable для §5) — НЕ переписывается в PASS, а фиксируется честно с явным остатком в backlog, и тогда verdict спринта остаётся PARTIAL до закрытия этой строки.
-
----
-
-### Технические артефакты, которые будут собраны и положены в proof
-
-- `psql` выводы: pg_tables/pg_policies/role_table_grants/edge_functions_registry/cron.job (raw блоки в `<details>`).
-- `rg` выводы по 6 удалённым именам функций.
-- JSON ответа `security--get_scan_results` (force=true) до и после.
-- `preview_ui--publish` response (без подмены формулировок).
-- Browser screenshots (если доступен) — пути в `/mnt/documents/closing-run/`.
-- Git diff списка файлов за ран (только имена) для regression-доказательства.
-
-### Файлы, которые будут изменены
-
-- `.lovable/proofs/stripe_final_closure_runtime_v1.md` — добавление секции «CLOSING RUN — EVIDENCE PACK» в конец, без переписывания предыдущих секций.
-- `.lovable/plan.md` — короткая запись о фиксации (одна строка), без нового плана.
-
-### Что НЕ будет сделано
-
-- Никаких новых миграций.
-- Никаких новых edge-функций, ре-деплоев существующих webhook/access функций.
-- Никаких изменений в lifecycle-таблицах.
-- Никаких новых memory-записей сверх уже обновлённой security-memory.
-- Никаких изменений publish visibility/slug.
-
-### Критерии готовности (DoD)
-
-1. Все 8 подсекций §1–§8 заполнены фактами, а не утверждениями.
-2. Повторный `security--get_scan_results` не содержит ни одного из 7 исходных critical findings.
-3. Closure matrix не содержит WAITING/PARTIAL — либо PASS, либо явный backlog-маркер.
-4. Verdict в конце CLOSING RUN: PASS — только если все 9 строк PASS/закрыты-как-нужно; иначе честный PARTIAL с перечислением остатка.
----
-
-STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN: evidence pack зафиксирован, итоговый verdict = PASS WITH DEFERRED OPERATIONAL UAT, proof .lovable/proofs/stripe_final_closure_runtime_v1.md (секция «CLOSING RUN — EVIDENCE PACK»).
+Параметры берутся из локальных переменных, уже доступных в ветках (order, payment, product), без дополнительных DB-запросов. Деплой: только одна функция `stripe-webhook`.
