@@ -76,6 +76,7 @@ import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDial
 import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
 import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
 import { useStripeSubscriptionsList } from "@/hooks/admin/useStripeSubscriptionsList";
+import { StripeBulkCancelDialog } from "./StripeBulkCancelDialog";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
