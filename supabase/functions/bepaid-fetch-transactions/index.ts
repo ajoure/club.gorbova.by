@@ -2,6 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+// PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser
+import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,29 +50,23 @@ interface ParsedTrackingId {
   orderId: string | null;
   offerId: string | null;
   isValid: boolean;
+  subscriptionV2Id: string | null;
+  kind: string;
 }
 
-function parseTrackingId(trackingId?: string): ParsedTrackingId {
-  if (!trackingId) {
-    return { orderId: null, offerId: null, isValid: false };
-  }
-
-  const parts = trackingId.split("_");
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  
-  if (parts.length === 2 && uuidRegex.test(parts[0])) {
-    return {
-      orderId: parts[0],
-      offerId: uuidRegex.test(parts[1]) ? parts[1] : null,
-      isValid: true,
-    };
-  }
-  
-  if (parts.length === 1 && uuidRegex.test(parts[0])) {
-    return { orderId: parts[0], offerId: null, isValid: true };
-  }
-  
-  return { orderId: null, offerId: null, isValid: false };
+// PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR
+// Delegate to the single shared parser so recurring `subv2:*` tracking IDs
+// are recognised here too (previously only the webhook handled them, and
+// recovery/backfill silently dropped them as `unknown`).
+function parseTrackingId(trackingId?: string | null): ParsedTrackingId {
+  const r = parseBepaidTrackingId(trackingId ?? null);
+  return {
+    orderId: r.orderId,
+    offerId: r.offerId,
+    subscriptionV2Id: r.subscriptionV2Id,
+    kind: r.kind,
+    isValid: r.kind !== "unknown" && (r.orderId !== null || r.subscriptionV2Id !== null),
+  };
 }
 
 function normalizeTransactionStatus(status: string): string {
