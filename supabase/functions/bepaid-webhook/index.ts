@@ -19,6 +19,9 @@ import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts'
 import { runRebillFlow } from './rebill_flow.ts';
 import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
+// PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
+import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -667,42 +670,17 @@ type TrackingParse = {
 };
 
 function parseTrackingId(raw: string | null): TrackingParse {
-  if (!raw) return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
-
-  // subv2:{subscription_v2_id}:order:{order_id}
-  const subv2Match = raw.match(/^subv2:([^:]+):order:(.+)$/i);
-  if (subv2Match) {
-    return { kind: 'subv2', orderId: subv2Match[2], offerId: null, subscriptionV2Id: subv2Match[1], raw };
-  }
-  // A4: Support legacy subv2:{uuid} format (without :order:)
-  const simpleSubv2 = raw.match(/^subv2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-  if (simpleSubv2) {
-    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: simpleSubv2[1], raw };
-  }
-  if (raw.startsWith('subv2:')) {
-    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: null, raw };
-  }
-
-  const uuid = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
-  const linkOrder = new RegExp(`^link:order:${uuid}(?:$|:)`, 'i');
-  const link = new RegExp(`^link:${uuid}(?:$|:)`, 'i');
-
-  const m1 = raw.match(linkOrder);
-  if (m1) return { kind: 'link_order', orderId: m1[1], offerId: null, subscriptionV2Id: null, raw };
-
-  const m2 = raw.match(link);
-  if (m2) return { kind: 'link', orderId: m2[1], offerId: null, subscriptionV2Id: null, raw };
-
-  // uuid or uuid_uuid
-  const uuidRe = new RegExp(`^${uuid}$`, 'i');
-  const parts = raw.split('_');
-  if (parts.length >= 1 && uuidRe.test(parts[0])) {
-    const orderId = parts[0];
-    const offerId = (parts.length >= 2 && uuidRe.test(parts[1])) ? parts[1] : null;
-    return { kind: offerId ? 'uuid_pair' : 'uuid', orderId, offerId, subscriptionV2Id: null, raw };
-  }
-
-  return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
+  // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: delegate to shared SOT parser.
+  // No behavior change vs. the previous inline implementation; the shared
+  // module preserves the exact same regex set (`subv2:*`, `link*`, uuid/uuid_pair).
+  const r = parseBepaidTrackingId(raw);
+  return {
+    kind: r.kind,
+    orderId: r.orderId,
+    offerId: r.offerId,
+    subscriptionV2Id: r.subscriptionV2Id,
+    raw: r.raw,
+  };
 }
 
 // =====================================================================
@@ -1451,27 +1429,92 @@ Deno.serve(async (req) => {
       }
       
       // Get subscription and order data
-      const { data: subV2, error: subError } = await supabase
+      // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: `let` so we can rebind via
+      // future-root fallback when tracking points at a missing subscription_v2.
+      let { data: subV2, error: subError } = await supabase
         .from('subscriptions_v2')
         .select('*, tariffs(id, name, access_days, getcourse_offer_id), products_v2(id, name, code, telegram_club_id)')
         .eq('id', subscriptionV2Id)
         .maybeSingle();
+
       
       if (subError || !subV2) {
-        console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found:', subscriptionV2Id);
-        await supabase.from('provider_webhook_orphans').upsert({
-          provider: 'bepaid',
-          provider_subscription_id: subscriptionId,
-          provider_payment_id: transactionUid,
-          reason: 'subscription_not_found',
-          raw_data: createSafeOrphanData(body, rawTrackingId),
-          processed: false,
-        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
-        return new Response(JSON.stringify({ error: 'Subscription not found' }), {
-          status: 404,
-          headers: corsHeaders,
+        // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR — future-root guard.
+        // Tracking points to a subscription_v2 that no longer exists (orphan
+        // `subv2:{missing_sub_id}`). Try fallback through provider_subscriptions
+        // by provider_subscription_id so we don't silently fail and bePaid
+        // doesn't infinitely retry into the same dead row.
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.webhook.tracking_subscription_missing',
+          meta: {
+            provider_subscription_id: subscriptionId,
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            missing_subscription_v2_id: subscriptionV2Id,
+            severity: 'WARNING',
+          },
         });
+
+        let fallbackSubV2: any = null;
+        if (subscriptionId) {
+          const { data: ps } = await supabase
+            .from('provider_subscriptions')
+            .select('subscription_v2_id, user_id')
+            .eq('provider', 'bepaid')
+            .eq('provider_subscription_id', subscriptionId)
+            .maybeSingle();
+
+          if (ps?.subscription_v2_id && ps.subscription_v2_id !== subscriptionV2Id) {
+            const { data: candidate } = await supabase
+              .from('subscriptions_v2')
+              .select('*, tariffs(id, name, access_days, getcourse_offer_id), products_v2(id, name, code, telegram_club_id)')
+              .eq('id', ps.subscription_v2_id)
+              .maybeSingle();
+            if (candidate) {
+              fallbackSubV2 = candidate;
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.tracking_subscription_recovered_via_provider',
+                target_user_id: candidate.user_id,
+                meta: {
+                  provider_subscription_id: subscriptionId,
+                  transaction_uid: transactionUid,
+                  tracking_id: rawTrackingId,
+                  missing_subscription_v2_id: subscriptionV2Id,
+                  recovered_subscription_v2_id: candidate.id,
+                  recovered_order_id: candidate.order_id,
+                },
+              });
+              subV2 = candidate;
+              subscriptionV2Id = candidate.id;
+              if (candidate.order_id) orderV2Id = String(candidate.order_id);
+            }
+          }
+        }
+
+        if (!fallbackSubV2) {
+          console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found, no provider fallback:', subscriptionV2Id);
+          await supabase.from('provider_webhook_orphans').upsert({
+            provider: 'bepaid',
+            provider_subscription_id: subscriptionId,
+            provider_payment_id: transactionUid,
+            reason: 'subscription_not_found',
+            raw_data: createSafeOrphanData(body, rawTrackingId),
+            processed: false,
+          }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+          // 202 (not 404) — bePaid should not infinite-retry a permanent
+          // missing reference. Row stays in payment_reconcile_queue for
+          // manual review.
+          return new Response(JSON.stringify({ ok: false, status: 'orphan_subscription_not_found' }), {
+            status: 202,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
+
       
       const now = new Date();
       
@@ -1974,6 +2017,50 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
+
+        // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR
+        // Close the corresponding payment_reconcile_queue row ONLY after the
+        // full provider-managed cycle succeeded:
+        //   1) payments_v2 upserted in STEP E (subPayResult.action !== 'error')
+        //   2) grant-access-for-order ok OR REBILL flow handled the cycle.
+        // On grant skip/error we MUST leave the queue row as-is so manual
+        // review still sees it.
+        if (
+          transactionUid &&
+          (grantOutcome === 'ok' || rebillHandled) &&
+          subPayResult?.action !== 'error'
+        ) {
+          try {
+            const queueOrderId =
+              (rebillHandled && rebillOrderIdFromFlow) ? rebillOrderIdFromFlow : orderV2Id;
+            const { data: queueOrder } = await supabase
+              .from('orders_v2')
+              .select('id, product_id, tariff_id, profile_id, user_id')
+              .eq('id', queueOrderId)
+              .maybeSingle();
+
+            await supabase
+              .from('payment_reconcile_queue')
+              .update({
+                status: 'materialized',
+                processed_at: new Date().toISOString(),
+                processed_order_id: queueOrderId,
+                matched_order_id: queueOrderId,
+                matched_profile_id: queueOrder?.profile_id ?? null,
+                matched_product_id: queueOrder?.product_id ?? null,
+                matched_tariff_id: queueOrder?.tariff_id ?? null,
+                last_error: null,
+              })
+              .eq('bepaid_uid', transactionUid)
+              .in('status', ['pending', 'error']);
+          } catch (queueCloseErr) {
+            // Non-fatal — queue closure is bookkeeping. Webhook already
+            // succeeded; we just leave the row for the next reconcile pass.
+            console.error('[WEBHOOK-SUBSCRIPTION] queue materialize non-fatal:', queueCloseErr);
+          }
+        }
+
+
         
         return new Response(JSON.stringify({ 
           ok: true, 

@@ -1,601 +1,334 @@
 да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Approve D разрешён с уточнениями ниже.
-
-**1. Не требовать искусственного создания runtime-fixtures**
-
-Runtime-проверка выполняется только на уже существующих безопасных данных.
-
-Если в production отсутствует подходящий фактический пример:
-
-- Stripe hosted invoice;
-- Stripe invoice PDF;
-- credit note;
-- refund без parent;
-- payment с внутренними документами определённого типа;
-- готовая view-only admin-учётная запись,
-
-не создавать ради proof:
-
-- новый платёж;
-- новый refund;
-- новый документ;
-- новую роль;
-- новую подписку;
-- новый заказ.
-
-В отчёте ставить:
-
-NOT AVAILABLE IN CURRENT FIXTURES
-
-и подтверждать соответствующий код-путь локальными тестами.
-
-Отсутствие необязательного production-fixture не блокирует PASS, если:
-
-- реализация покрыта тестами;
-- основной drawer работает на доступных реальных платежах;
-- архитектурная функция не заявляется как runtime-проверенная без факта.
+1. План правильный по направлению: текущий доступ Вероники не трогать, чинить нужно queue/materialization и parser `subv2:*`.
 
 &nbsp;
 
-**2. Frontend deploy не перекладывать на пользователя без необходимости**
+2. Но data repair старых queue-строк не должен называться “materialized”, если соответствующий платеж уже давно был обработан вручную/другим путем.
 
-Lovable должен самостоятельно выполнить доступный ему publish/deploy workflow.
+Статус лучше:
 
-Фраза:
+- `materialized` — если есть точный `payments_v2` + order + profile + product match;
 
-уведомить пользователя нажать Update
+- либо `resolved_existing_payment` / meta.resolution='existing_payment_found', если status enum позволяет;
 
-допустима только если платформа технически требует подтверждения владельца и агент действительно не может завершить публикацию самостоятельно.
+- если enum не позволяет — `materialized` допустим, но в meta обязательно указать:
 
-В таком случае:
-
-backend deploy = выполнен
-
-frontend deploy = WAITING_FOR_OWNER_PUBLISH_CONFIRMATION
-
-Approve D = PARTIAL
-
-До фактической публикации frontend и browser runtime proof нельзя заявлять финальный PASS.
-
-Не просить пользователя выполнять:
-
-- консольные команды;
-- SQL;
-- JWT-вызовы;
-- ручные технические smoke-тесты.
+  `resolution_reason='existing_payment_already_exists'`.
 
 &nbsp;
 
-**3. Baseline должен быть транзакционно привязан к тестовому окну**
+3. Перед закрытием старых queue-строк обязательно проверить, что это не вызовет повторную обработку:
 
-Глобальные counts могут измениться из-за обычной работы сайта.
+- не создаст новый order;
 
-Перед runtime proof зафиксировать:
+- не вызовет `grant-access-for-order`;
 
-baseline_started_at
+- не изменит `subscriptions_v2.access_end_at`;
 
-runtime_actor_user_id
-
-контрольные payment_id
-
-runtime_correlation_id
-
-После proof сравнивать:
-
-1. конкретные контрольные строки;
-2. записи, созданные или изменённые в интервале теста;
-3. audit rows с данным actor/correlation;
-4. глобальные counts только как дополнительный сигнал.
-
-Естественные изменения других пользователей не считать регрессией без доказанной связи с drawer.
-
-Для каждого обнаруженного delta указать:
-
-entity
-
-row UUID
-
-created_at / updated_at
-
-actor/source
-
-связь с runtime test
-
-verdict: expected | unrelated activity | regression
+- не изменит `entitlements.expires_at`.
 
 &nbsp;
 
-**4. Нулевая регрессия должна проверяться по конкретным полям**
+4. В `bepaid-fetch-transactions` parser добавить общий shared parser, если такой уже есть в `bepaid-webhook`.
 
-Для контрольных payment rows сохранить before/after snapshot минимум:
+Не плодить две разные реализации `subv2:*`.
 
-id
-
-status
-
-order_id
-
-subscription_id
-
-amount
-
-currency
-
-receipt_url
-
-meta
-
-provider_response
-
-updated_at
-
-Для связанных сущностей:
-
-orders_v2.id/status/updated_at
-
-subscriptions_v2.id/status/updated_at
-
-provider_subscriptions.id/status/updated_at
-
-entitlements.id/status/expires_at/updated_at
-
-ai_generated_documents.id/status/document_number/created_at
-
-При обычном открытии drawer:
-
-refresh_provider=false
-
-обязательный результат:
-
-0 DB writes
-
-0 audit rows provider_refresh
-
-0 document creation
-
-0 document number allocation
-
-При ручном refresh допускается только утверждённая safe audit row.
+Если уже есть helper — вынести/переиспользовать.
 
 &nbsp;
 
-**5. Audit proof использовать по фактической схеме**
+5. В webhook fix обязательно закрывать queue row только после полной успешной цепочки:
 
-Не хардкодить значение:
+- payment создан/найден;
 
-actor_type = admin
+- order найден/создан;
 
-если такого значения нет в действующем contract.
+- если access writer вызывался — завершился без error/manual_review;
 
-Проверить фактические допустимые значения audit_[logs.actor](http://logs.actor)_type и использовать каноническое значение проекта.
+- audit записан.
 
-Обязательно доказать:
-
-actor_user_id = JWT sub пользователя [7500084@gmail.com](mailto:7500084@gmail.com)
-
-actor_user_id IS NOT NULL
-
-payment_id заполнен
-
-provider заполнен
-
-action = admin.payment_documents.provider_refresh
-
-В audit отсутствуют:
-
-полные URL
-
-query parameters
-
-Stripe response body
-
-vault error
-
-secret
-
-connection credentials
-
-card data
-
-ФИО владельца карты
-
-customer object
+Если writer вернул error — queue должна остаться error/pending, а не materialized.
 
 &nbsp;
 
-**6. Smoke без JWT не заменяет authenticated runtime**
+6. Для legacy `subv2:{sub_id}` без `order:{order_id}`:
 
-После deploy проверить два отдельных сценария:
+- lookup через `subscriptions_v2.order_id` допустим только если order_id не null и order belongs to same user/product/tariff;
 
-**Без JWT**
-
-admin-payment-documents-resolve
-
-→ 401
-
-**С реальным JWT пользователя с правом просмотра**
-
-refresh_provider=false
-
-→ 200
-
-→ canonical DTO проходит runtime validation
-
-**Без права refresh**
-
-refresh_provider=true
-
-→ 403
-
-если существует безопасный готовый fixture пользователя.
-
-Если готового view-only fixture нет, сохранить ранее утверждённый fallback:
-
-backend RBAC unit/integration test
-
-+
-
-frontend component test
-
-+
-
-отсутствие write-action в rendered state
-
-Новую роль ради proof не создавать.
+- если order_id null или неоднозначность — не матчить, отправлять в manual_review.
 
 &nbsp;
 
-**7. Не запускать provider refresh на произвольной Stripe-строке**
+7. Proof должен отдельно показать:
 
-Для ручного Stripe refresh сначала read-only подтвердить:
+- старые orphan/canceled provider_subscriptions Вероники не трогались;
 
-provider = stripe
+- текущий active `sbs_411...` остался active;
 
-account_code определён
-
-mode определён
-
-active acquiring connection однозначна
-
-есть exact provider object ID
-
-Если хотя бы одно условие не выполнено, refresh не запускать ради эксперимента.
-
-Зафиксировать безопасный verdict resolver:
-
-STRIPE_ACCOUNT_NOT_RESOLVED
-
-STRIPE_MODE_NOT_RESOLVED
-
-STRIPE_MODE_MISMATCH
-
-NO_PROVIDER_DOCUMENTS
-
-Не менять payment metadata для подготовки fixture.
+- следующий цикл должен пойти по новому tracking_id `subv2:0396...:order:7a7f...`.
 
 &nbsp;
 
-**8. bePaid refresh не должен вызывать legacy write-flow**
+8. Добавить future-root guard:
 
-Для bePaid без локального receipt ожидаемое безопасное поведение может быть:
+если webhook видит tracking_id с `subv2:{missing_sub_id}`, но по provider_subscription есть current active subscription_v2_id, он не должен silently fail.
 
-BEPAID_REFRESH_NOT_AVAILABLE_READ_ONLY
+Он должен:
 
-Это считается PASS, если подтверждено:
+- записать audit `bepaid.webhook.tracking_subscription_missing`;
 
-bepaid-get-payment-docs не вызван
+- попытаться fallback через provider_subscriptions.provider_subscription_id / user / active state;
 
-payments_v2 не изменён
+- если fallback однозначный — materialize;
 
-provider_response не изменён
+- если нет — queue manual_review.
 
-receipt_url не записан
+Итоговая команда:
 
-drawer остаётся рабочим
-
-Не требовать появления bePaid receipt ценой вызова старого writer.
+План принимаю с правками.
 
 &nbsp;
 
-**9. Внутренние документы проверять только read-only**
-
-Для payment, связанного с существующим order:
-
-- зафиксировать список ai_generated_documents до открытия drawer;
-- открыть drawer;
-- открыть или скачать существующий документ;
-- повторить SELECT после проверки.
-
-Обязательный результат:
-
-document count delta = 0
-
-document number delta = 0
-
-document status delta = 0
-
-generation audit delta = 0
-
-Нельзя нажимать или временно добавлять generation/regeneration controls ради proof.
+Approve на PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR.
 
 &nbsp;
 
-**10. Проверка webhook-регрессии**
+Scope:
 
-Подтвердить не только совпадение версий:
+1. Код:
 
-stripe-webhook version before = after
+- `bepaid-webhook/index.ts`;
 
-bepaid-webhook version before = after
+- `bepaid-fetch-transactions/index.ts`;
 
-но и отсутствие этих функций в deploy command/result Approve D.
-
-Не отправлять новые тестовые webhook events в рамках этого патча.
-
-Достаточно:
-
-- version/deployment inventory;
-- отсутствие webhook в deploy scope;
-- ранее подтверждённые webhook proofs;
-- отсутствие изменений связанных файлов.
+- общий parser `subv2:{sub_id}:order:{order_id}` и legacy `subv2:{sub_id}`.
 
 &nbsp;
 
-**11. PCI scan выполнять по фактическим данным, созданным патчем**
+2. Data repair:
 
-Проверить:
+- только `payment_reconcile_queue`;
 
-resolver response
+- только строки Вероники;
 
-audit_logs новых refresh-attempts
+- только если существует matching `payments_v2.provider_payment_id = queue.bepaid_uid`;
 
-новые frontend logs — должны отсутствовать
+- только если order/product/profile = Gorbova Club + Вероника;
 
-изменённые backend/shared files
-
-Forbidden keys минимум:
-
-pan
-
-card_number
-
-cvc
-
-cvv
-
-exp_month
-
-exp_year
-
-fingerprint
-
-authorization
-
-secret_key
-
-client_secret
-
-Наличие допустимого слова в исходном тесте или type guard не считать утечкой. Verdict строить по runtime response/audit и фактическому persistence.
+- не менять access/subscriptions/entitlements/orders/payments.
 
 &nbsp;
 
-**12. Runtime screenshots не должны содержать чувствительные данные**
+3. Verify:
 
-Перед сохранением proof проверить отсутствие на скриншотах:
+- текущая subscription `0396c3d9...` active до 2026-07-12;
 
-- полного email клиента;
-- полного телефона;
-- Stripe customer ID без маскирования;
-- полного provider object ID, если diagnostics требует masking;
-- signed URL;
-- card holder;
-- внутренних storage paths;
-- секретов.
+- provider `sbs_411...` active;
 
-Admin email [7500084@gmail.com](mailto:7500084@gmail.com) допускается только как подтверждение actor/account, если это необходимо для proof.
+- entitlement unchanged;
+
+- старые queue строки закрыты как resolved/materialized with existing payment;
+
+- новые successful provider-managed webhook больше не оставляет queue pending.
 
 &nbsp;
 
-**13. Допустимые fixes**
+Запрещено:
 
-Фраза «код не меняем» остаётся основным правилом.
+- ручное продление доступа;
 
-Точечный fix-to-patch допускается только если runtime выявил реальный блокирующий дефект.
+- изменение subscriptions_v2;
 
-Перед исправлением:
+- изменение entitlements;
 
-описать дефект
+- изменение orders_v2/payments_v2;
 
-указать root cause
+- удаление старых provider_subscriptions;
 
-перечислить exact files
+- bePaid API;
 
-подтвердить отсутствие scope expansion
-
-После исправления обязательно повторить:
-
-backend tests
-
-frontend tests
-
-deploy только изменённого утверждённого scope
-
-runtime scenario
-
-regression comparison
-
-Архитектурные улучшения и необязательные UI-доработки переносить в backlog и не задерживать закрытие Approve D.
+- Stripe.
 
 &nbsp;
 
-**14. Финальный verdict**
+Proof:
 
-**PASS**
+`.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
 
-Только если:
-
-admin-payment-documents-resolve реально задеплоен
-
-frontend реально опубликован
-
-основной Stripe runtime PASS
-
-основной bePaid regression PASS
-
-internal documents read-only PASS
-
-refund available fixture PASS либо NOT AVAILABLE с test proof
-
-audit actor proof PASS
-
-security/PCI PASS
-
-lifecycle regression отсутствует
-
-webhooks не передеплоены
-
-**PARTIAL**
-
-Если backend задеплоен, но:
-
-- frontend не опубликован;
-- browser runtime не выполнен;
-- критичный доступный fixture не проверен;
-- audit runtime row не получена.
-
-**FAIL**
-
-Если обнаружены:
-
-- lifecycle write;
-- автоматическая генерация документа;
-- private Storage leak;
-- PCI/secret leak;
-- регрессия bePaid receipt;
-- несанкционированный webhook redeploy.
+Коротко: чинить нужно **reconcile queue + parser**, а не доступ Вероники. Текущая подписка и доступ уже правильные.
 
 &nbsp;
 
-**Gate status**
+План:
 
-PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D = APPROVED
+## 1. Проблема
 
-Выполнить pre-deploy verification, точечный deploy, доступный runtime proof и один consolidated финальный отчёт.
+У Вероники Матук (`nika.1900735@mail.ru`, Telegram ID из скриншота `1337365629`) регулярно ломался сценарий Gorbova Club: автосписание/оплата либо не попадала корректно в журнал платежей, либо подписка/доступ не продлевались без ручного вмешательства.
 
-Следующие Stripe-патчи автоматически не начинать.
+## 2. Диагностика
 
-&nbsp;
+Фактическое состояние по read-only SQL:
 
-## План: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D
+- Контакт найден один:
+  - `profiles.id = 4e8834a5-0f6a-44d6-b05a-8d7ec3b4d6e9`
+  - `user_id = 341e6f46-79dd-4920-b500-da78e3574aab`
+  - email `nika.1900735@mail.ru`
+- Продукт Gorbova Club:
+  - `products_v2.id = 11c9f1b8-0355-4753-bd74-40b42aa53616`
+- История Club BUSINESS:
+  - 2026-02-11: оплата `PAY-26-MLP8XY2S`, 250 BYN.
+  - 2026-03-12: rebill `REBILL-23a5fe7f-813`, 250 BYN.
+  - 2026-04-11: rebill `REBILL-3ef6feed-a9e`, 250 BYN.
+  - 2026-05-11: оплата `PAY-26-MP5R5Z6S`, 250 BYN.
+  - 2026-06-12: новая subscription-link оплата `SUB-LINK-MQAM6G4O`, 250 BYN.
+- Текущий доступ сейчас корректный:
+  - `subscriptions_v2.id = 0396c3d9-a469-4124-b8c9-9b50228b66b6`
+  - `status = active`
+  - `auto_renew = true`
+  - `billing_type = provider_managed`
+  - `access_end_at = 2026-07-12 20:59:59+00`
+  - `provider_subscriptions.provider_subscription_id = sbs_411b4b1b3a9c96a4`
+  - `tracking_id = subv2:0396c3d9-a469-4124-b8c9-9b50228b66b6:order:7a7f4595-8b64-43fe-adaf-f543d423ebe4`
+- Root cause старых ежемесячных сбоев:
+  - В `payment_reconcile_queue` автосписания за март/апрель/май висели как `pending` с `last_error = Could not match to order`.
+  - Их `tracking_id = subv2:b3fd405f-bd62-4e5a-b44f-ad1f0de71fc6`.
+  - Такой `subscriptions_v2.id` сейчас не существует, поэтому webhook/backfill не мог однозначно связать provider payment с канонической подпиской/заказом.
+  - Старые `provider_subscriptions` по Веронике содержат несколько orphan/canceled/expired provider-subscriptions без `subscription_v2_id`; это объясняет «каждый месяц что-то не так».
+- Дополнительный текущий дефект:
+  - Даже по новой корректной подписке июньский webhook создал `payments_v2` и продлил доступ, но строка `payment_reconcile_queue` по `provider_payment_id = 6a508de5-aa8d-4f6a-8fa1-712733dc147f` осталась `pending` с `Could not match to order`.
+  - В коде `bepaid-webhook` provider-managed ветка пишет `payments_v2`, audit и доступ через `grant-access-for-order`, но не закрывает исходную строку `payment_reconcile_queue` как `materialized`.
+- Подтверждение по коду:
+  - `supabase/functions/bepaid-webhook/index.ts` уже умеет парсить `subv2:{subscription_v2_id}:order:{order_id}` и legacy `subv2:{subscription_v2_id}`.
+  - `supabase/functions/bepaid-fetch-transactions/index.ts` использует более старый `parseTrackingId`, который понимает только `order_uuid` / `order_uuid_offer_uuid` и не понимает `subv2:*`; поэтому backfill/reconcile по provider-managed подпискам может продолжать складывать платежи в queue как unmatched.
 
-Финальный deploy утверждённой архитектуры. Код не меняем, только верификация → deploy → runtime proof → отчёт.
+## 3. Предлагаемое решение
 
-### Scope deploy (строго)
+Сделать минимальный repair-патч без изменения бизнес-архитектуры:
 
-- Edge Function: `admin-payment-documents-resolve` (включает bundle shared `_shared/payments/documents/*`)
-- Frontend bundle (PaymentsTable + PaymentDocumentsDrawer + hook/utils/types)
+1. Исправить `bepaid-webhook` provider-managed ветку:
+  - после успешной обработки subscription webhook и записи/обновления `payments_v2` закрывать соответствующую строку `payment_reconcile_queue` по `bepaid_uid = transactionUid`;
+  - проставлять `status = materialized`, `processed_at`, `processed_order_id`, `matched_order_id`, `matched_profile_id`, `matched_product_id`, `matched_tariff_id`, `last_error = null`;
+  - не менять `orders_v2`, `subscriptions_v2`, `entitlements` напрямую — доступ по-прежнему только через `grant-access-for-order`.
+2. Исправить `bepaid-fetch-transactions` parser/recovery:
+  - добавить поддержку `subv2:{subscription_v2_id}:order:{order_id}`;
+  - добавить поддержку legacy `subv2:{subscription_v2_id}` с lookup в `subscriptions_v2.order_id`;
+  - для provider-managed платежей не создавать параллельный доступ и не писать entitlement напрямую.
+3. Выполнить точечный data repair только по уже доказанным строкам Вероники:
+  - dry-run SELECT покажет строки `payment_reconcile_queue`, где есть соответствующий `payments_v2.provider_payment_id` и `orders_v2.product_id = Gorbova Club`;
+  - только эти строки будут переведены из `pending` в `materialized` с привязкой к уже существующим платежам/заказам;
+  - не продлевать доступ задним числом вручную, потому что текущий доступ уже корректен до 2026-07-12 и ручной доступ нарушит canonical write-path.
+4. Зафиксировать proof-файл:
+  - `.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
+  - с timeline, root cause, SQL before/after, rowcount, тестами, deploy version и STOP-guards.
 
-Запрещено передеплоивать: `stripe-webhook`, `bepaid-webhook`, `public-checkout`, `grant-access-*`, document generation functions. Secrets и `acquiring_connections` не трогаются. Никаких новых функций / RPC / таблиц / миграций / drawers.
+## 4. Изменяемые компоненты
 
-### Этап 1. Pre-deploy verification
+### Файлы
 
-1. Запустить Deno tests для `admin-payment-documents-resolve` (ожидание 56/56 PASS).
-  - Подтвердить: production Stripe client ≠ stub, account/mode-aware factory подключён, нет Stripe list/search, нет записи в `payments_v2`, нет вызова generation, signed/provider URL не сохраняются.
-2. Запустить `bunx vitest run` (ожидание 189/189 PASS).
-  - Подтвердить: PaymentDocumentsDrawer читает только canonical response; первое открытие `refresh_provider=false`; provider refresh только вручную; `isSafeHttpsUrl` блокирует unsafe action; существующая колонка receipt в `PaymentsTable.tsx` не изменена; нет generation/regeneration UI; stale-response guard (seqRef) работает.
-3. Если хоть один тест падает → STOP + `PRE_DEPLOY_TEST_FAILED`.
+- `supabase/functions/bepaid-webhook/index.ts`
+- `supabase/functions/bepaid-fetch-transactions/index.ts`
+- существующие/новые Deno tests рядом с этими функциями, если в текущем наборе есть подходящий тестовый harness
+- `.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
 
-### Этап 2. Baseline (read-only SQL)
+### Таблицы данных
 
-До deploy зафиксировать через `supabase--read_query`:
+Только точечное обновление существующих строк:
 
-- counts: `payments_v2`, `orders_v2`, `subscriptions_v2`, `provider_subscriptions`, `entitlements`, `ai_generated_documents`, `access_rules`
-- `payment_links.current_uses` (sum)
-- последние номера внутренних документов (счёт/акт/счёт-акт/договор)
-- контрольные Stripe и bePaid `payment.id` для runtime-проверки
-- текущие версии `stripe-webhook` и `bepaid-webhook` (для проверки «не передеплоены»)
+- `payment_reconcile_queue`
 
-### Этап 3. Deploy
+Только read-only verification:
 
-1. `supabase--deploy_edge_functions(["admin-payment-documents-resolve"])`.
-2. Подтвердить `verify_jwt=true` через `supabase/config.toml` + smoke-вызов без JWT → 401.
-3. Frontend deploy: уведомить пользователя нажать «Update» в publish-диалоге (frontend deploy не автоматический).
+- `profiles`
+- `orders_v2`
+- `payments_v2`
+- `subscriptions_v2`
+- `provider_subscriptions`
+- `entitlements`
+- `access_grant_ledger`
+- `audit_logs`
 
-### Этап 4. Runtime proof (под `7500084@gmail.com` в реальном браузере)
+### Edge functions
 
-Матрица сценариев:
+- `bepaid-webhook` — код + controlled deploy после тестов.
+- `bepaid-fetch-transactions` — код + deploy только если реально изменён.
 
+## 5. Что не будет изменено
 
-| Кейс                                                      | Что проверяем                                                                                                              |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Stripe с local receipt                                    | drawer открывается, receipt отображается                                                                                   |
-| Stripe с hosted invoice / invoice PDF                     | provider documents отображаются после ручного refresh                                                                      |
-| Stripe без локальных документов                           | empty state корректный                                                                                                     |
-| Stripe ручной refresh                                     | срабатывает только по confirm                                                                                              |
-| Stripe открытие drawer                                    | НЕТ auto-refresh (`refresh_provider=false`)                                                                                |
-| bePaid с receipt                                          | существующая кнопка чека работает как раньше                                                                               |
-| bePaid без local receipt                                  | provider refresh НЕ вызывает старый write-flow                                                                             |
-| Refund row                                                | используется `meta.parent_payment_id`, отметка «Документ относится к исходному платежу»                                    |
-| Внутренние документы (заказ со счёт/акт/счёт-акт/договор) | отображаются read-only, открываются/скачиваются через canonical resolver, новый документ НЕ создаётся, номер не выделяется |
-| Empty states                                              | без provider docs / без internal / без order / provider API down / refund parent unknown                                   |
+- Не трогать `stripe-webhook`.
+- Не трогать Stripe-логику.
+- Не менять `grant-access-for-order`.
+- Не создавать новые таблицы/RPC/enum/status-machine.
+- Не менять `orders_v2`, `subscriptions_v2`, `entitlements` вручную без отдельного proof, потому что текущий доступ уже активен.
+- Не удалять старые provider-subscriptions; максимум read-only классификация как historical orphan/canceled/expired.
+- Не использовать product code/slug в новой логике; только UUID и отображаемое имя.
 
+## 6. Dry-run
 
-### Этап 5. RBAC proof
+Перед любым UPDATE выполнить:
 
-- Admin с view-only → видит документы, refresh скрыт.
-- Admin с write → refresh доступен.
-- Super_admin → diagnostics видны.
-- Без права просмотра → 403 от edge function.
-- Generation/regeneration отсутствуют во всех ролях.
+1. SELECT по Веронике:
+  - все Club orders/payments/subscriptions/provider_subscriptions;
+  - текущий entitlement;
+  - queue-строки с `pending`/`error` и `bepaid_uid`.
+2. SELECT candidate rows для repair:
+  - `payment_reconcile_queue.status in ('pending','error')`;
+  - есть `payments_v2.provider = 'bepaid'` и `payments_v2.provider_payment_id = payment_reconcile_queue.bepaid_uid`;
+  - платеж связан с `orders_v2.product_id = 11c9f1b8-0355-4753-bd74-40b42aa53616`;
+  - профиль/пользователь соответствует Веронике.
+3. Expected rowcount: небольшой точечный набор по Веронике; если rowcount больше ожидаемого или выходит за профиль Вероники — STOP.
 
-### Этап 6. Security proof
+## 7. Execute
 
-- Все URL = HTTPS (secondary guard `isSafeHttpsUrl`).
-- Private storage остаётся private; signed URL = short-lived, не сохраняется.
-- Provider URL не сохраняется.
-- URL не попадают в audit.
-- Secrets и connection credentials не в response/log/audit.
-- Raw Stripe/bePaid body не возвращается.
-- PCI forbidden keys = 0.
-- Реальный `audit_logs` row `admin.payment_documents.provider_refresh`: actor_user_id = JWT sub, actor_type ∈ {user, admin}, payment_id заполнен, provider заполнен, safe_error_code безопасный.
+После одобрения:
 
-### Этап 7. Regression after deploy
+1. Внести кодовые правки в `bepaid-webhook` и `bepaid-fetch-transactions`.
+2. Добавить/обновить тесты на:
+  - `subv2:{sub_id}:order:{order_id}`;
+  - legacy `subv2:{sub_id}`;
+  - materialization queue row после successful provider-managed subscription webhook;
+  - запрет прямых access writes в webhook.
+3. Запустить релевантные Deno tests для изменённых функций.
+4. Выполнить controlled deploy только изменённых bePaid functions.
+5. Выполнить точечный data repair через safe UPDATE с WHERE по dry-run candidate IDs.
+6. Повторить SQL after:
+  - текущая подписка active;
+  - entitlement unchanged/active until 2026-07-12;
+  - queue rows materialized;
+  - 0 прямых изменений access вне canonical path;
+  - webhook versions только для разрешённых функций.
 
-Повторный SQL и сравнение с baseline. Все дельты должны быть = 0 (с поправкой на естественную пользовательскую активность вне drawer):
+## 8. STOP-guards
 
-- payments_v2 / orders_v2 / subscriptions_v2 / provider_subscriptions / entitlements / access_rules / payment_links.current_uses / ai_generated_documents (unexpected) / document numbering
-- 0 авто-документов при открытии drawer
-- 0 дублей provider documents
-- bePaid receipt regression = PASS
-- Stripe webhook regression = PASS
-- webhook-функции не передеплоены (версии совпадают)
+Остановиться без UPDATE/deploy, если:
 
-### Этап 8. UI proof
+- dry-run находит больше строк, чем точечный набор Вероники;
+- candidate row не имеет соответствующего `payments_v2.provider_payment_id`;
+- payment/order не относится к `Gorbova Club` UUID;
+- найдено расхождение `user_id/profile_id` не в пользу Вероники;
+- текущая active subscription исчезла или стала не `provider_managed`;
+- тесты `bepaid-webhook` или `bepaid-fetch-transactions` падают;
+- требуется изменение `grant-access-for-order` или manual entitlement extension — это отдельный PATCH.
 
-Скриншоты:
+## 9. DoD
 
-1. Stripe + provider docs
-2. Stripe + internal docs
-3. bePaid
-4. Refund с parent-отметкой
-5. Empty state
-6. Super_admin diagnostics
-7. Существующая колонка чека
-8. Панель без кнопок generation/regeneration
+Задача считается выполненной, если:
 
-### Этап 9. Финальный отчёт
+- причина задокументирована: старые provider-managed webhooks приходили с orphan `subv2:b3fd...`, который не существовал в `subscriptions_v2`, поэтому queue/reconcile не мог матчить платежи;
+- новая активная подписка Вероники подтверждена и остаётся активной до 2026-07-12;
+- `bepaid-webhook` больше не оставляет successful provider-managed webhook в `payment_reconcile_queue.pending` после успешной materialization;
+- `bepaid-fetch-transactions` понимает `subv2:*` tracking IDs;
+- точечные старые queue-строки Вероники закрыты как `materialized` только при наличии уже существующего `payments_v2`;
+- нет ручных изменений `orders_v2/subscriptions_v2/entitlements` вне канонического writer-path;
+- тесты PASS;
+- proof-файл создан с SQL before/after и rowcount.
 
-`Отчёт о выполнении: PATCH-STRIPE-DOCUMENTS-DRAWER-V2 / Approve D` с: deployed functions + versions, изменённые файлы, diff-summary, результаты тестов, runtime matrix, screenshots, audit proof, SQL before/after, PCI proof, bePaid regression, webhook regression, deferred пункты, verdict PASS/PARTIAL/FAIL. STOP.
+## 10. Риски и зависимости
 
-### Допустимые fix-to-patch в ходе Approve D
+- `bepaid-webhook` — production public webhook; deploy только controlled, без затрагивания Stripe.
+- Исторические orphan provider-subscriptions нельзя безопасно «склеивать» задним числом без отдельного repair-патча, если не доказан единственный SOT; в этом патче они остаются историческим объяснением.
+- Если bePaid на следующем цикле пришлёт новый формат payload без `transaction.uid`, понадобится отдельный webhook replay/debug patch.
 
-Только точечные правки в утверждённом scope (resolver, shared docs modules, drawer/card/hook/types/utils, add-only PaymentsTable, тесты, proof). Архитектурный рефакторинг запрещён. Каждый дефект — отдельный fix с DoD.
+## 11. Требуется дополнительная информация
 
-### Stop conditions
-
-- любой pre-deploy test fail
-- любой PCI / private storage leak
-- любой lifecycle delta > 0 (вне естественной активности)
-- любой auto-create документа при открытии drawer
-- любая попытка передеплоить webhook
+Дополнительная информация от пользователя не требуется. Для выполнения нужен переход из plan mode в build mode/approval плана.
