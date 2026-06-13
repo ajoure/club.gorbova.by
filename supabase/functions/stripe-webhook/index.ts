@@ -34,6 +34,8 @@ import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materi
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
 // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
 import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
+// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+import { notifyAdminPaymentEvent } from '../_shared/stripe-admin-notify.ts';
 
 
 
