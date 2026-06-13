@@ -1,334 +1,787 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. План правильный по направлению: текущий доступ Вероники не трогать, чинить нужно queue/materialization и parser `subv2:*`.
+Все пункты плана сохраняются по принципу add-only/no-loss. Ниже — единый consolidated-пакет обязательных уточнений. Новых дополнений после этого пакета не добавлять, если не появятся новые факты RUN 1, код, DDL или runtime-блокер.
 
-&nbsp;
+## **1. RUN 1 должен завершиться окончательной scope-матрицей**
 
-2. Но data repair старых queue-строк не должен называться “materialized”, если соответствующий платеж уже давно был обработан вручную/другим путем.
+До начала реализации для каждого workstream вернуть:
 
-Статус лучше:
+```text
+workstream
+текущая архитектура
+точные файлы
+точные таблицы и поля
+нужна ли migration
+нужна ли новая Edge Function
+нужен ли redeploy существующей функции
+риски bePaid/Stripe
+execute scope
+deferred scope
+verdict
+```
 
-- `materialized` — если есть точный `payments_v2` + order + profile + product match;
+Допустимые verdict:
 
-- либо `resolved_existing_payment` / meta.resolution='existing_payment_found', если status enum позволяет;
+```text
+READY_TO_IMPLEMENT
+ALREADY_IMPLEMENTED
+MERGE_WITH_EXISTING
+DEFERRED_OPERATIONAL_UAT
+CANCELLED_AS_NOT_NEEDED
+STOP_BLOCKER
+```
 
-- если enum не позволяет — `materialized` допустим, но в meta обязательно указать:
+После RUN 1 запрещено расширять scope без нового обнаруженного факта.
 
-  `resolution_reason='existing_payment_already_exists'`.
+---
 
-&nbsp;
+## **2. Не создавать функциональность повторно**
 
-3. Перед закрытием старых queue-строк обязательно проверить, что это не вызовет повторную обработку:
+Перед созданием каждого endpoint/helper/UI выполнить anti-duplication discovery.
 
-- не создаст новый order;
+Особенно проверить существование:
 
-- не вызовет `grant-access-for-order`;
+```text
+single Stripe cancel endpoint
+bulk subscription actions
+subscription period presenter
+provider-aware subscription resolver
+technical/test payment metadata
+multi-select subscriptions UI
+system actor audit helper
+```
 
-- не изменит `subscriptions_v2.access_end_at`;
+Если пригодная функция уже существует — расширять её add-only.
 
-- не изменит `entitlements.expires_at`.
+Новый endpoint разрешён только при доказанном отсутствии подходящего существующего пути.
 
-&nbsp;
+---
 
-4. В `bepaid-fetch-transactions` parser добавить общий shared parser, если такой уже есть в `bepaid-webhook`.
+## **3. Billing period: сначала определить владельца истины**
 
-Не плодить две разные реализации `subv2:*`.
+Не добавлять новые поля в БД только ради отображения, если данные уже доступны в:
 
-Если уже есть helper — вынести/переиспользовать.
+```text
+subscriptions_v2
+provider_subscriptions
+provider metadata
+tariff_offers
+```
 
-&nbsp;
+В RUN 1 обязательно определить:
 
-5. В webhook fix обязательно закрывать queue row только после полной успешной цепочки:
+```text
+canonical owner каждой даты
+source priority
+timezone
+null semantics
+provider parity
+```
 
-- payment создан/найден;
+Пример приоритета должен быть доказан фактической архитектурой:
 
-- order найден/создан;
-
-- если access writer вызывался — завершился без error/manual_review;
-
-- audit записан.
-
-Если writer вернул error — queue должна остаться error/pending, а не materialized.
-
-&nbsp;
-
-6. Для legacy `subv2:{sub_id}` без `order:{order_id}`:
-
-- lookup через `subscriptions_v2.order_id` допустим только если order_id не null и order belongs to same user/product/tariff;
-
-- если order_id null или неоднозначность — не матчить, отправлять в manual_review.
-
-&nbsp;
-
-7. Proof должен отдельно показать:
-
-- старые orphan/canceled provider_subscriptions Вероники не трогались;
-
-- текущий active `sbs_411...` остался active;
-
-- следующий цикл должен пойти по новому tracking_id `subv2:0396...:order:7a7f...`.
-
-&nbsp;
-
-8. Добавить future-root guard:
-
-если webhook видит tracking_id с `subv2:{missing_sub_id}`, но по provider_subscription есть current active subscription_v2_id, он не должен silently fail.
-
-Он должен:
-
-- записать audit `bepaid.webhook.tracking_subscription_missing`;
-
-- попытаться fallback через provider_subscriptions.provider_subscription_id / user / active state;
-
-- если fallback однозначный — materialize;
-
-- если нет — queue manual_review.
-
-Итоговая команда:
-
-План принимаю с правками.
-
-&nbsp;
-
-Approve на PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR.
-
-&nbsp;
-
-Scope:
-
-1. Код:
-
-- `bepaid-webhook/index.ts`;
-
-- `bepaid-fetch-transactions/index.ts`;
-
-- общий parser `subv2:{sub_id}:order:{order_id}` и legacy `subv2:{sub_id}`.
-
-&nbsp;
-
-2. Data repair:
-
-- только `payment_reconcile_queue`;
-
-- только строки Вероники;
-
-- только если существует matching `payments_v2.provider_payment_id = queue.bepaid_uid`;
-
-- только если order/product/profile = Gorbova Club + Вероника;
-
-- не менять access/subscriptions/entitlements/orders/payments.
-
-&nbsp;
-
-3. Verify:
-
-- текущая subscription `0396c3d9...` active до 2026-07-12;
-
-- provider `sbs_411...` active;
-
-- entitlement unchanged;
-
-- старые queue строки закрыты как resolved/materialized with existing payment;
-
-- новые successful provider-managed webhook больше не оставляет queue pending.
-
-&nbsp;
+```text
+canonical local field
+→ exact provider snapshot
+→ safe unavailable
+```
 
 Запрещено:
 
-- ручное продление доступа;
+- вычислять даты по `created_at + interval`;
+- использовать `+30 дней`;
+- подменять `current_period_end` датой entitlement;
+- показывать `next_charge_at`, если подписка отменена немедленно;
+- считать `cancel_at_period_end` завершённой подпиской.
 
-- изменение subscriptions_v2;
+Если для заполнения UI потребовался provider API call, он не должен выполняться при каждом render страницы.
 
-- изменение entitlements;
+---
 
-- изменение orders_v2/payments_v2;
+## **4. Billing period не должен менять lifecycle**
 
-- удаление старых provider_subscriptions;
+Workstream A — presenter/read model.
 
-- bePaid API;
+Запрещено в нём:
 
-- Stripe.
+```text
+обновление статусов подписки
+создание invoice/payment
+изменение provider_subscriptions
+изменение entitlement
+перенос next_charge_at
+```
+
+Любой обнаруженный дефект lifecycle оформить отдельным fix-to-patch внутри спринта, но не маскировать UI-изменением.
+
+---
+
+## **5. Bulk cancel: dry-run должен выдавать подписанный batch token**
+
+Execute не должен принимать просто повторный список UUID после dry-run.
+
+Dry-run должен создать безопасный краткоживущий идентификатор:
+
+```text
+batch_id
+actor_user_id
+selected subscription UUIDs
+mode
+eligibility snapshot/hash
+expires_at
+```
+
+Execute принимает:
+
+```json
+{
+  "batch_id": "uuid",
+  "confirm": true
+}
+```
+
+и повторно валидирует состояние каждой подписки перед отменой.
+
+Если состояние изменилось после dry-run:
+
+```text
+STALE_DRY_RUN
+```
+
+для конкретной строки или всего batch согласно фактической архитектуре.
+
+Нельзя доверять eligibility, присланной frontend.
+
+---
+
+## **6. Bulk cancel: scope по provider определить в RUN 1**
+
+В плане нельзя заранее смешивать все provider.
+
+Первый execute scope:
+
+```text
+Stripe only
+```
+
+если именно для Stripe подтверждён безопасный single-cancel flow.
+
+bePaid:
+
+- либо остаётся вне execute;
+- либо включается только при наличии доказанного канонического single-cancel;
+- regression обязателен независимо от того, входит ли bePaid в execute.
+
+Нельзя создавать общую bulk-отмену, которая внутри имеет несимметричное или непроверенное поведение provider.
+
+---
+
+## **7. Immediate cancellation требует отдельного строгого gate**
+
+Для `immediate` обязательно:
+
+- повторное явное подтверждение;
+- ввод причины;
+- показ последствий;
+- запрет отмены production-клиента в runtime proof;
+- повторная проверка active entitlements;
+- использование только существующего single-cancel lifecycle;
+- отсутствие прямого удаления access;
+- отсутствие прямого Telegram revoke;
+- отсутствие автоматического refund, если это не является существующей бизнес-логикой.
+
+Если безопасный immediate single-flow не подтверждён:
+
+```text
+period_end = IMPLEMENT
+immediate = DEFERRED
+```
+
+Это не блокирует закрытие всего финального спринта при наличии отдельного доказанного verdict.
+
+---
+
+## **8. Bulk cancel и SYSTEM ACTOR**
+
+Не создавать искусственную системную операцию только ради SYSTEM ACTOR proof.
+
+SYSTEM ACTOR обязателен лишь если после bulk cancel реально запускается background reconcile.
+
+Тогда proof должен показать:
+
+```text
+admin bulk execute audit:
+actor_user_id = реальный JWT sub
+
+background reconcile audit:
+actor_type = system
+actor_user_id = NULL
+actor_label заполнен
+correlation_id/batch_id совпадает
+```
+
+Если фоновой операции нет, SYSTEM ACTOR для workstream B помечается:
+
+```text
+NOT APPLICABLE
+```
+
+с объяснением, а не имитируется.
+
+---
+
+
+
+## **9. Multi-select не смешивать с известным багом**
+
+`/admin/products-v2`
+
+Проверить фактический компонент выбора в таблице подписок.
+
+Нужно подтвердить:
+
+- выбор нескольких произвольных строк;
+- shift-range, только если уже поддерживается таблицей;
+- select all;
+- снятие отдельной строки;
+- выбор не сбрасывается при открытии dry-run;
+- pagination/filter semantics понятны.
+
+Не переносить автоматически backlog-баг таблицы продуктов в таблицу подписок.
+
+---
+
+## **10. Conflict helper: определить бизнес-ключ конфликта**
+
+Provider-aware не означает «конфликтует любая активная подписка другого provider».
+
+RUN 1 должен установить canonical business identity:
+
+```text
+profile/contact
+product
+tariff/package
+subscription domain
+business stream
+offer
+```
+
+Конфликт определяется только по доказанному бизнес-ключу.
+
+Нельзя блокировать:
+
+- разные независимые продукты;
+- разные business streams;
+- допустимые параллельные подписки;
+- one-time заказы;
+- завершённые подписки;
+- technical fixture.
+
+Для cross-provider conflict вернуть таблицу:
+
+```text
+existing provider
+requested provider
+same business identity
+status
+policy
+verdict
+```
+
+---
+
+## **11. Conflict helper не должен преждевременно менять закрытые checkout flows**
+
+Сначала:
+
+1. создать/исправить pure provider-aware helper;
+2. покрыть тестами;
+3. подключить к одному Stripe caller;
+4. доказать результат;
+5. затем подключать остальные callers.
+
+Если для подключения bePaid/public checkout требуется redeploy закрытой критической функции:
+
+```text
+STOP
+SHARED_DEPENDENCY_REDEPLOY_REQUIRED
+```
+
+Вернуть dependency graph.
+
+Не передеплоивать массово checkout-функции только из-за общего shared import.
+
+---
+
+## **12. Fixture marker: разделить marker и бизнес-последствия**
+
+Workstream D сначала создаёт только каноническую маркировку:
+
+```text
+is_test_fixture
+fixture_type
+marked_at
+marked_by
+source
+```
+
+После этого отдельно определить, какие consumers реально должны учитывать marker.
+
+Нельзя автоматически добавлять все последствия одновременно:
+
+```text
+не учитывать в выручке
+не выдавать доступ
+не отправлять CRM
+не создавать документы
+```
+
+Каждое последствие должно быть подтверждено существующим бизнес-правилом.
+
+Минимально допустимое поведение:
+
+- badge в admin UI;
+- audit;
+- запрет production document generation, если это уже утверждённое правило;
+- доступ и payment lifecycle без изменений.
+
+---
+
+## **13. Historical fixture marking требует отдельного dry-run**
+
+Dry-run должен вернуть exact UUID:
+
+```text
+payment_id
+order_id
+provider
+marker_before
+evidence
+planned_marker
+```
+
+Execute:
+
+- только по утверждённому exact UUID;
+- idempotent;
+- без поиска по сумме, email, дате;
+- без изменения status, amount, order, access;
+- с реальным admin audit.
+
+Если доказательств недостаточно, строка остаётся:
+
+```text
+UNCONFIRMED_FIXTURE
+```
+
+и не помечается.
+
+---
+
+## **14. Canary нельзя удалять до завершения финальной regression**
+
+Порядок Workstream E изменить:
+
+```text
+inventory callers
+→ сохранить recovery source
+→ завершить основной deploy/runtime
+→ подтвердить public webhook health
+→ удалить canary
+→ проверить отсутствие функции
+```
+
+Не проводить «smoke реальных public webhooks» посредством создания новых business webhook events.
+
+Разрешён только безопасный transport/auth smoke, который не создаёт payment/order/subscription/access.
+
+Перед удалением:
+
+- source/recovery snapshot;
+- config/registry mapping;
+- доказательство callers=0;
+- список реальных public webhooks с версиями before.
+
+После удаления:
+
+- canary отсутствует;
+- реальные public webhooks версии не изменились;
+- `verify_jwt=false` реальных webhook сохранён.
+
+---
+
+## **15. Backup tables: в этом спринте по умолчанию retention verdict, а не DROP**
+
+Физический DROP разрешён только после финального RUN 4 regression PASS.
+
+Поэтому порядок:
+
+```text
+RUN 1–2: inventory + proposed verdict
+RUN 3: никаких DROP до завершения runtime
+RUN 4: финальный verdict
+после PASS: DROP_NOW execute только для полностью безопасных таблиц
+```
+
+Если есть хотя бы одна неопределённость:
+
+```text
+RETAIN_UNTIL_DATE
+```
+
+с точной датой, owner и причиной.
+
+Не удалять backup-таблицы ради формального закрытия спринта.
+
+---
+
+## **16. Проверка references backup tables должна быть широкой**
+
+Проверить не только FK:
+
+- SQL functions;
+- views/materialized views;
+- Edge Functions;
+- frontend queries;
+- migrations;
+- cron jobs;
+- RPC;
+- docs/recovery scripts;
+- manual restore instructions.
+
+`references=0` означает отсутствие всех этих зависимостей.
+
+---
+
+## **17. Deploy-план формируется только после dependency graph**
+
+До RUN 3 вернуть таблицу:
+
+```text
+changed file
+bundle/function
+почему нужен deploy
+shared consumers
+нужен ли redeploy consumer
+risk
+```
+
+Если изменение shared helper попадает в bundle нескольких функций, нельзя предполагать, что достаточно deploy одной функции.
+
+При необходимости redeploy закрытой функции:
+
+```text
+STOP
+SHARED_DEPENDENCY_REDEPLOY_REQUIRED
+```
+
+и отдельное решение по минимальному безопасному scope.
+
+---
+
+## **18. Не требовать четыре отдельных ответа при отсутствии блокеров**
+
+Пользователь просит завершить быстро.
+
+Допустимый режим:
+
+- RUN 1–2 выполнить непрерывно;
+- дать один промежуточный consolidated отчёт перед production deploy;
+- после deploy выполнить RUN 3–4;
+- дать один финальный отчёт.
+
+Не останавливать работу ради отчёта после каждого workstream.
+
+Однако непосредственно перед destructive execute или production bulk cancellation обязателен STOP.
+
+---
+
+## **19. Runtime bulk-cancel proof не должен отменять клиента**
+
+Production runtime:
+
+- dry-run на существующих данных;
+- execute только на подтверждённой fixture;
+- при отсутствии fixture — integration proof + `NOT AVAILABLE IN CURRENT FIXTURES`.
+
+Запрещено создавать новую платную подписку только ради отмены.
+
+Отсутствие execute-fixture не блокирует закрытие workstream, если:
+
+- dry-run runtime PASS;
+- execute integration tests PASS;
+- Stripe mock/API contract proof PASS;
+- access/Telegram guards доказаны.
+
+---
+
+## **20. Public checkout и bePaid regression**
+
+Workstream C обязан доказать не только тесты helper, но и отсутствие изменения пользовательского поведения:
+
+```text
+bePaid recurring existing customer
+bePaid new recurring checkout
+Stripe recurring checkout
+one-time checkout
+public payment link
+admin payment link
+```
+
+Если конкретный live fixture отсутствует, использовать existing integration tests и обозначить это честно.
+
+---
+
+## **21. Final UAT не должен повторно открывать закрытые патчи**
+
+Все first-real-event пункты оформить только как operational checklist.
+
+Статусы:
+
+```text
+DEFERRED_OPERATIONAL_UAT
+```
+
+Они не являются:
+
+- незакрытым PATCH;
+- причиной PARTIAL;
+- основанием для нового deploy;
+- основанием для нового sprint.
+
+Новый fix-to-patch создаётся только при реальном FAIL первого события.
+
+---
+
+## **22. Финальный backlog inventory должен охватить весь Stripe master sprint**
+
+Проверить не только новые пять workstream, но и:
+
+```text
+provider abstraction
+Stripe sandbox/live setup
+one-time checkout
+subscription lifecycle
+customer portal
+public links
+product acquiring settings
+payment profiles
+currencies
+documents
+reporting
+card enrichment
+webhook lifecycle
+refund/dispute
+billing period
+bulk cancel
+fixture marker
+backup/canary
+```
+
+Для каждого:
+
+```text
+status
+proof file
+deferred operational check
+remaining blocker
+```
+
+Не оставлять записи без статуса.
+
+---
+
+## **23. Финальный PASS допускает контролируемые deferred verdict**
+
+Пункты не должны искусственно блокировать закрытие:
+
+- нет live trial fixture;
+- нет безопасной subscription fixture для bulk execute;
+- ещё не наступил первый recurring invoice;
+- ещё не появился live Stripe invoice PDF;
+- retention date backup-таблицы ещё не наступила.
+
+При этом обязательны:
+
+```text
+код и тесты PASS
+runtime доступной части PASS
+security/regression PASS
+чёткий deferred checklist
+нет блокирующего дефекта
+```
+
+---
+
+## **24. Уточнённый финальный DoD**
+
+`STRIPE-FINAL-CLOSURE-SPRINT-V1 = PASS` при выполнении исходных 22 пунктов с такими трактовками:
+
+- bulk execute runtime может быть `NOT AVAILABLE IN CURRENT FIXTURES`, если integration proof полный;
+- immediate cancel может быть `DEFERRED` при отсутствии безопасного подтверждённого lifecycle;
+- backup table может иметь `RETAIN_UNTIL_DATE`;
+- first-real-cycle остаётся `DEFERRED_OPERATIONAL_UAT`;
+- SYSTEM ACTOR может быть `NOT APPLICABLE`, если фоновой операции нет;
+- всё это не должно скрывать реальные FAIL или lifecycle/security regression.
+
+---
+
+## **Итоговый режим исполнения**
+
+```text
+RUN 1:
+полный discovery + scope freeze
+
+RUN 2:
+implementation + полный test suite
+
+ПРОМЕЖУТОЧНЫЙ ОТЧЁТ:
+точный deploy scope, migrations, cleanup verdicts, blockers
+
+RUN 3:
+deploy + runtime доступных безопасных сценариев
+
+RUN 4:
+regression + cleanup + backlog/deferred closure
+
+ФИНАЛЬНЫЙ ОТЧЁТ:
+PASS / PARTIAL / FAIL
+```
+
+Если после RUN 1 нет STOP-condition и нет destructive execute, сразу продолжать RUN 2 без нового плана.
 
 &nbsp;
 
-Proof:
+План: STRIPE-FINAL-CLOSURE-SPRINT-V1
 
-`.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
+Финальный объединённый спринт по завершению Stripe-интеграции. Выполняется четырьмя непрерывными прогонами без промежуточных approve-gates. STOP — только при реальном блокере (см. §8).
 
-Коротко: чинить нужно **reconcile queue + parser**, а не доступ Вероники. Текущая подписка и доступ уже правильные.
+## Жёсткие правила
 
-&nbsp;
+- Язык артефактов: только русский. Финальный отчёт начинается строго: `Отчёт о выполненной работе: STRIPE-FINAL-CLOSURE-SPRINT-V1`.
+- Порядок: DISCOVERY → CONSOLIDATED FINDINGS → DRY-RUN → EXECUTE → DEPLOY → RUNTIME PROOF → FINAL CLOSURE.
+- Add-only / no-loss: bePaid lifecycle, stripe-webhook, bepaid-webhook, grant-access-*, telegram access, document generation, orders_v2/payments_v2/entitlements/access_rules/payment_links — НЕ трогать без прямой необходимости.
+- Связи только по UUID и точным provider object IDs. Запрещены связи по email/ФИО/сумме/дате.
+- SYSTEM ACTOR proof обязателен для фоновых операций; для ручных — actor_user_id = JWT sub.
+- Никаких массовых операций без dry-run, batch, idempotency, audit.
+- Никаких прямых удалений entitlements или Telegram revoke из bulk endpoint.
 
-План:
+## Scope (6 workstream'ов)
 
-## 1. Проблема
+- **A.** PATCH-STRIPE-BILLING-PERIOD-MODE-V2 — корректное отображение периода, trial, next charge, cancel-at-period-end.
+- **B.** PATCH-STRIPE-BULK-CANCEL-V2 — безопасная массовая отмена Stripe-подписок с dry-run и period_end/immediate.
+- **C.** PATCH-PROVIDER-AWARE-SUBSCRIPTION-CONFLICT-V1 — устранение hardcode `provider='bepaid'` в shared conflict helper.
+- **D.** PATCH-STRIPE-TEST-FIXTURE-MARKER-V1 — канонический server-only marker технических платежей.
+- **E.** PATCH-STRIPE-INFRA-CLEANUP-V1 — backup tables retention verdict, удаление canary `public-webhook-deploy-probe`, инвентаризация мёртвых артефактов.
+- **F.** STRIPE-FINAL-UAT-AND-CLOSURE-V1 — единый regression + deferred first-real-event checklist + backlog classification.
 
-У Вероники Матук (`nika.1900735@mail.ru`, Telegram ID из скриншота `1337365629`) регулярно ломался сценарий Gorbova Club: автосписание/оплата либо не попадала корректно в журнал платежей, либо подписка/доступ не продлевались без ручного вмешательства.
+## RUN 1 — Discovery (read-only)
 
-## 2. Диагностика
+Артефакт: `.lovable/discovery/stripe_final_closure_sprint_v1.md`.
 
-Фактическое состояние по read-only SQL:
+- **A.** Mapping всех источников периода/trial/next_charge (subscriptions_v2, provider_subscriptions, orders_v2, payments_v2, Stripe sub/invoice/checkout, offer/tariff). Таблица «поле UI → текущий источник → канонический → fallback → риск → решение». Определить canonical fields (payment_mode, billing_interval[*count], trial, current_period_*, next_charge_at, cancel_at[_period_end], ended_at) под фактическую архитектуру.
+- **B.** Single cancel flow, Stripe cancel endpoint, RBAC, reconcile pipeline, UI selection. Dry-run contract `{selected, eligible, skipped, blocked, items[]}` с per-item полями (sub_id, provider_sub_id, provider, status, mode, eligibility, skip_reason, access_effect).
+- **C.** Аудит `_shared/subscription-conflict.ts`, все callers, provider matrix (bepaid/stripe/future).
+- **D.** Существующие conventions metadata fixture (meta.test_payment/fixture/technical/...), список fixture-UUID из истории. Запрещены heuristics по amount/email/date.
+- **E.** Backup tables (`*_backup_*`, `_stripe_cleanup_*`): name, created, rows, size, refs, purpose, restore, last use, retention deadline, drop eligibility. Canary: config, registry, callers, deployment, external traffic. Dead artifacts inventory.
+- **F.** Единая матрица deferred proof (card enrichment по 3 event'ам, consultation PDF, drawer live Stripe, recurring cycle, invoice.payment_failed, replay/idempotency, non-admin RBAC) с разметкой «можно сейчас / нет fixture / покрыто тестами / требует первого реального».
 
-- Контакт найден один:
-  - `profiles.id = 4e8834a5-0f6a-44d6-b05a-8d7ec3b4d6e9`
-  - `user_id = 341e6f46-79dd-4920-b500-da78e3574aab`
-  - email `nika.1900735@mail.ru`
-- Продукт Gorbova Club:
-  - `products_v2.id = 11c9f1b8-0355-4753-bd74-40b42aa53616`
-- История Club BUSINESS:
-  - 2026-02-11: оплата `PAY-26-MLP8XY2S`, 250 BYN.
-  - 2026-03-12: rebill `REBILL-23a5fe7f-813`, 250 BYN.
-  - 2026-04-11: rebill `REBILL-3ef6feed-a9e`, 250 BYN.
-  - 2026-05-11: оплата `PAY-26-MP5R5Z6S`, 250 BYN.
-  - 2026-06-12: новая subscription-link оплата `SUB-LINK-MQAM6G4O`, 250 BYN.
-- Текущий доступ сейчас корректный:
-  - `subscriptions_v2.id = 0396c3d9-a469-4124-b8c9-9b50228b66b6`
-  - `status = active`
-  - `auto_renew = true`
-  - `billing_type = provider_managed`
-  - `access_end_at = 2026-07-12 20:59:59+00`
-  - `provider_subscriptions.provider_subscription_id = sbs_411b4b1b3a9c96a4`
-  - `tracking_id = subv2:0396c3d9-a469-4124-b8c9-9b50228b66b6:order:7a7f4595-8b64-43fe-adaf-f543d423ebe4`
-- Root cause старых ежемесячных сбоев:
-  - В `payment_reconcile_queue` автосписания за март/апрель/май висели как `pending` с `last_error = Could not match to order`.
-  - Их `tracking_id = subv2:b3fd405f-bd62-4e5a-b44f-ad1f0de71fc6`.
-  - Такой `subscriptions_v2.id` сейчас не существует, поэтому webhook/backfill не мог однозначно связать provider payment с канонической подпиской/заказом.
-  - Старые `provider_subscriptions` по Веронике содержат несколько orphan/canceled/expired provider-subscriptions без `subscription_v2_id`; это объясняет «каждый месяц что-то не так».
-- Дополнительный текущий дефект:
-  - Даже по новой корректной подписке июньский webhook создал `payments_v2` и продлил доступ, но строка `payment_reconcile_queue` по `provider_payment_id = 6a508de5-aa8d-4f6a-8fa1-712733dc147f` осталась `pending` с `Could not match to order`.
-  - В коде `bepaid-webhook` provider-managed ветка пишет `payments_v2`, audit и доступ через `grant-access-for-order`, но не закрывает исходную строку `payment_reconcile_queue` как `materialized`.
-- Подтверждение по коду:
-  - `supabase/functions/bepaid-webhook/index.ts` уже умеет парсить `subv2:{subscription_v2_id}:order:{order_id}` и legacy `subv2:{subscription_v2_id}`.
-  - `supabase/functions/bepaid-fetch-transactions/index.ts` использует более старый `parseTrackingId`, который понимает только `order_uuid` / `order_uuid_offer_uuid` и не понимает `subv2:*`; поэтому backfill/reconcile по provider-managed подпискам может продолжать складывать платежи в queue как unmatched.
+STOP-conditions RUN 1: destructive migration, конкурирующие subscription models, bulk cancel невозможен без прямого удаления access, дефект в single cancel, backup всё ещё используется production, canary имеет caller, conflict helper требует изменения закрытого bePaid lifecycle, нужно менять webhook contract. Иначе сразу RUN 2.
 
-## 3. Предлагаемое решение
+## RUN 2 — Implementation + tests
 
-Сделать минимальный repair-патч без изменения бизнес-архитектуры:
+### A. Billing period
 
-1. Исправить `bepaid-webhook` provider-managed ветку:
-  - после успешной обработки subscription webhook и записи/обновления `payments_v2` закрывать соответствующую строку `payment_reconcile_queue` по `bepaid_uid = transactionUid`;
-  - проставлять `status = materialized`, `processed_at`, `processed_order_id`, `matched_order_id`, `matched_profile_id`, `matched_product_id`, `matched_tariff_id`, `last_error = null`;
-  - не менять `orders_v2`, `subscriptions_v2`, `entitlements` напрямую — доступ по-прежнему только через `grant-access-for-order`.
-2. Исправить `bepaid-fetch-transactions` parser/recovery:
-  - добавить поддержку `subv2:{subscription_v2_id}:order:{order_id}`;
-  - добавить поддержку legacy `subv2:{subscription_v2_id}` с lookup в `subscriptions_v2.order_id`;
-  - для provider-managed платежей не создавать параллельный доступ и не писать entitlement напрямую.
-3. Выполнить точечный data repair только по уже доказанным строкам Вероники:
-  - dry-run SELECT покажет строки `payment_reconcile_queue`, где есть соответствующий `payments_v2.provider_payment_id` и `orders_v2.product_id = Gorbova Club`;
-  - только эти строки будут переведены из `pending` в `materialized` с привязкой к уже существующим платежам/заказам;
-  - не продлевать доступ задним числом вручную, потому что текущий доступ уже корректен до 2026-07-12 и ручной доступ нарушит canonical write-path.
-4. Зафиксировать proof-файл:
-  - `.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
-  - с timeline, root cause, SQL before/after, rowcount, тестами, deploy version и STOP-guards.
+- Один provider-agnostic presenter/resolver, переиспользовать существующий subscription DTO.
+- Stripe и bePaid — единый UI contract. Не вычислять next_charge_at как +30 дней, если provider дал точную дату. Trial не подменяет основной period. One-time не показывается как подписка. `cancel_at_period_end=true` ≠ уже отменена.
+- UI: `/admin/subscriptions`, карточка подписки/сделки. В `/admin/payments` — только компактная связанная информация, без дубля subscription management.
 
-## 4. Изменяемые компоненты
+### B. Bulk cancel
 
-### Файлы
+- Один endpoint `admin-bulk-cancel-subscriptions` (или расширение существующего, если безопасно).
+- Input: `{subscription_ids[], mode: period_end|immediate, dry_run, reason}`. Batch ≤ 50, только UUID, super_admin.
+- Dry-run обязателен; execute обрабатывает только утверждённые ID; idempotency per-sub; ошибка одной не ломает batch.
+- Period_end: Stripe `cancel_at_period_end=true`, доступ до конца периода. Immediate: второе подтверждение, существующий single-cancel lifecycle. Никаких прямых entitlement writes и Telegram revoke из bulk endpoint — доступ только через канонический reconcile.
+- Audit: `admin.subscriptions.bulk_cancel.{dry_run,execute}` + SYSTEM ACTOR для follow-up reconcile.
+- UI: multi-select, кнопка по выбору, явное разделение period_end / immediate.
 
-- `supabase/functions/bepaid-webhook/index.ts`
-- `supabase/functions/bepaid-fetch-transactions/index.ts`
-- существующие/новые Deno tests рядом с этими функциями, если в текущем наборе есть подходящий тестовый harness
-- `.lovable/proofs/veronika_matuk_gorbova_club_repair.md`
+### C. Provider-aware conflict helper
 
-### Таблицы данных
+- Убрать hardcode `provider='bepaid'`. Contract: requested_provider/offer/profile, existing business subs, conflict policy.
+- Конфликт: active, pending, past_due (если блокирует по политике), cancel_at_period_end (пока период активен). Не конфликт: cancelled+завершено, expired, failed checkout без sub, fixture.
+- Использовать в: Stripe checkout, bePaid recurrent, admin checkout/link, public checkout. bePaid regression — proof обязателен.
 
-Только точечное обновление существующих строк:
+### D. Fixture marker
 
-- `payment_reconcile_queue`
+- Канонический server-only marker (имя поля — по фактической convention из discovery). Клиент задать не может.
+- Исторические fixture — только по UUID из discovery, через dry-run. Запрещены mass update по сумме/email/date.
+- Поведение: badge в admin UI; нет production document generation, если бизнес-правило запрещает; нет CRM/document automation, если архитектура это подтверждает; access/payment lifecycle не меняется без отдельного правила.
+- Audit `admin.payment.fixture_mark`.
 
-Только read-only verification:
+### E. Infra cleanup
 
-- `profiles`
-- `orders_v2`
-- `payments_v2`
-- `subscriptions_v2`
-- `provider_subscriptions`
-- `entitlements`
-- `access_grant_ledger`
-- `audit_logs`
+- **Canary**: если callers=0 → удалить function + config + registry + temporary harness. Реальные public webhooks НЕ трогать. Proof: «before deployed / after absent / реальные webhooks unchanged».
+- **Backup tables**: для каждой verdict `DROP_NOW | RETAIN_UNTIL_DATE | KEEP_AS_CANONICAL_RECOVERY`. DROP_NOW только при refs=0, восстановление не нужно, regression PASS, истёкший retention, dry-run подтверждён. RETAIN — фиксировать дату/owner/reason. KEEP — restore-инструкция. Не оставлять без verdict.
 
-### Edge functions
+### Тесты (минимум)
 
-- `bepaid-webhook` — код + controlled deploy после тестов.
-- `bepaid-fetch-transactions` — код + deploy только если реально изменён.
+- A: recurring monthly/yearly, trial, period_end cancel, immediate cancelled, one-time, missing provider date, Stripe/bePaid parity, timezone, next_charge не вычисляется ошибочно.
+- B: dry-run, period_end, immediate, repeated execute, mixed, batch>50, provider missing, partial Stripe error, no direct entitlement writes, no Telegram revoke, audit actor, SYSTEM ACTOR follow-up.
+- C: Stripe active, bePaid active, cross-provider, pending, past_due, cancel_at_period_end active, cancelled, fixture ignored, one-time не recurring conflict, bePaid regression.
+- D: server-only, exact UUID, no amount heuristic, audit, document guard, UI badge, client spoof blocked.
 
-## 5. Что не будет изменено
+Полный backend/frontend suite PASS — обязательно.
 
-- Не трогать `stripe-webhook`.
-- Не трогать Stripe-логику.
-- Не менять `grant-access-for-order`.
-- Не создавать новые таблицы/RPC/enum/status-machine.
-- Не менять `orders_v2`, `subscriptions_v2`, `entitlements` вручную без отдельного proof, потому что текущий доступ уже активен.
-- Не удалять старые provider-subscriptions; максимум read-only классификация как historical orphan/canceled/expired.
-- Не использовать product code/slug в новой логике; только UUID и отображаемое имя.
+## RUN 3 — Deploy + runtime
 
-## 6. Dry-run
+- Pre-deploy: backend/frontend tests, typecheck, build, code-search guards, PCI scan. Падение → STOP `PRE_DEPLOY_TEST_FAILED`.
+- Baseline snapshot: payments_v2, orders_v2, subscriptions_v2, provider_subscriptions, entitlements, access_rules, payment_links, ai_generated_documents, audit_logs, webhook versions, access counts.
+- Deploy ТОЛЬКО фактически изменённые функции спринта. Запрещён автоматический redeploy stripe-webhook/bepaid-webhook/grant-access-*/telegram/documents. Если shared import требует redeploy закрытой функции → STOP `SHARED_DEPENDENCY_REDEPLOY_REQUIRED` с dependency graph.
+- Runtime A: реальные Stripe recurring / bePaid recurring / one-time / trial (если fixture есть) / cancel_at_period_end (если fixture есть). Отсутствие — `NOT AVAILABLE IN CURRENT FIXTURES` + test proof.
+- Runtime B: НЕ отменять реальных клиентов. Допустимо: dry-run на реальных без execute; execute только на подтверждённой технической fixture или mocked/integration proof.
+- Runtime D: пометить только подтверждённые UUID, проверить badge/audit/нет documents/нет lifecycle delta.
+- Cleanup: canary удалить после успешных smoke реальных public webhooks без их redeploy; backup tables — по verdict RUN 2.
 
-Перед любым UPDATE выполнить:
+## RUN 4 — Final closure
 
-1. SELECT по Веронике:
-  - все Club orders/payments/subscriptions/provider_subscriptions;
-  - текущий entitlement;
-  - queue-строки с `pending`/`error` и `bepaid_uid`.
-2. SELECT candidate rows для repair:
-  - `payment_reconcile_queue.status in ('pending','error')`;
-  - есть `payments_v2.provider = 'bepaid'` и `payments_v2.provider_payment_id = payment_reconcile_queue.bepaid_uid`;
-  - платеж связан с `orders_v2.product_id = 11c9f1b8-0355-4753-bd74-40b42aa53616`;
-  - профиль/пользователь соответствует Веронике.
-3. Expected rowcount: небольшой точечный набор по Веронике; если rowcount больше ожидаемого или выходит за профиль Вероники — STOP.
+- Общий regression: bePaid one-time/recurring PASS, Stripe one-time PASS, Stripe recurring PASS либо deferred first-real-cycle, refund PASS, documents drawer PASS, card enrichment PASS + deferred live, consultation PASS + deferred first-real PDF, access/Telegram/payment links/public checkout — 0 regression.
+- `.lovable/proofs/stripe_first_real_event_checklist_v1.md` — один файл со всеми deferred (event, expected behavior, SQL/audit checks, failure condition, owner, no deploy required). Эти пункты НЕ считаются открытыми патчами.
+- Backlog: каждому Stripe-item присвоить `CLOSED | MERGED_INTO_FINAL_SPRINT | DEFERRED_OPERATIONAL_UAT | CANCELLED_AS_NOT_NEEDED`. Артефакт: `.lovable/proofs/stripe_final_backlog_inventory_v1.md`.
 
-## 7. Execute
+## Stop-conditions (немедленный STOP)
 
-После одобрения:
+Lifecycle delta связанная со спринтом; массовая отмена без dry-run; прямое удаление entitlements; авто Telegram revoke из bulk; Stripe test/live mismatch; bePaid conflict regression; document generation для fixture; secret/PCI leak; private Storage leak; webhook redeploy вне scope; backup table удаляется при refs>0; canary имеет caller; production-клиент как тест.
 
-1. Внести кодовые правки в `bepaid-webhook` и `bepaid-fetch-transactions`.
-2. Добавить/обновить тесты на:
-  - `subv2:{sub_id}:order:{order_id}`;
-  - legacy `subv2:{sub_id}`;
-  - materialization queue row после successful provider-managed subscription webhook;
-  - запрет прямых access writes в webhook.
-3. Запустить релевантные Deno tests для изменённых функций.
-4. Выполнить controlled deploy только изменённых bePaid functions.
-5. Выполнить точечный data repair через safe UPDATE с WHERE по dry-run candidate IDs.
-6. Повторить SQL after:
-  - текущая подписка active;
-  - entitlement unchanged/active until 2026-07-12;
-  - queue rows materialized;
-  - 0 прямых изменений access вне canonical path;
-  - webhook versions только для разрешённых функций.
+## DoD
 
-## 8. STOP-guards
+Все 22 пункта из §9 исходного запроса (билинг корректен, one-time≠recurring, bulk cancel с dry-run+execute, period_end/immediate разделены, bulk не пишет access, conflict helper provider-aware без hardcode, fixture marker канонический и не по сумме/email/date, canary удалён или сохранён с причиной, каждая backup table с verdict, все тесты PASS, PCI PASS, bePaid/Stripe regression PASS, webhooks не передеплоены без необходимости, audit + SYSTEM ACTOR proof, backlog классифицирован, first-real-event checklist создан, нет блокирующих Stripe-патчей).
 
-Остановиться без UPDATE/deploy, если:
+## Артефакты
 
-- dry-run находит больше строк, чем точечный набор Вероники;
-- candidate row не имеет соответствующего `payments_v2.provider_payment_id`;
-- payment/order не относится к `Gorbova Club` UUID;
-- найдено расхождение `user_id/profile_id` не в пользу Вероники;
-- текущая active subscription исчезла или стала не `provider_managed`;
-- тесты `bepaid-webhook` или `bepaid-fetch-transactions` падают;
-- требуется изменение `grant-access-for-order` или manual entitlement extension — это отдельный PATCH.
+Создать:
 
-## 9. DoD
+- `.lovable/discovery/stripe_final_closure_sprint_v1.md`
+- `.lovable/proofs/stripe_final_closure_implementation_v1.md`
+- `.lovable/proofs/stripe_final_closure_runtime_v1.md`
+- `.lovable/proofs/stripe_first_real_event_checklist_v1.md`
+- `.lovable/proofs/stripe_final_backlog_inventory_v1.md`
 
-Задача считается выполненной, если:
+Обновить:
 
-- причина задокументирована: старые provider-managed webhooks приходили с orphan `subv2:b3fd...`, который не существовал в `subscriptions_v2`, поэтому queue/reconcile не мог матчить платежи;
-- новая активная подписка Вероники подтверждена и остаётся активной до 2026-07-12;
-- `bepaid-webhook` больше не оставляет successful provider-managed webhook в `payment_reconcile_queue.pending` после успешной materialization;
-- `bepaid-fetch-transactions` понимает `subv2:*` tracking IDs;
-- точечные старые queue-строки Вероники закрыты как `materialized` только при наличии уже существующего `payments_v2`;
-- нет ручных изменений `orders_v2/subscriptions_v2/entitlements` вне канонического writer-path;
-- тесты PASS;
-- proof-файл создан с SQL before/after и rowcount.
+- `.lovable/plan.md`
+- `.lovable/architecture/canonical_infrastructure_v1.md`
 
-## 10. Риски и зависимости
+## Формат отчётов
 
-- `bepaid-webhook` — production public webhook; deploy только controlled, без затрагивания Stripe.
-- Исторические orphan provider-subscriptions нельзя безопасно «склеивать» задним числом без отдельного repair-патча, если не доказан единственный SOT; в этом патче они остаются историческим объяснением.
-- Если bePaid на следующем цикле пришлёт новый формат payload без `transaction.uid`, понадобится отдельный webhook replay/debug patch.
+После каждого RUN — короткий отчёт `Отчёт о выполненной работе: STRIPE-FINAL-CLOSURE-SPRINT-V1 / RUN N` и сразу продолжение, если нет STOP-condition. Финальный — `Отчёт о выполненной работе: STRIPE-FINAL-CLOSURE-SPRINT-V1` с verdict PASS / PARTIAL / FAIL. Новые планы между RUN'ами не создавать. Блокирующие дефекты — fix-to-patch внутри этого же спринта. Некритичное — в backlog без задержки закрытия.
+---
 
-## 11. Требуется дополнительная информация
+## 2026-06-13 — STRIPE-FINAL-CLOSURE-SPRINT-V1: PASS
 
-Дополнительная информация от пользователя не требуется. Для выполнения нужен переход из plan mode в build mode/approval плана.
+- RUN 1: `.lovable/discovery/stripe_final_closure_sprint_v1.md`
+- RUN 2: `.lovable/proofs/stripe_final_closure_implementation_v1.md`
+- RUN 3/4: `.lovable/proofs/stripe_final_closure_runtime_v1.md`
+- Deferred operational: `.lovable/proofs/stripe_first_real_event_checklist_v1.md`
+- Backlog: `.lovable/proofs/stripe_final_backlog_inventory_v1.md`
+
+Deployed: `admin-stripe-bulk-cancel`. Stripe regression delta = 0.

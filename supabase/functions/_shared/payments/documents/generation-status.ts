@@ -20,13 +20,19 @@ export interface GenerationFacts {
   scenario_in_progress?: boolean;
   scenario_failed?: boolean;
   missing_requisites?: boolean;
+  /** STRIPE-FINAL-CLOSURE-SPRINT-V1 / Workstream D — canonical test fixture marker.
+   *  Только явный `payments_v2.meta.fixture === true`. См. _shared/payments/fixture-marker.ts. */
+  is_test_fixture?: boolean;
 }
 
 export function classifyGeneration(facts: GenerationFacts): GenerationInfo {
   let blocked: GenerationCode | null = null;
   const sf = !!facts.scenario_found;
 
-  if (facts.is_refund) blocked = 'REFUND_USES_PARENT_DOCUMENTS';
+  // TEST_PAYMENT_DOCUMENT_BLOCKED имеет высший приоритет:
+  // никакая production-генерация для fixture-платежа недопустима.
+  if (facts.is_test_fixture) blocked = 'TEST_PAYMENT_DOCUMENT_BLOCKED';
+  else if (facts.is_refund) blocked = 'REFUND_USES_PARENT_DOCUMENTS';
   else if (!facts.order_id) blocked = 'PAYMENT_NOT_LINKED_TO_ORDER';
   else if (facts.stripe_account_resolved === false) blocked = 'STRIPE_ACCOUNT_NOT_RESOLVED';
   else if (!sf) blocked = 'NO_DOCUMENT_SCENARIO';

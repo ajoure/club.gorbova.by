@@ -76,6 +76,7 @@ import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDial
 import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
 import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
 import { useStripeSubscriptionsList } from "@/hooks/admin/useStripeSubscriptionsList";
+import { StripeBulkCancelDialog } from "./StripeBulkCancelDialog";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -1521,6 +1522,11 @@ export function BepaidSubscriptionsTabContent() {
           </TooltipTrigger>
           <TooltipContent>Обновить список</TooltipContent>
         </Tooltip>
+
+        {/* STRIPE-FINAL-CLOSURE-SPRINT-V1 / Workstream B — Bulk Stripe cancel */}
+        {isSuperAdmin && <StripeBulkCancelDialog />}
+
+
 
         {/* Advanced sync dropdown — admin/super_admin only */}
         {(isSuperAdmin || isAdmin) && (
