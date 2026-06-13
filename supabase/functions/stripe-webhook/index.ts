@@ -178,6 +178,35 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           }
         } catch { /* never re-throw — invoice.paid activation already committed */ }
       }
+      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+      // Notify admins on subscription invoice.paid (covers BOTH first invoice
+      // and renewals). Gated on: non-manual, NOT duplicate, payment_id resolved.
+      // Stripe event-level dedup is enforced upstream by provider_events.
+      if (
+        event.type === 'invoice.paid'
+        && !out.manual_review
+        && out.payment_id
+        && out.order_id
+        && out.note !== 'invoice_paid_duplicate'
+      ) {
+        try {
+          const inv = event.data.object as Record<string, unknown>;
+          const amount_minor = Number(inv.amount_paid ?? inv.amount_due ?? 0);
+          const inv_currency = String(inv.currency ?? 'usd').toUpperCase();
+          const inv_amount_major = toMajorUnits(amount_minor, inv_currency);
+          const period_end = typeof inv.period_end === 'number' ? inv.period_end : null;
+          const next_charge_at = period_end ? new Date(period_end * 1000).toISOString() : null;
+          notifyAdminPaymentEvent(supabase, {
+            op: 'subscription_renewal',
+            order_id: out.order_id,
+            payment_id: out.payment_id,
+            provider_object_id: (inv.id as string) ?? null,
+            amount: inv_amount_major,
+            currency: inv_currency,
+            next_charge_at,
+          });
+        } catch { /* notify is best-effort */ }
+      }
       // Map resolver result → webhook output shape.
       // manual_review остаётся в note, чтобы processing_status выставился ниже.
       const note = out.manual_review
