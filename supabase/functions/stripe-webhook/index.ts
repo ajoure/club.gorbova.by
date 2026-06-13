@@ -47,7 +47,13 @@ import {
 // Returns inserted=true ONLY when this call created the row. Race between
 // checkout.session.completed and payment_intent.succeeded carrying the same pi_*
 // is decided by the database constraint (23505). Notify caller is gated on inserted=true.
-async function persistStripePaymentIfAbsent(
+//
+// Strict 23505 handling (PARITY-V2 fix-to-patch):
+//   - 23505 is interpreted as "another writer won" ONLY when a matching row with the
+//     same (provider='stripe', provider_payment_id=pi_id) actually exists.
+//   - If no matching row is found after 23505, the original DB error is re-thrown.
+//     This prevents masking unrelated unique violations as a duplicate payment.
+export async function persistStripePaymentIfAbsent(
   supabase: ReturnType<typeof svc>,
   pi_id: string,
   row: Record<string, unknown>,
@@ -60,9 +66,9 @@ async function persistStripePaymentIfAbsent(
   if (!insertRes.error && insertRes.data?.id) {
     return { payment_id: insertRes.data.id, inserted: true };
   }
-  // 23505 = unique_violation → another branch / delivery already inserted this pi_*.
-  const isUniqueViolation = insertRes.error?.code === '23505'
-    || /duplicate key|unique constraint/i.test(insertRes.error?.message ?? '');
+  const err = insertRes.error;
+  const isUniqueViolation = err?.code === '23505'
+    || /duplicate key|unique constraint/i.test(err?.message ?? '');
   if (isUniqueViolation) {
     const { data: existing } = await supabase
       .from('payments_v2')
@@ -70,10 +76,16 @@ async function persistStripePaymentIfAbsent(
       .eq('provider', 'stripe')
       .eq('provider_payment_id', pi_id)
       .maybeSingle();
-    return { payment_id: existing?.id ?? null, inserted: false };
+    if (existing?.id) {
+      return { payment_id: existing.id, inserted: false };
+    }
+    // 23505 but no row with this pi_* — some other unique constraint fired.
+    // Re-throw so caller does NOT treat this as a duplicate Stripe payment.
+    throw new Error(`payments_v2 unique_violation without matching pi_*: ${err?.message ?? 'unknown'}`);
   }
-  // Real DB error — surface as not-inserted, do not notify.
-  console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, insertRes.error?.message);
+  if (err) {
+    console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, err.message);
+  }
   return { payment_id: null, inserted: false };
 }
 
@@ -360,22 +372,24 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       payment_link_id: md_payment_link_id,
     });
 
-    // Find order; call grant-access-for-order (existing, untouched).
-    await supabase.functions.invoke('grant-access-for-order', {
-      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
-    });
-    // Insert payments_v2 if not exists — V2: atomic insert-winner via UNIQUE(provider, provider_payment_id)
+    // V2 fix-to-patch: atomic insert-winner FIRST. Downstream business lifecycle
+    // (grant-access / transitionOrderPaid / CRM / payment_link consume /
+    //  document materialize / card enrichment) runs ONLY on the winner branch.
+    // Loser branch returns early — its sibling event already executed lifecycle.
+    // When there is no pi_id (rare; mode!=payment, no PI generated), there is no
+    // cross-event race possible, so lifecycle runs unconditionally.
     const amount_total_minor = Number(obj.amount_total ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
     const amount_major = toMajorUnits(amount_total_minor, currency);
     let payment_id: string | undefined;
+    let inserted = false;
     if (pi_id) {
       const { data: ordRow } = await supabase
         .from('orders_v2')
         .select('user_id, profile_id')
         .eq('id', order_id_meta)
         .maybeSingle();
-      const { payment_id: pid, inserted } = await persistStripePaymentIfAbsent(supabase, pi_id, {
+      const { payment_id: pid, inserted: ins } = await persistStripePaymentIfAbsent(supabase, pi_id, {
         order_id: order_id_meta,
         user_id: ordRow?.user_id ?? null,
         profile_id: ordRow?.profile_id ?? null,
@@ -391,24 +405,33 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         },
       });
       payment_id = pid ?? undefined;
-      // PATCH-V2: notify ONLY when we were the atomic insert-winner.
-      if (inserted && payment_id) {
-        notifyAdminPaymentEvent(supabase, {
-          op: 'payment_succeeded',
-          order_id: order_id_meta,
-          payment_id,
-          provider_object_id: pi_id,
-          amount: amount_major,
-          currency,
-        });
-      }
+      inserted = ins;
+    }
+
+    // Cross-event lifecycle dedup: loser exits before grant-access / CRM / docs.
+    if (pi_id && !inserted) {
+      return { order_id: order_id_meta, payment_id, note: 'cross_event_loser_skipped:checkout' };
+    }
+
+    // Winner (or no-pi rare path): run full lifecycle exactly once.
+    await supabase.functions.invoke('grant-access-for-order', {
+      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
+    });
+    if (inserted && payment_id) {
+      notifyAdminPaymentEvent(supabase, {
+        op: 'payment_succeeded',
+        order_id: order_id_meta,
+        payment_id,
+        provider_object_id: pi_id,
+        amount: amount_major,
+        currency,
+      });
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
-    // PRR-FIX-02 (F3): apply CRM stage_on_success.
+    // PRR-FIX-02 (F3): apply CRM stage_on_success (winner only — prevents double audit).
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.checkout.session.completed');
 
     // Phase 4.3: consume public payment_link slot (idempotent via helper).
-    // Skip silently if metadata.payment_link_id is absent (admin sandbox, direct checkout).
     if (md_payment_link_id) {
       try {
         await consumePaymentLinkForOrder(
@@ -430,7 +453,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         });
       }
     }
-    // Phase 8-C: same one-time charge.receipt_url materialization for checkout.session.completed.
+    // Phase 8-C: charge.receipt_url + card enrichment.
     try {
       if (payment_id && pi_id) {
         let sk: string | null = null;
@@ -450,10 +473,8 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
               { receipt_url },
               { event_id: event.id, event_type: event.type, account_code, source: 'checkout.session.completed.api_latest_charge' },
             );
-            // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2: единый writer card snapshot.
-            // Preloaded charge — повторного Stripe fetch нет.
             try {
-              if (payment_id && pi_id && latest && typeof latest === 'object') {
+              if (latest && typeof latest === 'object') {
                 await enrichStripePaymentCardData({
                   supabase,
                   paymentId: payment_id,
@@ -465,8 +486,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
                   fetchStripeSecret: (code) => readAcquiringSecret('stripe', code, 'secret_key').catch(() => null),
                 });
               }
-            } catch { /* never re-throw — webhook lifecycle must not fail */ }
-
+            } catch { /* never re-throw */ }
           }
         }
       }
@@ -513,8 +533,16 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       },
     });
     const payment_id: string | undefined = pid ?? undefined;
-    // PATCH-V2: notify ONLY when we were the atomic insert-winner.
-    if (inserted && payment_id) {
+    // V2 fix-to-patch: cross-event lifecycle dedup — loser exits before grant-access/CRM.
+    if (!inserted) {
+      return { order_id: order_id_meta, payment_id, note: 'cross_event_loser_skipped:pi' };
+    }
+    // Winner only: ensure grant-access runs at least once even if checkout.session.completed
+    // arrived AFTER PI (race). grant-access-for-order is idempotent.
+    await supabase.functions.invoke('grant-access-for-order', {
+      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
+    });
+    if (payment_id) {
       notifyAdminPaymentEvent(supabase, {
         op: 'payment_succeeded',
         order_id: order_id_meta,
@@ -525,7 +553,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       });
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
-    // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
+    // PRR-FIX-02 (F3): apply CRM stage_on_success (winner only — prevents double audit).
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.payment_intent.succeeded');
     // Phase 8-C: materialize one-time charge.receipt_url via Stripe API (latest_charge).
     // Strictly non-fatal: never affects webhook lifecycle. Lineage = pi_id only.
