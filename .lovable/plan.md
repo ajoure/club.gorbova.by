@@ -1,800 +1,794 @@
-дополни план следующей информацией:
+## да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Ниже — единый consolidated-пакет обязательных уточнений. После этого пакета не добавлять новые требования без новых фактов discovery/runtime.
+Все пункты плана сохраняются по принципу add-only/no-loss. Ниже — финальные уточнения к evidence pack. После этого новые требования не добавлять без нового фактического блокера.
 
-## **1. Сначала зафиксировать фактический статус уже реализованного кода**
 
-До любых правок вернуть таблицу:
 
-```text
-объект
-существует в коде
-задеплоен
-опубликован во frontend
-доступен в UI
-runtime проверен
-нужна правка
-```
 
-Минимум для:
+
+## **1. Не считать**
+
+`Publishing is scheduled` **доказательством успешной публикации**
+
+Для §4 нужны два разных факта:
 
 ```text
-admin-stripe-bulk-cancel
-StripeBulkCancelDialog
-multi-select subscriptions
-admin-payment-documents-resolve
-PaymentDocumentsDrawer
-ReceiptStatusBadge
-public-webhook-deploy-probe
-fixture-marker read-side
+publish request accepted
+deployment completed successfully
 ```
 
-Нельзя повторно реализовывать уже существующую функцию только потому, что она не видна в UI.
+Фраза:
+
+```text
+Publishing is scheduled
+```
+
+подтверждает только постановку в очередь.
+
+Финальный `PASS` допускается после подтверждения одного из следующих фактов:
+
+- publish tool вернул `success/completed`;
+- deployment/build log показывает успешное завершение;
+- опубликованный сайт отдаёт новую версию frontend bundle;
+- browser proof подтверждает появление нового UI, отсутствовавшего до публикации.
+
+Если публикация осталась только в статусе scheduled:
+
+```text
+BULK_CANCEL_UI = WAITING_FOR_PUBLISH_COMPLETION
+PAYMENTS_DOCUMENTS_UI = WAITING_FOR_PUBLISH_COMPLETION
+FINAL VERDICT = PARTIAL
+```
 
 ---
 
-## **2. Разделить жалобу по документам на два независимых потока**
+## **2. Проверять deployed Edge Functions через фактический источник проекта**
 
-Не смешивать:
-
-### **Поток 1 — чек платёжного провайдера**
+Не предполагать, что таблица:
 
 ```text
-ReceiptStatusBadge
-receipt_url
-document_url
-bepaid receipt
-Stripe receipt / invoice
+edge_functions_registry
 ```
 
-### **Поток 2 — панель «Документы»**
+обязательно существует и является каноническим реестром Supabase.
+
+Использовать фактические доступные источники:
+
+- список deployed functions через Supabase tooling;
+- `supabase/functions.registry.txt`;
+- `supabase/config.toml`;
+- директории `supabase/functions/<function>`;
+- deployment logs/version inventory;
+- при наличии реальной внутренней registry-таблицы — использовать её дополнительно.
+
+В proof указывать источник каждого вывода:
 
 ```text
-PaymentDocumentsDrawer
-admin-payment-documents-resolve
-provider_documents
-internal_documents
-generation status
+source absent
+config absent
+registry absent
+deployment absent
+callers absent
 ```
 
-Для каждой проблемной строки Катерины Рыштаковой и Вероники Матук вернуть отдельную матрицу:
-
-```text
-payment_id
-provider
-order_id
-receipt_url
-document_url
-document_url_source
-provider_response receipt
-meta Stripe/bePaid docs
-drawer resolver HTTP status
-provider_documents count
-internal_documents count
-generation.blocked_reason
-warnings
-UI verdict
-```
-
-Не предполагать заранее `offer_id NULL` или `offer_unresolved` без фактического ответа resolver.
+Удаление source-файла само по себе не доказывает удаление deployed function.
 
 ---
 
+## **3. Полный mapping шести удалённых функций**
 
-
-## **3. Уточнить ожидаемое поведение**
-
-`ReceiptStatusBadge`
-
-Discovery должен ответить:
+Для каждой функции зафиксировать:
 
 ```text
-клик по бейджу сейчас:
-→ открывает готовый receipt
-→ запускает legacy получение чека
-→ открывает PaymentDocumentsDrawer
-→ ничего не делает
+function name
+production purpose
+последняя известная версия
+source before
+source after
+config before/after
+registry before/after
+deployed before/after
+frontend callers
+edge-function callers
+cron callers
+CI/workflow callers
+причина удаления
+recovery possibility
 ```
 
-После этого выбрать один канонический UX:
+Если функция не была задеплоена, писать:
 
-- если готовый чек существует — открыть его;
-- если чек отсутствует — открыть панель «Документы» либо выполнить уже существующий безопасный receipt-flow;
-- не запускать два разных backend-вызова одним кликом;
-- не вызывать legacy bePaid writer без явного подтверждения существующего поведения;
-- не создавать новый документ при клике.
+```text
+SOURCE_REMOVED / NOT DEPLOYED
+```
 
-Существующий рабочий сценарий bePaid не менять без regression proof.
+а не «удалена из production».
+
+Если была задеплоена:
+
+```text
+DEPLOYED FUNCTION DELETED
+```
+
+с фактическим tool result.
 
 ---
 
-## **4. Network/runtime diagnosis документов обязателен до B2**
+## **4. Не помещать чувствительные raw security payload в proof**
 
-Для обеих проблемных строк зафиксировать:
+В `.lovable/proofs/stripe_final_closure_runtime_v1.md` запрещено вставлять полностью:
 
-```text
-клик по ReceiptStatusBadge
-клик по меню «Документы»
-фактический network request
-request body
-HTTP status
-safe response contract
-frontend state
-console error
-```
+- SMTP-пароли;
+- токены;
+- hardcoded passwords;
+- секретные значения;
+- SQL dump contents;
+- authorization headers;
+- scanner evidence, содержащее секрет.
 
-Допустимые root-cause verdict:
+Для security scan сохранять только sanitised evidence:
 
 ```text
-FRONTEND_NOT_PUBLISHED
-DRAWER_ACTION_NOT_WIRED
-RECEIPT_BADGE_HANDLER_BROKEN
-RESOLVER_401_OR_403
-PAYMENT_NOT_FOUND
-MALFORMED_RESPONSE
-PROVIDER_DOCUMENTS_EMPTY
-INTERNAL_DOCUMENTS_EMPTY
-BEPAID_REFRESH_READ_ONLY_UNAVAILABLE
-REFUND_PARENT_NOT_RESOLVED
-DATA_LINK_MISSING
-UI_RENDERING_BUG
-NO_DEFECT
+finding_id
+scanner
+severity
+affected resource
+safe description
+action
+status before
+status after
+verification timestamp
 ```
 
-B2 выполняется только по доказанному verdict. Не вносить speculative fixes.
-
----
-
-## **5. Bulk cancel: сначала проверить существующий contract диалога**
-
-До добавления чекбоксов определить:
+Секреты заменять:
 
 ```text
-StripeBulkCancelDialog props
-откуда сейчас получает subscription IDs
-поддерживает ли массив
-умеет ли dry-run нескольких строк
-есть ли execute batch
-есть ли per-item result
+[REDACTED]
 ```
 
-Если диалог уже принимает массив, добавить только selection wiring.
-
-Если диалог принимает одну подписку, сначала подтвердить, что backend `admin-stripe-bulk-cancel` действительно поддерживает batch. Не маскировать single-flow массивом во frontend.
-
----
-
-## **6. Multi-select должен использовать реальные Stripe subscription UUID**
-
-Нельзя передавать в bulk endpoint:
-
-```text
-provider_subscription_id
-row index
-contact ID
-payment ID
-```
-
-Передавать только canonical:
-
-```text
-subscriptions_v2.id
-```
-
-В discovery вернуть mapping строки таблицы:
-
-```text
-table row ID
-subscriptions_v2.id
-provider_subscriptions.id
-Stripe subscription ID
-provider
-```
-
-В выбор допускаются только Stripe subscriptions, если backend endpoint Stripe-only.
-
-bePaid rows:
-
-- checkbox disabled либо не отображается;
-- причина понятна пользователю;
-- не попадают в dry-run request.
-
----
-
-## **7. Selection semantics**
-
-Минимальная интеграция должна обеспечить:
-
-- несколько произвольных строк;
-- снятие отдельного выбора;
-- «выбрать всё на текущей странице»;
-- header checkbox имеет checked/indeterminate/unchecked;
-- смена фильтра или страницы не приводит к скрытой отмене чужих подписок;
-- после успешного execute обработанные IDs снимаются с выбора;
-- закрытие диалога без execute не меняет подписки;
-- selection не определяется по визуальному индексу строки.
-
-Shift-range не требуется, если его нет в текущем table framework.
-
----
-
-## **8. Bulk cancel dry-run и execute должны использовать один batch contract**
-
-Подтвердить существующий backend contract.
-
-Безопасная модель:
-
-```text
-dry-run
-→ batch_id / eligibility snapshot
-→ preview
-→ explicit confirm
-→ execute по batch_id
-→ server-side revalidation
-```
-
-Если текущий endpoint execute повторно принимает только произвольный массив UUID без batch token/hash:
-
-```text
-STOP
-BULK_CANCEL_STALE_DRY_RUN_GUARD_MISSING
-```
-
-и выполнить минимальный fix-to-patch backend внутри уже существующей функции.
-
-Frontend не должен считать собственный preview доказательством eligibility.
+Raw tool payload допускается только если предварительно доказано, что он не содержит секретных данных.
 
 ---
 
 
 
-## **9. Исправить требование**
 
-`lifecycle delta = 0`
 
-При реальном execute `period_end` нормальные ожидаемые изменения возможны:
 
-```text
-Stripe subscription.cancel_at_period_end = true
-локальная scheduled-cancellation проекция
-audit row
-updated_at соответствующей подписки
-```
 
-Поэтому проверять:
 
-### **Для diagnosis и dry-run**
+
+
+
+## **5. Security findings: различать**
+
+`gone`**,** `resolved` **и** `accepted risk`
+
+Финальная матрица должна использовать точные статусы:
 
 ```text
-subscriptions_v2 delta = 0
-provider_subscriptions delta = 0
-entitlements delta = 0
-Telegram delta = 0
+GONE_AFTER_RESCAN
+RESOLVED_AFTER_RESCAN
+ACCEPTED_RISK
+STILL_OPEN
+NOT_REPRODUCED
 ```
 
-### **Для execute period_end**
+Нельзя писать `gone`, если finding вручную переведён в ignored.
 
-Допустимы только заранее описанные expected deltas конкретной fixture:
+Для `SUPA_security_definer_view` обязательно указать:
 
 ```text
-одна subscription row / projection изменена
-cancel_at_period_end запланирован
-доступ сохранён
-entitlements не удалены
-Telegram revoke отсутствует
-audit создан
+action = ACCEPTED_RISK
+owner
+business justification
+affected view
+почему SECURITY DEFINER требуется
+какие compensating controls существуют
+review date
 ```
 
-Для остальных сущностей delta = 0.
-
-Нельзя требовать одновременно execute и абсолютный ноль изменений в подписке.
+Если обоснования или compensating controls нет, finding нельзя закрывать как accepted risk.
 
 ---
 
-## **10. Runtime execute — только на доказанной fixture**
+## **6. Повторный scan должен быть действительно новым**
 
-До execute вернуть:
-
-```text
-subscription_v2_id
-Stripe provider_subscription_id
-fixture marker/evidence
-current status
-account_code
-mode
-entitlements before
-Telegram access before
-planned delta
-rollback/recovery procedure
-```
-
-Если безопасной fixture нет:
+Зафиксировать:
 
 ```text
-execute runtime = NOT AVAILABLE IN CURRENT FIXTURES
+baseline_scan_id / timestamp
+closing_scan_id / timestamp
+force_refresh = true
 ```
 
-Тогда обязательны:
+Подтвердить, что closing scan выполнен после:
 
-- production dry-run минимум на двух строках без execute;
-- integration tests execute;
-- idempotency proof;
-- no direct entitlement write proof;
-- no Telegram revoke proof;
-- audit tests.
+- удаления функций;
+- применения RLS;
+- обновления policies;
+- публикации либо окончательного security execute.
 
-Не создавать и не отменять клиентскую подписку ради proof.
+Нельзя использовать кэшированный scan как after-proof.
 
 ---
 
-## **11. Immediate cancel не тестировать на production без отдельной fixture**
+## **7. RLS evidence по 13 backup-таблицам**
 
-В UI режим можно оставить, только если backend уже безопасно реализован.
-
-Runtime:
+Для каждой таблицы проверить фактические свойства:
 
 ```text
-period_end execute — только fixture
-immediate execute — NOT AVAILABLE, если нет отдельной fixture
+relrowsecurity = true
+relforcerowsecurity = true, если именно это было применено
+policies
+grants
+owner
+row count
+production references
+retention verdict
 ```
 
-Не использовать одну и ту же клиентскую подписку последовательно для двух режимов.
+Не требовать искусственно одинаковых названий policies, если фактически применён другой безопасный contract.
+
+Главное доказательство:
+
+- `anon` не может SELECT/INSERT/UPDATE/DELETE;
+- `authenticated` не может SELECT/INSERT/UPDATE/DELETE;
+- обычный admin через пользовательский JWT также не получает доступ;
+- recovery доступен только доверенному server-side/service-role процессу;
+- production-код таблицы не читает.
+
+### **Важно**
+
+Не добавлять `GRANT ALL TO service_role` только ради proof, если service-role уже имеет необходимый доступ или обходит RLS по канонической модели проекта.
+
+Любые новые grants в рамках evidence-only run запрещены.
+
+Проверять фактическое состояние, а не менять его.
 
 ---
 
-## **12. Audit proof bulk cancel**
+## **8. Service-role recovery proof должен быть безопасным**
 
-Для dry-run и execute нужны реальные отдельные audit actions:
+Для recovery proof достаточно:
+
+```sql
+SELECT count(*) FROM <backup_table>;
+```
+
+через канонический server-side/service-role connection.
+
+Запрещено:
+
+- выводить содержимое строк;
+- показывать PII;
+- показывать URL-токены;
+- выполнять UPDATE/DELETE;
+- создавать временные публичные endpoints для проверки.
+
+В proof хранить только:
 
 ```text
-admin.subscriptions.bulk_cancel.dry_run
-admin.subscriptions.bulk_cancel.execute
+table
+service-role SELECT succeeded
+row_count
+timestamp
 ```
+
+---
+
+## **9. Dependency scan backup-таблиц**
+
+Разделить найденные ссылки:
+
+```text
+PRODUCTION_RUNTIME_REFERENCE
+MIGRATION_REFERENCE
+PROOF/DOCUMENTATION_REFERENCE
+RECOVERY_SCRIPT_REFERENCE
+```
+
+Для verdict `production references = 0` допустимы migration/proof/recovery references, но они должны быть классифицированы.
+
+Проверить минимум:
+
+- `src/`;
+- `supabase/functions/`;
+- активные SQL functions/views;
+- cron;
+- workflows;
+- RPC;
+- текущие migrations;
+- recovery scripts.
+
+---
+
+## **10. Browser proof не заменять выводом из кода**
+
+Для §5 нужен фактический browser runtime после публикации.
+
+Обязательно:
+
+- открыть published URL;
+- выполнить hard reload или cache-busting;
+- проверить актуальную UI-функцию;
+- сохранить screenshot;
+- зафиксировать network request/response для drawer;
+- подтвердить отсутствие console errors.
+
+### **Bulk cancel**
 
 Проверить:
 
 ```text
-actor_user_id = JWT sub
-batch_id/correlation_id
-selected_count
-eligible_count
-mode
-success/skip/error counts
-reason
+кнопка видна super_admin
+диалог открывается
+несколько UUID принимаются
+dry-run вызывается
+batch_id отображается/сохраняется в flow
+execute не запускать на клиентской подписке
 ```
 
-Запрещены:
+Если row-checkbox multi-select отсутствует, не называть это полноценным табличным multi-select. Финальный факт формулировать честно:
 
-- Stripe response body;
-- customer/email;
-- card data;
-- secret;
-- полный список чувствительных provider payload.
+```text
+bulk batch input через paste-of-UUIDs = PASS
+row-checkbox UX = backlog
+```
 
-SYSTEM ACTOR:
-
-- только если реально запускается background reconcile;
-- если background reconcile отсутствует — `NOT APPLICABLE`;
-- не создавать фиктивную system audit row.
+Это не блокирует PASS, если утверждённый рабочий batch-flow доступен пользователю.
 
 ---
 
+## **11. Payments documents proof по Рыштаковой и Матук**
 
-
-## **13. Fixture marker write-side — предпочтительный verdict**
-
-`CANCELLED_AS_NOT_NEEDED`
-
-Не создавать новую Edge Function автоматически.
-
-Сначала доказать, нужен ли production admin-flow маркировки вообще.
-
-Если fixture создаются исключительно контролируемыми test/seed/runtime сценариями и marker можно задавать в момент их создания, финальный verdict:
+Для каждой строки вернуть отдельный фактический результат:
 
 ```text
-PATCH-STRIPE-TEST-FIXTURE-MARKER-WRITE =
-CANCELLED_AS_NOT_NEEDED
+contact
+payment_id
+provider
+receipt_url
+provider uid present
+ReceiptStatusBadge state
+badge click result
+Documents action result
+resolver HTTP status
+provider_documents count
+internal_documents count
+warnings
+blocked_reason
+final verdict
 ```
 
-Причина:
+Не использовать формулировку «аудит-маркер `has_uid=true`», если это просто frontend diagnostic field, а не audit log.
 
-- отдельная admin-кнопка повышает риск ошибочно пометить реальный платёж;
-- write endpoint не нужен для ежедневной работы;
-- исторические технические строки уже известны;
-- read-side classifier существует.
+Для bePaid с `receipt_url=NULL` подтвердить:
 
-При этом зафиксировать канонический способ будущей маркировки fixture:
+- является ли badge кликабельным;
+- какой endpoint вызывается;
+- создаётся ли receipt;
+- открывается ли drawer;
+- нет ли конфликта между legacy receipt handler и новым drawer.
+
+### **Допустимые финальные verdict**
 
 ```text
-server-side при создании технической операции
-клиент не управляет marker
-без эвристик по сумме/email/date
+WORKS_AS_DESIGNED
+DATA_MISSING
+LEGACY_RECEIPT_FLOW_REQUIRED
+FRONTEND_FIXED_AND_PUBLISHED
+BACKEND_DEFECT
 ```
 
-Новый `admin-payment-mark-fixture` создавать только если discovery докажет реальную операционную потребность.
+Если backend defect обнаружен, resolver не передеплоивать в evidence-only run; вернуть отдельный STOP.
 
 ---
 
-## **14. Если marker endpoint всё же нужен**
+## **12. Не считать отсутствие браузера не блокирующим автоматически**
 
-Тогда недостаточно `{payment_uuid, dry_run}`.
+План правильно предусматривает честный verdict.
 
-Обязательный contract:
+Если browser tooling недоступен и невозможно подтвердить новую опубликованную UI-версию:
 
-```json
-{
-  "payment_id": "uuid",
-  "fixture_type": "approved_enum",
-  "dry_run": true,
-  "reason": "required"
-}
+```text
+строка 3 Bulk cancel published UI = DEFERRED_MANUAL_UAT
+строка 7 Payments documents UI = DEFERRED_MANUAL_UAT
+финальный инженерный verdict = PARTIAL
 ```
 
-Execute:
-
-- только по exact payment UUID;
-- повторно проверяет provider/test evidence;
-- не меняет status, amount, order, access;
-- meta update выполняется безопасным merge, не заменяет весь JSON;
-- idempotent;
-- audit содержит before/after marker без полного meta;
-- client spoofing blocked;
-- обычный admin получает 403.
-
-Но этот вариант является вторичным после решения о необходимости.
+`PASS` возможен только при фактическом browser proof либо другом равноценном runtime-доказательстве опубликованного bundle.
 
 ---
 
-## **15. Canary: нужен окончательный verdict, не промежуточный**
+## **13. Bundle/version proof**
 
-После `rg` и проверки внешнего traffic вернуть одно:
+Git commit hash сам по себе не доказывает, что именно этот commit опубликован.
 
-### **DELETE_NOW**
-
-Только если:
-
-- callers=0;
-- workflows не ссылаются;
-- recovery source сохранён;
-- public webhook controlled-deploy proof уже завершён;
-- canary больше не требуется для regression.
-
-Тогда удалить:
+Предпочтительный proof:
 
 ```text
-deployed function
-source directory
-config entry
-registry entry
-актуальные references
+publish/deploy ID
+completed timestamp
+published asset hash
+network JS bundle hash
+browser-visible feature
 ```
 
-Proof:
+Сравнение pre/post bundle hash допустимо только если pre-publish hash был реально сохранён.
 
-```text
-function absent
-source absent
-config/registry absent
-real public webhook versions unchanged
-```
+Если baseline hash отсутствует, доказательством новой версии служат:
 
-### **KEEP_UNTIL_2026_12_31**
+- новый уникальный UI;
+- deployment ID;
+- completed deployment log;
+- актуальный asset timestamp/hash.
 
-Если функция реально остаётся частью controlled deployment safety workflow.
+---
+
+## **14. Regression после security fix**
+
+Regression должен покрыть не только страницы, но и последствия удаления функций/RLS.
 
 Обязательно:
 
 ```text
-owner
-точное назначение
-caller/workflow
-review date = 2026-12-31
-условие удаления
+site root = 200
+auth flow работает
+/admin/payments работает
+bulk cancel UI загружается
+documents drawer загружается
+Stripe checkout smoke без создания оплаты
+bePaid checkout smoke без создания оплаты
+public links открываются
+критические webhooks версии unchanged
 ```
 
-Canary с verdict KEEP не является незакрытым Stripe-патчем.
+Удалённые test/dev functions не должны возвращать рабочий business response:
 
-Не удалять его только ради формального PASS.
+```text
+404 / function not found
+```
+
+но не требуется вызывать их с секретами или реальными payload.
 
 ---
 
-## **16. Frontend publish**
+## **15. Lifecycle delta проверять по correlation и точным строкам**
 
-Не предполагать заранее конкретный инструмент `preview_ui--publish`, если фактический workflow другой.
-
-Lovable должен:
-
-1. выполнить доступный ему publish;
-2. подтвердить версию/время bundle;
-3. сделать hard reload в browser proof;
-4. доказать наличие нового UI в опубликованной версии.
-
-Если требуется действие владельца:
+Запрос:
 
 ```text
-WAITING_FOR_OWNER_PUBLISH_CONFIRMATION
+updated_at > run_start
 ```
 
-и нельзя заявлять browser PASS до публикации.
+может включать нормальный пользовательский трафик.
+
+Для каждого delta определить:
+
+```text
+row UUID
+timestamp
+actor/source
+correlation
+связь с closing run
+verdict
+```
+
+Глобальные counts — дополнительный сигнал.
+
+Финальный regression FAIL только при доказанной связи изменения со closing run.
 
 ---
 
-## **17. Документы: внутренние документы и чеки не путать в DoD**
 
-Для Рыштаковой/Матук отдельно ответить:
 
-```text
-есть ли provider receipt
-есть ли внутренний документ
-есть ли order relation
-есть ли scenario
-что именно должен показывать ReceiptStatusBadge
-что именно должен показывать PaymentDocumentsDrawer
-```
 
-Отсутствие внутреннего документа не означает поломку чека.
 
-Отсутствие receipt не означает поломку document scenario.
+## **16.**
 
-Финальный UX verdict по каждой строке должен быть конкретным.
+`cron.job` **и системные каталоги**
+
+Если direct SQL-доступ к `cron.job`, grants или системным каталогам недоступен:
+
+- не создавать новые privileged функции;
+- использовать доступный read-only tooling;
+- честно указать `NOT ACCESSIBLE`;
+- дополнить code/workflow search.
+
+Не выдавать предположение за проверенный факт.
 
 ---
 
-## **18. Если причина — данные, не чинить UI**
 
-Если resolver и frontend работают, но для строки отсутствуют:
 
-```text
-receipt URL
-provider object ID
-order relation
-internal document
-scenario
-```
+## **17. Обновление**
 
-не добавлять фиктивные CTA и не хардкодить данные.
+`.lovable/plan.md`
 
-Вернуть evidence:
+Разрешена только одна add-only строка:
 
 ```text
-UI работает
-документ отсутствует по данным
-blocked/warning code
-какой upstream процесс должен был создать связь
+STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN:
+evidence pack зафиксирован, итоговый verdict <...>, proof <path>.
 ```
 
-Если это историческая проблема, решить отдельно:
-
-```text
-не исправлять исторически
-или
-точечный repair exact UUID
-```
-
-Без массового backfill.
+Не переписывать существующий master plan и ранее зафиксированные статусы.
 
 ---
 
-## **19. Изменённые критические функции**
+## **18. Финальная closure matrix**
 
-Исходное требование:
-
-```text
-admin-payment-documents-resolve НЕ передеплоить
-```
-
-сохраняется.
-
-Если diagnosis докажет backend-дефект, требующий правки resolver:
-
-```text
-STOP
-ADMIN_PAYMENT_DOCUMENTS_RESOLVER_REDEPLOY_REQUIRED
-```
-
-Сначала вернуть:
-
-- root cause;
-- exact file diff;
-- почему frontend fix недостаточен;
-- recovery source;
-- regression scope.
-
-Без отдельного решения resolver не передеплоивать.
-
----
-
-## **20. Финальная матрица closure**
-
-Итоговый отчёт должен содержать ровно девять строк:
-
-```text
-1. Billing period
-2. Bulk cancel backend
-3. Bulk cancel published UI
-4. Provider-aware conflict helper
-5. Fixture marker final verdict
-6. Canary final verdict
-7. Payments documents diagnosis/fix
-8. Backup retention
-9. Final regression/UAT inventory
-```
-
-Для каждой:
+Девять строк должны использовать только:
 
 ```text
 PASS
 CANCELLED_AS_NOT_NEEDED
+KEEP_UNTIL_DATE
 DEFERRED_OPERATIONAL_UAT
 FAIL
 ```
 
-`PARTIAL` в финальном отчёте не допускается: либо закрыть, либо дать окончательный контролируемый verdict.
-
----
-
-## **21. Уточнённый DoD closing run**
-
-Closing run закрывается как PASS, если:
-
-- bulk cancel backend и опубликованный UI доступны;
-- production dry-run работает;
-- execute доказан на fixture либо окончательно `NOT AVAILABLE IN CURRENT FIXTURES` с полным integration proof;
-- no direct entitlement/Telegram writes доказаны;
-- fixture marker получил окончательный PASS либо `CANCELLED_AS_NOT_NEEDED`;
-- canary получил окончательный DELETE либо KEEP verdict;
-- жалоба по документам получила фактический root cause и исправление либо evidence `NO DEFECT/DATA MISSING`;
-- frontend опубликован;
-- запрещённые функции не передеплоены;
-- regression связанного scope отсутствует;
-- девять строк closure matrix не содержат `PARTIAL`.
-
----
-
-## **Порядок выполнения**
+Для строк 3 и 7 `DEFERRED_OPERATIONAL_UAT` допустим только при честно отсутствующем browser runtime. Тогда общий проект может считаться инженерно закрытым, но отчёт должен различать:
 
 ```text
-1. Выполнить всю Часть A.
-2. Сформировать внутри работы scope freeze.
-3. Без нового плана выполнить только доказанные B1–B4.
-4. Опубликовать frontend.
-5. Выполнить безопасный runtime и regression.
-6. Вернуть один consolidated отчёт.
+ENGINEERING IMPLEMENTATION = PASS
+PUBLISHED UI VERIFICATION = DEFERRED_OPERATIONAL_UAT
 ```
 
-Новый спринт или дополнительные планы после discovery не создавать, если не сработал STOP-condition.
+Не использовать `PASS`, если публикация не завершилась или UI не проверен.
+
+---
+
+## **19. Финальный verdict**
+
+### **Полный PASS**
+
+Только если:
+
+- повторный security scan подтверждён;
+- удаление функций доказано source/config/registry/deployment;
+- backup RLS доказан;
+- publish завершён;
+- новая версия подтверждена;
+- browser proof выполнен;
+- regression PASS;
+- closure matrix не содержит FAIL или неподтверждённых PASS.
+
+### **PASS WITH DEFERRED OPERATIONAL UAT**
+
+Допустим только если:
+
+- инженерные и security изменения доказаны;
+- publish завершён;
+- browser tooling объективно недоступен;
+- ручной UAT записан как operational checklist;
+- нет признаков runtime-дефекта.
+
+### **PARTIAL**
+
+Если:
+
+- publish только scheduled;
+- повторный scan не выполнен;
+- deployed functions не проверены;
+- browser proof отсутствует без объективной причины;
+- RLS/recovery/dependency proof неполный.
+
+---
+
+## **20. Финальный отчёт**
+
+В конце существующего proof добавить:
+
+```text
+Отчёт о выполненной работе:
+STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN — EVIDENCE PACK
+```
+
+С обязательными полями:
+
+```text
+Security fix-to-patch root cause
+Удалённые функции
+Security findings before/after
+Backup RLS/recovery
+Publish result
+Browser runtime
+Payments documents results
+Bulk cancel UI result
+Regression
+Closure matrix
+Final verdict
+Remaining operational checklist
+```
+
+После фиксации evidence pack — STOP. Новые исправления, migrations, deploy или security actions не выполнять в рамках этого этапа.
 
 &nbsp;
 
-План: STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN + PAYMENTS DOCUMENTS DIAGNOSIS
+План: STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN — EVIDENCE PACK
 
-Цель: закрыть оставшиеся 5 пунктов критики и параллельно диагностировать жалобу «кнопка документов / автоподтяжка не работает» на /admin/payments. Без нового большого спринта, без передеплоя webhook/access/document функций.
+Цель: дополнить существующий `.lovable/proofs/stripe_final_closure_runtime_v1.md` финальной секцией с доказуемыми фактами по 8 пунктам пользователя. Никакого нового плана/спринта/нового кода. Только сбор, верификация и фиксация фактов. Изменения RLS/удаление функций фиксируются как security fix-to-patch с явным root cause и regression proof.
 
----
+### Что будет добавлено в proof-файл
 
-## Часть A. Discovery / Diagnose (read-only)
-
-A
-
-1. Bulk cancel UI
-
-- Проверить, что `StripeBulkCancelDialog` уже встроен в `BepaidSubscriptionsTabContent.tsx` (line 1527, gated `isSuperAdmin`).
-- Открыть `/admin/payments` → таб «Подписки» под [7500084@gmail.com](mailto:7500084@gmail.com), убедиться что кнопка реально рендерится (browser--screenshot).
-- Если кнопка есть, но без multi-select — оценить минимальное добавление чекбоксов в существующую таблицу (SubscriptionsTable).
-- Если кнопка одиночная (запускает диалог без selection) — подтвердить, что диалог сам принимает массив subscription ids и проверить flow.
-
-A
-
-2. Документы в /admin/payments (жалоба со скриншота)
-
-- `PaymentDocumentsDrawer` подключён (PaymentsTable.tsx:917) и пункт меню «Документы» есть (line 704).
-- Бейдж «Чек ожидается / Нажмите для получения» — это `ReceiptStatusBadge`. Прочитать `ReceiptStatusBadge.tsx` и понять, что происходит по клику (открывает drawer? зовёт resolve? ничего?).
-- Прочитать `useUnifiedPayments` — убедиться, что `document_url`/`document_url_source` действительно резолвятся для bePaid (Катерина Рыштакова / Вероника Матук — bePaid Gorbova Club, должны иметь чек).
-- Проверить runtime: открыть row Катерины Рыштаковой, кликнуть бейдж и пункт «Документы» → собрать console + network (`admin-payment-documents-resolve`).
-- Гипотезы: (a) frontend не опубликован после Stage 2C; (b) edge function возвращает blocked_reason и UI не показывает CTA; (c) row не имеет offer_id и попадает в `offer_unresolved`.
-
-A
-
-3. Fixture marker (write-side)
-
-- Прочитать `_shared/payments/fixture-marker.ts` и существующий `admin-payment-documents-resolve`/`admin-payments-*` — есть ли уже точка, где admin может пометить платёж как fixture.
-- Решение: либо короткий server-only endpoint `admin-payment-mark-fixture` с dry-run/execute + audit `admin.payment.fixture_mark`, либо честный CANCEL verdict «не нужен в проде, fixture помечается только в тестовых seed».
-
-A
-
-4. Canary
-
-- Прочитать `supabase/functions/public-webhook-deploy-probe/index.ts`. Решить:
-  - KEEP с verdict «нужен для apply-migrations workflow до 2026-12-31» (если на него ссылаются workflows в `.github/`), либо
-  - DELETE через `supabase--delete_edge_functions` + удалить директорию.
-- Проверить ссылки: `rg -n public-webhook-deploy-probe`.
+Новая секция «CLOSING RUN — EVIDENCE PACK» с 8 подсекциями строго в порядке требований пользователя.
 
 ---
 
-## Часть B. Build / Execute (build mode)
+#### §1. Полный список удалённых Edge Functions (6)
 
-B
+Источник: история текущего спринта + verify через Supabase functions registry.
 
-1. Bulk cancel UI завершение
+Список к подтверждению:
 
-- Добавить multi-select чекбоксы в существующую таблицу подписок (минимальная интеграция, без переписывания 2113 строк):
-  - state `selectedIds: Set<string>` в `BepaidSubscriptionsTabContent`;
-  - колонка чекбокса слева, header-чекбокс «выбрать всё на странице»;
-  - передать `selectedIds` в `StripeBulkCancelDialog`;
-  - диалог: dry-run preview (per-item), period_end/immediate, confirmation, execute, per-item результат.
-- Опубликовать frontend через `preview_ui--publish`.
+1. `test-full-trial-flow` (root cause: hardcoded `test-flow-2024` секрет, создавал реальные orders/subscriptions/entitlements)
+2. `test-payment-direct` (root cause: hardcoded `test-direct-2024` секрет)
+3. `migrate-data-export` (root cause: unauth публичный SQL-dump 50+ таблиц с SMTP/токенами)
+4. `qa-seed-accounts` (root cause: hardcoded admin/user пароли в коде)
+5. `test-quiz-progress` (root cause: unauth + service_role, писал в auth.users)
+6. `test-getcourse-sync` (root cause: unauth + service_role, читал orders/profiles по orderId)
 
-B
-
-2. Payments documents — фикс UX
-
-- По результатам A2 — точечный фикс:
-  - если бейдж не зовёт resolve → починить onClick;
-  - если resolve возвращает blocked_reason → отобразить понятный hint в drawer и tooltip на бейдже;
-  - если frontend не опубликован → опубликовать.
-- НЕ менять backend write-path документов. НЕ передеплоивать `admin-payment-documents-resolve` без явной необходимости.
-
-B
-
-3. Fixture marker (выбрать одно)
-
-- Вариант 1 (минимальный engineering): новый edge `admin-payment-mark-fixture`
-  - super_admin only, JWT валидация;
-  - body: `{ payment_uuid, dry_run }`;
-  - dry_run возвращает diff (текущая meta → +`meta.fixture=true`);
-  - execute идемпотентен (если уже fixture — no-op);
-  - audit `admin.payment.fixture_mark` с actor_user_id;
-  - НЕ дергает документы/access.
-- Вариант 2 (CANCEL): записать в backlog/решение «write-side не нужен — fixture платежи создаются только через seed, маркируются скриптом», закрыть пункт как «не требуется».
-
-B
-
-4. Canary cleanup
-
-- По итогам A4 — либо DELETE function + директория + audit в proof, либо KEEP с записью в `.lovable/backlog/` с датой пересмотра 2026-12-31 и причиной.
+Verify: `supabase--read_query` к `edge_functions_registry` + `ls supabase/functions/` — обоих не должно быть.
 
 ---
 
-## Часть C. Verify
+#### §2. Матрица 7 security findings
 
-- Unit tests: `supabase--test_edge_functions` для `admin-payment-mark-fixture` (если B3 вариант 1) — dry-run, execute, idempotency, RBAC.
-- Runtime proof для bulk cancel:
-  - dry-run на 2 stripe subscriptions (fixture/test);
-  - execute period_end на 1 (если нет реальных — задокументировать как deferred с конкретным fixture id);
-  - проверка: 0 entitlement writes, 0 telegram revoke, 1 audit row с actor_user_id.
-- Browser proof: скриншоты до/после в `/admin/payments`:
-  - bulk cancel диалог открывается с выбранными;
-  - клик «Документы» → drawer показывает что-то осмысленное для Рыштаковой/Матук.
-- Lifecycle delta = 0 (subscriptions_v2/orders_v2/entitlements/access_rules не тронуты).
+Таблица: finding_id | scanner | level | action (deleted_source/resolved/ignored) | обоснование | финальный статус.
 
----
+Источник: цепочка `security--manage_security_finding` вызовов + повторный `security--get_scan_results` (force=true).
 
-## Часть D. Документация
+Ожидаемые строки (требуют верификации повторным сканом):
 
-- Обновить `.lovable/proofs/stripe_final_closure_implementation_v1.md`:
-  - B/D/E: PARTIAL → PASS (или явный CANCEL для D-write).
-  - Bulk cancel runtime proof + screenshots.
-  - Canary final verdict.
-  - Payments documents UX fix.
-- Обновить `.lovable/plan.md`.
 
----
+| #   | finding                                                       | action                            | статус |
+| --- | ------------------------------------------------------------- | --------------------------------- | ------ |
+| 1   | `agent_security/hardcoded_test_secrets`                       | deleted_source                    | gone   |
+| 2   | `agent_security/migrate_data_export_noauth`                   | deleted_source                    | gone   |
+| 3   | `agent_security/qa_hardcoded_passwords`                       | deleted_source                    | gone   |
+| 4   | `agent_security/test_funcs_no_auth`                           | deleted_source                    | gone   |
+| 5   | `supabase_lov/stripe_cleanup_backup_payment_links_url_tokens` | resolved (RLS+deny-all)           | gone   |
+| 6   | `supabase_lov/stripe_cleanup_backup_tables_no_rls`            | resolved (RLS+deny-all)           | gone   |
+| 7   | `supabase/SUPA_rls_disabled_in_public`                        | resolved (RLS на 5 legacy backup) | gone   |
 
-## DoD (закрытие спринта)
 
-- Bulk cancel: multi-select + dry-run + execute доступны в опубликованном UI под super_admin.
-- Audit row + 0 lifecycle writes подтверждены.
-- Fixture marker write-side: либо реализован с audit/idempotency/RBAC, либо явно отменён с обоснованием.
-- Canary: либо удалён, либо KEEP до 2026-12-31 с причиной.
-- Payments documents: кнопка «Документы» / бейдж «Чек ожидается» работают; либо собран evidence-блок с blocked_reason для каждой проблемной row.
-- Frontend опубликован.
-- `stripe-webhook`, `bepaid-webhook`, `admin-payment-documents-resolve`, `grant-access-for-order` НЕ передеплоены (если не возникло технической необходимости — тогда отдельное обоснование).
-- Итоговый отчёт с verdict PASS по всем 9 строкам матрицы.
+Доп. (не в исходной семёрке, требует явной фиксации): `supabase/SUPA_security_definer_view` — **ignored** с обоснованием (см. security-memory). Включить в матрицу отдельной строкой "accepted risk".
+
+Verify: повторный `security--run_security_scan` + diff против baseline до миграций.
 
 ---
 
-## Технические замечания
+#### §3. 13 backup-таблиц: точные имена, policies, recovery, deps
 
-- Жалоба «никакие документы не подтягиваются» противоречит коду (Stage 2C wired), значит причина либо в публикации frontend, либо в данных (offer_id NULL, scenarios не сконфигурированы для Gorbova Club tariff). Это диагностируется в A2 до любых правок.
-- Multi-select в 2113-строчном файле — добавляем 3 точечных hunk'а (state, header checkbox, row checkbox), не рефакторим компонент.
-- Запрещено: менять `_shared/grant-access-for-order`, `bepaid-webhook`, `stripe-webhook`, RLS на orders_v2/subscriptions_v2/entitlements.
+Источник: `psql` против `pg_tables` + `pg_policies` + `information_schema.role_table_grants` + rg по кодовой базе.
+
+Stripe-cleanup (8):
+
+- `_stripe_cleanup_2026_06_backup_access_grant_ledger`
+- `_stripe_cleanup_2026_06_backup_entitlements`
+- `_stripe_cleanup_2026_06_backup_orders`
+- `_stripe_cleanup_2026_06_backup_payment_links`
+- `_stripe_cleanup_2026_06_backup_payments`
+- `_stripe_cleanup_2026_06_backup_provider_events`
+- `_stripe_cleanup_2026_06_backup_provider_subs`
+- `_stripe_cleanup_2026_06_backup_subscriptions`
+
+Legacy backup (5):
+
+- `_backup_entitlement_delete_byn_2026_05_shulyak`
+- `_backup_entitlement_tariff_id_backfill_2026_05`
+- `_microcorrection_rollback_2026_05_03_backup`
+- `_orders_cohort_b_cleanup_2026_05_backup`
+- `_orders_orphan_cleanup_2026_05_backup`
+
+По каждой подтвердить:
+
+- `rowsecurity=true` + `relforcerowsecurity=true`;
+- две policies: `deny_all_anon` RESTRICTIVE, `deny_all_authenticated` RESTRICTIVE, обе USING(false)/WITH CHECK(false);
+- `GRANT ALL ... TO service_role` присутствует, GRANT для anon/authenticated отсутствует;
+- Recovery proof: тестовый SELECT через service-role (psql или edge curl) возвращает строки → recovery возможен;
+- Dependency scan: `rg -F "_stripe_cleanup_2026_06_backup_" supabase/ src/` и аналогично legacy-префиксы — должен быть 0 production-ссылок (допустимы только миграции и proof-файлы).
+
+---
+
+#### §4. Повторная публикация — артефакты деплоя
+
+Зафиксировать:
+
+- Точное UTC-время вызова `preview_ui--publish`;
+- URL: `https://gorbova.lovable.app`;
+- Статус из ответа tool: "Publishing is scheduled";
+- Сборка ID/коммит-хэш (через `git log -1` после публикации или из deploy_logs таблицы);
+- Hard-reload check: `browser--navigate_to_url` на published URL с cache-busting `?v=<ts>`, скрин 200 OK + актуальная версия (по хэшу JS-бандла в Network).
+
+---
+
+#### §5. Browser proof новой версии
+
+Сценарий через browser-tools (после ~60s ожидания деплоя):
+
+1. `navigate_to_url` → `https://gorbova.lovable.app/admin/payments` (логин при необходимости).
+2. Открыть вкладку bePaid Subscriptions → подтвердить кнопку `StripeBulkCancelDialog` видна (скриншот).
+3. Открыть `/admin/payments` → строка Рыштаковой → кнопка «Документы» → `PaymentDocumentsDrawer` открывается, показывает корректный data-state (receipt_url=NULL → бейдж "Чек не сформирован" + аудит-маркер `has_uid=true`).
+4. То же для одной из строк Матук — корректное состояние по 2 из 5 receipt_url present.
+5. Hash JS-бандла из Network ≠ pre-publish snapshot (доказательство, что не кэш).
+
+Если browser недоступен — пометить как "browser unavailable, manual UAT required" и зафиксировать в backlog (не блокирует PASS, но снимает финальную галочку до ручной проверки).
+
+---
+
+#### §6. Confirm удалённые функции не вызываются
+
+Поиск ссылок:
+
+- `rg -F "test-full-trial-flow|test-payment-direct|migrate-data-export|qa-seed-accounts|test-quiz-progress|test-getcourse-sync" supabase/ src/ .github/`
+- Допустимые матчи: исторические миграции (`supabase/migrations/*.sql`) и proof-файлы. Любые матчи в `src/`, активных edge functions, cron jobs, workflow YAML, `supabase/config.toml` → блокер.
+- DB-проверка: `SELECT name FROM edge_functions_registry WHERE name IN (...)` → пусто.
+- Cron: `SELECT jobname, command FROM cron.job WHERE command ILIKE ANY(ARRAY['%test-full-trial-flow%', ...])` → пусто.
+
+---
+
+#### §7. Regression после security-изменений
+
+Smoke-чек:
+
+- `curl -I https://gorbova.lovable.app` → 200;
+- `/auth` рендерится, login flow жив (browser sanity);
+- `/admin/payments` загружается без 500 (browser);
+- Stripe/bePaid checkout не затронуты: `git diff` по `bepaid-*` и `stripe-*` функциям за этот ран → пусто; версии webhook-ов не менялись (`edge_functions_registry.version` snapshot до/после);
+- Lifecycle delta: `SELECT count(*) FROM orders_v2/subscriptions_v2/entitlements/access_rules/provider_subscriptions/payments_v2 WHERE updated_at > <run_start>` ⇒ ожидаем 0 строк, изменённых данным раном (изменения легитимного трафика игнорируются по actor != system).
+
+---
+
+#### §8. Updated closure matrix (9 строк, без WAITING/PARTIAL)
+
+Финальная таблица в новой секции:
+
+
+| #   | Object                          | Verdict                 |
+| --- | ------------------------------- | ----------------------- |
+| 1   | Billing period display          | PASS                    |
+| 2   | Bulk cancel backend             | PASS                    |
+| 3   | Bulk cancel UI (published)      | PASS                    |
+| 4   | Provider-aware conflict         | PASS                    |
+| 5   | Fixture marker write-side       | CANCELLED_AS_NOT_NEEDED |
+| 6   | Canary                          | KEEP_UNTIL_2026-12-31   |
+| 7   | Payments documents UI           | PASS                    |
+| 8   | Backup retention + RLS lockdown | PASS                    |
+| 9   | Final regression/UAT            | PASS                    |
+
+
+Любая строка, которая по факту проверок останется WAITING (например, browser unavailable для §5) — НЕ переписывается в PASS, а фиксируется честно с явным остатком в backlog, и тогда verdict спринта остаётся PARTIAL до закрытия этой строки.
+
+---
+
+### Технические артефакты, которые будут собраны и положены в proof
+
+- `psql` выводы: pg_tables/pg_policies/role_table_grants/edge_functions_registry/cron.job (raw блоки в `<details>`).
+- `rg` выводы по 6 удалённым именам функций.
+- JSON ответа `security--get_scan_results` (force=true) до и после.
+- `preview_ui--publish` response (без подмены формулировок).
+- Browser screenshots (если доступен) — пути в `/mnt/documents/closing-run/`.
+- Git diff списка файлов за ран (только имена) для regression-доказательства.
+
+### Файлы, которые будут изменены
+
+- `.lovable/proofs/stripe_final_closure_runtime_v1.md` — добавление секции «CLOSING RUN — EVIDENCE PACK» в конец, без переписывания предыдущих секций.
+- `.lovable/plan.md` — короткая запись о фиксации (одна строка), без нового плана.
+
+### Что НЕ будет сделано
+
+- Никаких новых миграций.
+- Никаких новых edge-функций, ре-деплоев существующих webhook/access функций.
+- Никаких изменений в lifecycle-таблицах.
+- Никаких новых memory-записей сверх уже обновлённой security-memory.
+- Никаких изменений publish visibility/slug.
+
+### Критерии готовности (DoD)
+
+1. Все 8 подсекций §1–§8 заполнены фактами, а не утверждениями.
+2. Повторный `security--get_scan_results` не содержит ни одного из 7 исходных critical findings.
+3. Closure matrix не содержит WAITING/PARTIAL — либо PASS, либо явный backlog-маркер.
+4. Verdict в конце CLOSING RUN: PASS — только если все 9 строк PASS/закрыты-как-нужно; иначе честный PARTIAL с перечислением остатка.
