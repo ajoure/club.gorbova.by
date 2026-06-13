@@ -1488,7 +1488,7 @@ Deno.serve(async (req) => {
                   recovered_order_id: candidate.order_id,
                 },
               });
-              (subV2 as any) = candidate;
+              subV2 = candidate;
               subscriptionV2Id = candidate.id;
               if (candidate.order_id) orderV2Id = String(candidate.order_id);
             }
