@@ -700,6 +700,23 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         meta: { event_id: event.id, refund_id: refund.id, note: 'refunds[] per-entry receipt_url not materialized in Phase 8' },
       });
     }
+    // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+    // Notify only on `charge.refunded` (canonical event carrying a definitive
+    // `re_*` id). `refund.created` / `refund.updated` deliveries for the SAME
+    // refund_id are intentionally skipped here to avoid duplicate Telegram
+    // messages. `record_refund_atomic_multi` is idempotent by refund_uid, so
+    // re-delivery of `charge.refunded` itself is already blocked upstream by
+    // `provider_events.idempotency_key`.
+    if (event.type === 'charge.refunded') {
+      notifyAdminPaymentEvent(supabase, {
+        op: 'refund_succeeded',
+        order_id: order_id_meta,
+        payment_id: parent_payment_id,
+        provider_object_id: refund.id,
+        amount: toMajorUnits(Number(refund.amount), refund_currency),
+        currency: refund_currency,
+      });
+    }
     return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
   }
 
