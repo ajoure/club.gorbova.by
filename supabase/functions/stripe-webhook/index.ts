@@ -533,8 +533,16 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       },
     });
     const payment_id: string | undefined = pid ?? undefined;
-    // PATCH-V2: notify ONLY when we were the atomic insert-winner.
-    if (inserted && payment_id) {
+    // V2 fix-to-patch: cross-event lifecycle dedup — loser exits before grant-access/CRM.
+    if (!inserted) {
+      return { order_id: order_id_meta, payment_id, note: 'cross_event_loser_skipped:pi' };
+    }
+    // Winner only: ensure grant-access runs at least once even if checkout.session.completed
+    // arrived AFTER PI (race). grant-access-for-order is idempotent.
+    await supabase.functions.invoke('grant-access-for-order', {
+      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
+    });
+    if (payment_id) {
       notifyAdminPaymentEvent(supabase, {
         op: 'payment_succeeded',
         order_id: order_id_meta,
@@ -545,7 +553,7 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       });
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
-    // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
+    // PRR-FIX-02 (F3): apply CRM stage_on_success (winner only — prevents double audit).
     await applyCrmStageOnTerminal(supabase, order_id_meta, 'success', 'stripe.payment_intent.succeeded');
     // Phase 8-C: materialize one-time charge.receipt_url via Stripe API (latest_charge).
     // Strictly non-fatal: never affects webhook lifecycle. Lineage = pi_id only.
