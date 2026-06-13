@@ -491,54 +491,38 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
       account_code,
       business_stream: md_business_stream,
     });
-    const { data: existing } = await supabase
-      .from('payments_v2')
-      .select('id')
-      .eq('provider_payment_id', pi_id)
+    // V2: atomic insert-winner via UNIQUE(provider, provider_payment_id).
+    const { data: ordRow } = await supabase
+      .from('orders_v2')
+      .select('user_id, profile_id')
+      .eq('id', order_id_meta)
       .maybeSingle();
-    let payment_id: string | undefined;
-    if (existing) {
-      payment_id = existing.id;
-    } else {
-      // PATCH-LIVE-2: см. checkout.session.completed — копируем user_id/profile_id из orders_v2.
-      const { data: ordRow } = await supabase
-        .from('orders_v2')
-        .select('user_id, profile_id')
-        .eq('id', order_id_meta)
-        .maybeSingle();
-      const { data: ins } = await supabase
-        .from('payments_v2')
-        .insert({
-          order_id: order_id_meta,
-          user_id: ordRow?.user_id ?? null,
-          profile_id: ordRow?.profile_id ?? null,
-          provider: 'stripe',
-          provider_payment_id: pi_id,
-          amount: amount_major,
-          currency,
-          status: 'succeeded',
-          paid_at: new Date().toISOString(),
-          meta: {
-            business_stream: md_business_stream,
-            stripe: { payment_intent_id: pi_id, charge_id, account_code, customer: pi_customer, business_stream: md_business_stream, source: 'payment_intent.succeeded' },
-          },
-        })
-        .select('id')
-        .maybeSingle();
-      payment_id = ins?.id;
-      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-      // New payments_v2 row created → one notify per pi_id (race-safe with
-      // checkout.session.completed; whichever branch inserts first notifies).
-      if (payment_id) {
-        notifyAdminPaymentEvent(supabase, {
-          op: 'payment_succeeded',
-          order_id: order_id_meta,
-          payment_id,
-          provider_object_id: pi_id,
-          amount: amount_major,
-          currency,
-        });
-      }
+    const { payment_id: pid, inserted } = await persistStripePaymentIfAbsent(supabase, pi_id, {
+      order_id: order_id_meta,
+      user_id: ordRow?.user_id ?? null,
+      profile_id: ordRow?.profile_id ?? null,
+      provider: 'stripe',
+      provider_payment_id: pi_id,
+      amount: amount_major,
+      currency,
+      status: 'succeeded',
+      paid_at: new Date().toISOString(),
+      meta: {
+        business_stream: md_business_stream,
+        stripe: { payment_intent_id: pi_id, charge_id, account_code, customer: pi_customer, business_stream: md_business_stream, source: 'payment_intent.succeeded' },
+      },
+    });
+    const payment_id: string | undefined = pid ?? undefined;
+    // PATCH-V2: notify ONLY when we were the atomic insert-winner.
+    if (inserted && payment_id) {
+      notifyAdminPaymentEvent(supabase, {
+        op: 'payment_succeeded',
+        order_id: order_id_meta,
+        payment_id,
+        provider_object_id: pi_id,
+        amount: amount_major,
+        currency,
+      });
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
