@@ -185,6 +185,15 @@ export default function PaymentsTable({
   const [documentsDrawerOpen, setDocumentsDrawerOpen] = useState(false);
   const [documentsPaymentId, setDocumentsPaymentId] = useState<string | null>(null);
   const openDocumentsDrawer = (payment: UnifiedPayment) => {
+    // Документы резолвятся только по записям из payments_v2.
+    // Очередь bePaid (rawSource='queue') ещё не имеет canonical payment_id,
+    // поэтому admin-payment-documents-resolve вернёт PAYMENT_NOT_FOUND.
+    if (payment.rawSource !== 'payments_v2') {
+      toast.info(
+        "Документы доступны после привязки платежа к заказу (payments_v2). Эта запись ещё в очереди bePaid.",
+      );
+      return;
+    }
     setDocumentsPaymentId(payment.id);
     setDocumentsDrawerOpen(true);
   };
