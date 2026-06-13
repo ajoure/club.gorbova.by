@@ -792,3 +792,6 @@ Smoke-чек:
 2. Повторный `security--get_scan_results` не содержит ни одного из 7 исходных critical findings.
 3. Closure matrix не содержит WAITING/PARTIAL — либо PASS, либо явный backlog-маркер.
 4. Verdict в конце CLOSING RUN: PASS — только если все 9 строк PASS/закрыты-как-нужно; иначе честный PARTIAL с перечислением остатка.
+---
+
+STRIPE-FINAL-CLOSURE-SPRINT-V1 / CLOSING RUN: evidence pack зафиксирован, итоговый verdict = PASS WITH DEFERRED OPERATIONAL UAT, proof .lovable/proofs/stripe_final_closure_runtime_v1.md (секция «CLOSING RUN — EVIDENCE PACK»).
