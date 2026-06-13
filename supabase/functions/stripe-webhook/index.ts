@@ -34,8 +34,48 @@ import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materi
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
 // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
 import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
-// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-import { notifyAdminPaymentEvent } from '../_shared/stripe-admin-notify.ts';
+// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V2
+import {
+  notifyAdminPaymentEvent,
+  resolveInvoiceNotifyDecision,
+  orderedRefundCandidates,
+  type RefundRecord,
+} from '../_shared/stripe-admin-notify.ts';
+
+// PATCH-V2: atomic insert-winner for Stripe single-charge payments.
+// Relies on existing partial UNIQUE `(provider, provider_payment_id)` on payments_v2.
+// Returns inserted=true ONLY when this call created the row. Race between
+// checkout.session.completed and payment_intent.succeeded carrying the same pi_*
+// is decided by the database constraint (23505). Notify caller is gated on inserted=true.
+async function persistStripePaymentIfAbsent(
+  supabase: ReturnType<typeof svc>,
+  pi_id: string,
+  row: Record<string, unknown>,
+): Promise<{ payment_id: string | null; inserted: boolean }> {
+  const insertRes = await supabase
+    .from('payments_v2')
+    .insert(row)
+    .select('id')
+    .maybeSingle();
+  if (!insertRes.error && insertRes.data?.id) {
+    return { payment_id: insertRes.data.id, inserted: true };
+  }
+  // 23505 = unique_violation → another branch / delivery already inserted this pi_*.
+  const isUniqueViolation = insertRes.error?.code === '23505'
+    || /duplicate key|unique constraint/i.test(insertRes.error?.message ?? '');
+  if (isUniqueViolation) {
+    const { data: existing } = await supabase
+      .from('payments_v2')
+      .select('id')
+      .eq('provider', 'stripe')
+      .eq('provider_payment_id', pi_id)
+      .maybeSingle();
+    return { payment_id: existing?.id ?? null, inserted: false };
+  }
+  // Real DB error — surface as not-inserted, do not notify.
+  console.warn(`[stripe-webhook] persistStripePaymentIfAbsent error pi=${pi_id}:`, insertRes.error?.message);
+  return { payment_id: null, inserted: false };
+}
 
 
 
