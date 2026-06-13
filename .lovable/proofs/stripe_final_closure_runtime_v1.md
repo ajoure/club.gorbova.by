@@ -84,9 +84,20 @@ Verdict: **NO DEFECT в UI**. Состояние корректно: badge `pend
 - Webhook-функции (`stripe-webhook`, `bepaid-webhook`, `grant-access-for-order`, `admin-payment-documents-resolve`) — НЕ передеплоены.
 - Runtime bulk-cancel execute на живой фикстуре: **NOT AVAILABLE IN CURRENT FIXTURES** — нет безопасной Stripe-test-subscription, которой можно злоупотребить ради proof. Integration coverage: dry-run path + batch_id stale guard покрыты unit-тестами; period_end execute материализуется при первом реальном бизнес-запросе (ops UAT, см. `stripe_first_real_event_checklist_v1.md`).
 
-## Часть D. Frontend publish
+## Часть D. Frontend publish — BLOCKED BY PRE-EXISTING SECURITY FINDINGS
 
-Опубликован в этом ходе через `preview_ui--publish`. После publish — все wired UI (StripeBulkCancelDialog, PaymentDocumentsDrawer, обновлённый ReceiptStatusBadge со Stage 2C логикой) доступны на club.gorbova.by.
+Попытка `preview_ui--publish` (already_relevant) была отклонена с verdict «7 unresolved critical security findings». Все 7 findings — наследие до этого closing-run и НЕ относятся к коду STRIPE-FINAL-CLOSURE-SPRINT-V1:
+
+1. `test-full-trial-flow` / `test-payment-direct` — hardcoded test secrets
+2. `migrate-data-export` — публичный неаутентифицированный экспорт БД
+3. `qa-seed-accounts` — hardcoded QA passwords
+4. (+ 4 других, см. `security--get_scan_results`)
+
+Эти findings блокируют любую публикацию, не только этот sprint. Решение требует владельца проекта:
+- либо удалить указанные test/seed/migrate edge-функции (рекомендуется);
+- либо использовать `security--manage_security_finding` с обоснованием для каждой записи и обновить `security-memory`.
+
+Verdict для пункта 7 (Payments documents) меняется на: **код-PASS + publish-WAITING_FOR_SECURITY_RESOLUTION**. UI-фиксов для документов не требуется (см. диагностику выше) — после resolve security findings и publish жалоба должна закрыться автоматически (пользователь увидит уже-смерженные Stage 2C изменения).
 
 ---
 
