@@ -364,62 +364,43 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     await supabase.functions.invoke('grant-access-for-order', {
       body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
     });
-    // Insert payments_v2 if not exists
+    // Insert payments_v2 if not exists — V2: atomic insert-winner via UNIQUE(provider, provider_payment_id)
     const amount_total_minor = Number(obj.amount_total ?? 0);
     const currency = String(obj.currency ?? 'usd').toUpperCase();
     const amount_major = toMajorUnits(amount_total_minor, currency);
     let payment_id: string | undefined;
     if (pi_id) {
-      const { data: existing } = await supabase
-        .from('payments_v2')
-        .select('id')
-        .eq('provider_payment_id', pi_id)
+      const { data: ordRow } = await supabase
+        .from('orders_v2')
+        .select('user_id, profile_id')
+        .eq('id', order_id_meta)
         .maybeSingle();
-      if (!existing) {
-        // PATCH-LIVE-2: подтягиваем user_id/profile_id из связанного orders_v2,
-        // чтобы Stripe-платёж был виден в карточке контакта и в фильтрах "Контакт=Есть".
-        const { data: ordRow } = await supabase
-          .from('orders_v2')
-          .select('user_id, profile_id')
-          .eq('id', order_id_meta)
-          .maybeSingle();
-        const { data: ins } = await supabase
-          .from('payments_v2')
-          .insert({
-            order_id: order_id_meta,
-            user_id: ordRow?.user_id ?? null,
-            profile_id: ordRow?.profile_id ?? null,
-            provider: 'stripe',
-            provider_payment_id: pi_id,
-            amount: amount_major,
-            currency,
-            status: 'succeeded',
-            paid_at: new Date().toISOString(),
-            meta: {
-              business_stream: md_business_stream,
-              stripe: { checkout_session_id: session_id, payment_intent_id: pi_id, account_code, customer: session_customer, business_stream: md_business_stream },
-            },
-          })
-          .select('id')
-          .maybeSingle();
-        payment_id = ins?.id;
-        // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-        // New payments_v2 row created → first time we see this pi_id.
-        // Guarantees one admin notification per payment intent regardless of
-        // whether checkout.session.completed or payment_intent.succeeded wins
-        // the race (the other branch will see `existing` and skip).
-        if (payment_id) {
-          notifyAdminPaymentEvent(supabase, {
-            op: 'payment_succeeded',
-            order_id: order_id_meta,
-            payment_id,
-            provider_object_id: pi_id,
-            amount: amount_major,
-            currency,
-          });
-        }
-      } else {
-        payment_id = existing.id;
+      const { payment_id: pid, inserted } = await persistStripePaymentIfAbsent(supabase, pi_id, {
+        order_id: order_id_meta,
+        user_id: ordRow?.user_id ?? null,
+        profile_id: ordRow?.profile_id ?? null,
+        provider: 'stripe',
+        provider_payment_id: pi_id,
+        amount: amount_major,
+        currency,
+        status: 'succeeded',
+        paid_at: new Date().toISOString(),
+        meta: {
+          business_stream: md_business_stream,
+          stripe: { checkout_session_id: session_id, payment_intent_id: pi_id, account_code, customer: session_customer, business_stream: md_business_stream },
+        },
+      });
+      payment_id = pid ?? undefined;
+      // PATCH-V2: notify ONLY when we were the atomic insert-winner.
+      if (inserted && payment_id) {
+        notifyAdminPaymentEvent(supabase, {
+          op: 'payment_succeeded',
+          order_id: order_id_meta,
+          payment_id,
+          provider_object_id: pi_id,
+          amount: amount_major,
+          currency,
+        });
       }
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id ?? session_id);
