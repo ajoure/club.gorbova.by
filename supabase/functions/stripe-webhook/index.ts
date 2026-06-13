@@ -34,6 +34,8 @@ import { materializeStripeDocumentLinks } from '../_shared/stripe-receipt-materi
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
 // PATCH-STRIPE-CARD-DATA-ENRICHMENT-V2 — единый writer card snapshot.
 import { enrichStripePaymentCardData } from '../_shared/stripe/card-enrichment.ts';
+// PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+import { notifyAdminPaymentEvent } from '../_shared/stripe-admin-notify.ts';
 
 
 
@@ -175,6 +177,35 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
             });
           }
         } catch { /* never re-throw — invoice.paid activation already committed */ }
+      }
+      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+      // Notify admins on subscription invoice.paid (covers BOTH first invoice
+      // and renewals). Gated on: non-manual, NOT duplicate, payment_id resolved.
+      // Stripe event-level dedup is enforced upstream by provider_events.
+      if (
+        event.type === 'invoice.paid'
+        && !out.manual_review
+        && out.payment_id
+        && out.order_id
+        && out.note !== 'invoice_paid_duplicate'
+      ) {
+        try {
+          const inv = event.data.object as Record<string, unknown>;
+          const amount_minor = Number(inv.amount_paid ?? inv.amount_due ?? 0);
+          const inv_currency = String(inv.currency ?? 'usd').toUpperCase();
+          const inv_amount_major = toMajorUnits(amount_minor, inv_currency);
+          const period_end = typeof inv.period_end === 'number' ? inv.period_end : null;
+          const next_charge_at = period_end ? new Date(period_end * 1000).toISOString() : null;
+          notifyAdminPaymentEvent(supabase, {
+            op: 'subscription_renewal',
+            order_id: out.order_id,
+            payment_id: out.payment_id,
+            provider_object_id: (inv.id as string) ?? null,
+            amount: inv_amount_major,
+            currency: inv_currency,
+            next_charge_at,
+          });
+        } catch { /* notify is best-effort */ }
       }
       // Map resolver result → webhook output shape.
       // manual_review остаётся в note, чтобы processing_status выставился ниже.
@@ -326,6 +357,21 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
           .select('id')
           .maybeSingle();
         payment_id = ins?.id;
+        // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+        // New payments_v2 row created → first time we see this pi_id.
+        // Guarantees one admin notification per payment intent regardless of
+        // whether checkout.session.completed or payment_intent.succeeded wins
+        // the race (the other branch will see `existing` and skip).
+        if (payment_id) {
+          notifyAdminPaymentEvent(supabase, {
+            op: 'payment_succeeded',
+            order_id: order_id_meta,
+            payment_id,
+            provider_object_id: pi_id,
+            amount: amount_major,
+            currency,
+          });
+        }
       } else {
         payment_id = existing.id;
       }
@@ -453,6 +499,19 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         .select('id')
         .maybeSingle();
       payment_id = ins?.id;
+      // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+      // New payments_v2 row created → one notify per pi_id (race-safe with
+      // checkout.session.completed; whichever branch inserts first notifies).
+      if (payment_id) {
+        notifyAdminPaymentEvent(supabase, {
+          op: 'payment_succeeded',
+          order_id: order_id_meta,
+          payment_id,
+          provider_object_id: pi_id,
+          amount: amount_major,
+          currency,
+        });
+      }
     }
     await transitionOrderPaid(supabase, order_id_meta, amount_major, currency, pi_id);
     // PRR-FIX-02 (F3): apply CRM stage_on_success (idempotent if already at target).
@@ -639,6 +698,23 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         actor_user_id: null,
         actor_label: 'stripe-webhook',
         meta: { event_id: event.id, refund_id: refund.id, note: 'refunds[] per-entry receipt_url not materialized in Phase 8' },
+      });
+    }
+    // PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
+    // Notify only on `charge.refunded` (canonical event carrying a definitive
+    // `re_*` id). `refund.created` / `refund.updated` deliveries for the SAME
+    // refund_id are intentionally skipped here to avoid duplicate Telegram
+    // messages. `record_refund_atomic_multi` is idempotent by refund_uid, so
+    // re-delivery of `charge.refunded` itself is already blocked upstream by
+    // `provider_events.idempotency_key`.
+    if (event.type === 'charge.refunded') {
+      notifyAdminPaymentEvent(supabase, {
+        op: 'refund_succeeded',
+        order_id: order_id_meta,
+        payment_id: parent_payment_id,
+        provider_object_id: refund.id,
+        amount: toMajorUnits(Number(refund.amount), refund_currency),
+        currency: refund_currency,
       });
     }
     return { order_id: order_id_meta, note: 'refund_recorded', rpc: rpcData };
