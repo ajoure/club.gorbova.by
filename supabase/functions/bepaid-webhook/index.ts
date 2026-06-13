@@ -667,42 +667,17 @@ type TrackingParse = {
 };
 
 function parseTrackingId(raw: string | null): TrackingParse {
-  if (!raw) return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
-
-  // subv2:{subscription_v2_id}:order:{order_id}
-  const subv2Match = raw.match(/^subv2:([^:]+):order:(.+)$/i);
-  if (subv2Match) {
-    return { kind: 'subv2', orderId: subv2Match[2], offerId: null, subscriptionV2Id: subv2Match[1], raw };
-  }
-  // A4: Support legacy subv2:{uuid} format (without :order:)
-  const simpleSubv2 = raw.match(/^subv2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-  if (simpleSubv2) {
-    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: simpleSubv2[1], raw };
-  }
-  if (raw.startsWith('subv2:')) {
-    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: null, raw };
-  }
-
-  const uuid = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
-  const linkOrder = new RegExp(`^link:order:${uuid}(?:$|:)`, 'i');
-  const link = new RegExp(`^link:${uuid}(?:$|:)`, 'i');
-
-  const m1 = raw.match(linkOrder);
-  if (m1) return { kind: 'link_order', orderId: m1[1], offerId: null, subscriptionV2Id: null, raw };
-
-  const m2 = raw.match(link);
-  if (m2) return { kind: 'link', orderId: m2[1], offerId: null, subscriptionV2Id: null, raw };
-
-  // uuid or uuid_uuid
-  const uuidRe = new RegExp(`^${uuid}$`, 'i');
-  const parts = raw.split('_');
-  if (parts.length >= 1 && uuidRe.test(parts[0])) {
-    const orderId = parts[0];
-    const offerId = (parts.length >= 2 && uuidRe.test(parts[1])) ? parts[1] : null;
-    return { kind: offerId ? 'uuid_pair' : 'uuid', orderId, offerId, subscriptionV2Id: null, raw };
-  }
-
-  return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
+  // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: delegate to shared SOT parser.
+  // No behavior change vs. the previous inline implementation; the shared
+  // module preserves the exact same regex set (`subv2:*`, `link*`, uuid/uuid_pair).
+  const r = parseBepaidTrackingId(raw);
+  return {
+    kind: r.kind,
+    orderId: r.orderId,
+    offerId: r.offerId,
+    subscriptionV2Id: r.subscriptionV2Id,
+    raw: r.raw,
+  };
 }
 
 // =====================================================================
