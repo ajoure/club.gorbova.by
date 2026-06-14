@@ -8,12 +8,27 @@ const corsHeaders = {
 };
 
 interface FileData {
-  type: "photo" | "video" | "audio" | "video_note" | "document";
+  type: "photo" | "video" | "audio" | "voice" | "video_note" | "document";
   name: string;
   // Either base64 (small files) OR storage_path (large files via storage upload).
   base64?: string;
   storage_path?: string;
   storage_bucket?: string;
+}
+
+// PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1
+// Single resolver: fileType -> Telegram method + multipart field name.
+// Used by BOTH transport paths (telegramSendFile, telegramSendFileFromBytes)
+// so the matrix never drifts. Old types keep their previous behaviour bit-for-bit.
+function resolveTelegramMediaTransport(type: FileData["type"]): { method: string; fieldName: string } {
+  switch (type) {
+    case "photo":      return { method: "sendPhoto",     fieldName: "photo" };
+    case "video":      return { method: "sendVideo",     fieldName: "video" };
+    case "audio":      return { method: "sendAudio",     fieldName: "audio" };
+    case "voice":      return { method: "sendVoice",     fieldName: "voice" };
+    case "video_note": return { method: "sendVideoNote", fieldName: "video_note" };
+    default:           return { method: "sendDocument",  fieldName: "document" };
+  }
 }
 
 interface ChatAction {
@@ -145,6 +160,15 @@ function guessMimeType(fileName: string, kind: FileData["type"]) {
     if (lower.endsWith(".png")) return "image/png";
     if (lower.endsWith(".webp")) return "image/webp";
     return "image/jpeg";
+  }
+  if (kind === "voice") {
+    // Voice MUST keep its real container so Telegram returns result.voice.
+    // No silent OGG renaming — D4 probes confirmed Telegram accepts ogg/webm/m4a.
+    if (lower.endsWith(".ogg") || lower.endsWith(".oga")) return "audio/ogg";
+    if (lower.endsWith(".webm")) return "audio/webm";
+    if (lower.endsWith(".m4a") || lower.endsWith(".mp4")) return "audio/mp4";
+    if (lower.endsWith(".mp3")) return "audio/mpeg";
+    return "audio/ogg";
   }
   if (kind === "audio") {
     if (lower.endsWith(".mp3")) return "audio/mpeg";
