@@ -415,8 +415,9 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
           </TabsContent>
 
           {isAdminUI && (
-            <TabsContent value="roles">
+            <TabsContent value="roles" className="space-y-4">
               <PackageRolesManager packageTemplateId={selectedPackage.id} />
+              <PackageFieldsManager packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
 
