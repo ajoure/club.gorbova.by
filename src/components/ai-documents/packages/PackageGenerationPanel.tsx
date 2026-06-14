@@ -83,10 +83,19 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
   const hasSession = !!pkg.session?.id;
   const hasItems = (packageItems?.length ?? 0) > 0;
 
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 B2: required pf-fields gate.
+  const fieldsState = usePackageSessionFields(pkg.session?.id ?? null, pkg.templateId);
+  const requiredFieldsSatisfied = fieldsState.progress.allRequiredFilled;
+
   const blockers: string[] = [];
   if (!hasSession) blockers.push("Анкета пакета ещё не сохранена.");
   if (!hasItems) blockers.push("В пакете нет шаблонов.");
   if (hasSession && !allRequiredSatisfied) blockers.push("Не заполнены обязательные роли.");
+  if (hasSession && !requiredFieldsSatisfied) {
+    blockers.push(
+      `Не заполнены обязательные поля пакета (${fieldsState.progress.requiredFilled}/${fieldsState.progress.requiredTotal}).`,
+    );
+  }
 
   const handleGenerate = async (runMode: "user_generate" | "admin_test") => {
     if (!pkg.session?.id) return;
