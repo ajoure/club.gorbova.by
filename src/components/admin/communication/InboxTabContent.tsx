@@ -370,37 +370,50 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     },
   });
 
-  // Mark messages as read
+  // Mark messages as read — атомарно через RPC с server-side boundary (no client Date).
+  // p_boundary=null → сервер использует now(); входящие, пришедшие после атомарного
+  // UPDATE, остаются unread по серверной отсечке.
   const markAsRead = useMutation({
     mutationFn: async (userId: string) => {
-      const { error } = await supabase
-        .from("telegram_messages")
-        .update({ is_read: true })
-        .eq("user_id", userId)
-        .eq("direction", "incoming")
-        .eq("is_read", false);
+      const { error } = await supabase.rpc("mark_dialog_read_atomic" as any, {
+        p_user_id: userId,
+        p_boundary: null,
+      });
       if (error) throw error;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
-      queryClient.invalidateQueries({ queryKey: ["unread-messages-count"] });
+    onMutate: async (userId: string) => {
+      await queryClient.cancelQueries({ queryKey: INBOX_DIALOGS_QK });
+      const prev = queryClient.getQueriesData<any>({ queryKey: INBOX_DIALOGS_QK });
+      queryClient.setQueriesData<any>({ queryKey: INBOX_DIALOGS_QK }, (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((d: any) =>
+          d?.user_id === userId ? { ...d, unread_count: 0 } : d,
+        );
+      });
+      return { prev };
+    },
+    onError: (_e, _v, ctx: any) => {
+      ctx?.prev?.forEach(([key, data]: [any, any]) => queryClient.setQueryData(key, data));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+      queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });
     },
   });
 
-  // Bulk mark as read
+  // Bulk mark as read — единый атомарный RPC, без N запросов.
   const bulkMarkAsRead = useMutation({
     mutationFn: async (userIds: string[]) => {
-      const { error } = await supabase
-        .from("telegram_messages")
-        .update({ is_read: true })
-        .in("user_id", userIds)
-        .eq("direction", "incoming")
-        .eq("is_read", false);
+      if (!userIds.length) return;
+      const { error } = await supabase.rpc("bulk_mark_dialogs_read_atomic" as any, {
+        p_user_ids: userIds,
+        p_boundary: null,
+      });
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
-      queryClient.invalidateQueries({ queryKey: ["unread-messages-count"] });
+      queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+      queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });
       setSelectedChats(new Set());
       setSelectionMode(false);
       toast.success("Чаты отмечены как прочитанные");
