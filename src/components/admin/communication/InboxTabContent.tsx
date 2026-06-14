@@ -1042,7 +1042,12 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           avatarUrl={selectedDialog?.profile?.avatar_url}
           onAvatarUpdated={() => refetch()}
           hidePhotoButton
-          onMessageSent={() => markAsRead.mutate(selectedUserId)}
+          onMessageSent={(boundary) => {
+            if (!selectedUserId) return;
+            const b = boundary ?? resolveBoundary(selectedUserId);
+            if (!b) return; // нет observed snapshot — no-op (graceful)
+            markAsRead.mutate({ userId: selectedUserId, boundary: b });
+          }}
         />
       </div>
     </div>
