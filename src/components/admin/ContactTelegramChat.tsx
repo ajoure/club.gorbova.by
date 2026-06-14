@@ -2064,6 +2064,18 @@ export function ContactTelegramChat({
                   onSelect={(e) => {
                     e.preventDefault();
                     setShowMediaMenu(false);
+                    setShowVoiceRecorder(true);
+                  }}
+                >
+                  <Mic className="w-4 h-4" />
+                  Голосовое
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
                     if (fileInputRef.current) {
                       fileInputRef.current.accept = "audio/*";
                       fileInputRef.current.click();
@@ -2098,7 +2110,7 @@ export function ContactTelegramChat({
                 const mediaType = fileInputRef.current?.dataset.mediaType as "video_note" | undefined;
                 const file = e.target.files?.[0];
                 if (file) {
-                  let type: "photo" | "video" | "audio" | "video_note" | "document" | undefined;
+                  let type: "photo" | "video" | "audio" | "voice" | "video_note" | "document" | undefined;
                   if (mediaType === "video_note") {
                     type = "video_note";
                   } else if (file.type.startsWith("image/")) {
@@ -2154,6 +2166,17 @@ export function ContactTelegramChat({
           setSelectedFileType("video_note");
         }}
       />
+
+      {/* Voice Recorder — PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1 */}
+      <AdminVoiceRecorder
+        open={showVoiceRecorder}
+        onOpenChange={setShowVoiceRecorder}
+        onRecorded={(file) => {
+          setSelectedFile(file);
+          setSelectedFileType("voice");
+        }}
+      />
+
 
       {/* Edit Message Dialog */}
       <Dialog open={!!editingMessage} onOpenChange={(open) => !open && setEditingMessage(null)}>
