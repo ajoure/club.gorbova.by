@@ -157,8 +157,8 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 
 * **Severity:** HIGH
 * **Confidence:** FACT.
-* **Доказательство:** `InboxTabContent.tsx:420-434` — UPDATE `is_read=true WHERE user_id=… AND direction='incoming' AND is_read=false`. Каждая строка UPDATE → realtime UPDATE → `refetch()` в InboxTabContent (F2). При 14 непрочитанных в одном диалоге = 14 refetch'ей в секунду.
-* **Recommended fix (HYPOTHESIS):** debounce + игнорирование UPDATE-событий, инициированных текущей сессией (по `sent_by_admin` или сравнением с локальным optimistic state). Или серверная RPC `mark_dialog_read(user_id uuid)` единым UPDATE без построчного fanout.
+* **Доказательство:** `InboxTabContent.tsx:420-434` — UPDATE `is_read=true WHERE user_id=… AND direction='incoming' AND is_read=false`. Каждая строка UPDATE → realtime UPDATE-broadcast → triggers refetch в `inbox-messages-realtime` и `unread-count` (см. F2). При 14 непрочитанных в одном диалоге = до 14 × 2 = **28 refetch-сигналов** от двух refetch-подписок. Фактическое число сетевых HTTP-запросов может быть меньше из-за React Query in-flight dedup/staleTime, но сами realtime callbacks вызываются построчно, и стоимость на realtime-канале/сервере = N×2.
+* **Recommended fix (HYPOTHESIS):** серверная RPC `mark_dialog_read_atomic(user_id uuid, before_ts timestamptz)` — единый UPDATE одним SQL без построчного fanout + debounce на стороне подписчика + игнорирование UPDATE-событий, инициированных текущей сессией (по `sent_by_admin` / локальному optimistic state).
 * **Blocker:** да.
 
 ### F4 — Карточка остаётся «новой» после успешного ответа оператора
