@@ -1,162 +1,155 @@
-# Отчет о выполненной работе: PATCH-PACKAGE-CUSTOM-FIELDS-V1
+# PATCH-PACKAGE-CUSTOM-FIELDS-V1 — Proof Bundle
 
 Дата: 2026-06-14
-Канон токена: `{{pf-XXXXXX}}` (per-package custom field)
+Статус: Phase 1 закрыт доказательствами, Phase 2 — частично (B1 + auto-assign trigger выполнены).
 
----
+## A1. Migrations & files inventory
 
-## ENGINEERING — выполнено в этом проходе
+### Миграции
+- `supabase/migrations/20260614161448_282413e4-1bbc-4f81-8dda-5fc830537ec6.sql` — создание трёх таблиц, RLS, триггеры, RPC `upsert_session_field_values`, `upsert_package_field_catalog`, `report_package_field_dependencies`, smart-date helper, аудит.
+- `supabase/migrations/<новая Phase 2>.sql` — серверный триггер `trg_dpti_auto_assign_fields` на `document_package_template_items` (auto-assign по `auto_assign_to_new_items=true`, идемпотентно).
 
-### DB миграция (одной транзакцией, applied)
+### Созданные / изменённые файлы
+- `src/hooks/usePackageFieldCatalog.ts` — CRUD каталога полей.
+- `src/hooks/useDocumentItemFieldAssignments.ts` — назначения per-item + bulk `assignToAll`.
+- `src/lib/packageFields/smartDate.ts` — pre-fill дат по `default_kind`, TZ `Europe/Minsk`.
+- `src/components/ai-documents/packages/PackageFieldsManager.tsx` — CRUD UI каталога (Phase 1).
+- `src/components/ai-documents/packages/PackageFieldsAssignmentPanel.tsx` — Phase 2 B1: назначение полей шаблону документа.
+- `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx` — встроен `PackageFieldsAssignmentPanel` под блоком ролей в аккордеоне «Анкеты документов».
+- `src/components/ai-documents/packages/PackagesWorkspace.tsx` — переименование таба в «Роли и поля пакета».
+- `supabase/functions/_shared/resolve-package-tokens.ts` — branch `pf-XXXXXX` (валидация принадлежности пакету, форматирование по `data_type`).
+- `supabase/functions/_shared/resolve-package-tokens.pf.test.ts` — Deno-тест 4 сценариев (valid / wrong package / required missing / not found).
 
-1. **`document_package_field_catalog`** — каталог полей пакета
-   * `pf-XXXXXX` через `assign_package_field_public_id` + `document_package_field_public_id_seq` + `public_id_sequences`
-   * Immutability guard (`guard_package_field_catalog_mutations`): запрещает менять `public_id`, `data_type`, `field_key`, `package_template_id`; запрещает DELETE `is_system=true`; блокирует DELETE при наличии assignments или session values
-   * Поля: `usage_scope ∈ {package_all, questionnaire_only, documents_only}`, `client_visible`, `admin_editable`, `auto_assign_to_new_items`, `required`, `version` (optimistic concurrency), `is_active`, `is_system`, `metadata`, `options jsonb`
-   * `data_type` CHECK ∈ `{text, number, date, datetime, time, year, select, multiselect, checkbox}`
-   * Уникальность: `(package_template_id, field_key) WHERE is_active`, `(public_id)`
-   * Audit trigger `audit_package_field_catalog_change` пишет `document_package_field.{created,updated,archived,restored,deleted}` в `audit_logs`
+## A2. SQL-проверка структуры
 
-2. **`document_package_item_field_assignments`** — назначения поля шаблонам пакета
-   * FK на `document_package_template_items` (CASCADE) и `document_package_field_catalog` (RESTRICT)
-   * UNIQUE `(package_template_item_id, field_catalog_id)`
-   * Триггер `dpifa_assert_package_match` гарантирует, что поле принадлежит тому же пакету, что и шаблон (RAISE `pf_token_outside_bound_package` иначе)
-   * `visibility_mode ∈ {ask_client, admin_only, hidden_with_default}`, `is_required_override`, `label_override`, `help_override`, `section_key`, `sort_order`, `is_active`
+### Таблицы (51 столбец суммарно, нормализованные типы)
+```
+document_package_field_catalog          22 столбца  — каталог полей пакета
+document_package_item_field_assignments 15 столбцов — назначения полей шаблонам
+document_package_session_field_values   14 столбцов — типизированные значения сессии
+```
 
-3. **`document_package_session_field_values`** — значения сессии
-   * UNIQUE `(session_id, field_catalog_id)` — одно значение на сессию на поле
-   * Типизированные колонки: `value_text`, `value_number`, `value_date`, `value_datetime`, `value_time`, `value_boolean`, `value_json`
-   * RLS: admin/super_admin — full; владелец сессии — SELECT/INSERT/UPDATE собственных значений
+### Ключевые constraints
+```
+dpfc_public_id_format_chk    CHECK (public_id ~ '^pf-[0-9]{6,}$')
+dpfc_data_type_chk           CHECK (data_type IN ('text','number','date','datetime',
+                                                 'time','year','select','multiselect','checkbox'))
+dpfc_usage_scope_chk         CHECK (usage_scope IN ('package_all','questionnaire_only','documents_only'))
+dpifa_visibility_mode_chk    CHECK (visibility_mode IN ('ask_client','admin_only','hidden_with_default'))
 
-4. **RPC** (все SECURITY DEFINER):
-   * `upsert_package_field_catalog(_payload jsonb, _expected_version int)` — admin-only, optimistic concurrency, инкрементит `version`
-   * `report_package_field_dependencies(_field_id uuid)` → `{templates_using_token, active_sessions_with_value, historical_sessions_with_value, generation_snapshots_count}` для dependency-dialog перед архивацией/удалением
-   * `upsert_session_field_values(_session_id uuid, _values jsonb)` — пакетное сохранение со server-side валидацией типов, нормализацией в типизированные колонки, проверкой принадлежности session ↔ package ↔ field, валидацией choices для select/multiselect; возвращает `{saved, errors[]}`
+FK  document_package_field_catalog.package_template_id  → document_package_templates(id)  ON DELETE CASCADE
+FK  document_package_item_field_assignments.package_template_item_id → document_package_template_items(id) ON DELETE CASCADE
+FK  document_package_item_field_assignments.field_catalog_id         → document_package_field_catalog(id)  ON DELETE RESTRICT
+FK  document_package_session_field_values.session_id                 → document_package_sessions(id)       ON DELETE CASCADE
+FK  document_package_session_field_values.field_catalog_id           → document_package_field_catalog(id)  ON DELETE RESTRICT
 
-5. **GRANT + RLS**: все три таблицы — `authenticated` (CRUD), `service_role` (ALL); политики:
-   * `dpfc_admin_all` (admin/super_admin) + `dpfc_select_for_package_consumers` (узкая: только владельцы активной сессии этого пакета)
-   * `dpifa_admin_all` + `dpifa_select_for_package_consumers`
-   * `dpsfv_admin_all` + `dpsfv_select_own` + `dpsfv_insert_own` + `dpsfv_update_own`
+UNIQUE uq_dpifa   (package_template_item_id, field_catalog_id)
+UNIQUE uq_dpsfv   (session_id, field_catalog_id)
+```
 
-### Edge / Resolver
+### RLS-политики (все таблицы RLS ON)
+```
+document_package_field_catalog
+  dpfc_admin_all                     ALL    authenticated
+  dpfc_select_for_package_consumers  SELECT authenticated
 
-* `supabase/functions/_shared/resolve-package-tokens.ts`
-  * Добавлены коды: `pf_token_not_found`, `pf_token_outside_bound_package`, `pf_value_missing`, `pf_required_value_missing`, `pf_invalid_choice`, `pf_value_type_mismatch`, `pf_unsupported_modifier`
-  * Новая ветка `PF_RE = /^pf-\d{6}$/` вставлена **после** `ln-` и **до** legacy-alias lookup; никогда не падает в `document_package_token_aliases`
-  * `resolvePfFieldToken`:
-    * lookup в `document_package_field_catalog` по `(public_id)` → `pf_token_not_found` если нет
-    * проверка `field.package_template_id === item.package_template_id` (или session.package_template_id, если item не задан) → `pf_token_outside_bound_package` при mismatch
-    * lookup значения в `document_package_session_field_values` по `(session_id, field_catalog_id)`
-    * required-check: missing + `field.required=true` → `pf_required_value_missing`; иначе soft empty (как FLD)
-    * форматирование по `data_type`:
-      * `text` → as-is
-      * `number|year` → numeric
-      * `date` → `ru-RU` long; модификаторы `|format=short|year_only|month_year`
-      * `datetime` → ru-RU + `HH:mm`
-      * `time` → as-is
-      * `checkbox` → `options.true_label/false_label` (defaults «Да»/«Нет»)
-      * `select` → label из `options.choices`, fallback на value; `|format=value` → raw value
-      * `multiselect` → массив через `options.separator`
+document_package_item_field_assignments
+  dpifa_admin_all                    ALL    authenticated
+  dpifa_select_for_package_consumers SELECT authenticated
 
-### Shared helper
+document_package_session_field_values
+  dpsfv_admin_all                    ALL    authenticated
+  dpsfv_select_own                   SELECT authenticated
+  dpsfv_insert_own                   INSERT authenticated
+  dpsfv_update_own                   UPDATE authenticated
+```
 
-* `src/lib/packageFields/smartDate.ts`
-  * `resolveSmartDatePrefill(kind, ctx)` для всех `default_kind` (`today|tomorrow|yesterday|first/last_day_of_week/month/quarter/year|session_created_date|generation_date|none`)
-  * Расчёт в TZ `Europe/Minsk` (через `Intl.DateTimeFormat`, не UTC браузера)
-  * `SMART_DATE_KIND_LABELS` для UI
-  * **Контракт**: prefill — это значение для предзаполнения формы; в БД оно попадает ТОЛЬКО после явного сохранения
+### Триггеры
+```
+document_package_field_catalog
+  trg_dpfc_public_id            BEFORE INSERT  → присваивает pf-XXXXXX и валидирует
+  trg_dpfc_guard                BEFORE UPDATE/DELETE → immutable {data_type,public_id,field_key,
+                                                       package_template_id}; запрет delete при
+                                                       зависимостях или is_system=true
+  trg_audit_dpfc                AFTER INSERT/UPDATE/DELETE → audit_logs
 
-### UI
+document_package_item_field_assignments
+  trg_dpifa_assert_package_match BEFORE INSERT/UPDATE → field_catalog.package_template_id
+                                                        обязан совпадать с package_template_id
+                                                        самого item (защита от кросс-пакет-назначения)
+  trg_dpifa_updated_at          BEFORE UPDATE
 
-* `src/hooks/usePackageFieldCatalog.ts` — list/upsert (через RPC, optimistic concurrency через `expected_version`)/archive/restore/delete + `loadDependencyReport`
-* `src/hooks/useDocumentItemFieldAssignments.ts` — `useItemFieldAssignments(itemId)` и `usePackageFieldAssignments(packageId)` (с `assignToAll` массовым действием)
-* `src/components/ai-documents/packages/PackageFieldsManager.tsx` — полный CRUD UI каталога:
-  * вкладки «Активные» / «Архив» + поиск
-  * список с `pf-XXXXXX`, типом, описанием, счётчиком «В N шаблон(ах)», копированием токена, кнопкой массового назначения во все шаблоны пакета
-  * диалог создания/редактирования: data_type (disabled в edit), usage_scope, switches для visibility, required, sort_order, default_kind для date-like, редактор choices с уникальностью value, разделитель для multiselect, true/false labels для checkbox
-  * dependency-report dialog перед архивацией; кнопка «Удалить безвозвратно» (только для архивных, доступна если все счётчики = 0)
-* `src/components/ai-documents/packages/PackagesWorkspace.tsx`:
-  * Таб «Роли пакета» → **«Роли и поля пакета»** (одна строка label, иконка `Users`)
-  * Под `PackageRolesManager` добавлен `PackageFieldsManager` (две секции внутри одного таба)
-  * Существующий UI ролей **не изменён**
+document_package_session_field_values
+  trg_dpsfv_updated_at          BEFORE UPDATE
 
----
+document_package_template_items
+  trg_dpti_auto_assign_fields   AFTER INSERT (Phase 2 B1) — авто-назначение полей с
+                                auto_assign_to_new_items=true
+```
 
-## TELEGRAM API RUNTIME
+## A3. Audit-факты
 
-* N/A — патч не затрагивает Telegram pipeline.
+На момент создания proof-bundle таблицы `audit_logs WHERE entity_type IN
+('document_package_field_catalog', 'document_package_item_field_assignments',
+'document_package_session_field_values')` пусто — UI ещё не использовался для
+CRUD. Sprint runtime UAT даст реальные строки и они будут вставлены сюда
+после фактического UAT-прохода. До UAT proof фиксирует только структурную
+готовность аудита (триггер `trg_audit_dpfc` присутствует, см. A2).
 
----
+## A4. Resolver-тесты
 
-## DESKTOP UAT (план следующего прохода)
+Файл: `supabase/functions/_shared/resolve-package-tokens.pf.test.ts`
+Покрытые сценарии:
 
-Базовые сценарии, доступные на текущем UI:
+1. **valid pf-token** → `resolved=true`, значение «ООО Пример», `canonicalFieldPublicId='pf-000123'`.
+2. **pf-token из другого пакета** → `resolved=false`, `code='pf_token_outside_bound_package'`.
+3. **required без значения** → `resolved=false`, `code='pf_required_value_missing'`.
+4. **неизвестный pf-токен** → `resolved=false`, `code='pf_token_not_found'`.
 
-1. Открыть «AI-документы → Пакеты → Роли и поля пакета».
-2. Создать поле `date`, `default_kind=today`, required, label «Дата приказа».
-3. Проверить, что `pf-XXXXXX` сгенерирован.
-4. Скопировать токен, нажать «Назначить во все шаблоны пакета».
-5. Архивировать поле — увидеть dependency report (counts).
-6. Восстановить, попробовать удалить — кнопка заблокирована, если есть назначения.
+Регрессия `ln-` / `{{field:FLD-…}}`: код-путь не изменён (ветка `LN_RE`
+обрабатывается до `PF_RE`, billing `{{field:FLD-…}}` — отдельной функцией
+`resolveBillingField` вне этого файла). Совместный smoke-тест на один
+шаблон с тремя типами токенов одновременно перенесён в B5 (требует
+интеграционной фикстуры DOCX и запуска `canonical-document-generate-strict`
+в test-режиме).
 
----
+## A5. UI-факт
 
-## MOBILE UAT (план следующего прохода)
+PackageFieldsManager доступен в admin-разделе «Документы» → пакет →
+вкладка «Роли и поля пакета». Запись `public_id` создаётся триггером
+`trg_dpfc_public_id` (формат `pf-XXXXXX`). UAT-прогон с фиксацией
+конкретного public_id и скрином — следующий шаг.
 
-* Заполнение анкеты клиентом и проверка single-question dedup (см. PHASE-2 ниже).
+## B1. Назначение полей шаблонам (выполнено)
 
----
+- `PackageFieldsAssignmentPanel` встроен в аккордеон документа в
+  `DocumentPackageQuestionnairesView`.
+- Per-item контролы: видимость (`ask_client` / `admin_only` /
+  `hidden_with_default`), override обязательности (inherit / required /
+  optional — корректный override-контракт: null = наследовать, true =
+  принудительно обязательно, false = принудительно нет), локальный
+  label.
+- Bulk: кнопка «Во все» → `usePackageFieldAssignments.assignToAll(field.id)`,
+  идемпотентно (`ON CONFLICT DO NOTHING` в БД).
+- Auto-assign на новые шаблоны: серверный триггер
+  `trg_dpti_auto_assign_fields` (миграция Phase 2), работает независимо
+  от UI/RPC/импорта — пункт 2 уточнений плана выполнен.
+- Каталог-свойства (`public_id`, `data_type`, `choices`, `default_kind`,
+  global label) панель НЕ дублирует — это read-only справа от свитча.
 
-## SUPPORT REGRESSION
+## Не выполнено (следующие итерации)
 
-* Канон `{{ln-XXXXXX}}` (роли) — резолвер не изменён в этой ветке, тесты прежней семантики применимы.
-* Канон `{{field:FLD-XXXXXX}}` (FLD billing) — не тронут.
-* Legacy `package.role.PKR-XXXXXX` / `package.roles.*` — поведение прежнее.
-* `pf-` НИКОГДА не пытается резолвиться через `document_package_token_aliases`.
+- B2: клиентская анкета `pf-` (один вопрос на `field_catalog_id`, дедуп
+  по сессии, контролы по типам).
+- B3: блок «Поля пакета» в `PackageTemplateValidationPanel` со сверкой
+  DOCX-токенов через `extractDocxPlaceholders`.
+- B4: backend required-gate в `canonical-document-generate-strict`
+  (effective_required = override чёткий приоритет; `hidden_with_default`
+  без вычислимого default → конфигурационная ошибка) +
+  `meta.tokens_snapshot[]` (add-only, без слома формата).
+- B5: интеграционный smoke `ln- + pf- + FLD-` в одной генерации.
+- Runtime UAT + audit-выборка в A3.
 
----
-
-## CLEANUP
-
-* Резервные таблицы не созданы.
-* Бэкап старых данных не требовался — все три таблицы новые.
-* Никаких удалений или ALTER чужих таблиц/функций.
-
----
-
-## PHASE-2 BACKLOG (вне текущего прохода — требует отдельных коммитов)
-
-Из утверждённого плана отложено как **дополнительные коммиты в рамках того же патча**:
-
-1. **`DocumentPackageQuestionnairesView` — UI назначений** per-document:
-   * комбобокс «Добавить поле в анкету документа» (выбор существующего pf-поля + быстрый диалог создания)
-   * inline-редактирование `visibility_mode`, `is_required_override`, `label_override`, `help_override`, `sort_order`
-   * массовое «Использовать во всех документах пакета» уже работает из менеджера полей
-   * клиентская часть: рендеринг типизированных контролов (DatePicker с prefill через `resolveSmartDatePrefill`, Select из `options.choices`, MultiSelect, Switch, numeric Input)
-   * save → `upsert_session_field_values` (RPC уже создан)
-2. **`PackageTemplateValidationPanel`** — блок «Поля анкеты документа» с матрицей `PASS / token_without_assignment / assignment_without_token / token_belongs_to_other_package / pf_token_not_found`.
-3. **`PlaceholdersCatalogTab`** — категория «Пакет: Поля» (только в контексте выбранного пакета).
-4. **`canonical-document-generate-strict`** — required-gate (`pf_required_value_missing` STOP перед генерацией) + расширение `meta.tokens_snapshot[]` полем `source='session_field_value'`, `field_catalog_updated_at`, `assignment_id`.
-5. **Общий canonical modifier helper** (`supabase/functions/_shared/token-modifiers.ts`) с переключением `ln-`/FLD/`pf-` на него без изменения поведения старых namespace.
-6. **Авто-assignment на новый шаблон**: при добавлении `document_package_template_items` поля с `auto_assign_to_new_items=true` получают assignment автоматически (миграция-триггер либо edge-функция при INSERT).
-7. **Тесты**:
-   * `resolve-package-tokens_test.ts` — 11 кейсов из §5.4 плана + required gate
-   * `usePackageFieldCatalog.test.ts`, `PackageFieldsManager.test.tsx`, `smartDate.test.ts`
-8. **Память (`mem://index.md`)** — запись `package_custom_fields_v1` после полного прохождения UAT.
-
----
-
-## DoD статусы (на момент этого коммита)
-
-| # | DoD пункт | Статус |
-|---|---|---|
-| 1 | Вкладка «Роли и поля пакета», два блока | ✅ |
-| 2 | CRUD поля любого `data_type`, копирование токена, счётчик «Используется в N шаблонах» | ✅ |
-| 3 | Per-document назначение в «Анкетах документов» (UI) | ⏳ Phase-2 |
-| 4 | Массовое «Использовать во всех документах пакета» + `auto_assign_to_new_items` (флаг есть, авто-триггер на новый item) | ✅ (массовое) / ⏳ (авто на новый item) |
-| 5 | Single-question dedup в клиентской анкете | ⏳ Phase-2 |
-| 6 | Резолвер с явными кодами ошибок | ✅ |
-| 7 | Snapshot расширен полями pf | ⏳ Phase-2 |
-| 8 | Audit на CRUD каталога | ✅ (триггер `audit_package_field_catalog_change`) |
-| 9 | Без регрессий ролей/FLD | ✅ (код этих ветвей не тронут) |
-| 10 | Build green, DB linter clean, proof создан | ✅ (миграция применена, линтер не показывает новых критичных issues) |
+Каждый из этих пунктов запускается отдельным проходом — они затрагивают
+канонический генератор и снимок, поэтому ломать в одном спринте всё
+сразу запрещено инвариантом «безопасной модификации».
