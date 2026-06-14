@@ -565,6 +565,14 @@ export async function resolvePackageTokenCore(
     return resolveLnRoleToken(input, aliasToken, caseMod, formatMod);
   }
 
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1: {{pf-XXXXXX}} (per-package custom field).
+  // Никогда не падает в legacy alias-fallback.
+  const PF_RE = /^pf-\d{6}$/;
+  if (PF_RE.test(aliasToken)) {
+    return resolvePfFieldToken(input, aliasToken, caseMod, formatMod);
+  }
+
+
   // 1. Найти активный alias
   const { data: alias, error: aliasErr } = await input.supabase
     .from('document_package_token_aliases')
