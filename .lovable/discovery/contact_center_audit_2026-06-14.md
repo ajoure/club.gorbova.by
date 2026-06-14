@@ -106,7 +106,7 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 ### F1 — `get_inbox_dialogs_v1` сканирует всю таблицу для каждого вызова
 
 * **Severity:** HIGH
-* **Confidence:** ROOT CAUSE CONFIRMED (определение функции прочитано целиком).
+* **Confidence:** CONFIRMED SCALING BOTTLENECK (определение функции прочитано целиком; факт полного `GROUP BY` + `DISTINCT ON` подтверждён по исходнику). Окончательное влияние именно этого RPC на наблюдаемую задержку открытия контакт-центра подтверждается безопасным before/after proof на Этапе 2 (см. §4.A Baseline pre-execute).
 * **User scenario:** открытие контакт-центра / возврат на вкладку Telegram / каждый refetch по realtime.
 * **Доказательство:**
   ```sql
