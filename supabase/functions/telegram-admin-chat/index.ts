@@ -242,34 +242,22 @@ async function telegramSendFile(
     }));
   }
 
-  // Determine the method and field name based on file type
-  let method: string;
-  let fieldName: string;
+  // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: shared resolver, single source of truth.
+  const transport = resolveTelegramMediaTransport(file.type);
+  const method = transport.method;
+  const fieldName = transport.fieldName;
 
-  switch (file.type) {
-    case "photo":
-      method = "sendPhoto";
-      fieldName = "photo";
-      break;
-    case "video":
-      method = "sendVideo";
-      fieldName = "video";
-      break;
-    case "audio":
-      method = "sendAudio";
-      fieldName = "audio";
-      break;
-    case "video_note":
-      method = "sendVideoNote";
-      fieldName = "video_note";
-      // Video notes don't support captions
-      formData.delete("caption");
-      // Required: length parameter for circular video
-      formData.append("length", "384");
-      break;
-    default:
-      method = "sendDocument";
-      fieldName = "document";
+  if (file.type === "video_note") {
+    // Video notes don't support captions
+    formData.delete("caption");
+    // Required: length parameter for circular video
+    formData.append("length", "384");
+  }
+  if (file.type === "voice") {
+    // Telegram sendVoice accepts an optional caption — keep it as-is.
+    // Do NOT rename .webm/.m4a to .ogg: D4 probes confirmed Telegram returns
+    // result.voice for all three real recorder formats. Renaming would break
+    // duration metadata and produce a "0:00" voice bubble.
   }
 
   formData.append(fieldName, blob, fileName);
@@ -292,22 +280,17 @@ async function telegramSendFileFromBytes(
   chatId: number,
   bytes: Uint8Array,
   fileName: string,
-  fileType: "photo" | "video" | "audio" | "video_note" | "document",
+  fileType: FileData["type"],
   mimeType: string,
   caption?: string
 ) {
   const blob = new Blob([bytes], { type: mimeType });
   const file = new File([blob], fileName, { type: mimeType });
 
-  let method: string;
-  let fieldName: string;
-  switch (fileType) {
-    case "photo": method = "sendPhoto"; fieldName = "photo"; break;
-    case "video": method = "sendVideo"; fieldName = "video"; break;
-    case "audio": method = "sendAudio"; fieldName = "audio"; break;
-    case "video_note": method = "sendVideoNote"; fieldName = "video_note"; break;
-    default: method = "sendDocument"; fieldName = "document";
-  }
+  // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: shared resolver.
+  const transport = resolveTelegramMediaTransport(fileType);
+  const method = transport.method;
+  const fieldName = transport.fieldName;
 
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
