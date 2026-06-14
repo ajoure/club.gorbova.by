@@ -290,6 +290,7 @@ export function ContactTelegramChat({
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const keyboardInset = useVisualViewportInset();
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
