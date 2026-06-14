@@ -61,6 +61,43 @@ async function uploadViaTus(params: {
 }
 
 /**
+ * Список MIME, которые точно разрешены bucket'ом telegram-media.
+ * Если у файла другой MIME (например, audio/webm от MediaRecorder в Chrome
+ * или audio/ogg;codecs=opus из Firefox), Storage отклоняет загрузку с
+ * "mime type ... is not supported". Голосовой/медиа-pipeline на сервере
+ * всё равно повторно выводит MIME из имени файла и kind в guessMimeType,
+ * поэтому безопасно отправлять такие файлы как application/octet-stream —
+ * это и есть тип, явно разрешённый bucket'ом для произвольных бинарников.
+ */
+const BUCKET_ALLOWED_MIME = new Set<string>([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/wav",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/octet-stream",
+]);
+
+function resolveUploadContentType(rawType: string | undefined | null): string {
+  if (!rawType) return "application/octet-stream";
+  // Отрезаем параметры кодека (audio/webm;codecs=opus → audio/webm)
+  const base = rawType.split(";")[0].trim().toLowerCase();
+  if (BUCKET_ALLOWED_MIME.has(base)) return base;
+  return "application/octet-stream";
+}
+
+/**
  * Загружает файл в bucket telegram-media и возвращает storage_path.
  * Большие файлы автоматически идут через TUS (обход лимита тела запроса).
  */
@@ -71,7 +108,7 @@ export async function uploadToTelegramMedia(
   const bucket = "telegram-media";
   const safeName = sanitizeName(file.name);
   const path = `outbound/${userId}/${Date.now()}_${safeName}`;
-  const contentType = file.type || "application/octet-stream";
+  const contentType = resolveUploadContentType(file.type);
 
   if (file.size > TUS_THRESHOLD_BYTES) {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -88,3 +125,4 @@ export async function uploadToTelegramMedia(
 
   return { bucket, path };
 }
+
