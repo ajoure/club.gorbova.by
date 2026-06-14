@@ -16237,6 +16237,15 @@ export type Database = {
         Args: { p_boundary?: string; p_user_ids: string[] }
         Returns: number
       }
+      bulk_mark_dialogs_read_v2: {
+        Args: { p_items: Json }
+        Returns: {
+          boundary: string
+          dialog_user_id: string
+          marked_count: number
+          remaining_unread_count: number
+        }[]
+      }
       can_send_reaction: {
         Args: { _event_id: string; _user_id: string }
         Returns: boolean
@@ -17053,6 +17062,15 @@ export type Database = {
       mark_dialog_read_atomic: {
         Args: { p_boundary?: string; p_user_id: string }
         Returns: number
+      }
+      mark_dialog_read_v2: {
+        Args: { p_boundary: string; p_user_id: string }
+        Returns: {
+          boundary: string
+          dialog_user_id: string
+          marked_count: number
+          remaining_unread_count: number
+        }[]
       }
       next_public_id: { Args: { p_entity_type: string }; Returns: string }
       norm_email: { Args: { _val: string }; Returns: string }

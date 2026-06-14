@@ -1,619 +1,525 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-Утверждаю общий scope PATCH-CONTACT-CENTER-FIX-V1 при обязательном внесении следующих правок. Принцип add-only/no-loss: перечисленные изменения дополняют S0–S4 и не удаляют ранее заявленные этапы, DoD, proof и rollback.
+План в целом корректно устраняет найденные блокеры S2/S3. Перед выполнением нужно внести следующие обязательные изменения.
 
-1. Убрать обязательное ручное подтверждение между каждым S0–S4.
+Да, согласен, с учетом правок:
 
-Выполнять PATCH как один основной спринт:
+1. Не менять сигнатуру уже развёрнутых RPC через `DROP FUNCTION` в основной миграции.
 
-- S0 → S1 → S2 → S3 → S4;
-- внутренние STOP-guards сохраняются;
-- останавливаться и запрашивать решение только при фактическом blocker, риске данных, провале rollback или выходе за scope;
-- некритичные proof gaps заносить в deferred list и не превращать спринт в пять отдельных циклов согласования.
+Считать, что текущие функции уже могут вызываться production-фронтом. Использовать безопасный compatibility-flow:
 
-2. Перед созданием `useInboxRealtimeInvalidation.ts` выполнить anti-duplication check:
+- создать `mark_dialog_read_v2(p_user_id uuid, p_boundary timestamptz)`;
+- создать `bulk_mark_dialogs_read_v2(p_items jsonb)`;
+- переключить frontend на V2;
+- выполнить runtime/proof;
+- старые `mark_dialog_read_atomic` и `bulk_mark_dialogs_read_atomic` пока оставить как deprecated compatibility layer;
+- удалять старые RPC только отдельным cleanup-патчем после доказательства отсутствия вызовов.
 
-- найти существующие realtime bus/hooks;
-- проверить владельца текущих подписок;
-- не создавать второй параллельный realtime-контур, если существующий можно расширить.
+Нельзя допускать окно, в котором старый frontend вызывает уже удалённую функцию.
 
-3. Определить единственного владельца общей realtime-подписки.
+2. Boundary после отправки сообщения фиксировать ДО начала отправки, а не внутри `onMessageSent`.
 
-Не монтировать общий хук только внутри `InboxTabContent`, если счётчик непрочитанных используется глобально. Иначе вне вкладки Inbox обновления будут приходить лишь раз в пять минут.
+Правильный flow:
 
-Нужно:
+- перед вызовом `telegram-admin-chat` сохранить `observedIncomingBoundary`;
+- выполнить отправку;
+- только при подтверждённом `success=true` передать ранее сохранённую boundary в mark-as-read;
+- incoming, пришедший во время отправки, не должен попасть в эту boundary, даже если realtime уже добавил его в клиентский cache к моменту `onMessageSent`.
 
-- выбрать один always-mounted owner, вероятнее всего `AdminLayout`, `AdminCommunication` либо существующий глобальный hook;
-- гарантировать один channel на вкладку браузера;
-- исключить двойной mount при StrictMode;
-- доказать cleanup после unmount;
-- добавить фактически затронутый owner-файл в список файлов плана.
+3. Явно разделить boundary для разных действий:
 
-4. S1 должен быть event-aware, а не инвалидировать обе query на любое событие.
+- открытый чат + ответ оператора:  
+`MAX(created_at)` среди incoming, загруженных до начала отправки;
+- ручная отметка одного диалога из списка:  
+`last_message_at` строки списка допустима как observed preview boundary;
+- bulk mark:  
+собственный `last_message_at` для каждого выбранного диалога;
+- boundary отсутствует:  
+RPC не вызывается, cache не меняется, показывается понятный toast, а не только `console.warn`.
 
-Матрица:
+4. Серверная V2 RPC должна строго валидировать boundary:
 
-- incoming INSERT → inbox-dialogs + unread-count;
-- outgoing INSERT → только inbox-dialogs;
-- UPDATE `is_read` → inbox-dialogs + unread-count;
-- UPDATE статуса/медиа, влияющего на превью → только inbox-dialogs;
-- нерелевантный UPDATE → без invalidate;
-- incoming INSERT → один звук только через `useIncomingMessageAlert`.
+- `p_boundary IS NULL` → `boundary_required`, SQLSTATE `22023`;
+- boundary в будущем относительно серверного времени с заметным допуском → STOP/error;
+- `p_user_id IS NULL` → validation error, а не тихий no-op;
+- timestamp возвращать в ответе ровно тот, который фактически применён.
 
-Нельзя реализовать единый callback, который на любой INSERT/UPDATE всегда инвалидирует обе query.
-
-5. Уточнить DoD S1:
-
-Под «1+1 refetch» понимать:
-
-- не более одного запроса списка диалогов;
-- не более одного запроса общего unread count;
-- ноль дублирующих запросов каждого типа.
-
-React Query invalidation и фактический HTTP-refetch считать отдельно:
-
-- realtime callbacks;
-- invalidate calls;
-- реальные Network requests.
-
-6. Debounce должен быть trailing и иметь flush/cleanup-контракт:
-
-- один общий батч в окне 300 мс;
-- последнее событие не теряется;
-- таймер очищается при unmount;
-- при размонтировании определить, нужен ли flush;
-- повторный mount не оставляет старый timer/channel;
-- query keys использовать через единые constants/factory, если они уже существуют.
-
-7. Polling `unread-count` не удалять полностью.
-
-Оставить safety polling 5 минут, но:
-
-- только при `document.visibilityState === 'visible'`;
-- без наложения на уже выполняющийся запрос;
-- realtime остаётся основным механизмом.
-
-8. S2: `SECURITY DEFINER + GRANT authenticated` без внутренней авторизации запрещён.
-
-RPC обязана:
-
-- проверять `auth.uid() IS NOT NULL`;
-- проверять административное permission, соответствующее контакт-центру; использовать существующий permission code после discovery, не придумывать новый;
-- запретить обычному authenticated-пользователю помечать чужие диалоги прочитанными;
-- `REVOKE ALL ... FROM PUBLIC, anon`;
-- `GRANT EXECUTE` только допустимой роли;
-- иметь `SET search_path = public`;
-- не принимать actor/user identity из клиента;
-- учитывать workspace/tenant isolation, если она присутствует в текущей модели.
-
-RLS policies не меняются, но в proof явно указать, что SECURITY DEFINER является отдельным привилегированным access path.
-
-9. Не использовать `new Date().toISOString()` как boundary без проверки.
-
-Клиентское время подвержено clock skew и может пометить прочитанным сообщение, которое оператор ещё не видел.
-
-Перед реализацией S2 провести короткий sub-discovery и выбрать каноническую границу:
-
-- timestamp последнего фактически загруженного входящего сообщения;
-- либо Telegram `message_id`, если доказана его монотонность в нужном контексте;
-- либо иной существующий серверный sequence/cursor.
-
-RPC должна читать только сообщения, существовавшие в наблюдаемом оператором snapshot. Новое параллельное incoming не должно стать прочитанным.
-
-10. RPC mark-as-read должна возвращать не только число обновлённых строк.
-
-Предпочтительный контракт:
+5. Для одиночной RPC утвердить структурированный контракт:
 
 ```text
-{
-  marked_count,
-  remaining_unread_count,
-  boundary,
-  dialog_user_id
-}
+dialog_user_id
+boundary
+marked_count
+remaining_unread_count
 ```
 
-Это нужно, чтобы UI не показывал ложный `unread_count=0`, если после boundary уже существует новое входящее сообщение.
+В одной транзакции:
 
-11. Исправить optimistic flow S2.
+1. UPDATE только сообщений `created_at <= boundary`;
+2. подсчёт всех оставшихся unread;
+3. возврат результата.
 
-Безусловный `onMutate → unread_count=0` небезопасен.
+Frontend устанавливает `unread_count` исключительно по `remaining_unread_count`.
 
-Допустимые варианты:
+6. Bulk RPC не должна молча отбрасывать невалидные элементы.
 
-- optimistic zero только если текущий client snapshot доказывает отсутствие более нового incoming;
-- либо мгновенный patch после успешного RPC по возвращённому `remaining_unread_count`.
+Вместо частичного silent processing:
 
-При ошибке:
+- проверить, что `p_items` является массивом;
+- установить разумный batch limit;
+- каждый элемент обязан содержать валидные `user_id` и `boundary`;
+- дубликаты `user_id` дедуплицировать детерминированно либо отклонять;
+- при любом невалидном элементе отклонять весь запрос с validation error;
+- не создавать частично выполненный bulk без явного контракта.
 
-- восстановить предыдущий cache snapshot;
-- не менять вкладку «Новые»;
-- показать понятную ошибку;
-- не скрывать новое входящее сообщение.
+Audit invalid input можно писать одной агрегированной записью, но он не заменяет ошибку вызывающему клиенту.
 
-12. Уточнить утверждение о fanout.
+7. Ограничить размер bulk-запроса.
 
-Один SQL `UPDATE` не превращает PostgreSQL Realtime в одно UPDATE-событие: realtime всё равно может отправить событие на каждую изменённую строку.
-
-Цель S2:
-
-- одна RPC-транзакция;
-- несколько row events допустимы;
-- S1 debounce сводит их максимум к одному запросу списка и одному запросу count.
-
-Не заявлять, что RPC сама устраняет построчный realtime fanout.
-
-13. После отправки сообщения mark-as-read выполнять только после подтверждённого бизнес-успеха.
-
-Недостаточно проверить только HTTP 2xx.
-
-Нужно проверить фактический контракт `telegram-admin-chat`:
-
-- HTTP success;
-- `ok/success` в response body;
-- сообщение действительно принято Telegram или сохранено с успешным статусом;
-- при частичной ошибке, timeout или `200` с error payload `onMessageSent` не вызывается.
-
-Edge-функцию не менять, если существующий контракт достаточен.
-
-14. Согласовать один источник финальной синхронизации после mark-as-read.
-
-Текущая формулировка:
+Добавить guard, например:
 
 ```text
-invalidateQueries(..., refetchType:'none')
+1 <= количество элементов <= безопасный установленный лимит
 ```
 
-не гарантирует финальную серверную сверку при потере realtime event.
+При превышении лимита — STOP/error без UPDATE.
 
-Нужно выбрать и доказать один вариант:
+Не допускать произвольный JSON-массив неограниченного размера в `SECURITY DEFINER` RPC.
 
-- RPC response → cache patch + один контролируемый refetch;
-- либо RPC response → cache patch + realtime invalidate + safety fallback timeout.
+8. Уточнить доступ service role.
 
-Не допускать одновременно:
+Текущий guard через `auth.uid()` несовместим с обычным вызовом service role без пользовательского JWT.
 
-- mutation invalidate;
-- realtime invalidate;
-- дополнительный manual refetch,  
-если это приводит к двум и более Network calls.
+Выбрать один вариант:
 
-15. Добавить тесты S1/S2:
+- если service role для этих RPC не требуется — не выдавать ей отдельный GRANT;
+- если требуется системный вызов — добавить отдельный явно ограниченный system-path и audit.
 
-- debounce нескольких INSERT/UPDATE;
-- StrictMode mount/unmount;
-- один источник звука;
-- permission denied для пользователя без административного права;
-- RPC не читает сообщения после boundary;
-- параллельный incoming остаётся unread;
-- semantic send failure не запускает mark-as-read;
-- optimistic rollback;
-- repeated mark-as-read идемпотентен.
+Не оставлять формальный `GRANT service_role`, который фактически всегда падает на `auth.uid() IS NULL`.
 
-16. S3 не фиксировать заранее конкретный SQL rewrite как утверждённое решение.
+9. TTL-guard realtime нельзя реализовывать как локальный `Set` внутри несвязанных компонентов.
 
-Вариант `top-N user_id по created_at + LATERAL` остаётся кандидатом. Он обязан доказать:
+Нужен один shared coordination layer, доступный mutation и realtime bus:
 
-- точную сортировку по последнему сообщению;
-- отсутствие потери пользователей из-за повторяющихся сообщений одного активного диалога;
-- правильную работу `p_search`;
-- правильную работу `p_limit` и `p_offset`;
-- идентичный состав и типы колонок;
-- идентичные значения unread/media/status;
-- отсутствие изменения SECURITY DEFINER/STABLE/GRANT-контракта.
+- до RPC зарегистрировать `{user_id, operation_id, expires_at}`;
+- при ошибке RPC удалить регистрацию немедленно;
+- при успехе оставить только на время доставки row-events;
+- cleanup timer обязателен;
+- повторный mount не должен терять или дублировать registry;
+- incoming INSERT никогда не подавляется;
+- подавляются только ожидаемые UPDATE `is_read: false → true`.
 
-До contract-parity proof новый вариант не выкатывать.
+Если надёжно определить ожидаемое собственное событие невозможно, не использовать хрупкий TTL suppression. Допустим один debounced reconciliation-refetch после пачки UPDATE, но запрещены повторные запросы на каждую строку.
 
-17. Synthetic scale proof S3 выполнять безопасно:
+10. Не полагаться на `commit_timestamp` как на признак собственного события.
 
-- только в изолированных временных таблицах или отдельном тестовом проекте;
-- не создавать ×30 копии в production-таблицах;
-- обязательный cleanup;
+`commit_timestamp` не идентифицирует инициатора. Он может использоваться только как временная метка, но не как доказательство ownership.
+
+Proof должен показать:
+
+- собственная mutation не вызывает дублирующий Network request;
+- изменение другим оператором не теряется;
+- новое incoming не проглатывается;
+- после TTL cache остаётся консистентным.
+
+11. Добавить fallback reconciliation после точечного cache patch.
+
+Основной flow:
+
+- RPC response;
+- `setQueryData` по `remaining_unread_count`;
+- без немедленного полного invalidate.
+
+Но нужен один контролируемый safety reconciliation:
+
+- либо trailing debounced refetch после завершения row-event burst;
+- либо delayed refetch через ограниченный интервал;
+- без одновременного mutation invalidate + realtime invalidate + manual refetch.
+
+В proof показать фактическое число Network requests.
+
+12. Для permission proof использовать реальный JWT-контекст.
+
+`SET LOCAL ROLE authenticated` сам по себе не формирует `auth.uid()` и может доказать только часть поведения.
+
+Нужно проверить минимум:
+
+- anon без JWT;
+- authenticated JWT без admin/superadmin;
+- admin JWT;
+- superadmin JWT;
+- при наличии system-path — отдельный system proof.
+
+Ожидание для первых двух: SQLSTATE `42501`.
+
+13. Concurrency fixture выполнять только на выделенном тестовом диалоге.
+
+Обязательно:
+
+- подтвердить, что UUID относится к тестовому профилю;
+- добавить test metadata;
+- сохранить созданные message IDs;
+- после proof удалить fixture либо вернуть исходный `is_read`;
+- не использовать данные реального клиента;
+- зафиксировать cleanup.
+
+14. S3 parity проверять не через один `array_agg(row(...))`.
+
+Использовать более доказуемый двусторонний diff:
+
+```sql
+old_result
+EXCEPT ALL
+new_result;
+
+new_result
+EXCEPT ALL
+old_result;
+```
+
+Оба результата должны вернуть 0 строк.
+
+Проверить матрицу:
+
+- `p_search=NULL`;
+- `p_search=''`;
+- search по имени;
+- search по email;
+- search без результатов;
+- `limit=1/50/200`;
+- несколько offset;
+- unread=0 и unread>0;
+- pending media true/false;
+- несколько ботов;
+- одинаковый `created_at` у сообщений.
+
+15. Для одинакового `created_at` добавить детерминированный tie-breaker.
+
+В LATERAL last-message:
+
+```sql
+ORDER BY created_at DESC, id DESC
+```
+
+Старый и новый RPC должны выбирать одно и то же сообщение при равном timestamp. Иначе row-by-row parity может быть недетерминированной.
+
+16. S3 performance proof выполнять со строгими guards:
+
 - `statement_timeout`;
 - `lock_timeout`;
-- ограниченное число прогонов;
-- read-only transaction для текущего RPC;
-- запуск вне пикового окна.
+- только read-only;
+- вне пикового окна;
+- ограниченное число повторов;
+- old/new функции под разными временными именами;
+- никаких изменений production-данных;
+- после proof временные функции удалить.
 
-Создание временного custom test schema допустимо только как изолированный proof-артефакт с последующим полным удалением; системные schemas не трогать.
+`pg_stat_statements` использовать только если можно изолировать конкретные query IDs. Иначе снимать client-side timings 20 одинаковых прогонов и считать P50/P95 отдельно.
 
-18. Для S3 разделить метрики:
+17. Не утверждать заранее, что новый LATERAL-вариант лучше.
 
-- чистое время SQL;
-- Supabase/PostgREST/RPC network latency;
-- payload size;
-- frontend time до первого отображения.
+Решение принимается только после proof:
 
-DoD:
+- parity = 100%;
+- новый P95 не хуже старого;
+- buffers/rows scanned не хуже;
+- search и pagination корректны.
 
-- DB execution P50/P95;
-- end-to-end RPC P50/P95;
-- cold/warm UI отдельно.
+Если доказательства нет или новый вариант хуже — немедленно восстановить старую функцию.
 
-Не смешивать P95 SQL `<200 ms` с полным временем пользовательского рендера.
+18. Rollback SQL нельзя помещать в обычную папку `supabase/migrations/`, если он не должен автоматически применяться.
 
-19. Изменение `staleTime 30s → 60s` выполнять только при proof необходимости.
-
-Сначала проверить фактические `staleTime`, `refetchInterval`, focus/reconnect settings. Увеличение staleTime не должно маскировать потерю realtime или ухудшать восстановление после reconnect.
-
-Если точечная realtime invalidation уже решает нагрузку, staleTime можно оставить без изменения.
-
-20. Aggregate-таблица `telegram_dialog_summary` остаётся условным fallback.
-
-Перед её созданием потребуется отдельный уточнённый план внутри S3 с:
-
-- source of truth;
-- backfill;
-- INSERT/UPDATE/DELETE maintenance;
-- idempotency;
-- reconciliation;
-- rebuild;
-- drift detection;
-- rollback;
-- write amplification;
-- RLS/permissions;
-- proof отсутствия расхождения.
-
-Без отдельного плана aggregate-таблицу не создавать.
-
-21. S4: не считать `interactive-widget=resizes-content` гарантированным iOS-решением.
-
-Meta-параметр добавить можно, но основным proof остаётся реальное поведение `visualViewport`.
-
-Нужно:
-
-- проверить фактическую поддержку в Safari используемой версии;
-- feature detection;
-- no-op при отсутствии API;
-- слушать `resize` и при необходимости `scroll`;
-- удалить listeners при unmount;
-- исключить отрицательные и чрезмерные offsets;
-- проверить изменение ориентации.
-
-22. Перед переиспользованием `useVisualViewportInset` подтвердить его контракт.
-
-Если существующий hook:
-
-- завязан на lesson-room;
-- пишет только `--room-vv-bottom-offset`;
-- предполагает конкретный DOM;
-- содержит room-specific side effects,
-
-не подключать его «как есть» слепо.
-
-Предпочтение:
-
-- безопасно обобщить существующий canonical hook без регрессии lesson-room;
-- либо использовать его публичный return value;
-- не создавать второй дублирующий hook.
-
-В список затронутых файлов добавить существующий hook, если он изменяется.
-
-23. Не выполнять безусловный `scrollIntoView` при каждом focus.
-
-Это может выбросить оператора вниз, когда он читает старые сообщения.
-
-Auto-scroll разрешён только если:
-
-- пользователь уже находится возле нижней границы;
-- либо открывается новый диалог;
-- либо только что успешно отправлено сообщение.
-
-Зафиксировать threshold «near bottom» и proof отсутствия прыжка при просмотре истории.
-
-24. S4 runtime matrix расширить:
-
-- iOS Safari;
-- standalone PWA;
-- portrait;
-- landscape;
-- textarea 1 строка;
-- textarea несколько строк;
-- QuickType включён;
-- attachment preview;
-- возврат приложения из background;
-- Android Chrome;
-- desktop.
-
-25. S0 должен использовать строго определённый тестовый диалог:
-
-- указать UUID тестового пользователя;
-- подтвердить отсутствие реального клиента;
-- не отправлять тестовые сообщения внешнему человеку;
-- зафиксировать созданные тестовые строки;
-- после proof выполнить безопасный cleanup либо явно оставить их с test metadata.
-
-26. Сохранить исходные Verify/DoD требования через mapping add-only:
+Файл вида:
 
 ```text
-Старое: Lighthouse mobile ≥80
-→ Новое: остаётся финальным non-regression proof после S4.
-
-Старое: первый рендер 500 диалогов <1.5s
-→ Новое: измерить на реальном объёме и синтетической проекции; если UI сейчас ограничен 100, отдельно проверить виртуализированный набор/fixture 500 без изменения production данных.
-
-Старое: карточка уходит из «Новые» ≤2s
-→ Новое: целевой optimistic UI <500ms, серверная консистентность ≤2s.
-
-Старое: 0 повторных realtime-refetch при одном сообщении
-→ Новое: 0 дубликатов; допускается один intended inbox request и один intended unread-count request.
+supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql
 ```
 
-27. Поскольку исходный scope включал Telegram, техподдержку и `UnifiedCommunicationHistory`, в финальный Verify добавить smoke:
+будет воспринят как обычная следующая миграция и может автоматически отменить исправление.
 
-- Telegram;
-- support tickets;
-- `UnifiedCommunicationHistory`;
-- email empty-state;
-- Instagram tab navigation.
-
-Код этих каналов не менять без finding, но доказать отсутствие регрессии.
-
-28. Симптом медленной загрузки файлов не считать закрытым автоматически.
-
-После S1 и S3 повторно измерить F11:
-
-- время открытия чата с медиа;
-- число signed URL calls;
-- second round-trip;
-- payload.
-
-Если проблема сохраняется, F11 остаётся обязательным follow-up patch, а не считается выполненной частью PATCH-CONTACT-CENTER-FIX-V1.
-
-29. Rollback для SQL оформлять не как `DROP RPC`, а как безопасную restore migration:
-
-- сохранить точное предыдущее определение;
-- при rollback восстановить старую функцию;
-- не оставлять frontend, вызывающий отсутствующую RPC;
-- порядок rollback: frontend compatibility → DB restore.
-
-30. Финальный отчёт должен быть озаглавлен строго:
+Хранить rollback-артефакты отдельно, например:
 
 ```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-FIX-V1
+.lovable/rollback/contact_center/
+supabase/rollback/
 ```
 
-В финальном отчёте показать:
+или в proof-файле как полный исполняемый SQL.
 
-- S0–S4: выполнено / частично / не выполнено;
-- before/after;
-- SQL/RPC contract parity;
-- runtime proof;
-- rollback readiness;
-- deferred list;
-- отсутствие изменений в исключённых доменах;
-- список всех реально изменённых файлов и миграций.
+В основной migrations-папке должны находиться только миграции, которые действительно должны применяться по порядку.
 
-После внесения этих правок план считается утверждённым. Начинать с S0 и далее выполнять S1–S4 без дополнительных промежуточных согласований, кроме срабатывания критического STOP-guard.
+19. Не создавать «пустую rollback migration» с закомментированным DROP.
+
+Она не даёт реального rollback и засоряет историю миграций.
+
+Нужно сохранить:
+
+- полный restore SQL старого `get_inbox_dialogs_v1`;
+- полный cleanup SQL deprecated RPC;
+- точный порядок применения;
+- проверки до и после rollback.
+
+20. Rollback порядок зафиксировать так:
+21. выкатить frontend compatibility, который не зависит от V2;
+22. проверить отсутствие вызовов V2;
+23. восстановить старое тело `get_inbox_dialogs_v1`;
+24. проверить старый UI flow;
+25. отдельным cleanup удалить V2 RPC;
+26. deprecated V1 удалить только после подтверждения отсутствия вызовов.
+27. S4 housekeeping принимается без изменения кода.
+
+Статус оставить:
+
+```text
+ENGINEERING IMPLEMENTED
+LIVE MOBILE UAT PENDING
+```
+
+Anti-duplication proof через `rg` достаточен только для hooks-каталога. Дополнительно проверить `visualViewport` по всему `src`, чтобы исключить локальную реализацию внутри компонентов.
+
+22. Финальный corrective proof должен отдельно показать:
+
+- реальные имена V2 RPC;
+- старые RPC оставлены или удалены;
+- frontend commit, который переключает вызовы;
+- boundary captured before send;
+- concurrency result;
+- remaining unread result;
+- permission matrix;
+- realtime Network count;
+- S3 EXPLAIN old/new;
+- EXCEPT ALL parity matrix;
+- расположение rollback SQL вне migrations;
+- cleanup временных функций и тестовых данных.
+
+23. Финальный заголовок:
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-FIX-V1 — корректирующий проход S2/S3
+```
+
+После внесения этих правок план считается утверждённым. Выполнять корректирующий проход без нового общего discovery и без дополнительных промежуточных согласований, кроме фактического критического STOP-guard.
+
+Ключевые обязательные изменения: **V2 compatibility вместо DROP существующих RPC, boundary фиксируется до отправки, bulk не выполняется частично, rollback SQL не размещается среди автоматически применяемых миграций**. Это соответствует обязательному безопасному циклу и запрету ломать существующую production-логику.  
 
 &nbsp;
 
-План: PATCH-CONTACT-CENTER-FIX-V1
+План: PATCH-CONTACT-CENTER-FIX-V1 — корректирующий проход (S2/S3 + housekeeping S4)
 
-Основание: Discovery `.lovable/discovery/contact_center_audit_2026-06-14.md` после корректировок (F1=CONFIRMED SCALING BOTTLENECK, F2=2 канала refetch + sound-only, F3 = до 28 сигналов, F4=PARTIALLY CONFIRMED / RACE HYPOTHESIS, §4.A baseline pre-execute).
+Новый общий discovery не выполняется. Корректируем существующий спринт по 11 пунктам из ревью. Никаких изменений в исключённых доменах (доступы, billing, broadcasts, Stripe/bePaid, RLS чужих таблиц, Storage, telegram lifecycle).
 
-Принципы:
+## Главный блокер
 
-- Этап 2 = подготовка + baseline proof + последовательное выполнение S0…S4 микро-патчами.
-- Не трогаем: доступы (`grant-access-for-order`, `access_rules`, `entitlements`, `subscriptions_v2`), billing/payments (bePaid, Stripe, `orders_v2`), broadcasts (диспетчер, шаблоны, аудитории), CRM (pipelines, deals), документы, RLS, Storage, schemas `auth/storage/realtime/supabase_functions/vault`, авто-генерируемые файлы Supabase client.
-- Все артефакты, планы, proof — на русском.
-- Каждый sub-patch S0…S4 проходит цикл: Diagnose → Plan-of-subpatch → Dry run → Execute → Verify (before/after proof по §4.A). Между sub-patch'ами — STOP-guard и подтверждение.
+S2 в текущем виде может пометить прочитанным incoming, которого оператор ещё не видел: серверный `now()` фиксирует время выполнения RPC, а не observed snapshot. Все правки ниже устраняют именно это.
 
 ---
 
-S
+## S2 — Корректирующий патч (FAIL → PASS)
 
-1. Baseline pre-execute (ОБЯЗАТЕЛЬНО, до любого кода)
+### 2.1 Канон observed boundary
 
-Файлы/действия:
+- Источник истины: `MAX(created_at)` среди реально загруженных incoming-сообщений диалога. Это серверные timestamptz из ответа edge function `telegram-admin-chat` action `get_messages` (в `ContactTelegramChat.tsx` уже есть кэш `["telegram-messages", userId]`). Никакого `new Date()` на клиенте.
+- В `InboxTabContent.tsx` при клике «отметить прочитанным» или после успешной отправки ответа клиент вычисляет boundary из ближайшего источника:
+  1. кэш `["telegram-messages", userId]` (если чат открывался — есть точная граница);
+  2. fallback: значение `last_message_at` из строки `INBOX_DIALOGS_QK` для этого `user_id` (доказанно серверное и не больше реально показанного last preview);
+  3. если ни одного источника нет → mutation не отправляется, кнопка не вызывает RPC и UI не меняется (graceful no-op + console.warn). Это явно отдельный режим — пользовательский flow никогда не уходит в `now()`.
 
-- `.lovable/proofs/contact_center_baseline_2026-06-14.md` — снять метрики по §4.A discovery: cold/warm Network trace, число вызовов `get_inbox_dialogs_v1`, payload size, TTFP, открытие одного диалога, один INSERT, mark-as-read 5 непрочитанных в ТЕСТОВОМ диалоге.
-- Зафиксировать численные значения «до». Без pgbench, без EXPLAIN ANALYZE в проде, без правок prod-данных вне тестового диалога.
-- Воспроизвести F4 runtime: ответить из десктопа и из мобильной версии тестовому пользователю, зафиксировать, остаётся ли карточка в «Новые» после mark-as-read. Если runtime не воспроизводится — F4 остаётся PARTIALLY CONFIRMED и решается превентивно через S2.
+### 2.2 RPC `mark_dialog_read_atomic` — новый структурированный контракт
 
-DoD S0: proof-файл создан, цифры зафиксированы, F4-runtime либо воспроизведён (приложен лог), либо явно помечен «не воспроизведено».
+Меняется сигнатура (создаём миграцию с `CREATE OR REPLACE`, тип возврата другой → сначала `DROP FUNCTION ... mark_dialog_read_atomic(uuid, timestamptz)` в той же миграции, так как функция была применена в этом же спринте и фронт ещё не в проде — приемлемо). Если на момент применения уже есть production-трафик — миграция выполняется в порядке: создаём новую функцию `mark_dialog_read_v2(...)`, переключаем фронт, затем drop старой.
 
----
-
-S
-
-1. F2 + F7 + F10 — единая модель realtime-инвалидации
-
-Цель: один INSERT → ≤ 1 refetch RPC + ≤ 1 refetch count; один звук; убрать избыточный polling.
-
-Файлы:
-
-- `src/hooks/useInboxRealtimeInvalidation.ts` (новый) — единая точка подписки на `telegram_messages` (INSERT/UPDATE без фильтра) с debounce 300 мс и dedup. Внутри триггерит `invalidateQueries(["inbox-dialogs"])` и `invalidateQueries(["unread-messages-count"])` одним батчем.
-- `src/components/admin/communication/InboxTabContent.tsx` — удалить локальную realtime-подписку `inbox-messages-realtime` и локальный `playNotificationSound`; подключить `useInboxRealtimeInvalidation()`.
-- `src/hooks/useUnreadMessagesCount.tsx` — удалить отдельную realtime-подписку `unread-count` (теперь invalidate приходит из общего хука); `refetchInterval` уменьшить до 5 минут (safety net, не основная сигнализация).
-- `src/hooks/useIncomingMessageAlert.ts` — без изменений (уже фильтрованный, sound-only — это единственный источник звука).
-
-SQL/RPC: нет.
-
-Branch matrix (realtime → действие):
-
-- INSERT incoming → invalidate inbox-dialogs + unread-count (debounced); звук — из global-alert.
-- INSERT outgoing → invalidate inbox-dialogs (debounced); без звука.
-- UPDATE is_read → invalidate inbox-dialogs + unread-count (debounced).
-- UPDATE other → invalidate inbox-dialogs (debounced).
-
-STOP-guards: если после S1 в DevTools видно > 1 refetch на одиночный INSERT — STOP, разобрать причину перед S2.
-
-Rollback: revert файлов; восстановить старые подписки из git.
-
-DRY RUN: проверить, что хук монтируется один раз (StrictMode), cleanup срабатывает, debounce не теряет события (последний invalidate всегда выполняется).
-
-Before/after proof: повторить §4.A замеры; ожидаемое — 1 INSERT даёт 1+1 refetch, mass mark-as-read 14 — 1+1 refetch вместо 28 callbacks → 2 запроса.
-
-DoD S1: 1 звук, 1+1 refetch на INSERT, polling 5 мин, отчёт `.lovable/proofs/patch_contact_center_s1_<date>.md`.
-
----
-
-S
-
-2. F3 + F4 — атомарный mark-as-read + защищённый flow «ответ»
-
-Цель: убрать построчный fanout UPDATE; гарантировать, что unread сбрасывается только при успешной отправке; защита от параллельного incoming во время отправки; один финальный refetch.
-
-Файлы:
-
-- Миграция Supabase: создать RPC `public.mark_dialog_read_atomic(p_user_id uuid, p_before_ts timestamptz)` — `SECURITY DEFINER`, `VOLATILE`, единым SQL: `UPDATE telegram_messages SET is_read = true WHERE user_id = p_user_id AND direction = 'incoming' AND is_read = false AND created_at <= p_before_ts RETURNING id`. GRANT EXECUTE на роль `authenticated`. RLS не меняем (RPC SECURITY DEFINER).
-  - `p_before_ts` — timestamp boundary: фиксируется в клиенте в момент решения mark-as-read, чтобы параллельный новый incoming (created_at > p_before_ts) НЕ был ошибочно помечен прочитанным.
-- `src/components/admin/communication/InboxTabContent.tsx` — заменить построчный UPDATE на вызов RPC. В `markAsRead.mutate`:
-  - сохранить `beforeTs = new Date().toISOString()` ДО RPC;
-  - вызвать `supabase.rpc('mark_dialog_read_atomic', { p_user_id, p_before_ts: beforeTs })`;
-  - `onMutate`: optimistic `setQueryData(["inbox-dialogs"], …)` — unread_count=0 для user_id (НЕ затрагивая остальные карточки);
-  - `onError`: откат optimistic patch; unread не сбрасывается;
-  - `onSuccess`: один `invalidateQueries(["inbox-dialogs"], { refetchType: 'none' })` чтобы синхронизация прошла через debounced хук из S1, без двойного refetch.
-- `src/components/admin/ContactTelegramChat.tsx` — `onMessageSent` вызывается ТОЛЬКО при подтверждении успешной отправки (HTTP 2xx от edge `telegram-admin-chat`). При FAIL — не вызывать.
-
-Branch / state matrix unread:
-
-```
-event                            unread_count       inbox refetch
-incoming INSERT                  ++ (realtime)      debounced
-open dialog                      не трогать         —
-manual ✓                         RPC + optimistic 0 1 (через S1)
-outgoing send OK                 RPC + optimistic 0 1 (через S1)
-outgoing send FAIL               без изменений      —
-параллельный incoming during RPC оставлен unread    debounced
+```sql
+CREATE OR REPLACE FUNCTION public.mark_dialog_read_atomic(
+  p_user_id  uuid,
+  p_boundary timestamptz       -- обязательный, без DEFAULT
+)
+RETURNS TABLE(
+  dialog_user_id          uuid,
+  boundary                timestamptz,
+  marked_count            integer,
+  remaining_unread_count  integer
+)
 ```
 
-STOP-guards:
+Поведение:
 
-- если RPC возвращает 0 rows и при этом UI показал «прочитано» — STOP, разобрать перед прод-выкаткой;
-- если `onError` не откатывает optimistic patch — STOP.
+- `p_boundary IS NULL` → `RAISE EXCEPTION 'boundary_required' USING ERRCODE='22023'`. Никакого fallback на `now()`.
+- admin guard (`auth.uid()` + `has_role(admin|superadmin)`) сохранён.
+- `UPDATE ... WHERE user_id=p_user_id AND direction='incoming' AND is_read=false AND created_at <= p_boundary` → `marked_count`.
+- В той же транзакции: `SELECT count(*) FROM telegram_messages WHERE user_id=p_user_id AND direction='incoming' AND is_read=false` → `remaining_unread_count`. Любое incoming, пришедшее в T2 ∈ (T_boundary, T_RPC], попадает в remaining и остаётся unread.
+- `REVOKE FROM PUBLIC` + `GRANT EXECUTE` только `authenticated`, `service_role`.
 
-Rollback: drop RPC миграцией; revert файлов.
+### 2.3 RPC `bulk_mark_dialogs_read_atomic` — per-dialog контракт
 
-DRY RUN: на тестовом диалоге с 5 непрочитанных — RPC одной транзакцией помечает все 5; параллельный incoming во время RPC остаётся unread; FAIL отправки → unread не сброшен.
+```sql
+CREATE OR REPLACE FUNCTION public.bulk_mark_dialogs_read_atomic(
+  p_items jsonb              -- [{ "user_id": "...", "boundary": "..." }, ...]
+)
+RETURNS TABLE(
+  dialog_user_id         uuid,
+  boundary               timestamptz,
+  marked_count           integer,
+  remaining_unread_count integer
+)
+```
 
-Before/after proof: mark-as-read 14 непрочитанных = 1 RPC + 1 inbox-refetch (вместо ≤28 callbacks). F4 runtime: после успешного ответа карточка теряет unread-badge < 500 мс (optimistic).
+- Каждая запись — собственная granular boundary. Один общий `now()` запрещён.
+- Валидация: пустой массив → пустой результат; элементы без `user_id` или `boundary` отбрасываются с записью в `audit_logs` (`telegram.mark_read.invalid_item`).
+- Внутри один цикл `FOR rec IN SELECT ... FROM jsonb_to_recordset(p_items)`, каждое обновление — собственный `UPDATE ... RETURNING` + локальный count. Идемпотентно.
 
-DoD S2: миграция применена, RPC работает, F3/F4 закрыты по state-matrix, proof-файл.
+### 2.4 Frontend контракт mutations
 
----
+В `InboxTabContent.tsx`:
 
-S
+- `markAsRead.mutationFn` принимает `{ userId, boundary }`; если `boundary` не получен — функция не запускается (см. 2.1).
+- `onMutate` больше **не** ставит безусловный `unread_count = 0`. Вместо этого:
+  - snapshot кэша сохраняется (rollback на ошибку);
+  - UI оставляет текущее значение до ответа сервера, чтобы избежать ложного нуля.
+- `onSuccess(data)` патчит ровно одну строку диалога: `unread_count = data.remaining_unread_count`. Никаких полных invalidate — это убирает дубликат с realtime-bus.
+- `onError` — восстанавливает snapshot, тост через `normalizeEdgeFunctionError`.
+- `bulkMarkAsRead` собирает массив `{ user_id, boundary }` из текущего кэша `INBOX_DIALOGS_QK` (по `last_message_at` каждого выбранного диалога) и патчит результат построчно.
+- Триггер после отправки ответа (`onMessageSent`) использует `MAX(created_at)` из локального `["telegram-messages", userId]` (всегда есть, чат открыт).
 
-3. F1 — оптимизация `get_inbox_dialogs_v1`
+### 2.5 Удаление двойной инвалидации
 
-Цель: уменьшить latency RPC на текущем объёме (9 334 строк) и сделать рост сублинейным. Сначала — переписать запрос; aggregate-таблицу заводим ТОЛЬКО если после rewrite + S1 baseline не достигает DoD.
+- `mark_dialog_read_atomic` точечно патчит кэш через `setQueryData`, поэтому **mutation не вызывает invalidateQueries**.
+- В `useInboxRealtimeInvalidation.ts` UPDATE-ветка остаётся (для incoming-сообщений от других операторов), но добавляется guard: если payload `new.is_read = true AND payload.commit_timestamp` приходит в окне 1.5 с после нашей собственной mutation — событие проглатывается (используем `Set<string>` recently-marked user_id с TTL). Это устраняет «mutation + realtime = 2 запроса».
+- Альтернатива (если guard признаём хрупким): RPC возвращает ответ → клиент патчит → realtime UPDATE на тех же id просто проигнорирован дедупликацией React Query (queryKey уже свежий, in-flight нет). Контракт описывается в proof.
 
-Шаг S3.1 — Diagnose под нагрузкой (read-only):
+### 2.6 Concurrency proof
 
-- `EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)` текущего RPC на тестовой нагрузке (НЕ в прайм-тайм, согласовать окно).
-- Зафиксировать P50/P95/P99 на сегодняшнем объёме + 3 синтетических объёма (×3, ×10, ×30 через временный test-schema, не trogая prod).
+Скрипт (SQL fixture, выполняется как часть proof, не как миграция):
 
-Шаг S3.2 — Plan rewrite (HYPOTHESIS):
+```sql
+-- T1: snapshot
+SELECT max(created_at) FROM telegram_messages
+ WHERE user_id=$dialog AND direction='incoming';  -- => B
 
-- Вариант A (предпочтительный): переписать через CTE с предварительным выбором top-N user_id по `idx_telegram_messages_created_at DESC` + LATERAL подзапросы для last-message и unread-count по `idx_telegram_messages_unread_v1`. Цель — Index Scan + Nested Loop вместо полного HashAgg.
-- Снять `EXPLAIN ANALYZE` варианта A, сравнить.
+-- T2: симулируем новое incoming
+INSERT INTO telegram_messages (... created_at=now() ...);
 
-Шаг S3.3 — Execute:
+-- T3: RPC
+SELECT * FROM mark_dialog_read_atomic($dialog, $B);
+-- => marked_count = N (старые), remaining_unread_count >= 1 (новое)
 
-- Миграция: `CREATE OR REPLACE FUNCTION public.get_inbox_dialogs_v1(...)` с новым телом. Сигнатура и контракт результата НЕ меняются.
-- GRANT EXECUTE остаётся прежним.
-- Уменьшить частоту вызова: `staleTime` `["inbox-dialogs"]` поднять с 30s до 60s (после S1 invalidate приходит точечно по событию — частые автоматические refetch не нужны).
+SELECT count(*) FROM telegram_messages
+ WHERE user_id=$dialog AND direction='incoming' AND is_read=false;  -- = remaining
+```
 
-STOP-guards:
+Ожидание: новое сообщение `created_at > B` остаётся `is_read=false`.
 
-- если новый план хуже старого по P95 хоть на одной выборке — STOP, откат, не катить.
-- если контракт колонок результата изменился — STOP.
+### 2.7 Permission-denied proof
 
-Rollback: миграцией восстановить предыдущее тело функции (бэкап текста — в proof-файле).
+```sql
+SET LOCAL ROLE authenticated;  -- jwt без admin/superadmin
+SELECT * FROM mark_dialog_read_atomic('<uuid>', now());
+-- ERROR: forbidden (SQLSTATE 42501)
+```
 
-Условие на S3.4 (aggregate-таблица): материализованная `telegram_dialog_summary` создаётся ТОЛЬКО если после S3.3 + S1 cold-открытие > 200 ms P95 на сегодняшнем объёме или ×10 проекции даёт > 800 ms. Не создаётся автоматически.
-
-Before/after proof: EXPLAIN ANALYZE до/после; cold/warm Network trace по §4.A. Цель: P50 < 80 ms, P95 < 200 ms на текущем объёме.
-
-DoD S3: RPC оптимизирован, контракт сохранён, proof-файл.
-
----
-
-S
-
-4. F5 — мобильный composer (единый патч)
-
-Цель: composer виден при открытой клавиатуре и QuickType bar на iOS Safari и standalone PWA, на Android не регрессирует, на desktop без изменений. Все три элемента (meta viewport, safe-area, visualViewport) делаются совместно; одна строка `interactive-widget` сама по себе не закрывает фикс.
-
-Файлы:
-
-- `index.html` — meta viewport: `content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"`.
-- `src/hooks/useVisualViewportInset.ts` — УЖЕ существует (canonical, см. lesson-room). Подключить как есть, не дублировать.
-- `src/components/admin/ContactTelegramChat.tsx` composer (`~line 1907`):
-  - подключить `useVisualViewportInset()` (single-mount на странице чата);
-  - обернуть composer в контейнер со `style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + var(--room-vv-bottom-offset, 0px))' }}`;
-  - после `textarea.focus` — `scrollIntoView({ block: 'end', behavior: 'smooth' })` для последнего сообщения.
-- Никаких изменений в desktop-ветке (хук no-op на desktop).
-
-STOP-guards:
-
-- runtime proof обязателен на реальном iPhone (iOS Safari + standalone PWA, iOS 16.4+);
-- если на iPhone клавиатура всё ещё перекрывает composer — STOP, не закрывать;
-- двойного учёта safe-area нет (только в `calc()`).
-
-Rollback: revert файлов; meta viewport вернуть к исходному.
-
-Before/after proof: видеозапись/скрин с iPhone — composer виден над клавиатурой и QuickType bar; на Android Chrome не сломалось; на desktop layout идентичен.
-
-DoD S4: runtime PASS на iPhone + Android + desktop, proof-файл.
+Также: anon → 42501.
 
 ---
 
-Follow-up / DEFERRED (не блокируют S0…S4)
+## S3 — Корректирующий патч (PARTIAL → PASS либо revert)
 
-- F9 — дубликат partial-индексов `idx_telegram_messages_unread` / `_unread_v1`: дроп ТОЛЬКО после `pg_stat_user_indexes` proof, что один из них не используется, и dependency-проверки. Отдельный микро-патч.
-- F8 — partial-индекс для `telegram_logs.action NOT IN`: вне scope контакт-центра, в backlog.
-- F11 — lazy signed URLs через intersection observer: пересмотреть после S1+S3.
-- Memory growth UAT (20–30 последовательных открытий) — отдельная задача.
-- F12 — email_inbox health-check после фактической настройки IMAP.
+### 3.1 EXPLAIN/parity proof
+
+Запускаем (read-only) и сохраняем в proof:
+
+- `EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM get_inbox_dialogs_v1(50, 0, NULL);` — старое тело (восстанавливается локально в shadow-схеме для замера) и новое.
+- P50/P95 за 20 повторов через `pg_stat_statements` (или таймер по запросу).
+- Полный row-by-row diff: `SELECT array_agg(row(t.*) ORDER BY user_id) FROM <old>() t` vs `<new>() t` — должно быть идентично (контракт parity по всем столбцам, включая `has_pending_media` и `last_bot_*`).
+- Дополнительно: `EXPLAIN` показывает, какой индекс используется в каждом LATERAL.
+
+### 3.2 Признание ограничения
+
+В отчёте честно фиксируется: первый CTE `users AS (SELECT DISTINCT user_id ...)` всё ещё делает полный index scan по `telegram_messages` (хоть и не sort+GROUP BY). Формулировка «full scan устранён» удаляется. Корректный текст: «устранён двойной агрегирующий проход (GROUP BY + DISTINCT ON); распределённая работа на пользователя стала O(unread_index_seek) вместо O(rows_per_user)».
+
+### 3.3 Условие принятия
+
+- Если EXPLAIN/parity proof подтверждает: новая функция не медленнее старой ни на одном из планов и parity 100% → S3 PASS.
+- Если хоть один из критериев не выполнен → миграция-restore возвращает прежнее тело RPC.
 
 ---
 
-Технический раздел
+## Rollback — durable
 
-SQL/RPC summary:
+- Создаём файл `supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql` со ВЗЯТЫМ ИЗ `pg_get_functiondef` ДО-патч телом (тем, что лежало до S3). Это restore migration в репозитории, не `/tmp`.
+- Создаём файл `supabase/migrations/<ts>_restore_mark_dialog_read_atomic.sql` — пустая операция (`-- intentionally empty; rollback path documented below`) + комментированный SQL `DROP FUNCTION` обеих новых RPC.
+- Документ rollback процедуры в proof:
+  1. выкатить frontend, где `markAsRead`/`bulkMarkAsRead` снова используют прямой `update().eq(...)`;
+  2. дождаться отсутствия вызовов новых RPC (логи Edge / PostgREST);
+  3. применить restore migration get_inbox_dialogs_v1;
+  4. только затем `DROP FUNCTION` mark_dialog_read_atomic / bulk_mark_dialogs_read_atomic.
+
+---
+
+## S4 — статус и anti-duplication
+
+- Статус S4: **ENGINEERING IMPLEMENTED, LIVE MOBILE UAT PENDING**. Не помечать PASS.
+- Anti-duplication proof для `useVisualViewportInset`: `rg -n "visualViewport" src/hooks` показывает единственный hook (`src/hooks/useVisualViewportInset.ts`). Других реализаций нет — это новый файл, дубликата не создан. Фиксируем в proof.
+- Никаких изменений кода S4 в этом проходе.
+
+---
+
+## Файлы и миграции (минимально)
 
 ```text
-+ CREATE FUNCTION public.mark_dialog_read_atomic(p_user_id uuid, p_before_ts timestamptz)
-  RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = public;
-  GRANT EXECUTE ON FUNCTION public.mark_dialog_read_atomic TO authenticated;
+Миграции:
+  supabase/migrations/<ts>_mark_dialog_read_atomic_v2_contract.sql
+    - DROP FUNCTION public.mark_dialog_read_atomic(uuid, timestamptz);
+    - DROP FUNCTION public.bulk_mark_dialogs_read_atomic(uuid[], timestamptz);
+    - CREATE FUNCTION mark_dialog_read_atomic(uuid, timestamptz NOT NULL)
+        RETURNS TABLE(dialog_user_id, boundary, marked_count, remaining_unread_count)
+    - CREATE FUNCTION bulk_mark_dialogs_read_atomic(p_items jsonb)
+        RETURNS TABLE(dialog_user_id, boundary, marked_count, remaining_unread_count)
+    - REVOKE/GRANT
+  supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql   (только для on-demand rollback; не запускать)
 
-~ CREATE OR REPLACE FUNCTION public.get_inbox_dialogs_v1(p_limit int, p_offset int, p_search text)
-  -- rewrite: top-N user_id by idx_telegram_messages_created_at + LATERAL per-user
-  -- контракт результата НЕ меняется
+Код:
+  src/components/admin/communication/InboxTabContent.tsx
+    - вычисление boundary из ["telegram-messages", userId] или из INBOX_DIALOGS_QK
+    - mutations: новый контракт, no optimistic-zero, setQueryData по remaining_unread_count
+    - bulk: сборка jsonb [{user_id, boundary}]
+  src/components/admin/ContactTelegramChat.tsx
+    - onMessageSent передаёт boundary = max(created_at) incoming из локального кэша
+  src/hooks/useInboxRealtimeInvalidation.ts
+    - guard «recently-marked user_id TTL 1500 ms» для UPDATE incoming.is_read=true
+  src/constants/inboxQueryKeys.ts — без изменений
+  src/hooks/useVisualViewportInset.ts — без изменений (anti-duplication подтверждён)
 ```
 
-Список затрагиваемых файлов:
+## Артефакт
 
-```text
-S1: src/hooks/useInboxRealtimeInvalidation.ts (new)
-    src/components/admin/communication/InboxTabContent.tsx
-    src/hooks/useUnreadMessagesCount.tsx
-S2: supabase/migrations/<ts>_mark_dialog_read_atomic.sql
-    src/components/admin/communication/InboxTabContent.tsx
-    src/components/admin/ContactTelegramChat.tsx
-S3: supabase/migrations/<ts>_get_inbox_dialogs_v1_rewrite.sql
-    src/components/admin/communication/InboxTabContent.tsx (staleTime)
-S4: index.html
-    src/components/admin/ContactTelegramChat.tsx
-```
+`.lovable/proofs/patch_contact_center_s2_s3_corrective_2026-06-14.md` — содержит:
 
-Безопасность и изоляция:
+- boundary contract (источник, fallback, no-op case);
+- RPC parity и новый контракт ответа;
+- concurrency fixture лог;
+- permission-denied лог;
+- EXPLAIN (ANALYZE, BUFFERS) старой и новой `get_inbox_dialogs_v1` + P50/P95;
+- row-by-row diff parity;
+- durable rollback процедуру и пути migration-файлов;
+- anti-duplication proof для `useVisualViewportInset`;
+- подтверждение отсутствия изменений в исключённых доменах.
 
-- доступы / billing / broadcasts / CRM / документы / Stripe / bePaid / RLS / Storage НЕ затрагиваются;
-- edge-функции (telegram-admin-chat, telegram-webhook, grant-access-*) не меняются;
-- контракт API (`get_inbox_dialogs_v1`) сохраняется по сигнатуре и колонкам результата;
-- никаких миграций по `auth/storage/realtime/supabase_functions/vault`.
+## Definition of Done
 
-Артефакты на выходе Этапа 2:
+1. RPC `mark_dialog_read_atomic` требует `p_boundary`, возвращает `(dialog_user_id, boundary, marked_count, remaining_unread_count)`.
+2. RPC `bulk_mark_dialogs_read_atomic` принимает `jsonb` per-dialog boundary, возвращает per-dialog результат.
+3. Frontend не использует `new Date()` для boundary, не показывает оптимистический ноль до ответа RPC, не вызывает invalidateQueries в mutation success.
+4. Realtime bus не порождает повторный refetch на собственное событие mark-as-read (TTL-guard ≥ 1.5 s).
+5. Concurrency proof в репозитории: incoming в окне (T_boundary, T_RPC] остаётся unread.
+6. Permission-denied proof: anon и authenticated-без-admin → 42501.
+7. EXPLAIN/parity proof для `get_inbox_dialogs_v1` принят либо restore migration применена.
+8. Restore migration `get_inbox_dialogs_v1` лежит в `supabase/migrations/`, не в `/tmp`.
+9. Rollback процедура задокументирована в правильном порядке (frontend → wait → restore → drop).
+10. S4 явно остаётся в статусе ENGINEERING IMPLEMENTED / LIVE MOBILE UAT PENDING.
+11. Anti-duplication proof для `useVisualViewportInset` сохранён.
+12. Изменений в исключённых доменах нет (grep + ручная проверка).
 
-- `.lovable/proofs/contact_center_baseline_2026-06-14.md` (S0)
-- `.lovable/proofs/patch_contact_center_s1_<date>.md`
-- `.lovable/proofs/patch_contact_center_s2_<date>.md`
-- `.lovable/proofs/patch_contact_center_s3_<date>.md`
-- `.lovable/proofs/patch_contact_center_s4_<date>.md`
-- финальный отчёт `Отчет о выполнении: PATCH-CONTACT-CENTER-FIX-V1`
+## Что НЕ делается
 
-Ожидаемое подтверждение перед выполнением: «Утверждаю план PATCH-CONTACT-CENTER-FIX-V1, начинать с S0».
+- Никаких изменений в `access_rules`, `entitlements`, `subscriptions_v2`, `orders_v2`, billing-webhooks, broadcasts, Stripe/bePaid edge functions, Storage policy, telegram grant/queue/lifecycle.
+- S0 runtime baseline и S1 live UAT остаются в deferred-листе для единого operational прохода — этим патчем не затрагиваются.
+- S4 код не меняется в этом проходе.
