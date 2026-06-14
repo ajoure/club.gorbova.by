@@ -42,7 +42,7 @@ export function OutboundMediaPreview({
       setPreviewUrl(url);
       return () => URL.revokeObjectURL(url);
     }
-  }, [file]);
+  }, [file, fileType]);
 
   // Get video duration
   useEffect(() => {
