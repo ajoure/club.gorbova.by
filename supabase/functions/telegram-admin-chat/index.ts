@@ -541,6 +541,57 @@ Deno.serve(async (req) => {
           sendResult = await telegramRequest(botToken, "sendMessage", sendBody);
         }
 
+        // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: voice STOP-guard.
+        // Success criteria for voice: HTTP success + ok === true +
+        // result.message_id + result.voice. If Telegram returned audio/document
+        // or an empty result, do NOT silently accept it: delete the orphan
+        // Telegram message and report a clear error to the admin.
+        if (file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
+          const orphanMid = sendResult?.result?.message_id;
+          const classified =
+            sendResult?.result?.audio ? "audio"
+            : sendResult?.result?.document ? "document"
+            : "unknown";
+          console.warn("[telegram-admin-chat] voice_not_recognized", {
+            user_id,
+            file_name: file?.name,
+            classified_as: classified,
+            telegram_message_id: orphanMid,
+          });
+          if (orphanMid) {
+            try {
+              await telegramRequest(botToken, "deleteMessage", {
+                chat_id: profile.telegram_user_id,
+                message_id: orphanMid,
+              });
+            } catch (cleanupErr) {
+              console.warn("[telegram-admin-chat] voice_cleanup_failed", cleanupErr);
+            }
+          }
+          await supabase.from("telegram_logs").insert({
+            user_id,
+            action: "ADMIN_CHAT_FILE",
+            target: "user",
+            status: "error",
+            error_message: `voice_classified_as_${classified}`,
+            meta: {
+              failure_stage: "voice_stop_guard",
+              file_type: "voice",
+              file_name: file?.name,
+              classified_as: classified,
+              telegram_response: sendResult,
+              sent_by_admin: user.id,
+            },
+          });
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Telegram распознал файл как «${classified}», а не как голосовое. Отправка отменена.`,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+
         // If file was sent successfully, download from Telegram and upload to Storage
         let storageBucket: string | null = null;
         let storagePath: string | null = null;
