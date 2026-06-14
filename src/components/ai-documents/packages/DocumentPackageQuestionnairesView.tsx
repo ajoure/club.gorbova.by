@@ -39,6 +39,7 @@ import { useRbac } from "@/hooks/useRbac";
 import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
+import { PackageFieldsAssignmentPanel } from "./PackageFieldsAssignmentPanel";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 interface Props {
@@ -492,6 +493,10 @@ function ItemQuestionnaire({
             </p>
           </>
         )}
+        <PackageFieldsAssignmentPanel
+          packageTemplateId={packageTemplateId}
+          packageTemplateItemId={item.id}
+        />
       </AccordionContent>
     </AccordionItem>
   );
