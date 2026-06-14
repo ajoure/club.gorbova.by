@@ -197,3 +197,19 @@ Deno.test("pf-XXXXXX: unknown token → pf_token_not_found", async () => {
   assertEquals(res.resolved, false);
   if (!res.resolved) assertEquals(res.code, "pf_token_not_found");
 });
+
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1 Step 0 contract symmetry:
+// БД CHECK сужен до ^pf-[0-9]{6}$ и assign_package_field_public_id
+// бросает pf_sequence_exhausted при v_next > 999999. Resolver обязан
+// отказывать 7-значным токенам, чтобы не было класса «сгенерировано — не распознано».
+Deno.test("pf-XXXXXX: 7-digit token (out of contract) → not matched by PF_RE", async () => {
+  const supabase = buildMock([]);
+  const res = await resolvePackageTokenCore({
+    rawToken: "pf-1234567",
+    packageSessionId: SESSION_ID,
+    packageTemplateItemId: ITEM_ID,
+    supabase,
+  });
+  assertEquals(res.resolved, false);
+  if (!res.resolved) assertEquals(res.code, "alias_missing");
+});
