@@ -10,12 +10,12 @@
 
 Baseline инвентаризация показала, что архитектура контакт-центра в целом канонична: используется RPC `get_inbox_dialogs_v1`, виртуализация списка (`@tanstack/react-virtual`), есть `staleTime`/`refetchOnWindowFocus:false`, индексы по `(user_id, created_at DESC)` и partial-индекс по непрочитанным.
 
-При этом подтверждены **4 ROOT CAUSE** проблем, описанных пользователем:
+При этом подтверждены наблюдения по 4 направлениям, описанным пользователем (с уточнённой классификацией confidence):
 
-1. **Постепенная деградация скорости** — `get_inbox_dialogs_v1` каждый вызов выполняет полный `GROUP BY user_id` + `DISTINCT ON (user_id)` по ВСЕМ строкам `telegram_messages` (9 334 строк сейчас, растёт линейно). При том что выводится только 100 диалогов. Это «налог», растущий с историей.
-2. **Каскад refetch'ей на одно событие** — три независимые realtime-подписки на ВСЮ таблицу `telegram_messages` без серверного фильтра. Один входящий INSERT и каждый mass mark-as-read триггерят 2–3 рефетча тяжёлой RPC одновременно.
-3. **Карточка остаётся «новой» после ответа** — mark-as-read вызывается на `onMessageSent`, но решение зависит от 30s-staleTime и порядка прихода realtime-событий. Race condition между outgoing INSERT и UPDATE is_read даёт окно, когда карточка отображается с unread_count > 0.
-4. **Мобильный composer перекрыт клавиатурой/QuickType bar (iOS)** — в `index.html` нет `interactive-widget=resizes-content`, в композере нет обработки `visualViewport` и `env(safe-area-inset-bottom)`. iOS Safari layout viewport не сжимается при появлении клавиатуры → поле ввода уходит под QuickType bar.
+1. **F1 — Постепенная деградация скорости (CONFIRMED SCALING BOTTLENECK).** `get_inbox_dialogs_v1` каждый вызов выполняет полный `GROUP BY user_id` + `DISTINCT ON (user_id)` по ВСЕМ строкам `telegram_messages` (9 334 строк сейчас, растёт линейно). Окончательное влияние на наблюдаемую latency подтверждается безопасным before/after proof на Этапе 2.
+2. **F2 — Каскад refetch'ей на одно событие (ROOT CAUSE CONFIRMED).** Два realtime-канала без серверного фильтра инициируют тяжёлый RPC-refetch: `inbox-messages-realtime` (refetch `get_inbox_dialogs_v1`) и `unread-count` (refetch `count(*)` по непрочитанным). Третий канал `global-incoming-alert` имеет фильтр `direction=eq.incoming` и выполняет sound-only — не вызывает refetch и не считается в стоимости. Один INSERT → 2 параллельных refetch-сигнала; mass mark-as-read даёт построчный fanout.
+3. **F4 — Карточка может оставаться «новой» после ответа (PARTIALLY CONFIRMED / RACE HYPOTHESIS).** Подтверждено наличие потенциально неверного порядка операций между outgoing INSERT, mark-as-read UPDATE и refetch'ем `get_inbox_dialogs_v1`. Сам пользовательский кейс runtime не воспроизведён; скриншот IMG_4569 может показывать корректную сортировку в разделе «Все», а не сохранённое unread-состояние. На Этапе 2 закрывается атомарным фиксом вместе с F3 (RPC + optimistic patch + защита от ошибки исходящей).
+4. **F5 — Мобильный composer перекрыт клавиатурой/QuickType bar (iOS) (ROOT CAUSE CONFIRMED).** В `index.html` нет `interactive-widget=resizes-content`, в композере нет `visualViewport`-обработки и `env(safe-area-inset-bottom)`. iOS Safari layout viewport не сжимается при появлении клавиатуры. Одна строка `interactive-widget` в meta-viewport — НЕ самостоятельное завершённое исправление; правится одним мобильным патчем (meta + safe-area + visualViewport), runtime proof на реальном iPhone обязателен.
 
 Прочие наблюдения — список F1…F12 ниже.
 
@@ -106,7 +106,7 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 ### F1 — `get_inbox_dialogs_v1` сканирует всю таблицу для каждого вызова
 
 * **Severity:** HIGH
-* **Confidence:** ROOT CAUSE CONFIRMED (определение функции прочитано целиком).
+* **Confidence:** CONFIRMED SCALING BOTTLENECK (определение функции прочитано целиком; факт полного `GROUP BY` + `DISTINCT ON` подтверждён по исходнику). Окончательное влияние именно этого RPC на наблюдаемую задержку открытия контакт-центра подтверждается безопасным before/after proof на Этапе 2 (см. §4.A Baseline pre-execute).
 * **User scenario:** открытие контакт-центра / возврат на вкладку Telegram / каждый refetch по realtime.
 * **Доказательство:**
   ```sql
@@ -136,36 +136,39 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 * **Expected proof:** `EXPLAIN ANALYZE` до/после; P50 < 80 ms, P95 < 200 ms на сегодняшнем объёме.
 * **Blocker:** да — корневая причина деградации.
 
-### F2 — Тройная realtime-подписка на ВСЕ строки `telegram_messages` без серверного фильтра
+### F2 — Realtime-подписки на ВСЕ строки `telegram_messages` без серверного фильтра инициируют каскад refetch
 
 * **Severity:** HIGH
 * **Confidence:** ROOT CAUSE CONFIRMED.
 * **User scenario:** любая активность бота, mass mark-as-read, входящий поток.
-* **Доказательство:** см. таблицу 2.5. Три канала без `filter:`:
-  - `inbox-messages-realtime` — INSERT + UPDATE → `refetch("inbox-dialogs")` без debounce;
-  - `unread-count` — event `*` → `refetch("unread-messages-count")` без debounce;
-  - `global-incoming-alert` — INSERT direction=incoming → sound.
+* **Доказательство:** см. таблицу 2.5. Тяжёлый refetch выполняют **два** канала без `filter:`:
+  - `inbox-messages-realtime` — INSERT + UPDATE на `telegram_messages` без фильтра → `refetch("inbox-dialogs")` (тяжёлая RPC `get_inbox_dialogs_v1`, см. F1) без debounce;
+  - `unread-count` — event `*` на `telegram_messages` без фильтра → `refetch("unread-messages-count")` (count(*) с partial-index) без debounce.
+
+  Третий канал — `global-incoming-alert` — имеет серверный фильтр `direction=eq.incoming` и выполняет **только** проигрывание звука (sound-only); RPC-refetch он не инициирует и в стоимости каскада не участвует.
+
   Плюс при открытии чата дополнительно `chat-messages-<uuid>` + `chat-bridge-<uuid>` (эти уже с фильтром по user_id, корректно).
-* **Root cause:** один INSERT в `telegram_messages` рассылается в N открытых вкладок × 3 подписки × 1 RPC = 3 параллельных вызова `get_inbox_dialogs_v1` (см. F1). При mass mark-as-read через `update().eq.in(...)` каждая обновлённая строка идёт UPDATE-broadcast'ом → лавина refetch.
-* **Expected proof:** Network-трасса: один входящий ≤ 1 вызов `get_inbox_dialogs_v1`; mass mark-as-read 100 диалогов = 1 refetch, не 100.
-* **Recommended fix (HYPOTHESIS):** debounce 250–500 мс + dedup по client-side; либо переход на единый канал-«bus» с условием. Не менять контракт realtime, только wrapper.
+* **Root cause:** один INSERT в `telegram_messages` рассылается в N открытых вкладок × 2 refetch-канала = 2 параллельных вызова (RPC + count). При mass mark-as-read через построчные UPDATE каждая обновлённая строка идёт UPDATE-broadcast'ом → линейный fanout refetch.
+* **Expected proof (на Этапе 2, после фикса):** Network-трасса: один входящий ≤ 1 вызов `get_inbox_dialogs_v1` и ≤ 1 вызов count; mass mark-as-read N диалогов = 1 refetch, не N.
+* **Recommended fix (HYPOTHESIS):** debounce 250–500 мс + dedup по client-side; единая модель realtime-инвалидации в одном слое. Не менять контракт realtime, только wrapper.
 * **Blocker:** да — главная причина «нагрузки от собственного действия» и каскадов.
 
 ### F3 — Mark-as-read mutation триггерит сама себя через realtime UPDATE
 
 * **Severity:** HIGH
 * **Confidence:** FACT.
-* **Доказательство:** `InboxTabContent.tsx:420-434` — UPDATE `is_read=true WHERE user_id=… AND direction='incoming' AND is_read=false`. Каждая строка UPDATE → realtime UPDATE → `refetch()` в InboxTabContent (F2). При 14 непрочитанных в одном диалоге = 14 refetch'ей в секунду.
-* **Recommended fix (HYPOTHESIS):** debounce + игнорирование UPDATE-событий, инициированных текущей сессией (по `sent_by_admin` или сравнением с локальным optimistic state). Или серверная RPC `mark_dialog_read(user_id uuid)` единым UPDATE без построчного fanout.
+* **Доказательство:** `InboxTabContent.tsx:420-434` — UPDATE `is_read=true WHERE user_id=… AND direction='incoming' AND is_read=false`. Каждая строка UPDATE → realtime UPDATE-broadcast → triggers refetch в `inbox-messages-realtime` и `unread-count` (см. F2). При 14 непрочитанных в одном диалоге = до 14 × 2 = **28 refetch-сигналов** от двух refetch-подписок. Фактическое число сетевых HTTP-запросов может быть меньше из-за React Query in-flight dedup/staleTime, но сами realtime callbacks вызываются построчно, и стоимость на realtime-канале/сервере = N×2.
+* **Recommended fix (HYPOTHESIS):** серверная RPC `mark_dialog_read_atomic(user_id uuid, before_ts timestamptz)` — единый UPDATE одним SQL без построчного fanout + debounce на стороне подписчика + игнорирование UPDATE-событий, инициированных текущей сессией (по `sent_by_admin` / локальному optimistic state).
 * **Blocker:** да.
 
 ### F4 — Карточка остаётся «новой» после успешного ответа оператора
 
 * **Severity:** MEDIUM (UX-bug, описан пользователем; см. IMG_4569).
-* **Confidence:** ROOT CAUSE CONFIRMED через 2 цепочки:
+* **Confidence:** PARTIALLY CONFIRMED / RACE HYPOTHESIS. Подтверждено наличие потенциально неверного порядка операций, сам пользовательский кейс runtime не воспроизведён.
+* **Доказательство потенциальной race condition:**
   1. `InboxTabContent.tsx:1010` действительно вызывает `markAsRead.mutate(selectedUserId)` после `onMessageSent`. Но `onMessageSent` вызывается в `ContactTelegramChat.tsx:1077` **после** локального `refetch()` (line 1075), а сам outgoing INSERT прилетает асинхронно от Telegram API. Возможен порядок: outgoing INSERT broadcast → `refetch("inbox-dialogs")` → RPC возвращает старый снепшот с unread_count > 0, потому что mark-as-read ещё не отработал. Финальный mark-as-read UPDATE придёт следующим тиком, но из-за F1+F2 RPC ещё «считается».
-  2. `staleTime: 30000` на `["inbox-dialogs"]` — после успешного refetch следующий не произойдёт 30 секунд (нет invalidate в `markAsRead.onSuccess`? — есть: `queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] })`, line 431; но это попадёт под debounce при F2-фиксе тоже).
-  Также видна вторая ветка: сообщение на скрине отправлено через десктоп («Добрый день. Эти ссылки не работают?» от gorbova support 11:23, скрин в 11:25); 1 минуту карточка ещё в списке (хотя без unread-badge — это уже корректное состояние, в «Все»; счётчик «Новые: 5» — это другие диалоги). Гипотеза: на самом деле read-state в этом конкретном случае ОК, симптом — карточка просто отсортирована вверху по `last_message_at`, что нормально.
+  2. `staleTime: 30000` на `["inbox-dialogs"]` — после успешного refetch следующий не произойдёт 30 секунд. В `markAsRead.onSuccess` есть `queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] })` (line 431), но при F2-каскаде он сливается с фоновым refetch.
+* **Альтернативная интерпретация скриншота:** карточка на IMG_4569 могла отображаться корректно в разделе «Все» (отсортирована вверх по `last_message_at` без unread-badge), а счётчик «Новые: 5» относится к другим диалогам. Это объясняет наблюдение без race и должно быть исключено сначала.
 * **Confirmed sub-finding:** настоящая проблема read-state возникает при ответе из мобильной версии и/или когда mark-as-read UPDATE приходит после следующего refetch. State-machine ниже.
 * **State-machine, как должно быть:**
   ```
@@ -254,9 +257,9 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 
 ---
 
-## 4. Сводка по User Scenarios (Baseline)
+## 4. Сводка по User Scenarios (Baseline — архитектурная оценка)
 
-Замеры P50/P95 не выполнялись (исключено STOP-условиями плана: pg-bench запрещён в проде, EXPLAIN ANALYZE на write-heavy таблицу с дорогим планом — рискованно). Базовая численная оценка из slow_queries и архитектурного анализа:
+Численные замеры P50/P95 на Этапе 1 не выполнялись (исключено STOP-условиями). Базовая оценка из slow_queries и архитектурного анализа:
 
 | Сценарий | Текущее ожидаемое поведение | Ожидаемый bottleneck |
 | --- | --- | --- |
@@ -265,10 +268,36 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 | Отправка ответа | optimistic OK; реальная inbox-карточка обновляется через 100–2000 ms | F2, F3, F4 |
 | Открытие файла | signed URL уже в payload если в первой пачке, иначе second-call | F11 |
 | Переключение «Новые» / «Все» | мгновенно (клиентский фильтр) | — |
-| Один входящий | 3 параллельных refetch | F2 |
-| Mass mark-as-read 14 диалогов | 14 строк × 3 realtime channels = 42 refetch-триггера | F2, F3 |
+| Один входящий INSERT | до 2 параллельных refetch-сигнала (один RPC `get_inbox_dialogs_v1` + один count(*)). `global-incoming-alert` фильтрованный, sound-only — не считается | F2 |
+| Mass mark-as-read 14 диалогов (построчно) | до 14 × 2 = **28 refetch-сигналов** от двух refetch-каналов. Фактических HTTP-запросов может быть меньше из-за React Query in-flight dedup, но callbacks вызываются построчно. | F2, F3 |
 
 После исправлений F1–F5 ожидается, что эти значения упадут в 3–10× раз.
+
+---
+
+## 4.A Baseline pre-execute (обязательный шаг в начале Этапа 2)
+
+Безопасный browser/network baseline (без pgbench, без EXPLAIN ANALYZE на write-heavy, без production-нагрузки). Снимается до любого кода/миграций и сохраняется как proof-артефакт `.lovable/proofs/contact_center_baseline_<date>.md`. Та же методика повторяется после фикса для before/after proof.
+
+Замеры:
+1. **Browser Network trace** при cold-открытии `/admin/communication?tab=inbox` (hard reload) и warm-возврате на вкладку. Фиксируем:
+   - число вызовов `get_inbox_dialogs_v1` за первые 10 секунд;
+   - payload size ответа (bytes);
+   - время от навигации до первой полной отрисовки списка диалогов (TTFP).
+2. **Открытие одного диалога** (средний по объёму медиа). Фиксируем:
+   - суммарное время от клика до отрисовки последнего сообщения;
+   - число запросов `telegram-admin-chat`;
+   - число second-call'ов на signed URLs.
+3. **Один входящий INSERT** (тестовое сообщение в тестовый диалог). Фиксируем:
+   - число realtime callbacks по подпискам;
+   - число фактических HTTP-refetch'ей (`get_inbox_dialogs_v1`, count unread).
+4. **Mark-as-read одного диалога с N непрочитанных** (тестовый диалог). Фиксируем:
+   - число realtime callbacks;
+   - число фактических HTTP-refetch'ей.
+
+Источники: Chrome DevTools Network panel, Performance panel (без CPU throttling), консольный лог реалтайма.
+
+Запрещено: pg-bench, нагрузочные скрипты, `EXPLAIN (ANALYZE, BUFFERS)` на `telegram_messages` в прайм-тайм, любые INSERT/UPDATE в production-таблицы вне тестового диалога.
 
 ---
 
