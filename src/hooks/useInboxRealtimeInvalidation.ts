@@ -5,6 +5,7 @@ import {
   INBOX_DIALOGS_QK,
   UNREAD_MESSAGES_COUNT_QK,
 } from "@/constants/inboxQueryKeys";
+import { isSelfMarkActive } from "@/hooks/inboxMarkReadCoordinator";
 
 /**
  * useInboxRealtimeInvalidation
@@ -97,12 +98,21 @@ export function useInboxRealtimeInvalidation(): void {
         { event: "UPDATE", schema: "public", table: "telegram_messages" },
         (payload) => {
           const row = payload.new as
-            | { direction?: string; is_read?: boolean }
+            | { direction?: string; is_read?: boolean; user_id?: string }
             | null;
+          // Coordinator-guard: если этот user_id только что был помечен
+          // нашей собственной mutation, RPC уже вернула remaining_unread_count
+          // и кэш точечно пропатчен. Realtime-эхо своего UPDATE не должен
+          // плодить параллельный refetch. Чужие изменения и любые INSERT
+          // продолжают инвалидировать как обычно.
+          if (
+            row?.direction === "incoming" &&
+            row?.is_read === true &&
+            isSelfMarkActive(row?.user_id)
+          ) {
+            return;
+          }
           markInbox();
-          // Эвристика без зависимости от REPLICA IDENTITY FULL:
-          // если новое состояние строки = «прочитанное входящее», это
-          // событие меняет счётчик непрочитанных.
           if (row?.direction === "incoming" && row?.is_read === true) {
             markUnread();
           }
