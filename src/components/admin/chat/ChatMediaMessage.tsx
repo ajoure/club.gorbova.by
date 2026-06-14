@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { MediaLightbox } from "./MediaLightbox";
 import { AudioPlayer } from "./AudioPlayer";
+import { VoiceMessageBubble } from "./VoiceMessageBubble";
 import {
   Tooltip,
   TooltipContent,
@@ -404,10 +405,30 @@ export function ChatMediaMessage({
   // Audio / Voice
   if (isAudio) {
     if (hasFile) {
+      if (canonicalType === "voice") {
+        const handleVoiceDownload = () => {
+          const a = document.createElement("a");
+          a.href = fileUrl!;
+          a.download = fileName || "voice.ogg";
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        };
+        return (
+          <VoiceMessageBubble
+            direction={isOutgoing ? "outgoing" : "incoming"}
+            src={fileUrl!}
+            fileName={fileName}
+            onDownload={handleVoiceDownload}
+          />
+        );
+      }
       return (
         <AudioPlayer
           url={fileUrl!}
-          isVoice={canonicalType === "voice"}
+          isVoice={false}
           isOutgoing={isOutgoing}
         />
       );
