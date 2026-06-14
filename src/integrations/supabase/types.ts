@@ -16233,6 +16233,10 @@ export type Database = {
         Args: { _ban_case_id: string; _identifiers: Json }
         Returns: number
       }
+      bulk_mark_dialogs_read_atomic: {
+        Args: { p_boundary?: string; p_user_ids: string[] }
+        Returns: number
+      }
       can_send_reaction: {
         Args: { _event_id: string; _user_id: string }
         Returns: boolean
@@ -17045,6 +17049,10 @@ export type Database = {
           p_service_key: string
         }
         Returns: undefined
+      }
+      mark_dialog_read_atomic: {
+        Args: { p_boundary?: string; p_user_id: string }
+        Returns: number
       }
       next_public_id: { Args: { p_entity_type: string }; Returns: string }
       norm_email: { Args: { _val: string }; Returns: string }
