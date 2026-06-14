@@ -136,19 +136,21 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 * **Expected proof:** `EXPLAIN ANALYZE` до/после; P50 < 80 ms, P95 < 200 ms на сегодняшнем объёме.
 * **Blocker:** да — корневая причина деградации.
 
-### F2 — Тройная realtime-подписка на ВСЕ строки `telegram_messages` без серверного фильтра
+### F2 — Realtime-подписки на ВСЕ строки `telegram_messages` без серверного фильтра инициируют каскад refetch
 
 * **Severity:** HIGH
 * **Confidence:** ROOT CAUSE CONFIRMED.
 * **User scenario:** любая активность бота, mass mark-as-read, входящий поток.
-* **Доказательство:** см. таблицу 2.5. Три канала без `filter:`:
-  - `inbox-messages-realtime` — INSERT + UPDATE → `refetch("inbox-dialogs")` без debounce;
-  - `unread-count` — event `*` → `refetch("unread-messages-count")` без debounce;
-  - `global-incoming-alert` — INSERT direction=incoming → sound.
+* **Доказательство:** см. таблицу 2.5. Тяжёлый refetch выполняют **два** канала без `filter:`:
+  - `inbox-messages-realtime` — INSERT + UPDATE на `telegram_messages` без фильтра → `refetch("inbox-dialogs")` (тяжёлая RPC `get_inbox_dialogs_v1`, см. F1) без debounce;
+  - `unread-count` — event `*` на `telegram_messages` без фильтра → `refetch("unread-messages-count")` (count(*) с partial-index) без debounce.
+
+  Третий канал — `global-incoming-alert` — имеет серверный фильтр `direction=eq.incoming` и выполняет **только** проигрывание звука (sound-only); RPC-refetch он не инициирует и в стоимости каскада не участвует.
+
   Плюс при открытии чата дополнительно `chat-messages-<uuid>` + `chat-bridge-<uuid>` (эти уже с фильтром по user_id, корректно).
-* **Root cause:** один INSERT в `telegram_messages` рассылается в N открытых вкладок × 3 подписки × 1 RPC = 3 параллельных вызова `get_inbox_dialogs_v1` (см. F1). При mass mark-as-read через `update().eq.in(...)` каждая обновлённая строка идёт UPDATE-broadcast'ом → лавина refetch.
-* **Expected proof:** Network-трасса: один входящий ≤ 1 вызов `get_inbox_dialogs_v1`; mass mark-as-read 100 диалогов = 1 refetch, не 100.
-* **Recommended fix (HYPOTHESIS):** debounce 250–500 мс + dedup по client-side; либо переход на единый канал-«bus» с условием. Не менять контракт realtime, только wrapper.
+* **Root cause:** один INSERT в `telegram_messages` рассылается в N открытых вкладок × 2 refetch-канала = 2 параллельных вызова (RPC + count). При mass mark-as-read через построчные UPDATE каждая обновлённая строка идёт UPDATE-broadcast'ом → линейный fanout refetch.
+* **Expected proof (на Этапе 2, после фикса):** Network-трасса: один входящий ≤ 1 вызов `get_inbox_dialogs_v1` и ≤ 1 вызов count; mass mark-as-read N диалогов = 1 refetch, не N.
+* **Recommended fix (HYPOTHESIS):** debounce 250–500 мс + dedup по client-side; единая модель realtime-инвалидации в одном слое. Не менять контракт realtime, только wrapper.
 * **Blocker:** да — главная причина «нагрузки от собственного действия» и каскадов.
 
 ### F3 — Mark-as-read mutation триггерит сама себя через realtime UPDATE
