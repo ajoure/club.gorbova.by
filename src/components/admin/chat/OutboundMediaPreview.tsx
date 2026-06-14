@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { X, RefreshCw, Image as ImageIcon, Video, Music, Circle, FileText, Play, AlertCircle, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VoiceMessageBubble } from "./VoiceMessageBubble";
 
 interface OutboundMediaPreviewProps {
   file: File;
@@ -31,12 +32,17 @@ export function OutboundMediaPreview({
       return;
     }
 
-    if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
+    if (
+      file.type.startsWith("image/") ||
+      file.type.startsWith("video/") ||
+      file.type.startsWith("audio/") ||
+      fileType === "voice"
+    ) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       return () => URL.revokeObjectURL(url);
     }
-  }, [file]);
+  }, [file, fileType]);
 
   // Get video duration
   useEffect(() => {
@@ -93,42 +99,18 @@ export function OutboundMediaPreview({
     }
   };
 
-  // Voice preview — playable audio bubble
+  // Voice preview — same canonical bubble as history, compact mode
   if (fileType === "voice") {
-    const url = URL.createObjectURL(file);
     return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg mb-2 max-w-[320px]">
-        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-          {isUploading ? (
-            <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : (
-            <Mic className="w-4 h-4 text-primary" />
-          )}
-        </div>
-        <audio
-          controls
-          src={url}
-          preload="metadata"
-          className="flex-1 min-w-0 h-9"
-          onLoadedData={(e) => {
-            // Revoke after the element grabbed the data; safe-guard.
-            // Note: many browsers keep streaming; rely on onRemove for hard cleanup.
-            void e;
-          }}
+      <div className="mb-2">
+        <VoiceMessageBubble
+          direction="outgoing"
+          src={previewUrl ?? ""}
+          fileSize={file.size}
+          fileName={file.name}
+          onDelete={onRemove}
+          compact
         />
-        <span className="text-[11px] text-muted-foreground tabular-nums">
-          {formatFileSize(file.size)}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 flex-shrink-0"
-          onClick={onRemove}
-          disabled={isUploading}
-          title="Удалить"
-        >
-          <X className="w-4 h-4" />
-        </Button>
       </div>
     );
   }
