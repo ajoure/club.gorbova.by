@@ -1,595 +1,202 @@
 да, согласен, с учетом правок:
 
-Все пункты плана сохраняются по принципу add-only/no-loss. Перед изменением `stripe-webhook` добавить следующие обязательные уточнения.
-
-
-
-## **1. Сначала подтвердить фактический контракт**
-
-`telegram-notify-admins`
-
-До реализации прочитать:
-
-```text
-supabase/functions/telegram-notify-admins/index.ts
-supabase/functions/bepaid-webhook/index.ts
-```
-
-Зафиксировать:
-
-- точный request DTO;
-- обязательные и необязательные поля;
-- допустимые `source`;
-- допустимые `event_type`;
-- формат суммы и валюты;
-- способ определения админского Telegram-чата;
-- текущую дедупликацию;
-- audit/log actions;
-- поведение при отсутствии Telegram-конфигурации.
-
-Не отправлять предполагаемый JSON-контракт, пока он не сверен с фактическим обработчиком.
-
-Если bePaid использует shared helper, переиспользовать его. Не копировать восемь inline-вызовов в Stripe без необходимости.
-
----
-
-
-
-
-
-
-
-## **2. Не уведомлять одновременно из**
-
-`payment_intent.succeeded` **и** `charge.succeeded`
-
-Один Stripe-платёж обычно порождает связанные события:
-
-```text
-payment_intent.succeeded
-charge.succeeded
-checkout.session.completed
-```
-
-Если добавить уведомление в несколько веток, админы могут получить дубли.
-
-Для разовой успешной оплаты выбрать **один канонический бизнес-триггер**, соответствующий текущему payment lifecycle.
-
-Предпочтительный trigger определяется по фактическому коду:
-
-```text
-ветка, которая атомарно завершила:
-payment succeeded
-→ order paid
-→ grant-access completed/accepted
-```
-
-Остальные Stripe-события должны:
-
-- обновлять технические данные;
-- не создавать повторное админское уведомление;
-- либо проходить через общий idempotency guard.
-
-В отчёте указать выбранный trigger и почему остальные события не дублируют сообщение.
-
----
-
-
-
-
-
-## **3.**
-
-`invoice.paid` **также может пересекаться с первым платежом подписки**
-
-Для первой subscription invoice Stripe может одновременно прислать:
-
-```text
-checkout.session.completed
-payment_intent.succeeded
-invoice.paid
-```
-
-Нужно различать:
-
-```text
-первичная покупка подписки
-повторное рекуррентное списание
-```
-
-`event_type='recurring_charge'` отправлять только если invoice действительно относится к последующему циклу, а не к первичной оплате.
-
-Использовать доказанный marker, например по фактической архитектуре:
-
-- billing reason;
-- subscription cycle;
-- уже существующая локальная подписка;
-- invoice sequence;
-- metadata contract.
-
-Не определять recurring только по наличию `subscription_id`.
-
----
-
-## **4. Обязательная идемпотентность уведомлений**
-
-Добавить canonical notification key:
-
-```text
-stripe_admin_notify:
-<business_event_type>:
-<provider_object_id>
-```
-
-Примеры:
-
-```text
-stripe_admin_notify:payment_succeeded:pi_...
-stripe_admin_notify:refund:re_...
-stripe_admin_notify:recurring_charge:in_...
-```
-
-Повторная доставка того же Stripe event или другого Stripe event для того же бизнес-факта не должна создавать второе уведомление.
-
-Перед добавлением новой таблицы проверить существующие механизмы:
-
-```text
-provider_events
-audit_logs
-pending_telegram_notifications
-telegram notification dedup helpers
-```
-
-Новая таблица или migration в этом патче запрещена без доказанной необходимости.
-
-Если `telegram-notify-admins` уже принимает `idempotency_key`, использовать её.
-
----
-
-## **5. Refund trigger должен использовать точный refund object**
-
-Для возврата не ограничиваться только `charge.refunded`, поскольку одно событие может отражать:
-
-- полный возврат;
-- частичный возврат;
-- несколько refund objects по одному charge;
-- повторную доставку события.
-
-Уведомление должно содержать и дедуплицироваться по точному:
-
-```text
-refund_id = re_*
-```
-
-Поля:
-
-```text
-refund amount
-currency
-parent payment/order
-refund status
-provider refund ID
-```
-
-Если из `charge.refunded` невозможно однозначно получить новый конкретный refund без Stripe list/search:
-
-```text
-STOP
-REFUND_NOTIFICATION_EXACT_ID_NOT_RESOLVED
-```
-
-Не выбирать refund по сумме или дате.
-
-Допускается использовать другую уже существующую Stripe webhook-ветку, где точный `re_*` известен.
-
----
-
-## **6. Уведомлять только после подтверждённого бизнес-результата**
-
-Для successful payment уведомление вызывается после того, как подтверждены:
-
-```text
-payments_v2 succeeded
-orders_v2 paid
-canonical payment/order relation
-```
-
-`grant-access-for-order` может корректно завершиться `default-deny` для продукта без клубного доступа. Это не должно блокировать админское уведомление об оплате.
-
-Следовательно, критерий:
-
-```text
-платёж и заказ успешно зафиксированы
-```
-
-а не обязательное создание Telegram-access или entitlement.
-
-Если `grant-access-for-order` завершился технической ошибкой, определить по существующей политике:
-
-- уведомить об оплате с warning;
-- либо не уведомлять до reconcile.
-
-Это решение должно совпадать с bePaid parity.
-
----
-
-## **7. Не передавать лишние персональные и карточные данные**
-
-В `telegram-notify-admins` передавать только поля, которые реально используются существующим шаблоном.
-
-Допустимо:
-
-```text
-имя клиента
-product name
-amount/currency
-provider
-masked card brand/last4
-order number
-```
-
-Запрещено:
-
-```text
-полный PAN
-email, если он не нужен шаблону
-телефон
-billing_details целиком
-Stripe customer object
-payment method object
-raw webhook payload
-client_secret
-receipt URL с query
-```
-
-`provider_payment_id` в Telegram при необходимости показывать только маскированно либо хранить внутри технической metadata, не в основном сообщении.
-
----
-
-## **8. Вызов должен быть non-blocking, но контролируемым**
-
-Не использовать бесконтрольный fire-and-forget, который Edge runtime может завершить до отправки запроса.
-
-Использовать тот же надёжный pattern, что применяется в bePaid:
-
-- bounded timeout;
-- `try/catch`;
-- безопасный лог результата;
-- ошибка Telegram не меняет HTTP-ответ Stripe;
-- ошибка Telegram не откатывает payment lifecycle.
-
-Если используется `await`, вызов должен иметь короткий timeout и не блокировать webhook надолго.
-
-Если проект использует `EdgeRuntime.waitUntil`, переиспользовать канонический pattern.
-
----
-
-## **9. Не дублировать код в трёх webhook-ветках**
-
-Создать один локальный/shared helper, если подходящего уже нет:
-
-```text
-notifyAdminsAboutStripePayment(...)
-```
-
-или provider-agnostic:
-
-```text
-notifyAdminsAboutPaymentEvent(...)
-```
-
-Helper отвечает за:
-
-- canonical DTO;
-- idempotency key;
-- timeout;
-- safe logging;
-- вызов `telegram-notify-admins`;
-- sanitization.
-
-Webhook-ветки только формируют доказанные бизнес-поля.
-
-Не выполнять глобальный рефакторинг `stripe-webhook` или `bepaid-webhook`.
-
----
-
-## **10. Scope событий**
-
-В рамках патча реализовать только:
-
-```text
-payment_succeeded
-refund_succeeded
-recurring_charge_succeeded
-```
-
-Не добавлять автоматически:
-
-- payment failed;
-- invoice failed;
-- dispute;
-- cancellation;
-- chargeback;
-- access granted/revoked.
-
-Их parity проверить в discovery и вынести в backlog, если действительно нужны.
-
----
-
-## **11. Тесты до deploy**
-
-Добавить минимум:
-
-1. Разовая Stripe-оплата → одно уведомление.
-2. `payment_intent.succeeded` + связанный `charge.succeeded` → одно уведомление.
-3. Повторная доставка Stripe event → одно уведомление.
-4. Первая subscription invoice не создаёт одновременно `payment_succeeded` и `recurring_charge`.
-5. Последующая invoice → `recurring_charge`.
-6. Полный refund → одно уведомление по `re_*`.
-7. Частичный refund → правильная сумма.
-8. Повторный refund event → без дубля.
-9. Telegram endpoint 500 → webhook lifecycle остаётся успешным.
-10. Telegram timeout → webhook lifecycle остаётся успешным.
-11. Продукт без Telegram access rules → admin notify всё равно отправляется.
-12. В payload отсутствуют forbidden card/Stripe fields.
-13. bePaid код и поведение не изменены.
-14. Никаких дополнительных записей в payments/orders/entitlements из notification helper.
-
----
-
-## **12. Deploy safety**
-
-Поскольку меняется критическая public webhook-функция:
-
-```text
-stripe-webhook
-```
-
-перед deploy выполнить controlled public webhook protocol:
-
-1. Сохранить recovery source текущей версии.
-2. Зафиксировать текущую deployed version.
-3. Подтвердить:
-4. Pre-deploy unsigned smoke:
-  - endpoint доступен;
-  - ответ — signature verification failure;
-  - нет Supabase JWT-wall.
-5. Deploy только:
-  &nbsp;
-  ```text
-  stripe-webhook
-  ```
-  и shared helper, входящий в его bundle.
-6. Post-deploy smoke на t=0, t=30s, t=2m:
-  - endpoint публично доступен;
-  - Stripe signature guard работает;
-  - `verify_jwt=false` сохранён.
-7. `bepaid-webhook` не передеплоивать.
-
-Если агентский deploy меняет JWT-доступность:
-
-```text
-STOP
-PUBLIC_WEBHOOK_DEPLOY_REGRESSION
-```
-
-и восстановить recovery version.
-
----
-
-## **13. Runtime proof**
-
-Не требовать нового реального платежа 7 BYN специально ради теста.
-
-Допустимые варианты:
-
-### **Предпочтительно**
-
-Безопасная test-mode Stripe fixture с подписанными событиями:
-
-```text
-payment succeeded
-recurring invoice
-refund
-```
-
-### **Если test-mode больше не используется**
-
-- replay существующего provider event только через доказанно idempotent processing path;
-- либо integration proof с реальным signed Stripe fixture без создания нового заказа/доступа;
-- первый будущий реальный платёж — `DEFERRED_OPERATIONAL_UAT`.
-
-Нельзя повторно обработать существующий event так, чтобы создать:
-
-- второй payment;
-- второй order;
-- повторное продление;
-- повторный entitlement;
-- повторный CRM stage.
-
----
-
-## **14. Runtime DoD**
-
-Для каждого доступного сценария подтвердить:
-
-```text
-одно Telegram admin notification
-один idempotency key
-actor/source = stripe webhook/system
-payment/order lifecycle delta ожидаемый либо 0 при replay
-0 дублей AGL
-0 повторных CRM actions
-0 повторной генерации документа
-0 Telegram client-access изменений
-```
-
-Лог должен подтверждать вызов helper, но не обязательно содержать точную строку:
-
-```text
-[telegram-notify-admins] Starting notification
-```
-
-Использовать фактические безопасные log markers проекта.
-
----
-
-## **15. Audit и SYSTEM ACTOR**
-
-Если `telegram-notify-admins` или очередь создаёт audit:
-
-```text
-actor_type = system
-actor_user_id = NULL
-actor_label = stripe-webhook
-source_event_id/provider_object_id заполнен
-```
-
-Если audit для admin-notify архитектурой не предусмотрен:
-
-```text
-SYSTEM ACTOR = NOT APPLICABLE
-```
-
-с доказательством фактического существующего контракта.
-
-Не создавать фиктивный audit только ради proof.
-
----
-
-## **16. Уточнённый итоговый DoD**
-
-Патч закрывается как PASS, если:
-
-1. Канонический trigger разовой оплаты выбран.
-2. Нет дублей между `payment_intent.succeeded`, `charge.succeeded` и `checkout.session.completed`.
-3. Recurring notification не дублирует первую оплату.
-4. Refund привязан к точному `re_*`.
-5. Все уведомления идемпотентны.
-6. Ошибка Telegram не влияет на Stripe webhook response.
-7. Продукты без Telegram access rules всё равно создают admin payment notification.
-8. Payload безопасен.
-9. bePaid не изменён и не передеплоен.
-10. `stripe-webhook` controlled deploy PASS.
-11. Public endpoint после deploy не получил JWT-wall.
-12. Tests PASS.
-13. Доступные runtime-сценарии PASS.
-14. Отсутствующий первый реальный сценарий оформлен как `DEFERRED_OPERATIONAL_UAT`, а не как новый открытый спринт.
-15. Grant/access/AGL/orders/payments/CRM/documents regression отсутствует.
-
-## **Итоговый scope**
-
-Разрешено изменить только:
-
-```text
-supabase/functions/stripe-webhook/index.ts
-существующий shared notification helper
-либо один новый узкий shared helper
-tests
-proof
-```
-
-Запрещено изменять:
-
-```text
-bepaid-webhook
-telegram access functions
-grant-access-for-order
-document generation
-CRM lifecycle
-payments/orders schema
-RLS
-```
-
-После выполнения вернуть:
-
-```text
-Отчёт о выполненной работе:
-PATCH-STRIPE-TELEGRAM-ADMIN-NOTIFY-PARITY-V1
-```
-
-Следующие Stripe-патчи автоматически не начинать.
+1. **Этап 1 остаётся строго Diagnose-only**: без миграций, индексов, изменения RLS/RPC, правок кода, деплоя, очистки данных, изменения realtime-подписок и конфигурации Storage. Соблюсти порядок DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY.
+2. Сначала провести **инвентаризацию фактической архитектуры**, не предполагая заранее названия таблиц и источники истины:
+  - реальные таблицы, views, RPC, edge-функции;
+  - query keys React Query;
+  - realtime-каналы и места их создания/удаления;
+  - Storage buckets;
+  - связи Telegram, support tickets и UnifiedCommunicationHistory;
+  - legacy и canonical контуры.
+3. Направления A–F считать **гипотезами**, а не заранее утверждёнными решениями. Этап Diagnose должен доказать, действительно ли нужны pagination, новые индексы, aggregate view, visualViewport, chunking и другие перечисленные изменения.
+4. Для каждого проблемного пользовательского сценария зафиксировать воспроизводимый baseline:
+  - открытие контакт-центра;
+  - загрузка списка диалогов;
+  - открытие переписки;
+  - подгрузка старых сообщений;
+  - открытие и отправка файла;
+  - отправка ответа;
+  - переключение вкладки «Новые».
+5. Замеры разделить на:
+  - SQL/backend time;
+  - network latency;
+  - размер payload;
+  - frontend render time;
+  - число запросов;
+  - число realtime-событий и вызванных ими refetch.
+6. Производительность измерять для cold/warm cache и фиксировать хотя бы P50/P95. Не выполнять опасные нагрузочные тесты и тяжёлый EXPLAIN ANALYZE в production без лимитов и STOP-условий.
+7. По unread/read-state построить полную state-machine:
+  - источник истины непрочитанного;
+  - входящее/исходящее сообщение;
+  - контакт/тикет/диалог;
+  - открытие диалога;
+  - успешная отправка ответа;
+  - ошибка отправки;
+  - параллельное входящее сообщение;
+  - realtime UPDATE после локального optimistic update.
+8. Отдельно доказать, должно ли успешное исходящее сообщение автоматически закрывать все предыдущие входящие. Не сбрасывать unread при неуспешной отправке.
+9. Проверить не только наличие индексов, но и соответствие фактическим WHERE, JOIN, ORDER BY, включая:
+  - направление сообщения;
+  - статус прочтения;
+  - contact_id / ticket_id;
+  - created_at;
+  - partial indexes;
+  - RLS overhead;
+  - планы запросов RPC и views.
+10. Для realtime составить таблицу:
+  - компонент;
+  - имя канала;
+  - таблица;
+  - event;
+  - filter;
+  - вызываемый refetch;
+  - количество подписок при повторном открытии страницы;
+  - корректность cleanup/unsubscribe.
+11. Отдельный proof: сколько SQL/API-запросов вызывает один Telegram INSERT и один UPDATE.
+12. Для файлов дополнительно проверить:
+  - распределение количества и размеров вложений;
+  - генерируются ли signed URL по одному на файл и создаёт ли это N+1;
+  - срок жизни URL;
+  - повторную генерацию URL при каждом render;
+  - thumbnails/preview;
+  - lazy loading;
+  - хранение file_id, URL и metadata;
+  - отсутствие загрузки всех файлов диалога до открытия вложения.
+13. Мобильный Diagnose провести минимум для:
+  - iOS Safari;
+  - установленного PWA, если используется;
+  - portrait/landscape;
+  - открытой клавиатуры;
+  - QuickType bar;
+  - textarea в одну и несколько строк;
+  - отправки файла;
+  - возвращения из background.
+14. Зафиксировать размеры visualViewport, layout viewport, safe-area и положение composer до/после фокуса.
+15. Проверить жизненный цикл компонентов: повторное открытие контактов не должно накапливать listeners, observers, timers, realtime channels и кешированные тяжёлые объекты. Добавить проверку memory growth после 20–30 последовательных открытий диалогов.
+16. В discovery-отчёте разделять:
+  - **FACT** — доказано кодом, SQL или runtime;
+  - **HYPOTHESIS** — требует дополнительной проверки;
+  - **ROOT CAUSE CONFIRMED** — воспроизведено и подтверждено;
+  - **DEFERRED** — не блокирует основной fix.
+17. Формат каждого finding F1…Fn расширить:
+  - симптом;
+  - затронутый пользовательский сценарий;
+  - доказательство;
+  - root cause;
+  - confidence;
+  - severity;
+  - scope;
+  - риск исправления;
+  - зависимости;
+  - рекомендуемый fix;
+  - expected proof;
+  - blocker / non-blocker.
+18. Discovery-файл не должен содержать полные тексты сообщений, токены, персональные данные, приватные signed URL и содержимое вложений. Использовать UUID и обезличенные примеры.
+19. Целевые показатели этапа Verify (<1.5s, Lighthouse ≥80, 0 повторных refetch) пока считать **предварительными**. После Diagnose сопоставить их с baseline и утвердить окончательные измеримые DoD.
+20. После завершения Diagnose предоставить:
+  - единый файл .lovable/discovery/contact_center_audit_<date>.md;
+  - краткую executive summary;
+  - consolidated список всех findings;
+  - перечень критических блокеров;
+  - список безопасных quick wins;
+  - deferred/backlog;
+  - карту затрагиваемых файлов, таблиц, RPC и edge-функций.
+21. До отдельного согласования Этапа 2 никаких исправлений не применять. План и отчёт о выполненной работе должны быть отдельными сообщениями и полностью на русском языке.
 
 &nbsp;
 
-План: Аудит Stripe-платежа pi_3ThrF46UYJj2vm0G13OzIbVS и парити Telegram-уведомлений с bePaid
+План: PATCH-CONTACT-CENTER-AUDIT-AND-FIX-V1
 
-## Diagnose — что проверено по реальному платежу
+## Цель
 
-Платёж: 7.00 BYN, Stripe, VISA ****3587, Сергей Федорчук, продукт «Платная консультация / Несрочная консультация», order_id `f230633f-30b9-441e-8433-5dab8b073471`.
+Полный аудит контакт-центра (Telegram + техподдержка + UnifiedCommunicationHistory) с фиксацией и устранением деградации скорости, багов мобильной верстки и неверного статуса «непрочитано» после ответа.
 
-### Что работает корректно (PASS)
+## Известные симптомы (из обращения и скринов)
 
-1. **payments_v2** — запись создана: `status=succeeded`, `paid_at=13:05:01`, `receipt_url` от Stripe сохранён, `card_brand=visa`, `card_last4=3587`. PASS.
-2. **orders_v2** — `status=paid`, `provider_payment_id=pi_3ThrF...`, `final_price=7.00 BYN`. PASS.
-3. **grant-access-for-order** — отработал по канону: AGL запись `action_type=extend`, `reason_code=paid_order`, `source_event_key=gafo:webhook:f230633f...`, `source_window_rule=tariff_duration`, `window_days=30`. Подписка `0ea21015-...` продлена с 2026-07-10 до 2026-08-09 (tariffMatch + sbsMatch). Entitlement `44caec9c-...` обновлён. PASS.
-4. **CRM** — `crm_stage_applied_success` сработал дважды (success-stage воронки «Платная консультация»). PASS.
-5. **Документы** — `document_data.snapshot_created` в 13:05:15, в orders_v2.meta.document_data 97 типизированных b97-полей + executor + scenario `e28a9ea1-...` (payer=individual, channel=card), template `7caee05d-...`. В UI на скриншоте зелёная иконка «документ готов». PASS.
-6. **Возврат денег** — Stripe-канал поддерживается каноническим путём `record_refund_atomic` (RPC) + UI кнопка возврата в /admin/payments. Видны успешные возвраты (Julia Gr -100 BYN bePaid). Для Stripe refund-кнопка использует тот же RPC через `stripe-refund` функцию. PASS (требуется реальный смок-возврат вне аудита).
-7. **Public checkout link** — `system.payment_link.created` → `public_checkout.created` → `public_checkout.link_consumed`. Lifecycle чистый. PASS.
+1. Долго грузятся переписка и файлы в чате.
+2. Контакт-центр постепенно деградирует, всё медленнее реагирует.
+3. После ответа оператором карточка остаётся в «Новые» / счётчик не сбрасывается (скрин IMG_4569: «Наталия Колесник — 1 минута», висит как новое, хотя ответ ушёл).
+4. На мобильной версии (скрин IMG_4570) iOS подсказочный бар (стрелки ↑↓ и галочка) и клавиатура накрывают поле ввода — текст не виден при наборе.
 
-### Что НЕ работает (FAIL — корневая причина найдена)
+## Этап 1. Diagnose (read-only, без правок)
 
-**Telegram-уведомление админам о платеже отсутствует.**
+Подцели — собрать факты, без догадок:
 
-Корень: `supabase/functions/bepaid-webhook/index.ts` вызывает `telegram-notify-admins` в 8 точках (charge.succeed, refund, recurring и т.д.). `supabase/functions/stripe-webhook/index.ts` — **0 вызовов** `telegram-notify-admins`. Это разрыв webhook parity. По мемори [bePaid Webhook Parity](mem://architecture/subscriptions/bepaid-webhook-parity-standard) Stripe должен делать те же операции, что и bePaid.
+1. **Замер скорости:**
+  - Прогнать `supabase--slow_queries` на `telegram_messages`, `support_tickets`, `support_messages`, вьюхах истории, RPC `get_unread_*`.
+  - Прочитать `InboxTabContent.tsx` (1089 строк), `ContactTelegramChat.tsx` (2152 строки), `UnifiedCommunicationHistory.tsx`, `useUnreadMessagesCount`, `useIncomingMessageAlert` — найти: N+1 запросы, отсутствие пагинации, `select('*')` на больших таблицах, лишние realtime-подписки, дубли react-query ключей, неинвалидируемые кеши.
+  - Проверить размер пэйлоадов `telegram_messages` (raw_update jsonb может быть гигантским) и хранение файлов (inline base64 vs storage).
+2. **Read-state регрессия:**
+  - Найти все места, где `is_read=true` проставляется (server RPC, webhook, фронт). Проверить, вызывается ли mark-as-read при отправке исходящего ответа, а не только при открытии диалога.
+  - Проверить условие фильтра «Новые» в `InboxTabContent` — может считаться по `unread_count` диалога без учёта последнего исходящего.
+  - Проверить, есть ли индексы `(direction, is_read)`, `(contact_id, created_at)`.
+3. **Мобильный UX (IMG_4570):**
+  - Найти composer (поле ввода) в `ContactTelegramChat.tsx`. Проверить: `position: sticky/fixed bottom`, `env(safe-area-inset-bottom)`, `interactiveWidget=resizes-content` в `<meta name="viewport">` (index.html), обработку `visualViewport` для iOS Safari (бар iOS QuickType не учитывается без JS-фикса).
+  - Проверить scroll-to-bottom после фокуса textarea на мобиле.
+4. **Realtime-шум:**
+  - В `useIncomingMessageAlert` и `useUnreadMessagesCount` подписки на ВСЮ таблицу `telegram_messages` (`event:'*'`) — каждый INSERT/UPDATE триггерит рефетч count по всему проекту. На большой истории это и есть «постепенная деградация».
+5. **Загрузка файлов:**
+  - Найти где аплоадятся файлы в Telegram чат — проверить, идут ли они через storage signed URL или base64 в edge, есть ли progress, лимиты, chunking.
 
-Доказательство в логах:
+DoD этапа 1: единый отчёт `.lovable/discovery/contact_center_audit_<date>.md` с findings F1..Fn, для каждого: симптом, доказательство (sql/файл:строка/network), severity, предлагаемый fix.
 
-- `[telegram-process-access-queue] No pending items` — очередь пуста, потому что у продукта «Платная консультация» обе `access_rules` (club / product_access) `is_active=false` (отключены 2026-05-22, by-design — продукт не клубный, без TG-club).
-- В `pending_telegram_notifications` для user `05cd3754-...` после 12:50 — 0 записей.
-- Поток `grant-access → telegram-grant-access` корректно отработал `pending_downstream` → `[grant-access] No club rule found ... default-deny`. PASS (это правильное поведение — у консультаций нет TG-клуба).
+## Этап 2. Plan (после Diagnose, отдельным сообщением)
 
-Итого: уведомления в TG-клуб клиенту по продукту правильно не отправлены (продукт без клуба). Но **админское уведомление «прошла оплата 7 BYN, продукт X»** не отправлено, потому что stripe-webhook не зовёт `telegram-notify-admins`.
+По собранным findings составлю отдельный план PATCH-CONTACT-CENTER-FIX-V1 с конкретными правками. Список ожидаемых направлений:
 
-## Plan — что сделать (одно небольшое изменение)
+A. **Производительность списка диалогов**
 
-Добавить в `supabase/functions/stripe-webhook/index.ts` вызов `telegram-notify-admins` с parity-полями относительно bePaid:
+- Серверная пагинация (limit 50 + cursor), вместо загрузки всей истории.
+- Вьюха-агрегат для списка («последнее сообщение + unread_count») вместо подсчёта на клиенте.
+- Индексы: `idx_telegram_messages_contact_created`, `idx_telegram_messages_unread_incoming`.
+- Уменьшить `raw_update` в SELECT (выбирать только нужные поля).
 
-1. После успешной обработки события `payment_intent.succeeded` / `charge.succeeded` (после того как `grant-access-for-order` отработал успешно) — выполнить fire-and-forget вызов:
-  ```ts
-   await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
-     method: 'POST',
-     headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
-     body: JSON.stringify({
-       source: 'stripe_webhook',
-       event_type: 'payment_succeeded',
-       order_id, order_number,
-       user_id, profile_id,
-       product_id, product_name,
-       amount, currency,
-       provider: 'stripe',
-       provider_payment_id,
-       card_brand, card_last4,
-       paid_at,
-     }),
-   }).catch(err => console.error('[stripe-webhook] notify-admins failed:', err));
-  ```
-2. Аналогично — для `charge.refunded` (parity с bePaid refund-уведомлением).
-3. Для `invoice.paid` (recurring) — отдельное уведомление с `event_type='recurring_charge'`.
+B. **Realtime-каналы**
 
-Все три точки заворачиваются в try/catch так же, как в bePaid (никогда не блокируют ответ Stripe).
+- Сузить фильтры подписок (только incoming + только активный диалог).
+- Дебаунс `refetch()` в `useUnreadMessagesCount` (сейчас на каждый event).
+- Один общий канал на страницу вместо нескольких.
 
-## Verify (DoD)
+C. **Mark-as-read на ответ**
 
-1. После деплоя — повторный реальный Stripe-платёж (или test-mode) → в админ-чате Telegram появляется сообщение «Stripe • 7.00 BYN • Платная консультация • Сергей Федорчук».
-2. Возврат через Stripe → в админ-чате сообщение о refund.
-3. Логи `stripe-webhook` содержат строки `[telegram-notify-admins] Starting notification, source=stripe_webhook`.
-4. Никаких регрессий в grant-access / AGL / orders_v2 / CRM.
+- При успешной отправке исходящего сообщения помечать все incoming диалога `is_read=true` через RPC.
+- Инвалидировать `unread-messages-count` и список «Новые».
 
-## Backlog (не входит в этот патч)
+D. **Мобильный composer**
 
-- Per-user TG-DM по факту оплаты (если когда-нибудь захочется) — отдельный модуль, не относится к админскому notify.
-- Smoke-возврат реальных 7 BYN через Stripe Dashboard / админ-UI — выполнит владелец после фикса.
-- Продукт «Платная консультация» намеренно без TG-клуба — никаких access-rule изменений не требуется.
+- Использовать `visualViewport` API для подстройки `padding-bottom` под клавиатуру + iOS QuickType bar.
+- `<meta name="viewport" content="..., interactive-widget=resizes-content">`.
+- Скрытие composer'а под безопасную зону `env(safe-area-inset-bottom)`.
+- Auto-scroll к низу при фокусе textarea.
 
-## Технический раздел (для разработчика)
+E. **Файлы**
 
-Файл: `supabase/functions/stripe-webhook/index.ts`
-Точки вставки:
+- Аплоад через signed URL в storage, edge только проксирует `sendDocument` с `file_id`/URL.
+- Прогресс-бар, лимит размера, чанковка >10MB.
 
-- ветка `payment_intent.succeeded` (после `grant-access-for-order` invoke)
-- ветка `charge.refunded` (после `record_refund_atomic` RPC)
-- ветка `invoice.paid` (после продления subscription)
+F. **Чистка**
 
-Параметры берутся из локальных переменных, уже доступных в ветках (order, payment, product), без дополнительных DB-запросов. Деплой: только одна функция `stripe-webhook`.
+- Снять `event:'*'` подписки, заменить на `INSERT` + `UPDATE` точечно.
+- Кеш react-query: `staleTime` 30s для списка, `gcTime` 5m.
+
+## Этап 3. Dry run + Execute (после approve этапа 2)
+
+Каждый fix отдельным мини-патчем с proof.
+
+## Этап 4. Verify
+
+- Lighthouse mobile на /admin/communication ≥ 80.
+- Время первого рендера списка из 500 диалогов < 1.5s.
+- Mark-as-read: после ответа в течение 2s карточка уходит из «Новые».
+- Мобильный composer: при открытой клавиатуре всё поле ввода видно (скрин до/после).
+- 0 повторных realtime-рефетчей при отправке одного сообщения (Network proof).
+
+## Что НЕ трогаем
+
+- Бизнес-логика выдачи доступа, grant-access, CRM, RLS, схемы заказов/подписок.
+- Шаблоны рассылок и broadcast-движок (отдельная зона).
+- bePaid/Stripe webhooks.
+
+## Подтверждение
+
+Прежде чем переходить к Этапу 2 (конкретные правки), дай OK на Этап 1 — Diagnose-only прогон с отчётом findings. После отчёта согласуем приоритеты и объём фиксов.
