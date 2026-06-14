@@ -67,6 +67,8 @@ export function OutboundMediaPreview({
         return <Video className="w-4 h-4" />;
       case "audio":
         return <Music className="w-4 h-4" />;
+      case "voice":
+        return <Mic className="w-4 h-4" />;
       case "video_note":
         return <Circle className="w-4 h-4" />;
       default:
@@ -82,12 +84,54 @@ export function OutboundMediaPreview({
         return "Видео";
       case "audio":
         return "Аудио";
+      case "voice":
+        return "Голосовое";
       case "video_note":
         return "Кружок";
       default:
         return "Документ";
     }
   };
+
+  // Voice preview — playable audio bubble
+  if (fileType === "voice") {
+    const url = URL.createObjectURL(file);
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg mb-2 max-w-[320px]">
+        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+          {isUploading ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <Mic className="w-4 h-4 text-primary" />
+          )}
+        </div>
+        <audio
+          controls
+          src={url}
+          preload="metadata"
+          className="flex-1 min-w-0 h-9"
+          onLoadedData={(e) => {
+            // Revoke after the element grabbed the data; safe-guard.
+            // Note: many browsers keep streaming; rely on onRemove for hard cleanup.
+            void e;
+          }}
+        />
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {formatFileSize(file.size)}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 flex-shrink-0"
+          onClick={onRemove}
+          disabled={isUploading}
+          title="Удалить"
+        >
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+    );
+  }
 
   // Photo preview
   if (fileType === "photo" && previewUrl) {
