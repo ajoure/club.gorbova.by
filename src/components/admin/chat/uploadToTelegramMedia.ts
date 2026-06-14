@@ -110,13 +110,27 @@ export async function uploadToTelegramMedia(
   const path = `outbound/${userId}/${Date.now()}_${safeName}`;
   const contentType = resolveUploadContentType(file.type);
 
-  if (file.size > TUS_THRESHOLD_BYTES) {
+  // Если оригинальный MIME файла не входит в allowlist bucket'а (например
+  // audio/webm;codecs=opus от MediaRecorder), пересобираем File с MIME,
+  // равным безопасному contentType. Это нужно потому, что Supabase Storage
+  // на сервере дополнительно сверяет actual MIME blob'а с allowed list,
+  // и если он не совпадает с заявленным contentType — отклоняет загрузку
+  // ("mime type ... is not supported"). Канонический MIME для Telegram
+  // sendVoice всё равно выводится из имени файла и kind="voice" в
+  // guessMimeType на edge function, поэтому downstream-логика не страдает.
+  const needsRewrap =
+    (file.type || "").split(";")[0].trim().toLowerCase() !== contentType;
+  const uploadFile: File = needsRewrap
+    ? new File([file], file.name, { type: contentType, lastModified: file.lastModified })
+    : file;
+
+  if (uploadFile.size > TUS_THRESHOLD_BYTES) {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
     if (!token) throw new Error("Not authenticated");
-    await uploadViaTus({ file, bucket, filePath: path, contentType, token });
+    await uploadViaTus({ file: uploadFile, bucket, filePath: path, contentType, token });
   } else {
-    const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    const { error } = await supabase.storage.from(bucket).upload(path, uploadFile, {
       contentType,
       upsert: false,
     });
@@ -125,4 +139,5 @@ export async function uploadToTelegramMedia(
 
   return { bucket, path };
 }
+
 
