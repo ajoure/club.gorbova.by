@@ -333,6 +333,8 @@ export function ContactTelegramChat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const prevMessageCountRef = useRef<number>(0);
+  // Observed boundary, зафиксированная в onMutate ДО отправки (corrective S2).
+  const pendingBoundaryRef = useRef<string | null>(null);
   const localMediaUrlsRef = useRef<string[]>([]);
   const stickyScrollUntilRef = useRef(0);
   const shouldStickToBottomRef = useRef(true);
