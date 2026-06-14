@@ -164,10 +164,11 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 ### F4 — Карточка остаётся «новой» после успешного ответа оператора
 
 * **Severity:** MEDIUM (UX-bug, описан пользователем; см. IMG_4569).
-* **Confidence:** ROOT CAUSE CONFIRMED через 2 цепочки:
+* **Confidence:** PARTIALLY CONFIRMED / RACE HYPOTHESIS. Подтверждено наличие потенциально неверного порядка операций, сам пользовательский кейс runtime не воспроизведён.
+* **Доказательство потенциальной race condition:**
   1. `InboxTabContent.tsx:1010` действительно вызывает `markAsRead.mutate(selectedUserId)` после `onMessageSent`. Но `onMessageSent` вызывается в `ContactTelegramChat.tsx:1077` **после** локального `refetch()` (line 1075), а сам outgoing INSERT прилетает асинхронно от Telegram API. Возможен порядок: outgoing INSERT broadcast → `refetch("inbox-dialogs")` → RPC возвращает старый снепшот с unread_count > 0, потому что mark-as-read ещё не отработал. Финальный mark-as-read UPDATE придёт следующим тиком, но из-за F1+F2 RPC ещё «считается».
-  2. `staleTime: 30000` на `["inbox-dialogs"]` — после успешного refetch следующий не произойдёт 30 секунд (нет invalidate в `markAsRead.onSuccess`? — есть: `queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] })`, line 431; но это попадёт под debounce при F2-фиксе тоже).
-  Также видна вторая ветка: сообщение на скрине отправлено через десктоп («Добрый день. Эти ссылки не работают?» от gorbova support 11:23, скрин в 11:25); 1 минуту карточка ещё в списке (хотя без unread-badge — это уже корректное состояние, в «Все»; счётчик «Новые: 5» — это другие диалоги). Гипотеза: на самом деле read-state в этом конкретном случае ОК, симптом — карточка просто отсортирована вверху по `last_message_at`, что нормально.
+  2. `staleTime: 30000` на `["inbox-dialogs"]` — после успешного refetch следующий не произойдёт 30 секунд. В `markAsRead.onSuccess` есть `queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] })` (line 431), но при F2-каскаде он сливается с фоновым refetch.
+* **Альтернативная интерпретация скриншота:** карточка на IMG_4569 могла отображаться корректно в разделе «Все» (отсортирована вверх по `last_message_at` без unread-badge), а счётчик «Новые: 5» относится к другим диалогам. Это объясняет наблюдение без race и должно быть исключено сначала.
 * **Confirmed sub-finding:** настоящая проблема read-state возникает при ответе из мобильной версии и/или когда mark-as-read UPDATE приходит после следующего refetch. State-machine ниже.
 * **State-machine, как должно быть:**
   ```
