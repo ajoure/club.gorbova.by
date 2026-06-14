@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X, RefreshCw, Image as ImageIcon, Video, Music, Circle, FileText, Play, AlertCircle } from "lucide-react";
+import { X, RefreshCw, Image as ImageIcon, Video, Music, Circle, FileText, Play, AlertCircle, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface OutboundMediaPreviewProps {
   file: File;
-  fileType: "photo" | "video" | "audio" | "video_note" | "document" | null;
+  fileType: "photo" | "video" | "audio" | "voice" | "video_note" | "document" | null;
   isUploading?: boolean;
   error?: string | null;
   onRemove: () => void;
