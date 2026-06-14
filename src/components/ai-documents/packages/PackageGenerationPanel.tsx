@@ -111,7 +111,8 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
     }
   };
 
-  const canGenerate = hasSession && hasItems && allRequiredSatisfied && !isGenerating;
+  const canGenerate =
+    hasSession && hasItems && allRequiredSatisfied && requiredFieldsSatisfied && !isGenerating;
 
   return (
     <div className="space-y-3">
