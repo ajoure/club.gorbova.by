@@ -60,6 +60,7 @@ import {
   Bell,
   Video,
   Music,
+  Mic,
   Circle,
   Edit2,
   CreditCard,
@@ -80,6 +81,7 @@ import { getEventLabel } from "@/lib/eventLabels";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
+import { AdminVoiceRecorder } from "./chat/AdminVoiceRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
@@ -285,10 +287,11 @@ export function ContactTelegramChat({
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "video_note" | "document" | null>(null);
+  const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "voice" | "video_note" | "document" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
@@ -1350,7 +1353,7 @@ export function ContactTelegramChat({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "video_note" | "document") => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document") => {
     const file = e.target.files?.[0];
     if (file) {
       // Validate file size
@@ -1377,6 +1380,7 @@ export function ContactTelegramChat({
     if (fileType === "photo") return <ImageIcon className="w-4 h-4" />;
     if (fileType === "video") return <Video className="w-4 h-4" />;
     if (fileType === "audio") return <Music className="w-4 h-4" />;
+    if (fileType === "voice") return <Mic className="w-4 h-4" />;
     if (fileType === "video_note") return <Circle className="w-4 h-4" />;
     return <FileText className="w-4 h-4" />;
   };
@@ -2060,6 +2064,18 @@ export function ContactTelegramChat({
                   onSelect={(e) => {
                     e.preventDefault();
                     setShowMediaMenu(false);
+                    setShowVoiceRecorder(true);
+                  }}
+                >
+                  <Mic className="w-4 h-4" />
+                  Голосовое
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
                     if (fileInputRef.current) {
                       fileInputRef.current.accept = "audio/*";
                       fileInputRef.current.click();
@@ -2094,7 +2110,7 @@ export function ContactTelegramChat({
                 const mediaType = fileInputRef.current?.dataset.mediaType as "video_note" | undefined;
                 const file = e.target.files?.[0];
                 if (file) {
-                  let type: "photo" | "video" | "audio" | "video_note" | "document" | undefined;
+                  let type: "photo" | "video" | "audio" | "voice" | "video_note" | "document" | undefined;
                   if (mediaType === "video_note") {
                     type = "video_note";
                   } else if (file.type.startsWith("image/")) {
@@ -2150,6 +2166,17 @@ export function ContactTelegramChat({
           setSelectedFileType("video_note");
         }}
       />
+
+      {/* Voice Recorder — PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1 */}
+      <AdminVoiceRecorder
+        open={showVoiceRecorder}
+        onOpenChange={setShowVoiceRecorder}
+        onRecorded={(file) => {
+          setSelectedFile(file);
+          setSelectedFileType("voice");
+        }}
+      />
+
 
       {/* Edit Message Dialog */}
       <Dialog open={!!editingMessage} onOpenChange={(open) => !open && setEditingMessage(null)}>

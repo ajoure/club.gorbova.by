@@ -8,12 +8,27 @@ const corsHeaders = {
 };
 
 interface FileData {
-  type: "photo" | "video" | "audio" | "video_note" | "document";
+  type: "photo" | "video" | "audio" | "voice" | "video_note" | "document";
   name: string;
   // Either base64 (small files) OR storage_path (large files via storage upload).
   base64?: string;
   storage_path?: string;
   storage_bucket?: string;
+}
+
+// PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1
+// Single resolver: fileType -> Telegram method + multipart field name.
+// Used by BOTH transport paths (telegramSendFile, telegramSendFileFromBytes)
+// so the matrix never drifts. Old types keep their previous behaviour bit-for-bit.
+function resolveTelegramMediaTransport(type: FileData["type"]): { method: string; fieldName: string } {
+  switch (type) {
+    case "photo":      return { method: "sendPhoto",     fieldName: "photo" };
+    case "video":      return { method: "sendVideo",     fieldName: "video" };
+    case "audio":      return { method: "sendAudio",     fieldName: "audio" };
+    case "voice":      return { method: "sendVoice",     fieldName: "voice" };
+    case "video_note": return { method: "sendVideoNote", fieldName: "video_note" };
+    default:           return { method: "sendDocument",  fieldName: "document" };
+  }
 }
 
 interface ChatAction {
@@ -146,6 +161,15 @@ function guessMimeType(fileName: string, kind: FileData["type"]) {
     if (lower.endsWith(".webp")) return "image/webp";
     return "image/jpeg";
   }
+  if (kind === "voice") {
+    // Voice MUST keep its real container so Telegram returns result.voice.
+    // No silent OGG renaming — D4 probes confirmed Telegram accepts ogg/webm/m4a.
+    if (lower.endsWith(".ogg") || lower.endsWith(".oga")) return "audio/ogg";
+    if (lower.endsWith(".webm")) return "audio/webm";
+    if (lower.endsWith(".m4a") || lower.endsWith(".mp4")) return "audio/mp4";
+    if (lower.endsWith(".mp3")) return "audio/mpeg";
+    return "audio/ogg";
+  }
   if (kind === "audio") {
     if (lower.endsWith(".mp3")) return "audio/mpeg";
     if (lower.endsWith(".m4a")) return "audio/mp4";
@@ -218,34 +242,22 @@ async function telegramSendFile(
     }));
   }
 
-  // Determine the method and field name based on file type
-  let method: string;
-  let fieldName: string;
+  // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: shared resolver, single source of truth.
+  const transport = resolveTelegramMediaTransport(file.type);
+  const method = transport.method;
+  const fieldName = transport.fieldName;
 
-  switch (file.type) {
-    case "photo":
-      method = "sendPhoto";
-      fieldName = "photo";
-      break;
-    case "video":
-      method = "sendVideo";
-      fieldName = "video";
-      break;
-    case "audio":
-      method = "sendAudio";
-      fieldName = "audio";
-      break;
-    case "video_note":
-      method = "sendVideoNote";
-      fieldName = "video_note";
-      // Video notes don't support captions
-      formData.delete("caption");
-      // Required: length parameter for circular video
-      formData.append("length", "384");
-      break;
-    default:
-      method = "sendDocument";
-      fieldName = "document";
+  if (file.type === "video_note") {
+    // Video notes don't support captions
+    formData.delete("caption");
+    // Required: length parameter for circular video
+    formData.append("length", "384");
+  }
+  if (file.type === "voice") {
+    // Telegram sendVoice accepts an optional caption — keep it as-is.
+    // Do NOT rename .webm/.m4a to .ogg: D4 probes confirmed Telegram returns
+    // result.voice for all three real recorder formats. Renaming would break
+    // duration metadata and produce a "0:00" voice bubble.
   }
 
   formData.append(fieldName, blob, fileName);
@@ -268,22 +280,17 @@ async function telegramSendFileFromBytes(
   chatId: number,
   bytes: Uint8Array,
   fileName: string,
-  fileType: "photo" | "video" | "audio" | "video_note" | "document",
+  fileType: FileData["type"],
   mimeType: string,
   caption?: string
 ) {
   const blob = new Blob([bytes], { type: mimeType });
   const file = new File([blob], fileName, { type: mimeType });
 
-  let method: string;
-  let fieldName: string;
-  switch (fileType) {
-    case "photo": method = "sendPhoto"; fieldName = "photo"; break;
-    case "video": method = "sendVideo"; fieldName = "video"; break;
-    case "audio": method = "sendAudio"; fieldName = "audio"; break;
-    case "video_note": method = "sendVideoNote"; fieldName = "video_note"; break;
-    default: method = "sendDocument"; fieldName = "document";
-  }
+  // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: shared resolver.
+  const transport = resolveTelegramMediaTransport(fileType);
+  const method = transport.method;
+  const fieldName = transport.fieldName;
 
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
@@ -533,6 +540,57 @@ Deno.serve(async (req) => {
           }
           sendResult = await telegramRequest(botToken, "sendMessage", sendBody);
         }
+
+        // PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1: voice STOP-guard.
+        // Success criteria for voice: HTTP success + ok === true +
+        // result.message_id + result.voice. If Telegram returned audio/document
+        // or an empty result, do NOT silently accept it: delete the orphan
+        // Telegram message and report a clear error to the admin.
+        if (file?.type === "voice" && sendResult?.ok && !sendResult?.result?.voice) {
+          const orphanMid = sendResult?.result?.message_id;
+          const classified =
+            sendResult?.result?.audio ? "audio"
+            : sendResult?.result?.document ? "document"
+            : "unknown";
+          console.warn("[telegram-admin-chat] voice_not_recognized", {
+            user_id,
+            file_name: file?.name,
+            classified_as: classified,
+            telegram_message_id: orphanMid,
+          });
+          if (orphanMid) {
+            try {
+              await telegramRequest(botToken, "deleteMessage", {
+                chat_id: profile.telegram_user_id,
+                message_id: orphanMid,
+              });
+            } catch (cleanupErr) {
+              console.warn("[telegram-admin-chat] voice_cleanup_failed", cleanupErr);
+            }
+          }
+          await supabase.from("telegram_logs").insert({
+            user_id,
+            action: "ADMIN_CHAT_FILE",
+            target: "user",
+            status: "error",
+            error_message: `voice_classified_as_${classified}`,
+            meta: {
+              failure_stage: "voice_stop_guard",
+              file_type: "voice",
+              file_name: file?.name,
+              classified_as: classified,
+              telegram_response: sendResult,
+              sent_by_admin: user.id,
+            },
+          });
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Telegram распознал файл как «${classified}», а не как голосовое. Отправка отменена.`,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
 
         // If file was sent successfully, download from Telegram and upload to Storage
         let storageBucket: string | null = null;
