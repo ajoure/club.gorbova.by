@@ -257,9 +257,9 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 
 ---
 
-## 4. Сводка по User Scenarios (Baseline)
+## 4. Сводка по User Scenarios (Baseline — архитектурная оценка)
 
-Замеры P50/P95 не выполнялись (исключено STOP-условиями плана: pg-bench запрещён в проде, EXPLAIN ANALYZE на write-heavy таблицу с дорогим планом — рискованно). Базовая численная оценка из slow_queries и архитектурного анализа:
+Численные замеры P50/P95 на Этапе 1 не выполнялись (исключено STOP-условиями). Базовая оценка из slow_queries и архитектурного анализа:
 
 | Сценарий | Текущее ожидаемое поведение | Ожидаемый bottleneck |
 | --- | --- | --- |
@@ -268,10 +268,36 @@ telegram_messages_sent_by_admin_idx     (sent_by_admin)
 | Отправка ответа | optimistic OK; реальная inbox-карточка обновляется через 100–2000 ms | F2, F3, F4 |
 | Открытие файла | signed URL уже в payload если в первой пачке, иначе second-call | F11 |
 | Переключение «Новые» / «Все» | мгновенно (клиентский фильтр) | — |
-| Один входящий | 3 параллельных refetch | F2 |
-| Mass mark-as-read 14 диалогов | 14 строк × 3 realtime channels = 42 refetch-триггера | F2, F3 |
+| Один входящий INSERT | до 2 параллельных refetch-сигнала (один RPC `get_inbox_dialogs_v1` + один count(*)). `global-incoming-alert` фильтрованный, sound-only — не считается | F2 |
+| Mass mark-as-read 14 диалогов (построчно) | до 14 × 2 = **28 refetch-сигналов** от двух refetch-каналов. Фактических HTTP-запросов может быть меньше из-за React Query in-flight dedup, но callbacks вызываются построчно. | F2, F3 |
 
 После исправлений F1–F5 ожидается, что эти значения упадут в 3–10× раз.
+
+---
+
+## 4.A Baseline pre-execute (обязательный шаг в начале Этапа 2)
+
+Безопасный browser/network baseline (без pgbench, без EXPLAIN ANALYZE на write-heavy, без production-нагрузки). Снимается до любого кода/миграций и сохраняется как proof-артефакт `.lovable/proofs/contact_center_baseline_<date>.md`. Та же методика повторяется после фикса для before/after proof.
+
+Замеры:
+1. **Browser Network trace** при cold-открытии `/admin/communication?tab=inbox` (hard reload) и warm-возврате на вкладку. Фиксируем:
+   - число вызовов `get_inbox_dialogs_v1` за первые 10 секунд;
+   - payload size ответа (bytes);
+   - время от навигации до первой полной отрисовки списка диалогов (TTFP).
+2. **Открытие одного диалога** (средний по объёму медиа). Фиксируем:
+   - суммарное время от клика до отрисовки последнего сообщения;
+   - число запросов `telegram-admin-chat`;
+   - число second-call'ов на signed URLs.
+3. **Один входящий INSERT** (тестовое сообщение в тестовый диалог). Фиксируем:
+   - число realtime callbacks по подпискам;
+   - число фактических HTTP-refetch'ей (`get_inbox_dialogs_v1`, count unread).
+4. **Mark-as-read одного диалога с N непрочитанных** (тестовый диалог). Фиксируем:
+   - число realtime callbacks;
+   - число фактических HTTP-refetch'ей.
+
+Источники: Chrome DevTools Network panel, Performance panel (без CPU throttling), консольный лог реалтайма.
+
+Запрещено: pg-bench, нагрузочные скрипты, `EXPLAIN (ANALYZE, BUFFERS)` на `telegram_messages` в прайм-тайм, любые INSERT/UPDATE в production-таблицы вне тестового диалога.
 
 ---
 
