@@ -37,6 +37,8 @@ import {
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
+import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
+import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 
 interface Props {
   /** Канонический код пакета (например, "ideology"). SOT — `document_package_templates.code`. */
