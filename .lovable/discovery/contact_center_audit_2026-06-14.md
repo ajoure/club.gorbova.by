@@ -10,12 +10,12 @@
 
 Baseline инвентаризация показала, что архитектура контакт-центра в целом канонична: используется RPC `get_inbox_dialogs_v1`, виртуализация списка (`@tanstack/react-virtual`), есть `staleTime`/`refetchOnWindowFocus:false`, индексы по `(user_id, created_at DESC)` и partial-индекс по непрочитанным.
 
-При этом подтверждены **4 ROOT CAUSE** проблем, описанных пользователем:
+При этом подтверждены наблюдения по 4 направлениям, описанным пользователем (с уточнённой классификацией confidence):
 
-1. **Постепенная деградация скорости** — `get_inbox_dialogs_v1` каждый вызов выполняет полный `GROUP BY user_id` + `DISTINCT ON (user_id)` по ВСЕМ строкам `telegram_messages` (9 334 строк сейчас, растёт линейно). При том что выводится только 100 диалогов. Это «налог», растущий с историей.
-2. **Каскад refetch'ей на одно событие** — три независимые realtime-подписки на ВСЮ таблицу `telegram_messages` без серверного фильтра. Один входящий INSERT и каждый mass mark-as-read триггерят 2–3 рефетча тяжёлой RPC одновременно.
-3. **Карточка остаётся «новой» после ответа** — mark-as-read вызывается на `onMessageSent`, но решение зависит от 30s-staleTime и порядка прихода realtime-событий. Race condition между outgoing INSERT и UPDATE is_read даёт окно, когда карточка отображается с unread_count > 0.
-4. **Мобильный composer перекрыт клавиатурой/QuickType bar (iOS)** — в `index.html` нет `interactive-widget=resizes-content`, в композере нет обработки `visualViewport` и `env(safe-area-inset-bottom)`. iOS Safari layout viewport не сжимается при появлении клавиатуры → поле ввода уходит под QuickType bar.
+1. **F1 — Постепенная деградация скорости (CONFIRMED SCALING BOTTLENECK).** `get_inbox_dialogs_v1` каждый вызов выполняет полный `GROUP BY user_id` + `DISTINCT ON (user_id)` по ВСЕМ строкам `telegram_messages` (9 334 строк сейчас, растёт линейно). Окончательное влияние на наблюдаемую latency подтверждается безопасным before/after proof на Этапе 2.
+2. **F2 — Каскад refetch'ей на одно событие (ROOT CAUSE CONFIRMED).** Два realtime-канала без серверного фильтра инициируют тяжёлый RPC-refetch: `inbox-messages-realtime` (refetch `get_inbox_dialogs_v1`) и `unread-count` (refetch `count(*)` по непрочитанным). Третий канал `global-incoming-alert` имеет фильтр `direction=eq.incoming` и выполняет sound-only — не вызывает refetch и не считается в стоимости. Один INSERT → 2 параллельных refetch-сигнала; mass mark-as-read даёт построчный fanout.
+3. **F4 — Карточка может оставаться «новой» после ответа (PARTIALLY CONFIRMED / RACE HYPOTHESIS).** Подтверждено наличие потенциально неверного порядка операций между outgoing INSERT, mark-as-read UPDATE и refetch'ем `get_inbox_dialogs_v1`. Сам пользовательский кейс runtime не воспроизведён; скриншот IMG_4569 может показывать корректную сортировку в разделе «Все», а не сохранённое unread-состояние. На Этапе 2 закрывается атомарным фиксом вместе с F3 (RPC + optimistic patch + защита от ошибки исходящей).
+4. **F5 — Мобильный composer перекрыт клавиатурой/QuickType bar (iOS) (ROOT CAUSE CONFIRMED).** В `index.html` нет `interactive-widget=resizes-content`, в композере нет `visualViewport`-обработки и `env(safe-area-inset-bottom)`. iOS Safari layout viewport не сжимается при появлении клавиатуры. Одна строка `interactive-widget` в meta-viewport — НЕ самостоятельное завершённое исправление; правится одним мобильным патчем (meta + safe-area + visualViewport), runtime proof на реальном iPhone обязателен.
 
 Прочие наблюдения — список F1…F12 ниже.
 
