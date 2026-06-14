@@ -1,152 +1,157 @@
+План: PATCH-CONTACT-CENTER-VOICE-UI-PARITY-V1
 
-# План: PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1 — Discovery (D1–D5)
+Цель: единый компактный Telegram-style voice во всех трёх местах (incoming/outgoing/preview), фикс Safari-«большого пустого блока», без изменения transport/recorder/storage/metadata.
 
-Финальная редакция плана с учётом всех уточнений. Выполняется одним проходом без ожидания файлов от пользователя и без дополнительных согласований. Остановка — только при реальном data-safety / secret-safety STOP-guard.
+---
 
-## Базовые принципы
+## D. Diagnose (read-only, уже частично выполнен)
 
-- Discovery-first. Никакого production-кода и выбора архитектуры (варианты 1–4 транспорта) до D5.
-- Вариант 1 для fixtures: только публичные короткие WebM/Opus и M4A/AAC с зафиксированным источником, контейнером, codec, MIME, расширением, целостностью и лицензией. Простого расширения недостаточно — реальный формат проверяется диагностическим инструментом (ffprobe/file/mediainfo в sandbox).
-- Если подходящих публичных fixtures нет — допускается локальная генерация диагностическим инструментом (ffmpeg в sandbox, вне приложения): WebM/Opus и M4A/AAC, 1–2 сек, без коммита бинарников в репозиторий, без добавления зависимости в `package.json`. Команда создания и фактический формат фиксируются в proof.
-- Реальные пользовательские файлы пока не запрашиваются. Неоднозначный публичный fixture → P2/P3 помечается `NEEDS DEVICE UAT`, но D1–D3 и P1 не блокируются.
-- Support-тикеты функционально не меняем.
+Component mapping подтверждён:
 
-## Data-safety / secret-safety инварианты
+- incoming voice в истории → `ChatMediaMessage.tsx` → `AudioPlayer` (ветка `isAudio`, canonicalType `voice`)
+- outgoing voice в истории → `ChatMediaMessage.tsx` → `AudioPlayer` (тот же компонент, флаг `isOutgoing`)
+- voice после reload → тот же `ChatMediaMessage` + `AudioPlayer` (по `meta.file_type='voice'` + signed URL из Storage)
+- pre-send preview → `OutboundMediaPreview.tsx`, ветка `fileType === "voice"` использует **нативный `<audio controls>`** — это и есть источник «огромного пустого блока» в Safari (нативный плеер растягивается на доступную ширину контейнера-сообщения и в Safari имеет высокий хром)
+- Safari history-bubble корректен: попадает в `isAudio` → `AudioPlayer` (кастомный компактный)
 
-- Bot token / `TELEGRAM_API_KEY` / `LOVABLE_API_KEY` НИКОГДА не попадают в: отчёты, stdout, screenshots, `.lovable/`-артефакты, git history. В proof — только маскированные ссылки на имена секретов.
-- Runtime probes (D4) — только на выделенных test bot / test Telegram account / test contact / test profile. Если хотя бы один идентификатор относится к реальному клиенту → STOP только для runtime probes; D1–D3 и D5 продолжаются.
-- Оригинальное входящее voice клиента не модифицируется и не удаляется. Для P1 байты скачиваются и сохраняются как отдельная тестовая копия в изолированном storage path (или только локально), отправляется копия, удаляется только созданная копия и тестовое исходящее сообщение.
-- Cleanup direct Telegram probe: `deleteMessage` по каждому `result.message_id`; удаляются только созданные fixture-объекты; если диагностический вызов не создаёт строку в `telegram_messages` — DB cleanup явно отмечается `not applicable`. Никаких широких DELETE по типу файла или временному диапазону.
+Root cause Safari «огромный блок» = `<audio controls>` в `OutboundMediaPreview`, не transport и не storage. Significant: в истории Safari проблема не воспроизводится, только в pre-send. STOP-guard не срабатывает: правка чисто UI.
 
-## D1 — Historical discovery (git + DB)
+Дополнительно: канонический выбор ветки в `ChatMediaMessage` сейчас корректно отдаёт voice в audio-ветку при `fileType === 'voice'` (строки 148–174). MIME `audio/webm`/`audio/mp4` тоже разруливаются как audio. Никаких изменений в media-резолвере не требуется — только усиление приоритета `file_type` (см. §3).
 
-Цель: доказать, существовала ли ранее исходящая voice-реализация и не потерялась ли при рефакторингах.
+---
 
-Семантический поиск (не только точные строки) по всей истории всех веток, включая удалённые/переименованные файлы:
+## 1. Canonical компонент
 
-- Код: `sendVoice`, `VoiceRecorder`, `MediaRecorder`, `audio/ogg`, `audio/webm`, `audio/mp4`, `audio/mpeg`, `opus`, `recording`, `recorder`, `sendAudio`, `OutboundMediaPreview`, `voice`, `voice_message`, `audio_message`, `mic`, `microphone`, `BlobEvent`, `getUserMedia({ audio`.
-- Файлы интереса: `ContactTelegramChat.tsx`, `telegram-admin-chat/index.ts`, `telegram-webhook*/index.ts`, `VoiceRecorder.tsx`, `VideoNoteRecorder.tsx`, `OutboundMediaPreview.tsx`, `.lovable/proofs/`, `.lovable/plan.md`, `.lovable/discovery/**`.
+Создать `src/components/admin/chat/VoiceMessageBubble.tsx` на базе текущего `AudioPlayer.tsx` (он уже отвечает контракту: play/pause, seek-bar, elapsed/total, иконка Mic). Расширить:
 
-История БД и миграций:
+Props:
+```
+direction: "incoming" | "outgoing"
+src: string
+durationHint?: number          // meta.duration или recorder duration
+fileSize?: number              // байты, для подписи
+fileName?: string              // только для tooltip/меню
+sentAt?: Date | null
+status?: "sending" | "sent" | "delivered" | "failed"
+onDownload?: () => void
+onDelete?: () => void          // только preview
+onReply?: () => void
+compact?: boolean              // preview-режим: без time/status/senderLabel
+```
 
-- enum / `CHECK` constraints со значением `voice` (`telegram_messages.message_type`, `meta.file_type`, любые message-type enums).
-- Сгенерированные `src/integrations/supabase/types.ts` в прошлых коммитах — наличие `"voice"` в union'ах.
-- Старые metadata contracts на `telegram_messages.meta` (поля `duration`, `waveform`, `mime_type`, `is_voice`).
-- `audit_logs` и proof-файлы с упоминаниями исходящего voice.
+Логика duration (приоритет, согласно §6 ТЗ):
+1. `durationHint > 0`
+2. recorder-измеренная (передаётся в preview)
+3. `HTMLAudioElement.duration` после `loadedmetadata` (с защитой от `Infinity`/`NaN`)
+4. fallback `—`, не `0:00`
 
-Output: `.lovable/discovery/voice_history_2026-06-14.md` — список находок, коммиты, ветки, удалённые файлы, фрагменты diff'ов, вывод «функция существовала / не существовала / частично существовала».
+Полученную клиентом duration **не писать обратно в БД**.
 
-## D2 — Reverse-engineer incoming voice chain (proof что плеер — именно voice)
+Удалить `AudioPlayer.tsx` после миграции (single source of truth) — экспорт `AudioPlayer` оставить как алиас в `index.ts`, если он используется где-то ещё (проверить ripgrep'ом перед удалением; если только в `ChatMediaMessage` — удалить файл).
 
-Цель: доказать, что красивый плеер на скриншоте относится именно к voice, а не к универсальному audio-рендеру.
+## 2. Подключение в ChatMediaMessage
 
-Фиксируем:
+В ветке `isAudio && canonicalType === "voice"` рендерить `VoiceMessageBubble` напрямую (с `direction`, `durationHint=meta?.duration`, `fileSize`, `fileName`, `sentAt`, `status`, `onDownload`). Ветка `audio` (не voice) продолжает использовать существующий компонент без изменений — визуально отличается (Music-иконка, имя файла).
 
-- Webhook handler (`telegram-webhook*`): как `message.voice` отличается от `message.audio` и `message.document`; какое значение записывается в `telegram_messages.message_type` и `meta.file_type`.
-- Полный путь: Telegram update → download → bucket/storage path → DB row → signed URL → UI player.
-- UI: какой именно React-компонент рендерит плеер, по какому условию (`file_type === 'voice'` vs `'audio'` vs MIME-fallback), как ведёт себя после reload.
-- Реальный MIME сохранённого файла (через storage HEAD / DB `meta.mime_type`), реальная `duration`.
+Усилить приоритет canonical: если `fileType === 'voice'` (или `meta.file_type === 'voice'`), форсировать voice-ветку **до** проверок MIME/extension — это защита от случая, когда Safari перепутает `audio/mp4` с видео-веткой при отсутствии MIME.
 
-Output: `.lovable/discovery/voice_incoming_architecture_2026-06-14.md` с branch-mapping `voice → component`, `audio → component`, `document → component`.
+## 3. Подключение в OutboundMediaPreview
 
-## D3 — Audit outgoing chain (что именно отсутствует)
+В ветке `fileType === "voice"` заменить `<audio controls>` на тот же `VoiceMessageBubble` (`direction="outgoing"`, `compact=true`, `onDelete=onRemove`, `src=URL.createObjectURL(file)`). Это устраняет Safari-«большой пустой блок» — кастомный плеер имеет фиксированную компактную высоту.
 
-Цель: точно определить недостающие звенья исходящего voice без записи нового кода.
+Управление `URL.createObjectURL`: создавать в `useEffect`, revoke в cleanup (сейчас утечка — preview уже её допускал).
 
-Проходим существующий путь для других медиа (`recording → uploadToTelegramMedia → storage_path → telegram-admin-chat → sendXxx → telegram_messages`) и фиксируем разрывы:
+## 4. Стиль (glassmorphism, единый)
 
-- Composer: есть ли пункт меню «🎤 Голосовое»? Где он должен встроиться? Какие типы поддерживает `selectedFileType`?
-- Edge function `telegram-admin-chat/index.ts`: две дублирующиеся карты `fileType → method/fieldName` (строки ~230 и ~280) — `voice` не маппится.
-- Storage upload: ограничения на bucket по MIME / size; политика на `audio/*`.
-- DB write back: ветка для `voice` после успешного sendVoice (`message_type`, `meta`).
-- Mobile lifecycle: где обрабатывается фон/блокировка экрана/прерывание звонком (если уже есть для других медиа).
+В `VoiceMessageBubble`:
+- контейнер: `bg-card/30 dark:bg-card/20 backdrop-blur-xl border border-border/30 shadow-sm rounded-2xl px-2 py-1.5`
+- outgoing — лёгкий primary-tint: `bg-primary/8 border-primary/20` (не сплошная синяя заливка)
+- max-width: 320–420 px desktop, `calc(100% - 16px)` mobile
+- структура: `[play/pause 36×36] [progress + 0:02/0:06 · 119 КБ] [⋯]`
+- play/pause: нейтральная (foreground/10 фон), не ярко-синяя; одинаковая для in/out; focus-ring, `aria-label`
+- senderLabel — только если передан явно; в DM обычно скрыт
+- filename — только в tooltip кнопки ⋯ и в пункте меню «Скачать» (текст подписи)
+- time/status — в нижнем правом углу bubble (вне внутреннего контейнера плеера), `text-[10px] text-muted-foreground tabular-nums`, `compact` режим их скрывает
 
-Output: `.lovable/discovery/voice_outgoing_gap_2026-06-14.md` — точный список отсутствующих звеньев и для каждого пометка «можно переиспользовать существующее / нужно новое».
+## 5. Меню действий ⋯
 
-## D4 — Runtime transport probes (Telegram Bot API напрямую, БЕЗ изменения production-кода)
+DropdownMenu (shadcn) триггер — компактная `Button variant="ghost" size="icon-sm"` с `MoreHorizontal`. Пункты:
+- Скачать (всегда, через `onDownload` — `<a download>` с `fileName` или fallback `voice-<sentAt>.ogg`)
+- Ответить (только если `onReply` передан)
+- Удалить (только при наличии существующего permission; пока не пробрасываем — пункт скрыт, чтобы не вводить новые права)
 
-Цель: получить ground truth от Telegram, что он принимает как `voice`, `audio`, `document` или отвергает.
+В preview — отдельная `×` для удаления записи (`onDelete`), меню ⋯ скрыто.
 
-Способ выполнения:
+## 6. Safari-guards (CSS)
 
-- Прямой диагностический вызов Telegram Bot API `sendVoice` из защищённого sandbox/runner с использованием существующего тестового bot secret через connector gateway (`https://connector-gateway.lovable.dev/telegram/sendVoice`, headers `Authorization: Bearer $LOVABLE_API_KEY`, `X-Connection-Api-Key: $TELEGRAM_API_KEY`).
-- Либо временный ad-hoc diagnostic runner, который НЕ деплоится, НЕ коммитится и НЕ меняет production edge function.
-- `case "voice"` в `telegram-admin-chat/index.ts` НЕ добавляется до D5.
-- Только test bot / test contact / test chat. Перед probe — verification, что `chat_id` не принадлежит реальному клиенту.
+В `VoiceMessageBubble`:
+- никакого `aspect-ratio`, `min-height` под видео, `poster`, `<video>`
+- ширина адаптивная (`w-fit max-w-[420px] md:max-w-[420px]`)
+- высота от контента
+- `overflow: hidden` на bubble
+- `<audio>` всегда без атрибута `controls` (только программно через ref)
+- родитель в `ChatMediaMessage` не задаёт фиксированную высоту voice-ветке
 
-Probes:
+## 7. Responsive
 
-- **P1 — OGG/Opus (real incoming):** скачать байты существующего voice клиента → создать тестовую копию в изолированном path (или держать локально) → отправить тестовому контакту → зафиксировать ответ Telegram.
-- **P2 — WebM/Opus (Chrome-like):** публичный или локально сгенерированный fixture с доказанным контейнером (Matroska/WebM) и codec (opus), длительность 1–2 сек.
-- **P3 — M4A/AAC (Safari-like):** публичный или локально сгенерированный fixture с доказанным контейнером (ISO MP4 / `M4A `) и codec (AAC-LC), длительность 1–2 сек.
+- Desktop: bubble 320–420 px
+- Mobile (`<768`): `max-w-[calc(100vw-96px)]`, progress flex-1
+- DropdownMenu использует shadcn (auto-flip, остаётся внутри viewport)
+- safe-area уже соблюдается родителем
 
-Главное техническое доказательство — структурное поле в ответе Telegram Bot API (объект Message):
+## 8. Что НЕ трогаем
 
-| Поле ответа        | Интерпретация                  |
-|--------------------|--------------------------------|
-| `result.voice`     | Telegram принял как voice      |
-| `result.audio`     | audio-track                    |
-| `result.document`  | document                       |
-| `ok=false`         | transport rejected             |
+`sendVoice`, `sendAudio`, `uploadToTelegramMedia.ts`, `AdminVoiceRecorder`, `audioRecorderCore`, edge-функцию `telegram-admin-chat`, схему `meta`, video-note рендер, photo/video/document ветки, incoming webhook.
 
-Скриншот клиента — дополнительный UI-proof, не основной. Для P3 (если `result.voice`) дополнительно проверить воспроизведение в клиенте и в нашей UI-истории после reload — только тогда Safari-формат считается пригодным.
+## 9. UAT (DM Sergey @fs_by, chat_id 66086524, bot @gorbovabybot)
 
-Cleanup после каждого probe: `deleteMessage` по `result.message_id`; удалить созданный fixture-объект из storage; если DB-строки в `telegram_messages` не создавалось — `DB cleanup = not applicable`. Никаких широких DELETE.
+Smoke + screenshots before/after:
+1. incoming OGG voice — слева, компактно
+2. outgoing Chrome WebM voice — справа, тот же стиль
+3. outgoing Safari/iOS M4A voice (desktop Safari + iPhone Safari) — нет «большого пустого блока» ни в preview, ни в истории
+4. reload — voice продолжает воспроизводиться (signed URL)
+5. download через ⋯
+6. seek, play/pause
+7. длинное имя файла — не ломает bubble (filename скрыт)
+8. duration fallback (если meta=0 → берётся loadedmetadata)
+9. light/dark
+10. audio/mp3 (не voice) — остаётся audio-track с именем файла (регрессии нет)
+11. video note — круглый, без регрессии
+12. document — без регрессии
 
-Если runtime probe нельзя безопасно выполнить без изменения production-кода или раскрытия секрета — guard не обходится; D4 помечается `BLOCKED_BY_SECURE_RUNTIME`; D1–D3 завершаются; D5 возвращает точный минимальный run-book.
+## 10. Файлы
 
-Output: `.lovable/discovery/voice_runtime_probes_2026-06-14.md` — для каждого probe фиксируется fixture (источник, контейнер, codec, MIME, расширение, длительность, целостность, лицензия), HTTP status, `ok`, какое из полей `voice/audio/document` присутствует, `message_id`, cleanup-результат, маска секретов.
+Создаются:
+- `src/components/admin/chat/VoiceMessageBubble.tsx`
+- `.lovable/proofs/contact_center_voice_ui_parity_2026-06-14.md`
 
-## D5 — Консолидированный отчёт и решение
+Изменяются:
+- `src/components/admin/chat/ChatMediaMessage.tsx` (voice → VoiceMessageBubble, усиление file_type-приоритета)
+- `src/components/admin/chat/OutboundMediaPreview.tsx` (voice-ветка → VoiceMessageBubble compact, fix URL leak)
+- `src/components/admin/chat/index.ts` (экспорт)
 
-Output: `.lovable/proofs/voice_discovery_consolidated_2026-06-14.md`.
+Возможно удаляется:
+- `src/components/admin/chat/AudioPlayer.tsx` (если нет внешних потребителей; иначе оставляем для audio-ветки)
 
-Структурные блоки, разделённые по природе фактов:
+## 11. DoD
 
-- **HISTORICAL FACT** — было ли это уже реализовано (из D1), какие коммиты/ветки, что потеряно.
-- **CURRENT CODE FACT** — текущая входящая (D2) и исходящая (D3) архитектура; точный список gap'ов.
-- **TELEGRAM API RUNTIME FACT** — результаты P1/P2/P3 по полям `result.voice/audio/document` (из D4).
-- **DEVICE-SPECIFIC UAT PENDING** — что нельзя закрыть публичными fixtures и требует реального устройства (явный список: iOS Safari, Android Chrome WebView и т.д.).
-- **RECOMMENDATION** — итоговое решение.
+- incoming/outgoing/preview voice используют единый `VoiceMessageBubble`
+- incoming слева, outgoing справа, единый glassmorphism
+- filename скрыт из bubble (только tooltip/меню)
+- duration + размер показываются, есть fallback на `loadedmetadata`
+- download — через ⋯
+- Safari preview не показывает огромный пустой блок
+- voice играет после reload
+- audio (не voice) визуально отличается
+- regression: video_note/photo/video/document целы
+- screenshots desktop + mobile приложены к proof
 
-Если в D1 найдена старая реализация — НЕ переносить автоматически. Дать mapping-таблицу:
+## 12. Технические детали (для разработчика)
 
-| старый элемент | текущий эквивалент | решение: восстановить / не использовать / адаптировать |
+- Импорт canonical компонента: `import { VoiceMessageBubble } from "@/components/admin/chat/VoiceMessageBubble"`
+- `formatTime` и pointer-seek заимствуются из текущего `AudioPlayer.tsx`
+- DropdownMenu: `@/components/ui/dropdown-menu`
+- Цвета строго через design tokens (`bg-card`, `bg-primary`, `border-border`, `text-muted-foreground`) — никаких `bg-blue-*`/`text-white`
+- Тест canonical resolver guard: добавить unit-проверку (vitest) на функцию-резолвер canonicalType, если она будет вынесена; иначе — inline JSX-ветка без теста
 
-Сравнение проводится по: Storage contract, edge payload, Telegram response validation, metadata, signed URL, current composer, mobile lifecycle.
-
-Итоговое решение принимается по совокупности (git history + D2 + P1/P2/P3 + поля Message + требование одинакового поведения Chrome/Safari), а НЕ только по таблице поддержки браузеров. RECOMMENDATION содержит четыре отдельных вывода:
-
-1. Нужен ли `sendVoice` mapping в `telegram-admin-chat`?
-2. Нужен ли UI recorder в `ContactTelegramChat`?
-3. Можно ли переиспользовать `src/components/support/VoiceRecorder.tsx` (через извлечение shared `recorder-core` без изменения support-UI)?
-4. Нужен ли transcoding / remux (и если да — на каком уровне: client `ffmpeg.wasm`, server, container-swap remux)?
-
-Граничные случаи:
-
-- Если P2 (WebM/Opus) → `result.voice`, это не закрывает Safari. Минимально допустимый вывод: Chrome/Edge без транскодера, Firefox без транскодера, Safari/iOS → `DEVICE-SPECIFIC UAT PENDING` или отдельный fallback (`sendAudio`).
-- Если P3 (M4A/AAC) → `result.voice` + reload-playback OK → Safari-формат пригоден.
-- Если `BLOCKED_BY_SECURE_RUNTIME` — D5 содержит минимальный run-book для безопасного запуска probes.
-
-## Технические детали выполнения
-
-- Anti-duplication: общий `recorder-core` (`src/components/admin/chat/useAudioRecorderCore.ts`) будет вынесен только в build-фазе после D5, и только после regression proof для support.
-- В `telegram-admin-chat/index.ts` две дублирующиеся карты `fileType → method/fieldName` будут консолидированы в `resolveTelegramMediaTransport(fileType)` тоже только в build-фазе.
-- Все proof-файлы пишутся в `.lovable/discovery/` и `.lovable/proofs/`. Bot token / API keys никогда не попадают в эти файлы; используются только маскированные ссылки (`$TELEGRAM_API_KEY`).
-- Diagnostic ffmpeg/ffprobe вызовы — в `/tmp/`, без модификации `package.json`.
-
-## Исключения (вне scope этого discovery-прохода)
-
-- Биллинг, Stripe, RLS, Telegram lifecycle (join/kick), support-тикеты как фича, S0–S4 `PATCH-CONTACT-CENTER-FIX-V1`.
-- Выбор и реализация транспортной архитектуры (варианты 1–4) — только после D5.
-- Любые изменения production edge functions, DB schema, миграций.
-
-## DoD discovery-прохода
-
-- `.lovable/discovery/voice_history_2026-06-14.md` создан, содержит верифицируемые ссылки на коммиты/ветки/файлы.
-- `.lovable/discovery/voice_incoming_architecture_2026-06-14.md` создан, доказывает природу плеера (voice vs audio).
-- `.lovable/discovery/voice_outgoing_gap_2026-06-14.md` создан с точным списком gap'ов.
-- `.lovable/discovery/voice_runtime_probes_2026-06-14.md` создан с fixtures-картами и полями `result.voice/audio/document` (или `BLOCKED_BY_SECURE_RUNTIME` + run-book).
-- `.lovable/proofs/voice_discovery_consolidated_2026-06-14.md` создан с пятью блоками (HISTORICAL/CURRENT/RUNTIME/UAT-PENDING/RECOMMENDATION) и четырьмя ответами в RECOMMENDATION.
-- Cleanup всех тестовых артефактов подтверждён в proof; оригинальное voice клиента не тронуто; секреты не утекли.
-- Production-код не изменён.
+Выполнение одним проходом. STOP-guard сработает только если в ходе UAT выяснится, что Safari «большой блок» воспроизводится **в истории** (не в preview) — тогда останавливаемся и эскалируем, т.к. это указывало бы на transport/MIME, а не на UI.
