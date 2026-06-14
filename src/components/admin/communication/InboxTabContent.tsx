@@ -371,60 +371,147 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     },
   });
 
-  // Mark messages as read — атомарно через RPC с server-side boundary (no client Date).
-  // p_boundary=null → сервер использует now(); входящие, пришедшие после атомарного
-  // UPDATE, остаются unread по серверной отсечке.
+  // ===== PATCH-CONTACT-CENTER-FIX-V1 corrective (S2 V2 contract) =====
+  // Канон observed boundary:
+  //   1) MAX(created_at) среди incoming из локального кэша чата
+  //      ["telegram-messages", userId] (если чат открывался — точная граница);
+  //   2) fallback: last_message_at строки диалога (серверная отметка,
+  //      не больше реально показанного preview);
+  //   3) отсутствие источника → RPC не вызывается, явная ошибка пользователю.
+  // Никаких new Date()/now() в пользовательском flow.
+  const resolveBoundary = (userId: string): string | null => {
+    const msgs = queryClient.getQueryData<any[]>(["telegram-messages", userId]);
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      let maxAt: string | null = null;
+      for (const m of msgs) {
+        if (m?.direction === "incoming" && typeof m?.created_at === "string") {
+          if (!maxAt || m.created_at > maxAt) maxAt = m.created_at;
+        }
+      }
+      if (maxAt) return maxAt;
+    }
+    const list = queryClient.getQueryData<any[]>(INBOX_DIALOGS_QK);
+    if (Array.isArray(list)) {
+      const row = list.find((d: any) => d?.user_id === userId);
+      if (row?.last_message_at) return String(row.last_message_at);
+    }
+    return null;
+  };
+
+  // Mark messages as read — V2 RPC, observed boundary обязателен.
   const markAsRead = useMutation({
-    mutationFn: async (userId: string) => {
-      const { error } = await supabase.rpc("mark_dialog_read_atomic" as any, {
-        p_user_id: userId,
-        p_boundary: null,
-      });
-      if (error) throw error;
-    },
-    onMutate: async (userId: string) => {
-      await queryClient.cancelQueries({ queryKey: INBOX_DIALOGS_QK });
-      const prev = queryClient.getQueriesData<any>({ queryKey: INBOX_DIALOGS_QK });
-      queryClient.setQueriesData<any>({ queryKey: INBOX_DIALOGS_QK }, (old: any) => {
-        if (!Array.isArray(old)) return old;
-        return old.map((d: any) =>
-          d?.user_id === userId ? { ...d, unread_count: 0 } : d,
+    mutationFn: async ({ userId, boundary }: { userId: string; boundary: string }) => {
+      // Регистрируем self-mark ДО вызова RPC, чтобы realtime-эхо подавилось,
+      // даже если оно прилетит раньше, чем onSuccess.
+      const { registerSelfMark, clearSelfMark } = await import(
+        "@/hooks/inboxMarkReadCoordinator"
+      );
+      registerSelfMark(userId, 2500);
+      try {
+        const { data, error } = await supabase.rpc(
+          "mark_dialog_read_v2" as any,
+          { p_user_id: userId, p_boundary: boundary },
         );
-      });
-      return { prev };
+        if (error) {
+          clearSelfMark(userId);
+          throw error;
+        }
+        const row = Array.isArray(data) ? data[0] : data;
+        return { userId, result: row };
+      } catch (e) {
+        clearSelfMark(userId);
+        throw e;
+      }
     },
-    onError: (_e, _v, ctx: any) => {
-      ctx?.prev?.forEach(([key, data]: [any, any]) => queryClient.setQueryData(key, data));
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+    onSuccess: ({ userId, result }) => {
+      // НЕТ безусловного optimistic-zero. unread_count выставляется ровно
+      // тем, что сервер вернул в remaining_unread_count.
+      if (!result) return;
+      const remain = Number((result as any).remaining_unread_count) || 0;
+      queryClient.setQueriesData<any>(
+        { queryKey: INBOX_DIALOGS_QK },
+        (old: any) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((d: any) =>
+            d?.user_id === userId ? { ...d, unread_count: remain } : d,
+          );
+        },
+      );
+      // Лёгкая реконсиляция глобального счётчика непрочитанных (не списка):
+      // realtime-bus подавит свой эхо-UPDATE, mutation остаётся единственным
+      // источником invalidate для UNREAD_MESSAGES_COUNT_QK.
       queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });
+    },
+    onError: (e: any) => {
+      toast.error("Не удалось отметить как прочитанное: " + (e?.message || "ошибка"));
     },
   });
 
-  // Bulk mark as read — единый атомарный RPC, без N запросов.
+  // Bulk mark as read — V2 RPC, per-dialog boundary.
   const bulkMarkAsRead = useMutation({
     mutationFn: async (userIds: string[]) => {
-      if (!userIds.length) return;
-      const { error } = await supabase.rpc("bulk_mark_dialogs_read_atomic" as any, {
-        p_user_ids: userIds,
-        p_boundary: null,
-      });
-      if (error) throw error;
+      if (!userIds.length) return [] as any[];
+      const items: Array<{ user_id: string; boundary: string }> = [];
+      const missing: string[] = [];
+      for (const id of userIds) {
+        const b = resolveBoundary(id);
+        if (b) items.push({ user_id: id, boundary: b });
+        else missing.push(id);
+      }
+      if (missing.length) {
+        throw new Error(
+          `Нет observed boundary для ${missing.length} диалога(ов). Откройте чат(ы) и повторите.`,
+        );
+      }
+      const { registerSelfMark, clearSelfMark } = await import(
+        "@/hooks/inboxMarkReadCoordinator"
+      );
+      items.forEach((i) => registerSelfMark(i.user_id, 2500));
+      const { data, error } = await supabase.rpc(
+        "bulk_mark_dialogs_read_v2" as any,
+        { p_items: items as any },
+      );
+      if (error) {
+        items.forEach((i) => clearSelfMark(i.user_id));
+        throw error;
+      }
+      return (data || []) as any[];
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+    onSuccess: (rows: any[]) => {
+      if (!rows?.length) return;
+      const map = new Map<string, number>();
+      for (const r of rows) {
+        map.set(String(r.dialog_user_id), Number(r.remaining_unread_count) || 0);
+      }
+      queryClient.setQueriesData<any>(
+        { queryKey: INBOX_DIALOGS_QK },
+        (old: any) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((d: any) =>
+            map.has(d?.user_id) ? { ...d, unread_count: map.get(d.user_id)! } : d,
+          );
+        },
+      );
       queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });
       setSelectedChats(new Set());
       setSelectionMode(false);
       toast.success("Чаты отмечены как прочитанные");
     },
+    onError: (e: any) => {
+      toast.error("Не удалось отметить чаты: " + (e?.message || "ошибка"));
+    },
   });
 
   const markChatAsRead = (userId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    markAsRead.mutate(userId);
-    toast.success("Отмечено как прочитанное");
+    const boundary = resolveBoundary(userId);
+    if (!boundary) {
+      toast.error(
+        "Не удалось определить границу прочитанного. Откройте чат и попробуйте снова.",
+      );
+      return;
+    }
+    markAsRead.mutate({ userId, boundary });
   };
 
   const handleSelectDialog = (userId: string) => {
