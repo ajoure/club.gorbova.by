@@ -3986,6 +3986,158 @@ export type Database = {
         }
         Relationships: []
       }
+      document_package_field_catalog: {
+        Row: {
+          admin_editable: boolean
+          auto_assign_to_new_items: boolean
+          client_visible: boolean
+          created_at: string
+          created_by: string | null
+          data_type: string
+          description: string | null
+          field_key: string
+          id: string
+          is_active: boolean
+          is_system: boolean
+          label: string
+          metadata: Json
+          options: Json
+          package_template_id: string
+          public_id: string
+          required: boolean
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          usage_scope: string
+          version: number
+        }
+        Insert: {
+          admin_editable?: boolean
+          auto_assign_to_new_items?: boolean
+          client_visible?: boolean
+          created_at?: string
+          created_by?: string | null
+          data_type: string
+          description?: string | null
+          field_key: string
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          label: string
+          metadata?: Json
+          options?: Json
+          package_template_id: string
+          public_id: string
+          required?: boolean
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          usage_scope?: string
+          version?: number
+        }
+        Update: {
+          admin_editable?: boolean
+          auto_assign_to_new_items?: boolean
+          client_visible?: boolean
+          created_at?: string
+          created_by?: string | null
+          data_type?: string
+          description?: string | null
+          field_key?: string
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          label?: string
+          metadata?: Json
+          options?: Json
+          package_template_id?: string
+          public_id?: string
+          required?: boolean
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          usage_scope?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_field_catalog_package_template_id_fkey"
+            columns: ["package_template_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_item_field_assignments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          field_catalog_id: string
+          help_override: string | null
+          id: string
+          is_active: boolean
+          is_required_override: boolean | null
+          label_override: string | null
+          metadata: Json
+          package_template_item_id: string
+          section_key: string | null
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          visibility_mode: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          field_catalog_id: string
+          help_override?: string | null
+          id?: string
+          is_active?: boolean
+          is_required_override?: boolean | null
+          label_override?: string | null
+          metadata?: Json
+          package_template_item_id: string
+          section_key?: string | null
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          visibility_mode?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          field_catalog_id?: string
+          help_override?: string | null
+          id?: string
+          is_active?: boolean
+          is_required_override?: boolean | null
+          label_override?: string | null
+          metadata?: Json
+          package_template_item_id?: string
+          section_key?: string | null
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          visibility_mode?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_item_field_assig_package_template_item_id_fkey"
+            columns: ["package_template_item_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_template_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_item_field_assignments_field_catalog_id_fkey"
+            columns: ["field_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_field_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_package_item_role_assignments: {
         Row: {
           created_at: string
@@ -4130,6 +4282,72 @@ export type Database = {
             columns: ["package_template_id"]
             isOneToOne: false
             referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_session_field_values: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          field_catalog_id: string
+          id: string
+          session_id: string
+          updated_at: string
+          updated_by: string | null
+          value_boolean: boolean | null
+          value_date: string | null
+          value_datetime: string | null
+          value_json: Json | null
+          value_number: number | null
+          value_text: string | null
+          value_time: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          field_catalog_id: string
+          id?: string
+          session_id: string
+          updated_at?: string
+          updated_by?: string | null
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_datetime?: string | null
+          value_json?: Json | null
+          value_number?: number | null
+          value_text?: string | null
+          value_time?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          field_catalog_id?: string
+          id?: string
+          session_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_datetime?: string | null
+          value_json?: Json | null
+          value_number?: number | null
+          value_text?: string | null
+          value_time?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_session_field_values_field_catalog_id_fkey"
+            columns: ["field_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_field_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_session_field_values_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -17159,6 +17377,10 @@ export type Database = {
         Returns: Json
       }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
+      report_package_field_dependencies: {
+        Args: { _field_id: string }
+        Returns: Json
+      }
       resolve_broadcast_audience: { Args: { _filters: Json }; Returns: Json }
       resolve_broadcast_audience_contacts: {
         Args: { _filters: Json }
@@ -17346,6 +17568,43 @@ export type Database = {
           _name: string
           _package_id: string
         }
+        Returns: Json
+      }
+      upsert_package_field_catalog: {
+        Args: { _expected_version?: number; _payload: Json }
+        Returns: {
+          admin_editable: boolean
+          auto_assign_to_new_items: boolean
+          client_visible: boolean
+          created_at: string
+          created_by: string | null
+          data_type: string
+          description: string | null
+          field_key: string
+          id: string
+          is_active: boolean
+          is_system: boolean
+          label: string
+          metadata: Json
+          options: Json
+          package_template_id: string
+          public_id: string
+          required: boolean
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          usage_scope: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "document_package_field_catalog"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      upsert_session_field_values: {
+        Args: { _session_id: string; _values: Json }
         Returns: Json
       }
       user_can_see_document_package: {
