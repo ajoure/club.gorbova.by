@@ -432,29 +432,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     // НЕ вызываем markAsRead — чат остаётся "новым" до явного действия или ответа
   };
 
-  // Subscribe to realtime updates for new messages
-  useEffect(() => {
-    const channel = supabase
-      .channel("inbox-messages-realtime")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "telegram_messages" },
-        (payload) => {
-          refetch();
-          const newMsg = payload.new as any;
-          if (newMsg?.direction === "incoming" && soundEnabledRef.current) {
-            playNotificationSound();
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "telegram_messages" },
-        () => refetch()
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [refetch]);
+  // Realtime-подписка перенесена в глобальный `useInboxRealtimeInvalidation`
+  // (mounted в AdminLayout). Здесь больше не нужна: invalidate приходит из общего
+  // bus-хука с trailing debounce 300 мс и event-aware матрицей.
 
   const toggleChatSelection = (userId: string, e: React.MouseEvent | React.ChangeEvent) => {
     e.stopPropagation();
