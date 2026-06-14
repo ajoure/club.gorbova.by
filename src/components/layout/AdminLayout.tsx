@@ -8,6 +8,7 @@ import { Loader2, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { PushNotificationToggle } from "@/components/admin/PushNotificationToggle";
 import { useIncomingMessageAlert } from "@/hooks/useIncomingMessageAlert";
+import { useInboxRealtimeInvalidation } from "@/hooks/useInboxRealtimeInvalidation";
 
 interface AdminLayoutProps {
   children: ReactNode;
