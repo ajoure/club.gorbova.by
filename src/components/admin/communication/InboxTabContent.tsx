@@ -82,41 +82,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
-// Notification sound using Web Audio API
-const playNotificationSound = () => {
-  try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    
-    const audioContext = new AudioContextClass();
-    
-    if (audioContext.state === 'suspended') {
-      audioContext.resume();
-    }
-    
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
-    oscillator.frequency.setValueAtTime(1100, audioContext.currentTime + 0.1);
-    oscillator.type = 'sine';
-    
-    gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.4);
-    
-    oscillator.onended = () => {
-      audioContext.close();
-    };
-  } catch (e) {
-    console.log('Sound notification not available:', e);
-  }
-};
+// Звуковое уведомление о новых входящих живёт в глобальном хуке
+// `useIncomingMessageAlert` (mounted в AdminLayout). Локальный playNotificationSound
+// удалён в S1 PATCH-CONTACT-CENTER-FIX-V1, чтобы исключить дубль звука.
 
 interface Dialog {
   user_id: string;
