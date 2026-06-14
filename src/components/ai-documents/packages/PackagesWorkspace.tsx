@@ -45,6 +45,7 @@ import { useRbac } from "@/hooks/useRbac";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
+import { PackageFieldsManager } from "./PackageFieldsManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
