@@ -93,7 +93,13 @@ interface ContactTelegramChatProps {
   avatarUrl?: string | null;
   onAvatarUpdated?: (url: string) => void;
   hidePhotoButton?: boolean;
-  onMessageSent?: () => void;
+  /**
+   * Вызывается ПОСЛЕ успешной отправки. `boundary` = max(created_at) среди
+   * incoming-сообщений, реально загруженных ДО отправки (capture-before-send).
+   * Null → пользовательский flow не должен помечать прочитанным с now()
+   * (PATCH-CONTACT-CENTER-FIX-V1 corrective).
+   */
+  onMessageSent?: (boundary?: string | null) => void;
   /** True когда вкладка Telegram активна. При переходе false→true автоматически прижимаем ленту к низу. */
   isActive?: boolean;
 }
@@ -1035,6 +1041,23 @@ export function ContactTelegramChat({
       return data;
     },
     onMutate: () => {
+      // === Observed boundary capture BEFORE send ===
+      // Фиксируем границу до фактической отправки, чтобы incoming, пришедший
+      // во время отправки, НЕ попал в эту boundary, даже если realtime уже
+      // добавил его в кэш к моменту onSuccess.
+      const snapshot = (queryClient.getQueryData(["telegram-messages", userId]) as
+        | TelegramMessage[]
+        | undefined) || [];
+      let capturedBoundary: string | null = null;
+      for (const m of snapshot) {
+        if (m?.direction === "incoming" && typeof m?.created_at === "string") {
+          if (!capturedBoundary || m.created_at > capturedBoundary) {
+            capturedBoundary = m.created_at;
+          }
+        }
+      }
+      pendingBoundaryRef.current = capturedBoundary;
+
       // Optimistically add message to UI immediately
       const localUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
       if (localUrl) localMediaUrlsRef.current.push(localUrl);
@@ -1076,10 +1099,14 @@ export function ContactTelegramChat({
       setReplyingTo(null);
       refetch();
       startStickyScroll(2200);
-      onMessageSent?.();
+      // Передаём boundary, зафиксированную ДО отправки (corrective S2).
+      const b = pendingBoundaryRef.current;
+      pendingBoundaryRef.current = null;
+      onMessageSent?.(b);
     },
     onError: (error) => {
       setIsUploading(false);
+      pendingBoundaryRef.current = null;
       toast.error("Ошибка отправки: " + formatChatError(error));
     },
   });
