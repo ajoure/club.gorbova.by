@@ -381,9 +381,9 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               </TabsTrigger>
             </HelpTooltip>
             {isAdminUI && (
-              <HelpTooltip helpKey="" customShort="Список ролей, которые встречаются в шаблонах пакета." alwaysShow>
+              <HelpTooltip helpKey="" customShort="Роли и кастомные поля, которые встречаются в шаблонах пакета." alwaysShow>
                 <TabsTrigger value="roles">
-                  <Users className="h-3.5 w-3.5 mr-1.5" /> Роли пакета
+                  <Users className="h-3.5 w-3.5 mr-1.5" /> Роли и поля пакета
                 </TabsTrigger>
               </HelpTooltip>
             )}
