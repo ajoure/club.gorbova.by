@@ -1,146 +1,83 @@
-# да, согласен, с учетом правок:
+План: PATCH-PACKAGE-CUSTOM-FIELDS-V1 — закрытие Phase 2 и DoD
 
-1. **Унифицировать коды ошибок во всём патче.** Сейчас используются три варианта:
-  - `pf_value_missing`;
-  - `pf_required_missing`;
-  - ранее утверждённый `pf_required_value_missing`.
-  Оставить единый канонический код:
-  ```text
-  pf_required_value_missing
-  ```
-  Его использовать в resolver tests, backend gate, UI error handling, proof и snapshot warnings.
-2. **Auto-assign выполнять серверно, а не только хуком после INSERT.** Логика в `useDocumentPackageItems.addItem` не покрывает создание шаблона через RPC, импорт, service role или другой UI. Добавить серверный trigger/RPC-step:
-  &nbsp;
-  ```text
-  after package item creation
-  → insert assignments for active catalog fields
-    where auto_assign_to_new_items=true
-  → ON CONFLICT DO NOTHING
-  ```
-  Клиентский хук может только обновлять UI.
-3. **Required рассчитывать с корректным override-контрактом:**
-  &nbsp;
-  ```text
-  effective_required =
-    CASE
-      WHEN assignment.is_required_override IS NOT NULL
-        THEN assignment.is_required_override
-      ELSE catalog.required
-    END
-  ```
-  Нельзя использовать простой `OR`, поскольку override=`false` должен иметь возможность отключить базовую обязательность поля для конкретного документа.
-4. `hidden_with_default` **не должен создавать пустое значение.**
-  - есть допустимый `default_kind` → backend вычисляет значение;
-  - `generation_date` вычисляется непосредственно при генерации;
-  - default отсутствует или неприменим к типу → конфигурационная ошибка;
-  - required hidden-поле без вычисляемого значения → `pf_required_value_missing`.
-5. **Snapshot должен сохраняться в согласованном формате массива токенов.** Не создавать одновременно несовместимые структуры:
-  &nbsp;
-  ```text
-  meta.tokens_snapshot[]
-  ```
-  и
-  ```text
-  meta.tokens_snapshot.pf
-  ```
-  Сначала подтвердить фактический существующий контракт. Добавить `pf` provider-neutral элементами в текущую структуру, не менять её форму и не ломать старые snapshots.
-6. **Для доказательств Phase 1 audit-выборка должна содержать реальные записи.** Если до тестового CRUD таблица пуста, сначала выполнить контролируемое создание/изменение/архивацию тестового поля, затем приложить строки `audit_logs` с `actor_type`, `actor_user_id`, `actor_label`, before/after.
-7. **Regression proof должен проверять не только отдельные тесты, но и совместный проход:**
-  &nbsp;
-  ```text
-  {{ln-XXXXXX}}
-  {{pf-XXXXXX}}
-  {{field:FLD-XXXXXX}}
-  ```
-  в одном шаблоне и одной генерации.
-8. Все пункты исходного Phase 2 и доказательств Phase 1 сохраняются add-only. После этих уточнений можно выполнять A параллельно с B1, затем B2 → B3 → B4 → B5 → B6.
-9. &nbsp;
-10. План: PATCH-PACKAGE-CUSTOM-FIELDS-V1 — Phase 2 + доказательства Phase 1
+Принимаю замечания. Текущий проход = Phase 1 proof + B1 checkpoint. Ниже — порядок добивания до полного DoD без замены ранее согласованных пунктов.
 
-Принимаю замечание: Phase 1 — это implementation checkpoint, не закрытый патч. Закрываем оба гэпа: (A) собираем фактические доказательства Phase 1, (B) дореализуем сценарий до DoD.
+## Шаг 0. Контракт `pf-XXXXXX` (regex + sequence) — блокер
 
-## A. Доказательная база Phase 1 (proof bundle)
+Канон: ровно шесть цифр, `^pf-\d{6}$`. Это уже стоит в resolver и UI, но БД-CHECK сейчас `^pf-[0-9]{6,}$` (≥6). Привести БД к ровно 6.
 
-Все артефакты складываются в `.lovable/proofs/package_custom_fields_2026-06-14.md` (дополняется секциями):
+- Миграция:
+  - `ALTER TABLE document_package_field_catalog DROP CONSTRAINT … (текущий CHECK на public_id)` и пересоздать как `CHECK (public_id ~ '^pf-\\d{6}$')`.
+  - Предварительно: `SELECT public_id FROM document_package_field_catalog WHERE public_id !~ '^pf-\\d{6}$'`. Если строки есть — миграция фейлится с явной ошибкой (без авто-переименования; данные ценные).
+  - Перепроверить генератор `next_public_id('pf')` / соответствующий sequence: при достижении `pf-999999` функция должна возвращать `pf_sequence_exhausted` (RAISE EXCEPTION), а не молча выдавать 7 цифр. Если в текущей реализации нет проверки — добавить guard в SQL-функцию выдачи `public_id`.
+  - Аналогично проверить и при необходимости ужать CHECK на `document_package_role_catalog.public_id` до канона `^ln-\\d{6}$` (если там также `{6,}`) — без правок контракта, только align.
+- Resolver: оставить `PF_RE = /^pf-\d{6}$/` как есть; добавить отдельный unit «`pf-1234567` → не матчится → `alias_missing`», чтобы зафиксировать симметрию с БД.
 
-1. **Migrations & files inventory** — список миграций (`20260614161448_…`) и созданных/изменённых файлов с git-style diff sizes.
-2. **SQL-проверки структуры** через `supabase--read_query`:
-  - `information_schema.columns` для трёх таблиц;
-  - `pg_constraint` (FK на `package_template_id`, unique `(session_id, field_catalog_id)`, unique `(package_template_item_id, field_catalog_id)`, CHECK на `public_id ~ '^pf-\\d{6}$'`);
-  - `pg_policies` (RLS by role);
-  - `pg_trigger` (immutability `data_type/public_id/field_key/package_template_id`, delete-guard, audit).
-3. **Audit-факты** — выборка `audit_logs WHERE entity_type IN ('document_package_field_catalog','document_package_item_field_assignments','document_package_session_field_values')` с лимитом 20 строк.
-4. **Resolver-тесты (deno test)** в `supabase/functions/_shared/resolve-package-tokens.test.ts`:
-  - `pf-XXXXXX` валидный → значение по типу;
-  - `pf-` из другого пакета → `pf_token_outside_bound_package`;
-  - `pf-` без записи в каталоге → `pf_token_not_found`;
-  - `pf-` без значения сессии и `required=true` → `pf_value_missing`;
-  - regression: `ln-XXXXXX` и `{{field:FLD-XXXXXX}}` продолжают резолвиться без изменений.
-5. **UI-факт** — короткий runtime прогон в preview (логин dev-паролем) c созданием поля и фиксацией `public_id` в proof.
+Proof Step 0: запрос `pg_constraint` (новый regdef), unit-тест resolver на 7-значный id, ручной SQL-вызов sequence в граничной точке (имитация через временную установку счётчика недопустима в проде — поэтому только unit-тест функции на in-memory счётчике + код-review guard).
 
-## B. Phase 2 — закрытие пользовательского сценария
+## Шаг B2. Клиентская анкета (дедуп + типы + RPC)
 
-### B1. Назначение полей шаблонам (вкладка «Анкеты документов»)
+Файлы:
+- `src/components/ai-documents/packages/ClientPackageQuestionnaire.tsx` (или существующий компонент клиентской анкеты пакета — сначала найти, не дублировать).
+- Новые контролы по типам в `src/components/ai-documents/packages/fields/` (text/number/date/datetime/time/year/select/multiselect/checkbox).
 
-- Новый компонент `PackageFieldsAssignmentPanel.tsx` встраивается в `DocumentPackageQuestionnairesView` под текущим блоком ролей, по одному шаблону пакета.
-- Использует `useItemFieldAssignments(itemId)` + `usePackageFieldCatalog(packageTemplateId)`.
-- Контролы строго настройки использования: `visibility_mode`, `is_required_override`, `label_override`, `help_override`, `section_key`, `sort_order`, `is_active`. Никакого дублирования `public_id/data_type/choices/default_kind/global label`.
-- Bulk: кнопка «Использовать во всех документах пакета» → `assignToAll(fieldCatalogId)` из `usePackageFieldAssignments`.
-- Auto-assign-to-new-items: новый шаблон при добавлении в пакет получает assignments всех `catalog.auto_assign_to_new_items=true` (хук в `useDocumentPackageItems.addItem` после insert).
+Логика:
+- Источник вопросов = `document_package_item_field_assignments` с `visibility_mode = 'ask_client'` по всем шаблонам сессии.
+- Дедуп по `field_catalog_id`: вопрос рендерится один раз, даже если назначен в N документах. Метаданные (label/help/required) — эффективные: override берётся из «канонического» assignment приоритетом (a) наличие override, (b) минимальный `sort_order`, (c) самый ранний `created_at`. Эта политика фиксируется в memory.
+- Предзаполнение `smart-date` через существующий `src/lib/packageFields/smartDate.ts`.
+- Сохранение — батчем через RPC `upsert_session_field_values(_session_id, _values jsonb)` (создан в Phase 1). Серверная типовая валидация уже есть; на клиенте — мягкая валидация перед отправкой + показ ошибок типа из RPC (`pf_value_type_mismatch`).
+- Прогресс «N из M required заполнено».
 
-### B2. Клиентская анкета (заполнение)
+## Шаг B3. Сверка `pf-` в DOCX и панель валидации
 
-- В `DocumentPackageQuestionnairesView` (клиентский режим/предпросмотр) добавляется секция «Поля пакета» с дедупликацией по `field_catalog_id`: один вопрос на каталог-поле, даже если он назначен N шаблонам.
-- Контролы по `data_type`: `Input`, `NumberInput`, `DatePicker`, `DateTimePicker`, `TimePicker`, year-`Select`, `Select`/`MultiSelect` по `options.choices`, `Switch`.
-- Префилл по `smart-date` (`default_kind`) только если значения сессии ещё нет.
-- Сохранение пачкой через RPC `upsert_session_field_values` (уже есть).
+- Расширить `PackageTemplateValidationPanel` (или эквивалент в `DocumentPackageQuestionnairesView`) блоком «Поля пакета»:
+  - На каждый item: вытащить `pf-XXXXXX` через `extractDocxPlaceholders` из последнего `document_template_versions.file`.
+  - Сопоставить с `document_package_item_field_assignments` и `document_package_field_catalog`.
+  - Категории: `ok`, `pf_token_not_found` (нет в каталоге), `pf_token_outside_bound_package` (поле другого пакета), `pf_assignment_missing` (есть в каталоге, но не назначено на этот item), `pf_unused_assignment` (назначено, но в DOCX нет).
+  - CTA: «Назначить во все», «Создать поле», «Снять назначение».
 
-### B3. Сверка DOCX-токенов и блок в «Проверке шаблонов»
+## Шаг B4. Backend required-gate + snapshot
 
-- В `PackageTemplateValidationPanel` добавляется блок «Поля пакета»:
-  - извлекаем `pf-XXXXXX` из DOCX (через существующий `extractDocxPlaceholders`);
-  - сверяем с `document_package_field_catalog` пакета;
-  - помечаем: `unknown_pf_token`, `pf_token_outside_bound_package`, `pf_without_assignment` (если есть в DOCX, но нет assignment у этого item), `assignment_without_token` (info).
-- Никаких авто-исправлений: только список с CTA «Назначить» / «Создать поле».
+- В `supabase/functions/canonical-document-generate-strict/index.ts` (только обвязка, ядро не трогаем):
+  - Перед рендером — precheck по `effective_required` с учётом значений сессии и `default_kind`/`generation_date`. Если есть unresolved required без вычислимого default → HTTP 422 `pf_required_value_missing` со списком `{ document_template_id, public_id, label }[]`.
+  - После успешного рендера — add-only запись в `ai_generated_documents.meta.tokens_snapshot[]` элементов: `{ provider:'pf', public_id, label, data_type, raw_value, rendered_value, default_kind_applied }`. Не создавать `meta.tokens_snapshot.pf`.
 
-### B4. Backend required-gate перед генерацией
+## Шаг B5. Тесты и регрессия
 
-- В `canonical-document-generate-strict` (или текущей оркестрации генерации пакета) добавляется precheck:
-  - собрать effective-required для item: `catalog.required` с учётом `assignment.is_required_override`;
-  - если значения нет в `document_package_session_field_values` и `visibility_mode != 'hidden_with_default'` без `default_kind`, → 422 `{ error: 'pf_required_missing', missing: [{public_id,label,template_item_id}] }`;
-  - UI ловит и показывает per-document список незаполненных.
-- Snapshot: в `ai_generated_documents.meta.tokens_snapshot.pf` сохраняем `{ public_id, label, data_type, raw_value, rendered_value, default_kind_applied }` для каждого `pf-`, использованного в DOCX. Это и есть «подтверждённый snapshot по pf-».
+- Resolver Deno: добавить тест «ln + pf + FLD в одном шаблоне» — все три ветви срабатывают изолированно; soft-empty для не-required.
+- UI vitest: дедуп клиентской анкеты, override-приоритет, типы значений.
+- Регрессия: existing `ln-` сценарии не меняются; `FLD-` billing pipeline не затронут.
 
-### B5. Регрессии и тесты
+## Шаг UAT (runtime) + audit proof
 
-- Resolver-тесты (см. A4) дополняются интеграционным smoke: один документ с `ln-`, `FLD-`, `pf-` одновременно — все три типа резолвятся в одном проходе.
-- UI vitest для `PackageFieldsAssignmentPanel`: дедупликация и bulk-assign.
-- Runtime UAT в preview: создать поле → назначить шаблону → заполнить в анкете → сгенерировать пакет → проверить, что в DOCX подставлено и snapshot есть. Скрин/лог в proof.
+- Сценарий в `/admin/documents`:
+  1) создать поле `pf-XXXXXX` (date, required, default `last_day_of_month`),
+  2) bulk «во все шаблоны»,
+  3) открыть клиентскую анкету сессии — поле один раз, prefill виден,
+  4) сохранить — `audit_logs` запись `pf_value_upserted`,
+  5) сгенерировать DOCX — pf-токены подставлены, snapshot записан,
+  6) попытка сгенерировать без значения required без default → 422.
+- Собрать в `.lovable/proofs/package_custom_fields_2026-06-14.md`:
+  - SQL-выписки нового CHECK,
+  - 20 свежих строк `audit_logs` по трём entity types,
+  - результаты resolver-тестов,
+  - HTTP-лог 422 от generate-strict,
+  - скрин/описание UI факта (без скриншотов из агента — фиксируем шагами и SQL).
 
-### B6. Memory
+## Память и DoD
 
-- Создаём `mem://architecture/documents/package-custom-fields-v1` с инвариантами:
-  - SOT поля = `document_package_field_catalog`; назначения = `document_package_item_field_assignments`; значения = `document_package_session_field_values`;
-  - namespace `{{pf-XXXXXX}}`, scope = `package_template_id`, кросс-пакет запрещён;
-  - резолвер-приоритет `ln-` → `pf-` → `package.{ul|ip|fl}.FLD-XXXXXX` → ошибка;
-  - канон UI: вкладка «Роли и поля пакета», дедуп вопросов по `field_catalog_id`, bulk «во всех документах пакета», auto-assign на новые items;
-  - backend required-gate + snapshot `meta.tokens_snapshot.pf` обязательны;
-  - `FLD-`, `ln-`, billing/role pipelines не изменяются.
-- Добавляем ссылку в `mem://index.md` (раздел Memories).
-
-## DoD первого закрытия патча
-
-- Все секции A1–A5 в proof-файле с реальными данными.
-- B1–B4 реализованы и проходят resolver+UI тесты.
-- Runtime UAT: создано поле, заполнено, сгенерирован документ, snapshot зафиксирован.
-- `mem://index.md` обновлён.
-- Нет регрессий `ln-` и `{{field:FLD-…}}` (доказано тестами и smoke).
+- Обновить `mem://architecture/documents/package-custom-fields-v1`:
+  - канон `^pf-\d{6}$` + поведение sequence на исчерпании,
+  - политика выбора «канонического» assignment при дедупе клиентской анкеты,
+  - snapshot — только массив `tokens_snapshot[]` с `provider:'pf'`.
+- DoD считается выполненным только после Шага UAT + audit proof.
 
 ## Что НЕ трогаем
 
-- `document_package_role_catalog`, `document_package_item_role_assignments`, `ln-` namespace.
-- `fields_registry`, `document_token_registry`, `document_package_token_aliases`, billing FLD pipeline.
-- Gotenberg, `canonical-document-generate-strict` ядро (правим только precheck-обвязку и snapshot-запись).
-- Структуру `ai_generated_documents` (только новый ключ в `meta`).
+`ln-` namespace и `document_package_item_role_assignments`; billing `FLD-` / `fields_registry` / `document_token_registry` / `document_package_token_aliases`; Gotenberg; ядро `canonical-document-generate-strict` (только precheck + snapshot-обвязка); структура `ai_generated_documents` (только add-only ключ массива).
 
-Подтвердите план — стартую с секции A (доказательства) параллельно с B1, дальше последовательно B2 → B3 → B4 → B5 → B6.
+## Порядок исполнения
+
+Строго последовательно: Шаг 0 (миграция + resolver unit) → B2 → B3 → B4 → B5 → UAT + audit proof. Между шагами — короткий отчёт фактом, без «выполнено в целом».
+
+Подтверди план — начну с Шага 0 (миграция CHECK + sequence guard + resolver-тест на 7 цифр).

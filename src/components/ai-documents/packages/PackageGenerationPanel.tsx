@@ -37,6 +37,8 @@ import {
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
+import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
+import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 
 interface Props {
   /** Канонический код пакета (например, "ideology"). SOT — `document_package_templates.code`. */
@@ -81,10 +83,19 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
   const hasSession = !!pkg.session?.id;
   const hasItems = (packageItems?.length ?? 0) > 0;
 
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 B2: required pf-fields gate.
+  const fieldsState = usePackageSessionFields(pkg.session?.id ?? null, pkg.templateId);
+  const requiredFieldsSatisfied = fieldsState.progress.allRequiredFilled;
+
   const blockers: string[] = [];
   if (!hasSession) blockers.push("Анкета пакета ещё не сохранена.");
   if (!hasItems) blockers.push("В пакете нет шаблонов.");
   if (hasSession && !allRequiredSatisfied) blockers.push("Не заполнены обязательные роли.");
+  if (hasSession && !requiredFieldsSatisfied) {
+    blockers.push(
+      `Не заполнены обязательные поля пакета (${fieldsState.progress.requiredFilled}/${fieldsState.progress.requiredTotal}).`,
+    );
+  }
 
   const handleGenerate = async (runMode: "user_generate" | "admin_test") => {
     if (!pkg.session?.id) return;
@@ -100,7 +111,8 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
     }
   };
 
-  const canGenerate = hasSession && hasItems && allRequiredSatisfied && !isGenerating;
+  const canGenerate =
+    hasSession && hasItems && allRequiredSatisfied && requiredFieldsSatisfied && !isGenerating;
 
   return (
     <div className="space-y-3">
@@ -232,6 +244,18 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
           </div>
         )}
       </GlassCard>
+
+      {/* PATCH-PACKAGE-CUSTOM-FIELDS-V1 B2: клиентская анкета pf-полей */}
+      {hasSession && (
+        <PackageFieldsClientForm
+          sessionId={pkg.session?.id ?? null}
+          packageTemplateId={pkg.templateId}
+          sessionCreatedAt={pkg.session?.created_at ?? null}
+          disabled={pkg.isLocked}
+        />
+      )}
+
+
 
       {/* Результат последнего запуска */}
       {lastResult && (
