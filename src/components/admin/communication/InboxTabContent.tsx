@@ -185,22 +185,8 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
   const [botFilter, setBotFilter] = useState<string>("all");
   const lastMessageCountRef = useRef<number>(0);
-  const soundEnabledRef = useRef<boolean>(false);
-
-  // Enable sound after first user interaction
-  useEffect(() => {
-    const enableSound = () => {
-      soundEnabledRef.current = true;
-      document.removeEventListener('click', enableSound);
-      document.removeEventListener('keydown', enableSound);
-    };
-    document.addEventListener('click', enableSound);
-    document.addEventListener('keydown', enableSound);
-    return () => {
-      document.removeEventListener('click', enableSound);
-      document.removeEventListener('keydown', enableSound);
-    };
-  }, []);
+  // soundEnabledRef и autoplay-gate удалены вместе с локальным playNotificationSound.
+  // Звук теперь играет глобальный `useIncomingMessageAlert` со своим AudioContext-gate'ом.
 
   // Sync channel with defaultChannel prop
   useEffect(() => {
