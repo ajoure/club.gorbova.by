@@ -1,525 +1,152 @@
-# да, согласен, с учетом правок:
 
-План в целом корректно устраняет найденные блокеры S2/S3. Перед выполнением нужно внести следующие обязательные изменения.
+# План: PATCH-CONTACT-CENTER-VOICE-MESSAGES-V1 — Discovery (D1–D5)
 
-Да, согласен, с учетом правок:
+Финальная редакция плана с учётом всех уточнений. Выполняется одним проходом без ожидания файлов от пользователя и без дополнительных согласований. Остановка — только при реальном data-safety / secret-safety STOP-guard.
 
-1. Не менять сигнатуру уже развёрнутых RPC через `DROP FUNCTION` в основной миграции.
+## Базовые принципы
 
-Считать, что текущие функции уже могут вызываться production-фронтом. Использовать безопасный compatibility-flow:
+- Discovery-first. Никакого production-кода и выбора архитектуры (варианты 1–4 транспорта) до D5.
+- Вариант 1 для fixtures: только публичные короткие WebM/Opus и M4A/AAC с зафиксированным источником, контейнером, codec, MIME, расширением, целостностью и лицензией. Простого расширения недостаточно — реальный формат проверяется диагностическим инструментом (ffprobe/file/mediainfo в sandbox).
+- Если подходящих публичных fixtures нет — допускается локальная генерация диагностическим инструментом (ffmpeg в sandbox, вне приложения): WebM/Opus и M4A/AAC, 1–2 сек, без коммита бинарников в репозиторий, без добавления зависимости в `package.json`. Команда создания и фактический формат фиксируются в proof.
+- Реальные пользовательские файлы пока не запрашиваются. Неоднозначный публичный fixture → P2/P3 помечается `NEEDS DEVICE UAT`, но D1–D3 и P1 не блокируются.
+- Support-тикеты функционально не меняем.
 
-- создать `mark_dialog_read_v2(p_user_id uuid, p_boundary timestamptz)`;
-- создать `bulk_mark_dialogs_read_v2(p_items jsonb)`;
-- переключить frontend на V2;
-- выполнить runtime/proof;
-- старые `mark_dialog_read_atomic` и `bulk_mark_dialogs_read_atomic` пока оставить как deprecated compatibility layer;
-- удалять старые RPC только отдельным cleanup-патчем после доказательства отсутствия вызовов.
+## Data-safety / secret-safety инварианты
 
-Нельзя допускать окно, в котором старый frontend вызывает уже удалённую функцию.
+- Bot token / `TELEGRAM_API_KEY` / `LOVABLE_API_KEY` НИКОГДА не попадают в: отчёты, stdout, screenshots, `.lovable/`-артефакты, git history. В proof — только маскированные ссылки на имена секретов.
+- Runtime probes (D4) — только на выделенных test bot / test Telegram account / test contact / test profile. Если хотя бы один идентификатор относится к реальному клиенту → STOP только для runtime probes; D1–D3 и D5 продолжаются.
+- Оригинальное входящее voice клиента не модифицируется и не удаляется. Для P1 байты скачиваются и сохраняются как отдельная тестовая копия в изолированном storage path (или только локально), отправляется копия, удаляется только созданная копия и тестовое исходящее сообщение.
+- Cleanup direct Telegram probe: `deleteMessage` по каждому `result.message_id`; удаляются только созданные fixture-объекты; если диагностический вызов не создаёт строку в `telegram_messages` — DB cleanup явно отмечается `not applicable`. Никаких широких DELETE по типу файла или временному диапазону.
 
-2. Boundary после отправки сообщения фиксировать ДО начала отправки, а не внутри `onMessageSent`.
+## D1 — Historical discovery (git + DB)
 
-Правильный flow:
+Цель: доказать, существовала ли ранее исходящая voice-реализация и не потерялась ли при рефакторингах.
 
-- перед вызовом `telegram-admin-chat` сохранить `observedIncomingBoundary`;
-- выполнить отправку;
-- только при подтверждённом `success=true` передать ранее сохранённую boundary в mark-as-read;
-- incoming, пришедший во время отправки, не должен попасть в эту boundary, даже если realtime уже добавил его в клиентский cache к моменту `onMessageSent`.
+Семантический поиск (не только точные строки) по всей истории всех веток, включая удалённые/переименованные файлы:
 
-3. Явно разделить boundary для разных действий:
+- Код: `sendVoice`, `VoiceRecorder`, `MediaRecorder`, `audio/ogg`, `audio/webm`, `audio/mp4`, `audio/mpeg`, `opus`, `recording`, `recorder`, `sendAudio`, `OutboundMediaPreview`, `voice`, `voice_message`, `audio_message`, `mic`, `microphone`, `BlobEvent`, `getUserMedia({ audio`.
+- Файлы интереса: `ContactTelegramChat.tsx`, `telegram-admin-chat/index.ts`, `telegram-webhook*/index.ts`, `VoiceRecorder.tsx`, `VideoNoteRecorder.tsx`, `OutboundMediaPreview.tsx`, `.lovable/proofs/`, `.lovable/plan.md`, `.lovable/discovery/**`.
 
-- открытый чат + ответ оператора:  
-`MAX(created_at)` среди incoming, загруженных до начала отправки;
-- ручная отметка одного диалога из списка:  
-`last_message_at` строки списка допустима как observed preview boundary;
-- bulk mark:  
-собственный `last_message_at` для каждого выбранного диалога;
-- boundary отсутствует:  
-RPC не вызывается, cache не меняется, показывается понятный toast, а не только `console.warn`.
+История БД и миграций:
 
-4. Серверная V2 RPC должна строго валидировать boundary:
+- enum / `CHECK` constraints со значением `voice` (`telegram_messages.message_type`, `meta.file_type`, любые message-type enums).
+- Сгенерированные `src/integrations/supabase/types.ts` в прошлых коммитах — наличие `"voice"` в union'ах.
+- Старые metadata contracts на `telegram_messages.meta` (поля `duration`, `waveform`, `mime_type`, `is_voice`).
+- `audit_logs` и proof-файлы с упоминаниями исходящего voice.
 
-- `p_boundary IS NULL` → `boundary_required`, SQLSTATE `22023`;
-- boundary в будущем относительно серверного времени с заметным допуском → STOP/error;
-- `p_user_id IS NULL` → validation error, а не тихий no-op;
-- timestamp возвращать в ответе ровно тот, который фактически применён.
+Output: `.lovable/discovery/voice_history_2026-06-14.md` — список находок, коммиты, ветки, удалённые файлы, фрагменты diff'ов, вывод «функция существовала / не существовала / частично существовала».
 
-5. Для одиночной RPC утвердить структурированный контракт:
+## D2 — Reverse-engineer incoming voice chain (proof что плеер — именно voice)
 
-```text
-dialog_user_id
-boundary
-marked_count
-remaining_unread_count
-```
+Цель: доказать, что красивый плеер на скриншоте относится именно к voice, а не к универсальному audio-рендеру.
 
-В одной транзакции:
+Фиксируем:
 
-1. UPDATE только сообщений `created_at <= boundary`;
-2. подсчёт всех оставшихся unread;
-3. возврат результата.
+- Webhook handler (`telegram-webhook*`): как `message.voice` отличается от `message.audio` и `message.document`; какое значение записывается в `telegram_messages.message_type` и `meta.file_type`.
+- Полный путь: Telegram update → download → bucket/storage path → DB row → signed URL → UI player.
+- UI: какой именно React-компонент рендерит плеер, по какому условию (`file_type === 'voice'` vs `'audio'` vs MIME-fallback), как ведёт себя после reload.
+- Реальный MIME сохранённого файла (через storage HEAD / DB `meta.mime_type`), реальная `duration`.
 
-Frontend устанавливает `unread_count` исключительно по `remaining_unread_count`.
+Output: `.lovable/discovery/voice_incoming_architecture_2026-06-14.md` с branch-mapping `voice → component`, `audio → component`, `document → component`.
 
-6. Bulk RPC не должна молча отбрасывать невалидные элементы.
+## D3 — Audit outgoing chain (что именно отсутствует)
 
-Вместо частичного silent processing:
+Цель: точно определить недостающие звенья исходящего voice без записи нового кода.
 
-- проверить, что `p_items` является массивом;
-- установить разумный batch limit;
-- каждый элемент обязан содержать валидные `user_id` и `boundary`;
-- дубликаты `user_id` дедуплицировать детерминированно либо отклонять;
-- при любом невалидном элементе отклонять весь запрос с validation error;
-- не создавать частично выполненный bulk без явного контракта.
+Проходим существующий путь для других медиа (`recording → uploadToTelegramMedia → storage_path → telegram-admin-chat → sendXxx → telegram_messages`) и фиксируем разрывы:
 
-Audit invalid input можно писать одной агрегированной записью, но он не заменяет ошибку вызывающему клиенту.
+- Composer: есть ли пункт меню «🎤 Голосовое»? Где он должен встроиться? Какие типы поддерживает `selectedFileType`?
+- Edge function `telegram-admin-chat/index.ts`: две дублирующиеся карты `fileType → method/fieldName` (строки ~230 и ~280) — `voice` не маппится.
+- Storage upload: ограничения на bucket по MIME / size; политика на `audio/*`.
+- DB write back: ветка для `voice` после успешного sendVoice (`message_type`, `meta`).
+- Mobile lifecycle: где обрабатывается фон/блокировка экрана/прерывание звонком (если уже есть для других медиа).
 
-7. Ограничить размер bulk-запроса.
+Output: `.lovable/discovery/voice_outgoing_gap_2026-06-14.md` — точный список отсутствующих звеньев и для каждого пометка «можно переиспользовать существующее / нужно новое».
 
-Добавить guard, например:
+## D4 — Runtime transport probes (Telegram Bot API напрямую, БЕЗ изменения production-кода)
 
-```text
-1 <= количество элементов <= безопасный установленный лимит
-```
+Цель: получить ground truth от Telegram, что он принимает как `voice`, `audio`, `document` или отвергает.
 
-При превышении лимита — STOP/error без UPDATE.
+Способ выполнения:
 
-Не допускать произвольный JSON-массив неограниченного размера в `SECURITY DEFINER` RPC.
+- Прямой диагностический вызов Telegram Bot API `sendVoice` из защищённого sandbox/runner с использованием существующего тестового bot secret через connector gateway (`https://connector-gateway.lovable.dev/telegram/sendVoice`, headers `Authorization: Bearer $LOVABLE_API_KEY`, `X-Connection-Api-Key: $TELEGRAM_API_KEY`).
+- Либо временный ad-hoc diagnostic runner, который НЕ деплоится, НЕ коммитится и НЕ меняет production edge function.
+- `case "voice"` в `telegram-admin-chat/index.ts` НЕ добавляется до D5.
+- Только test bot / test contact / test chat. Перед probe — verification, что `chat_id` не принадлежит реальному клиенту.
 
-8. Уточнить доступ service role.
+Probes:
 
-Текущий guard через `auth.uid()` несовместим с обычным вызовом service role без пользовательского JWT.
+- **P1 — OGG/Opus (real incoming):** скачать байты существующего voice клиента → создать тестовую копию в изолированном path (или держать локально) → отправить тестовому контакту → зафиксировать ответ Telegram.
+- **P2 — WebM/Opus (Chrome-like):** публичный или локально сгенерированный fixture с доказанным контейнером (Matroska/WebM) и codec (opus), длительность 1–2 сек.
+- **P3 — M4A/AAC (Safari-like):** публичный или локально сгенерированный fixture с доказанным контейнером (ISO MP4 / `M4A `) и codec (AAC-LC), длительность 1–2 сек.
 
-Выбрать один вариант:
+Главное техническое доказательство — структурное поле в ответе Telegram Bot API (объект Message):
 
-- если service role для этих RPC не требуется — не выдавать ей отдельный GRANT;
-- если требуется системный вызов — добавить отдельный явно ограниченный system-path и audit.
+| Поле ответа        | Интерпретация                  |
+|--------------------|--------------------------------|
+| `result.voice`     | Telegram принял как voice      |
+| `result.audio`     | audio-track                    |
+| `result.document`  | document                       |
+| `ok=false`         | transport rejected             |
 
-Не оставлять формальный `GRANT service_role`, который фактически всегда падает на `auth.uid() IS NULL`.
+Скриншот клиента — дополнительный UI-proof, не основной. Для P3 (если `result.voice`) дополнительно проверить воспроизведение в клиенте и в нашей UI-истории после reload — только тогда Safari-формат считается пригодным.
 
-9. TTL-guard realtime нельзя реализовывать как локальный `Set` внутри несвязанных компонентов.
+Cleanup после каждого probe: `deleteMessage` по `result.message_id`; удалить созданный fixture-объект из storage; если DB-строки в `telegram_messages` не создавалось — `DB cleanup = not applicable`. Никаких широких DELETE.
 
-Нужен один shared coordination layer, доступный mutation и realtime bus:
+Если runtime probe нельзя безопасно выполнить без изменения production-кода или раскрытия секрета — guard не обходится; D4 помечается `BLOCKED_BY_SECURE_RUNTIME`; D1–D3 завершаются; D5 возвращает точный минимальный run-book.
 
-- до RPC зарегистрировать `{user_id, operation_id, expires_at}`;
-- при ошибке RPC удалить регистрацию немедленно;
-- при успехе оставить только на время доставки row-events;
-- cleanup timer обязателен;
-- повторный mount не должен терять или дублировать registry;
-- incoming INSERT никогда не подавляется;
-- подавляются только ожидаемые UPDATE `is_read: false → true`.
+Output: `.lovable/discovery/voice_runtime_probes_2026-06-14.md` — для каждого probe фиксируется fixture (источник, контейнер, codec, MIME, расширение, длительность, целостность, лицензия), HTTP status, `ok`, какое из полей `voice/audio/document` присутствует, `message_id`, cleanup-результат, маска секретов.
 
-Если надёжно определить ожидаемое собственное событие невозможно, не использовать хрупкий TTL suppression. Допустим один debounced reconciliation-refetch после пачки UPDATE, но запрещены повторные запросы на каждую строку.
+## D5 — Консолидированный отчёт и решение
 
-10. Не полагаться на `commit_timestamp` как на признак собственного события.
+Output: `.lovable/proofs/voice_discovery_consolidated_2026-06-14.md`.
 
-`commit_timestamp` не идентифицирует инициатора. Он может использоваться только как временная метка, но не как доказательство ownership.
+Структурные блоки, разделённые по природе фактов:
 
-Proof должен показать:
+- **HISTORICAL FACT** — было ли это уже реализовано (из D1), какие коммиты/ветки, что потеряно.
+- **CURRENT CODE FACT** — текущая входящая (D2) и исходящая (D3) архитектура; точный список gap'ов.
+- **TELEGRAM API RUNTIME FACT** — результаты P1/P2/P3 по полям `result.voice/audio/document` (из D4).
+- **DEVICE-SPECIFIC UAT PENDING** — что нельзя закрыть публичными fixtures и требует реального устройства (явный список: iOS Safari, Android Chrome WebView и т.д.).
+- **RECOMMENDATION** — итоговое решение.
 
-- собственная mutation не вызывает дублирующий Network request;
-- изменение другим оператором не теряется;
-- новое incoming не проглатывается;
-- после TTL cache остаётся консистентным.
+Если в D1 найдена старая реализация — НЕ переносить автоматически. Дать mapping-таблицу:
 
-11. Добавить fallback reconciliation после точечного cache patch.
+| старый элемент | текущий эквивалент | решение: восстановить / не использовать / адаптировать |
 
-Основной flow:
+Сравнение проводится по: Storage contract, edge payload, Telegram response validation, metadata, signed URL, current composer, mobile lifecycle.
 
-- RPC response;
-- `setQueryData` по `remaining_unread_count`;
-- без немедленного полного invalidate.
+Итоговое решение принимается по совокупности (git history + D2 + P1/P2/P3 + поля Message + требование одинакового поведения Chrome/Safari), а НЕ только по таблице поддержки браузеров. RECOMMENDATION содержит четыре отдельных вывода:
 
-Но нужен один контролируемый safety reconciliation:
+1. Нужен ли `sendVoice` mapping в `telegram-admin-chat`?
+2. Нужен ли UI recorder в `ContactTelegramChat`?
+3. Можно ли переиспользовать `src/components/support/VoiceRecorder.tsx` (через извлечение shared `recorder-core` без изменения support-UI)?
+4. Нужен ли transcoding / remux (и если да — на каком уровне: client `ffmpeg.wasm`, server, container-swap remux)?
 
-- либо trailing debounced refetch после завершения row-event burst;
-- либо delayed refetch через ограниченный интервал;
-- без одновременного mutation invalidate + realtime invalidate + manual refetch.
+Граничные случаи:
 
-В proof показать фактическое число Network requests.
+- Если P2 (WebM/Opus) → `result.voice`, это не закрывает Safari. Минимально допустимый вывод: Chrome/Edge без транскодера, Firefox без транскодера, Safari/iOS → `DEVICE-SPECIFIC UAT PENDING` или отдельный fallback (`sendAudio`).
+- Если P3 (M4A/AAC) → `result.voice` + reload-playback OK → Safari-формат пригоден.
+- Если `BLOCKED_BY_SECURE_RUNTIME` — D5 содержит минимальный run-book для безопасного запуска probes.
 
-12. Для permission proof использовать реальный JWT-контекст.
+## Технические детали выполнения
 
-`SET LOCAL ROLE authenticated` сам по себе не формирует `auth.uid()` и может доказать только часть поведения.
+- Anti-duplication: общий `recorder-core` (`src/components/admin/chat/useAudioRecorderCore.ts`) будет вынесен только в build-фазе после D5, и только после regression proof для support.
+- В `telegram-admin-chat/index.ts` две дублирующиеся карты `fileType → method/fieldName` будут консолидированы в `resolveTelegramMediaTransport(fileType)` тоже только в build-фазе.
+- Все proof-файлы пишутся в `.lovable/discovery/` и `.lovable/proofs/`. Bot token / API keys никогда не попадают в эти файлы; используются только маскированные ссылки (`$TELEGRAM_API_KEY`).
+- Diagnostic ffmpeg/ffprobe вызовы — в `/tmp/`, без модификации `package.json`.
 
-Нужно проверить минимум:
+## Исключения (вне scope этого discovery-прохода)
 
-- anon без JWT;
-- authenticated JWT без admin/superadmin;
-- admin JWT;
-- superadmin JWT;
-- при наличии system-path — отдельный system proof.
+- Биллинг, Stripe, RLS, Telegram lifecycle (join/kick), support-тикеты как фича, S0–S4 `PATCH-CONTACT-CENTER-FIX-V1`.
+- Выбор и реализация транспортной архитектуры (варианты 1–4) — только после D5.
+- Любые изменения production edge functions, DB schema, миграций.
 
-Ожидание для первых двух: SQLSTATE `42501`.
+## DoD discovery-прохода
 
-13. Concurrency fixture выполнять только на выделенном тестовом диалоге.
-
-Обязательно:
-
-- подтвердить, что UUID относится к тестовому профилю;
-- добавить test metadata;
-- сохранить созданные message IDs;
-- после proof удалить fixture либо вернуть исходный `is_read`;
-- не использовать данные реального клиента;
-- зафиксировать cleanup.
-
-14. S3 parity проверять не через один `array_agg(row(...))`.
-
-Использовать более доказуемый двусторонний diff:
-
-```sql
-old_result
-EXCEPT ALL
-new_result;
-
-new_result
-EXCEPT ALL
-old_result;
-```
-
-Оба результата должны вернуть 0 строк.
-
-Проверить матрицу:
-
-- `p_search=NULL`;
-- `p_search=''`;
-- search по имени;
-- search по email;
-- search без результатов;
-- `limit=1/50/200`;
-- несколько offset;
-- unread=0 и unread>0;
-- pending media true/false;
-- несколько ботов;
-- одинаковый `created_at` у сообщений.
-
-15. Для одинакового `created_at` добавить детерминированный tie-breaker.
-
-В LATERAL last-message:
-
-```sql
-ORDER BY created_at DESC, id DESC
-```
-
-Старый и новый RPC должны выбирать одно и то же сообщение при равном timestamp. Иначе row-by-row parity может быть недетерминированной.
-
-16. S3 performance proof выполнять со строгими guards:
-
-- `statement_timeout`;
-- `lock_timeout`;
-- только read-only;
-- вне пикового окна;
-- ограниченное число повторов;
-- old/new функции под разными временными именами;
-- никаких изменений production-данных;
-- после proof временные функции удалить.
-
-`pg_stat_statements` использовать только если можно изолировать конкретные query IDs. Иначе снимать client-side timings 20 одинаковых прогонов и считать P50/P95 отдельно.
-
-17. Не утверждать заранее, что новый LATERAL-вариант лучше.
-
-Решение принимается только после proof:
-
-- parity = 100%;
-- новый P95 не хуже старого;
-- buffers/rows scanned не хуже;
-- search и pagination корректны.
-
-Если доказательства нет или новый вариант хуже — немедленно восстановить старую функцию.
-
-18. Rollback SQL нельзя помещать в обычную папку `supabase/migrations/`, если он не должен автоматически применяться.
-
-Файл вида:
-
-```text
-supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql
-```
-
-будет воспринят как обычная следующая миграция и может автоматически отменить исправление.
-
-Хранить rollback-артефакты отдельно, например:
-
-```text
-.lovable/rollback/contact_center/
-supabase/rollback/
-```
-
-или в proof-файле как полный исполняемый SQL.
-
-В основной migrations-папке должны находиться только миграции, которые действительно должны применяться по порядку.
-
-19. Не создавать «пустую rollback migration» с закомментированным DROP.
-
-Она не даёт реального rollback и засоряет историю миграций.
-
-Нужно сохранить:
-
-- полный restore SQL старого `get_inbox_dialogs_v1`;
-- полный cleanup SQL deprecated RPC;
-- точный порядок применения;
-- проверки до и после rollback.
-
-20. Rollback порядок зафиксировать так:
-21. выкатить frontend compatibility, который не зависит от V2;
-22. проверить отсутствие вызовов V2;
-23. восстановить старое тело `get_inbox_dialogs_v1`;
-24. проверить старый UI flow;
-25. отдельным cleanup удалить V2 RPC;
-26. deprecated V1 удалить только после подтверждения отсутствия вызовов.
-27. S4 housekeeping принимается без изменения кода.
-
-Статус оставить:
-
-```text
-ENGINEERING IMPLEMENTED
-LIVE MOBILE UAT PENDING
-```
-
-Anti-duplication proof через `rg` достаточен только для hooks-каталога. Дополнительно проверить `visualViewport` по всему `src`, чтобы исключить локальную реализацию внутри компонентов.
-
-22. Финальный corrective proof должен отдельно показать:
-
-- реальные имена V2 RPC;
-- старые RPC оставлены или удалены;
-- frontend commit, который переключает вызовы;
-- boundary captured before send;
-- concurrency result;
-- remaining unread result;
-- permission matrix;
-- realtime Network count;
-- S3 EXPLAIN old/new;
-- EXCEPT ALL parity matrix;
-- расположение rollback SQL вне migrations;
-- cleanup временных функций и тестовых данных.
-
-23. Финальный заголовок:
-
-```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-FIX-V1 — корректирующий проход S2/S3
-```
-
-После внесения этих правок план считается утверждённым. Выполнять корректирующий проход без нового общего discovery и без дополнительных промежуточных согласований, кроме фактического критического STOP-guard.
-
-Ключевые обязательные изменения: **V2 compatibility вместо DROP существующих RPC, boundary фиксируется до отправки, bulk не выполняется частично, rollback SQL не размещается среди автоматически применяемых миграций**. Это соответствует обязательному безопасному циклу и запрету ломать существующую production-логику.  
-
-&nbsp;
-
-План: PATCH-CONTACT-CENTER-FIX-V1 — корректирующий проход (S2/S3 + housekeeping S4)
-
-Новый общий discovery не выполняется. Корректируем существующий спринт по 11 пунктам из ревью. Никаких изменений в исключённых доменах (доступы, billing, broadcasts, Stripe/bePaid, RLS чужих таблиц, Storage, telegram lifecycle).
-
-## Главный блокер
-
-S2 в текущем виде может пометить прочитанным incoming, которого оператор ещё не видел: серверный `now()` фиксирует время выполнения RPC, а не observed snapshot. Все правки ниже устраняют именно это.
-
----
-
-## S2 — Корректирующий патч (FAIL → PASS)
-
-### 2.1 Канон observed boundary
-
-- Источник истины: `MAX(created_at)` среди реально загруженных incoming-сообщений диалога. Это серверные timestamptz из ответа edge function `telegram-admin-chat` action `get_messages` (в `ContactTelegramChat.tsx` уже есть кэш `["telegram-messages", userId]`). Никакого `new Date()` на клиенте.
-- В `InboxTabContent.tsx` при клике «отметить прочитанным» или после успешной отправки ответа клиент вычисляет boundary из ближайшего источника:
-  1. кэш `["telegram-messages", userId]` (если чат открывался — есть точная граница);
-  2. fallback: значение `last_message_at` из строки `INBOX_DIALOGS_QK` для этого `user_id` (доказанно серверное и не больше реально показанного last preview);
-  3. если ни одного источника нет → mutation не отправляется, кнопка не вызывает RPC и UI не меняется (graceful no-op + console.warn). Это явно отдельный режим — пользовательский flow никогда не уходит в `now()`.
-
-### 2.2 RPC `mark_dialog_read_atomic` — новый структурированный контракт
-
-Меняется сигнатура (создаём миграцию с `CREATE OR REPLACE`, тип возврата другой → сначала `DROP FUNCTION ... mark_dialog_read_atomic(uuid, timestamptz)` в той же миграции, так как функция была применена в этом же спринте и фронт ещё не в проде — приемлемо). Если на момент применения уже есть production-трафик — миграция выполняется в порядке: создаём новую функцию `mark_dialog_read_v2(...)`, переключаем фронт, затем drop старой.
-
-```sql
-CREATE OR REPLACE FUNCTION public.mark_dialog_read_atomic(
-  p_user_id  uuid,
-  p_boundary timestamptz       -- обязательный, без DEFAULT
-)
-RETURNS TABLE(
-  dialog_user_id          uuid,
-  boundary                timestamptz,
-  marked_count            integer,
-  remaining_unread_count  integer
-)
-```
-
-Поведение:
-
-- `p_boundary IS NULL` → `RAISE EXCEPTION 'boundary_required' USING ERRCODE='22023'`. Никакого fallback на `now()`.
-- admin guard (`auth.uid()` + `has_role(admin|superadmin)`) сохранён.
-- `UPDATE ... WHERE user_id=p_user_id AND direction='incoming' AND is_read=false AND created_at <= p_boundary` → `marked_count`.
-- В той же транзакции: `SELECT count(*) FROM telegram_messages WHERE user_id=p_user_id AND direction='incoming' AND is_read=false` → `remaining_unread_count`. Любое incoming, пришедшее в T2 ∈ (T_boundary, T_RPC], попадает в remaining и остаётся unread.
-- `REVOKE FROM PUBLIC` + `GRANT EXECUTE` только `authenticated`, `service_role`.
-
-### 2.3 RPC `bulk_mark_dialogs_read_atomic` — per-dialog контракт
-
-```sql
-CREATE OR REPLACE FUNCTION public.bulk_mark_dialogs_read_atomic(
-  p_items jsonb              -- [{ "user_id": "...", "boundary": "..." }, ...]
-)
-RETURNS TABLE(
-  dialog_user_id         uuid,
-  boundary               timestamptz,
-  marked_count           integer,
-  remaining_unread_count integer
-)
-```
-
-- Каждая запись — собственная granular boundary. Один общий `now()` запрещён.
-- Валидация: пустой массив → пустой результат; элементы без `user_id` или `boundary` отбрасываются с записью в `audit_logs` (`telegram.mark_read.invalid_item`).
-- Внутри один цикл `FOR rec IN SELECT ... FROM jsonb_to_recordset(p_items)`, каждое обновление — собственный `UPDATE ... RETURNING` + локальный count. Идемпотентно.
-
-### 2.4 Frontend контракт mutations
-
-В `InboxTabContent.tsx`:
-
-- `markAsRead.mutationFn` принимает `{ userId, boundary }`; если `boundary` не получен — функция не запускается (см. 2.1).
-- `onMutate` больше **не** ставит безусловный `unread_count = 0`. Вместо этого:
-  - snapshot кэша сохраняется (rollback на ошибку);
-  - UI оставляет текущее значение до ответа сервера, чтобы избежать ложного нуля.
-- `onSuccess(data)` патчит ровно одну строку диалога: `unread_count = data.remaining_unread_count`. Никаких полных invalidate — это убирает дубликат с realtime-bus.
-- `onError` — восстанавливает snapshot, тост через `normalizeEdgeFunctionError`.
-- `bulkMarkAsRead` собирает массив `{ user_id, boundary }` из текущего кэша `INBOX_DIALOGS_QK` (по `last_message_at` каждого выбранного диалога) и патчит результат построчно.
-- Триггер после отправки ответа (`onMessageSent`) использует `MAX(created_at)` из локального `["telegram-messages", userId]` (всегда есть, чат открыт).
-
-### 2.5 Удаление двойной инвалидации
-
-- `mark_dialog_read_atomic` точечно патчит кэш через `setQueryData`, поэтому **mutation не вызывает invalidateQueries**.
-- В `useInboxRealtimeInvalidation.ts` UPDATE-ветка остаётся (для incoming-сообщений от других операторов), но добавляется guard: если payload `new.is_read = true AND payload.commit_timestamp` приходит в окне 1.5 с после нашей собственной mutation — событие проглатывается (используем `Set<string>` recently-marked user_id с TTL). Это устраняет «mutation + realtime = 2 запроса».
-- Альтернатива (если guard признаём хрупким): RPC возвращает ответ → клиент патчит → realtime UPDATE на тех же id просто проигнорирован дедупликацией React Query (queryKey уже свежий, in-flight нет). Контракт описывается в proof.
-
-### 2.6 Concurrency proof
-
-Скрипт (SQL fixture, выполняется как часть proof, не как миграция):
-
-```sql
--- T1: snapshot
-SELECT max(created_at) FROM telegram_messages
- WHERE user_id=$dialog AND direction='incoming';  -- => B
-
--- T2: симулируем новое incoming
-INSERT INTO telegram_messages (... created_at=now() ...);
-
--- T3: RPC
-SELECT * FROM mark_dialog_read_atomic($dialog, $B);
--- => marked_count = N (старые), remaining_unread_count >= 1 (новое)
-
-SELECT count(*) FROM telegram_messages
- WHERE user_id=$dialog AND direction='incoming' AND is_read=false;  -- = remaining
-```
-
-Ожидание: новое сообщение `created_at > B` остаётся `is_read=false`.
-
-### 2.7 Permission-denied proof
-
-```sql
-SET LOCAL ROLE authenticated;  -- jwt без admin/superadmin
-SELECT * FROM mark_dialog_read_atomic('<uuid>', now());
--- ERROR: forbidden (SQLSTATE 42501)
-```
-
-Также: anon → 42501.
-
----
-
-## S3 — Корректирующий патч (PARTIAL → PASS либо revert)
-
-### 3.1 EXPLAIN/parity proof
-
-Запускаем (read-only) и сохраняем в proof:
-
-- `EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM get_inbox_dialogs_v1(50, 0, NULL);` — старое тело (восстанавливается локально в shadow-схеме для замера) и новое.
-- P50/P95 за 20 повторов через `pg_stat_statements` (или таймер по запросу).
-- Полный row-by-row diff: `SELECT array_agg(row(t.*) ORDER BY user_id) FROM <old>() t` vs `<new>() t` — должно быть идентично (контракт parity по всем столбцам, включая `has_pending_media` и `last_bot_*`).
-- Дополнительно: `EXPLAIN` показывает, какой индекс используется в каждом LATERAL.
-
-### 3.2 Признание ограничения
-
-В отчёте честно фиксируется: первый CTE `users AS (SELECT DISTINCT user_id ...)` всё ещё делает полный index scan по `telegram_messages` (хоть и не sort+GROUP BY). Формулировка «full scan устранён» удаляется. Корректный текст: «устранён двойной агрегирующий проход (GROUP BY + DISTINCT ON); распределённая работа на пользователя стала O(unread_index_seek) вместо O(rows_per_user)».
-
-### 3.3 Условие принятия
-
-- Если EXPLAIN/parity proof подтверждает: новая функция не медленнее старой ни на одном из планов и parity 100% → S3 PASS.
-- Если хоть один из критериев не выполнен → миграция-restore возвращает прежнее тело RPC.
-
----
-
-## Rollback — durable
-
-- Создаём файл `supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql` со ВЗЯТЫМ ИЗ `pg_get_functiondef` ДО-патч телом (тем, что лежало до S3). Это restore migration в репозитории, не `/tmp`.
-- Создаём файл `supabase/migrations/<ts>_restore_mark_dialog_read_atomic.sql` — пустая операция (`-- intentionally empty; rollback path documented below`) + комментированный SQL `DROP FUNCTION` обеих новых RPC.
-- Документ rollback процедуры в proof:
-  1. выкатить frontend, где `markAsRead`/`bulkMarkAsRead` снова используют прямой `update().eq(...)`;
-  2. дождаться отсутствия вызовов новых RPC (логи Edge / PostgREST);
-  3. применить restore migration get_inbox_dialogs_v1;
-  4. только затем `DROP FUNCTION` mark_dialog_read_atomic / bulk_mark_dialogs_read_atomic.
-
----
-
-## S4 — статус и anti-duplication
-
-- Статус S4: **ENGINEERING IMPLEMENTED, LIVE MOBILE UAT PENDING**. Не помечать PASS.
-- Anti-duplication proof для `useVisualViewportInset`: `rg -n "visualViewport" src/hooks` показывает единственный hook (`src/hooks/useVisualViewportInset.ts`). Других реализаций нет — это новый файл, дубликата не создан. Фиксируем в proof.
-- Никаких изменений кода S4 в этом проходе.
-
----
-
-## Файлы и миграции (минимально)
-
-```text
-Миграции:
-  supabase/migrations/<ts>_mark_dialog_read_atomic_v2_contract.sql
-    - DROP FUNCTION public.mark_dialog_read_atomic(uuid, timestamptz);
-    - DROP FUNCTION public.bulk_mark_dialogs_read_atomic(uuid[], timestamptz);
-    - CREATE FUNCTION mark_dialog_read_atomic(uuid, timestamptz NOT NULL)
-        RETURNS TABLE(dialog_user_id, boundary, marked_count, remaining_unread_count)
-    - CREATE FUNCTION bulk_mark_dialogs_read_atomic(p_items jsonb)
-        RETURNS TABLE(dialog_user_id, boundary, marked_count, remaining_unread_count)
-    - REVOKE/GRANT
-  supabase/migrations/<ts>_restore_get_inbox_dialogs_v1.sql   (только для on-demand rollback; не запускать)
-
-Код:
-  src/components/admin/communication/InboxTabContent.tsx
-    - вычисление boundary из ["telegram-messages", userId] или из INBOX_DIALOGS_QK
-    - mutations: новый контракт, no optimistic-zero, setQueryData по remaining_unread_count
-    - bulk: сборка jsonb [{user_id, boundary}]
-  src/components/admin/ContactTelegramChat.tsx
-    - onMessageSent передаёт boundary = max(created_at) incoming из локального кэша
-  src/hooks/useInboxRealtimeInvalidation.ts
-    - guard «recently-marked user_id TTL 1500 ms» для UPDATE incoming.is_read=true
-  src/constants/inboxQueryKeys.ts — без изменений
-  src/hooks/useVisualViewportInset.ts — без изменений (anti-duplication подтверждён)
-```
-
-## Артефакт
-
-`.lovable/proofs/patch_contact_center_s2_s3_corrective_2026-06-14.md` — содержит:
-
-- boundary contract (источник, fallback, no-op case);
-- RPC parity и новый контракт ответа;
-- concurrency fixture лог;
-- permission-denied лог;
-- EXPLAIN (ANALYZE, BUFFERS) старой и новой `get_inbox_dialogs_v1` + P50/P95;
-- row-by-row diff parity;
-- durable rollback процедуру и пути migration-файлов;
-- anti-duplication proof для `useVisualViewportInset`;
-- подтверждение отсутствия изменений в исключённых доменах.
-
-## Definition of Done
-
-1. RPC `mark_dialog_read_atomic` требует `p_boundary`, возвращает `(dialog_user_id, boundary, marked_count, remaining_unread_count)`.
-2. RPC `bulk_mark_dialogs_read_atomic` принимает `jsonb` per-dialog boundary, возвращает per-dialog результат.
-3. Frontend не использует `new Date()` для boundary, не показывает оптимистический ноль до ответа RPC, не вызывает invalidateQueries в mutation success.
-4. Realtime bus не порождает повторный refetch на собственное событие mark-as-read (TTL-guard ≥ 1.5 s).
-5. Concurrency proof в репозитории: incoming в окне (T_boundary, T_RPC] остаётся unread.
-6. Permission-denied proof: anon и authenticated-без-admin → 42501.
-7. EXPLAIN/parity proof для `get_inbox_dialogs_v1` принят либо restore migration применена.
-8. Restore migration `get_inbox_dialogs_v1` лежит в `supabase/migrations/`, не в `/tmp`.
-9. Rollback процедура задокументирована в правильном порядке (frontend → wait → restore → drop).
-10. S4 явно остаётся в статусе ENGINEERING IMPLEMENTED / LIVE MOBILE UAT PENDING.
-11. Anti-duplication proof для `useVisualViewportInset` сохранён.
-12. Изменений в исключённых доменах нет (grep + ручная проверка).
-
-## Что НЕ делается
-
-- Никаких изменений в `access_rules`, `entitlements`, `subscriptions_v2`, `orders_v2`, billing-webhooks, broadcasts, Stripe/bePaid edge functions, Storage policy, telegram grant/queue/lifecycle.
-- S0 runtime baseline и S1 live UAT остаются в deferred-листе для единого operational прохода — этим патчем не затрагиваются.
-- S4 код не меняется в этом проходе.
+- `.lovable/discovery/voice_history_2026-06-14.md` создан, содержит верифицируемые ссылки на коммиты/ветки/файлы.
+- `.lovable/discovery/voice_incoming_architecture_2026-06-14.md` создан, доказывает природу плеера (voice vs audio).
+- `.lovable/discovery/voice_outgoing_gap_2026-06-14.md` создан с точным списком gap'ов.
+- `.lovable/discovery/voice_runtime_probes_2026-06-14.md` создан с fixtures-картами и полями `result.voice/audio/document` (или `BLOCKED_BY_SECURE_RUNTIME` + run-book).
+- `.lovable/proofs/voice_discovery_consolidated_2026-06-14.md` создан с пятью блоками (HISTORICAL/CURRENT/RUNTIME/UAT-PENDING/RECOMMENDATION) и четырьмя ответами в RECOMMENDATION.
+- Cleanup всех тестовых артефактов подтверждён в proof; оригинальное voice клиента не тронуто; секреты не утекли.
+- Production-код не изменён.
