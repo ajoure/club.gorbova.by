@@ -1070,7 +1070,7 @@ export function ContactTelegramChat({
         id: `temp-${Date.now()}`,
         type: "message",
         direction: "outgoing",
-        message_text: message.trim() || (selectedFile ? `📎 ${selectedFile.name}` : null),
+        message_text: message.trim() || null,
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
