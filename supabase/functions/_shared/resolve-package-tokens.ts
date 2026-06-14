@@ -64,7 +64,15 @@ export type PackageTokenResolveCode =
   // Sprint 3H-fix: ln-XXXXXX branch
   | 'ln_token_not_found'
   | 'ln_token_outside_bound_package'
-  | 'role_assignment_missing';
+  | 'role_assignment_missing'
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX branch
+  | 'pf_token_not_found'
+  | 'pf_token_outside_bound_package'
+  | 'pf_value_missing'
+  | 'pf_required_value_missing'
+  | 'pf_invalid_choice'
+  | 'pf_value_type_mismatch'
+  | 'pf_unsupported_modifier';
 
 export type PackageTokenResolveResult =
   | {
@@ -292,6 +300,249 @@ async function resolveLnRoleToken(
   };
 }
 
+// ============================================================================
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX (per-package custom field) branch
+// ----------------------------------------------------------------------------
+// Контракт:
+//   • Source-of-truth поля:       `document_package_field_catalog` (public_id = pf-XXXXXX)
+//   • Source-of-truth значения:   `document_package_session_field_values`
+//   • Резолвер живёт исключительно в namespace пакета сессии. Использование
+//     `pf-XXXXXX` другого пакета → `pf_token_outside_bound_package`.
+//   • Required (catalog.required OR assignment.is_required_override) и
+//     отсутствующее значение → `pf_required_value_missing`.
+//   • Никаких legacy alias-fallback.
+// ============================================================================
+
+const DATE_FULL_FMT = new Intl.DateTimeFormat('ru-RU', {
+  day: '2-digit', month: 'long', year: 'numeric',
+});
+const DATE_SHORT_FMT = new Intl.DateTimeFormat('ru-RU', {
+  day: '2-digit', month: '2-digit', year: 'numeric',
+});
+
+function formatPfValue(
+  dataType: string,
+  rawValue: unknown,
+  options: Record<string, unknown> | null | undefined,
+  formatMod: string | undefined,
+): { value: string } | { error: string } {
+  if (rawValue == null || rawValue === '') return { value: '' };
+  const opts = (options ?? {}) as Record<string, unknown>;
+
+  switch (dataType) {
+    case 'text': {
+      return { value: String(rawValue) };
+    }
+    case 'number':
+    case 'year': {
+      const n = Number(rawValue);
+      if (!Number.isFinite(n)) return { error: 'pf_value_type_mismatch' };
+      return { value: String(n) };
+    }
+    case 'date': {
+      const d = new Date(String(rawValue));
+      if (isNaN(d.getTime())) return { error: 'pf_value_type_mismatch' };
+      if (formatMod === 'short') return { value: DATE_SHORT_FMT.format(d) };
+      if (formatMod === 'year_only') return { value: String(d.getFullYear()) };
+      if (formatMod === 'month_year')
+        return { value: `${(d.getMonth() + 1).toString().padStart(2, '0')}.${d.getFullYear()}` };
+      return { value: DATE_FULL_FMT.format(d) };
+    }
+    case 'datetime': {
+      const d = new Date(String(rawValue));
+      if (isNaN(d.getTime())) return { error: 'pf_value_type_mismatch' };
+      const datePart = formatMod === 'short' ? DATE_SHORT_FMT.format(d) : DATE_FULL_FMT.format(d);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return { value: `${datePart} ${hh}:${mm}` };
+    }
+    case 'time': {
+      return { value: String(rawValue) };
+    }
+    case 'checkbox': {
+      const b = rawValue === true || rawValue === 'true' || rawValue === 1;
+      const trueLabel = (opts.true_label as string | undefined) ?? 'Да';
+      const falseLabel = (opts.false_label as string | undefined) ?? 'Нет';
+      return { value: b ? trueLabel : falseLabel };
+    }
+    case 'select': {
+      const v = String(rawValue);
+      const choices = (opts.choices as Array<{ value: string; label: string }> | undefined) ?? [];
+      const found = choices.find((c) => c.value === v);
+      if (formatMod === 'value') return { value: v };
+      return { value: found?.label ?? v };
+    }
+    case 'multiselect': {
+      const arr = Array.isArray(rawValue) ? rawValue : [];
+      const choices = (opts.choices as Array<{ value: string; label: string }> | undefined) ?? [];
+      const separator = (opts.separator as string | undefined) ?? ', ';
+      const mapped = arr.map((v) => {
+        const found = choices.find((c) => c.value === String(v));
+        return formatMod === 'value' ? String(v) : (found?.label ?? String(v));
+      });
+      return { value: mapped.join(separator) };
+    }
+    default:
+      return { error: 'pf_value_type_mismatch' };
+  }
+}
+
+async function resolvePfFieldToken(
+  input: PackageTokenResolveInput,
+  pfPublicId: string,
+  _caseMod: string | undefined,
+  formatMod: string | undefined,
+): Promise<PackageTokenResolveResult> {
+  // 1. Поле в каталоге
+  const { data: fieldRow, error: fieldErr } = await input.supabase
+    .from('document_package_field_catalog')
+    .select('id, package_template_id, field_key, data_type, options, required, is_active, label')
+    .eq('public_id', pfPublicId)
+    .maybeSingle();
+  if (fieldErr || !fieldRow) {
+    return {
+      resolved: false,
+      code: 'pf_token_not_found',
+      warning: `pf_token_not_found:${pfPublicId}`,
+    };
+  }
+  const field = fieldRow as {
+    id: string;
+    package_template_id: string;
+    field_key: string;
+    data_type: string;
+    options: Record<string, unknown> | null;
+    required: boolean;
+    is_active: boolean;
+    label: string;
+  };
+
+  // 2. Принадлежность пакету
+  if (input.packageTemplateItemId) {
+    const { data: itemRow } = await input.supabase
+      .from('document_package_template_items')
+      .select('package_template_id')
+      .eq('id', input.packageTemplateItemId)
+      .maybeSingle();
+    if (!itemRow) {
+      return {
+        resolved: false,
+        code: 'config_error',
+        warning: `package_template_item_not_found:${input.packageTemplateItemId}`,
+      };
+    }
+    if ((itemRow as { package_template_id: string }).package_template_id !== field.package_template_id) {
+      return {
+        resolved: false,
+        code: 'pf_token_outside_bound_package',
+        warning: `pf_token_outside_bound_package:${pfPublicId}`,
+      };
+    }
+  } else {
+    const { data: sess } = await input.supabase
+      .from('document_package_sessions')
+      .select('package_template_id')
+      .eq('id', input.packageSessionId)
+      .maybeSingle();
+    if (!sess) {
+      return {
+        resolved: false,
+        code: 'config_error',
+        warning: `session_not_found:${input.packageSessionId}`,
+      };
+    }
+    if ((sess as { package_template_id: string }).package_template_id !== field.package_template_id) {
+      return {
+        resolved: false,
+        code: 'pf_token_outside_bound_package',
+        warning: `pf_token_outside_bound_package:${pfPublicId}`,
+      };
+    }
+  }
+
+  // 3. Значение из session_field_values
+  const { data: valueRow, error: valErr } = await input.supabase
+    .from('document_package_session_field_values')
+    .select('value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+    .eq('session_id', input.packageSessionId)
+    .eq('field_catalog_id', field.id)
+    .maybeSingle();
+  if (valErr) {
+    return {
+      resolved: false,
+      code: 'config_error',
+      warning: `pf_value_query_error:${pfPublicId}`,
+    };
+  }
+
+  let raw: unknown = null;
+  if (valueRow) {
+    const v = valueRow as Record<string, unknown>;
+    switch (field.data_type) {
+      case 'text':
+      case 'select':
+        raw = v.value_text;
+        break;
+      case 'number':
+      case 'year':
+        raw = v.value_number;
+        break;
+      case 'date':
+        raw = v.value_date;
+        break;
+      case 'datetime':
+        raw = v.value_datetime;
+        break;
+      case 'time':
+        raw = v.value_time;
+        break;
+      case 'checkbox':
+        raw = v.value_boolean;
+        break;
+      case 'multiselect':
+        raw = v.value_json;
+        break;
+    }
+  }
+
+  if (raw == null || raw === '') {
+    if (field.required) {
+      return {
+        resolved: false,
+        code: 'pf_required_value_missing',
+        warning: `pf_required_value_missing:${pfPublicId}`,
+      };
+    }
+    // Soft empty value (как FLD): подставляем пусто, считаем resolved.
+    return {
+      resolved: true,
+      value: '',
+      aliasId: field.id,
+      canonicalFieldPublicId: pfPublicId,
+      roleKey: field.field_key,
+      contextKind: 'package_custom_field',
+    };
+  }
+
+  const formatted = formatPfValue(field.data_type, raw, field.options, formatMod);
+  if ('error' in formatted) {
+    return {
+      resolved: false,
+      code: formatted.error === 'pf_value_type_mismatch' ? 'pf_value_type_mismatch' : 'config_error',
+      warning: `${formatted.error}:${pfPublicId}`,
+    };
+  }
+
+  return {
+    resolved: true,
+    value: formatted.value,
+    aliasId: field.id,
+    canonicalFieldPublicId: pfPublicId,
+    roleKey: field.field_key,
+    contextKind: 'package_custom_field',
+  };
+}
+
 /**
  * Pure resolver core. Use ONLY in dry-run edge function or in tests.
  * Не оборачивает feature-flag. Не пишет в БД. Не зовёт generation/snapshot.
@@ -313,6 +564,14 @@ export async function resolvePackageTokenCore(
   if (LN_RE.test(aliasToken)) {
     return resolveLnRoleToken(input, aliasToken, caseMod, formatMod);
   }
+
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1: {{pf-XXXXXX}} (per-package custom field).
+  // Никогда не падает в legacy alias-fallback.
+  const PF_RE = /^pf-\d{6}$/;
+  if (PF_RE.test(aliasToken)) {
+    return resolvePfFieldToken(input, aliasToken, caseMod, formatMod);
+  }
+
 
   // 1. Найти активный alias
   const { data: alias, error: aliasErr } = await input.supabase

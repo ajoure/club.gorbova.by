@@ -45,6 +45,7 @@ import { useRbac } from "@/hooks/useRbac";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
 import { PackageRolesManager } from "./PackageRolesManager";
+import { PackageFieldsManager } from "./PackageFieldsManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
@@ -381,9 +382,9 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               </TabsTrigger>
             </HelpTooltip>
             {isAdminUI && (
-              <HelpTooltip helpKey="" customShort="Список ролей, которые встречаются в шаблонах пакета." alwaysShow>
+              <HelpTooltip helpKey="" customShort="Роли и кастомные поля, которые встречаются в шаблонах пакета." alwaysShow>
                 <TabsTrigger value="roles">
-                  <Users className="h-3.5 w-3.5 mr-1.5" /> Роли пакета
+                  <Users className="h-3.5 w-3.5 mr-1.5" /> Роли и поля пакета
                 </TabsTrigger>
               </HelpTooltip>
             )}
@@ -415,8 +416,9 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
           </TabsContent>
 
           {isAdminUI && (
-            <TabsContent value="roles">
+            <TabsContent value="roles" className="space-y-4">
               <PackageRolesManager packageTemplateId={selectedPackage.id} />
+              <PackageFieldsManager packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
 
