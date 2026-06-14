@@ -1,0 +1,1 @@
+DELETE FROM public.telegram_messages WHERE user_id = '11111111-1111-1111-1111-111111111111'::uuid AND meta->>'_fixture' = 'oval_2026_06_14';
