@@ -64,7 +64,15 @@ export type PackageTokenResolveCode =
   // Sprint 3H-fix: ln-XXXXXX branch
   | 'ln_token_not_found'
   | 'ln_token_outside_bound_package'
-  | 'role_assignment_missing';
+  | 'role_assignment_missing'
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX branch
+  | 'pf_token_not_found'
+  | 'pf_token_outside_bound_package'
+  | 'pf_value_missing'
+  | 'pf_required_value_missing'
+  | 'pf_invalid_choice'
+  | 'pf_value_type_mismatch'
+  | 'pf_unsupported_modifier';
 
 export type PackageTokenResolveResult =
   | {
