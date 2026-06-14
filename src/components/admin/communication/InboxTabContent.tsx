@@ -243,7 +243,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
 
   // === P1 OPTIMIZED: Use get_inbox_dialogs_v1 RPC instead of loading all messages ===
   const { data: dialogs = [], isLoading, refetch } = useQuery({
-    queryKey: ["inbox-dialogs"],
+    queryKey: INBOX_DIALOGS_QK,
     queryFn: async () => {
       // Call optimized RPC that does server-side aggregation
       const { data: rpcDialogs, error: rpcError } = await supabase
