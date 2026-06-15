@@ -257,6 +257,8 @@ const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 // ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
 const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
+const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
 const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
@@ -351,6 +353,16 @@ Deno.serve(async (req) => {
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
       preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4)
+      preresolved_pf_fields: Record<string, {
+        public_id: string;
+        label: string;
+        data_type: string;
+        raw_value: unknown;
+        rendered_value: string;
+        effective_required: boolean;
+        default_kind_applied: string | null;
+      }>;
     };
     let packageContext: PackageCtx | null = null;
 
@@ -381,6 +393,7 @@ Deno.serve(async (req) => {
         preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+        preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
       } as PackageCtx;
       // Package-mode: orchestrator is the trust anchor for profile_id /
       // ownership. Strict acts as system actor — no user JWT.
@@ -728,6 +741,13 @@ Deno.serve(async (req) => {
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
+    // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): parsed pf-XXXXXX tokens.
+    interface ParsedPfToken {
+      raw_inside: string;
+      public_id: string;
+      format: string | null;
+    }
+    const parsedPfTokens: ParsedPfToken[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
 
@@ -807,6 +827,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // 3.5) PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX (package custom field).
+      const pfMatch = inside.match(PF_TOKEN_RE);
+      if (pfMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (pfMatch[2] || '').split('|').filter(Boolean);
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'format' && /^[a-z_]+$/.test(v)) fmt = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPfTokens.push({ raw_inside: inside, public_id: pfMatch[1], format: fmt });
+        continue;
+      }
+
       // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
@@ -880,7 +920,42 @@ Deno.serve(async (req) => {
           fields: missingFld,
         }, 400);
       }
+
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX preresolve + required-gate.
+      const pfBag = packageContext!.preresolved_pf_fields || {};
+      const missingPfPreresolved: string[] = [];
+      const requiredMissing: Array<{ public_id: string; label: string }> = [];
+      const seenPfPublicIds = new Set<string>();
+      for (const pt of parsedPfTokens) {
+        if (!Object.prototype.hasOwnProperty.call(pfBag, pt.public_id)) {
+          missingPfPreresolved.push(`{{${pt.raw_inside}}}`);
+          continue;
+        }
+        if (seenPfPublicIds.has(pt.public_id)) continue;
+        seenPfPublicIds.add(pt.public_id);
+        const entry = pfBag[pt.public_id];
+        const raw = entry.raw_value;
+        const isEmpty = raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0);
+        if (entry.effective_required && isEmpty) {
+          requiredMissing.push({ public_id: entry.public_id, label: entry.label });
+        }
+      }
+      if (missingPfPreresolved.length > 0) {
+        return json({
+          error: 'package_field_not_preresolved',
+          code: 'pf_token_not_found',
+          tokens: Array.from(new Set(missingPfPreresolved)),
+        }, 400);
+      }
+      if (requiredMissing.length > 0) {
+        return json({
+          error: 'pf_required_value_missing',
+          code: 'pf_required_value_missing',
+          fields: requiredMissing,
+        }, 422);
+      }
     }
+
 
 
 
@@ -1219,7 +1294,27 @@ Deno.serve(async (req) => {
           case_reason: caseReason,
         };
       }
+
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): resolve pf-XXXXXX → rendered string.
+      for (const pt of parsedPfTokens) {
+        const entry = (packageContext!.preresolved_pf_fields || {})[pt.public_id];
+        const outVal = entry?.rendered_value ?? '';
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: 'package_custom_field',
+          kind: 'pf',
+          public_id: pt.public_id,
+          label: entry?.label ?? null,
+          data_type: entry?.data_type ?? null,
+          required: !!entry?.effective_required,
+          value: outVal,
+          format_requested: pt.format,
+          default_kind_applied: entry?.default_kind_applied ?? null,
+        };
+      }
     }
+
 
 
 
@@ -1591,6 +1686,28 @@ Deno.serve(async (req) => {
         file_name_template_snapshot: fileNameTemplate,
         file_name_template_source: fileNameTemplateSource,
         file_name_warnings: fileNameWarnings,
+        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): add-only token snapshot for pf-XXXXXX.
+        tokens_snapshot: (() => {
+          if (generationContext !== 'package_session') return [];
+          const seen = new Set<string>();
+          const out: any[] = [];
+          for (const pt of parsedPfTokens) {
+            if (seen.has(pt.public_id)) continue;
+            seen.add(pt.public_id);
+            const e = (packageContext!.preresolved_pf_fields || {})[pt.public_id];
+            if (!e) continue;
+            out.push({
+              provider: 'pf',
+              public_id: e.public_id,
+              label: e.label,
+              data_type: e.data_type,
+              raw_value: e.raw_value,
+              rendered_value: e.rendered_value,
+              default_kind_applied: e.default_kind_applied,
+            });
+          }
+          return out;
+        })(),
         ...gotenbergMeta,
         ...packageMetaExtras,
       },

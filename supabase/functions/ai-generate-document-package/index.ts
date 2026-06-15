@@ -30,6 +30,7 @@ import {
   buildSystemFieldValues,
   SYSTEM_FIELD_VALUE_IDS,
 } from '../_shared/system-field-values.ts';
+import { formatPfValue } from '../_shared/resolve-package-tokens.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,6 +53,8 @@ const ALLOWED_FIELD_ENTITY_TYPES = new Set([
 const FIELD_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_RE = /^(ln-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX custom-field placeholders.
+const PF_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
 // Sprint 3J-Roles: FIO-полей пакета, для которых orchestrator сохраняет raw_full_name
@@ -185,6 +188,58 @@ Deno.serve(async (req) => {
       .from('legal_details_persons').select('*').in('id', personIds.length ? personIds : ['__none__']);
     const personMap = new Map<string, any>((persons || []).map((p: any) => [p.id, p]));
 
+    // ── PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX catalog + values + assignments ──
+    const { data: pfCatalogRows } = await supabase
+      .from('document_package_field_catalog')
+      .select('id, public_id, package_template_id, field_key, data_type, options, required, is_active, label, metadata')
+      .eq('package_template_id', session.package_template_id)
+      .eq('is_active', true);
+    const pfCatalogByPublicId = new Map<string, any>(
+      (pfCatalogRows || []).map((r: any) => [r.public_id, r]),
+    );
+    const pfCatalogIds = (pfCatalogRows || []).map((r: any) => r.id);
+
+    const { data: pfAssignmentRows } = pfCatalogIds.length
+      ? await supabase
+          .from('document_package_item_field_assignments')
+          .select('id, package_template_item_id, field_catalog_id, is_required_override, label_override, metadata, is_active')
+          .in('package_template_item_id', itemIds)
+          .in('field_catalog_id', pfCatalogIds)
+          .eq('is_active', true)
+      : { data: [] as any[] } as any;
+    const pfAssignByItemField = new Map<string, any>();
+    for (const a of (pfAssignmentRows || []) as any[]) {
+      pfAssignByItemField.set(`${a.package_template_item_id}::${a.field_catalog_id}`, a);
+    }
+
+    const { data: pfValueRows } = pfCatalogIds.length
+      ? await supabase
+          .from('document_package_session_field_values')
+          .select('field_catalog_id, value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+          .eq('session_id', packageSessionId)
+          .in('field_catalog_id', pfCatalogIds)
+      : { data: [] as any[] } as any;
+    const pfValueByField = new Map<string, any>(
+      (pfValueRows || []).map((v: any) => [v.field_catalog_id, v]),
+    );
+
+    function extractPfRawValue(field: any, valueRow: any): unknown {
+      if (!valueRow) return null;
+      switch (field.data_type) {
+        case 'text':
+        case 'select': return valueRow.value_text;
+        case 'number':
+        case 'year': return valueRow.value_number;
+        case 'date': return valueRow.value_date;
+        case 'datetime': return valueRow.value_datetime;
+        case 'time': return valueRow.value_time;
+        case 'checkbox': return valueRow.value_boolean;
+        case 'multiselect': return valueRow.value_json;
+        default: return null;
+      }
+    }
+
+
     // ── create batch (pending) ──────────────────────────────────────────
     const { data: batch, error: batchErr } = await supabase
       .from('ai_document_generation_batches')
@@ -245,6 +300,16 @@ Deno.serve(async (req) => {
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
       const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; positions: string[]; position_genders: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }> = {};
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX preresolved bag.
+      const preresolved_pf_fields: Record<string, {
+        public_id: string;
+        label: string;
+        data_type: string;
+        raw_value: unknown;
+        rendered_value: string;
+        effective_required: boolean;
+        default_kind_applied: string | null;
+      }> = {};
       const itemErrors: string[] = [];
       const seen = new Set<string>();
 
@@ -273,6 +338,7 @@ Deno.serve(async (req) => {
         if ((mm = inside.match(FIELD_RE))) baseKey = `field:${mm[1]}`;
         else if ((mm = inside.match(PACKAGE_FLD_RE))) baseKey = `package.${mm[1]}.${mm[2]}`;
         else if ((mm = inside.match(LN_RE))) baseKey = mm[1];
+        else if ((mm = inside.match(PF_RE))) baseKey = mm[1];
         else baseKey = inside;
         if (seen.has(baseKey)) continue;
         seen.add(baseKey);
@@ -414,6 +480,39 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): {{pf-XXXXXX[|format=…]}} (per-package custom field).
+        if ((mm = inside.match(PF_RE))) {
+          const pfPublicId = mm[1];
+          const field = pfCatalogByPublicId.get(pfPublicId);
+          if (!field) { itemErrors.push(`pf_token_not_found:${pfPublicId}`); continue; }
+          if (field.package_template_id !== session.package_template_id) {
+            itemErrors.push(`pf_token_outside_bound_package:${pfPublicId}`);
+            continue;
+          }
+          const asg = pfAssignByItemField.get(`${item.id}::${field.id}`);
+          const effective_required: boolean = typeof asg?.is_required_override === 'boolean'
+            ? asg.is_required_override
+            : !!field.required;
+          const label: string = asg?.label_override || field.label || pfPublicId;
+          const raw = extractPfRawValue(field, pfValueByField.get(field.id));
+          const fmt = formatPfValue(field.data_type, raw, field.options, undefined);
+          const rendered = 'value' in fmt ? fmt.value : '';
+          const default_kind_applied: string | null =
+            (field.metadata && typeof field.metadata === 'object' && typeof (field.metadata as any).default_kind === 'string')
+              ? (field.metadata as any).default_kind
+              : null;
+          preresolved_pf_fields[pfPublicId] = {
+            public_id: pfPublicId,
+            label,
+            data_type: field.data_type,
+            raw_value: raw,
+            rendered_value: rendered,
+            effective_required,
+            default_kind_applied,
+          };
+          continue;
+        }
+
         itemErrors.push(`invalid_token_in_package_template:${inside}`);
       }
 
@@ -427,6 +526,8 @@ Deno.serve(async (req) => {
         });
         continue;
       }
+
+
 
       // ── invoke strict in package mode (service-role + internal marker) ─
       const strictRes = await fetch(`${SUPABASE_URL}/functions/v1/canonical-document-generate-strict`, {
@@ -450,6 +551,7 @@ Deno.serve(async (req) => {
             preresolved_fields,
             preresolved_package_fields,
             preresolved_ln_tokens,
+            preresolved_pf_fields,
           },
         }),
       });
