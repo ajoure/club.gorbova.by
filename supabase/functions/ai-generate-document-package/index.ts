@@ -526,14 +526,8 @@ Deno.serve(async (req) => {
         });
         continue;
       }
-        results.push({
-          item_id: item.id,
-          template_id: tpl.id,
-          status: 'blocked',
-          errors: itemErrors,
-        });
-        continue;
-      }
+
+
 
       // ── invoke strict in package mode (service-role + internal marker) ─
       const strictRes = await fetch(`${SUPABASE_URL}/functions/v1/canonical-document-generate-strict`, {
