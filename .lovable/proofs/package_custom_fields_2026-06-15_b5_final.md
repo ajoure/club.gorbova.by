@@ -19,11 +19,29 @@
 | 11 | Snapshot add-only в `meta.tokens_snapshot[]` | **PASS** | `canonical-document-generate-strict/index.ts:1690` — push `{provider:'pf', public_id, label, data_type, raw_value, rendered_value, default_kind_applied}`. |
 | 12 | Совместный smoke ln- + pf- + FLD- | **PASS** | Deno `resolve-package-tokens.smoke.test.ts` 3/3 — каждая ветвь возвращает специфичный код, нет «съедания». |
 | 13 | Runtime UAT: создать поле + bulk assign + значение + audit | **PASS** | § 3, § 4 — pf-000002, 2 назначения, 1 значение, 4 audit-строки. |
-| 14 | Runtime 422 без обязательного значения | **PASS (proxy)** | Логика покрыта Deno `pf-required-gate.test.ts` (pure extract из обвязки strict-генератора). HTTP-вызов реального документа отложен — нет шаблона `.docx` с `pf-` токеном в preview БД. |
+| 14 | Runtime e2e: реальная DOCX-генерация `{{pf-000002}}` + 422 без значения | **DEFERRED** | Pure unit-логика покрыта Deno `pf-required-gate.test.ts` (7/7), но реальная цепочка `DOCX extraction → package context → assignment lookup → session value → strict generation → rendered DOCX → ai_generated_documents.meta.tokens_snapshot[]` не прогонялась. Блокер: отсутствует fixture-шаблон `.docx` с токеном `{{pf-000002}}` в preview БД. См. § 7 follow-up. |
 | 15 | Реальные `audit_logs` по каталогу, assignment, значению | **PASS** | § 4 — 4 строки трёх entity-types. До патча audit-триггер каталога был сломан (см. § 5), assignment/value audit отсутствовали. |
 | 16 | Регрессия `ln-` и `FLD-` | **PASS** | smoke-тест § 6 + поиск по diff: pipeline билинговых `FLD-` (`typed-tokens-resolver`) не тронут; `ln-` ветка не изменена. |
 
-**Итог:** 16/16 PASS (один — proxy через unit на pure-extract). Патч **закрыт**.
+**Итог:** **15 PASS / 1 DEFERRED / 0 FAIL.** Патч **code-complete и test-complete**, окончательное закрытие — после runtime e2e (см. § 7).
+
+## 7. Обязательный follow-up для безусловного закрытия
+
+Для перевода пункта 14 из DEFERRED → PASS требуется выполнить два runtime-сценария на реальном endpoint `canonical-document-generate-strict`:
+
+**Prerequisite:** загрузить в preview БД тестовый DOCX-шаблон, привязанный к пакету `document_package_templates`, в теле которого присутствует токен `{{pf-000002}}` (минимум — один параграф). Шаблон должен быть слинкован через `document_package_item_field_assignments` к полю `pf-000002` (`document_package_field_catalog`).
+
+**Сценарий A — значение заполнено:**
+1. В сессии `document_package_sessions` записать `document_package_session_field_values` для `pf-000002` (непустое значение).
+2. Вызвать strict-генератор.
+3. Ожидание: HTTP 200; в итоговом DOCX токен подменён на rendered_value; `ai_generated_documents.meta.tokens_snapshot[]` содержит элемент `{provider:'pf', public_id:'pf-000002', raw_value, rendered_value, default_kind_applied}`.
+
+**Сценарий B — required-значение отсутствует:**
+1. Снять значение (или не создавать) при `effective_required=true`.
+2. Вызвать strict-генератор.
+3. Ожидание: HTTP **422** с `code='pf_required_value_missing'`; запись `ai_generated_documents` НЕ создаётся; ложный snapshot не пишется; в `audit_logs` фиксируется reject-причина.
+
+До выполнения сценариев A+B патч остаётся **условно закрытым** (15 PASS / 1 DEFERRED).
 
 ## 2. Структура и контракт (Шаг 0)
 
