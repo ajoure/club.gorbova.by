@@ -338,6 +338,7 @@ Deno.serve(async (req) => {
         if ((mm = inside.match(FIELD_RE))) baseKey = `field:${mm[1]}`;
         else if ((mm = inside.match(PACKAGE_FLD_RE))) baseKey = `package.${mm[1]}.${mm[2]}`;
         else if ((mm = inside.match(LN_RE))) baseKey = mm[1];
+        else if ((mm = inside.match(PF_RE))) baseKey = mm[1];
         else baseKey = inside;
         if (seen.has(baseKey)) continue;
         seen.add(baseKey);
