@@ -353,6 +353,16 @@ Deno.serve(async (req) => {
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
       preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4)
+      preresolved_pf_fields: Record<string, {
+        public_id: string;
+        label: string;
+        data_type: string;
+        raw_value: unknown;
+        rendered_value: string;
+        effective_required: boolean;
+        default_kind_applied: string | null;
+      }>;
     };
     let packageContext: PackageCtx | null = null;
 
