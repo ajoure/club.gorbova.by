@@ -104,12 +104,36 @@ function classify(
   packageTemplateId: string | null,
   /** role_catalog_id, у которых есть active assignment в текущем (session,item) */
   assignedRoleCatalogIds: Set<string> | null,
+  /** pf-XXXXXX → catalog row (поля всех пакетов) */
+  pfCatalog: Map<string, FieldCatalogRow>,
+  /** field_catalog_id, у которых есть active assignment к выбранному item; null = item не выбран */
+  assignedFieldCatalogIds: Set<string> | null,
 ): Finding {
   const token = `{{${inside}}}`;
 
   if (RX_PACKAGE_REQ.test(inside)) {
     return { token, severity: "valid", code: "package_requisite_ok",
       hint: "Package-aware реквизит, читается из document_package_sessions." };
+  }
+
+  const pfMatch = inside.match(RX_PACKAGE_FIELD_PF);
+  if (pfMatch) {
+    const pfId = pfMatch[1];
+    const field = pfCatalog.get(pfId);
+    if (!field) {
+      return { token, severity: "error", code: "pf_token_not_found",
+        hint: `Поле пакета ${pfId} не найдено в каталоге. Создайте поле во вкладке «Роли и поля пакета» или исправьте плейсхолдер.` };
+    }
+    if (packageTemplateId && field.package_template_id !== packageTemplateId) {
+      return { token, severity: "error", code: "pf_token_outside_bound_package",
+        hint: `Поле ${pfId} принадлежит другому пакету. Используйте только поля текущего пакета.` };
+    }
+    if (assignedFieldCatalogIds && !assignedFieldCatalogIds.has(field.id)) {
+      return { token, severity: "error", code: "pf_assignment_missing",
+        hint: `Поле ${pfId} не назначено выбранному документу пакета. Добавьте назначение в «Анкеты документов» перед генерацией.` };
+    }
+    return { token, severity: "valid", code: "package_field_ok",
+      hint: `Поле пакета ${pfId} (${field.label}). Значение читается из document_package_session_field_values.` };
   }
 
   const lnMatch = inside.match(RX_PACKAGE_ROLE_LN);
@@ -131,6 +155,7 @@ function classify(
     return { token, severity: "valid", code: "package_role_ok",
       hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
+
 
   if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
     return { token, severity: "error", code: "invalid_legacy_role_placeholder",
