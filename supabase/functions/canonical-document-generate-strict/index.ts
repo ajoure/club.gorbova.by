@@ -393,6 +393,7 @@ Deno.serve(async (req) => {
         preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+        preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
       } as PackageCtx;
       // Package-mode: orchestrator is the trust anchor for profile_id /
       // ownership. Strict acts as system actor — no user JWT.
