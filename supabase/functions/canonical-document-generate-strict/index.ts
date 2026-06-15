@@ -827,6 +827,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // 3.5) PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX (package custom field).
+      const pfMatch = inside.match(PF_TOKEN_RE);
+      if (pfMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (pfMatch[2] || '').split('|').filter(Boolean);
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'format' && /^[a-z_]+$/.test(v)) fmt = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedPfTokens.push({ raw_inside: inside, public_id: pfMatch[1], format: fmt });
+        continue;
+      }
+
       // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
