@@ -72,13 +72,28 @@ interface ItemAssignmentRow {
   role_catalog_id: string;
 }
 
+interface FieldCatalogRow {
+  id: string;
+  public_id: string;          // pf-XXXXXX
+  field_key: string;
+  label: string;
+  package_template_id: string;
+}
+
+interface ItemFieldAssignmentRow {
+  field_catalog_id: string;
+}
+
+
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_ROLE_LN = /^(ln-\d{6})(\|[^}]+)?$/;
+const RX_PACKAGE_FIELD_PF = /^(pf-\d{6})(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
+
 
 function classify(
   inside: string,
@@ -89,12 +104,36 @@ function classify(
   packageTemplateId: string | null,
   /** role_catalog_id, у которых есть active assignment в текущем (session,item) */
   assignedRoleCatalogIds: Set<string> | null,
+  /** pf-XXXXXX → catalog row (поля всех пакетов) */
+  pfCatalog: Map<string, FieldCatalogRow>,
+  /** field_catalog_id, у которых есть active assignment к выбранному item; null = item не выбран */
+  assignedFieldCatalogIds: Set<string> | null,
 ): Finding {
   const token = `{{${inside}}}`;
 
   if (RX_PACKAGE_REQ.test(inside)) {
     return { token, severity: "valid", code: "package_requisite_ok",
       hint: "Package-aware реквизит, читается из document_package_sessions." };
+  }
+
+  const pfMatch = inside.match(RX_PACKAGE_FIELD_PF);
+  if (pfMatch) {
+    const pfId = pfMatch[1];
+    const field = pfCatalog.get(pfId);
+    if (!field) {
+      return { token, severity: "error", code: "pf_token_not_found",
+        hint: `Поле пакета ${pfId} не найдено в каталоге. Создайте поле во вкладке «Роли и поля пакета» или исправьте плейсхолдер.` };
+    }
+    if (packageTemplateId && field.package_template_id !== packageTemplateId) {
+      return { token, severity: "error", code: "pf_token_outside_bound_package",
+        hint: `Поле ${pfId} принадлежит другому пакету. Используйте только поля текущего пакета.` };
+    }
+    if (assignedFieldCatalogIds && !assignedFieldCatalogIds.has(field.id)) {
+      return { token, severity: "error", code: "pf_assignment_missing",
+        hint: `Поле ${pfId} не назначено выбранному документу пакета. Добавьте назначение в «Анкеты документов» перед генерацией.` };
+    }
+    return { token, severity: "valid", code: "package_field_ok",
+      hint: `Поле пакета ${pfId} (${field.label}). Значение читается из document_package_session_field_values.` };
   }
 
   const lnMatch = inside.match(RX_PACKAGE_ROLE_LN);
@@ -116,6 +155,7 @@ function classify(
     return { token, severity: "valid", code: "package_role_ok",
       hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
+
 
   if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
     return { token, severity: "error", code: "invalid_legacy_role_placeholder",
@@ -233,7 +273,7 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Active assignments для выбранной пары (session, item).
+  // Active role-assignments для выбранной пары (session, item).
   const assignmentsQuery = useQuery({
     queryKey: ["pkg-validation-assignments", selectedSessionId, selectedItemId],
     queryFn: async () => {
@@ -255,6 +295,44 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     enabled: !!selectedSessionId && !!selectedItemId,
   });
 
+  // Каталог pf-полей всех пакетов (для распознавания "из другого пакета").
+  const fieldCatalogQuery = useQuery({
+    queryKey: ["pkg-field-catalog-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_field_catalog")
+        .select("id, public_id, field_key, label, package_template_id")
+        .eq("is_active", true);
+      if (error) throw error;
+      const map = new Map<string, FieldCatalogRow>();
+      for (const r of (data ?? []) as FieldCatalogRow[]) {
+        if (r.public_id) map.set(r.public_id, r);
+      }
+      return map;
+    },
+    staleTime: 60 * 1000,
+  });
+
+  // Active pf-assignments для выбранного item (без сессии — assignments per-item).
+  const fieldAssignmentsQuery = useQuery({
+    queryKey: ["pkg-validation-field-assignments", selectedItemId],
+    queryFn: async () => {
+      if (!selectedItemId) return new Set<string>();
+      const { data, error } = await supabase
+        .from("document_package_item_field_assignments")
+        .select("field_catalog_id")
+        .eq("package_template_item_id", selectedItemId)
+        .eq("is_active", true);
+      if (error) throw error;
+      const s = new Set<string>();
+      for (const r of (data ?? []) as unknown as ItemFieldAssignmentRow[]) {
+        if (r.field_catalog_id) s.add(r.field_catalog_id);
+      }
+      return s;
+    },
+    enabled: !!selectedItemId,
+  });
+
   const runOnArrayBuffer = useCallback(async (ab: ArrayBuffer, label: string) => {
     setScanning(true);
     try {
@@ -264,16 +342,41 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       const out: Finding[] = [];
       const fldMap = fldEntityTypesQuery.data ?? new Map<string, string>();
       const lnMap = roleCatalogQuery.data ?? new Map<string, RoleCatalogRow>();
-      // Assignments-check включаем только если выбран и session, и item.
-      const assignedSet =
+      const pfMap = fieldCatalogQuery.data ?? new Map<string, FieldCatalogRow>();
+      // Role-assignments-check включаем только если выбран и session, и item.
+      const assignedRoleSet =
         selectedSessionId && selectedItemId
           ? assignmentsQuery.data ?? new Set<string>()
           : null;
+      // Pf-assignments-check включаем при выбранном item (без сессии).
+      const assignedFieldSet = selectedItemId
+        ? fieldAssignmentsQuery.data ?? new Set<string>()
+        : null;
+      // pf-токены, встретившиеся в DOCX (для последующего расчёта unused).
+      const seenPfIds = new Set<string>();
       for (const m of text.matchAll(ANY_PLACEHOLDER_RE)) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedSet));
+        const pfM = inside.match(RX_PACKAGE_FIELD_PF);
+        if (pfM) seenPfIds.add(pfM[1]);
+        out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedRoleSet, pfMap, assignedFieldSet));
+      }
+      // Unused-assignment pass: pf-поля назначены item, но не используются в DOCX.
+      if (assignedFieldSet && assignedFieldSet.size > 0) {
+        const byIdToPublic = new Map<string, FieldCatalogRow>();
+        for (const row of pfMap.values()) byIdToPublic.set(row.id, row);
+        for (const fieldId of assignedFieldSet) {
+          const row = byIdToPublic.get(fieldId);
+          if (!row) continue;
+          if (seenPfIds.has(row.public_id)) continue;
+          out.push({
+            token: `{{${row.public_id}}}`,
+            severity: "warning",
+            code: "pf_unused_assignment",
+            hint: `Поле ${row.public_id} (${row.label}) назначено документу, но не используется в DOCX. Уберите назначение или добавьте плейсхолдер в шаблон.`,
+          });
+        }
       }
       setFindings(out);
       setSourceLabel(label);
@@ -289,11 +392,14 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
   }, [
     fldEntityTypesQuery.data,
     roleCatalogQuery.data,
+    fieldCatalogQuery.data,
     assignmentsQuery.data,
+    fieldAssignmentsQuery.data,
     selectedSessionId,
     selectedItemId,
     packageTemplateId,
   ]);
+
 
   const handleFile = async (file: File | null) => {
     if (!file) return;
