@@ -108,61 +108,38 @@ export function usePackageSessionFields(
       if (aErr) throw aErr;
       const rows = ((assignments ?? []) as unknown) as PackageItemFieldAssignmentRow[];
 
+      // B5: дедуп и effective override вынесены в pure-utility (vitest-покрыта).
+      const { dedupePackageQuestions } = await import("@/utils/packageFieldsDedup");
+      const deduped = dedupePackageQuestions(
+        fields.map((f) => ({
+          id: f.id,
+          label: f.label,
+          required: !!f.required,
+          description: f.description ?? null,
+          sort_order: f.sort_order,
+        })),
+        rows.map((r) => ({
+          id: r.id,
+          package_template_item_id: r.package_template_item_id,
+          field_catalog_id: r.field_catalog_id,
+          visibility_mode: r.visibility_mode,
+          sort_order: r.sort_order,
+          created_at: r.created_at,
+          is_required_override: r.is_required_override,
+          label_override: r.label_override,
+          help_override: r.help_override,
+        })),
+      );
+
       const fieldById = new Map(fields.map((f) => [f.id, f]));
-      const byField = new Map<string, PackageItemFieldAssignmentRow[]>();
-      for (const r of rows) {
-        if (!fieldById.has(r.field_catalog_id)) continue;
-        const arr = byField.get(r.field_catalog_id) ?? [];
-        arr.push(r);
-        byField.set(r.field_catalog_id, arr);
-      }
-
-      const out: DedupedQuestion[] = [];
-      for (const [fieldId, arr] of byField) {
-        const field = fieldById.get(fieldId)!;
-        // Канонический: override → min sort_order → earliest created_at.
-        const sorted = [...arr].sort((a, b) => {
-          const aHasOverride =
-            a.is_required_override !== null ||
-            !!a.label_override ||
-            !!a.help_override;
-          const bHasOverride =
-            b.is_required_override !== null ||
-            !!b.label_override ||
-            !!b.help_override;
-          if (aHasOverride !== bHasOverride) return aHasOverride ? -1 : 1;
-          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-          return a.created_at.localeCompare(b.created_at);
-        });
-        const canonical = sorted[0];
-        const required =
-          canonical.is_required_override !== null
-            ? !!canonical.is_required_override
-            : !!field.required;
-        out.push({
-          field,
-          canonicalAssignment: canonical,
-          occurrences: arr.length,
-          itemIds: arr.map((a) => a.package_template_item_id),
-          effective: {
-            label: canonical.label_override?.trim() || field.label,
-            required,
-            help: canonical.help_override?.trim() || field.description || null,
-          },
-        });
-      }
-
-      // Сортировка: сначала required, затем по sort_order каталога / label.
-      out.sort((a, b) => {
-        if (a.effective.required !== b.effective.required) {
-          return a.effective.required ? -1 : 1;
-        }
-        if (a.field.sort_order !== b.field.sort_order) {
-          return a.field.sort_order - b.field.sort_order;
-        }
-        return a.effective.label.localeCompare(b.effective.label);
-      });
-      return out;
+      const rowById = new Map(rows.map((r) => [r.id, r]));
+      return deduped.map((q): DedupedQuestion => ({
+        field: fieldById.get(q.field.id)!,
+        canonicalAssignment: rowById.get(q.canonicalAssignment.id)!,
+        occurrences: q.occurrences,
+        itemIds: q.itemIds,
+        effective: q.effective,
+      }));
     },
     enabled: !!sessionId && !!packageTemplateId,
   });
