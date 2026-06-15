@@ -1294,7 +1294,27 @@ Deno.serve(async (req) => {
           case_reason: caseReason,
         };
       }
+
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): resolve pf-XXXXXX → rendered string.
+      for (const pt of parsedPfTokens) {
+        const entry = (packageContext!.preresolved_pf_fields || {})[pt.public_id];
+        const outVal = entry?.rendered_value ?? '';
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: 'package_custom_field',
+          kind: 'pf',
+          public_id: pt.public_id,
+          label: entry?.label ?? null,
+          data_type: entry?.data_type ?? null,
+          required: !!entry?.effective_required,
+          value: outVal,
+          format_requested: pt.format,
+          default_kind_applied: entry?.default_kind_applied ?? null,
+        };
+      }
     }
+
 
 
 
