@@ -551,6 +551,7 @@ Deno.serve(async (req) => {
             preresolved_fields,
             preresolved_package_fields,
             preresolved_ln_tokens,
+            preresolved_pf_fields,
           },
         }),
       });
