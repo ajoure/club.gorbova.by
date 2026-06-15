@@ -920,7 +920,42 @@ Deno.serve(async (req) => {
           fields: missingFld,
         }, 400);
       }
+
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX preresolve + required-gate.
+      const pfBag = packageContext!.preresolved_pf_fields || {};
+      const missingPfPreresolved: string[] = [];
+      const requiredMissing: Array<{ public_id: string; label: string }> = [];
+      const seenPfPublicIds = new Set<string>();
+      for (const pt of parsedPfTokens) {
+        if (!Object.prototype.hasOwnProperty.call(pfBag, pt.public_id)) {
+          missingPfPreresolved.push(`{{${pt.raw_inside}}}`);
+          continue;
+        }
+        if (seenPfPublicIds.has(pt.public_id)) continue;
+        seenPfPublicIds.add(pt.public_id);
+        const entry = pfBag[pt.public_id];
+        const raw = entry.raw_value;
+        const isEmpty = raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0);
+        if (entry.effective_required && isEmpty) {
+          requiredMissing.push({ public_id: entry.public_id, label: entry.label });
+        }
+      }
+      if (missingPfPreresolved.length > 0) {
+        return json({
+          error: 'package_field_not_preresolved',
+          code: 'pf_token_not_found',
+          tokens: Array.from(new Set(missingPfPreresolved)),
+        }, 400);
+      }
+      if (requiredMissing.length > 0) {
+        return json({
+          error: 'pf_required_value_missing',
+          code: 'pf_required_value_missing',
+          fields: requiredMissing,
+        }, 422);
+      }
     }
+
 
 
 
