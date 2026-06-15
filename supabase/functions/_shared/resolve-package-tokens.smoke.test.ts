@@ -57,8 +57,8 @@ Deno.test("smoke isolation: ln-XXXXXX без participants → participant_missin
   });
   assertEquals(r.resolved, false);
   if (!r.resolved) {
-    // PKR-row отсутствует → participant_missing с warning role_catalog_not_found
-    assertEquals(r.code, "participant_missing");
+    // ln-XXXXXX без записи роли → ln_token_not_found (специфичный код, не pf_*)
+    assertEquals(r.code, "ln_token_not_found");
   }
 });
 
