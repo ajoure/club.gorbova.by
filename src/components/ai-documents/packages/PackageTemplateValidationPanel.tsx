@@ -72,6 +72,19 @@ interface ItemAssignmentRow {
   role_catalog_id: string;
 }
 
+interface FieldCatalogRow {
+  id: string;
+  public_id: string;          // pf-XXXXXX
+  field_key: string;
+  label: string;
+  package_template_id: string;
+}
+
+interface ItemFieldAssignmentRow {
+  field_catalog_id: string;
+}
+
+
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
