@@ -53,6 +53,8 @@ const ALLOWED_FIELD_ENTITY_TYPES = new Set([
 const FIELD_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_RE = /^(ln-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX custom-field placeholders.
+const PF_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
 // Sprint 3J-Roles: FIO-полей пакета, для которых orchestrator сохраняет raw_full_name
