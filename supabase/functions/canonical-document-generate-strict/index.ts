@@ -1686,6 +1686,28 @@ Deno.serve(async (req) => {
         file_name_template_snapshot: fileNameTemplate,
         file_name_template_source: fileNameTemplateSource,
         file_name_warnings: fileNameWarnings,
+        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): add-only token snapshot for pf-XXXXXX.
+        tokens_snapshot: (() => {
+          if (generationContext !== 'package_session') return [];
+          const seen = new Set<string>();
+          const out: any[] = [];
+          for (const pt of parsedPfTokens) {
+            if (seen.has(pt.public_id)) continue;
+            seen.add(pt.public_id);
+            const e = (packageContext!.preresolved_pf_fields || {})[pt.public_id];
+            if (!e) continue;
+            out.push({
+              provider: 'pf',
+              public_id: e.public_id,
+              label: e.label,
+              data_type: e.data_type,
+              raw_value: e.raw_value,
+              rendered_value: e.rendered_value,
+              default_kind_applied: e.default_kind_applied,
+            });
+          }
+          return out;
+        })(),
         ...gotenbergMeta,
         ...packageMetaExtras,
       },
