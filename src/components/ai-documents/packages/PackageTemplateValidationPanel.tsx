@@ -89,9 +89,11 @@ const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
 const RX_PACKAGE_ROLE_LN = /^(ln-\d{6})(\|[^}]+)?$/;
+const RX_PACKAGE_FIELD_PF = /^(pf-\d{6})(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
 const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
 const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
+
 
 function classify(
   inside: string,
