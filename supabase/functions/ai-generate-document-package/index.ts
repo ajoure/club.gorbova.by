@@ -30,6 +30,7 @@ import {
   buildSystemFieldValues,
   SYSTEM_FIELD_VALUE_IDS,
 } from '../_shared/system-field-values.ts';
+import { formatPfValue } from '../_shared/resolve-package-tokens.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
