@@ -188,6 +188,58 @@ Deno.serve(async (req) => {
       .from('legal_details_persons').select('*').in('id', personIds.length ? personIds : ['__none__']);
     const personMap = new Map<string, any>((persons || []).map((p: any) => [p.id, p]));
 
+    // ── PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX catalog + values + assignments ──
+    const { data: pfCatalogRows } = await supabase
+      .from('document_package_field_catalog')
+      .select('id, public_id, package_template_id, field_key, data_type, options, required, is_active, label, metadata')
+      .eq('package_template_id', session.package_template_id)
+      .eq('is_active', true);
+    const pfCatalogByPublicId = new Map<string, any>(
+      (pfCatalogRows || []).map((r: any) => [r.public_id, r]),
+    );
+    const pfCatalogIds = (pfCatalogRows || []).map((r: any) => r.id);
+
+    const { data: pfAssignmentRows } = pfCatalogIds.length
+      ? await supabase
+          .from('document_package_item_field_assignments')
+          .select('id, package_template_item_id, field_catalog_id, is_required_override, label_override, metadata, is_active')
+          .in('package_template_item_id', itemIds)
+          .in('field_catalog_id', pfCatalogIds)
+          .eq('is_active', true)
+      : { data: [] as any[] } as any;
+    const pfAssignByItemField = new Map<string, any>();
+    for (const a of (pfAssignmentRows || []) as any[]) {
+      pfAssignByItemField.set(`${a.package_template_item_id}::${a.field_catalog_id}`, a);
+    }
+
+    const { data: pfValueRows } = pfCatalogIds.length
+      ? await supabase
+          .from('document_package_session_field_values')
+          .select('field_catalog_id, value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+          .eq('session_id', packageSessionId)
+          .in('field_catalog_id', pfCatalogIds)
+      : { data: [] as any[] } as any;
+    const pfValueByField = new Map<string, any>(
+      (pfValueRows || []).map((v: any) => [v.field_catalog_id, v]),
+    );
+
+    function extractPfRawValue(field: any, valueRow: any): unknown {
+      if (!valueRow) return null;
+      switch (field.data_type) {
+        case 'text':
+        case 'select': return valueRow.value_text;
+        case 'number':
+        case 'year': return valueRow.value_number;
+        case 'date': return valueRow.value_date;
+        case 'datetime': return valueRow.value_datetime;
+        case 'time': return valueRow.value_time;
+        case 'checkbox': return valueRow.value_boolean;
+        case 'multiselect': return valueRow.value_json;
+        default: return null;
+      }
+    }
+
+
     // ── create batch (pending) ──────────────────────────────────────────
     const { data: batch, error: batchErr } = await supabase
       .from('ai_document_generation_batches')
