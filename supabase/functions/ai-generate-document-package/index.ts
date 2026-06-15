@@ -480,11 +480,52 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): {{pf-XXXXXX[|format=…]}} (per-package custom field).
+        if ((mm = inside.match(PF_RE))) {
+          const pfPublicId = mm[1];
+          const field = pfCatalogByPublicId.get(pfPublicId);
+          if (!field) { itemErrors.push(`pf_token_not_found:${pfPublicId}`); continue; }
+          if (field.package_template_id !== session.package_template_id) {
+            itemErrors.push(`pf_token_outside_bound_package:${pfPublicId}`);
+            continue;
+          }
+          const asg = pfAssignByItemField.get(`${item.id}::${field.id}`);
+          const effective_required: boolean = typeof asg?.is_required_override === 'boolean'
+            ? asg.is_required_override
+            : !!field.required;
+          const label: string = asg?.label_override || field.label || pfPublicId;
+          const raw = extractPfRawValue(field, pfValueByField.get(field.id));
+          const fmt = formatPfValue(field.data_type, raw, field.options, undefined);
+          const rendered = 'value' in fmt ? fmt.value : '';
+          const default_kind_applied: string | null =
+            (field.metadata && typeof field.metadata === 'object' && typeof (field.metadata as any).default_kind === 'string')
+              ? (field.metadata as any).default_kind
+              : null;
+          preresolved_pf_fields[pfPublicId] = {
+            public_id: pfPublicId,
+            label,
+            data_type: field.data_type,
+            raw_value: raw,
+            rendered_value: rendered,
+            effective_required,
+            default_kind_applied,
+          };
+          continue;
+        }
+
         itemErrors.push(`invalid_token_in_package_template:${inside}`);
       }
 
       if (itemErrors.length > 0) {
         blocked++;
+        results.push({
+          item_id: item.id,
+          template_id: tpl.id,
+          status: 'blocked',
+          errors: itemErrors,
+        });
+        continue;
+      }
         results.push({
           item_id: item.id,
           template_id: tpl.id,
