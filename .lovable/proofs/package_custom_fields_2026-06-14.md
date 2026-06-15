@@ -153,3 +153,107 @@ PackageFieldsManager доступен в admin-разделе «Документ
 Каждый из этих пунктов запускается отдельным проходом — они затрагивают
 канонический генератор и снимок, поэтому ломать в одном спринте всё
 сразу запрещено инвариантом «безопасной модификации».
+
+## B4. Backend required-gate + tokens_snapshot (выполнено)
+
+Расширены два edge-функции — `ai-generate-document-package` (orchestrator)
+и `canonical-document-generate-strict` (генератор) — для поддержки
+`{{pf-XXXXXX}}` в DOCX-шаблонах пакета. Ни одно из ограничений
+канонической точки записи (single SOT, ai_generated_documents add-only,
+ln/FLD регрессионная защита) не нарушено.
+
+### Orchestrator (`ai-generate-document-package/index.ts`)
+
+- Добавлен `PF_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/` и
+  баг-ключ `pf-XXXXXX` в дедуп токенов.
+- Один bulk-load на сессию:
+  - `document_package_field_catalog` (active, package_template_id) →
+    `pfCatalogByPublicId`.
+  - `document_package_item_field_assignments` (active, в составе items
+    сессии, по `field_catalog_id`) → `pfAssignByItemField`.
+  - `document_package_session_field_values` (по `field_catalog_id`) →
+    `pfValueByField`.
+- На каждом item: для встреченного `pf-` токена проверяется принадлежность
+  пакета (иначе `pf_token_outside_bound_package`), вычисляется
+  `effective_required` (`assignment.is_required_override` если задан,
+  иначе `catalog.required`), `label_override` (если задан), достаётся
+  raw-value по `data_type`, форматируется через шаренный
+  `formatPfValue(...)` без модификатора, формируется запись:
+  ```ts
+  preresolved_pf_fields[pfPublicId] = {
+    public_id, label, data_type,
+    raw_value, rendered_value,
+    effective_required,
+    default_kind_applied: catalog.metadata.default_kind ?? null,
+  }
+  ```
+- `preresolved_pf_fields` передаётся в `canonical-document-generate-strict`
+  внутри `packageContext` (тем же service-role/x-internal-call контрактом,
+  что и `preresolved_ln_tokens`).
+
+### Generator (`canonical-document-generate-strict/index.ts`)
+
+- Добавлен `PF_TOKEN_RE` и парсер `parsedPfTokens[]`. Если `pf-` токен
+  встречается в order-mode шаблоне — он попадает в существующий
+  `packageTokensOutsideContext` и возвращается 400
+  `package_token_outside_package_context` (вместе с ln/package). Регрессия
+  ln/package не затронута.
+- В блоке pre-resolve гарантирий `if (generationContext === 'package_session')`:
+  - Если токен не найден в `preresolved_pf_fields` → 400
+    `package_field_not_preresolved` + `code: 'pf_token_not_found'`.
+  - Required-gate: если `entry.effective_required && raw_value пустой`
+    (null/''/[]) → **422** `{ error: 'pf_required_value_missing',
+    code: 'pf_required_value_missing', fields: [{public_id, label}] }`.
+    Единый код, как и потребовано.
+- Подстановка в `resolved` map: `outVal = entry.rendered_value`.
+  Docxtemplater использует тот же кастомный parser, что и для ln/package,
+  поэтому `{{pf-XXXXXX}}` и `{{pf-XXXXXX|format=…}}` рендерятся как один и
+  тот же ключ (format-modifier зарезервирован, не применяет повторного
+  форматирования в B4).
+- `sourceTrace[raw_inside]` для каждого pf-токена содержит
+  `{ kind: 'pf', public_id, label, data_type, required, value,
+  format_requested, default_kind_applied }`.
+
+### `meta.tokens_snapshot[]` (add-only)
+
+В `ai_generated_documents.meta` добавлен новый массив `tokens_snapshot`
+(никакие существующие поля meta не переписываются: `strict`,
+`docx_*`, `file_name_*`, `gotenbergMeta`, `packageMetaExtras` сохранены).
+
+В package-mode записывается по одному элементу на уникальный
+`pf-XXXXXX`, встреченный в DOCX этого документа:
+
+```json
+{
+  "provider": "pf",
+  "public_id": "pf-000123",
+  "label": "Дата подписания",
+  "data_type": "date",
+  "raw_value": "2026-06-14",
+  "rendered_value": "14 июня 2026 г.",
+  "default_kind_applied": "today_minsk"
+}
+```
+
+В order-mode массив пустой (`[]`) — никакие order-документы не получают
+pf-сноски. Имеющиеся поля snapshot (`template_tokens_snapshot`,
+`token_manifest_snapshot`, `source_trace`, `snapshot`) не изменены.
+
+### Регрессионная защита (контракты не сдвинуты)
+
+- `ln-XXXXXX` и `field:FLD-…` парсятся теми же regex/блоками — изменений
+  в их обработке нет.
+- В `file_name_template` поддержка pf-токенов не добавлена (вне
+  scope B4); существующий warning `file_name_warnings` сохранён.
+- В строгом гард-блоке package-mode остался прежний порядок: legacy →
+  unknown_modifier → outside_context → pf_not_preresolved →
+  pf_required_missing → field_not_preresolved. ln/package никогда
+  не достигают pf-веток.
+
+### Что НЕ закрывается этим проходом
+
+- B5: интеграционный resolver-тест `ln + pf + FLD`.
+- Runtime UAT: 422 при пустом required-pf и реальный
+  `meta.tokens_snapshot[]` после генерации.
+- audit-выборка по `document.package_generation_completed` + проверка
+  блока в `ai_generated_documents.meta`.
