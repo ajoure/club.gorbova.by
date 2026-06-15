@@ -741,6 +741,13 @@ Deno.serve(async (req) => {
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
+    // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): parsed pf-XXXXXX tokens.
+    interface ParsedPfToken {
+      raw_inside: string;
+      public_id: string;
+      format: string | null;
+    }
+    const parsedPfTokens: ParsedPfToken[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
 
