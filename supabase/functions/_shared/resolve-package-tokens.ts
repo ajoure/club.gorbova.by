@@ -320,7 +320,7 @@ const DATE_SHORT_FMT = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit', month: '2-digit', year: 'numeric',
 });
 
-function formatPfValue(
+export function formatPfValue(
   dataType: string,
   rawValue: unknown,
   options: Record<string, unknown> | null | undefined,
