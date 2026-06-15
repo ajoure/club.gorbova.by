@@ -257,6 +257,8 @@ const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 // ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
 const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
+const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
 const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
