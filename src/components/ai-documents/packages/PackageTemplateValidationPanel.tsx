@@ -273,7 +273,7 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Active assignments для выбранной пары (session, item).
+  // Active role-assignments для выбранной пары (session, item).
   const assignmentsQuery = useQuery({
     queryKey: ["pkg-validation-assignments", selectedSessionId, selectedItemId],
     queryFn: async () => {
@@ -295,6 +295,44 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
     enabled: !!selectedSessionId && !!selectedItemId,
   });
 
+  // Каталог pf-полей всех пакетов (для распознавания "из другого пакета").
+  const fieldCatalogQuery = useQuery({
+    queryKey: ["pkg-field-catalog-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_field_catalog")
+        .select("id, public_id, field_key, label, package_template_id")
+        .eq("is_active", true);
+      if (error) throw error;
+      const map = new Map<string, FieldCatalogRow>();
+      for (const r of (data ?? []) as FieldCatalogRow[]) {
+        if (r.public_id) map.set(r.public_id, r);
+      }
+      return map;
+    },
+    staleTime: 60 * 1000,
+  });
+
+  // Active pf-assignments для выбранного item (без сессии — assignments per-item).
+  const fieldAssignmentsQuery = useQuery({
+    queryKey: ["pkg-validation-field-assignments", selectedItemId],
+    queryFn: async () => {
+      if (!selectedItemId) return new Set<string>();
+      const { data, error } = await supabase
+        .from("document_package_item_field_assignments")
+        .select("field_catalog_id")
+        .eq("package_template_item_id", selectedItemId)
+        .eq("is_active", true);
+      if (error) throw error;
+      const s = new Set<string>();
+      for (const r of (data ?? []) as unknown as ItemFieldAssignmentRow[]) {
+        if (r.field_catalog_id) s.add(r.field_catalog_id);
+      }
+      return s;
+    },
+    enabled: !!selectedItemId,
+  });
+
   const runOnArrayBuffer = useCallback(async (ab: ArrayBuffer, label: string) => {
     setScanning(true);
     try {
@@ -304,16 +342,41 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
       const out: Finding[] = [];
       const fldMap = fldEntityTypesQuery.data ?? new Map<string, string>();
       const lnMap = roleCatalogQuery.data ?? new Map<string, RoleCatalogRow>();
-      // Assignments-check включаем только если выбран и session, и item.
-      const assignedSet =
+      const pfMap = fieldCatalogQuery.data ?? new Map<string, FieldCatalogRow>();
+      // Role-assignments-check включаем только если выбран и session, и item.
+      const assignedRoleSet =
         selectedSessionId && selectedItemId
           ? assignmentsQuery.data ?? new Set<string>()
           : null;
+      // Pf-assignments-check включаем при выбранном item (без сессии).
+      const assignedFieldSet = selectedItemId
+        ? fieldAssignmentsQuery.data ?? new Set<string>()
+        : null;
+      // pf-токены, встретившиеся в DOCX (для последующего расчёта unused).
+      const seenPfIds = new Set<string>();
       for (const m of text.matchAll(ANY_PLACEHOLDER_RE)) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedSet));
+        const pfM = inside.match(RX_PACKAGE_FIELD_PF);
+        if (pfM) seenPfIds.add(pfM[1]);
+        out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedRoleSet, pfMap, assignedFieldSet));
+      }
+      // Unused-assignment pass: pf-поля назначены item, но не используются в DOCX.
+      if (assignedFieldSet && assignedFieldSet.size > 0) {
+        const byIdToPublic = new Map<string, FieldCatalogRow>();
+        for (const row of pfMap.values()) byIdToPublic.set(row.id, row);
+        for (const fieldId of assignedFieldSet) {
+          const row = byIdToPublic.get(fieldId);
+          if (!row) continue;
+          if (seenPfIds.has(row.public_id)) continue;
+          out.push({
+            token: `{{${row.public_id}}}`,
+            severity: "warning",
+            code: "pf_unused_assignment",
+            hint: `Поле ${row.public_id} (${row.label}) назначено документу, но не используется в DOCX. Уберите назначение или добавьте плейсхолдер в шаблон.`,
+          });
+        }
       }
       setFindings(out);
       setSourceLabel(label);
@@ -329,11 +392,14 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
   }, [
     fldEntityTypesQuery.data,
     roleCatalogQuery.data,
+    fieldCatalogQuery.data,
     assignmentsQuery.data,
+    fieldAssignmentsQuery.data,
     selectedSessionId,
     selectedItemId,
     packageTemplateId,
   ]);
+
 
   const handleFile = async (file: File | null) => {
     if (!file) return;
