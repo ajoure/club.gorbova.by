@@ -98,7 +98,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       if (!profileId) return null;
       const { data: existing } = await supabase
         .from("document_package_sessions")
-        .select("id, selected_legal_entity_id, legal_entity_locked_at")
+        .select("id, selected_legal_entity_id, legal_entity_locked_at, created_at")
         .eq("profile_id", profileId)
         .eq("package_template_id", packageTemplateId)
         .is("entitlement_id", null)
