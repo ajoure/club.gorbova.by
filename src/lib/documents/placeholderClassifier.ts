@@ -152,7 +152,7 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
 
   const mReq = raw.match(RE_PACKAGE_REQ);
   if (mReq) {
-    const mods = parseModifiers(mReq[3] || '', FORMATS_BILLING);
+    const mods = parseModifiers(mReq[3] || '', FORMATS_PACKAGE_REQUISITE);
     if (mods.error) return mods.error;
     return {
       kind: 'package_requisite',
