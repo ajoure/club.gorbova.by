@@ -1,94 +1,123 @@
-## План: финальное закрытие PATCH-PACKAGE-CUSTOM-FIELDS-V1
+# да, согласен, с учетом правок:
 
-Закрываем три открытых пункта DoD: anti-divergence migration, runtime активацию шаблона, DOCX e2e (D7 200 + 422). Patch остаётся открытым до сбора всех proof.
+1. Перед утверждением, что генераторы уже поддерживают `long / full / short / signature_short`, провести read-only проверку фактического resolver-контракта. Классификатор лишь разрешает синтаксис; он не доказывает корректный рендеринг. Добавить тесты именно преобразования:
+  - `FLD-000010 + long`;
+  - `FLD-000014 + signature_short`;
+  - `FLD-000014 + short`;
+  - `FLD-000372 + full`.
+2. Если resolver не поддерживает хотя бы один из форматов, исправить его в рамках этого же PATCH до Runtime UAT. Нельзя активировать шаблон, который проходит классификацию, но падает или возвращает raw value при генерации.
+3. В `PlaceholderFormat` проверить весь итоговый union. Он должен содержать все реально разрешённые значения:
+  &nbsp;
+  ```text
+  words | text | full | short | signature_short | long
+  ```
+  Добавлять только `long` допустимо лишь при доказательстве, что остальные четыре уже присутствуют.
+4. Сохранить parity SOT ↔ edge mirror после изменения format-set. В proof приложить не только результаты одинаковых тестов, но и результат существующего parity/hash-контроля.
+5. После изменения `_shared/placeholderClassifier.ts` обязательно повторно задеплоить `canonical-template-apply-markup` и зафиксировать deployment proof. Иначе runtime продолжит использовать старый whitelist.
+6. В D-Activate не хардкодить значение `validation_status='active'`, если фактическая схема разделяет `validation_status` и `is_active`. Зафиксировать реальные поля до/после:
+  &nbsp;
+  ```text
+  validation_status
+  is_active
+  active_version_id
+  ```
+  Успех: ошибок `0`, валидный статус и реально активная версия.
+7. В D7-200 не требовать нового поля `format` внутри `tokens_snapshot[]`, если его нет в утверждённом snapshot-контракте. Формат доказать через:
+  - исходный manifest/raw token;
+  - фактически отрендеренный текст DOCX;
+  - существующие snapshot-поля без изменения их схемы.
+8. Добавить отрицательные resolver-тесты: формат, синтаксически разрешённый для namespace `package_requisite`, но неприменимый к конкретному типу значения, не должен приводить к молчаливому повреждению данных. Он должен либо корректно вернуть исходное значение по существующему контракту, либо дать каноническую ошибку — фактическое поведение зафиксировать в proof.
+9. D7-422 выполнять только после подтверждения, что используемый обязательный `pf-XXXXXX` действительно присутствует в DOCX этого шаблона, назначен данному item и имеет `effective_required=true`. Иначе тест не доказывает required-gate.
+10. Итоговый proof должен отдельно показывать:
+  - classifier tests;
+  - resolver/format tests;
+  - edge deployment;
+  - runtime activation;
+  - DOCX 200 с визуальной и XML-проверкой;
+  - 422 с `count(*)` до/после.
 
----
+Все остальные пункты плана сохраняются add-only.
 
-### Шаг 1. Перевод `TemplateMarkupDialog` на shared classifier
+&nbsp;
 
-Файл: `src/components/ai-documents/TemplateMarkupDialog.tsx`
+План: PATCH-PACKAGE-CUSTOM-FIELDS-V1 — fix invalid_modifier_value для package.{ul|ip|fl}
 
-- Удалить локальные `MOD_TAIL`, `RE_LN_ROLE` и тело `classifyTemplateToken`.
-- Перевести `classifyTemplateToken(token, scope)` на обёртку поверх `classifyPlaceholder` из `src/lib/documents/placeholderClassifier.ts`:
-  - вход — `{{...}}` целиком; внутри снять `{{`/`}}` и передать в shared classifier;
-  - сопоставить `kind` shared classifier → существующий `TokenKind` UI (`field` / `package` / `ln` / `pf` / `legacy` / `package_in_billing` / `unknown`);
-  - scope-гейт `package_in_billing` оставить локальным (он про scope, не про parse).
-- Не менять контракт TokenKind и call-sites (`isMarkupValid`, рендер highlight'ов).
+## Diagnose
 
-### Шаг 2. Перевод `PackageTemplateValidationPanel` на shared classifier
+Шаблон «1. Приказ о проведении годового общего собрания участников ООО» падает с 2 ошибками:
 
-Файл: `src/components/ai-documents/packages/PackageTemplateValidationPanel.tsx`
+- `{{package.ul.FLD-000010|format=long}}` → `invalid_modifier_value` (FLD-000010 = «Форма собственности», `long` = полная расшифровка «Общество с ограниченной ответственностью»).
+- `{{package.ul.FLD-000014|format=signature_short}}` → `invalid_modifier_value` (FLD-000014 = «Руководитель ФИО», `signature_short` = «И.И.Иванов»).
 
-- Удалить локальные `RX_PACKAGE_REQ`, `RX_PACKAGE_ROLE_LN`, `RX_PACKAGE_FIELD_PF`.
-- Внутри функции `classify(inside, ...)` заменить regex-ветви на `classifyPlaceholder(inside)`:
-  - `kind=billing_field` → существующая ветка package_req;
-  - `kind=package_role` (`ln-`) → ветка ln (с сохранением логики «другой пакет» через `lnMap`/`packageTemplateId`);
-  - `kind=package_field` (`pf-`) → ветка pf (с сохранением `assignedFieldSet`, `pfMap`, `packageTemplateId`);
-  - `kind=legacy_role` / `kind=invalid` → текущие сообщения.
-- Сохранить точные коды/тексты диагностики (UI и тесты на них не должны сломаться).
-- Логику unused-assignment pass и сбор pf-токенов через `inside.match(/^pf-\d{6}/)` оставить, либо подменить на shared helper, но без поведенческих изменений.
+Причина: в `placeholderClassifier.ts` для ветки `package_requisite` (`package.{ul|ip|fl}.FLD-XXXXXX`) разрешён только `FORMATS_BILLING = {words, text}`. При этом фронт-каталог `src/utils/packagePlaceholderCatalog.ts` (Sprint 3K/3L) **сам генерит** токены с `format=long|short|signature_short|full` для FLD-000010 (org_form) и FLD-000014 / FLD-000372 (имена). Это рассинхрон каталога и валидатора, а не ошибка пользователя в шаблоне.
 
-### Шаг 3. Parity-доказательство
+Память-канон: `package.ul/ip` — реюз `client_legal_details`, `package.fl` — `legal_details_persons`; namespace package_requisite одновременно держит и биллинговые поля (суммы/даты — нужны `words|text`), и поля-персоналии/орг-форма (нужны `full|short|signature_short|long`).
 
-- Расширить `src/lib/documents/placeholderClassifier.parity.test.ts` или добавить отдельный snapshot-тест: на наборе токенов (валидные `field:`, `ln-`, `pf-`, `package.ul/ip/fl.FLD-…`, легаси, мусор, модификаторы валидные/невалидные) — результаты `classifyPlaceholder` совпадают с тем, что ожидают оба UI-валидатора.
-- Прогнать `vitest` + `deno test`, зафиксировать счётчики в proof.
+## Scope
 
-### Шаг 4. Runtime активация «1. Приказ о проведении годового…»
+Расширить набор допустимых `format` именно для `package_requisite` так, чтобы он покрывал реально генерируемые каталогом значения, без расширения для билингового `field:FLD-…` и без касания smart-date / pf-/ ln- / scope-gate логики.
 
-- Через `supabase--read_query` получить текущий `document_templates` (id, scope, `validation_status`, привязка к package через `document_package_template_items`) до повторной проверки.
-- Открыть `/admin/documents`, повторить strict-валидацию шаблона.
-- Зафиксировать в proof:
-  - количество ошибок (ожидание: 0);
-  - финальный `validation_status` после активации;
-  - `document_template_id`, `package_template_id`, `package_id` (DB-binding идентификаторы);
-  - скриншот/выдержку UI.
+## Шаги
 
-### Шаг 5. Runtime D7 — 200 + реальная подстановка + snapshot
+### 1. Канон формата (shared SOT)
 
-- Подготовить минимальный package-шаблон с тремя токенами: `{{pf-XXXXXX}}`, `{{pf-XXXXXX|format=full}}`, и одним соседним `{{ln-XXXXXX}}` (для регрессии).
-- Запустить `canonical-document-generate-strict` через `supabase--curl_edge_functions` от реальной сессии пакета, в которой pf-значение заполнено.
-- Скачать DOCX → распаковать (`extract_document.py`) → подтвердить:
-  - HTTP 200;
-  - подстановка `{{pf-XXXXXX}}` соответствует raw value;
-  - модификатор `|format=full` применён (rendered ≠ raw там, где это ожидается);
-  - в `ai_generated_documents.meta.tokens_snapshot[]` появилась запись `provider='pf'` с `public_id`, `label`, `data_type`, `raw_value`, `rendered_value`, `default_kind_applied`, дедуп по `pf-XXXXXX` соблюдён;
-  - `ln-`/`FLD-` записи не затронуты (add-only).
+`src/lib/documents/placeholderClassifier.ts` и зеркало `supabase/functions/_shared/placeholderClassifier.ts`:
 
-### Шаг 6. Runtime D7 — 422 pf_required_value_missing
+- Добавить `FORMATS_PACKAGE_REQUISITE = new Set([...FORMATS_BILLING, 'full', 'short', 'signature_short', 'long'])`.
+- В `classifyPlaceholder` для ветки `RE_PACKAGE_REQ` использовать `FORMATS_PACKAGE_REQUISITE` вместо `FORMATS_BILLING`.
+- `FORMATS_BILLING` для `field:FLD-…` остаётся `{words, text}` — биллинг не расширяем.
+- `FORMATS_LN` (для `ln-` и `pf-`) — без изменений.
+- Добавить `'long'` в тип `PlaceholderFormat`.
 
-- На той же конфигурации очистить обязательное pf-значение и повторить запрос.
-- Зафиксировать:
-  - HTTP 422, body `code = pf_required_value_missing`, перечислены все недостающие `pf-XXXXXX`;
-  - запись в `ai_generated_documents` НЕ создана (`select count(*)` до/после);
-  - `tokens_snapshot[]` не дополнен фиктивными pf-элементами;
-  - аудит содержит запись об ошибке (если предусмотрено существующим pipeline — не добавляем новый audit).
+### 2. Тесты parity и контракта
 
-### Шаг 7. Финальная таблица DoD и закрытие proof
+- `src/lib/documents/placeholderClassifier.test.ts`: добавить кейсы valid для
+  - `package.ul.FLD-000010|format=long`
+  - `package.ul.FLD-000014|format=signature_short`
+  - `package.ul.FLD-000014|format=short|case=genitive`
+  - `package.fl.FLD-000372|format=full`
+  - и by-design invalid: `field:FLD-000001|format=long` → `invalid_modifier_value` (биллинг не расширен).
+- Зеркальные кейсы в `supabase/functions/_shared/placeholderClassifier.test.ts`.
+- Проверить, что существующий `placeholderClassifier.parity.test.ts` всё ещё PASS.
+- Vitest по `packagePlaceholderCatalog.test.ts` уже ожидает эти токены — их не трогаем.
 
-Дополнить `.lovable/proofs/package_custom_fields_2026-06-16_iteration2.md` (или создать `_final.md`) разделом «Final DoD» с колонками: пункт / статус (PASS/FAIL/deferred) / proof-ссылка. Таблица должна закрыть:
+### 3. UI-валидатор (косвенно)
 
-| # | Пункт | Ожидание |
-|---|---|---|
-| 1 | Shared classifier — единственная точка parse pf/ln/field/package | Шаги 1–3 |
-| 2 | TemplateMarkupDialog без локальных regex | Шаг 1 + parity |
-| 3 | PackageTemplateValidationPanel без локальных regex | Шаг 2 + parity |
-| 4 | Vitest + Deno полностью зелёные | Шаг 3 |
-| 5 | Runtime активация «1. Приказ…» — 0 ошибок | Шаг 4 |
-| 6 | DOCX e2e 200 + замена + modifier + snapshot add-only | Шаг 5 |
-| 7 | DOCX e2e 422 без документа и без snapshot | Шаг 6 |
-| 8 | `ln-` / `FLD-` / billing context — без регрессий | Шаги 3, 5 |
+`PackageTemplateValidationPanel.tsx` уже зовёт shared `classifyPlaceholder` (Iteration 3), отдельных правок не требуется — 2 ошибки в «Приказе …» исчезают автоматически после правки канона.
 
-Patch закрывается только когда все 8 строк = PASS.
+### 4. Runtime UAT (deferred-блок из предыдущего отчёта закрывается здесь)
 
----
+- D-Activate: открыть `/admin/documents` → «1. Приказ …» → «Проверка и исправление полей» → ошибок 0 → нажать «Активировать шаблон» → `validation_status='active'`, скрин.
+- D7-200: e2e генерация DOCX по этому шаблону — HTTP 200, в итоговом DOCX `FLD-000010` подставлен как «Общество с ограниченной ответственностью», `FLD-000014` как «И.И.Иванов»; `tokens_snapshot[]` содержит записи с корректными `format`.
+- D7-422: очистить required `pf-XXXXXX` поле в этом же пакете → HTTP 422 `pf_required_value_missing`, документ и snapshot не создаются.
 
-### Что НЕ делается в этом проходе
+### 5. Финализация DoD
 
-- Никаких новых SmartDateKind, новых полей в snapshot, новых audit-каналов.
-- `canonical-document-generate-strict`, `ai-generate-document-package`, миграции и edge-конфиг — без изменений (B5 уже зафиксирован).
-- `placeholderClassifier.ts` (frontend и `_shared`) не меняется по контракту; правки допустимы только если parity-тест выявит реальный гэп — тогда отдельным mini-шагом перед Шагом 3.
+Дописать в `.lovable/proofs/package_custom_fields_2026-06-16_iteration3_final.md` новые строки:
 
-### Риски
 
-- Различия в текстах ошибок UI после миграции на shared classifier — закрываем mapping-слоем в обоих компонентах, без изменения сообщений.
-- Runtime D7 может потребовать дозаполнения пакета (минимум одного `session_participant` и одного pf-значения) — выполняется через существующий UI или прямые `insert` в подготовительной фазе шага 5; не считается изменением кода.
+| #   | Item                                                                    | Status |
+| --- | ----------------------------------------------------------------------- | ------ |
+| 9   | package_requisite format set расширен (long/full/short/signature_short) | PASS   |
+| 10  | Билинговый `field:FLD-…` НЕ принимает long/short/signature_short        | PASS   |
+| 11  | D-Activate «1. Приказ …» 0 ошибок и active                              | PASS   |
+| 12  | D7-200 DOCX e2e + snapshot                                              | PASS   |
+| 13  | D7-422 без документа и snapshot                                         | PASS   |
+
+
+Патч закрывается, только когда 9–13 = PASS.
+
+## Что НЕ делаем
+
+- Не расширяем `FORMATS_BILLING` для `field:FLD-…`.
+- Не трогаем pf-/ln-/scope-gate, smart-date, миграции, edge config, `ai_generate_document_package`, `canonical-document-generate-strict` (резолверы уже корректно отдают long/short/signature_short).
+- Не вводим per-FLD whitelist форматов — это отдельный backlog (UI каталог уже задаёт корректные модификаторы за пользователя).
+- Не редактируем содержимое `.docx` шаблона пользователя.
+
+## Технические файлы
+
+- `src/lib/documents/placeholderClassifier.ts`
+- `supabase/functions/_shared/placeholderClassifier.ts`
+- `src/lib/documents/placeholderClassifier.test.ts`
+- `supabase/functions/_shared/placeholderClassifier.test.ts`
+- `.lovable/proofs/package_custom_fields_2026-06-16_iteration3_final.md`
