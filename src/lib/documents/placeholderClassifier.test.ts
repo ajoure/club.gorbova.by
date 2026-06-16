@@ -103,6 +103,9 @@ describe('classifyPlaceholder', () => {
     expect(classifyPlaceholder('field:FLD-000001|format=signature_short')).toEqual({
       kind: 'invalid_modifier_value', key: 'format', value: 'signature_short',
     });
+  });
+
+
 
   it('package.role.PKR-000001 → legacy_role_format', () => {
     expect(classifyPlaceholder('package.role.PKR-000001')).toEqual({ kind: 'legacy_role_format' });
