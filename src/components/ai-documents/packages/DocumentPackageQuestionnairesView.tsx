@@ -254,17 +254,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
         )}
       </GlassCard>
 
-      {/* Общие поля пакета (значения для всех документов) */}
-      {sessionId && (
-        <PackageFieldsClientForm
-          sessionId={sessionId}
-          packageTemplateId={packageTemplateId}
-          sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
-        />
-      )}
-
-
-      {/* Аккордеон по документам */}
+      {/* Аккордеон по документам — каждый шаблон содержит свои поля + роли */}
       {itemsQuery.isLoading ? (
         <GlassCard className="p-6 flex justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -279,7 +269,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       ) : !sessionId ? (
         <GlassCard className="p-4 text-xs text-muted-foreground">
           Сначала сохраните ЮЛ/ИП пакета — будет создана анкета пакета,
-          после чего станет доступно назначение ролей по документам.
+          после чего станет доступно заполнение полей и ролей по документам.
         </GlassCard>
       ) : (
         <GlassCard className="p-3">
@@ -290,6 +280,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
                 item={item}
                 packageTemplateId={packageTemplateId}
                 sessionId={sessionId}
+                sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
                 activeRoles={activeRoles}
                 persons={aiPersons.allPersons}
                 personsLoading={aiPersons.isLoading}
@@ -307,6 +298,7 @@ interface ItemQuestionnaireProps {
   item: ItemRow;
   packageTemplateId: string;
   sessionId: string;
+  sessionCreatedAt: string | null;
   activeRoles: { id: string; label: string; role_key: string; public_id: string }[];
   persons: { id: string; full_name: string | null; is_active: boolean }[];
   personsLoading: boolean;
