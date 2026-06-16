@@ -762,15 +762,17 @@ Deno.serve(async (req) => {
         required: meta?.required ?? false,
       });
     }
-    // Sprint 3F: добавить package-aware токены в manifest (без field_public_id).
+    // Sprint 3F + PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2:
+    // package-aware токены сохраняются в manifest с реальной классификацией.
     for (const pt of packageTokens) {
       manifestMap.set(`pkg|${pt.placeholder}`, {
         field_public_id: null,
         placeholder: pt.placeholder,
         is_package_token: true,
-        package_token_kind: pt.kind, // 'requisite' | 'role' | 'role_legacy'
-        format: null,
-        case_modifier: null,
+        package_token_kind: pt.kind, // 'requisite' | 'role' | 'package_field'
+        public_id: pt.public_id ?? null,
+        format: pt.format ?? null,
+        case_modifier: pt.case_modifier ?? null,
         label: null,
         data_type: null,
         required: false,
