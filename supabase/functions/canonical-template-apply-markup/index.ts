@@ -27,6 +27,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import PizZip from 'npm:pizzip@3.1.6';
 import { extractDocxTokensWithLocations } from '../_shared/docx-helpers.ts';
+import { evaluatePlaceholderInScope } from '../_shared/placeholderClassifier.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -556,84 +557,108 @@ Deno.serve(async (req) => {
     }> = [];
     const allFldInDoc: string[] = [];
 
-    // Sprint 3H §B: package-aware syntax (whitelist on upload).
-    // {{package.ul|ip|fl.FLD-XXXXXX}} — package requisites (Пакет: ЮЛ/ИП/ФЛ)
-    // {{ln-XXXXXX}}                   — package roles (Пакет: Роли) — канон Sprint 3H
-    // Существование роли/FLD проверяется позже резолвером / controlled validation.
-    // Legacy форматы {{package.role.PKR-XXXXXX}} и {{package.roles.<role>.*}}
-    // больше не считаются valid — это error invalid_legacy_role_placeholder
-    // (реальных шаблонов с ними нет, Sprint 3G §7).
-    const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-    // Sprint 3J-Roles: strict whitelist для ln modifiers (format/case любой ord).
-    const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(?:\|(?:format=(?:full|short|signature_short)|case=(?:nominative|genitive|dative|accusative|instrumental|prepositional))){0,2}$/;
-    const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-    const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
-
-    const packageTokens: Array<{ placeholder: string; kind: 'requisite' | 'role' }>
-      = [];
+    // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2:
+    // вся классификация делегирована shared `placeholderClassifier`. Никаких
+    // локальных RX_PACKAGE_*. Pf-XXXXXX (Sprint B) канонически валиден.
+    // Контекст-гейт (требование привязки к пакету) выполняется ниже, после цикла.
+    const packageTokens: Array<{
+      placeholder: string;
+      kind: 'requisite' | 'role' | 'package_field';
+      public_id?: string;
+      format?: string | null;
+      case_modifier?: string | null;
+    }> = [];
 
     for (const tk of parsed.tokens) {
       const inside = tk.trim();
+      const evald = evaluatePlaceholderInScope(inside, 'unknown');
+      const c = evald.classification;
 
-      if (RX_PACKAGE_REQ.test(inside)) {
-        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'requisite' });
-        continue;
-      }
-      if (RX_PACKAGE_ROLE_LN.test(inside)) {
-        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role' });
-        continue;
-      }
-      if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
-        validationErrors.push({
-          code: 'invalid_legacy_role_placeholder',
-          placeholder: `{{${inside}}}`,
-          message: 'Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли».',
-        });
-        continue;
-      }
-
-      // Legacy формат: document.*, executor.*, customer.*, deal.*, cf.*
-      if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
+      if (!evald.valid) {
+        if (evald.reason === 'legacy_role_format') {
+          validationErrors.push({
+            code: 'invalid_legacy_role_placeholder',
+            placeholder: `{{${inside}}}`,
+            message: 'Устаревший формат плейсхолдера роли. Используйте {{ln-XXXXXX}} из группы «Пакет: Роли».',
+          });
+          continue;
+        }
+        if (evald.reason === 'unknown_modifier' && c.kind === 'unknown_modifier') {
+          const looksLikePf = /^pf-\d{6}\|/.test(inside);
+          validationErrors.push({
+            code: looksLikePf ? 'pf_unsupported_modifier' : 'unknown_modifier',
+            placeholder: `{{${inside}}}`,
+            message: `Неподдерживаемый модификатор «${c.modifier}». Допустимы только format=words|text|full|short|signature_short и case=...`,
+          });
+          continue;
+        }
+        if (evald.reason === 'invalid_modifier_value' && c.kind === 'invalid_modifier_value') {
+          const looksLikePf = /^pf-\d{6}\|/.test(inside);
+          validationErrors.push({
+            code: looksLikePf ? 'pf_unsupported_modifier' : 'invalid_modifier_value',
+            placeholder: `{{${inside}}}`,
+            message: `Недопустимое значение «${c.value}» для модификатора «${c.key}».`,
+          });
+          continue;
+        }
         validationErrors.push({
           code: 'legacy_placeholder_format_detected',
           placeholder: `{{${inside}}}`,
-          message: `В шаблоне найден старый формат плейсхолдера «{{${inside}}}». Используйте только {{field:FLD-XXXXXX}}.`,
+          message: `Невалидный плейсхолдер «{{${inside}}}». Допустимы {{field:FLD-XXXXXX}}, {{pf-XXXXXX}}, {{ln-XXXXXX}}, {{package.ul|ip|fl.FLD-XXXXXX}}.`,
         });
         continue;
       }
-      const parsedTok = parseStrictToken(inside);
-      if (!parsedTok) {
-        validationErrors.push({
-          code: 'legacy_placeholder_format_detected',
+
+      if (c.kind === 'field') {
+        allFldInDoc.push(c.public_id);
+        recognizedTokens.push({
           placeholder: `{{${inside}}}`,
-          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} или package-aware ({{package.ul|ip|fl.FLD-XXXXXX}}, {{ln-XXXXXX}}).`,
+          field_public_id: c.public_id,
+          format: c.format,
+          case_modifier: c.case_modifier,
         });
         continue;
       }
-      if (parsedTok.unknown_modifier) {
-        validationErrors.push({
-          code: 'unknown_modifier',
-          placeholder: `{{${inside}}}`,
-          message: `Неподдерживаемый модификатор «${parsedTok.unknown_modifier}». Допустимы только format=words, format=text и case=...`,
-        });
+      if (c.kind === 'package_requisite') {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'requisite', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
         continue;
       }
-      if (parsedTok.invalid_value) {
-        validationErrors.push({
-          code: 'unknown_modifier',
-          placeholder: `{{${inside}}}`,
-          message: `Недопустимое значение модификатора «${parsedTok.invalid_value}».`,
-        });
+      if (c.kind === 'package_role') {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
         continue;
       }
-      allFldInDoc.push(parsedTok.field_public_id);
-      recognizedTokens.push({
-        placeholder: `{{${inside}}}`,
-        field_public_id: parsedTok.field_public_id,
-        format: parsedTok.format,
-        case_modifier: parsedTok.case_modifier,
-      });
+      if (c.kind === 'package_field') {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'package_field', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
+        continue;
+      }
     }
+
+    // Контекст-гейт для pf-* (PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2, A5):
+    // если в шаблоне есть {{pf-XXXXXX}}, шаблон ОБЯЗАН быть привязан к пакету
+    // через document_package_template_items (template_id → package_template_id).
+    // Иначе активация недопустима (package_token_outside_package_context).
+    const pfTokens = packageTokens.filter((t) => t.kind === 'package_field');
+    if (pfTokens.length > 0) {
+      const { data: bindRows, error: bindErr } = await supabase
+        .from('document_package_template_items')
+        .select('package_template_id')
+        .eq('template_id', srcVer.template_id)
+        .limit(1);
+      if (bindErr) {
+        return new Response(JSON.stringify({ error: 'package_binding_check_failed', detail: bindErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const isPackageBound = (bindRows ?? []).length > 0;
+      if (!isPackageBound) {
+        for (const pt of pfTokens) {
+          validationErrors.push({
+            code: 'package_token_outside_package_context',
+            placeholder: pt.placeholder,
+            message: 'Токен {{pf-XXXXXX}} допустим только в шаблонах, привязанных к пакету через «Пакеты документов». Привяжите шаблон к пакету или удалите токен.',
+          });
+        }
+      }
+    }
+
     // verify all FLD exist + load data_type for warnings/manifest
     const fieldMeta = new Map<string, { data_type: string; label: string; required: boolean }>();
     if (allFldInDoc.length > 0) {
@@ -737,15 +762,17 @@ Deno.serve(async (req) => {
         required: meta?.required ?? false,
       });
     }
-    // Sprint 3F: добавить package-aware токены в manifest (без field_public_id).
+    // Sprint 3F + PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2:
+    // package-aware токены сохраняются в manifest с реальной классификацией.
     for (const pt of packageTokens) {
       manifestMap.set(`pkg|${pt.placeholder}`, {
         field_public_id: null,
         placeholder: pt.placeholder,
         is_package_token: true,
-        package_token_kind: pt.kind, // 'requisite' | 'role' | 'role_legacy'
-        format: null,
-        case_modifier: null,
+        package_token_kind: pt.kind, // 'requisite' | 'role' | 'package_field'
+        public_id: pt.public_id ?? null,
+        format: pt.format ?? null,
+        case_modifier: pt.case_modifier ?? null,
         label: null,
         data_type: null,
         required: false,

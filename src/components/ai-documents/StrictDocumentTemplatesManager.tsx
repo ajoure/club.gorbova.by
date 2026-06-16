@@ -40,6 +40,7 @@ import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
 import { FileNameTemplateEditor } from "./FileNameTemplateEditor";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { evaluatePlaceholderInScope } from "@/lib/documents/placeholderClassifier";
 
 // C5-I: понятные сообщения для ошибок activation backend
 function mapActivationError(raw: string | undefined | null, data?: any): string {
@@ -100,6 +101,7 @@ interface ValidationError {
   code:
     | "legacy_placeholder_format_detected"
     | "unknown_modifier"
+    | "invalid_modifier_value"
     | "unknown_field_public_id"
     | "no_placeholders_in_template"
     | "docx_unreadable"
@@ -107,7 +109,10 @@ interface ValidationError {
     | "invalid_legacy_role_placeholder"
     | "ln_token_not_found"
     | "ln_token_outside_bound_package"
-    | "role_assignment_missing";
+    | "role_assignment_missing"
+    // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2
+    | "package_token_outside_package_context"
+    | "pf_unsupported_modifier";
   placeholder?: string;
   message: string;
 }
@@ -159,15 +164,12 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
   const recognized: RecognizedToken[] = [];
   const raw_tokens: string[] = [];
 
-  // Sprint 3H §B: package-aware syntax whitelist (client mirror).
-  // Канон роли — {{ln-XXXXXX}} (Word-friendly). Старые форматы
-  // {{package.role.PKR-XXXXXX}} и {{package.roles.<role_key>.*}} больше не
-  // считаются валидным синтаксисом — реальных шаблонов с ними нет (Sprint 3G §7).
-  const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-  const RX_PACKAGE_ROLE_LN = /^ln-\d{6}(\|[^}]+)?$/;
-  const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-  const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
-
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2:
+  // вся классификация делегирована shared `placeholderClassifier` (canonical
+  // источник истины — supabase/functions/_shared/placeholderClassifier.ts,
+  // mirror в src/lib/documents/). Никаких локальных regex.
+  // Scope='unknown' — standalone-шаблон. Реальная привязка к пакету для pf-*
+  // проверяется на стороне edge canonical-template-apply-markup.
   const seen = new Set<string>();
   for (const m of rawText.matchAll(ANY_PLACEHOLDER_RE)) {
     const inside = m[1].trim();
@@ -175,74 +177,78 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     seen.add(inside);
     raw_tokens.push(inside);
 
-    // Sprint 3H: package-aware токены (канон) — валидный синтаксис.
-    // Существование роли/FLD проверяется в controlled validation panel.
-    if (RX_PACKAGE_REQ.test(inside) || RX_PACKAGE_ROLE_LN.test(inside)) {
-      continue;
-    }
+    const evald = evaluatePlaceholderInScope(inside, "unknown");
+    const c = evald.classification;
 
-    // Sprint 3H: устаревшие role-placeholder форматы — error (не warning).
-    if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
-      errors.push({
-        code: "invalid_legacy_role_placeholder",
-        placeholder: `{{${inside}}}`,
-        message:
-          `Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида ` +
-          `{{ln-XXXXXX}} из группы «Пакет: Роли».`,
-      });
-      continue;
-    }
-
-    // Явный legacy-префикс — отдельная ошибка.
-    if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
+    if (!evald.valid) {
+      if (evald.reason === "legacy_role_format") {
+        errors.push({
+          code: "invalid_legacy_role_placeholder",
+          placeholder: `{{${inside}}}`,
+          message:
+            "Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида " +
+            "{{ln-XXXXXX}} из группы «Пакет: Роли».",
+        });
+        continue;
+      }
+      if (evald.reason === "unknown_modifier" && c.kind === "unknown_modifier") {
+        // pf-* со сломанным модификатором → специализированный код.
+        const looksLikePf = /^pf-\d{6}\|/.test(inside);
+        errors.push({
+          code: looksLikePf ? "pf_unsupported_modifier" : "unknown_modifier",
+          placeholder: `{{${inside}}}`,
+          message:
+            `Неподдерживаемый модификатор «${c.modifier}» в «{{${inside}}}». ` +
+            "Допустимы format=words|text (или format=full|short|signature_short для ролей) " +
+            "и case=nominative|genitive|dative|accusative|instrumental|prepositional.",
+        });
+        continue;
+      }
+      if (evald.reason === "invalid_modifier_value" && c.kind === "invalid_modifier_value") {
+        const looksLikePf = /^pf-\d{6}\|/.test(inside);
+        errors.push({
+          code: looksLikePf ? "pf_unsupported_modifier" : "invalid_modifier_value",
+          placeholder: `{{${inside}}}`,
+          message:
+            `Недопустимое значение «${c.value}» для модификатора «${c.key}» в «{{${inside}}}».`,
+        });
+        continue;
+      }
+      // legacy_placeholder_format_detected: namespace или invalid
       errors.push({
         code: "legacy_placeholder_format_detected",
         placeholder: `{{${inside}}}`,
         message:
-          `В шаблоне найден старый формат плейсхолдера «{{${inside}}}». ` +
-          `Используйте только {{field:FLD-XXXXXX}}.`,
+          `Невалидный плейсхолдер «{{${inside}}}». Допустимы {{field:FLD-XXXXXX}}, ` +
+          "{{pf-XXXXXX}}, {{ln-XXXXXX}}, {{package.ul|ip|fl.FLD-XXXXXX}} " +
+          "с опциональными |format=...|case=...",
       });
       continue;
     }
 
-    const parsed = parseStrictInside(inside);
-    if (parsed.ok === false) {
-      if (parsed.error === "unknown_modifier") {
+    // valid: field — обычный путь с проверкой существования FLD.
+    if (c.kind === "field") {
+      if (!knownPublicIds.has(c.public_id)) {
         errors.push({
-          code: "unknown_modifier",
+          code: "unknown_field_public_id",
           placeholder: `{{${inside}}}`,
-          message:
-            `Неподдерживаемый модификатор в «{{${inside}}}». ` +
-            `Допустимы format=words, format=text и case=nominative|genitive|dative|accusative|instrumental|prepositional.`,
+          message: `Field ID ${c.public_id} не найден в каталоге полей.`,
         });
-      } else {
-        errors.push({
-          code: "legacy_placeholder_format_detected",
-          placeholder: `{{${inside}}}`,
-          message:
-            `Невалидный плейсхолдер «{{${inside}}}». Допустим {{field:FLD-XXXXXX}} ` +
-            `с опциональными |format=...|case=..., либо package-aware ` +
-            `({{package.ul|ip|fl.FLD-XXXXXX}}, {{ln-XXXXXX}}).`,
-        });
+        continue;
       }
-      continue;
-    }
-
-    if (!knownPublicIds.has(parsed.field_public_id)) {
-      errors.push({
-        code: "unknown_field_public_id",
+      recognized.push({
         placeholder: `{{${inside}}}`,
-        message: `Field ID ${parsed.field_public_id} не найден в каталоге полей.`,
+        field_public_id: c.public_id,
+        format: (c.format as RecognizedToken["format"]) ?? null,
+        case_modifier: (c.case_modifier as RecognizedToken["case_modifier"]) ?? null,
       });
       continue;
     }
 
-    recognized.push({
-      placeholder: `{{${inside}}}`,
-      field_public_id: parsed.field_public_id,
-      format: parsed.format,
-      case_modifier: parsed.case_modifier,
-    });
+    // pf-/ln-/package.* — синтаксически валидны на client-strict-уровне.
+    // Существование в каталоге пакета и binding к пакету проверяются на бекенде
+    // (canonical-template-apply-markup) и в PackageTemplateValidationPanel.
+    // Здесь просто помечаем как known token и идём дальше.
   }
 
   if (raw_tokens.length === 0) {
