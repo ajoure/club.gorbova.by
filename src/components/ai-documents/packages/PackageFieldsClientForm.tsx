@@ -246,15 +246,7 @@ function isPerItemOverride(
   return !!effective && effective.package_template_item_id === itemId;
 }
 
-/**
- * Экспорт ref-API для внешнего «Сохранить анкету документа» (роли + поля).
- * Используем в DocumentPackageQuestionnairesView через imperative ref-pattern.
- */
-export interface PackageFieldsSubmitHandle {
-  submit: () => Promise<void>;
-  isDirty: boolean;
-  isSaving: boolean;
-}
+
 
 interface FieldRowProps {
   question: DedupedQuestion;
