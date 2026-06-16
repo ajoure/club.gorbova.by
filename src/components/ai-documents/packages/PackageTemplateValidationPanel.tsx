@@ -129,13 +129,14 @@ function classify(
       return { token, severity: "error", code: "pf_token_outside_bound_package",
         hint: `Поле ${pfId} принадлежит другому пакету. Используйте только поля текущего пакета.` };
     }
-    if (assignedFieldCatalogIds && !assignedFieldCatalogIds.has(field.id)) {
-      return { token, severity: "error", code: "pf_assignment_missing",
-        hint: `Поле ${pfId} не назначено выбранному документу пакета. Добавьте назначение в «Анкеты документов» перед генерацией.` };
-    }
+    // V2 (PATCH-PACKAGE-CUSTOM-FIELDS): per-document assignments отменены —
+    // привязка теперь token-driven. Поэтому код `pf_assignment_missing`
+    // больше не выставляется (retired). Поле валидно, если есть в каталоге пакета.
+    void assignedFieldCatalogIds;
     return { token, severity: "valid", code: "package_field_ok",
       hint: `Поле пакета ${pfId} (${field.label}). Значение читается из document_package_session_field_values.` };
   }
+
 
   if (c.kind === "package_role") {
     const lnId = c.public_id;
