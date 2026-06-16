@@ -42,6 +42,38 @@ Deno.test('package_requisite', () => {
   });
 });
 
+// Sprint patch: package_requisite расширенный format-set.
+Deno.test('package_requisite format=long valid', () => {
+  assertEquals(classifyPlaceholder('package.ul.FLD-000010|format=long'), {
+    kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000010', format: 'long', case_modifier: null,
+  });
+});
+Deno.test('package_requisite format=signature_short valid', () => {
+  assertEquals(classifyPlaceholder('package.ul.FLD-000014|format=signature_short'), {
+    kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000014', format: 'signature_short', case_modifier: null,
+  });
+});
+Deno.test('package_requisite format=short|case=genitive valid', () => {
+  assertEquals(classifyPlaceholder('package.ul.FLD-000014|format=short|case=genitive'), {
+    kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000014', format: 'short', case_modifier: 'genitive',
+  });
+});
+Deno.test('package_requisite format=full (fl) valid', () => {
+  assertEquals(classifyPlaceholder('package.fl.FLD-000372|format=full'), {
+    kind: 'package_requisite', entity: 'fl', public_id: 'FLD-000372', format: 'full', case_modifier: null,
+  });
+});
+Deno.test('package_requisite format=potato invalid', () => {
+  assertEquals(classifyPlaceholder('package.ip.FLD-000010|format=potato'), {
+    kind: 'invalid_modifier_value', key: 'format', value: 'potato',
+  });
+});
+Deno.test('billing field:FLD format=long invalid (биллинг не расширен)', () => {
+  assertEquals(classifyPlaceholder('field:FLD-000001|format=long'), {
+    kind: 'invalid_modifier_value', key: 'format', value: 'long',
+  });
+});
+
 Deno.test('legacy_role_format', () => {
   assertEquals(classifyPlaceholder('package.role.PKR-000001'), { kind: 'legacy_role_format' });
 });
