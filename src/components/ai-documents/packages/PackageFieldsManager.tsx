@@ -493,14 +493,11 @@ function FieldDialog({
       description: description.trim() || null,
       data_type: dataType,
       options: buildOptions(),
-      usage_scope: usageScope,
-      client_visible: clientVisible,
-      admin_editable: adminEditable,
-      auto_assign_to_new_items: autoAssign,
       required,
       sort_order: sortOrder,
     });
   }
+
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
