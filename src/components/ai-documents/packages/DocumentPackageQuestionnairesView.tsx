@@ -39,7 +39,7 @@ import { useRbac } from "@/hooks/useRbac";
 import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
-import { PackageFieldsAssignmentPanel } from "./PackageFieldsAssignmentPanel";
+import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 interface Props {
