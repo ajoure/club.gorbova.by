@@ -360,8 +360,8 @@ export function PackageTemplateValidationPanel({ packageTemplateId }: Props) {
         const inside = m[1].trim();
         if (seen.has(inside)) continue;
         seen.add(inside);
-        const pfM = inside.match(RX_PACKAGE_FIELD_PF);
-        if (pfM) seenPfIds.add(pfM[1]);
+        const pfClass = classifyPlaceholder(inside);
+        if (pfClass.kind === "package_field") seenPfIds.add(pfClass.public_id);
         out.push(classify(inside, fldMap, lnMap, packageTemplateId, assignedRoleSet, pfMap, assignedFieldSet));
       }
       // Unused-assignment pass: pf-поля назначены item, но не используются в DOCX.
