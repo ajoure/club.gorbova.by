@@ -41,7 +41,11 @@ import {
   type SmartDateKind,
 } from "@/hooks/usePackageFieldCatalog";
 import { usePackageFieldAssignments } from "@/hooks/useDocumentItemFieldAssignments";
-import { SMART_DATE_KIND_LABELS } from "@/lib/packageFields/smartDate";
+import {
+  SMART_DATE_KIND_LABELS,
+  allowedSmartDateKindsForType,
+  isSmartDateKindAllowedForType,
+} from "@/lib/packageFields/smartDate";
 
 interface Props {
   packageTemplateId: string | null;
