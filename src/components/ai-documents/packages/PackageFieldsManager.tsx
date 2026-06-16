@@ -62,30 +62,25 @@ const DATA_TYPE_LABELS: Record<PackageFieldDataType, string> = {
   checkbox: "Флажок (да/нет)",
 };
 
-const USAGE_SCOPE_LABELS: Record<PackageFieldUsageScope, string> = {
-  package_all: "Везде в пакете",
-  questionnaire_only: "Только в анкете",
-  documents_only: "Только в документах",
-};
-
 export function PackageFieldsManager({ packageTemplateId }: Props) {
   const { fields, isLoading, upsert, upserting, archive, restore, remove, loadDependencyReport } =
     usePackageFieldCatalog(packageTemplateId);
-  const { assignments, assignToAll, assigningToAll } = usePackageFieldAssignments(packageTemplateId);
+  const { byPublicId } = usePackageDetectedFields(packageTemplateId);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editRow, setEditRow] = useState<PackageFieldRow | null>(null);
   const [tab, setTab] = useState<"active" | "archive">("active");
   const [search, setSearch] = useState("");
 
+  // Сколько шаблонов содержит токен этого поля (по реальному DOCX, без assignments).
   const usageMap = useMemo(() => {
     const map = new Map<string, number>();
-    for (const a of assignments) {
-      if (!a.is_active) continue;
-      map.set(a.field_catalog_id, (map.get(a.field_catalog_id) ?? 0) + 1);
+    for (const f of fields) {
+      const items = byPublicId[f.public_id] ?? [];
+      if (items.length > 0) map.set(f.id, items.length);
     }
     return map;
-  }, [assignments]);
+  }, [fields, byPublicId]);
 
   const { activeFields, archivedFields } = useMemo(() => {
     const q = search.trim().toLowerCase();
