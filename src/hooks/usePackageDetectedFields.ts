@@ -20,12 +20,19 @@ import { useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { extractPfPublicIds } from "@/lib/packageFields/extractPfTokens";
 
+interface ItemRow {
+  id: string;
+  template_id: string;
+}
+interface VersionRow {
+  template_id: string;
+  detected_tokens: unknown;
+  tokens: unknown;
+}
+
 export interface PackageDetectedFieldsResult {
-  /** package_template_item_id → ordered pf-public_ids в шаблоне этого документа. */
   byItemId: Record<string, string[]>;
-  /** pf-public_id → список item_id, где он встречается. */
   byPublicId: Record<string, string[]>;
-  /** Уникальные pf-public_ids всего пакета. */
   allPublicIds: string[];
   isLoading: boolean;
 }
@@ -37,15 +44,15 @@ export function usePackageDetectedFields(
 ): PackageDetectedFieldsResult {
   const query = useQuery({
     queryKey: QK(packageTemplateId),
-    queryFn: async () => {
-      if (!packageTemplateId) return { items: [], versions: [] as Array<{ template_id: string; detected_tokens: unknown }> };
+    queryFn: async (): Promise<{ items: ItemRow[]; versions: VersionRow[] }> => {
+      if (!packageTemplateId) return { items: [], versions: [] };
 
       const { data: items, error: itemsErr } = await supabase
         .from("document_package_template_items")
         .select("id, template_id")
         .eq("package_template_id", packageTemplateId);
       if (itemsErr) throw itemsErr;
-      const rows = (items ?? []) as Array<{ id: string; template_id: string }>;
+      const rows = (items ?? []) as ItemRow[];
       const templateIds = Array.from(new Set(rows.map((r) => r.template_id)));
       if (templateIds.length === 0) return { items: rows, versions: [] };
 
@@ -56,14 +63,7 @@ export function usePackageDetectedFields(
         .eq("is_current", true);
       if (vErr) throw vErr;
 
-      return {
-        items: rows,
-        versions: ((versions ?? []) as Array<{
-          template_id: string;
-          detected_tokens: unknown;
-          tokens: unknown;
-        }>),
-      };
+      return { items: rows, versions: (versions ?? []) as VersionRow[] };
     },
     enabled: !!packageTemplateId,
     staleTime: 30 * 1000,
@@ -76,7 +76,6 @@ export function usePackageDetectedFields(
 
     const tokensByTemplate = new Map<string, string[]>();
     for (const v of query.data?.versions ?? []) {
-      // Предпочитаем detected_tokens, fallback на tokens (legacy).
       const fromDetected = extractPfPublicIds(v.detected_tokens);
       const ids = fromDetected.length > 0
         ? fromDetected
