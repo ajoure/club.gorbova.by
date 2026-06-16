@@ -36,7 +36,7 @@
  * placeholderClassifier.parity.test (см. supabase/functions/_shared/).
  */
 
-export type PlaceholderFormat = 'words' | 'text' | 'full' | 'short' | 'signature_short';
+export type PlaceholderFormat = 'words' | 'text' | 'full' | 'short' | 'signature_short' | 'long';
 export type PlaceholderCase =
   | 'nominative' | 'genitive' | 'dative'
   | 'accusative' | 'instrumental' | 'prepositional';
@@ -77,6 +77,12 @@ export type PlaceholderClassification =
 
 const FORMATS_BILLING = new Set<PlaceholderFormat>(['words', 'text']);
 const FORMATS_LN = new Set<PlaceholderFormat>(['full', 'short', 'signature_short']);
+// package_requisite держит и биллинговые (суммы/даты: words|text), и
+// персоналии/орг-форму (full|short|signature_short|long). Per-FLD семантика
+// форматов — на резолвере (canonical-document-generate-strict).
+const FORMATS_PACKAGE_REQUISITE = new Set<PlaceholderFormat>([
+  'words', 'text', 'full', 'short', 'signature_short', 'long',
+]);
 const CASES = new Set<PlaceholderCase>([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
 ]);
@@ -146,7 +152,7 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
 
   const mReq = raw.match(RE_PACKAGE_REQ);
   if (mReq) {
-    const mods = parseModifiers(mReq[3] || '', FORMATS_BILLING);
+    const mods = parseModifiers(mReq[3] || '', FORMATS_PACKAGE_REQUISITE);
     if (mods.error) return mods.error;
     return {
       kind: 'package_requisite',

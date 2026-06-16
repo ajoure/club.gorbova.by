@@ -61,6 +61,52 @@ describe('classifyPlaceholder', () => {
     expect(c).toEqual({ kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000014', format: null, case_modifier: null });
   });
 
+  // Sprint patch: package_requisite расширенный format-set
+  // (long для org_form, full/short/signature_short для person-FLD).
+  it('package.ul.FLD-000010|format=long → valid', () => {
+    expect(classifyPlaceholder('package.ul.FLD-000010|format=long')).toEqual({
+      kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000010', format: 'long', case_modifier: null,
+    });
+  });
+
+  it('package.ul.FLD-000014|format=signature_short → valid', () => {
+    expect(classifyPlaceholder('package.ul.FLD-000014|format=signature_short')).toEqual({
+      kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000014', format: 'signature_short', case_modifier: null,
+    });
+  });
+
+  it('package.ul.FLD-000014|format=short|case=genitive → valid', () => {
+    expect(classifyPlaceholder('package.ul.FLD-000014|format=short|case=genitive')).toEqual({
+      kind: 'package_requisite', entity: 'ul', public_id: 'FLD-000014', format: 'short', case_modifier: 'genitive',
+    });
+  });
+
+  it('package.fl.FLD-000372|format=full → valid', () => {
+    expect(classifyPlaceholder('package.fl.FLD-000372|format=full')).toEqual({
+      kind: 'package_requisite', entity: 'fl', public_id: 'FLD-000372', format: 'full', case_modifier: null,
+    });
+  });
+
+  it('package.ip.FLD-000010|format=potato → invalid_modifier_value', () => {
+    expect(classifyPlaceholder('package.ip.FLD-000010|format=potato')).toEqual({
+      kind: 'invalid_modifier_value', key: 'format', value: 'potato',
+    });
+  });
+
+  it('field:FLD-000001|format=long → invalid_modifier_value (биллинг не расширен)', () => {
+    expect(classifyPlaceholder('field:FLD-000001|format=long')).toEqual({
+      kind: 'invalid_modifier_value', key: 'format', value: 'long',
+    });
+  });
+
+  it('field:FLD-000001|format=signature_short → invalid_modifier_value (биллинг)', () => {
+    expect(classifyPlaceholder('field:FLD-000001|format=signature_short')).toEqual({
+      kind: 'invalid_modifier_value', key: 'format', value: 'signature_short',
+    });
+  });
+
+
+
   it('package.role.PKR-000001 → legacy_role_format', () => {
     expect(classifyPlaceholder('package.role.PKR-000001')).toEqual({ kind: 'legacy_role_format' });
   });

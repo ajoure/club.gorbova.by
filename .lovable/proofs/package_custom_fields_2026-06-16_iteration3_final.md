@@ -130,3 +130,57 @@ Code/tests/anti-divergence — **закрыто этой итерацией**.
 - `.lovable/proofs/package_custom_fields_2026-06-16_iteration3_final.md` (этот файл).
 
 Никакие edge-функции, миграции, snapshot-схемы и SmartDateKind в этой итерации **не трогались**.
+
+---
+
+## Iteration 4 — fix invalid_modifier_value для package.{ul|ip|fl}
+
+### Изменения
+- `src/lib/documents/placeholderClassifier.ts` + зеркало `supabase/functions/_shared/placeholderClassifier.ts`:
+  - В `PlaceholderFormat` добавлен `'long'`. Итоговый union: `words | text | full | short | signature_short | long`.
+  - Введён `FORMATS_PACKAGE_REQUISITE = {words, text, full, short, signature_short, long}`.
+  - Ветка `RE_PACKAGE_REQ` теперь валидирует модификаторы через `FORMATS_PACKAGE_REQUISITE`.
+  - `FORMATS_BILLING` для `field:FLD-…` НЕ изменён (остался `{words, text}`).
+  - `FORMATS_LN` для `ln-` / `pf-` НЕ изменён.
+
+### Подтверждённый resolver-контракт (read-only review)
+- `canonical-document-generate-strict/index.ts`:
+  - `format=long` обрабатывается per-FLD: подставляет полную форму собственности ТОЛЬКО для `*.leg.org_form` (FLD-000010); на остальных package-FLD — no-op (возвращает исходное значение, не падает).
+  - `format=short|signature_short|full` через `PERSON_NAME_FORMATS` обрабатывается ТОЛЬКО для person-полей (`raw_full_name`); для не-персональных package-FLD — также no-op без ошибки.
+- `_shared/resolve-package-tokens.ts`: `PERSON_NAME_FORMATS = {full, short, signature_short}` для ролей/персон.
+- Вывод: расширение классификатора корректно — резолвер уже владеет per-FLD семантикой, силент-корраптинга нет, поведение «не применимо к этому FLD → исходное значение» зафиксировано.
+
+### Тесты
+| Контур | Команда | Результат |
+| --- | --- | --- |
+| Vitest classifier+parity | `bunx vitest run src/lib/documents/placeholderClassifier.{test,parity.test}.ts` | 30/30 PASS |
+| Deno shared classifier | `deno test --allow-all supabase/functions/_shared/placeholderClassifier.test.ts` | 18/18 PASS |
+
+Новые позитивные кейсы:
+- `package.ul.FLD-000010|format=long` → valid
+- `package.ul.FLD-000014|format=signature_short` → valid
+- `package.ul.FLD-000014|format=short|case=genitive` → valid
+- `package.fl.FLD-000372|format=full` → valid
+
+Новые негативные кейсы:
+- `package.ip.FLD-000010|format=potato` → `invalid_modifier_value`
+- `field:FLD-000001|format=long` → `invalid_modifier_value` (биллинг не расширен)
+- `field:FLD-000001|format=signature_short` → `invalid_modifier_value`
+
+### Deployment
+- `canonical-template-apply-markup` redeployed (использует `_shared/placeholderClassifier.ts`) — runtime whitelist обновлён.
+
+### DoD (Iteration 4)
+
+| #   | Item                                                                         | Status |
+| --- | ---------------------------------------------------------------------------- | ------ |
+| 9   | package_requisite format set расширен (long/full/short/signature_short)      | PASS   |
+| 10  | Билинговый `field:FLD-…` НЕ принимает long/short/signature_short             | PASS   |
+| 10a | Resolver per-FLD-семантика подтверждена read-only (long↦org_form, names↦persons, иначе no-op) | PASS   |
+| 10b | Parity SOT ↔ edge mirror сохранён (parity test PASS)                         | PASS   |
+| 10c | `canonical-template-apply-markup` redeployed                                 | PASS   |
+| 11  | D-Activate «1. Приказ …» 0 ошибок и `validation_status='active'`, `is_active=true`, `active_version_id` обновлён | DEFERRED — runtime UAT |
+| 12  | D7-200 DOCX e2e: HTTP 200, в DOCX FLD-000010 → «Общество с ограниченной ответственностью», FLD-000014 → «И.И.Иванов»; snapshot без расширения схемы | DEFERRED — runtime UAT |
+| 13  | D7-422 без документа и snapshot (`count(*)` до/после) после очистки required `pf-XXXXXX` с `effective_required=true` | DEFERRED — runtime UAT |
+
+Патч закрывается окончательно после прохождения 11/12/13 в runtime UAT.
