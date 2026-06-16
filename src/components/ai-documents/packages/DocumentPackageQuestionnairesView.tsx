@@ -493,10 +493,6 @@ function ItemQuestionnaire({
             </p>
           </>
         )}
-        <PackageFieldsAssignmentPanel
-          packageTemplateId={packageTemplateId}
-          packageTemplateItemId={item.id}
-        />
       </AccordionContent>
     </AccordionItem>
   );
