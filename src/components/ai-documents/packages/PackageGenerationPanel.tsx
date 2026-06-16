@@ -67,35 +67,65 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
     return map;
   }, [packageItems]);
 
-  // Preflight — read-only сводка по сессии пакета (анкета, состав, роли).
+  // PATCH GATE V2: per-item role assignments SOT (а не legacy participants).
+  const itemIds = useMemo(() => (packageItems ?? []).map((it: any) => it.id), [packageItems]);
+  const assignmentsQuery = useQuery({
+    queryKey: ["pkg-gen-role-assignments", pkg.session?.id, itemIds.join(",")],
+    queryFn: async () => {
+      if (!pkg.session?.id || itemIds.length === 0) return [] as Array<{ role_catalog_id: string; package_template_item_id: string }>;
+      const { data, error } = await supabase
+        .from("document_package_item_role_assignments" as any)
+        .select("role_catalog_id, package_template_item_id, person_id")
+        .eq("package_session_id", pkg.session.id)
+        .in("package_template_item_id", itemIds)
+        .eq("is_active", true);
+      if (error) throw error;
+      return ((data ?? []) as any).filter((a: any) => a.person_id);
+    },
+    enabled: !!pkg.session?.id && itemIds.length > 0,
+  });
+  const assignments = assignmentsQuery.data ?? [];
+
+  // Required roles satisfied: package_company → entity selected;
+  // прочие required → ≥1 назначение в любом документе пакета.
   const requiredRolesStatus = useMemo(() => {
+    const assignedRoleIds = new Set(assignments.map((a) => a.role_catalog_id));
     return (pkg.roleCatalog ?? [])
       .filter((r) => r.required)
       .map((r) => {
         if (r.role_key === "package_company") {
           return { role: r, satisfied: !!pkg.session?.selected_legal_entity_id };
         }
-        const count = (pkg.participants ?? []).filter((p) => p.role_key === r.role_key).length;
-        const min = r.min_count ?? 1;
-        return { role: r, satisfied: count >= min };
+        return { role: r, satisfied: assignedRoleIds.has(r.id) };
       });
-  }, [pkg.roleCatalog, pkg.participants, pkg.session]);
+  }, [pkg.roleCatalog, assignments, pkg.session]);
 
   const allRequiredSatisfied = requiredRolesStatus.every((x) => x.satisfied);
   const hasSession = !!pkg.session?.id;
   const hasItems = (packageItems?.length ?? 0) > 0;
 
-  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 B2: required pf-fields gate.
+  // PATCH GATE V2: required pf-fields per-item (per-item value OR session-level fallback).
   const fieldsState = usePackageSessionFields(pkg.session?.id ?? null, pkg.templateId);
-  const requiredFieldsSatisfied = fieldsState.progress.allRequiredFilled;
+  const detected = usePackageDetectedFields(pkg.templateId);
+
+  const requiredFieldsGate = useMemo(() => {
+    let missing = 0;
+    let total = 0;
+    for (const itemId of itemIds) {
+      const prog = fieldsState.getItemProgress(itemId);
+      total += prog.requiredTotal;
+      missing += prog.requiredTotal - prog.requiredFilled;
+    }
+    return { missing, total, satisfied: missing === 0 };
+  }, [itemIds, fieldsState, detected.byItemId]);
 
   const blockers: string[] = [];
   if (!hasSession) blockers.push("Анкета пакета ещё не сохранена.");
   if (!hasItems) blockers.push("В пакете нет шаблонов.");
   if (hasSession && !allRequiredSatisfied) blockers.push("Не заполнены обязательные роли.");
-  if (hasSession && !requiredFieldsSatisfied) {
+  if (hasSession && !requiredFieldsGate.satisfied) {
     blockers.push(
-      `Не заполнены обязательные поля пакета (${fieldsState.progress.requiredFilled}/${fieldsState.progress.requiredTotal}).`,
+      `Не заполнены обязательные поля документов (${requiredFieldsGate.total - requiredFieldsGate.missing}/${requiredFieldsGate.total}).`,
     );
   }
 
