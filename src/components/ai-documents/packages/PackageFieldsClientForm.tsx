@@ -160,9 +160,10 @@ export function PackageFieldsClientForm({
   };
 
   const handleSave = async () => {
+    // RPC upsert_session_field_values ожидает ключ `value` (не raw_value).
     const payload = questions.map((q) => ({
       field_catalog_id: q.field.id,
-      raw_value: (draft[q.field.id] ?? null) === "" ? null : draft[q.field.id] ?? null,
+      value: (draft[q.field.id] ?? null) === "" ? null : draft[q.field.id] ?? null,
     }));
     try {
       await save(payload);
