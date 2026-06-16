@@ -168,7 +168,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     setDirty(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     const payload = questions.map((q) => ({
       field_catalog_id: q.field.id,
       value: (draft[q.field.id] ?? null) === "" ? null : draft[q.field.id] ?? null,
@@ -178,8 +178,17 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
       await save(payload);
       setDirty(false);
       onSaved?.();
-    } catch { /* toast handled */ }
+      return true;
+    } catch {
+      return false;
+    }
   };
+
+  useImperativeHandle(ref, () => ({
+    submit: handleSave,
+    isDirty: dirty,
+    isSaving,
+  }), [dirty, isSaving, handleSave]);
 
   return (
     <div className="space-y-2">
@@ -213,7 +222,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
       )}
     </div>
   );
-}
+});
 
 function isRowFilled(v: SessionFieldValueRow | undefined): boolean {
   if (!v) return false;
