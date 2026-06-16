@@ -100,6 +100,7 @@ interface ValidationError {
   code:
     | "legacy_placeholder_format_detected"
     | "unknown_modifier"
+    | "invalid_modifier_value"
     | "unknown_field_public_id"
     | "no_placeholders_in_template"
     | "docx_unreadable"
@@ -107,7 +108,10 @@ interface ValidationError {
     | "invalid_legacy_role_placeholder"
     | "ln_token_not_found"
     | "ln_token_outside_bound_package"
-    | "role_assignment_missing";
+    | "role_assignment_missing"
+    // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2
+    | "package_token_outside_package_context"
+    | "pf_unsupported_modifier";
   placeholder?: string;
   message: string;
 }
