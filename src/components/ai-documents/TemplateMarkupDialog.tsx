@@ -46,6 +46,7 @@ import { FieldFormatPicker } from "./FieldFormatPicker";
 import { buildFieldPlaceholder, type FieldCase, type FieldFormat } from "./extensions/FieldChipNode";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { FieldPickerPopover } from "./FieldPickerPopover";
+import { evaluatePlaceholderInScope } from "@/lib/documents/placeholderClassifier";
 
 // ───────────────────────── types ─────────────────────────
 
@@ -236,41 +237,30 @@ export type TokenKind = "valid" | "package_in_billing" | "legacy";
 const ANY_PLACEHOLDER_RE = /\{\{[^{}]+\}\}/g;
 
 /**
- * Sprint 3K: regexes допускают опциональный modifier-хвост
- * `(?:\|[a-z_]+=[a-z_]+)*` (zero или больше `|key=value` блоков).
- * Это зеркало backend strict-валидатора (RX_PACKAGE_REQ / RX_PACKAGE_ROLE_LN
- * в StrictDocumentTemplatesManager) и `_shared/canonical-document-generate-strict`.
- * Без этого валидные {{package.ul.FLD-000014|format=signature_short}} и
- * {{ln-000012|format=signature_short}} попадали в `legacy` и подсвечивались жёлтым.
+ * PATCH-PACKAGE-CUSTOM-FIELDS-V1 iter.3 (anti-divergence):
+ * локальных regex для `field:` / `package.<ul|ip|fl>.FLD-…` / `ln-…` / `pf-…`
+ * здесь больше нет. Источник истины — shared `evaluatePlaceholderInScope` из
+ * `@/lib/documents/placeholderClassifier` (парность с edge гарантируется
+ * placeholderClassifier.parity.test).
  */
-const MOD_TAIL = /(?:\|[a-z_]+=[a-z_]+)*/.source;
-/** {{field:FLD-XXXXXX}} с опциональными модификаторами |case=… / |format=…  */
-const RE_FIELD_FLD = new RegExp(`^\\{\\{field:FLD-\\d{6}${MOD_TAIL}\\}\\}$`);
-/** {{package.ul|ip|fl.FLD-XXXXXX[|...]}} */
-const RE_PACKAGE_ENTITY_FLD = new RegExp(`^\\{\\{package\\.(?:ul|ip|fl)\\.FLD-\\d{6}${MOD_TAIL}\\}\\}$`);
-/** {{ln-XXXXXX[|...]}} — канон роли (Sprint 3H-fix) */
-const RE_LN_ROLE = new RegExp(`^\\{\\{ln-\\d{6}${MOD_TAIL}\\}\\}$`);
-/** Реально legacy: {{package.role.PKR-…}} / {{package.roles.<key>.*}} */
-const RE_LEGACY_PKR = /^\{\{package\.role\.PKR-\d{6}(?:\|[^}]+)?\}\}$/;
-const RE_LEGACY_PACKAGE_ROLES = /^\{\{package\.roles\.[^{}]+\}\}$/;
 
 /**
  * Классифицирует один `{{...}}` токен по scope текущего шаблона.
  *
  *  - `valid`               — корректный токен для этого scope.
- *  - `package_in_billing`  — package/ln-токен в billing-шаблоне (scope-нарушение).
+ *  - `package_in_billing`  — package/ln/pf-токен в billing-шаблоне (scope-нарушение).
  *  - `legacy`              — реально устаревший или неизвестный токен.
  *
- * В scope `unknown` package/ln трактуются как valid (не подсвечиваем без причины);
- * рискованных подсветок «по умолчанию» не делаем — это требование Phase 3I-A.
+ * В scope `unknown` package/ln/pf трактуются как valid — рискованных подсветок
+ * «по умолчанию» не делаем (Phase 3I-A).
  */
 export function classifyTemplateToken(token: string, scope: TemplateMarkupScope): TokenKind {
-  if (RE_FIELD_FLD.test(token)) return "valid";
-  if (RE_PACKAGE_ENTITY_FLD.test(token) || RE_LN_ROLE.test(token)) {
-    if (scope === "billing") return "package_in_billing";
-    return "valid";
-  }
-  if (RE_LEGACY_PKR.test(token) || RE_LEGACY_PACKAGE_ROLES.test(token)) return "legacy";
+  const m = token.match(/^\{\{([^{}]+)\}\}$/);
+  if (!m) return "legacy";
+  const inside = m[1].trim();
+  const evaluated = evaluatePlaceholderInScope(inside, scope);
+  if (evaluated.valid) return "valid";
+  if (evaluated.reason === "package_token_outside_package_context") return "package_in_billing";
   return "legacy";
 }
 
