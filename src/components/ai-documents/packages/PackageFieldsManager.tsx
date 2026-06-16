@@ -597,34 +597,40 @@ function FieldDialog({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40">
+          <div className="flex items-center justify-between pt-2 border-t border-border/40">
             <div className="flex items-center gap-2">
               <Switch checked={required} onCheckedChange={setRequired} />
-              <Label className="cursor-pointer">Обязательно</Label>
+              <Label className="cursor-pointer">Обязательно для клиента</Label>
             </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={clientVisible} onCheckedChange={setClientVisible} />
-              <Label className="cursor-pointer">Виден клиенту</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={adminEditable} onCheckedChange={setAdminEditable} />
-              <Label className="cursor-pointer">Редактирует админ</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={autoAssign} onCheckedChange={setAutoAssign} />
-              <Label className="cursor-pointer">Автоматически добавлять в новые шаблоны</Label>
-            </div>
-            <div>
-              <Label>Порядок</Label>
-              <Input
-                type="number"
-                value={sortOrder}
-                onChange={(e) => setSortOrder(Number(e.target.value) || 100)}
-                className="w-24"
-              />
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? "Скрыть доп. настройки" : "Доп. настройки"}
+            </Button>
           </div>
+
+          {showAdvanced && (
+            <div className="grid grid-cols-2 gap-3 border rounded p-3 bg-muted/30">
+              <div>
+                <Label className="text-xs">Порядок отображения</Label>
+                <Input
+                  type="number"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(Number(e.target.value) || 100)}
+                  className="w-24 h-8 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Меньше — выше в анкете. По умолчанию 100.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
+
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Отмена</Button>
