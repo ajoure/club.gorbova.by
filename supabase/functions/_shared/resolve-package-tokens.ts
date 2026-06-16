@@ -461,23 +461,46 @@ async function resolvePfFieldToken(
   }
 
   // 3. Значение из session_field_values
-  const { data: valueRow, error: valErr } = await input.supabase
-    .from('document_package_session_field_values')
-    .select('value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
-    .eq('session_id', input.packageSessionId)
-    .eq('field_catalog_id', field.id)
-    .maybeSingle();
-  if (valErr) {
-    return {
-      resolved: false,
-      code: 'config_error',
-      warning: `pf_value_query_error:${pfPublicId}`,
-    };
+  //    Приоритет: per-item override → session-level fallback.
+  let valueRow: Record<string, unknown> | null = null;
+  if (input.packageTemplateItemId) {
+    const { data: perItem, error: perItemErr } = await input.supabase
+      .from('document_package_session_field_values')
+      .select('value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+      .eq('session_id', input.packageSessionId)
+      .eq('field_catalog_id', field.id)
+      .eq('package_template_item_id', input.packageTemplateItemId)
+      .maybeSingle();
+    if (perItemErr) {
+      return {
+        resolved: false,
+        code: 'config_error',
+        warning: `pf_value_query_error:${pfPublicId}`,
+      };
+    }
+    if (perItem) valueRow = perItem as Record<string, unknown>;
+  }
+  if (!valueRow) {
+    const { data: sessionLevel, error: valErr } = await input.supabase
+      .from('document_package_session_field_values')
+      .select('value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+      .eq('session_id', input.packageSessionId)
+      .eq('field_catalog_id', field.id)
+      .is('package_template_item_id', null)
+      .maybeSingle();
+    if (valErr) {
+      return {
+        resolved: false,
+        code: 'config_error',
+        warning: `pf_value_query_error:${pfPublicId}`,
+      };
+    }
+    if (sessionLevel) valueRow = sessionLevel as Record<string, unknown>;
   }
 
   let raw: unknown = null;
   if (valueRow) {
-    const v = valueRow as Record<string, unknown>;
+    const v = valueRow;
     switch (field.data_type) {
       case 'text':
       case 'select':

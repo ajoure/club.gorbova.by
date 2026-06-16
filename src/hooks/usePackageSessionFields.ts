@@ -1,13 +1,13 @@
 /**
- * usePackageSessionFields — token-driven резолвер анкеты pf-полей (V2).
+ * usePackageSessionFields — token-driven резолвер анкеты pf-полей (V3).
  *
- * Новая модель: набор pf-вопросов определяется токенами `{{pf-XXXXXX}}`
- * в активных версиях DOCX-шаблонов всех документов пакета. Никаких
- * `document_package_item_field_assignments` больше не читается.
+ * V3: поддержка per-document значений полей.
+ *   • `valuesByField` — session-level (общие) значения (item_id IS NULL).
+ *   • `valuesByItemField[itemId][fieldId]` — per-item override.
+ *   • Effective value для item = per-item override → fallback к session-level.
+ *   • `save({ field_catalog_id, value, package_template_item_id? })`.
  *
- * Дедуп: каждое поле спрашивается один раз на сессию, даже если токен
- * встречается в нескольких документах. Required, label и help берутся
- * строго из каталога (`document_package_field_catalog`).
+ * Дедуп вопросов и каталог — без изменений.
  */
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +24,7 @@ export interface SessionFieldValueRow {
   id: string;
   session_id: string;
   field_catalog_id: string;
+  package_template_item_id: string | null;
   value_text: string | null;
   value_number: number | null;
   value_date: string | null;
@@ -36,11 +37,8 @@ export interface SessionFieldValueRow {
 
 export interface DedupedQuestion {
   field: PackageFieldRow;
-  /** В скольких шаблонах пакета встречается токен этого поля. */
   occurrences: number;
-  /** item_id шаблонов, где поле используется (для CTA/диагностики). */
   itemIds: string[];
-  /** Эффективные метаданные для рендера (берутся из каталога). */
   effective: {
     label: string;
     required: boolean;
@@ -55,6 +53,26 @@ const QK = {
     ["package-session-values", sessionId] as const,
 };
 
+export interface SaveFieldValueInput {
+  field_catalog_id: string;
+  value: string | null;
+  /** NULL/omitted = session-level; uuid = per-document override. */
+  package_template_item_id?: string | null;
+}
+
+function isFilled(v: SessionFieldValueRow | undefined): boolean {
+  if (!v) return false;
+  return (
+    v.value_text != null ||
+    v.value_number != null ||
+    v.value_date != null ||
+    v.value_datetime != null ||
+    v.value_time != null ||
+    v.value_boolean != null ||
+    (v.value_json != null && JSON.stringify(v.value_json) !== "[]")
+  );
+}
+
 export function usePackageSessionFields(
   sessionId: string | null,
   packageTemplateId: string | null,
@@ -62,7 +80,6 @@ export function usePackageSessionFields(
   const qc = useQueryClient();
   const detected = usePackageDetectedFields(packageTemplateId);
 
-  // Каталог активных pf-полей пакета.
   const catalogQuery = useQuery({
     queryKey: QK.catalog(packageTemplateId),
     queryFn: async (): Promise<PackageFieldRow[]> => {
@@ -78,7 +95,6 @@ export function usePackageSessionFields(
     enabled: !!packageTemplateId,
   });
 
-  // Резолв вопросов: пересечение каталога и pf-токенов шаблонов.
   const questions = useMemo<DedupedQuestion[]>(() => {
     const fields = catalogQuery.data ?? [];
     if (fields.length === 0) return [];
@@ -89,7 +105,7 @@ export function usePackageSessionFields(
     const out: DedupedQuestion[] = [];
     for (const pid of detected.allPublicIds) {
       const field = byPublic.get(pid);
-      if (!field) continue; // токен без каталога — диагностика в админ-панели
+      if (!field) continue;
       const itemIds = detected.byPublicId[pid] ?? [];
       out.push({
         field,
@@ -125,20 +141,51 @@ export function usePackageSessionFields(
     enabled: !!sessionId,
   });
 
+  /** Session-level (общие) значения: item_id IS NULL */
   const valuesByField = useMemo(() => {
     const m = new Map<string, SessionFieldValueRow>();
-    for (const v of valuesQuery.data ?? []) m.set(v.field_catalog_id, v);
+    for (const v of valuesQuery.data ?? []) {
+      if (v.package_template_item_id == null) m.set(v.field_catalog_id, v);
+    }
     return m;
   }, [valuesQuery.data]);
 
+  /** Per-item overrides: itemId → (fieldId → row) */
+  const valuesByItemField = useMemo(() => {
+    const m = new Map<string, Map<string, SessionFieldValueRow>>();
+    for (const v of valuesQuery.data ?? []) {
+      if (v.package_template_item_id != null) {
+        const inner = m.get(v.package_template_item_id) ?? new Map();
+        inner.set(v.field_catalog_id, v);
+        m.set(v.package_template_item_id, inner);
+      }
+    }
+    return m;
+  }, [valuesQuery.data]);
+
+  /** Effective value для конкретного item: per-item → fallback к session-level. */
+  const getEffectiveValue = (
+    fieldId: string,
+    itemId: string | null,
+  ): SessionFieldValueRow | undefined => {
+    if (itemId) {
+      const perItem = valuesByItemField.get(itemId)?.get(fieldId);
+      if (perItem) return perItem;
+    }
+    return valuesByField.get(fieldId);
+  };
+
   const saveMutation = useMutation({
-    mutationFn: async (
-      values: Array<{ field_catalog_id: string; value: string | null }>,
-    ) => {
+    mutationFn: async (values: SaveFieldValueInput[]) => {
       if (!sessionId) throw new Error("session_not_loaded");
+      const payload = values.map((v) => ({
+        field_catalog_id: v.field_catalog_id,
+        value: v.value,
+        package_template_item_id: v.package_template_item_id ?? null,
+      }));
       const { data, error } = await supabase.rpc(
         "upsert_session_field_values" as never,
-        { _session_id: sessionId, _values: values as unknown } as never,
+        { _session_id: sessionId, _values: payload as unknown } as never,
       );
       if (error) throw error;
       const result = data as { ok: number; errors: Array<Record<string, unknown>> } | null;
@@ -154,26 +201,14 @@ export function usePackageSessionFields(
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.values(sessionId) });
-      toast.success("Значения сохранены");
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
+  /** Global progress: session-level required filled. */
   const progress = useMemo(() => {
     const required = questions.filter((q) => q.effective.required);
-    const filledRequired = required.filter((q) => {
-      const v = valuesByField.get(q.field.id);
-      if (!v) return false;
-      return (
-        v.value_text != null ||
-        v.value_number != null ||
-        v.value_date != null ||
-        v.value_datetime != null ||
-        v.value_time != null ||
-        v.value_boolean != null ||
-        (v.value_json != null && JSON.stringify(v.value_json) !== "[]")
-      );
-    }).length;
+    const filledRequired = required.filter((q) => isFilled(valuesByField.get(q.field.id))).length;
     return {
       total: questions.length,
       requiredTotal: required.length,
@@ -182,10 +217,51 @@ export function usePackageSessionFields(
     };
   }, [questions, valuesByField]);
 
+  /**
+   * Per-item progress: required pf-поле этого item заполнено, если есть per-item
+   * value ИЛИ session-level value.
+   */
+  const getItemProgress = (itemId: string) => {
+    const publicIdsInItem = detected.byItemId[itemId] ?? [];
+    const fieldsInItem = questions.filter((q) =>
+      publicIdsInItem.includes(q.field.public_id),
+    );
+    const requiredInItem = fieldsInItem.filter((q) => q.effective.required);
+    const filledRequired = requiredInItem.filter((q) =>
+      isFilled(getEffectiveValue(q.field.id, itemId)),
+    ).length;
+    const filledTotal = fieldsInItem.filter((q) =>
+      isFilled(getEffectiveValue(q.field.id, itemId)),
+    ).length;
+    return {
+      total: fieldsInItem.length,
+      filled: filledTotal,
+      requiredTotal: requiredInItem.length,
+      requiredFilled: filledRequired,
+      allRequiredFilled: filledRequired === requiredInItem.length,
+    };
+  };
+
+  /** Список вопросов для конкретного item (в порядке появления токена в шаблоне). */
+  const getItemQuestions = (itemId: string): DedupedQuestion[] => {
+    const publicIdsInItem = detected.byItemId[itemId] ?? [];
+    const byPid = new Map(questions.map((q) => [q.field.public_id, q]));
+    const out: DedupedQuestion[] = [];
+    for (const pid of publicIdsInItem) {
+      const q = byPid.get(pid);
+      if (q) out.push(q);
+    }
+    return out;
+  };
+
   return {
     questions,
     values: valuesQuery.data ?? [],
     valuesByField,
+    valuesByItemField,
+    getEffectiveValue,
+    getItemQuestions,
+    getItemProgress,
     isLoading:
       catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,

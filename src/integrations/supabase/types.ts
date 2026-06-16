@@ -4292,6 +4292,7 @@ export type Database = {
           created_by: string | null
           field_catalog_id: string
           id: string
+          package_template_item_id: string | null
           session_id: string
           updated_at: string
           updated_by: string | null
@@ -4308,6 +4309,7 @@ export type Database = {
           created_by?: string | null
           field_catalog_id: string
           id?: string
+          package_template_item_id?: string | null
           session_id: string
           updated_at?: string
           updated_by?: string | null
@@ -4324,6 +4326,7 @@ export type Database = {
           created_by?: string | null
           field_catalog_id?: string
           id?: string
+          package_template_item_id?: string | null
           session_id?: string
           updated_at?: string
           updated_by?: string | null
@@ -4336,6 +4339,13 @@ export type Database = {
           value_time?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "document_package_session_field_va_package_template_item_id_fkey"
+            columns: ["package_template_item_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_template_items"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "document_package_session_field_values_field_catalog_id_fkey"
             columns: ["field_catalog_id"]
