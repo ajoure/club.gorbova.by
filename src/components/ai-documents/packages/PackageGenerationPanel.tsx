@@ -19,6 +19,8 @@
  *     `useDocumentPackageSession`.
  */
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +39,8 @@ import {
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
-import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
+import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
 
 interface Props {
   /** Канонический код пакета (например, "ideology"). SOT — `document_package_templates.code`. */
