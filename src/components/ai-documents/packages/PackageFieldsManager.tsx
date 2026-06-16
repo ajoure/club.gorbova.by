@@ -588,14 +588,17 @@ function FieldDialog({
               <Select value={defaultKind} onValueChange={(v) => setDefaultKind(v as SmartDateKind)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(SMART_DATE_KIND_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  {allowedSmartDateKindsForType(dataType).map((k) => (
+                    <SelectItem key={k} value={k}>{SMART_DATE_KIND_LABELS[k]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-[10px] text-muted-foreground mt-1">
                 Значение подставляется в анкете автоматически (в часовом поясе Минск).
                 Записывается в БД только после сохранения клиентом или администратором.
+                {dataType === "year"
+                  ? " Для типа «Год» используются только годовые сдвиги (прошлый/текущий/будущий год)."
+                  : ""}
               </p>
             </div>
           )}
