@@ -505,9 +505,11 @@ function FieldDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Поле создаётся один раз в каталоге пакета. Назначить его конкретным шаблонам можно
-            во вкладке «Анкеты документов». Один токен {"{{pf-XXXXXX}}"} — одно значение на анкету.
+            Поле создаётся один раз и автоматически появляется в любом документе пакета,
+            где встречается его токен <code className="font-mono">{`{{${"pf-XXXXXX"}}}`}</code>.
+            Клиент в анкете заполнит его один раз на весь пакет.
           </DialogDescription>
+
         </DialogHeader>
 
         <div className="space-y-3">
