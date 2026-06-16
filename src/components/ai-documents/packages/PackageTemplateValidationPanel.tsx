@@ -89,9 +89,10 @@ interface ItemFieldAssignmentRow {
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 /**
  * PATCH-PACKAGE-CUSTOM-FIELDS-V1 iter.3 (anti-divergence):
- * локальные regex для field:/package.*/ln-/pf- удалены. Источник истины —
- * shared `classifyPlaceholder` из `@/lib/documents/placeholderClassifier`.
- * Парность фронта и edge гарантируется placeholderClassifier.parity.test.
+ * локальные regex для field:, package.<ul|ip|fl>.FLD-, ln-, pf- удалены.
+ * Источник истины — shared `classifyPlaceholder` из
+ * `@/lib/documents/placeholderClassifier`. Парность фронта и edge
+ * гарантируется placeholderClassifier.parity.test.
  */
 
 
