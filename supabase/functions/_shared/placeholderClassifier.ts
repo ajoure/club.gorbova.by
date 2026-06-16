@@ -77,6 +77,12 @@ export type PlaceholderClassification =
 
 const FORMATS_BILLING = new Set<PlaceholderFormat>(['words', 'text']);
 const FORMATS_LN = new Set<PlaceholderFormat>(['full', 'short', 'signature_short']);
+// package_requisite держит и биллинговые (суммы/даты: words|text), и
+// персоналии/орг-форму (full|short|signature_short|long). Per-FLD семантика
+// форматов — на резолвере (canonical-document-generate-strict).
+const FORMATS_PACKAGE_REQUISITE = new Set<PlaceholderFormat>([
+  'words', 'text', 'full', 'short', 'signature_short', 'long',
+]);
 const CASES = new Set<PlaceholderCase>([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
 ]);
