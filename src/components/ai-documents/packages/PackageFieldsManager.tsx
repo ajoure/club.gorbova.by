@@ -12,7 +12,7 @@
  *  • для select/multiselect редактируется набор choices; value уже использованного
  *    choice менять запрещено (в UI блокируется на edit).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,17 +30,16 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Copy, Plus, Pencil, Archive, RotateCcw, Search, Trash2, Layers, Wand2 } from "lucide-react";
+import { Copy, Plus, Pencil, Archive, RotateCcw, Search, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   usePackageFieldCatalog,
   type PackageFieldRow,
   type PackageFieldDataType,
-  type PackageFieldUsageScope,
   type PackageFieldChoice,
   type SmartDateKind,
 } from "@/hooks/usePackageFieldCatalog";
-import { usePackageFieldAssignments } from "@/hooks/useDocumentItemFieldAssignments";
+import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
 import {
   SMART_DATE_KIND_LABELS,
   allowedSmartDateKindsForType,
