@@ -39,7 +39,7 @@ import { useRbac } from "@/hooks/useRbac";
 import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
-import { PackageFieldsAssignmentPanel } from "./PackageFieldsAssignmentPanel";
+import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 interface Props {
@@ -98,7 +98,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       if (!profileId) return null;
       const { data: existing } = await supabase
         .from("document_package_sessions")
-        .select("id, selected_legal_entity_id, legal_entity_locked_at")
+        .select("id, selected_legal_entity_id, legal_entity_locked_at, created_at")
         .eq("profile_id", profileId)
         .eq("package_template_id", packageTemplateId)
         .is("entitlement_id", null)
@@ -253,6 +253,16 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
           </div>
         )}
       </GlassCard>
+
+      {/* Общие поля пакета (значения для всех документов) */}
+      {sessionId && (
+        <PackageFieldsClientForm
+          sessionId={sessionId}
+          packageTemplateId={packageTemplateId}
+          sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
+        />
+      )}
+
 
       {/* Аккордеон по документам */}
       {itemsQuery.isLoading ? (
@@ -493,10 +503,6 @@ function ItemQuestionnaire({
             </p>
           </>
         )}
-        <PackageFieldsAssignmentPanel
-          packageTemplateId={packageTemplateId}
-          packageTemplateItemId={item.id}
-        />
       </AccordionContent>
     </AccordionItem>
   );
