@@ -549,18 +549,8 @@ function FieldDialog({
                 </p>
               )}
             </div>
-            <div>
-              <Label>Видимость</Label>
-              <Select value={usageScope} onValueChange={(v) => setUsageScope(v as PackageFieldUsageScope)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(USAGE_SCOPE_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
+
 
           {isDateLike && (
             <div>
