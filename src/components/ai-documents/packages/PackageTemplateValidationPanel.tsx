@@ -87,13 +87,12 @@ interface ItemFieldAssignmentRow {
 
 
 const ANY_PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
-const RX_SYSTEM_FLD = /^field:FLD-\d{6}(\|[^}]+)?$/;
-const RX_PACKAGE_REQ = /^package\.(ul|ip|fl)\.FLD-\d{6}(\|[^}]+)?$/;
-const RX_PACKAGE_ROLE_LN = /^(ln-\d{6})(\|[^}]+)?$/;
-const RX_PACKAGE_FIELD_PF = /^(pf-\d{6})(\|[^}]+)?$/;
-const RX_LEGACY_PACKAGE_ROLE_PKR = /^package\.role\.PKR-\d{6}(\|[^}]+)?$/;
-const RX_LEGACY_PACKAGE_ROLES = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(\|[^}]+)?$/;
-const RX_LEGACY_PREFIX = /^(document|executor|customer|deal|cf)\./i;
+/**
+ * PATCH-PACKAGE-CUSTOM-FIELDS-V1 iter.3 (anti-divergence):
+ * локальные regex для field:/package.*/ln-/pf- удалены. Источник истины —
+ * shared `classifyPlaceholder` из `@/lib/documents/placeholderClassifier`.
+ * Парность фронта и edge гарантируется placeholderClassifier.parity.test.
+ */
 
 
 function classify(
@@ -111,15 +110,15 @@ function classify(
   assignedFieldCatalogIds: Set<string> | null,
 ): Finding {
   const token = `{{${inside}}}`;
+  const c = classifyPlaceholder(inside);
 
-  if (RX_PACKAGE_REQ.test(inside)) {
+  if (c.kind === "package_requisite") {
     return { token, severity: "valid", code: "package_requisite_ok",
       hint: "Package-aware реквизит, читается из document_package_sessions." };
   }
 
-  const pfMatch = inside.match(RX_PACKAGE_FIELD_PF);
-  if (pfMatch) {
-    const pfId = pfMatch[1];
+  if (c.kind === "package_field") {
+    const pfId = c.public_id;
     const field = pfCatalog.get(pfId);
     if (!field) {
       return { token, severity: "error", code: "pf_token_not_found",
@@ -137,9 +136,8 @@ function classify(
       hint: `Поле пакета ${pfId} (${field.label}). Значение читается из document_package_session_field_values.` };
   }
 
-  const lnMatch = inside.match(RX_PACKAGE_ROLE_LN);
-  if (lnMatch) {
-    const lnId = lnMatch[1];
+  if (c.kind === "package_role") {
+    const lnId = c.public_id;
     const role = lnCatalog.get(lnId);
     if (!role) {
       return { token, severity: "error", code: "ln_token_not_found",
@@ -157,15 +155,14 @@ function classify(
       hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
 
-
-  if (RX_LEGACY_PACKAGE_ROLE_PKR.test(inside) || RX_LEGACY_PACKAGE_ROLES.test(inside)) {
+  if (c.kind === "legacy_role_format") {
     return { token, severity: "error", code: "invalid_legacy_role_placeholder",
       hint: "Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли»." };
   }
-  if (RX_SYSTEM_FLD.test(inside)) {
-    const m = inside.match(/FLD-\d{6}/);
-    const fldId = m ? m[0] : null;
-    const entityType = fldId ? fldEntityTypes.get(fldId) : null;
+
+  if (c.kind === "field") {
+    const fldId = c.public_id;
+    const entityType = fldEntityTypes.get(fldId);
     if (entityType && isBillingEntityType(entityType)) {
       return { token, severity: "warning", code: "billing_fld_in_package_scope",
         hint: "Этот плейсхолдер относится к биллинговым реквизитам. Для реквизитов пакета используйте {{package.ul|ip|fl.FLD-XXXXXX}}." };
@@ -173,10 +170,13 @@ function classify(
     return { token, severity: "valid", code: "system_field_ok",
       hint: "Системное/документное поле каталога — допустимо в пакетном шаблоне." };
   }
-  if (RX_LEGACY_PREFIX.test(inside)) {
+
+  if (c.kind === "legacy_namespace") {
     return { token, severity: "error", code: "legacy_placeholder_format_detected",
       hint: "Старый формат {{document|executor|customer|deal|cf.*}} запрещён. Замените на FLD-каталог." };
   }
+
+  // unknown_modifier / invalid_modifier_value / invalid
   return { token, severity: "error", code: "unrecognized_placeholder",
     hint: "Токен не соответствует ни одному допустимому формату. Удалите или замените." };
 }
