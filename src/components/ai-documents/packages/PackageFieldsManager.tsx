@@ -12,7 +12,7 @@
  *  • для select/multiselect редактируется набор choices; value уже использованного
  *    choice менять запрещено (в UI блокируется на edit).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,17 +30,16 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Copy, Plus, Pencil, Archive, RotateCcw, Search, Trash2, Layers, Wand2 } from "lucide-react";
+import { Copy, Plus, Pencil, Archive, RotateCcw, Search, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   usePackageFieldCatalog,
   type PackageFieldRow,
   type PackageFieldDataType,
-  type PackageFieldUsageScope,
   type PackageFieldChoice,
   type SmartDateKind,
 } from "@/hooks/usePackageFieldCatalog";
-import { usePackageFieldAssignments } from "@/hooks/useDocumentItemFieldAssignments";
+import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
 import {
   SMART_DATE_KIND_LABELS,
   allowedSmartDateKindsForType,
@@ -63,30 +62,25 @@ const DATA_TYPE_LABELS: Record<PackageFieldDataType, string> = {
   checkbox: "Флажок (да/нет)",
 };
 
-const USAGE_SCOPE_LABELS: Record<PackageFieldUsageScope, string> = {
-  package_all: "Везде в пакете",
-  questionnaire_only: "Только в анкете",
-  documents_only: "Только в документах",
-};
-
 export function PackageFieldsManager({ packageTemplateId }: Props) {
   const { fields, isLoading, upsert, upserting, archive, restore, remove, loadDependencyReport } =
     usePackageFieldCatalog(packageTemplateId);
-  const { assignments, assignToAll, assigningToAll } = usePackageFieldAssignments(packageTemplateId);
+  const { byPublicId } = usePackageDetectedFields(packageTemplateId);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editRow, setEditRow] = useState<PackageFieldRow | null>(null);
   const [tab, setTab] = useState<"active" | "archive">("active");
   const [search, setSearch] = useState("");
 
+  // Сколько шаблонов содержит токен этого поля (по реальному DOCX, без assignments).
   const usageMap = useMemo(() => {
     const map = new Map<string, number>();
-    for (const a of assignments) {
-      if (!a.is_active) continue;
-      map.set(a.field_catalog_id, (map.get(a.field_catalog_id) ?? 0) + 1);
+    for (const f of fields) {
+      const items = byPublicId[f.public_id] ?? [];
+      if (items.length > 0) map.set(f.id, items.length);
     }
     return map;
-  }, [assignments]);
+  }, [fields, byPublicId]);
 
   const { activeFields, archivedFields } = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -145,17 +139,8 @@ export function PackageFieldsManager({ packageTemplateId }: Props) {
           <Button size="icon" variant="ghost" onClick={() => copyToken(r.public_id)} title="Скопировать токен">
             <Copy className="h-3.5 w-3.5" />
           </Button>
-          {r.is_active && (
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => assignToAll(r.id)}
-              disabled={assigningToAll}
-              title="Назначить во все шаблоны пакета"
-            >
-              <Layers className="h-3.5 w-3.5" />
-            </Button>
-          )}
+          {/* Кнопка «Назначить во все шаблоны пакета» удалена: привязка теперь
+              автоматическая по токенам в DOCX. */}
           <Button size="icon" variant="ghost" onClick={() => setEditRow(r)} title="Редактировать">
             <Pencil className="h-3.5 w-3.5" />
           </Button>
@@ -409,10 +394,6 @@ interface FieldDialogSubmit {
   description: string | null;
   data_type: PackageFieldDataType;
   options: Record<string, unknown>;
-  usage_scope: PackageFieldUsageScope;
-  client_visible: boolean;
-  admin_editable: boolean;
-  auto_assign_to_new_items: boolean;
   required: boolean;
   sort_order: number;
 }
@@ -430,10 +411,6 @@ function FieldDialog({
   const [label, setLabel] = useState(existing?.label ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [dataType, setDataType] = useState<PackageFieldDataType>(existing?.data_type ?? "text");
-  const [usageScope, setUsageScope] = useState<PackageFieldUsageScope>(existing?.usage_scope ?? "package_all");
-  const [clientVisible, setClientVisible] = useState(existing?.client_visible ?? true);
-  const [adminEditable, setAdminEditable] = useState(existing?.admin_editable ?? true);
-  const [autoAssign, setAutoAssign] = useState(existing?.auto_assign_to_new_items ?? false);
   const [required, setRequired] = useState(existing?.required ?? false);
   const [sortOrder, setSortOrder] = useState<number>(existing?.sort_order ?? 100);
   const [defaultKind, setDefaultKind] = useState<SmartDateKind>(
@@ -445,21 +422,22 @@ function FieldDialog({
   const [separator, setSeparator] = useState<string>((existing?.options?.separator as string | undefined) ?? ", ");
   const [trueLabel, setTrueLabel] = useState<string>((existing?.options?.true_label as string | undefined) ?? "Да");
   const [falseLabel, setFalseLabel] = useState<string>((existing?.options?.false_label as string | undefined) ?? "Нет");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const isDateLike = dataType === "date" || dataType === "datetime" || dataType === "year";
   const isChoiceLike = dataType === "select" || dataType === "multiselect";
   const isCheckbox = dataType === "checkbox";
 
-  // Reset when opening for a different row
-  function handleOpenChange(o: boolean) {
-    if (o && existing) {
+  // FIX (V2): синхронизация состояния при программном открытии диалога.
+  // useState инициализируется только при mount, а Dialog не вызывает
+  // onOpenChange при изменении prop `open`. Раньше из-за этого инпуты
+  // показывали пустые значения, и казалось, что «ничего не редактируется».
+  useEffect(() => {
+    if (!open) return;
+    if (existing) {
       setLabel(existing.label);
       setDescription(existing.description ?? "");
       setDataType(existing.data_type);
-      setUsageScope(existing.usage_scope);
-      setClientVisible(existing.client_visible);
-      setAdminEditable(existing.admin_editable);
-      setAutoAssign(existing.auto_assign_to_new_items);
       setRequired(existing.required);
       setSortOrder(existing.sort_order);
       setDefaultKind((existing.options?.default_kind as SmartDateKind | undefined) ?? "none");
@@ -467,14 +445,19 @@ function FieldDialog({
       setSeparator((existing.options?.separator as string | undefined) ?? ", ");
       setTrueLabel((existing.options?.true_label as string | undefined) ?? "Да");
       setFalseLabel((existing.options?.false_label as string | undefined) ?? "Нет");
-    } else if (o && !existing) {
-      setLabel(""); setDescription(""); setDataType("text"); setUsageScope("package_all");
-      setClientVisible(true); setAdminEditable(true); setAutoAssign(false); setRequired(false);
-      setSortOrder(100); setDefaultKind("none"); setChoices([]); setSeparator(", ");
+    } else {
+      setLabel(""); setDescription(""); setDataType("text");
+      setRequired(false); setSortOrder(100); setDefaultKind("none");
+      setChoices([]); setSeparator(", ");
       setTrueLabel("Да"); setFalseLabel("Нет");
     }
+    setShowAdvanced(false);
+  }, [open, existing]);
+
+  function handleOpenChange(o: boolean) {
     onOpenChange(o);
   }
+
 
   function buildOptions(): Record<string, unknown> {
     const opts: Record<string, unknown> = {};
@@ -510,14 +493,11 @@ function FieldDialog({
       description: description.trim() || null,
       data_type: dataType,
       options: buildOptions(),
-      usage_scope: usageScope,
-      client_visible: clientVisible,
-      admin_editable: adminEditable,
-      auto_assign_to_new_items: autoAssign,
       required,
       sort_order: sortOrder,
     });
   }
+
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -525,9 +505,11 @@ function FieldDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Поле создаётся один раз в каталоге пакета. Назначить его конкретным шаблонам можно
-            во вкладке «Анкеты документов». Один токен {"{{pf-XXXXXX}}"} — одно значение на анкету.
+            Поле создаётся один раз и автоматически появляется в любом документе пакета,
+            где встречается его токен <code className="font-mono">{`{{${"pf-XXXXXX"}}}`}</code>.
+            Клиент в анкете заполнит его один раз на весь пакет.
           </DialogDescription>
+
         </DialogHeader>
 
         <div className="space-y-3">
@@ -569,18 +551,8 @@ function FieldDialog({
                 </p>
               )}
             </div>
-            <div>
-              <Label>Видимость</Label>
-              <Select value={usageScope} onValueChange={(v) => setUsageScope(v as PackageFieldUsageScope)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(USAGE_SCOPE_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
+
 
           {isDateLike && (
             <div>
@@ -627,34 +599,40 @@ function FieldDialog({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40">
+          <div className="flex items-center justify-between pt-2 border-t border-border/40">
             <div className="flex items-center gap-2">
               <Switch checked={required} onCheckedChange={setRequired} />
-              <Label className="cursor-pointer">Обязательно</Label>
+              <Label className="cursor-pointer">Обязательно для клиента</Label>
             </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={clientVisible} onCheckedChange={setClientVisible} />
-              <Label className="cursor-pointer">Виден клиенту</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={adminEditable} onCheckedChange={setAdminEditable} />
-              <Label className="cursor-pointer">Редактирует админ</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={autoAssign} onCheckedChange={setAutoAssign} />
-              <Label className="cursor-pointer">Автоматически добавлять в новые шаблоны</Label>
-            </div>
-            <div>
-              <Label>Порядок</Label>
-              <Input
-                type="number"
-                value={sortOrder}
-                onChange={(e) => setSortOrder(Number(e.target.value) || 100)}
-                className="w-24"
-              />
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? "Скрыть доп. настройки" : "Доп. настройки"}
+            </Button>
           </div>
+
+          {showAdvanced && (
+            <div className="grid grid-cols-2 gap-3 border rounded p-3 bg-muted/30">
+              <div>
+                <Label className="text-xs">Порядок отображения</Label>
+                <Input
+                  type="number"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(Number(e.target.value) || 100)}
+                  className="w-24 h-8 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Меньше — выше в анкете. По умолчанию 100.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
+
 
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Отмена</Button>

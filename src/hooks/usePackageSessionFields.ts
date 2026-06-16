@@ -1,22 +1,13 @@
 /**
- * usePackageSessionFields — PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B2).
+ * usePackageSessionFields — token-driven резолвер анкеты pf-полей (V2).
  *
- * Источник пользовательской анкеты `pf-XXXXXX` для сессии пакета.
+ * Новая модель: набор pf-вопросов определяется токенами `{{pf-XXXXXX}}`
+ * в активных версиях DOCX-шаблонов всех документов пакета. Никаких
+ * `document_package_item_field_assignments` больше не читается.
  *
- * Контракт:
- *   • Кандидаты вопросов = все `document_package_item_field_assignments`
- *     активных шаблонов пакета с `visibility_mode = 'ask_client'`.
- *   • Дедупликация по `field_catalog_id`: каждый вопрос рендерится один раз,
- *     даже если назначен в N документах. Канонический assignment выбирается
- *     приоритетом: (a) явный override (`is_required_override`, `label_override`),
- *     (b) минимальный `sort_order`, (c) самый ранний `created_at`.
- *   • `effective_required = is_required_override ?? catalog.required`
- *     (override=false снимает каталоговую обязательность).
- *   • Значения хранятся в `document_package_session_field_values` и пишутся
- *     батчем через RPC `upsert_session_field_values`.
- *
- * STOP: не дублирует CRUD каталога (см. `usePackageFieldCatalog`); не пишет
- * напрямую в таблицы — только через RPC.
+ * Дедуп: каждое поле спрашивается один раз на сессию, даже если токен
+ * встречается в нескольких документах. Required, label и help берутся
+ * строго из каталога (`document_package_field_catalog`).
  */
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,9 +18,7 @@ import type {
   SmartDateKind,
   PackageFieldChoice,
 } from "@/hooks/usePackageFieldCatalog";
-import type {
-  PackageItemFieldAssignmentRow,
-} from "@/hooks/useDocumentItemFieldAssignments";
+import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
 
 export interface SessionFieldValueRow {
   id: string;
@@ -47,13 +36,11 @@ export interface SessionFieldValueRow {
 
 export interface DedupedQuestion {
   field: PackageFieldRow;
-  /** Канонический assignment, выбранный политикой дедупа. */
-  canonicalAssignment: PackageItemFieldAssignmentRow;
-  /** Сколько раз поле встречается в шаблонах пакета (для UI-хинта). */
+  /** В скольких шаблонах пакета встречается токен этого поля. */
   occurrences: number;
-  /** Список item_id, где это поле используется (для CTA). */
+  /** item_id шаблонов, где поле используется (для CTA/диагностики). */
   itemIds: string[];
-  /** Эффективные метаданные для рендера. */
+  /** Эффективные метаданные для рендера (берутся из каталога). */
   effective: {
     label: string;
     required: boolean;
@@ -62,8 +49,8 @@ export interface DedupedQuestion {
 }
 
 const QK = {
-  questions: (sessionId: string | null, templateId: string | null) =>
-    ["package-session-questions", sessionId, templateId] as const,
+  catalog: (templateId: string | null) =>
+    ["package-session-catalog", templateId] as const,
   values: (sessionId: string | null) =>
     ["package-session-values", sessionId] as const,
 };
@@ -73,76 +60,56 @@ export function usePackageSessionFields(
   packageTemplateId: string | null,
 ) {
   const qc = useQueryClient();
+  const detected = usePackageDetectedFields(packageTemplateId);
 
-  const questionsQuery = useQuery({
-    queryKey: QK.questions(sessionId, packageTemplateId),
-    queryFn: async (): Promise<DedupedQuestion[]> => {
-      if (!sessionId || !packageTemplateId) return [];
-
-      // 1. Активный каталог полей пакета.
-      const { data: catalog, error: catErr } = await supabase
+  // Каталог активных pf-полей пакета.
+  const catalogQuery = useQuery({
+    queryKey: QK.catalog(packageTemplateId),
+    queryFn: async (): Promise<PackageFieldRow[]> => {
+      if (!packageTemplateId) return [];
+      const { data, error } = await supabase
         .from("document_package_field_catalog" as never)
         .select("*")
         .eq("package_template_id", packageTemplateId)
         .eq("is_active", true);
-      if (catErr) throw catErr;
-      const fields = ((catalog ?? []) as unknown) as PackageFieldRow[];
-      if (fields.length === 0) return [];
-
-      // 2. Все items пакета.
-      const { data: items, error: itemsErr } = await supabase
-        .from("document_package_template_items")
-        .select("id")
-        .eq("package_template_id", packageTemplateId);
-      if (itemsErr) throw itemsErr;
-      const itemIds = (items ?? []).map((r) => r.id);
-      if (itemIds.length === 0) return [];
-
-      // 3. Активные ask_client assignments.
-      const { data: assignments, error: aErr } = await supabase
-        .from("document_package_item_field_assignments" as never)
-        .select("*")
-        .in("package_template_item_id", itemIds)
-        .eq("is_active", true)
-        .eq("visibility_mode", "ask_client");
-      if (aErr) throw aErr;
-      const rows = ((assignments ?? []) as unknown) as PackageItemFieldAssignmentRow[];
-
-      // B5: дедуп и effective override вынесены в pure-utility (vitest-покрыта).
-      const { dedupePackageQuestions } = await import("@/utils/packageFieldsDedup");
-      const deduped = dedupePackageQuestions(
-        fields.map((f) => ({
-          id: f.id,
-          label: f.label,
-          required: !!f.required,
-          description: f.description ?? null,
-          sort_order: f.sort_order,
-        })),
-        rows.map((r) => ({
-          id: r.id,
-          package_template_item_id: r.package_template_item_id,
-          field_catalog_id: r.field_catalog_id,
-          visibility_mode: r.visibility_mode,
-          sort_order: r.sort_order,
-          created_at: r.created_at,
-          is_required_override: r.is_required_override,
-          label_override: r.label_override,
-          help_override: r.help_override,
-        })),
-      );
-
-      const fieldById = new Map(fields.map((f) => [f.id, f]));
-      const rowById = new Map(rows.map((r) => [r.id, r]));
-      return deduped.map((q): DedupedQuestion => ({
-        field: fieldById.get(q.field.id)!,
-        canonicalAssignment: rowById.get(q.canonicalAssignment.id)!,
-        occurrences: q.occurrences,
-        itemIds: q.itemIds,
-        effective: q.effective,
-      }));
+      if (error) throw error;
+      return ((data ?? []) as unknown) as PackageFieldRow[];
     },
-    enabled: !!sessionId && !!packageTemplateId,
+    enabled: !!packageTemplateId,
   });
+
+  // Резолв вопросов: пересечение каталога и pf-токенов шаблонов.
+  const questions = useMemo<DedupedQuestion[]>(() => {
+    const fields = catalogQuery.data ?? [];
+    if (fields.length === 0) return [];
+
+    const byPublic = new Map<string, PackageFieldRow>();
+    for (const f of fields) if (f.public_id) byPublic.set(f.public_id, f);
+
+    const out: DedupedQuestion[] = [];
+    for (const pid of detected.allPublicIds) {
+      const field = byPublic.get(pid);
+      if (!field) continue; // токен без каталога — диагностика в админ-панели
+      const itemIds = detected.byPublicId[pid] ?? [];
+      out.push({
+        field,
+        occurrences: itemIds.length,
+        itemIds,
+        effective: {
+          label: field.label,
+          required: !!field.required,
+          help: field.description ?? null,
+        },
+      });
+    }
+
+    out.sort((a, b) => {
+      if (a.effective.required !== b.effective.required) return a.effective.required ? -1 : 1;
+      if (a.field.sort_order !== b.field.sort_order) return a.field.sort_order - b.field.sort_order;
+      return a.effective.label.localeCompare(b.effective.label);
+    });
+    return out;
+  }, [catalogQuery.data, detected.allPublicIds, detected.byPublicId]);
 
   const valuesQuery = useQuery({
     queryKey: QK.values(sessionId),
@@ -192,10 +159,8 @@ export function usePackageSessionFields(
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Прогресс по обязательным полям.
   const progress = useMemo(() => {
-    const qs = questionsQuery.data ?? [];
-    const required = qs.filter((q) => q.effective.required);
+    const required = questions.filter((q) => q.effective.required);
     const filledRequired = required.filter((q) => {
       const v = valuesByField.get(q.field.id);
       if (!v) return false;
@@ -210,18 +175,19 @@ export function usePackageSessionFields(
       );
     }).length;
     return {
-      total: qs.length,
+      total: questions.length,
       requiredTotal: required.length,
       requiredFilled: filledRequired,
       allRequiredFilled: filledRequired === required.length,
     };
-  }, [questionsQuery.data, valuesByField]);
+  }, [questions, valuesByField]);
 
   return {
-    questions: questionsQuery.data ?? [],
+    questions,
     values: valuesQuery.data ?? [],
     valuesByField,
-    isLoading: questionsQuery.isLoading || valuesQuery.isLoading,
+    isLoading:
+      catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,
     isSaving: saveMutation.isPending,
     progress,
