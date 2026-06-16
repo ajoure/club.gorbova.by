@@ -35,6 +35,7 @@ import { CheckCircle2, AlertTriangle, XCircle, ShieldCheck, Loader2, Upload } fr
 import mammoth from "mammoth";
 import { isBillingEntityType } from "@/utils/billingFldGroups";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { classifyPlaceholder } from "@/lib/documents/placeholderClassifier";
 
 interface Props {
   packageTemplateId: string | null;
