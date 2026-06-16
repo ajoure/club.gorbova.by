@@ -542,7 +542,20 @@ function FieldDialog({
             </div>
             <div>
               <Label>Тип данных</Label>
-              <Select value={dataType} onValueChange={(v) => setDataType(v as PackageFieldDataType)} disabled={!!existing}>
+              <Select
+                value={dataType}
+                onValueChange={(v) => {
+                  const next = v as PackageFieldDataType;
+                  setDataType(next);
+                  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2 (B4):
+                  // авто-сброс defaultKind, если он несовместим с новым типом
+                  // (например, year → date или date → text).
+                  if (!isSmartDateKindAllowedForType(defaultKind, next)) {
+                    setDefaultKind("none");
+                  }
+                }}
+                disabled={!!existing}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(DATA_TYPE_LABELS).map(([k, v]) => (
