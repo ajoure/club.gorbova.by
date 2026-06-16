@@ -381,7 +381,6 @@ function ItemQuestionnaire({
       }));
     try {
       await save(payload);
-      toast.success("Анкета документа сохранена");
     } catch { /* toast in hook */ }
   };
 
