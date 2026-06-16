@@ -504,7 +504,7 @@ Deno.serve(async (req) => {
             ? asg.is_required_override
             : !!field.required;
           const label: string = asg?.label_override || field.label || pfPublicId;
-          const raw = extractPfRawValue(field, pfValueByField.get(field.id));
+          const raw = extractPfRawValue(field, pfValueFor(item.id, field.id));
           const fmt = formatPfValue(field.data_type, raw, field.options, undefined);
           const rendered = 'value' in fmt ? fmt.value : '';
           const default_kind_applied: string | null =
