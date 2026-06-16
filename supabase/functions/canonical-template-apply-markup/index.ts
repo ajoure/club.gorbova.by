@@ -27,6 +27,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import PizZip from 'npm:pizzip@3.1.6';
 import { extractDocxTokensWithLocations } from '../_shared/docx-helpers.ts';
+import { evaluatePlaceholderInScope } from '../_shared/placeholderClassifier.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
