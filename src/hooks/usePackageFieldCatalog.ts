@@ -41,6 +41,21 @@ export type SmartDateKind =
   | "last_day_of_quarter"
   | "first_day_of_year"
   | "last_day_of_year"
+  // PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2 (Часть B, 11 новых):
+  // 4 month
+  | "first_day_of_prev_month"
+  | "last_day_of_prev_month"
+  | "first_day_of_next_month"
+  | "last_day_of_next_month"
+  // 4 quarter
+  | "first_day_of_prev_quarter"
+  | "last_day_of_prev_quarter"
+  | "first_day_of_next_quarter"
+  | "last_day_of_next_quarter"
+  // 3 year (только для data_type='year', возвращают 4-значное число строкой)
+  | "prev_year"
+  | "current_year"
+  | "next_year"
   | "session_created_date"
   | "generation_date";
 
