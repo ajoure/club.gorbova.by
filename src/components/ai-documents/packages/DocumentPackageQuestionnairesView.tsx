@@ -254,6 +254,16 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
         )}
       </GlassCard>
 
+      {/* Общие поля пакета (значения для всех документов) */}
+      {sessionId && (
+        <PackageFieldsClientForm
+          sessionId={sessionId}
+          packageTemplateId={packageTemplateId}
+          sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
+        />
+      )}
+
+
       {/* Аккордеон по документам */}
       {itemsQuery.isLoading ? (
         <GlassCard className="p-6 flex justify-center">
