@@ -139,17 +139,8 @@ export function PackageFieldsManager({ packageTemplateId }: Props) {
           <Button size="icon" variant="ghost" onClick={() => copyToken(r.public_id)} title="Скопировать токен">
             <Copy className="h-3.5 w-3.5" />
           </Button>
-          {r.is_active && (
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => assignToAll(r.id)}
-              disabled={assigningToAll}
-              title="Назначить во все шаблоны пакета"
-            >
-              <Layers className="h-3.5 w-3.5" />
-            </Button>
-          )}
+          {/* Кнопка «Назначить во все шаблоны пакета» удалена: привязка теперь
+              автоматическая по токенам в DOCX. */}
           <Button size="icon" variant="ghost" onClick={() => setEditRow(r)} title="Редактировать">
             <Pencil className="h-3.5 w-3.5" />
           </Button>
