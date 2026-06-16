@@ -29,7 +29,7 @@ import {
   Accordion, AccordionContent, AccordionItem, AccordionTrigger,
 } from "@/components/ui/accordion";
 import {
-  Building2, Users, Save, Plus, Trash2, AlertCircle, CheckCircle2, Info, Loader2, FileText,
+  Building2, Users, Save, Plus, Trash2, AlertCircle, CheckCircle2, Info, Loader2, FileText, ListChecks,
 } from "lucide-react";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
@@ -38,8 +38,9 @@ import { useAiPersons } from "@/hooks/useAiPersons";
 import { useRbac } from "@/hooks/useRbac";
 import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
+import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
-import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
+import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 interface Props {
