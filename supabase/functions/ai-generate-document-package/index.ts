@@ -215,13 +215,23 @@ Deno.serve(async (req) => {
     const { data: pfValueRows } = pfCatalogIds.length
       ? await supabase
           .from('document_package_session_field_values')
-          .select('field_catalog_id, value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
+          .select('field_catalog_id, package_template_item_id, value_text, value_number, value_date, value_datetime, value_time, value_boolean, value_json')
           .eq('session_id', packageSessionId)
           .in('field_catalog_id', pfCatalogIds)
       : { data: [] as any[] } as any;
-    const pfValueByField = new Map<string, any>(
-      (pfValueRows || []).map((v: any) => [v.field_catalog_id, v]),
-    );
+    // Per-item override map + session-level fallback map.
+    const pfValueSessionByField = new Map<string, any>();
+    const pfValueItemFieldMap = new Map<string, any>(); // key: `${itemId}::${fieldId}`
+    for (const v of (pfValueRows || []) as any[]) {
+      if (v.package_template_item_id) {
+        pfValueItemFieldMap.set(`${v.package_template_item_id}::${v.field_catalog_id}`, v);
+      } else {
+        pfValueSessionByField.set(v.field_catalog_id, v);
+      }
+    }
+    function pfValueFor(itemId: string, fieldId: string) {
+      return pfValueItemFieldMap.get(`${itemId}::${fieldId}`) ?? pfValueSessionByField.get(fieldId) ?? null;
+    }
 
     function extractPfRawValue(field: any, valueRow: any): unknown {
       if (!valueRow) return null;
