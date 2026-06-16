@@ -13,7 +13,7 @@
  * Канонические календари (DatePicker/DateTimePicker), компактная сетка.
  * Технический pf-XXXXXX клиенту не показывается.
  */
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
