@@ -247,15 +247,8 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
         )}
       </GlassCard>
 
-      {/* PATCH-PACKAGE-CUSTOM-FIELDS-V1 B2: клиентская анкета pf-полей */}
-      {hasSession && (
-        <PackageFieldsClientForm
-          sessionId={pkg.session?.id ?? null}
-          packageTemplateId={pkg.templateId}
-          sessionCreatedAt={pkg.session?.created_at ?? null}
-          disabled={pkg.isLocked}
-        />
-      )}
+
+
 
 
 
