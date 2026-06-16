@@ -317,9 +317,15 @@ function newUid() {
 }
 
 function ItemQuestionnaire({
-  item, packageTemplateId, sessionId, activeRoles, persons, personsLoading, isAdmin,
+  item, packageTemplateId, sessionId, sessionCreatedAt,
+  activeRoles, persons, personsLoading, isAdmin,
 }: ItemQuestionnaireProps) {
   const { assignments, isLoading, save, isSaving } = useDocumentItemRoleAssignments(sessionId, item.id);
+  const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
+  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
+  const itemQuestions = fieldsState.getItemQuestions(item.id);
+  const itemProgress = fieldsState.getItemProgress(item.id);
+
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
 
   // hydrate when assignments loaded
@@ -336,10 +342,7 @@ function ItemQuestionnaire({
     );
   }, [isLoading, assignments, draft]);
 
-  const filledCount = (draft ?? []).filter((r) => r.role_catalog_id && r.person_id).length;
-  const statusLabel = filledCount === 0
-    ? "Не заполнено"
-    : `Назначений: ${filledCount}`;
+  const filledRolesCount = (draft ?? []).filter((r) => r.role_catalog_id && r.person_id).length;
 
   const addRow = (preselectRoleKey?: string) => {
     const role = preselectRoleKey
@@ -358,7 +361,16 @@ function ItemQuestionnaire({
     setDraft((prev) => (prev ?? []).filter((r) => r.uid !== uid));
   };
 
-  const handleSave = async () => {
+  const handleSaveAll = async () => {
+    // 1) Сначала сохраняем поля документа (per-item).
+    if (fieldsRef.current && fieldsRef.current.isDirty) {
+      const ok = await fieldsRef.current.submit();
+      if (!ok) {
+        toast.error("Не удалось сохранить поля документа");
+        return;
+      }
+    }
+    // 2) Затем сохраняем роли документа.
     const payload = (draft ?? [])
       .filter((r) => r.role_catalog_id && r.person_id)
       .map((r) => ({
@@ -368,8 +380,15 @@ function ItemQuestionnaire({
       }));
     try {
       await save(payload);
+      toast.success("Анкета документа сохранена");
     } catch { /* toast in hook */ }
   };
+
+  const hasFields = itemQuestions.length > 0;
+  const fieldsBadge = hasFields
+    ? `${itemProgress.filled}/${itemProgress.total} полей`
+    : null;
+  const rolesBadge = `${filledRolesCount} ролей`;
 
   return (
     <AccordionItem value={item.id}>
@@ -380,121 +399,145 @@ function ItemQuestionnaire({
           </Badge>
           <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
           <span className="text-sm font-medium truncate text-left">{item.template_name}</span>
-          <Badge
-            variant="outline"
-            className={`text-[10px] h-4 px-1.5 ml-auto shrink-0 ${
-              filledCount === 0 ? "text-muted-foreground" : "border-emerald-300 text-emerald-700"
-            }`}
-          >
-            {filledCount === 0
-              ? <><AlertCircle className="h-2.5 w-2.5 mr-1" />{statusLabel}</>
-              : <><CheckCircle2 className="h-2.5 w-2.5 mr-1" />{statusLabel}</>}
-          </Badge>
+          <div className="flex items-center gap-1 ml-auto shrink-0">
+            {fieldsBadge && (
+              <Badge variant="outline"
+                className={`text-[10px] h-4 px-1.5 ${
+                  itemProgress.allRequiredFilled
+                    ? "border-emerald-300 text-emerald-700"
+                    : "text-muted-foreground"
+                }`}>
+                {itemProgress.allRequiredFilled
+                  ? <CheckCircle2 className="h-2.5 w-2.5 mr-1" />
+                  : <AlertCircle className="h-2.5 w-2.5 mr-1" />}
+                {fieldsBadge}
+              </Badge>
+            )}
+            <Badge variant="outline"
+              className={`text-[10px] h-4 px-1.5 ${
+                filledRolesCount === 0 ? "text-muted-foreground" : "border-emerald-300 text-emerald-700"
+              }`}>
+              {filledRolesCount === 0
+                ? <AlertCircle className="h-2.5 w-2.5 mr-1" />
+                : <CheckCircle2 className="h-2.5 w-2.5 mr-1" />}
+              {rolesBadge}
+            </Badge>
+          </div>
         </div>
       </AccordionTrigger>
-      <AccordionContent className="px-3 pb-3 space-y-2">
-        {isLoading || draft === null ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        ) : activeRoles.length === 0 ? (
-          <div className="text-xs text-muted-foreground border border-dashed rounded p-3 text-center">
-            В пакете нет активных ролей. Создайте роль в подвкладке «Роли пакета»
-            {isAdmin && (
-              <div className="mt-2">
-                <InlineCreateRoleDialog packageTemplateId={packageTemplateId} />
-              </div>
-            )}
+      <AccordionContent className="px-3 pb-3 space-y-4">
+        {/* Поля этого документа */}
+        {hasFields && (
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+              <ListChecks className="h-3 w-3" /> Поля документа
+            </div>
+            <PackageFieldsClientForm
+              ref={fieldsRef}
+              sessionId={sessionId}
+              packageTemplateId={packageTemplateId}
+              packageTemplateItemId={item.id}
+              sessionCreatedAt={sessionCreatedAt}
+              hideSaveButton
+            />
           </div>
-        ) : (
-          <>
-            <div className="space-y-1.5">
-              {(draft ?? []).length === 0 && (
-                <div className="text-xs text-muted-foreground text-center py-2">
-                  Пока нет назначений. Добавьте первую роль.
+        )}
+
+        {/* Роли этого документа */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+            <Users className="h-3 w-3" /> Роли документа
+          </div>
+          {isLoading || draft === null ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : activeRoles.length === 0 ? (
+            <div className="text-xs text-muted-foreground border border-dashed rounded p-3 text-center">
+              В пакете нет активных ролей. Создайте роль в подвкладке «Роли пакета»
+              {isAdmin && (
+                <div className="mt-2">
+                  <InlineCreateRoleDialog packageTemplateId={packageTemplateId} />
                 </div>
               )}
-              {(draft ?? []).map((row) => (
-                <div key={row.uid} className="flex items-start gap-1.5 border rounded p-2">
-                  <Select
-                    value={row.role_catalog_id}
-                    onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}
-                  >
-                    <SelectTrigger className="h-8 text-[11px] flex-1">
-                      <SelectValue placeholder="Роль…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeRoles.map((r) => (
-                        <SelectItem key={r.id} value={r.id} className="text-[11px]">
-                          {r.label} <span className="text-muted-foreground ml-1">({r.public_id})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={row.person_id}
-                    onValueChange={(v) => updateRow(row.uid, { person_id: v })}
-                  >
-                    <SelectTrigger className="h-8 text-[11px] flex-1">
-                      <SelectValue placeholder="Физлицо…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {personsLoading ? (
-                        <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
-                      ) : persons.filter((p) => p.is_active).length === 0 ? (
-                        <div className="px-2 py-1 text-[11px] text-muted-foreground">
-                          Нет физлиц. Добавьте их во вкладке «Реквизиты».
-                        </div>
-                      ) : (
-                        persons.filter((p) => p.is_active).map((p) => (
-                          <SelectItem key={p.id} value={p.id} className="text-[11px]">
-                            {p.full_name ?? "—"}
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                {(draft ?? []).length === 0 && (
+                  <div className="text-xs text-muted-foreground text-center py-2">
+                    Пока нет назначений. Добавьте первую роль.
+                  </div>
+                )}
+                {(draft ?? []).map((row) => (
+                  <div key={row.uid} className="flex items-start gap-1.5 border rounded p-2">
+                    <Select value={row.role_catalog_id}
+                      onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}>
+                      <SelectTrigger className="h-8 text-[11px] flex-1">
+                        <SelectValue placeholder="Роль…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeRoles.map((r) => (
+                          <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                            {r.label}
                           </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={row.position}
-                    onChange={(e) => updateRow(row.uid, { position: e.target.value })}
-                    placeholder="Должность (опц.)"
-                    className="h-8 text-[11px] flex-1"
-                  />
-                  <Button
-                    variant="ghost" size="icon" className="h-8 w-8 shrink-0"
-                    onClick={() => removeRow(row.uid)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <HelpTooltip
-                helpKey=""
-                customShort="Добавить ещё одно назначение: роль + человек. Одну роль можно назначить нескольким людям."
-                alwaysShow
-              >
-                <Button size="sm" variant="outline" onClick={() => addRow()}>
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Добавить роль
-                </Button>
-              </HelpTooltip>
-              <HelpTooltip
-                helpKey=""
-                customShort="Сохранить заполненные назначения по этому документу."
-                alwaysShow
-              >
-                <Button size="sm" onClick={handleSave} disabled={isSaving}>
-                  <Save className="h-3.5 w-3.5 mr-1" />
-                  {isSaving ? "Сохранение…" : "Сохранить анкету документа"}
-                </Button>
-              </HelpTooltip>
-            </div>
-            <p className="text-[10px] text-muted-foreground flex items-start gap-1">
-              <Info className="h-2.5 w-2.5 mt-0.5 shrink-0" />
-              Одну роль можно назначить нескольким физлицам — просто добавьте
-              строку с той же ролью и другим человеком.
-            </p>
-          </>
-        )}
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={row.person_id}
+                      onValueChange={(v) => updateRow(row.uid, { person_id: v })}>
+                      <SelectTrigger className="h-8 text-[11px] flex-1">
+                        <SelectValue placeholder="Физлицо…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {personsLoading ? (
+                          <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
+                        ) : persons.filter((p) => p.is_active).length === 0 ? (
+                          <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                            Нет физлиц. Добавьте их во вкладке «Реквизиты».
+                          </div>
+                        ) : (
+                          persons.filter((p) => p.is_active).map((p) => (
+                            <SelectItem key={p.id} value={p.id} className="text-[11px]">
+                              {p.full_name ?? "—"}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <Input value={row.position}
+                      onChange={(e) => updateRow(row.uid, { position: e.target.value })}
+                      placeholder="Должность (опц.)" className="h-8 text-[11px] flex-1" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"
+                      onClick={() => removeRow(row.uid)}>
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button size="sm" variant="outline" onClick={() => addRow()}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Добавить роль
+              </Button>
+            </>
+          )}
+        </div>
+
+        {/* Единая кнопка сохранения по документу (поля + роли) */}
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/40">
+          <p className="text-[10px] text-muted-foreground flex items-start gap-1">
+            <Info className="h-2.5 w-2.5 mt-0.5 shrink-0" />
+            Значения полей сохраняются для этого документа. Если поле не заполнено
+            здесь — используется общее значение пакета.
+          </p>
+          <HelpTooltip
+            helpKey=""
+            customShort="Сохранить поля и роли этого документа."
+            alwaysShow
+          >
+            <Button size="sm" onClick={handleSaveAll} disabled={isSaving}>
+              <Save className="h-3.5 w-3.5 mr-1" />
+              {isSaving ? "Сохранение…" : "Сохранить анкету документа"}
+            </Button>
+          </HelpTooltip>
+        </div>
       </AccordionContent>
     </AccordionItem>
   );
