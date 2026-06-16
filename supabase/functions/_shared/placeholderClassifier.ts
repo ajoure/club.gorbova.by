@@ -188,7 +188,7 @@ export interface ScopeEvaluation {
    *   - 'ok' (valid)
    *   - 'package_token_outside_package_context'  — pf/ln/package.* в billing scope
    *   - 'legacy_role_format'                     — устаревший role-формат
-   *   - 'legacy_placeholder_format_detected'     — document.*/executor.* и т.д. и любой invalid
+   *   - 'legacy_placeholder_format_detected'     — document./executor. и т.д. и любой invalid
    *   - 'unknown_modifier' | 'invalid_modifier_value'
    */
   reason?:
