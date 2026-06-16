@@ -133,7 +133,7 @@ export function usePackageSessionFields(
 
   const saveMutation = useMutation({
     mutationFn: async (
-      values: Array<{ field_catalog_id: string; raw_value: string | null }>,
+      values: Array<{ field_catalog_id: string; value: string | null }>,
     ) => {
       if (!sessionId) throw new Error("session_not_loaded");
       const { data, error } = await supabase.rpc(
