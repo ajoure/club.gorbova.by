@@ -82,7 +82,13 @@ function serializeDateTime(date: Date | undefined, time: string): string {
   return `${serializeLocalDate(date)}T${t}`;
 }
 
-export function PackageFieldsClientForm({
+export interface PackageFieldsSubmitHandle {
+  submit: () => Promise<boolean>;
+  isDirty: boolean;
+  isSaving: boolean;
+}
+
+export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Props>(function PackageFieldsClientForm({
   sessionId,
   packageTemplateId,
   packageTemplateItemId = null,
@@ -90,7 +96,7 @@ export function PackageFieldsClientForm({
   disabled,
   onSaved,
   hideSaveButton = false,
-}: Props) {
+}, ref) {
   const {
     questions: allQuestions,
     valuesByField,
