@@ -1,123 +1,244 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. Перед утверждением, что генераторы уже поддерживают `long / full / short / signature_short`, провести read-only проверку фактического resolver-контракта. Классификатор лишь разрешает синтаксис; он не доказывает корректный рендеринг. Добавить тесты именно преобразования:
-  - `FLD-000010 + long`;
-  - `FLD-000014 + signature_short`;
-  - `FLD-000014 + short`;
-  - `FLD-000372 + full`.
-2. Если resolver не поддерживает хотя бы один из форматов, исправить его в рамках этого же PATCH до Runtime UAT. Нельзя активировать шаблон, который проходит классификацию, но падает или возвращает raw value при генерации.
-3. В `PlaceholderFormat` проверить весь итоговый union. Он должен содержать все реально разрешённые значения:
+1. **Не отключать assignment-слой до полного аудита всех его потребителей.** Ранее B2/B4 использовали `document_package_item_field_assignments` для:
+  - `effective_required`;
+  - `visibility_mode`;
+  - assignment lookup перед генерацией;
+  - диагностики `pf_assignment_missing` / `pf_unused_assignment`;
+  - snapshot и required-gate.
+  До изменения выполнить grep/read-only карту всех чтений таблицы во frontend, RPC и edge. Каждый потребитель должен быть явно переведён на новую модель «catalog ∩ tokens». Недостаточно изменить только клиентскую форму.
+2. **Зафиксировать новый канонический required-контракт.** После удаления override:
   &nbsp;
   ```text
-  words | text | full | short | signature_short | long
+  effective_required = document_package_field_catalog.required
   ```
-  Добавлять только `long` допустимо лишь при доказательстве, что остальные четыре уже присутствуют.
-4. Сохранить parity SOT ↔ edge mirror после изменения format-set. В proof приложить не только результаты одинаковых тестов, но и результат существующего parity/hash-контроля.
-5. После изменения `_shared/placeholderClassifier.ts` обязательно повторно задеплоить `canonical-template-apply-markup` и зафиксировать deployment proof. Иначе runtime продолжит использовать старый whitelist.
-6. В D-Activate не хардкодить значение `validation_status='active'`, если фактическая схема разделяет `validation_status` и `is_active`. Зафиксировать реальные поля до/после:
+  Это правило должно одинаково применяться:
+  - в клиентской анкете;
+  - в `canGenerate`;
+  - в `canonical-document-generate-strict`;
+  - в `pf-required-gate`;
+  - в snapshot.
+  Старое вычисление через `is_required_override` должно быть удалено или перестать участвовать.
+3. **Не утверждать, что** `resolve-package-tokens.ts` **не зависит от assignments, только по одному файлу.** Проверить весь путь:
+  ```text
+  ai-generate-document-package
+  → orchestrator/pre-resolve
+  → canonical-document-generate-strict
+  → pf-required-gate
+  → resolve-package-tokens
+  ```
+  Если assignment читается выше resolver, его необходимо удалить из полного pipeline.
+4. **Источник токенов — только актуальная активная версия шаблона.** Не объединять без приоритета:
+  - `document_templates.placeholders`;
+  - `current_version.content`;
+  - `manifest.tokens[]`.
+  Зафиксировать один канон:
+  1. `active_version_id/current_version.manifest.tokens[]`;
+  2. fallback на canonical placeholders только для legacy-версий;
+  3. сырой `content` не парсить в UI, если manifest уже существует.
+  Иначе анкета может показывать поля из старой или черновой версии.
+5. **Не выполнять клиентский security-critical JOIN только на фронте.** Список полей сессии должен возвращаться серверным RPC с проверкой:
+  - workspace;
+  - package/session ownership;
+  - активных package items;
+  - актуальных template versions;
+  - `package_template_id`;
+  - архивности catalog field.
+  Клиент не должен самостоятельно читать произвольные шаблоны и каталог пакета.
+6. **Автопривязка становится вычисляемой, а не физической.** Поэтому термин «авто-привязка» заменить в коде и UI на «обнаружено в шаблоне». Не создавать новые строки assignments при чтении. Read-only панель должна показывать:
+  ```text
+  поле найдено в DOCX
+  поле отсутствует в DOCX
+  неизвестный pf-токен
+  pf-токен другого пакета
+  ```
+  Последние два состояния нельзя молча отфильтровывать JOIN-ом.
+7. **Не делать триггер no-op без необходимости.** Предпочтительно:
+  - удалить конкретный trigger через миграцию;
+  - сохранить trigger function только при наличии других зависимостей;
+  - приложить dependency query.
+  No-op триггер оставляет скрытую архитектурную ловушку и бесполезный runtime overhead.
+8. **Исторические assignments не удалять и не изменять.** Новая логика чтения их игнорирует, но:
+  - старые строки сохраняются для аудита;
+  - старые session/document snapshots остаются неизменными;
+  - никакого массового cleanup в этом PATCH;
+  - новые записи assignments после деплоя не создаются.
+9. **Поля** `usage_scope`**,** `client_visible`**,** `auto_assign_to_new_items` **должны нормализоваться сервером.** Удаление контролов из UI недостаточно. Create/update RPC должен принудительно устанавливать:
   &nbsp;
   ```text
-  validation_status
-  is_active
-  active_version_id
+  usage_scope = 'package_all'
+  client_visible = true
+  auto_assign_to_new_items = false
   ```
-  Успех: ошибок `0`, валидный статус и реально активная версия.
-7. В D7-200 не требовать нового поля `format` внутри `tokens_snapshot[]`, если его нет в утверждённом snapshot-контракте. Формат доказать через:
-  - исходный manifest/raw token;
-  - фактически отрендеренный текст DOCX;
-  - существующие snapshot-поля без изменения их схемы.
-8. Добавить отрицательные resolver-тесты: формат, синтаксически разрешённый для namespace `package_requisite`, но неприменимый к конкретному типу значения, не должен приводить к молчаливому повреждению данных. Он должен либо корректно вернуть исходное значение по существующему контракту, либо дать каноническую ошибку — фактическое поведение зафиксировать в proof.
-9. D7-422 выполнять только после подтверждения, что используемый обязательный `pf-XXXXXX` действительно присутствует в DOCX этого шаблона, назначен данному item и имеет `effective_required=true`. Иначе тест не доказывает required-gate.
-10. Итоговый proof должен отдельно показывать:
-  - classifier tests;
-  - resolver/format tests;
-  - edge deployment;
+  и игнорировать подменённые значения клиента. Для существующих записей выполнить read-only аудит отклонений и решить:
+  - либо безопасная data-normalization migration;
+  - либо server projection, которая всегда трактует их канонически.
+  Утверждение «миграция данных не требуется» должно быть доказано фактическими значениями.
+10. **Архивные поля не показывать в новых анкетах, но сохранять историческую генерацию.** Зафиксировать:
+  - активная сессия/новая анкета — только active catalog fields;
+  - уже сохранённое значение архивного поля и исторический snapshot не удаляются;
+  - генерация старой зафиксированной сессии должна иметь определённое поведение, а не случайно терять токен.
+11. **Поле показывается клиенту один раз на пакетную сессию.** При наличии одного `pf-XXXXXX` в нескольких документах:
+  - дедуп по `field_catalog_id`;
+  - порядок — `catalog.sort_order`, затем `created_at/public_id`;
+  - значение одно в `document_package_session_field_values`;
+  - required progress считается по уникальным полям, а не по количеству вхождений.
+12. **Read-only панель документа не должна показывать “0/7 → 4/7” без определения знаменателя.** Зафиксировать:
+  - числитель — число уникальных валидных `pf-` токенов в активной версии этого документа;
+  - знаменатель — число активных полей каталога пакета;
+  - либо отказаться от дроби и показывать «Найдено полей: 4», чтобы не создавать ложное ожидание, что все 7 должны присутствовать в каждом документе.
+13. **Сохранить validation panel.** После отказа от assignments:
+  - `pf_assignment_missing` становится устаревшим и не должен продолжать блокировать шаблон;
+  - `pf_unused_assignment` теряет смысл для новых данных;
+  - `pf_token_not_found` и `pf_token_outside_bound_package` остаются обязательными.
+
+Изменение кодов диагностики отразить add-only в proof и тестах. Исторические коды не удалять из документации без mapping:
+
+```text
+pf_assignment_missing → retired: assignment layer no longer canonical
+pf_unused_assignment → retired: assignment layer no longer canonical
+```
+
+14. **Исправление** `FieldDialog` **тестировать не только визуально.** Добавить тесты:
+  - открыть поле A;
+  - закрыть;
+  - открыть поле B;
+  - все значения соответствуют B;
+  - изменить label/help/required/options;
+  - сохранить;
+  - повторно открыть и проверить persisted values;
+  - create-dialog после edit открывается очищенным.
+15. **Select/multiselect options должны сохраняться без потери.** При редактировании проверить:
+  - порядок options;
+  - удаление/добавление option;
+  - недопустимость пустых значений и дублей;
+  - существующие session values не повреждаются после изменения каталога.
+16. **Добавить серверный RPC вместо переиспользования deprecated hook как источника истины.** Например:
+  &nbsp;
+  ```text
+  get_package_session_effective_fields(session_id)
+  get_package_item_detected_fields(package_item_id)
+  ```
+  RPC должны возвращать public ID, catalog ID, label, type, required, help, options, sort order и список item/template references.
+17. `useDocumentItemFieldAssignments.ts` **не удалять частично без проверки импортов.** Сначала dependency map. После перевода всех call-sites:
+  - либо переименовать в `usePackageTemplateDetectedFields.ts`;
+  - либо создать новый hook, а старый оставить deprecated compatibility-wrapper без write API.
+
+Имя `Assignments` после отказа от assignments вводит в заблуждение.
+
+18. **DoD дополнить backend required-gate и runtime DOCX.** Обязательно доказать:
+  - поле найдено по токену без assignment row;
+  - анкета показывает его один раз;
+  - значение сохраняется;
+  - генерация 200 подставляет значение;
+  - отсутствие required значения даёт 422;
+  - создание документа при 422 отсутствует;
+  - физическое отсутствие assignment row не мешает генерации.
+19. **Добавить миграционный runtime-сценарий.** Взять существующий пакет, где assignments уже есть:
+  - зафиксировать анкету до патча;
+  - применить новую модель;
+  - убедиться, что набор полей определяется токенами;
+  - старые assignments не влияют на видимость/required;
+  - toast `dpifa_invalid_references` исчезает;
+  - новых assignment rows не появляется.
+20. **Предыдущий открытый D7 не отменяется.** Упрощение модели не закрывает автоматически:
   - runtime activation;
-  - DOCX 200 с визуальной и XML-проверкой;
-  - 422 с `count(*)` до/после.
+  - DOCX 200;
+  - snapshot;
+  - &nbsp;
+  422. 422.
 
-Все остальные пункты плана сохраняются add-only.
+Эти проверки включить в финальный proof текущего PATCH. Патч закрывается только после полного runtime PASS новой token-driven модели.
 
-&nbsp;
+да, согласен, с учетом правок:
 
-План: PATCH-PACKAGE-CUSTOM-FIELDS-V1 — fix invalid_modifier_value для package.{ul|ip|fl}
+21. **Не усложнять внедрение избыточным discovery/dry-run.** Функциональность ещё не используется в production-сценариях: фактически имеется один тестовый шаблон с добавленными `pf-` плейсхолдерами, исторических клиентских сессий и значимого массива зависимостей нет. Поэтому:
 
-## Diagnose
+- не проводить многоэтапный аудит всех старых assignments и потребителей;
+- не строить сложный migration/compatibility layer;
+- не выполнять многократные read-only проверки перед изменениями;
+- допускается прямо заменить текущую модель на упрощённую token-driven логику;
+- основная задача — упростить UI и обеспечить понятное поведение: поле из каталога автоматически появляется в анкете, если его токен присутствует в шаблоне;
+- старые таблицы и колонки можно оставить физически для совместимости, но они не должны участвовать в новой UI-логике;
+- достаточно базовой проверки, что сборка проходит, анкета показывает нужные поля, редактирование работает и DOCX генерируется.
 
-Шаблон «1. Приказ о проведении годового общего собрания участников ООО» падает с 2 ошибками:
+Приоритет — быстрое и чистое упрощение интерфейса без избыточной архитектурной перестраховки.
 
-- `{{package.ul.FLD-000010|format=long}}` → `invalid_modifier_value` (FLD-000010 = «Форма собственности», `long` = полная расшифровка «Общество с ограниченной ответственностью»).
-- `{{package.ul.FLD-000014|format=signature_short}}` → `invalid_modifier_value` (FLD-000014 = «Руководитель ФИО», `signature_short` = «И.И.Иванов»).
+План: упрощение модели полей пакета (pf-XXXXXX)
 
-Причина: в `placeholderClassifier.ts` для ветки `package_requisite` (`package.{ul|ip|fl}.FLD-XXXXXX`) разрешён только `FORMATS_BILLING = {words, text}`. При этом фронт-каталог `src/utils/packagePlaceholderCatalog.ts` (Sprint 3K/3L) **сам генерит** токены с `format=long|short|signature_short|full` для FLD-000010 (org_form) и FLD-000014 / FLD-000372 (имена). Это рассинхрон каталога и валидатора, а не ошибка пользователя в шаблоне.
+Цель — одно правило: **поле создаётся один раз в каталоге, всегда видно клиенту в анкете и автоматически подставляется во все документы, где встречается токен `{{pf-XXXXXX}}**`. Никаких ручных тумблеров, оверрайдов и непонятных «видимостей».
 
-Память-канон: `package.ul/ip` — реюз `client_legal_details`, `package.fl` — `legal_details_persons`; namespace package_requisite одновременно держит и биллинговые поля (суммы/даты — нужны `words|text`), и поля-персоналии/орг-форма (нужны `full|short|signature_short|long`).
+---
 
-## Scope
+### 1. Что убираем (UI + БД)
 
-Расширить набор допустимых `format` именно для `package_requisite` так, чтобы он покрывал реально генерируемые каталогом значения, без расширения для билингового `field:FLD-…` и без касания smart-date / pf-/ ln- / scope-gate логики.
+**Каталог поля (PackageFieldsManager → диалог редактирования):**
 
-## Шаги
+- Поле «Видимость» (`usage_scope`: package_all / questionnaire_only / documents_only) — убираем из UI, в БД фиксируем `'package_all'` по умолчанию (column оставляем, миграция не нужна).
+- Тумблер «Виден клиенту» (`client_visible`) — убираем из UI, всегда `true`.
+- Тумблер «Автоматически добавлять в новые шаблоны» (`auto_assign_to_new_items`) — убираем; авто-привязка теперь идёт по реально найденным токенам, флаг не нужен.
+- Поле «Порядок» (`sort_order`) — оставляем, но скрываем в advanced (по умолчанию 100).
 
-### 1. Канон формата (shared SOT)
+**Аккордеон «Анкеты документов» (PackageFieldsAssignmentPanel):**
 
-`src/lib/documents/placeholderClassifier.ts` и зеркало `supabase/functions/_shared/placeholderClassifier.ts`:
+- Тумблер активации каждого поля — убираем.
+- Селектор «Видимость» (ask_client / admin_only / hidden_with_default) — убираем.
+- Селектор «Обязательность в этом документе» (как в каталоге / обязательно / необязательно) — убираем.
+- Поле «Локальная подпись» (`label_override`) — убираем.
+- Кнопка «Во все» — убираем (бессмысленна при авто-привязке).
 
-- Добавить `FORMATS_PACKAGE_REQUISITE = new Set([...FORMATS_BILLING, 'full', 'short', 'signature_short', 'long'])`.
-- В `classifyPlaceholder` для ветки `RE_PACKAGE_REQ` использовать `FORMATS_PACKAGE_REQUISITE` вместо `FORMATS_BILLING`.
-- `FORMATS_BILLING` для `field:FLD-…` остаётся `{words, text}` — биллинг не расширяем.
-- `FORMATS_LN` (для `ln-` и `pf-`) — без изменений.
-- Добавить `'long'` в тип `PlaceholderFormat`.
+Панель превращается в **read-only список pf-полей, реально встречающихся в шаблоне этого документа** (с public_id, типом и пометкой «обязательно», если так задано в каталоге). Это и есть «0 / 7 → 4 / 7» — но без тумблеров, просто как карта присутствия.
 
-### 2. Тесты parity и контракта
+---
 
-- `src/lib/documents/placeholderClassifier.test.ts`: добавить кейсы valid для
-  - `package.ul.FLD-000010|format=long`
-  - `package.ul.FLD-000014|format=signature_short`
-  - `package.ul.FLD-000014|format=short|case=genitive`
-  - `package.fl.FLD-000372|format=full`
-  - и by-design invalid: `field:FLD-000001|format=long` → `invalid_modifier_value` (биллинг не расширен).
-- Зеркальные кейсы в `supabase/functions/_shared/placeholderClassifier.test.ts`.
-- Проверить, что существующий `placeholderClassifier.parity.test.ts` всё ещё PASS.
-- Vitest по `packagePlaceholderCatalog.test.ts` уже ожидает эти токены — их не трогаем.
+### 2. Что чиним в редактировании каталога
 
-### 3. UI-валидатор (косвенно)
+Текущий баг: `FieldDialog` инициализирует локальное состояние через `useState(existing?.label ?? "")` один раз. При открытии диалога для другой строки prop меняется, а state — нет, поэтому инпуты показывают пустоту и пользователю кажется, что «ничего не редактируется».
 
-`PackageTemplateValidationPanel.tsx` уже зовёт shared `classifyPlaceholder` (Iteration 3), отдельных правок не требуется — 2 ошибки в «Приказе …» исчезают автоматически после правки канона.
+Фикс:
 
-### 4. Runtime UAT (deferred-блок из предыдущего отчёта закрывается здесь)
+- Загружать state из `existing` каждый раз при переходе `open: false → true` (через `useEffect`, а не только через `onOpenChange`, которое не срабатывает на программное открытие).
+- Disabled оставляем только на «Тип данных» (immutability по контракту БД).
 
-- D-Activate: открыть `/admin/documents` → «1. Приказ …» → «Проверка и исправление полей» → ошибок 0 → нажать «Активировать шаблон» → `validation_status='active'`, скрин.
-- D7-200: e2e генерация DOCX по этому шаблону — HTTP 200, в итоговом DOCX `FLD-000010` подставлен как «Общество с ограниченной ответственностью», `FLD-000014` как «И.И.Иванов»; `tokens_snapshot[]` содержит записи с корректными `format`.
-- D7-422: очистить required `pf-XXXXXX` поле в этом же пакете → HTTP 422 `pf_required_value_missing`, документ и snapshot не создаются.
+---
 
-### 5. Финализация DoD
+### 3. Авто-привязка по токенам шаблона
 
-Дописать в `.lovable/proofs/package_custom_fields_2026-06-16_iteration3_final.md` новые строки:
+Источник истины — токены `{{pf-XXXXXX}}` в актуальной версии шаблона (`document_templates.placeholders` уже содержит распознанные токены; для уверенности будем читать и `current_version.content`).
 
+Поведение:
 
-| #   | Item                                                                    | Status |
-| --- | ----------------------------------------------------------------------- | ------ |
-| 9   | package_requisite format set расширен (long/full/short/signature_short) | PASS   |
-| 10  | Билинговый `field:FLD-…` НЕ принимает long/short/signature_short        | PASS   |
-| 11  | D-Activate «1. Приказ …» 0 ошибок и active                              | PASS   |
-| 12  | D7-200 DOCX e2e + snapshot                                              | PASS   |
-| 13  | D7-422 без документа и snapshot                                         | PASS   |
+- При открытии анкеты документа (клиент) и при показе панели в админке: для каждого `document_package_template_items.template_id` собираем множество `pf-XXXXXX` → джойн с `document_package_field_catalog` по `public_id` + `package_template_id` = его пакет.
+- Результат — список полей, которые показываем клиенту в анкете и админу в read-only панели. Никаких `document_package_item_field_assignments` для определения видимости больше не читаем.
 
+Таблицу `document_package_item_field_assignments` **не удаляем** (миграция совместимости): просто перестаём от неё зависеть в чтении. Триггер `dpti_auto_assign_package_fields` обезвреживаем (no-op), чтобы не плодить мусорные строки. Это снимет и ошибку `dpifa_invalid_references`, потому что писать в таблицу UI больше не будет.
 
-Патч закрывается, только когда 9–13 = PASS.
+В клиентской анкете (`PackageFieldsClientForm`): резолвер «какие поля показывать» переписываем — берём пересечение каталога пакета и токенов всех шаблонов сессии. Required приходит из каталога. Это даёт ровно тот UX, что описал пользователь: клиент быстро заполняет, не думает.
 
-## Что НЕ делаем
+---
 
-- Не расширяем `FORMATS_BILLING` для `field:FLD-…`.
-- Не трогаем pf-/ln-/scope-gate, smart-date, миграции, edge config, `ai_generate_document_package`, `canonical-document-generate-strict` (резолверы уже корректно отдают long/short/signature_short).
-- Не вводим per-FLD whitelist форматов — это отдельный backlog (UI каталог уже задаёт корректные модификаторы за пользователя).
-- Не редактируем содержимое `.docx` шаблона пользователя.
+### 4. Влияние на резолвер DOCX
 
-## Технические файлы
+`supabase/functions/_shared/resolve-package-tokens.ts` уже резолвит `pf-XXXXXX` по `document_package_field_catalog` + `document_package_session_field_values`. На него изменения не нужны — он не зависит от `document_package_item_field_assignments`.
 
-- `src/lib/documents/placeholderClassifier.ts`
-- `supabase/functions/_shared/placeholderClassifier.ts`
-- `src/lib/documents/placeholderClassifier.test.ts`
-- `supabase/functions/_shared/placeholderClassifier.test.ts`
-- `.lovable/proofs/package_custom_fields_2026-06-16_iteration3_final.md`
+---
+
+### 5. Файлы и порядок работ
+
+1. **src/components/ai-documents/packages/PackageFieldsManager.tsx** — упростить `FieldDialog`: убрать «Видимость», «Виден клиенту», «Авто-добавление»; пофиксить sync state с `existing` через `useEffect`; «Порядок» спрятать в раскрывающийся блок.
+2. **src/components/ai-documents/packages/PackageFieldsAssignmentPanel.tsx** — переписать в read-only список pf-полей по токенам шаблона. Удалить весь код тумблеров/селектов/upsert/remove.
+3. **src/hooks/useDocumentItemFieldAssignments.ts** — пометить deprecated; экспортировать только хелпер, который читает токены из шаблона и возвращает список pf-полей этого документа (через `document_templates.placeholders`). Старые upsert/remove/assignToAll удалить из публичного API.
+4. **src/components/ai-documents/packages/PackageFieldsClientForm.tsx** — резолвер «какие поля показать клиенту» = объединение токенов всех `template_id` пакета ∩ каталог. Required строго из каталога.
+5. **Миграция БД**: триггер `dpti_auto_assign_package_fields` → no-op (либо DROP). Поля `client_visible`, `auto_assign_to_new_items`, `usage_scope` оставляем как есть — миграция данных не требуется. RLS не трогаем.
+6. **Тесты**: обновить `placeholderClassifier.test.ts` (если задевает pf), добавить юнит на «парсинг pf-токенов из placeholders шаблона». Не ломать `resolve-package-tokens.pf.test.ts`.
+
+---
+
+### Definition of Done
+
+- В диалоге pf-поля админ может реально менять название, описание, обязательность, варианты select — изменения сохраняются и видны после переоткрытия.
+- В аккордеоне документа отображается список pf-полей, реально встречающихся в шаблоне (без тумблеров, без ошибок `dpifa_invalid_references`).
+- В анкете клиента видны только те pf-поля, чьи токены реально есть хотя бы в одном шаблоне пакета.
+- Удалены пункты «Видимость», «Виден клиенту», «Авто-добавлять» из каталога и all per-document overrides из аккордеона.
+- Резолвер `resolve-package-tokens.ts` и генерация DOCX продолжают работать без изменений (smoke + pf тесты зелёные).
+- В UI больше не появляется toast `dpifa_invalid_references`.
