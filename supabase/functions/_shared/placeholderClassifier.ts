@@ -36,7 +36,7 @@
  * placeholderClassifier.parity.test (см. supabase/functions/_shared/).
  */
 
-export type PlaceholderFormat = 'words' | 'text' | 'full' | 'short' | 'signature_short';
+export type PlaceholderFormat = 'words' | 'text' | 'full' | 'short' | 'signature_short' | 'long';
 export type PlaceholderCase =
   | 'nominative' | 'genitive' | 'dative'
   | 'accusative' | 'instrumental' | 'prepositional';
