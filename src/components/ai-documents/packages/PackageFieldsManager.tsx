@@ -394,10 +394,6 @@ interface FieldDialogSubmit {
   description: string | null;
   data_type: PackageFieldDataType;
   options: Record<string, unknown>;
-  usage_scope: PackageFieldUsageScope;
-  client_visible: boolean;
-  admin_editable: boolean;
-  auto_assign_to_new_items: boolean;
   required: boolean;
   sort_order: number;
 }
@@ -415,10 +411,6 @@ function FieldDialog({
   const [label, setLabel] = useState(existing?.label ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [dataType, setDataType] = useState<PackageFieldDataType>(existing?.data_type ?? "text");
-  const [usageScope, setUsageScope] = useState<PackageFieldUsageScope>(existing?.usage_scope ?? "package_all");
-  const [clientVisible, setClientVisible] = useState(existing?.client_visible ?? true);
-  const [adminEditable, setAdminEditable] = useState(existing?.admin_editable ?? true);
-  const [autoAssign, setAutoAssign] = useState(existing?.auto_assign_to_new_items ?? false);
   const [required, setRequired] = useState(existing?.required ?? false);
   const [sortOrder, setSortOrder] = useState<number>(existing?.sort_order ?? 100);
   const [defaultKind, setDefaultKind] = useState<SmartDateKind>(
@@ -430,21 +422,22 @@ function FieldDialog({
   const [separator, setSeparator] = useState<string>((existing?.options?.separator as string | undefined) ?? ", ");
   const [trueLabel, setTrueLabel] = useState<string>((existing?.options?.true_label as string | undefined) ?? "Да");
   const [falseLabel, setFalseLabel] = useState<string>((existing?.options?.false_label as string | undefined) ?? "Нет");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const isDateLike = dataType === "date" || dataType === "datetime" || dataType === "year";
   const isChoiceLike = dataType === "select" || dataType === "multiselect";
   const isCheckbox = dataType === "checkbox";
 
-  // Reset when opening for a different row
-  function handleOpenChange(o: boolean) {
-    if (o && existing) {
+  // FIX (V2): синхронизация состояния при программном открытии диалога.
+  // useState инициализируется только при mount, а Dialog не вызывает
+  // onOpenChange при изменении prop `open`. Раньше из-за этого инпуты
+  // показывали пустые значения, и казалось, что «ничего не редактируется».
+  useEffect(() => {
+    if (!open) return;
+    if (existing) {
       setLabel(existing.label);
       setDescription(existing.description ?? "");
       setDataType(existing.data_type);
-      setUsageScope(existing.usage_scope);
-      setClientVisible(existing.client_visible);
-      setAdminEditable(existing.admin_editable);
-      setAutoAssign(existing.auto_assign_to_new_items);
       setRequired(existing.required);
       setSortOrder(existing.sort_order);
       setDefaultKind((existing.options?.default_kind as SmartDateKind | undefined) ?? "none");
@@ -452,14 +445,19 @@ function FieldDialog({
       setSeparator((existing.options?.separator as string | undefined) ?? ", ");
       setTrueLabel((existing.options?.true_label as string | undefined) ?? "Да");
       setFalseLabel((existing.options?.false_label as string | undefined) ?? "Нет");
-    } else if (o && !existing) {
-      setLabel(""); setDescription(""); setDataType("text"); setUsageScope("package_all");
-      setClientVisible(true); setAdminEditable(true); setAutoAssign(false); setRequired(false);
-      setSortOrder(100); setDefaultKind("none"); setChoices([]); setSeparator(", ");
+    } else {
+      setLabel(""); setDescription(""); setDataType("text");
+      setRequired(false); setSortOrder(100); setDefaultKind("none");
+      setChoices([]); setSeparator(", ");
       setTrueLabel("Да"); setFalseLabel("Нет");
     }
+    setShowAdvanced(false);
+  }, [open, existing]);
+
+  function handleOpenChange(o: boolean) {
     onOpenChange(o);
   }
+
 
   function buildOptions(): Record<string, unknown> {
     const opts: Record<string, unknown> = {};
