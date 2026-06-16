@@ -40,6 +40,7 @@ import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
 import { FileNameTemplateEditor } from "./FileNameTemplateEditor";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { evaluatePlaceholderInScope } from "@/lib/documents/placeholderClassifier";
 
 // C5-I: понятные сообщения для ошибок activation backend
 function mapActivationError(raw: string | undefined | null, data?: any): string {
