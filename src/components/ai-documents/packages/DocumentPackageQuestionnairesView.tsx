@@ -14,7 +14,7 @@
  * STOP: не вызывает генерацию, не трогает billing resolver, не пишет в
  * ai_generated_documents.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
