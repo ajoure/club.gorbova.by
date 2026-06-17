@@ -1,5 +1,6 @@
 /**
- * PackageDocumentCard — Stage 5 of PATCH-PACKAGE-CROSS-PARITY-V1.
+ * PackageDocumentCard — Stage 5 / Stage 5.0 visual redesign of
+ * PATCH-PACKAGE-CROSS-PARITY-V1.
  *
  * Единая карточка документа пакета. Используется одинаково в любом пакете
  * (Идеология, Годовое собрание, новые пакеты) без специальных условий по
@@ -7,13 +8,32 @@
  * транзакцией через RPC `save_session_document_atomic` (Stage 2).
  *
  * Контракт:
- *  • Поля — sparse-патч только из явно изменённых пользователем pf-полей
+ *  • Поля = sparse-патч только из явно изменённых пользователем pf-полей
  *    этого документа (orphan-поля никогда не попадают сюда).
- *  • Роли — полный desired-state управляемых ролей этого документа.
+ *  • Роли = полный desired-state управляемых ролей этого документа.
  *    Сохранение блокируется, пока desired-state ролей не гидратирован.
- *  • Версия шаблона — `document_templates.active_version_id` (приходит
- *    с item). Если активная версия отсутствует — save заблокирован.
+ *  • Версия шаблона = `document_templates.current_version_id`
+ *    (поле приходит как `active_version_id` в проп item). Если активной
+ *    версии нет — save заблокирован, карточка показывает inline-CTA.
  *  • Никаких ветвлений по `package_template_id`, названию или UUID.
+ *
+ * Бейджи:
+ *  • «X/Y полей» — token-driven (detected pf), required-aware ✓/●.
+ *  • «K/N обязательных ролей» — только required-роли пакета.
+ *    Доп. nullable-бейдж «+N доп.» для необязательных назначений.
+ *  • «Сохранено» / «Есть несохранённые изменения» — отдельный indicator,
+ *    не смешивается со статусом полноты.
+ *  • «Нет активной версии» — warning, если у шаблона нет current_version_id.
+ *
+ * Empty-state:
+ *  • Если у шаблона нет detected pf-токенов — показываем
+ *    «В этом документе нет дополнительных полей», а не пустую секцию.
+ *  • Если в каталоге пакета нет активных ролей — отдельный helper-блок
+ *    с CTA для админа.
+ *
+ * Все цвета — через семантические токены (bg-card/border/foreground/…).
+ * Никакого hardcoded `text-white`/`#hex`. Карточка корректно работает
+ * в light и dark.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -27,10 +47,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertCircle, CheckCircle2, FileText, Info, ListChecks, Loader2, Plus, Save, Trash2, Users,
+  AlertCircle, AlertTriangle, CheckCircle2, FileText, Info, ListChecks,
+  Loader2, Plus, Save, Trash2, Users, Circle, Sparkles,
 } from "lucide-react";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
@@ -46,12 +68,20 @@ export interface PackageDocumentCardItem {
   active_version_id: string | null;
 }
 
+export interface PackageDocumentCardRole {
+  id: string;
+  label: string;
+  role_key: string;
+  public_id: string;
+  required?: boolean;
+}
+
 export interface PackageDocumentCardProps {
   item: PackageDocumentCardItem;
   packageTemplateId: string;
   sessionId: string;
   sessionCreatedAt: string | null;
-  activeRoles: { id: string; label: string; role_key: string; public_id: string }[];
+  activeRoles: PackageDocumentCardRole[];
   persons: { id: string; full_name: string | null; is_active: boolean }[];
   personsLoading: boolean;
   isAdmin: boolean;
@@ -78,6 +108,8 @@ function rowsEqual(a: DraftRow[], b: DraftRow[]): boolean {
   return true;
 }
 
+type CardStatus = "ready" | "partial" | "empty";
+
 export function PackageDocumentCard({
   item,
   packageTemplateId,
@@ -88,7 +120,6 @@ export function PackageDocumentCard({
   personsLoading,
   isAdmin,
 }: PackageDocumentCardProps) {
-  
   const { assignments, isLoading: rolesLoading } = useDocumentItemRoleAssignments(sessionId, item.id);
   const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
   const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
@@ -114,7 +145,24 @@ export function PackageDocumentCard({
     setBaseline(initial);
   }, [rolesLoading, assignments, draft]);
 
-  const filledRolesCount = (draft ?? []).filter((r) => r.role_catalog_id && r.person_id).length;
+  // ---------- роли: required vs optional ----------
+  const requiredRoleIds = useMemo(
+    () => new Set(activeRoles.filter((r) => r.required).map((r) => r.id)),
+    [activeRoles],
+  );
+  const requiredRolesTotal = requiredRoleIds.size;
+
+  const filledRows = (draft ?? []).filter((r) => r.role_catalog_id && r.person_id);
+  const requiredRolesFilled = useMemo(() => {
+    const filledRequiredIds = new Set<string>();
+    for (const r of filledRows) {
+      if (requiredRoleIds.has(r.role_catalog_id)) filledRequiredIds.add(r.role_catalog_id);
+    }
+    return filledRequiredIds.size;
+  }, [filledRows, requiredRoleIds]);
+  const optionalRolesFilled = filledRows.filter((r) => !requiredRoleIds.has(r.role_catalog_id)).length;
+  const rolesAllRequiredFilled = requiredRolesTotal === 0 || requiredRolesFilled >= requiredRolesTotal;
+
   const rolesDirty = useMemo(() => {
     if (draft === null || baseline === null) return false;
     return !rowsEqual(draft, baseline);
@@ -124,6 +172,7 @@ export function PackageDocumentCard({
 
   const rolesHydrated = draft !== null;
   const hasActiveVersion = !!item.active_version_id;
+  const hasFields = itemQuestions.length > 0;
   const canSave =
     isDirty &&
     !rolesLoading &&
@@ -131,6 +180,20 @@ export function PackageDocumentCard({
     rolesHydrated &&
     hasActiveVersion &&
     !atomicSave.isPending;
+
+  // ---------- общий статус карточки ----------
+  const fieldsReady = !hasFields || itemProgress.allRequiredFilled;
+  const rolesReady = rolesAllRequiredFilled;
+  const anythingFilled =
+    (hasFields && itemProgress.filled > 0) || filledRows.length > 0;
+
+  const status: CardStatus = !hasActiveVersion
+    ? "empty"
+    : fieldsReady && rolesReady && (anythingFilled || (!hasFields && requiredRolesTotal === 0))
+      ? (anythingFilled ? "ready" : "empty")
+      : anythingFilled
+        ? "partial"
+        : "empty";
 
   const addRow = (preselectRoleKey?: string) => {
     const role = preselectRoleKey
@@ -154,11 +217,7 @@ export function PackageDocumentCard({
       toast.error("У шаблона документа нет активной версии. Сохранение невозможно.");
       return;
     }
-    // Поля: только sparse-патч изменённых пользователем (orphan не попадает по контракту PackageFieldsClientForm).
     const fieldsPatch = fieldsRef.current?.getDirtyPatch() ?? [];
-
-    // Роли: ВСЕГДА полный desired-state управляемых ролей этого item (даже если dirty только поля),
-    // иначе RPC архивирует все назначения (см. v_kept_ids в save_session_document_atomic).
     const rolesDesired = (draft ?? [])
       .filter((r) => r.role_catalog_id && r.person_id)
       .map((r, idx) => ({
@@ -178,7 +237,6 @@ export function PackageDocumentCard({
       });
       if (res?.ok) {
         fieldsRef.current?.markSaved();
-        // baseline ролей — текущий draft (без soft-deleted uid не важны: после refetch регенерируются)
         setBaseline(draft);
         toast.success("Анкета документа сохранена");
       }
@@ -195,63 +253,157 @@ export function PackageDocumentCard({
     }
   };
 
-  const hasFields = itemQuestions.length > 0;
-  const fieldsBadge = hasFields
-    ? `${itemProgress.filled}/${itemProgress.total} полей`
-    : null;
-  const rolesBadge = `${filledRolesCount} ролей`;
+  // ---------- header presentation ----------
+  const displayName = item.template_name?.trim()
+    ? item.template_name
+    : `Документ №${item.sort_order + 1}`;
+
+  const fieldsBadge = hasFields ? (
+    <Badge
+      variant="outline"
+      className={cn(
+        "text-[10px] h-5 px-1.5 gap-1 font-medium",
+        itemProgress.allRequiredFilled
+          ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5"
+          : "text-muted-foreground",
+      )}
+    >
+      {itemProgress.allRequiredFilled
+        ? <CheckCircle2 className="h-3 w-3" />
+        : <Circle className="h-3 w-3" />}
+      {itemProgress.filled}/{itemProgress.total} полей
+    </Badge>
+  ) : null;
+
+  const requiredRolesBadge = requiredRolesTotal > 0 ? (
+    <Badge
+      variant="outline"
+      className={cn(
+        "text-[10px] h-5 px-1.5 gap-1 font-medium",
+        rolesAllRequiredFilled
+          ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5"
+          : "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5",
+      )}
+    >
+      {rolesAllRequiredFilled
+        ? <CheckCircle2 className="h-3 w-3" />
+        : <AlertCircle className="h-3 w-3" />}
+      {requiredRolesFilled}/{requiredRolesTotal} обяз. ролей
+    </Badge>
+  ) : null;
+
+  const optionalRolesBadge = optionalRolesFilled > 0 ? (
+    <Badge variant="outline" className="text-[10px] h-5 px-1.5 gap-1 font-medium text-muted-foreground">
+      <Users className="h-3 w-3" />
+      +{optionalRolesFilled} доп.
+    </Badge>
+  ) : null;
+
+  const dirtyBadge = isDirty ? (
+    <Badge
+      variant="outline"
+      className="text-[10px] h-5 px-1.5 gap-1 font-medium border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5"
+    >
+      <Circle className="h-2 w-2 fill-current" />
+      Есть несохранённые изменения
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="text-[10px] h-5 px-1.5 gap-1 font-medium text-muted-foreground"
+    >
+      <CheckCircle2 className="h-3 w-3" />
+      Сохранено
+    </Badge>
+  );
+
+  const statusAccent =
+    status === "ready"
+      ? "before:bg-emerald-500/60"
+      : status === "partial"
+        ? "before:bg-amber-500/60"
+        : "before:bg-border";
 
   return (
-    <AccordionItem value={item.id}>
-      <AccordionTrigger className="px-2 hover:no-underline">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Badge variant="outline" className="text-[10px] h-4 px-1.5 shrink-0">
-            #{item.sort_order}
-          </Badge>
-          <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-          <span className="text-sm font-medium truncate text-left">{item.template_name}</span>
-          <div className="flex items-center gap-1 ml-auto shrink-0">
-            {!hasActiveVersion && (
-              <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-amber-300 text-amber-700">
-                нет активной версии
-              </Badge>
-            )}
-            {fieldsBadge && (
-              <Badge variant="outline"
-                className={`text-[10px] h-4 px-1.5 ${
-                  itemProgress.allRequiredFilled
-                    ? "border-emerald-300 text-emerald-700"
-                    : "text-muted-foreground"
-                }`}>
-                {itemProgress.allRequiredFilled
-                  ? <CheckCircle2 className="h-2.5 w-2.5 mr-1" />
-                  : <AlertCircle className="h-2.5 w-2.5 mr-1" />}
-                {fieldsBadge}
-              </Badge>
-            )}
-            <Badge variant="outline"
-              className={`text-[10px] h-4 px-1.5 ${
-                filledRolesCount === 0 ? "text-muted-foreground" : "border-emerald-300 text-emerald-700"
-              }`}>
-              {filledRolesCount === 0
-                ? <AlertCircle className="h-2.5 w-2.5 mr-1" />
-                : <CheckCircle2 className="h-2.5 w-2.5 mr-1" />}
-              {rolesBadge}
-            </Badge>
-            {isDirty && (
-              <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-amber-300 text-amber-700">
-                есть несохранённые изменения
-              </Badge>
-            )}
+    <AccordionItem
+      value={item.id}
+      className={cn(
+        "relative rounded-xl border border-border/60 bg-card/40 mb-3 overflow-hidden",
+        "before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1",
+        statusAccent,
+      )}
+    >
+      <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-muted/30 transition-colors group">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="inline-flex items-center justify-center h-6 min-w-6 px-1.5 rounded-md bg-muted text-[11px] font-semibold text-muted-foreground tabular-nums">
+              {item.sort_order + 1}
+            </span>
+            <FileText className="h-4 w-4 text-primary shrink-0" />
+          </div>
+
+          <div className="flex flex-col items-start min-w-0 flex-1">
+            <span className="text-sm font-semibold truncate text-left text-foreground max-w-full">
+              {displayName}
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              {!hasActiveVersion && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] h-5 px-1.5 gap-1 font-medium border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5"
+                >
+                  <AlertTriangle className="h-3 w-3" />
+                  Нет активной версии
+                </Badge>
+              )}
+              {fieldsBadge}
+              {requiredRolesBadge}
+              {optionalRolesBadge}
+              {dirtyBadge}
+            </div>
           </div>
         </div>
       </AccordionTrigger>
-      <AccordionContent className="px-3 pb-3 space-y-4">
-        {hasFields && (
-          <div className="space-y-2">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-              <ListChecks className="h-3 w-3" /> Поля документа
+
+      <AccordionContent className="px-4 pb-4 pt-1 space-y-4 border-t border-border/40 bg-background/40">
+        {/* ---------- Поля документа ---------- */}
+        <section className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-2">
+          <header className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                <ListChecks className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-foreground">Поля документа</div>
+                <div className="text-[10px] text-muted-foreground">
+                  Пер-документные значения. Пустое поле использует общее значение пакета.
+                </div>
+              </div>
             </div>
+            {hasFields && (
+              <div className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                {itemProgress.filled} / {itemProgress.total}
+              </div>
+            )}
+          </header>
+
+          {!hasActiveVersion ? (
+            <div className="text-xs text-muted-foreground border border-dashed border-amber-500/30 rounded-md p-3 flex items-start gap-2 bg-amber-500/5">
+              <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium text-foreground">Нет активной версии шаблона</div>
+                <div className="mt-0.5">
+                  Активируйте версию DOCX-шаблона в разделе «Шаблоны документов»,
+                  чтобы появились поля и стало возможно сохранение.
+                </div>
+              </div>
+            </div>
+          ) : !hasFields ? (
+            <div className="text-xs text-muted-foreground border border-dashed border-border/60 rounded-md p-3 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-muted-foreground/70 shrink-0" />
+              <span>В этом документе нет дополнительных полей — все нужные значения берутся из общих полей пакета.</span>
+            </div>
+          ) : (
             <PackageFieldsClientForm
               ref={fieldsRef}
               sessionId={sessionId}
@@ -261,103 +413,166 @@ export function PackageDocumentCard({
               hideSaveButton
               onDirtyChange={setFieldsDirty}
             />
+          )}
+        </section>
 
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-            <Users className="h-3 w-3" /> Роли документа
-          </div>
-          {rolesLoading || draft === null ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          ) : activeRoles.length === 0 ? (
-            <div className="text-xs text-muted-foreground border border-dashed rounded p-3 text-center">
-              В пакете нет активных ролей. Создайте роль в подвкладке «Роли пакета»
-              {isAdmin && (
-                <div className="mt-2">
-                  <InlineCreateRoleDialog packageTemplateId={packageTemplateId} />
+        {/* ---------- Роли документа ---------- */}
+        <section className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-2">
+          <header className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                <Users className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-foreground">Роли документа</div>
+                <div className="text-[10px] text-muted-foreground">
+                  Кто подписывает / отвечает за этот конкретный документ.
                 </div>
-              )}
+              </div>
+            </div>
+            {requiredRolesTotal > 0 && (
+              <div className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                {requiredRolesFilled} / {requiredRolesTotal} обяз.
+              </div>
+            )}
+          </header>
+
+          {rolesLoading || draft === null ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Загружаем назначения…
+            </div>
+          ) : activeRoles.length === 0 ? (
+            <div className="text-xs text-muted-foreground border border-dashed border-border/60 rounded-md p-3 text-center space-y-2">
+              <div>В пакете пока нет активных ролей.</div>
+              {isAdmin && <InlineCreateRoleDialog packageTemplateId={packageTemplateId} />}
             </div>
           ) : (
-            <>
-              <div className="space-y-1.5">
-                {(draft ?? []).length === 0 && (
-                  <div className="text-xs text-muted-foreground text-center py-2">
-                    Пока нет назначений. Добавьте первую роль.
-                  </div>
-                )}
-                {(draft ?? []).map((row) => (
-                  <div key={row.uid} className="flex items-start gap-1.5 border rounded p-2">
-                    <Select value={row.role_catalog_id}
-                      onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}>
-                      <SelectTrigger className="h-8 text-[11px] flex-1">
-                        <SelectValue placeholder="Роль…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {activeRoles.map((r) => (
-                          <SelectItem key={r.id} value={r.id} className="text-[11px]">
-                            {r.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={row.person_id}
-                      onValueChange={(v) => updateRow(row.uid, { person_id: v })}>
-                      <SelectTrigger className="h-8 text-[11px] flex-1">
-                        <SelectValue placeholder="Физлицо…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {personsLoading ? (
-                          <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
-                        ) : persons.filter((p) => p.is_active).length === 0 ? (
-                          <div className="px-2 py-1 text-[11px] text-muted-foreground">
-                            Нет физлиц. Добавьте их во вкладке «Реквизиты».
-                          </div>
-                        ) : (
-                          persons.filter((p) => p.is_active).map((p) => (
-                            <SelectItem key={p.id} value={p.id} className="text-[11px]">
-                              {p.full_name ?? "—"}
-                            </SelectItem>
-                          ))
+            <div className="space-y-2">
+              {draft.length === 0 ? (
+                <div className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border/60 rounded-md">
+                  Пока нет назначений. Добавьте первую роль.
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {draft.map((row) => {
+                    const isRequired = requiredRoleIds.has(row.role_catalog_id);
+                    return (
+                      <div
+                        key={row.uid}
+                        className={cn(
+                          "flex items-start gap-1.5 rounded-md border p-2 transition-colors",
+                          isRequired
+                            ? "border-primary/30 bg-primary/[0.03]"
+                            : "border-border/60 bg-background/40",
                         )}
-                      </SelectContent>
-                    </Select>
-                    <Input value={row.position}
-                      onChange={(e) => updateRow(row.uid, { position: e.target.value })}
-                      placeholder="Должность (опц.)" className="h-8 text-[11px] flex-1" />
-                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"
-                      onClick={() => removeRow(row.uid)}>
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <Button size="sm" variant="outline" onClick={() => addRow()}>
+                      >
+                        <Select
+                          value={row.role_catalog_id}
+                          onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}
+                        >
+                          <SelectTrigger className="h-8 text-[11px] flex-1">
+                            <SelectValue placeholder="Роль…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeRoles.map((r) => (
+                              <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                                {r.label}
+                                {r.required && (
+                                  <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400">
+                                    (обяз.)
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={row.person_id}
+                          onValueChange={(v) => updateRow(row.uid, { person_id: v })}
+                        >
+                          <SelectTrigger className="h-8 text-[11px] flex-1">
+                            <SelectValue placeholder="Физлицо…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {personsLoading ? (
+                              <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
+                            ) : persons.filter((p) => p.is_active).length === 0 ? (
+                              <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                                Нет физлиц. Добавьте их во вкладке «Реквизиты».
+                              </div>
+                            ) : (
+                              persons.filter((p) => p.is_active).map((p) => (
+                                <SelectItem key={p.id} value={p.id} className="text-[11px]">
+                                  {p.full_name ?? "—"}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          value={row.position}
+                          onChange={(e) => updateRow(row.uid, { position: e.target.value })}
+                          placeholder="Должность (опц.)"
+                          className="h-8 text-[11px] flex-1"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeRow(row.uid)}
+                          aria-label="Удалить назначение"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <Button size="sm" variant="outline" onClick={() => addRow()} className="h-8">
                 <Plus className="h-3.5 w-3.5 mr-1" /> Добавить роль
               </Button>
-            </>
+            </div>
           )}
-        </div>
+        </section>
 
-        <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/40">
-          <p className="text-[10px] text-muted-foreground flex items-start gap-1">
-            <Info className="h-2.5 w-2.5 mt-0.5 shrink-0" />
-            Поля и роли этого документа сохраняются одной транзакцией. Если поле
-            не заполнено здесь — используется общее значение пакета.
+        {/* ---------- Footer: atomic save ---------- */}
+        <footer
+          className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-border/40"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <p className="text-[10px] text-muted-foreground flex items-start gap-1.5 leading-relaxed">
+            <Info className="h-3 w-3 mt-0.5 shrink-0" />
+            Поля и роли этого документа сохраняются одной транзакцией.
+            Если поле не заполнено здесь — используется общее значение пакета.
           </p>
           <HelpTooltip
             helpKey=""
-            customShort="Сохранить поля и роли этого документа одной транзакцией."
+            customShort={
+              !hasActiveVersion
+                ? "Сначала активируйте версию шаблона."
+                : !isDirty
+                  ? "Нет изменений для сохранения."
+                  : "Сохранить поля и роли этого документа одной транзакцией."
+            }
             alwaysShow
           >
-            <Button size="sm" onClick={handleSaveAll} disabled={!canSave}>
-              <Save className="h-3.5 w-3.5 mr-1" />
+            <Button
+              size="sm"
+              onClick={handleSaveAll}
+              disabled={!canSave}
+              className="w-full sm:w-auto"
+            >
+              {atomicSave.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5 mr-1" />
+              )}
               {atomicSave.isPending ? "Сохранение…" : "Сохранить документ"}
             </Button>
           </HelpTooltip>
-        </div>
+        </footer>
       </AccordionContent>
     </AccordionItem>
   );
