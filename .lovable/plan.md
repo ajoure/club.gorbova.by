@@ -1,251 +1,236 @@
 да, согласен, с учетом правок:
 
-1. **Не удалять старую запись** `ai_generated_documents ba5e7b44-…`**.** Это исторический сформированный документ и immutable-факт. Для повторного D7 использовать:
-  - новый batch/idempotency key;
-  - либо новую тестовую генерацию/сессию;
-  - либо предусмотренный pipeline параметр повторного запуска.
-  Старые документы, snapshots и audit-записи не удалять ради обхода идемпотентности.
-2. **Сохранять snapshot по фактически использованному raw-токену, а не только по базовому ID.** Один `pf-XXXXXX` или `ln-XXXXXX` может встречаться с разными модификаторами. Дедуп определить по:
+1. **Источник версии шаблона определять через фактически активную версию**, а не только `is_current=true`. Канон:
   &nbsp;
   ```text
-  provider + raw_inside
+  document_templates.active_version_id
+  → document_template_versions.id
+  → detected_tokens / tokens
   ```
-  либо по эквивалентному ключу, включающему `format` и `case`. Иначе два токена одного поля с разным форматированием могут потерять разные `rendered_value`.
-3. `template_tokens_snapshot` **должен фиксировать точные токены шаблона.** Сохранять не только базовые:
+  `is_current=true` использовать только как доказанный fallback, если `active_version_id` отсутствует. Черновая текущая версия не должна менять клиентскую анкету до активации.
+2. **Orphan-поле показывать клиенту только один раз как общее поле пакета**, но явно отделить от анкеты документов:
+  - заголовок «Общие поля пакета»;
+  - пометка «Пока не используется в документах»;
+  - сохранение только session-level;
+  - отсутствие per-item override и reset-кнопки;
+  - не учитывать в готовности и генерации.
+3. **Atomic RPC не должна позволять управлять системными или скрытыми назначениями через desired-state.** Перед удалением отсутствующих ролей определить множество назначений, которыми текущий пользователь вправе управлять. DELETE выполнять только внутри этого множества.
+4. **Для ролей определить устойчивый ключ desired-state.** Нельзя сопоставлять строки только по случайному `id`, если новая роль его ещё не имеет. Зафиксировать ключ, например:
   &nbsp;
   ```text
-  pf-000005
-  ln-000001
-  package.ul.FLD-000010
+  role_catalog_id + person_id + legal_entity_id + link discriminator
   ```
-  но и модификаторы, если они присутствовали:
-  ```text
-  pf-000005|format=full
-  package.ul.FLD-000010|format=long
-  ln-000001|format=signature_short
-  ```
-  Это необходимо для исторической воспроизводимости.
-4. **Не использовать** `resolved[raw_inside]`**, если фактический ключ map отличается.** Перед реализацией подтвердить точный ключ `resolved` для package/ln/pf. При отсутствии ключа snapshot не должен молча писать `undefined`; генерация либо сохраняет фактическое rendered value из trace, либо останавливается с доказуемой ошибкой snapshot propagation.
-5. **Для** `package` **snapshot зафиксировать происхождение без избыточного раскрытия внутренних объектов.** Сохранять канонические поля:
+  чтобы upsert и удаление не создавали дубли и не удаляли соседние назначения.
+5. **Concurrent proof не должен требовать одну audit-запись.** Пять успешно завершившихся транзакций закономерно могут создать пять audit rows. DoD:
+  - каждая запись содержит свой payload/порядок;
+  - финальное состояние целиком соответствует одному завершённому вызову;
+  - нет смешанного состояния;
+  - нет ложных audit-записей для откатившихся транзакций.
+6. **Multi-tenant proof должен опираться на фактическую модель доступа.** Не считать любого пользователя того же workspace автоматически уполномоченным. Для каждого сценария указать конкретную роль и ожидаемое право согласно действующему RBAC.
+7. **Редизайн выполнить по ранее утверждённому визуальному контракту**, а не ограничиться созданием технической карточки:
+  - единая карточка документа;
+  - вложенные секции полей и ролей;
+  - состояния `готово / частично / пусто`;
+  - постоянный dirty/saved indicator;
+  - одна pinned-кнопка сохранения;
+  - desktop/mobile и light/dark;
+  - без технических `pf-/ln-/FLD-/PKR-` в клиентском UI.
+8. **E2E нового пакета выполнять через обычный пользовательский workflow.** Создание пакета, загрузка и активация шаблонов, создание полей и ролей, анкета и генерация должны пройти через те же UI/RPC, которыми будут пользоваться реальные клиенты. Прямые SQL-вставки допустимы только для подготовки proof, но не заменяют пользовательский сценарий.
+9. **После перехода orphan → detected проверить сохранённое общее значение.** Оно должно сохраниться и автоматически стать fallback для нового document-level поля после появления токена, без потери данных и без создания лишнего per-item override.
+10. **Финальный отчёт разделить по фактам:**
   &nbsp;
   ```text
-  provider
-  raw_inside
-  bag_key
-  raw_value
-  rendered_value
-  format_applied
-  case_applied
-  source
-  item_context
+  cross-package parity
+  atomic save
+  concurrent save
+  multi-tenant isolation
+  unified redesign
+  new-package E2E
+  orphan transition
   ```
-  Не складывать целиком внутренний resolver entry, если там могут быть лишние данные.
-6. **Для** `ln` **не сохранять неограниченный внутренний объект** `persons/positions`**.** Зафиксировать минимальный исторический набор, необходимый для воспроизводимости:
-  &nbsp;
-  ```text
-  link_public_id / token
-  selected_person_ids либо snapshot отображённых ФИО
-  position labels
-  rendered_value
-  format_applied
-  case_applied
-  item_context
-  ```
-  Структура должна быть JSON-safe и не зависеть от временных внутренних типов resolver.
-7. **Snapshot формировать до INSERT документа и записывать атомарно вместе с документом.** Не допускается:
-  - сначала создать документ с пустым snapshot;
-  - затем отдельным UPDATE дописать trace.
-  При ошибке построения snapshot документ не должен сохраняться как успешно сгенерированный с неполной историей.
-8. **Сохранить обратную совместимость** `meta.tokens_snapshot`**.** Старые читатели могут ожидать текущую структуру pf-записей. Новые providers добавлять add-only, не переименовывая существующие pf-поля:
-9. `item_context` **должен брать доказуемый item текущего генерируемого документа.** Проверить, что:
-  &nbsp;
-  ```text
-  package_template_item_id
-  ```
-  не приходит из необязательного внешнего параметра и не может быть item другого пакета. При package-mode без item context — STOP с канонической ошибкой, кроме явно подтверждённого legacy-сценария.
-10. **RPC reset должна проверять не только владельца сессии.** Серверно подтвердить:
-  - session доступна текущему пользователю или администратору его workspace;
-  - field принадлежит `session.package_template_id`;
-  - item принадлежит тому же package template;
-  - удаляемая строка соответствует именно этой связке;
-  - нет доступа между workspace.
-  Не доверять одним переданным UUID.
-11. **При отсутствии строки reset должен быть идемпотентным.** Возврат:
-  &nbsp;
-  ```json
-  { "deleted": 0 }
-  ```
-  допустим и не является ошибкой. Ошибка нужна только при нарушении guard/auth/package boundaries.
-12. **Добавить серверный audit reset-операции.** При фактическом удалении per-item override записать:
-  &nbsp;
-  ```text
-  entity_type
-  entity_id
-  action
-  actor_user_id
-  session_id
-  field_catalog_id
-  package_template_item_id
-  previous_value
-  ```
-  Без удаления или изменения исторических snapshot сформированных документов.
-13. **Развести RPC reset и полное очищение значения.** В этом узком патче реализуется только:
-  &nbsp;
-  ```text
-  delete per-item override → fallback на session-level
-  ```
-  Не называть session-level `upsert value:null` «Очистить полностью», пока не доказано, удаляет ли RPC строку или сохраняет NULL и как required-gate трактует NULL.
-14. **Инвалидация после reset должна использовать реальные канонические query keys.** Не добавлять условный `pkg-gen-role-assignments`, если reset поля не меняет роли. Обязательно обновить:
-  - values текущей сессии/item;
-  - effective fields;
-  - generation readiness;
-  - package summary.
-  После reset fallback должен появиться без перезагрузки.
-15. **Добавить тесты snapshot propagation:**
-  - `pf`, `ln`, `package` в одном документе;
-  - одинаковый token ID с двумя разными modifiers;
-  - дедуп одинакового raw-токена;
-  - разные `rendered_value`;
-  - корректный `item_context`;
-  - billing-mode остаётся без изменений;
-  - ошибка snapshot builder не создаёт документ.
-16. **Добавить тесты reset RPC:**
-  - успешное удаление собственного override;
-  - повторный reset → `deleted:0`;
-  - `item=NULL` → `cannot_delete_session_level_via_reset`;
-  - item другого package → `pkg_field_value_item_mismatch`;
-  - field другого package;
-  - чужая session/workspace;
-  - admin согласно RBAC;
-  - session-level строка не удалена.
-17. **D7 proof выполнять без изменения предыдущего исторического документа.** В новом результате доказать:
-  - PDF идентичен по содержанию;
-  - `meta.tokens_snapshot[]` содержит все три provider;
-  - точные modifiers сохранены;
-  - `template_tokens_snapshot` заполнен;
-  - старый документ остался неизменным.
-18. **Статус** `token_manifest_snapshot` **зафиксировать честно.** Если он остаётся пустым для package-mode by design, не считать его частью закрываемого package snapshot DoD. В proof явно указать:
-19. **После патча повторить semantic 422 regression.** Транспортный контракт фиксировать фактически:
-  &nbsp;
-  ```text
-  HTTP 200 envelope
-  batch.status = failed
-  details.code = pf_required_value_missing
-  generated documents = 0
-  ```
-  Не называть это прямым HTTP 422.
+  Для каждого блока — `PASS / FAIL / deferred` и конкретный proof. Патч закрывается только при полном PASS всех DoD.
+11. &nbsp;
+12. План: PATCH-PACKAGE-CROSS-PARITY-V1 + UNIFIED-REDESIGN (revised)
 
-Остальной scope сохраняется: snapshot propagation и reset override выполняются сейчас; atomic save, concurrent upsert, расширенный multi-tenant proof и редизайн остаются следующим этапом.
+## Diagnose (выполнен до плана)
 
-&nbsp;
+Сравнение «Годовое собрание» vs «Идеология»:
 
-План v4 (узкий): закрыть D7-snapshot и reset per-item override. Редизайн откладывается до полного закрытия backend-контрактов.
 
----
+| Пакет            | Шаблон (активная версия) | detected_tokens содержит pf-*                         | Каталог pf пакета                                          |
+| ---------------- | ------------------------ | ----------------------------------------------------- | ---------------------------------------------------------- |
+| Годовое собрание | Приказ                   | 7 шт. (pf-000003…009)                                 | используются в DOCX                                        |
+| Идеология        | Приказ об организации    | 0 pf-* (только `field:FLD-*`, `package.ul.*`, `ln-*`) | каталог содержит pf-000002, **не вставлен ни в один DOCX** |
+| Идеология        | Положение                | 0 pf-*                                                | —                                                          |
 
-## Диагностика snapshot-gap (root cause)
 
-Источник пустоты `snapshot.fields`, `template_tokens_snapshot`, `token_manifest_snapshot` — НЕ потеря данных, а **architectural mismatch**:
+Текущий `usePackageDetectedFields` корректно возвращает pf-* строго из активной версии. Для «Идеологии» это пусто → клиентская анкета не рендерит pf-блок. Это data-contract gap (pf создан в каталоге, но токен не вставлен в шаблон), а не bug извлечения. Решение должно быть единым для всех пакетов, без веток по name/id, и не подменять parity показом orphan внутри каждой карточки.
 
-- `canonical-document-generate-strict/index.ts` строки 1658–1661 пишут snapshot ТОЛЬКО для billing-стека `{{field:FLD-XXXXXX}}`:
-  - `snapshot.fields = docFields` — bag, ключи = FLD-XXXXXX (billing).
-  - `template_tokens_snapshot = allIds.map(f => 'field:' + f)` — только billing FLD.
-  - `token_manifest_snapshot = manifest` — берётся из `document_template_versions.token_manifest`, который для пакетных шаблонов пуст.
-- Package-режим использует другие парсеры: `parsedPackageTokens` (`package.ul/ip/fl.FLD-*` и `ln-*`) и `parsedPfTokens` (`pf-*`). Их разрешённые значения попадают в `resolved` map (рендер DOCX) и `sourceTrace`, но в snapshot-блок строк 1658–1661 НЕ копируются.
-- Существующий add-only `meta.tokens_snapshot` (строки 1689–1710, PATCH-PACKAGE-CUSTOM-FIELDS-V1 B4) фиксирует только `pf-*`. `ln-*` и `package.*` нигде не сохраняются.
+## Архитектурные инварианты (зафиксировано)
 
-Подтверждение по `ba5e7b44-…`: `meta.tokens_snapshot` содержит 7 pf-токенов (raw+rendered+label+data_type), но НЕТ ln-*, НЕТ package.*; верхнеуровневые snapshot-поля пусты.
+1. **Источник detection — каноничен:** только `document_template_versions` где `is_current=true`, поле `detected_tokens` (fallback `tokens`). Старые/draft/неактивные версии НЕ объединяются. Новый пакет работает автоматически после активации версии шаблона.
+2. **orphan = диагностика пакета, не свойство item.** `byItemId[item.id]` содержит только pf, реально найденные в активной версии шаблона этого item. orphan pf отображаются один раз на уровне пакета, никогда не дублируются в карточках.
+3. **orphan не участвует ни в чём бизнес-критичном:** не входит в required-gate, не считается в X/Y документа, не попадает в snapshot/DOCX, не блокирует генерацию даже если `required=true` в каталоге, только показывает админу/клиенту явную диагностику «не вставлено ни в один шаблон».
+4. **Никаких `BEGIN/ROLLBACK` внутри plpgsql RPC.** Функция уже исполняется в одной транзакции. Guards → write → audit → при ошибке `RAISE`, всё откатывается автоматически.
+5. **Desired-state semantics для ролей:** RPC принимает полный desired-state ролей конкретного item; upsert переданных + DELETE отсутствующих в этом item; роли других items и системные/недоступные назначения не трогаются.
+6. **Semantics для полей:** непереданные поля НЕ удаляются (поле может быть просто не отредактировано). Пустое значение обрабатывается по текущему канону (хранение `''` vs absent). Reset override остаётся через `delete_session_field_value` (уже создан). Atomic save **никогда не превращает наследованное session-level значение в пустой per-item override**.
+7. **SaaS-guards дублируются на сервере** — RPC не доверяет hooks. Проверки в `save_session_document_atomic`:
+  - сессия принадлежит вызывающему / он admin / он member workspace;
+  - item принадлежит `session.package_template_id`;
+  - каждое поле принадлежит каталогу пакета **и** реально присутствует в активной версии шаблона item (либо является разрешённым package-level orphan — для orphan write запрещён в per-item, только session-level или вовсе игнор);
+  - каждая role assignment относится к пакету и item;
+  - выбранные `person_id` / `legal_entity_id` принадлежат клиентскому контексту, доступному пользователю;
+  - cross-workspace запись запрещена (`RAISE EXCEPTION 'forbidden_cross_workspace'`).
 
-Решение: расширить существующий `meta.tokens_snapshot` (тот же ключ, тот же канонический add-only контракт) на providers `pf | ln | package` и заполнить `template_tokens_snapshot` для package-mode. **Не создаём параллельный контракт, не трогаем billing-поведение.**
+## Scope патча
 
----
+### 1. Cross-package parity — detection
 
-## Scope изменений (только этот патч)
+**Файл:** `src/hooks/usePackageDetectedFields.ts`
 
-### A. Snapshot propagation — `supabase/functions/canonical-document-generate-strict/index.ts`
+- Источник: только `is_current=true` активная версия, `detected_tokens` → fallback `tokens`.
+- Возврат:
+  - `byItemId[item_id]: string[]` — pf реально в шаблоне item (как сейчас);
+  - `byPublicId[pf]: string[]` — items, где используется (для бейджа admin);
+  - `allDetectedPublicIds: string[]` — union по DOCX;
+  - `catalogPublicIds: string[]` — все pf из `document_package_field_catalog`;
+  - `orphanCatalogIds: string[]` = catalog − detected.
+- Никаких веток по name/id пакета. Никакого объединения версий.
 
-A
+### 2. UI parity без дублирования orphan
 
-1. Внутри блока `meta.tokens_snapshot` (≈1690) добавить итерацию `parsedPackageTokens`:
+```
+PackageFieldsClientForm (existing renderer)
+  ├─ блок «Поля пакета, не используемые в шаблонах» (orphan) — один раз
+  │     • явный help-text: «Поле пока не используется ни в одном документе пакета»;
+  │     • редактируется только как session-level (без per-item override);
+  │     • не считается в готовность и не блокирует генерацию;
+  └─ PackageDocumentCard[] (новый, по items)
+        ├─ блок «Поля документа»  ← detected fields этого item
+        ├─ блок «Роли документа»  ← assignments этого item
+        ├─ header: статус + «X/Y полей документа» (только detected) + «K/N ролей» (только обязательные)
+        └─ action-bar: Сохранить (atomic), Сбросить override
+```
 
-- Для `kind='package'`: `{ provider:'package', token: raw_inside, bag_key, raw_value: entry.value, rendered_value: resolved[raw_inside], source: entry.source, case_applied, format_applied }`.
-- Для `kind='ln'`: `{ provider:'ln', token, bag_key, persons: entry.persons, positions: entry.positions, rendered_value: resolved[raw_inside], format_applied, case_applied }`.
-- pf-блок остаётся как есть.
-- К каждой записи добавить `item_context: { package_session_id, package_template_item_id }` для исторической воспроизводимости.
+**Файлы:**
 
-A
+- Новый `src/components/ai-documents/packages/PackageDocumentCard.tsx`.
+- Композиция: `DocumentPackageQuestionnairesView` рендерит общий orphan-блок + список `PackageDocumentCard`. Внутри карточки переиспользуется существующий field-renderer из `PackageFieldsClientForm` (или выделить `PackageFieldsItemForm` без дублирования логики дат/select/smart defaults/effective-values/reset override).
+- `PackageFieldsClientForm.tsx` НЕ заменяется целиком — остаётся как renderer; меняется только композиция верхнего уровня и удаляется любая ветка по названию пакета.
+- `PackageFieldsAssignmentPanel.tsx` (админ): бейдж «используется в N документах» / «не вставлено ни в один шаблон» — берётся из `byPublicId`/`orphanCatalogIds`. Никаких изменений каталога/реестра.
 
-2. В `template_tokens_snapshot` (≈1661) в package-mode дописать после `field:FLD-*` все распарсенные пакетные токены:
+### 3. Atomic save — поля и роли одним RPC
 
-- `package.<ul|ip|fl>.FLD-XXXXXX` (из `parsedPackageTokens.bag_key` при `kind='package'`);
-- `ln-XXXXXX` (при `kind='ln'`);
-- `pf-XXXXXX` (из `parsedPfTokens`).
-Дедуп по строке. Billing-режим не меняется.
+**Migration:** RPC
 
-A
+```
+save_session_document_atomic(
+  _session_id uuid,
+  _package_template_item_id uuid,
+  _field_values jsonb,           -- [{ field_catalog_id, value, meta? }]  -- desired patch (sparse)
+  _role_assignments jsonb,       -- desired full state of roles of THIS item
+                                 --   [{ role_catalog_id, person_id?, legal_entity_id?, link_meta? }]
+  _expected_template_version_id uuid  -- guard against stale UI
+) RETURNS jsonb  -- { ok, written_fields, written_roles, deleted_roles, audit_id }
+SECURITY DEFINER
+```
 
-3. `snapshot.fields` оставляем billing-only. Добавить inline-комментарий: «package/ln/pf canonical snapshot lives in `meta.tokens_snapshot`; this bag is reserved for billing `{{field:FLD-*}}`».
+Контракт:
 
-A
+- Никаких `BEGIN/COMMIT/ROLLBACK` — функция атомарна по умолчанию.
+- Все SaaS-guards выше; orphan pf в `_field_values` для per-item → `RAISE 'orphan_field_not_writable_per_item'`.
+- Поля: upsert переданных; пропущенные НЕ удаляются; reset only через `delete_session_field_value`.
+- Роли: upsert переданных + DELETE отсутствующих в `_role_assignments` ровно по этому item (`WHERE package_template_item_id = _item AND id NOT IN (...)`); другие items не трогаются.
+- Audit `package_document_atomic_save` (counts, item_id, version_id).
+- Версионный guard: если `_expected_template_version_id` ≠ текущая активная → `RAISE 'stale_template_version'`.
 
-4. `token_manifest_snapshot` оставляем billing-only (manifest = required-FLD контракт для billing). Комментарий: «pf-required-gate enforced upstream в orchestrator; manifest пустой для package-mode by design».
+**Hooks:**
 
-Никаких изменений в Gotenberg, storage, файлах, allocate_document_number, immutability trigger, resolver_version.
+- `usePackageSessionFields.ts` + `useDocumentItemRoleAssignments.ts` — добавить `saveDocumentAtomic({ itemId, fields, rolesDesired, expectedVersionId })`.
+- Invalidate `values`, `role-assignments`, `session-q` **только после `ok:true**`. При ошибке: dirty-state сохраняется, точная серверная ошибка → `normalizeEdgeFunctionError` → toast; ложного «Сохранено» нет.
+- Старые отдельные mutate-цепочки save-fields → save-roles в карточке заменяются одним вызовом.
 
-### B. Reset per-item override
+### 4. UNIQUE-индексы — без третьего конфликта
 
-B
+Перед миграцией провести аудит существующих partial UNIQUE на `document_package_session_field_values`:
 
-1. Migration: RPC `delete_session_field_value(_session_id uuid, _field_catalog_id uuid, _package_template_item_id uuid)`:
+- `UNIQUE(session_id, field_catalog_id) WHERE item IS NULL`
+- `UNIQUE(session_id, field_catalog_id, item) WHERE item IS NOT NULL`
 
-- SECURITY DEFINER, SET search_path=public.
-- Guard: `_package_template_item_id IS NOT NULL` (через эту RPC нельзя удалить session-level — для этого есть upsert с `value:null`).
-- Authorization: проверка, что session принадлежит вызывающему профилю (либо admin/super_admin через `has_role_v2`).
-- DELETE FROM `document_package_session_field_values` WHERE `session_id=_session_id AND field_catalog_id=_field_catalog_id AND package_template_item_id=_package_template_item_id`.
-- Возвращает `jsonb { deleted: int }`.
+Решение: **не создавать** `COALESCE(...)`-индекс. Текущая пара partial UNIQUE покрывает оба контракта (session-level и per-item override). Никаких новых uniqueness-индексов в этом патче. Если по факту аудита обнаружится дрейф — отдельная migration с явной заменой одной согласованной моделью.
 
-B
+### 5. Concurrent upsert proof
 
-2. `src/hooks/usePackageSessionFields.ts`: добавить `resetOverride({field_catalog_id, package_template_item_id})` → вызов RPC → инвалидация `QK.values` + `pkg-gen-role-assignments` + `doc-pkg-session-q`.
+`/tmp/proof_concurrent_save.ts` (cleanup after):
 
-B
+- 5 параллельных RPC `save_session_document_atomic` одной (session, item) с РАЗНЫМИ payload (разные fields+roles).
+- DoD:
+  - 0 ошибок 23505 (или каноническая обработка через ON CONFLICT);
+  - ровно 1 строка по каждому ключу (session, field, item) и (session, item, role);
+  - финальное состояние = ровно один полностью завершённый payload (последний коммит), без смешения полей одного и ролей другого;
+  - в audit нет 5 разных «success» с противоречивыми снимками; либо last-write-wins с одной audit-записью на финальное состояние, либо 5 audit с явно сериализованным порядком.
+- Результат → `.lovable/proofs/concurrent-save-2026-06-17.md`.
 
-3. UI: в существующем per-item рендере поля показать кнопку «Сбросить к общему» рядом со значением, когда `valuesByItemField.get(itemId)?.get(fieldId)` существует. При клике — `resetOverride`. После успеха `getEffectiveValue` автоматически вернёт session-level (visual transition без перезагрузки). Toast «Возвращено к общему значению». Никаких новых компонентов — кнопка в текущем `PackageFieldsClientForm`.
+### 6. Multi-tenant proof — безопасный
 
----
+Сценарии в `.lovable/proofs/multi-tenant-2026-06-17.md`:
 
-## DoD (узкий)
+1. владелец сессии — full access;
+2. другой пользователь того же workspace в разрешённой роли — ожидаемый доступ;
+3. тот же workspace, запрещённая роль — 0 rows / canonical error;
+4. пользователь другого workspace — 0 rows на чтение, RPC `RAISE 'forbidden_cross_workspace'`;
+5. прямой RPC-вызов с чужими session/item/field/person/legal_entity ID — каноническая ошибка;
+6. read и write — обе стороны.
 
-D7-snapshot proof (та же сессия `6a61a7e3-…`, тот же шаблон):
+Все временные fixtures (профили, сессии, поля) удаляются в конце proof-скрипта. Никаких production-данных не создаётся.
 
-- Повторная генерация → `meta.tokens_snapshot[]` содержит:
-  - 7 × `provider='pf'` (как сейчас);
-  - ≥1 × `provider='ln'` с `persons` + `rendered_value` + `item_context`;
-  - ≥3 × `provider='package'` (org name, address, head FIO) с `raw_value`+`rendered_value`+`item_context`.
-- `template_tokens_snapshot` содержит все pf/ln/package токены шаблона (дедуплицировано).
-- Старая запись (`ba5e7b44-…`) удаляется до повторного запуска, чтобы не было idempotency-конфликта.
-- PDF рендерится идентично (без визуальных изменений).
+### 7. Унифицированный редизайн
 
-Reset override proof:
+Единый `PackageDocumentCard` для всех пакетов. Header: статус (пусто/частично/готово), `X/Y полей документа` (только detected), `K/N обязательных ролей`. Orphan-поля не считаются в готовности документа и пакета. action-bar: Сохранить (atomic), Сбросить override. dirty-state — per-card, локальный diff; success — только после `ok:true`. Никаких условий по имени/UUID пакета — grep `идеолог|годов` по `src/components/ai-documents/packages/**` после рефактора должен дать пусто кроме контента.
 
-- 1. Установить per-item override для `pf-000005` на `item_id=a1a40df2-…` со значением `2026-08-15`.
-- 2. Подтвердить в `document_package_session_field_values` row с непустым `package_template_item_id`.
-- 3. Вызвать `delete_session_field_value(...)`.
-- 4. Row исчез; UI показывает session-level `2026-07-01` без перезагрузки.
-- 5. Попытка `delete_session_field_value` с `package_template_item_id=NULL` → ошибка `cannot_delete_session_level_via_reset`.
+## DoD
 
-D7-422 — без регрессии (повтор предыдущего теста).
+1. Две **разных сессии** одного пользователя (одна для «Годового собрания», одна для «Идеологии») открыты в анкете — обе используют один и тот же компонент `PackageDocumentCard` с идентичной моделью поведения; контент различается, контракт — нет.
+2. orphan pf-000002 «Идеологии» виден один раз в общем package-блоке с пояснением «Поле пока не используется ни в одном документе пакета», не повторяется в карточках, не блокирует генерацию.
+3. detected pf отображается только в тех документах, где он найден в активной версии шаблона.
+4. Atomic rollback: тест с искусственной ошибкой в ролях → fields тоже откатываются; в БД ноль частичных записей; UI остаётся dirty; toast — точная ошибка.
+5. Desired-state ролей доказан: пользователь удалил роль в UI → в БД эта роль для item удалена; роли других items не затронуты.
+6. Concurrent: 5×parallel → одно когерентное финальное состояние, без смешения полей одного и ролей другого payload.
+7. Multi-tenant: все 6 сценариев — ожидаемые результаты, fixtures удалены.
+8. Новый пакет (создан в админке, два шаблона, токены вставлены, активная версия) — анкета и роли появляются автоматически, без миграций данных и без ветвлений по id.
+9. Orphan-переход (E2E):
+  - создать pf в каталоге без токена → виден один раз в общем orphan-блоке как «не используется»;
+  - вставить `{{pf-XXXXXX}}` в один шаблон и активировать новую версию;
+  - поле исчезает из orphan-блока и появляется ТОЛЬКО в нужном документе; во втором документе его нет;
+  - required-gate начинает учитывать его только после появления токена.
+10. Все proof-артефакты — в `.lovable/proofs/` (единая директория, не `.lovable/proof/`).
 
-Out-of-scope: atomic save, concurrent upsert, multi-tenant, редизайн карточек, новые snapshot-bag'и, замена `snapshot.fields`/`token_manifest_snapshot` контрактов.
+## Файлы
 
----
+Изменяются:
 
-## Не делаю в этом патче (зафиксировано явно)
+- `src/hooks/usePackageDetectedFields.ts`
+- `src/hooks/usePackageSessionFields.ts`
+- `src/hooks/useDocumentItemRoleAssignments.ts`
+- `src/components/ai-documents/packages/PackageFieldsClientForm.tsx` (только композиция верхнего уровня + общий orphan-блок; field renderer переиспользуется/выделяется в `PackageFieldsItemForm`)
+- `src/components/ai-documents/packages/PackageFieldsAssignmentPanel.tsx` (бейджи)
+- `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx` (рендерит orphan-блок + список карточек)
 
-- НЕ создаю параллельный snapshot-bag.
-- НЕ меняю billing FLD-resolver.
-- НЕ трогаю Gotenberg/storage/numbering/immutability.
-- НЕ удаляю существующие snapshot-поля.
-- НЕ редизайню карточки.
+Создаются:
 
-После approval — патчу edge function + миграцию RPC + hook + одну UI-кнопку, прогоняю D7-snapshot proof в этой же сессии, отчитываюсь конкретными JSON-выписками из БД.
+- `src/components/ai-documents/packages/PackageDocumentCard.tsx`
+- (опционально) `src/components/ai-documents/packages/PackageFieldsItemForm.tsx` — выделенный renderer без дублирования логики дат/select/effective values/reset
+- Migration: RPC `save_session_document_atomic` (без новых UNIQUE-индексов)
+- Proofs: `.lovable/proofs/atomic-save-2026-06-17.md`, `concurrent-save-2026-06-17.md`, `multi-tenant-2026-06-17.md`, `e2e-new-package-2026-06-17.md`, `orphan-transition-2026-06-17.md`
+
+## Out of scope
+
+- `canonical-document-generate-strict` (snapshot уже PASS).
+- token registry / каталог токенов / pf-extractor / role-resolver / billing snapshot.
+- Третий UNIQUE-индекс через `COALESCE` (см. §4).
+- Объединение detection из нескольких версий шаблона.
+- Любые ветвления по `package.name` или `package.id` в коде анкеты и карточек.
+
+## Порядок выполнения (одним проходом)
+
+cross-package parity (detection + orphan UI) → atomic save RPC + hooks → concurrent proof → multi-tenant proof → единый редизайн `PackageDocumentCard` → E2E нового пакета + orphan-переход.
