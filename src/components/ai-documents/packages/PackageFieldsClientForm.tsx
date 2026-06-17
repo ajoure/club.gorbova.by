@@ -261,7 +261,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
                   field_catalog_id: q.field.id,
                   package_template_item_id: packageTemplateItemId,
                 });
-                setDirty(false);
+                setDirtyFields(new Set());
               }
             : undefined;
           return (
