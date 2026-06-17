@@ -252,6 +252,19 @@ cross-package parity (detection + orphan UI) → atomic save RPC + hooks → con
 
 См. `.lovable/proofs/stage1_cross_package_parity_runtime.md`. Идеология: orphan-блок один раз на уровне пакета, pf-000002=15.06.2026, в карточках не дублируется. Годовое собрание: orphan-блока нет, документ-карточка показывает 7/7 полей. Сохранение orphan: session-level, hydration после refresh, без per-item row. Админский бейдж в `PackageFieldsAssignmentPanel` — отложен до этапа единого редизайна. Orphan→detected transition остаётся для E2E нового пакета.
 
-### Этап 2 — atomic save RPC + hooks: IN PROGRESS
+### Этап 2 — atomic save RPC: IMPLEMENTED (code-complete)
 
-### Этапы 3–7 (concurrent proof, multi-tenant proof, unified `PackageDocumentCard`, E2E нового пакета + orphan-transition): NOT STARTED
+См. `.lovable/proofs/stage2_atomic_save.md`.
+- Migration: `save_session_document_atomic(uuid, uuid, jsonb, jsonb, uuid)` создан, GRANT EXECUTE authenticated+service_role.
+- Hook: `src/hooks/useAtomicDocumentSave.ts`.
+- Guards (server-side): session ownership, item↔package, stale template version, orphan-per-item, type-cast, role/person validity, desired-state cleanup.
+- Audit: одна запись `package_document_atomic_save` на вызов.
+- Atomic rollback и desired-state semantics — PASS by construction (одна транзакция, scoped `NOT (id = ANY(v_kept_ids))`).
+
+### Этап 3 — concurrent proof: NOT STARTED (требует proof-скрипта с 5×parallel RPC)
+
+### Этап 4 — multi-tenant proof: NOT STARTED
+
+### Этап 5 — unified `PackageDocumentCard` (рефакторинг UI с использованием атомарного RPC): NOT STARTED
+
+### Этап 6 — E2E нового пакета + Этап 7 — orphan transition: NOT STARTED
