@@ -31,7 +31,7 @@ async function callAtomic(itemId: string, fields: unknown[] = [], roles: unknown
 async function auditCount() {
   const { count } = await admin.from("audit_logs")
     .select("*", { count: "exact", head: true })
-    .eq("action", "package_document_atomic_save").eq("resource_id", SESSION_ID);
+    .eq("action", "package_document_atomic_save").eq("entity_id", SESSION_ID);
   return count ?? 0;
 }
 
