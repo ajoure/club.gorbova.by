@@ -55,6 +55,8 @@ interface Props {
    * Используется один раз в общем диагностическом блоке пакета.
    */
   orphanOnly?: boolean;
+  /** Сообщает родителю об изменении dirty-state (для atomic save в карточке). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type DraftMap = Record<string, string | null>;
@@ -90,8 +92,18 @@ function serializeDateTime(date: Date | undefined, time: string): string {
   return `${serializeLocalDate(date)}T${t}`;
 }
 
+export interface PackageFieldDirtyPatch {
+  field_catalog_id: string;
+  value: string | null;
+}
+
 export interface PackageFieldsSubmitHandle {
+  /** Внутренний save (legacy путь — пишет через upsert_session_field_values). */
   submit: () => Promise<boolean>;
+  /** Sparse-патч только из явно изменённых пользователем полей. */
+  getDirtyPatch: () => PackageFieldDirtyPatch[];
+  /** Сбросить dirty-state, приняв текущий draft как baseline (после atomic save). */
+  markSaved: () => void;
   isDirty: boolean;
   isSaving: boolean;
 }
@@ -105,6 +117,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   onSaved,
   hideSaveButton = false,
   orphanOnly = false,
+  onDirtyChange,
 }, ref) {
   const {
     questions: allQuestions,
@@ -129,7 +142,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   }, [orphanOnly, orphanQuestions, packageTemplateItemId, allQuestions, getItemQuestions]);
 
   const [draft, setDraft] = useState<DraftMap>({});
-  const [dirty, setDirty] = useState(false);
+  const [baseline, setBaseline] = useState<DraftMap>({});
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (isLoading) return;
@@ -165,14 +179,25 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
       next[q.field.id] = null;
     }
     setDraft(next);
-    setDirty(false);
+    setBaseline(next);
+    setDirtyFields(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions, valuesByField, isLoading, sessionCreatedAt, effectiveItemId]);
 
   const handleChange = (fieldId: string, value: string | null) => {
     setDraft((d) => ({ ...d, [fieldId]: value }));
-    setDirty(true);
+    setDirtyFields((s) => {
+      const n = new Set(s);
+      n.add(fieldId);
+      return n;
+    });
   };
+
+  const dirty = dirtyFields.size > 0;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const handleSave = async (): Promise<boolean> => {
     const payload = questions.map((q) => ({
@@ -182,7 +207,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     }));
     try {
       await save(payload);
-      setDirty(false);
+      setBaseline(draft);
+      setDirtyFields(new Set());
       onSaved?.();
       return true;
     } catch {
@@ -190,11 +216,28 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     }
   };
 
+  const getDirtyPatch = (): PackageFieldDirtyPatch[] => {
+    const out: PackageFieldDirtyPatch[] = [];
+    for (const fid of dirtyFields) {
+      const v = draft[fid];
+      out.push({ field_catalog_id: fid, value: v === "" ? null : v ?? null });
+    }
+    return out;
+  };
+
+  const markSaved = () => {
+    setBaseline(draft);
+    setDirtyFields(new Set());
+  };
+
   useImperativeHandle(ref, () => ({
     submit: handleSave,
+    getDirtyPatch,
+    markSaved,
     isDirty: dirty,
     isSaving,
-  }), [dirty, isSaving, handleSave]);
+  }), [dirty, isSaving, handleSave, draft, dirtyFields]);
+
 
   if (!sessionId || !packageTemplateId) return null;
   if (isLoading) {
@@ -225,7 +268,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
                   field_catalog_id: q.field.id,
                   package_template_item_id: packageTemplateItemId,
                 });
-                setDirty(false);
+                setDirtyFields(new Set());
               }
             : undefined;
           return (
