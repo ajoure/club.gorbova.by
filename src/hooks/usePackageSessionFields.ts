@@ -127,6 +127,43 @@ export function usePackageSessionFields(
     return out;
   }, [catalogQuery.data, detected.allPublicIds, detected.byPublicId]);
 
+  /**
+   * Orphan questions: pf-поля каталога пакета, отсутствующие ВО ВСЕХ активных DOCX-версиях.
+   * Это диагностика уровня пакета:
+   *   • не входят в required-gate;
+   *   • не считаются в X/Y документа;
+   *   • не попадают в snapshot/DOCX;
+   *   • сохраняются ТОЛЬКО session-level (item_id IS NULL);
+   *   • никогда не дублируются в карточках документов.
+   */
+  const orphanQuestions = useMemo<DedupedQuestion[]>(() => {
+    const fields = catalogQuery.data ?? [];
+    if (fields.length === 0) return [];
+    const detectedSet = new Set(detected.allPublicIds);
+    const out: DedupedQuestion[] = [];
+    for (const f of fields) {
+      if (!f.public_id) continue;
+      if (detectedSet.has(f.public_id)) continue;
+      out.push({
+        field: f,
+        occurrences: 0,
+        itemIds: [],
+        effective: {
+          label: f.label,
+          // orphan НЕ участвует в required-gate, метку required игнорируем для готовности,
+          // но визуально оставляем как есть для админской осведомлённости.
+          required: !!f.required,
+          help: f.description ?? null,
+        },
+      });
+    }
+    out.sort((a, b) => {
+      if (a.field.sort_order !== b.field.sort_order) return a.field.sort_order - b.field.sort_order;
+      return a.effective.label.localeCompare(b.effective.label);
+    });
+    return out;
+  }, [catalogQuery.data, detected.allPublicIds]);
+
   const valuesQuery = useQuery({
     queryKey: QK.values(sessionId),
     queryFn: async (): Promise<SessionFieldValueRow[]> => {
