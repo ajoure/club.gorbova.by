@@ -1,26 +1,27 @@
 /**
- * PackageGenerationPanel — Sprint 3I-B (variant 2).
+ * PackageGenerationPanel — Sprint 3I-B (variant 2) + hotfix v3.
  *
- * Отдельная подвкладка «Генерация» внутри `PackagesWorkspace`. Финальное
- * действие после заполнения состава, шаблонов, анкет и проверок.
- *
- * Содержит:
- *   • preflight-сводку (шаблон, состав, обязательные роли, blockers);
- *   • кнопку пользователя «Сформировать пакет документов»;
- *   • кнопку admin «Тестово сформировать» (`run_mode='admin_test'`);
- *   • per-item результат последнего запуска (DOCX/PDF ссылки);
- *   • `PackageGenerationHistory`.
+ * Hotfix 2026-06-17:
+ *   • Источник session/items/roleCatalog — `packageTemplateId` (UUID), не `code`.
+ *     Это устраняет рассинхрон с вкладкой «Анкеты документов»: пакет без
+ *     заданного `code` (например, «Годовое собрание») раньше давал ложный
+ *     blocker «Анкета пакета ещё не сохранена».
+ *   • Query keys идентичны ключам `DocumentPackageQuestionnairesView`, что
+ *     обеспечивает мгновенную разблокировку кнопки после сохранения анкеты.
+ *   • Blocker — предметный: показывает, какой документ требует чего именно.
+ *   • STOP-condition: если session есть, но `session.package_template_id`
+ *     не совпадает с текущим templateId или items=0, генерация блокируется
+ *     с диагностикой, новая сессия не создаётся.
  *
  * STOP:
  *   • НЕ трогает backend pipeline: `UI → ai-generate-document-package →
  *     canonical-document-generate-strict`.
  *   • НЕ материализует `ai_generated_documents` / Gotenberg / storage.
- *   • НЕ дублирует логику анкеты — данные читаются из
- *     `useDocumentPackageSession`.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +31,6 @@ import {
 } from "lucide-react";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { useRbac } from "@/hooks/useRbac";
-import { useDocumentPackageSession } from "@/hooks/useDocumentPackageSession";
 import { useDocumentPackageItems } from "@/hooks/useDocumentPackages";
 import {
   useAiDocumentPackageGeneration,
@@ -40,20 +40,81 @@ import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
-import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
 
 interface Props {
-  /** Канонический код пакета (например, "ideology"). SOT — `document_package_templates.code`. */
-  packageCode: string;
+  /** UUID шаблона пакета. SOT — `document_package_templates.id`. */
+  packageTemplateId: string;
   packageName: string;
 }
 
-export function PackageGenerationPanel({ packageCode, packageName }: Props) {
+interface RoleDef {
+  id: string;
+  role_key: string;
+  label: string;
+  required: boolean;
+}
+
+export function PackageGenerationPanel({ packageTemplateId, packageName }: Props) {
+  const { user } = useAuth();
   const rbac = useRbac();
   const isAdmin = rbac.isAdmin || rbac.isSuperAdmin;
 
-  const pkg = useDocumentPackageSession(packageCode);
-  const { items: packageItems } = useDocumentPackageItems(pkg.templateId);
+  // 1. profile id (тот же key, что и в анкете)
+  const profileQuery = useQuery({
+    queryKey: ["profile-id", user?.id],
+    queryFn: async () => {
+      if (!user) return null;
+      const { data, error } = await supabase
+        .from("profiles").select("id").eq("user_id", user.id).single();
+      if (error) throw error;
+      return data.id as string;
+    },
+    enabled: !!user,
+  });
+  const profileId = profileQuery.data ?? null;
+
+  // 2. session (ИДЕНТИЧНЫЙ ключ и фильтр с DocumentPackageQuestionnairesView)
+  const sessionQuery = useQuery({
+    queryKey: ["doc-pkg-session-q", profileId, packageTemplateId],
+    queryFn: async () => {
+      if (!profileId) return null;
+      const { data } = await supabase
+        .from("document_package_sessions")
+        .select("id, selected_legal_entity_id, legal_entity_locked_at, created_at, package_template_id")
+        .eq("profile_id", profileId)
+        .eq("package_template_id", packageTemplateId)
+        .is("entitlement_id", null)
+        .is("order_id", null)
+        .neq("status", "archived")
+        .maybeSingle();
+      return data ?? null;
+    },
+    enabled: !!profileId,
+  });
+  const session = sessionQuery.data;
+  const sessionId = session?.id ?? null;
+
+  // 3. items пакета
+  const { items: packageItems } = useDocumentPackageItems(packageTemplateId);
+
+  // 4. role catalog для пакета (тот же ключ, что и usePackageRoleCatalog)
+  const roleCatalogQuery = useQuery({
+    queryKey: ["pkg-role-catalog", packageTemplateId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select("id, role_key, label, required, is_active")
+        .eq("package_template_id", packageTemplateId)
+        .eq("is_active", true)
+        .order("sort_order");
+      if (error) throw error;
+      return ((data ?? []) as any[]).map((r) => ({
+        id: r.id, role_key: r.role_key, label: r.label, required: !!r.required,
+      })) as RoleDef[];
+    },
+  });
+  const roleCatalog = roleCatalogQuery.data ?? [];
+
   const { generatePackage, isGenerating } = useAiDocumentPackageGeneration();
 
   const [lastResult, setLastResult] = useState<PackageGenerationResult | null>(null);
@@ -67,74 +128,98 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
     return map;
   }, [packageItems]);
 
-  // PATCH GATE V2: per-item role assignments SOT (а не legacy participants).
+  // PATCH GATE V2: per-item role assignments SOT.
   const itemIds = useMemo(() => (packageItems ?? []).map((it: any) => it.id), [packageItems]);
   const assignmentsQuery = useQuery({
-    queryKey: ["pkg-gen-role-assignments", pkg.session?.id, itemIds.join(",")],
+    queryKey: ["pkg-gen-role-assignments", sessionId, itemIds.join(",")],
     queryFn: async () => {
-      if (!pkg.session?.id || itemIds.length === 0) return [] as Array<{ role_catalog_id: string; package_template_item_id: string }>;
+      if (!sessionId || itemIds.length === 0) return [];
       const { data, error } = await supabase
         .from("document_package_item_role_assignments" as any)
         .select("role_catalog_id, package_template_item_id, person_id")
-        .eq("package_session_id", pkg.session.id)
+        .eq("package_session_id", sessionId)
         .in("package_template_item_id", itemIds)
         .eq("is_active", true);
       if (error) throw error;
-      return ((data ?? []) as any).filter((a: any) => a.person_id);
+      return ((data ?? []) as any[]).filter((a) => a.person_id) as Array<{
+        role_catalog_id: string; package_template_item_id: string;
+      }>;
     },
-    enabled: !!pkg.session?.id && itemIds.length > 0,
+    enabled: !!sessionId && itemIds.length > 0,
   });
   const assignments = assignmentsQuery.data ?? [];
 
-  // Required roles satisfied: package_company → entity selected;
-  // прочие required → ≥1 назначение в любом документе пакета.
+  // Required roles (на уровне пакета): package_company → entity; прочие → ≥1 в любом документе.
   const requiredRolesStatus = useMemo(() => {
     const assignedRoleIds = new Set(assignments.map((a) => a.role_catalog_id));
-    return (pkg.roleCatalog ?? [])
+    return roleCatalog
       .filter((r) => r.required)
       .map((r) => {
         if (r.role_key === "package_company") {
-          return { role: r, satisfied: !!pkg.session?.selected_legal_entity_id };
+          return { role: r, satisfied: !!session?.selected_legal_entity_id };
         }
         return { role: r, satisfied: assignedRoleIds.has(r.id) };
       });
-  }, [pkg.roleCatalog, assignments, pkg.session]);
+  }, [roleCatalog, assignments, session]);
 
   const allRequiredSatisfied = requiredRolesStatus.every((x) => x.satisfied);
-  const hasSession = !!pkg.session?.id;
+  const hasSession = !!sessionId;
   const hasItems = (packageItems?.length ?? 0) > 0;
 
-  // PATCH GATE V2: required pf-fields per-item (per-item value OR session-level fallback).
-  const fieldsState = usePackageSessionFields(pkg.session?.id ?? null, pkg.templateId);
-  const detected = usePackageDetectedFields(pkg.templateId);
+  // STOP-condition: session есть, но template_id не совпадает.
+  const sessionMismatch =
+    !!session && session.package_template_id && session.package_template_id !== packageTemplateId;
 
+  // Required pf-fields per-item.
+  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
   const requiredFieldsGate = useMemo(() => {
     let missing = 0;
     let total = 0;
+    const perItemMissing: Array<{ itemId: string; label: string; missing: number }> = [];
     for (const itemId of itemIds) {
       const prog = fieldsState.getItemProgress(itemId);
       total += prog.requiredTotal;
-      missing += prog.requiredTotal - prog.requiredFilled;
+      const miss = prog.requiredTotal - prog.requiredFilled;
+      missing += miss;
+      if (miss > 0) {
+        perItemMissing.push({
+          itemId,
+          label: itemLabelById.get(itemId) ?? "Документ",
+          missing: miss,
+        });
+      }
     }
-    return { missing, total, satisfied: missing === 0 };
-  }, [itemIds, fieldsState, detected.byItemId]);
+    return { missing, total, satisfied: missing === 0, perItemMissing };
+  }, [itemIds, fieldsState, itemLabelById]);
 
+  // Per-item missing roles: для каждого item — какие required роли не назначены.
+  // Сейчас required роли проверяются на уровне пакета (≥1 назначение где угодно),
+  // но для UX покажем item-level подсказку отдельным сообщением.
   const blockers: string[] = [];
-  if (!hasSession) blockers.push("Анкета пакета ещё не сохранена.");
-  if (!hasItems) blockers.push("В пакете нет шаблонов.");
-  if (hasSession && !allRequiredSatisfied) blockers.push("Не заполнены обязательные роли.");
-  if (hasSession && !requiredFieldsGate.satisfied) {
+  if (sessionMismatch) {
     blockers.push(
-      `Не заполнены обязательные поля документов (${requiredFieldsGate.total - requiredFieldsGate.missing}/${requiredFieldsGate.total}).`,
+      `Шаблон сессии не совпадает с выбранным пакетом (session.template=${session?.package_template_id}, выбран=${packageTemplateId}). Обратитесь к администратору.`,
     );
+  } else {
+    if (!hasSession) blockers.push("Анкета пакета ещё не сохранена.");
+    if (!hasItems && hasSession) blockers.push("В пакете нет шаблонов документов.");
+    if (hasSession && !allRequiredSatisfied) {
+      const missing = requiredRolesStatus.filter((x) => !x.satisfied).map((x) => x.role.label);
+      blockers.push(`Не назначены обязательные роли: ${missing.join(", ")}.`);
+    }
+    if (hasSession && !requiredFieldsGate.satisfied) {
+      for (const p of requiredFieldsGate.perItemMissing) {
+        blockers.push(`Документ «${p.label}»: не заполнено ${p.missing} обязательных полей.`);
+      }
+    }
   }
 
   const handleGenerate = async (runMode: "user_generate" | "admin_test") => {
-    if (!pkg.session?.id) return;
+    if (!sessionId) return;
     setLastRunMode(runMode);
     try {
       const data = await generatePackage({
-        package_session_id: pkg.session.id,
+        package_session_id: sessionId,
         run_mode: runMode,
       });
       setLastResult(data);
@@ -144,7 +229,8 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
   };
 
   const canGenerate =
-    hasSession && hasItems && allRequiredSatisfied && requiredFieldsGate.satisfied && !isGenerating;
+    hasSession && hasItems && !sessionMismatch && allRequiredSatisfied
+    && requiredFieldsGate.satisfied && !isGenerating;
 
   return (
     <div className="space-y-3">
@@ -227,15 +313,25 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
                 <span>{hasSession ? "Анкета пакета сохранена" : "Анкета не сохранена"}</span>
               </div>
               <div className="flex items-center gap-1.5">
-                {pkg.session?.selected_legal_entity_id
+                {session?.selected_legal_entity_id
                   ? <CheckCircle2 className="h-3 w-3 text-emerald-600" />
                   : <AlertCircle className="h-3 w-3 text-amber-600" />}
                 <span>
-                  {pkg.session?.selected_legal_entity_id
+                  {session?.selected_legal_entity_id
                     ? "ЮЛ / ИП выбрано"
                     : "ЮЛ / ИП не выбрано"}
                 </span>
               </div>
+              {requiredFieldsGate.total > 0 && (
+                <div className="flex items-center gap-1.5">
+                  {requiredFieldsGate.satisfied
+                    ? <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                    : <AlertCircle className="h-3 w-3 text-amber-600" />}
+                  <span>
+                    Обязательные поля документов: {requiredFieldsGate.total - requiredFieldsGate.missing}/{requiredFieldsGate.total}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -267,20 +363,15 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
         {blockers.length > 0 && (
           <div className="mt-3 border rounded-lg p-2.5 bg-amber-50 border-amber-200 text-[11px] text-amber-800 flex items-start gap-2">
             <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            <div>
+            <div className="min-w-0">
               <div className="font-medium mb-0.5">Перед запуском нужно:</div>
               <ul className="list-disc list-inside space-y-0.5">
-                {blockers.map((b) => <li key={b}>{b}</li>)}
+                {blockers.map((b, i) => <li key={i}>{b}</li>)}
               </ul>
             </div>
           </div>
         )}
       </GlassCard>
-
-
-
-
-
 
       {/* Результат последнего запуска */}
       {lastResult && (
@@ -374,7 +465,7 @@ export function PackageGenerationPanel({ packageCode, packageName }: Props) {
       {/* История запусков */}
       <GlassCard className="p-3">
         <PackageGenerationHistory
-          packageSessionId={pkg.session?.id ?? null}
+          packageSessionId={sessionId}
           isAdmin={isAdmin}
         />
       </GlassCard>
