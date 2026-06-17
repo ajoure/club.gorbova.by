@@ -16252,6 +16252,17 @@ export type Database = {
       }
     }
     Functions: {
+      _proof_stage3_call_atomic: {
+        Args: {
+          p_expected_version?: string
+          p_field_values: Json
+          p_item_id: string
+          p_role_assignments: Json
+          p_session_id: string
+          p_uid: string
+        }
+        Returns: Json
+      }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
