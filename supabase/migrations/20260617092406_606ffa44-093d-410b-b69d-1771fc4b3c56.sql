@@ -1,0 +1,1 @@
+INSERT INTO app_settings (key, value) VALUES ('dev_proof_d7_422_token', jsonb_build_object('token','fcb997a1a87b7ac89c471f748dd728ae64cbcbec67e86129')) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
