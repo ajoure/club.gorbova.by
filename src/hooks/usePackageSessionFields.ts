@@ -201,6 +201,9 @@ export function usePackageSessionFields(
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.values(sessionId) });
+      // hotfix 2026-06-17: разблокировать кнопку «Сформировать пакет» без переключения вкладок.
+      qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
+      qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
