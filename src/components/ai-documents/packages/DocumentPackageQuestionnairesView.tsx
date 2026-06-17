@@ -53,6 +53,7 @@ interface ItemRow {
   sort_order: number;
   template_id: string;
   template_name: string;
+  active_version_id: string | null;
 }
 
 function entityDisplay(e: ClientLegalDetails): string {
