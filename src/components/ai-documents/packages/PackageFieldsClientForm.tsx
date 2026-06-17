@@ -104,9 +104,11 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   disabled,
   onSaved,
   hideSaveButton = false,
+  orphanOnly = false,
 }, ref) {
   const {
     questions: allQuestions,
+    orphanQuestions,
     valuesByField,
     getEffectiveValue,
     getItemQuestions,
@@ -117,10 +119,14 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isResettingOverride,
   } = usePackageSessionFields(sessionId, packageTemplateId);
 
+  // orphanOnly игнорирует packageTemplateItemId — orphan-поля сохраняются строго session-level.
+  const effectiveItemId = orphanOnly ? null : packageTemplateItemId;
+
   const questions = useMemo<DedupedQuestion[]>(() => {
+    if (orphanOnly) return orphanQuestions;
     if (packageTemplateItemId) return getItemQuestions(packageTemplateItemId);
     return allQuestions;
-  }, [packageTemplateItemId, allQuestions, getItemQuestions]);
+  }, [orphanOnly, orphanQuestions, packageTemplateItemId, allQuestions, getItemQuestions]);
 
   const [draft, setDraft] = useState<DraftMap>({});
   const [dirty, setDirty] = useState(false);
