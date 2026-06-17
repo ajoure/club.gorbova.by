@@ -299,6 +299,8 @@ export function usePackageSessionFields(
       catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,
     isSaving: saveMutation.isPending,
+    resetOverride: resetOverrideMutation.mutateAsync,
+    isResettingOverride: resetOverrideMutation.isPending,
     progress,
   };
 }
