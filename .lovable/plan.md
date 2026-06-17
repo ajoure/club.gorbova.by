@@ -261,7 +261,9 @@ cross-package parity (detection + orphan UI) → atomic save RPC + hooks → con
 - Audit: одна запись `package_document_atomic_save` на вызов.
 - Atomic rollback и desired-state semantics — PASS by construction (одна транзакция, scoped `NOT (id = ANY(v_kept_ids))`).
 
-### Этап 3 — concurrent proof: NOT STARTED (требует proof-скрипта с 5×parallel RPC)
+### Этап 3 — concurrent + atomic runtime proof: PASS (2026-06-17)
+
+См. `.lovable/proofs/stage3_atomic_concurrent_runtime.md`. all_pass=true, 5/5 сценариев (orphan-per-item, stale-version, atomic rollback без audit и без leak, desired-state delete с архивированием ROLE_B, 5×parallel без дублей и с когерентным финальным состоянием). Proof выявил и устранил 4 реальных дефекта в `save_session_document_atomic`: (1) UPDATE-роль захватывала inactive-дубли → 23505; (2) race UPDATE→INSERT под параллельной нагрузкой; (3) ERRCODE 40001 для stale_template_version вызывал PostgREST retry loop; (4) audit-insert ссылался на несуществующие колонки и тихо откатывал все успешные транзакции. Все четыре исправлены. Транзитные артефакты (helper RPC, edge-функция, audit от прогона, временные роли) удалены.
 
 ### Этап 4 — multi-tenant proof: NOT STARTED
 
