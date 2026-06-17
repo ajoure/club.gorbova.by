@@ -1,0 +1,1 @@
+DELETE FROM app_settings WHERE key='dev_proof_d7_422_token';
