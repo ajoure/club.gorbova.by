@@ -195,6 +195,10 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
 
   const dirty = dirtyFields.size > 0;
 
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
   const handleSave = async (): Promise<boolean> => {
     const payload = questions.map((q) => ({
       field_catalog_id: q.field.id,
