@@ -47,11 +47,11 @@ Deno.serve(async (_req) => {
     steps.push({ name: "S1.orphan_per_item_rejected", ok: !!s1.error && /orphan_field_not_writable_per_item/.test(s1.error.message ?? ""),
       details: { error: s1.error?.message } });
 
-    // S2 — SKIPPED in this run: stale_template_version currently uses ERRCODE=40001
-    // (serialization_failure) which PostgREST treats as retryable → infinite loop in the
-    // edge runtime. Will be hardened in a follow-up migration (change to '22023' or '42501').
-    steps.push({ name: "S2.stale_version_rejected", ok: false,
-      details: { skipped: true, reason: "ERRCODE=40001 causes PostgREST retry loop; pending RPC patch" } });
+    log("S2");
+    const s2 = await callAtomic(ITEM_DOC1, [], [], "00000000-0000-0000-0000-000000000001");
+    steps.push({ name: "S2.stale_version_rejected",
+      ok: !!s2.error && /stale_template_version/.test(s2.error.message ?? ""),
+      details: { error: s2.error?.message } });
 
     // S3 rollback
     log("S3");
