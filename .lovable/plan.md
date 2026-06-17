@@ -234,3 +234,23 @@ SECURITY DEFINER
 ## Порядок выполнения (одним проходом)
 
 cross-package parity (detection + orphan UI) → atomic save RPC + hooks → concurrent proof → multi-tenant proof → единый редизайн `PackageDocumentCard` → E2E нового пакета + orphan-переход.
+---
+
+## Прогресс выполнения
+
+### Этап 1 — cross-package parity (detection + orphan UI): IMPLEMENTED
+
+- `usePackageSessionFields`: добавлен `orphanQuestions` (pf каталога, отсутствующие во всех активных DOCX-версиях). Сортировка по `sort_order` + label. Не входит в `progress`, не входит в `getItemProgress`. Никаких веток по name/id пакета.
+- `PackageFieldsClientForm`: добавлен проп `orphanOnly`. В этом режиме:
+  - источник вопросов — `orphanQuestions`;
+  - `effectiveItemId = null` всегда → сохраняется session-level;
+  - бейджи «общее значение / переопределено» и кнопка «Сбросить к общему» подавлены;
+  - per-item override недоступен по контракту.
+- `DocumentPackageQuestionnairesView`: над аккордеоном документов один раз рендерится блок «Общие поля пакета · не используются в документах» при `orphanCount > 0`. В карточках документов orphan-поля не повторяются.
+
+### Этап 1 — pending proof
+
+- E2E proof «Идеология»: orphan pf-000002 виден один раз в общем блоке, не дублируется в карточках, не блокирует генерацию. После вставки `{{pf-000002}}` в один шаблон и активации новой версии — поле исчезает из orphan-блока, появляется в карточке нужного документа, сохранённое значение автоматически становится session-level fallback (без потери данных, без лишнего per-item override).
+- Админский бейдж «используется в N документах / не вставлено ни в один шаблон» в `PackageFieldsAssignmentPanel` — отложен до этапа единого редизайна.
+
+### Этапы 3–7 (atomic save RPC, concurrent proof, multi-tenant proof, unified `PackageDocumentCard`, E2E нового пакета + orphan-transition): NOT STARTED

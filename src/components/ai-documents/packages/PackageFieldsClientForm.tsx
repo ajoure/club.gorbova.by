@@ -47,6 +47,14 @@ interface Props {
   onSaved?: () => void;
   /** Скрыть собственную кнопку «Сохранить» (для интеграции в общую анкету). */
   hideSaveButton?: boolean;
+  /**
+   * Orphan-режим: рендерить ТОЛЬКО pf-поля каталога, которых нет ни в одном
+   * активном DOCX-шаблоне пакета. Сохранение — session-level, без per-item
+   * override, без reset, без бейджа «общее значение / переопределено».
+   * Не учитывается в готовности документа и не блокирует генерацию.
+   * Используется один раз в общем диагностическом блоке пакета.
+   */
+  orphanOnly?: boolean;
 }
 
 type DraftMap = Record<string, string | null>;
@@ -96,9 +104,11 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   disabled,
   onSaved,
   hideSaveButton = false,
+  orphanOnly = false,
 }, ref) {
   const {
     questions: allQuestions,
+    orphanQuestions,
     valuesByField,
     getEffectiveValue,
     getItemQuestions,
@@ -109,10 +119,14 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isResettingOverride,
   } = usePackageSessionFields(sessionId, packageTemplateId);
 
+  // orphanOnly игнорирует packageTemplateItemId — orphan-поля сохраняются строго session-level.
+  const effectiveItemId = orphanOnly ? null : packageTemplateItemId;
+
   const questions = useMemo<DedupedQuestion[]>(() => {
+    if (orphanOnly) return orphanQuestions;
     if (packageTemplateItemId) return getItemQuestions(packageTemplateItemId);
     return allQuestions;
-  }, [packageTemplateItemId, allQuestions, getItemQuestions]);
+  }, [orphanOnly, orphanQuestions, packageTemplateItemId, allQuestions, getItemQuestions]);
 
   const [draft, setDraft] = useState<DraftMap>({});
   const [dirty, setDirty] = useState(false);
@@ -123,8 +137,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     for (const q of questions) {
       const existing = readRawValue(
         q.field,
-        packageTemplateItemId
-          ? getEffectiveValue(q.field.id, packageTemplateItemId)
+        effectiveItemId
+          ? getEffectiveValue(q.field.id, effectiveItemId)
           : valuesByField.get(q.field.id),
       );
       if (existing != null && existing !== "") {
@@ -153,7 +167,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     setDraft(next);
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions, valuesByField, isLoading, sessionCreatedAt, packageTemplateItemId]);
+  }, [questions, valuesByField, isLoading, sessionCreatedAt, effectiveItemId]);
 
   const handleChange = (fieldId: string, value: string | null) => {
     setDraft((d) => ({ ...d, [fieldId]: value }));
@@ -164,7 +178,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     const payload = questions.map((q) => ({
       field_catalog_id: q.field.id,
       value: (draft[q.field.id] ?? null) === "" ? null : draft[q.field.id] ?? null,
-      package_template_item_id: packageTemplateItemId ?? null,
+      package_template_item_id: effectiveItemId ?? null,
     }));
     try {
       await save(payload);
@@ -198,9 +212,11 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
         {questions.map((q) => {
           const sessionValue = valuesByField.get(q.field.id);
           const currentDraft = draft[q.field.id] ?? null;
-          const hasItemOverride = !!packageTemplateItemId
+          // В orphan-режиме per-item override недоступен по контракту:
+          // никаких бейджей «общее значение / переопределено» и кнопки сброса.
+          const hasItemOverride = !orphanOnly && !!packageTemplateItemId
             && isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
-          const inheritedFromSession = !!packageTemplateItemId
+          const inheritedFromSession = !orphanOnly && !!packageTemplateItemId
             && isRowFilled(sessionValue)
             && !hasItemOverride;
           const handleReset = hasItemOverride && packageTemplateItemId

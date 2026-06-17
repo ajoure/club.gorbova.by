@@ -77,6 +77,9 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
     () => catalogRoles.filter((r) => r.is_active && !r.is_system),
     [catalogRoles],
   );
+  // Orphan pf уровня пакета — диагностический блок, не часть анкеты документа.
+  const packageFields = usePackageSessionFields(null, packageTemplateId);
+  const orphanCount = packageFields.orphanQuestions.length;
 
   // 1. Profile id
   const profileQuery = useQuery({
@@ -254,6 +257,34 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
           </div>
         )}
       </GlassCard>
+
+      {/* Общие orphan-поля пакета (диагностика): pf каталога, не вставленные ни в один шаблон. */}
+      {sessionId && orphanCount > 0 && (
+        <GlassCard className="p-4 border-amber-200/60 dark:border-amber-900/40">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <ListChecks className="h-4 w-4 text-amber-500" />
+            <h3 className="text-sm font-semibold">Общие поля пакета</h3>
+            <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-amber-300 text-amber-700">
+              не используются в документах
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3 flex items-start gap-1.5">
+            <Info className="h-3 w-3 mt-0.5 shrink-0" />
+            Эти поля созданы в каталоге пакета, но пока не вставлены ни в один
+            шаблон документа. Сохранённые значения не используются при генерации
+            и не блокируют формирование пакета. Как только токен поля появится
+            в активной версии шаблона, поле автоматически перейдёт в анкету
+            нужного документа, а сохранённое здесь значение станет общим
+            значением пакета.
+          </p>
+          <PackageFieldsClientForm
+            sessionId={sessionId}
+            packageTemplateId={packageTemplateId}
+            sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
+            orphanOnly
+          />
+        </GlassCard>
+      )}
 
       {/* Аккордеон по документам — каждый шаблон содержит свои поля + роли */}
       {itemsQuery.isLoading ? (
