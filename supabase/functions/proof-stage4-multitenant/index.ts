@@ -180,9 +180,16 @@ async function run() {
     "field_outside_session_package");
 
   // T7: A passes random role catalog id from different package — create temp role first.
-  const { data: tmpRole } = await admin.from("document_package_role_catalog").insert({
-    package_template_id: PKG_GS, name: TAG + "_tmp_role", is_active: true, public_id: "ln-stage4-tmp",
+  const tmpPublicId = "ln-s4-" + crypto.randomUUID().slice(0, 8);
+  const { data: tmpRole, error: tmpRoleErr } = await admin.from("document_package_role_catalog").insert({
+    package_template_id: PKG_GS,
+    role_key: TAG + "_tmp_" + tmpPublicId,
+    label: TAG + " tmp role",
+    allowed_entity_types: ["person"],
+    is_active: true,
+    public_id: tmpPublicId,
   }).select("id").single();
+  if (tmpRoleErr) throw new Error("tmp role insert failed: " + tmpRoleErr.message);
   record("T7_cross_pkg_role_blocked", "error",
     await callRpc(jwtA, { _session_id: ctx.sessionA, _package_template_item_id: ITEM_IDEOLOGY,
       _field_values: [], _role_assignments: [{ role_catalog_id: tmpRole!.id, person_id: ctx.personA }] }),
