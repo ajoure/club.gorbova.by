@@ -132,14 +132,18 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       const ids = (items ?? []).map((r: any) => r.template_id);
       if (ids.length === 0) return [] as ItemRow[];
       const { data: tpls } = await supabase
-        .from("document_templates").select("id, name").in("id", ids);
-      const map = new Map((tpls ?? []).map((t: any) => [t.id, t.name]));
-      return (items ?? []).map((r: any) => ({
-        id: r.id,
-        sort_order: r.sort_order,
-        template_id: r.template_id,
-        template_name: (map.get(r.template_id) as string) ?? "—",
-      })) as ItemRow[];
+        .from("document_templates").select("id, name, active_version_id").in("id", ids);
+      const map = new Map((tpls ?? []).map((t: any) => [t.id, t]));
+      return (items ?? []).map((r: any) => {
+        const tpl: any = map.get(r.template_id);
+        return {
+          id: r.id,
+          sort_order: r.sort_order,
+          template_id: r.template_id,
+          template_name: (tpl?.name as string) ?? "—",
+          active_version_id: (tpl?.active_version_id as string | null) ?? null,
+        };
+      }) as ItemRow[];
     },
   });
 
