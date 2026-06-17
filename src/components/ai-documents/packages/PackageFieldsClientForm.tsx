@@ -55,6 +55,8 @@ interface Props {
    * Используется один раз в общем диагностическом блоке пакета.
    */
   orphanOnly?: boolean;
+  /** Сообщает родителю об изменении dirty-state (для atomic save в карточке). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type DraftMap = Record<string, string | null>;
