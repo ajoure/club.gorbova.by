@@ -312,7 +312,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
         <GlassCard className="p-3">
           <Accordion type="multiple" className="w-full">
             {items.map((item) => (
-              <ItemQuestionnaire
+              <PackageDocumentCard
                 key={item.id}
                 item={item}
                 packageTemplateId={packageTemplateId}
