@@ -97,6 +97,8 @@ export function PackageDocumentCard({
   const atomicSave = useAtomicDocumentSave();
 
   // role draft: null до гидратации (Stage 5 требование #4)
+  const [draft, setDraft] = useState<DraftRow[] | null>(null);
+  const [baseline, setBaseline] = useState<DraftRow[] | null>(null);
   const [fieldsDirty, setFieldsDirty] = useState(false);
 
   useEffect(() => {
