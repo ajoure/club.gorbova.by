@@ -90,8 +90,18 @@ function serializeDateTime(date: Date | undefined, time: string): string {
   return `${serializeLocalDate(date)}T${t}`;
 }
 
+export interface PackageFieldDirtyPatch {
+  field_catalog_id: string;
+  value: string | null;
+}
+
 export interface PackageFieldsSubmitHandle {
+  /** Внутренний save (legacy путь — пишет через upsert_session_field_values). */
   submit: () => Promise<boolean>;
+  /** Sparse-патч только из явно изменённых пользователем полей. */
+  getDirtyPatch: () => PackageFieldDirtyPatch[];
+  /** Сбросить dirty-state, приняв текущий draft как baseline (после atomic save). */
+  markSaved: () => void;
   isDirty: boolean;
   isSaving: boolean;
 }
