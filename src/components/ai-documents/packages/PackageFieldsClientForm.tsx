@@ -212,9 +212,11 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
         {questions.map((q) => {
           const sessionValue = valuesByField.get(q.field.id);
           const currentDraft = draft[q.field.id] ?? null;
-          const hasItemOverride = !!packageTemplateItemId
+          // В orphan-режиме per-item override недоступен по контракту:
+          // никаких бейджей «общее значение / переопределено» и кнопки сброса.
+          const hasItemOverride = !orphanOnly && !!packageTemplateItemId
             && isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
-          const inheritedFromSession = !!packageTemplateItemId
+          const inheritedFromSession = !orphanOnly && !!packageTemplateItemId
             && isRowFilled(sessionValue)
             && !hasItemOverride;
           const handleReset = hasItemOverride && packageTemplateItemId
