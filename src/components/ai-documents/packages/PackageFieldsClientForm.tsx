@@ -139,7 +139,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   }, [orphanOnly, orphanQuestions, packageTemplateItemId, allQuestions, getItemQuestions]);
 
   const [draft, setDraft] = useState<DraftMap>({});
-  const [dirty, setDirty] = useState(false);
+  const [baseline, setBaseline] = useState<DraftMap>({});
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (isLoading) return;
@@ -175,14 +176,21 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
       next[q.field.id] = null;
     }
     setDraft(next);
-    setDirty(false);
+    setBaseline(next);
+    setDirtyFields(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions, valuesByField, isLoading, sessionCreatedAt, effectiveItemId]);
 
   const handleChange = (fieldId: string, value: string | null) => {
     setDraft((d) => ({ ...d, [fieldId]: value }));
-    setDirty(true);
+    setDirtyFields((s) => {
+      const n = new Set(s);
+      n.add(fieldId);
+      return n;
+    });
   };
+
+  const dirty = dirtyFields.size > 0;
 
   const handleSave = async (): Promise<boolean> => {
     const payload = questions.map((q) => ({
@@ -192,7 +200,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     }));
     try {
       await save(payload);
-      setDirty(false);
+      setBaseline(draft);
+      setDirtyFields(new Set());
       onSaved?.();
       return true;
     } catch {
@@ -200,11 +209,28 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     }
   };
 
+  const getDirtyPatch = (): PackageFieldDirtyPatch[] => {
+    const out: PackageFieldDirtyPatch[] = [];
+    for (const fid of dirtyFields) {
+      const v = draft[fid];
+      out.push({ field_catalog_id: fid, value: v === "" ? null : v ?? null });
+    }
+    return out;
+  };
+
+  const markSaved = () => {
+    setBaseline(draft);
+    setDirtyFields(new Set());
+  };
+
   useImperativeHandle(ref, () => ({
     submit: handleSave,
+    getDirtyPatch,
+    markSaved,
     isDirty: dirty,
     isSaving,
-  }), [dirty, isSaving, handleSave]);
+  }), [dirty, isSaving, handleSave, draft, dirtyFields]);
+
 
   if (!sessionId || !packageTemplateId) return null;
   if (isLoading) {
