@@ -17,9 +17,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   const url = Deno.env.get('SUPABASE_URL')!;
   const srk = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const cronSecret = Deno.env.get('CRON_SECRET')!;
-  const provided = req.headers.get('x-cron-secret');
-  if (provided !== cronSecret) return j({ error: 'forbidden' }, 403);
+  const gateClient = createClient(url, srk);
+  const provided = req.headers.get('x-proof-token') ?? '';
+  const { data: gate } = await gateClient.from('app_settings').select('value').eq('key', 'dev_proof_d7_422_token').maybeSingle();
+  const expected = (gate?.value as any)?.token ?? '';
+  if (!provided || !expected || provided !== expected) return j({ error: 'forbidden' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const sessionId: string = body.session_id;
