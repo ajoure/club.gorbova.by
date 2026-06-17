@@ -16646,6 +16646,14 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      delete_session_field_value: {
+        Args: {
+          _field_catalog_id: string
+          _package_template_item_id: string
+          _session_id: string
+        }
+        Returns: Json
+      }
       diag_broadcast_cron_state: { Args: never; Returns: Json }
       expire_stale_entitlements: {
         Args: { p_batch_limit?: number }
