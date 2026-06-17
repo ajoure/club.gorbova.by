@@ -88,7 +88,7 @@ export function PackageDocumentCard({
   personsLoading,
   isAdmin,
 }: PackageDocumentCardProps) {
-  const qc = useQueryClient();
+  
   const { assignments, isLoading: rolesLoading } = useDocumentItemRoleAssignments(sessionId, item.id);
   const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
   const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
