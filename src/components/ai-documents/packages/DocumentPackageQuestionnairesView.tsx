@@ -77,6 +77,9 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
     () => catalogRoles.filter((r) => r.is_active && !r.is_system),
     [catalogRoles],
   );
+  // Orphan pf уровня пакета — диагностический блок, не часть анкеты документа.
+  const packageFields = usePackageSessionFields(null, packageTemplateId);
+  const orphanCount = packageFields.orphanQuestions.length;
 
   // 1. Profile id
   const profileQuery = useQuery({
