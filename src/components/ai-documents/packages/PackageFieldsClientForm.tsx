@@ -105,6 +105,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isLoading,
     save,
     isSaving,
+    resetOverride,
+    isResettingOverride,
   } = usePackageSessionFields(sessionId, packageTemplateId);
 
   const questions = useMemo<DedupedQuestion[]>(() => {
