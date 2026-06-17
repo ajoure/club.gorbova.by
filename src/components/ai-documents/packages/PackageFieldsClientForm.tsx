@@ -198,9 +198,20 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
         {questions.map((q) => {
           const sessionValue = valuesByField.get(q.field.id);
           const currentDraft = draft[q.field.id] ?? null;
+          const hasItemOverride = !!packageTemplateItemId
+            && isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
           const inheritedFromSession = !!packageTemplateItemId
             && isRowFilled(sessionValue)
-            && !isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
+            && !hasItemOverride;
+          const handleReset = hasItemOverride && packageTemplateItemId
+            ? async () => {
+                await resetOverride({
+                  field_catalog_id: q.field.id,
+                  package_template_item_id: packageTemplateItemId,
+                });
+                setDirty(false);
+              }
+            : undefined;
           return (
             <FieldRow
               key={q.field.id}
@@ -209,6 +220,9 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
               onChange={(v) => handleChange(q.field.id, v)}
               disabled={!!disabled}
               inheritedFromSession={inheritedFromSession}
+              hasItemOverride={hasItemOverride}
+              onResetOverride={handleReset}
+              isResettingOverride={isResettingOverride}
             />
           );
         })}
