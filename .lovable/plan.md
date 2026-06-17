@@ -1,160 +1,251 @@
-План v3 (финальный): фикс дефолта 2036, починка вкладки «Генерация», редизайн анкеты + дополнения и уточнения
+да, согласен, с учетом правок:
+
+1. **Не удалять старую запись** `ai_generated_documents ba5e7b44-…`**.** Это исторический сформированный документ и immutable-факт. Для повторного D7 использовать:
+  - новый batch/idempotency key;
+  - либо новую тестовую генерацию/сессию;
+  - либо предусмотренный pipeline параметр повторного запуска.
+  Старые документы, snapshots и audit-записи не удалять ради обхода идемпотентности.
+2. **Сохранять snapshot по фактически использованному raw-токену, а не только по базовому ID.** Один `pf-XXXXXX` или `ln-XXXXXX` может встречаться с разными модификаторами. Дедуп определить по:
+  &nbsp;
+  ```text
+  provider + raw_inside
+  ```
+  либо по эквивалентному ключу, включающему `format` и `case`. Иначе два токена одного поля с разным форматированием могут потерять разные `rendered_value`.
+3. `template_tokens_snapshot` **должен фиксировать точные токены шаблона.** Сохранять не только базовые:
+  &nbsp;
+  ```text
+  pf-000005
+  ln-000001
+  package.ul.FLD-000010
+  ```
+  но и модификаторы, если они присутствовали:
+  ```text
+  pf-000005|format=full
+  package.ul.FLD-000010|format=long
+  ln-000001|format=signature_short
+  ```
+  Это необходимо для исторической воспроизводимости.
+4. **Не использовать** `resolved[raw_inside]`**, если фактический ключ map отличается.** Перед реализацией подтвердить точный ключ `resolved` для package/ln/pf. При отсутствии ключа snapshot не должен молча писать `undefined`; генерация либо сохраняет фактическое rendered value из trace, либо останавливается с доказуемой ошибкой snapshot propagation.
+5. **Для** `package` **snapshot зафиксировать происхождение без избыточного раскрытия внутренних объектов.** Сохранять канонические поля:
+  &nbsp;
+  ```text
+  provider
+  raw_inside
+  bag_key
+  raw_value
+  rendered_value
+  format_applied
+  case_applied
+  source
+  item_context
+  ```
+  Не складывать целиком внутренний resolver entry, если там могут быть лишние данные.
+6. **Для** `ln` **не сохранять неограниченный внутренний объект** `persons/positions`**.** Зафиксировать минимальный исторический набор, необходимый для воспроизводимости:
+  &nbsp;
+  ```text
+  link_public_id / token
+  selected_person_ids либо snapshot отображённых ФИО
+  position labels
+  rendered_value
+  format_applied
+  case_applied
+  item_context
+  ```
+  Структура должна быть JSON-safe и не зависеть от временных внутренних типов resolver.
+7. **Snapshot формировать до INSERT документа и записывать атомарно вместе с документом.** Не допускается:
+  - сначала создать документ с пустым snapshot;
+  - затем отдельным UPDATE дописать trace.
+  При ошибке построения snapshot документ не должен сохраняться как успешно сгенерированный с неполной историей.
+8. **Сохранить обратную совместимость** `meta.tokens_snapshot`**.** Старые читатели могут ожидать текущую структуру pf-записей. Новые providers добавлять add-only, не переименовывая существующие pf-поля:
+9. `item_context` **должен брать доказуемый item текущего генерируемого документа.** Проверить, что:
+  &nbsp;
+  ```text
+  package_template_item_id
+  ```
+  не приходит из необязательного внешнего параметра и не может быть item другого пакета. При package-mode без item context — STOP с канонической ошибкой, кроме явно подтверждённого legacy-сценария.
+10. **RPC reset должна проверять не только владельца сессии.** Серверно подтвердить:
+  - session доступна текущему пользователю или администратору его workspace;
+  - field принадлежит `session.package_template_id`;
+  - item принадлежит тому же package template;
+  - удаляемая строка соответствует именно этой связке;
+  - нет доступа между workspace.
+  Не доверять одним переданным UUID.
+11. **При отсутствии строки reset должен быть идемпотентным.** Возврат:
+  &nbsp;
+  ```json
+  { "deleted": 0 }
+  ```
+  допустим и не является ошибкой. Ошибка нужна только при нарушении guard/auth/package boundaries.
+12. **Добавить серверный audit reset-операции.** При фактическом удалении per-item override записать:
+  &nbsp;
+  ```text
+  entity_type
+  entity_id
+  action
+  actor_user_id
+  session_id
+  field_catalog_id
+  package_template_item_id
+  previous_value
+  ```
+  Без удаления или изменения исторических snapshot сформированных документов.
+13. **Развести RPC reset и полное очищение значения.** В этом узком патче реализуется только:
+  &nbsp;
+  ```text
+  delete per-item override → fallback на session-level
+  ```
+  Не называть session-level `upsert value:null` «Очистить полностью», пока не доказано, удаляет ли RPC строку или сохраняет NULL и как required-gate трактует NULL.
+14. **Инвалидация после reset должна использовать реальные канонические query keys.** Не добавлять условный `pkg-gen-role-assignments`, если reset поля не меняет роли. Обязательно обновить:
+  - values текущей сессии/item;
+  - effective fields;
+  - generation readiness;
+  - package summary.
+  После reset fallback должен появиться без перезагрузки.
+15. **Добавить тесты snapshot propagation:**
+  - `pf`, `ln`, `package` в одном документе;
+  - одинаковый token ID с двумя разными modifiers;
+  - дедуп одинакового raw-токена;
+  - разные `rendered_value`;
+  - корректный `item_context`;
+  - billing-mode остаётся без изменений;
+  - ошибка snapshot builder не создаёт документ.
+16. **Добавить тесты reset RPC:**
+  - успешное удаление собственного override;
+  - повторный reset → `deleted:0`;
+  - `item=NULL` → `cannot_delete_session_level_via_reset`;
+  - item другого package → `pkg_field_value_item_mismatch`;
+  - field другого package;
+  - чужая session/workspace;
+  - admin согласно RBAC;
+  - session-level строка не удалена.
+17. **D7 proof выполнять без изменения предыдущего исторического документа.** В новом результате доказать:
+  - PDF идентичен по содержанию;
+  - `meta.tokens_snapshot[]` содержит все три provider;
+  - точные modifiers сохранены;
+  - `template_tokens_snapshot` заполнен;
+  - старый документ остался неизменным.
+18. **Статус** `token_manifest_snapshot` **зафиксировать честно.** Если он остаётся пустым для package-mode by design, не считать его частью закрываемого package snapshot DoD. В proof явно указать:
+19. **После патча повторить semantic 422 regression.** Транспортный контракт фиксировать фактически:
+  &nbsp;
+  ```text
+  HTTP 200 envelope
+  batch.status = failed
+  details.code = pf_required_value_missing
+  generated documents = 0
+  ```
+  Не называть это прямым HTTP 422.
+
+Остальной scope сохраняется: snapshot propagation и reset override выполняются сейчас; atomic save, concurrent upsert, расширенный multi-tenant proof и редизайн остаются следующим этапом.
+
+&nbsp;
+
+План v4 (узкий): закрыть D7-snapshot и reset per-item override. Редизайн откладывается до полного закрытия backend-контрактов.
 
 ---
 
-## A. Bug: «Дата проведения собрания» = 23.01.2036
+## Диагностика snapshot-gap (root cause)
 
-**Не фиксировать причину до завершения диагностики.** В отчёте явно указать root cause из 4 вариантов:
-1. сохранённое session-level значение в `document_package_session_field_values`;
-2. per-item override (с не-NULL `package_template_item_id`);
-3. сломанный `default_kind` в `document_package_field_catalog.options`;
-4. ошибка парсинга/границ DatePicker (`fromYear/toYear`, `parseLocalDate`).
+Источник пустоты `snapshot.fields`, `template_tokens_snapshot`, `token_manifest_snapshot` — НЕ потеря данных, а **architectural mismatch**:
 
-Исправлять **только подтверждённый источник**. До диагностики — никаких миграций данных, никаких правок DatePicker «на всякий случай».
+- `canonical-document-generate-strict/index.ts` строки 1658–1661 пишут snapshot ТОЛЬКО для billing-стека `{{field:FLD-XXXXXX}}`:
+  - `snapshot.fields = docFields` — bag, ключи = FLD-XXXXXX (billing).
+  - `template_tokens_snapshot = allIds.map(f => 'field:' + f)` — только billing FLD.
+  - `token_manifest_snapshot = manifest` — берётся из `document_template_versions.token_manifest`, который для пакетных шаблонов пуст.
+- Package-режим использует другие парсеры: `parsedPackageTokens` (`package.ul/ip/fl.FLD-*` и `ln-*`) и `parsedPfTokens` (`pf-*`). Их разрешённые значения попадают в `resolved` map (рендер DOCX) и `sourceTrace`, но в snapshot-блок строк 1658–1661 НЕ копируются.
+- Существующий add-only `meta.tokens_snapshot` (строки 1689–1710, PATCH-PACKAGE-CUSTOM-FIELDS-V1 B4) фиксирует только `pf-*`. `ln-*` и `package.*` нигде не сохраняются.
 
-**Разделить 4 визуальных состояния даты:**
-- значения нет → placeholder, пустой input;
-- есть smart-date default, ещё не сохранённый → бейдж «предложенное значение» (не считается заполненным до явного save);
-- есть общее сохранённое значение → бейдж «общее значение»;
-- есть per-item override → бейдж «собственное значение документа».
+Подтверждение по `ba5e7b44-…`: `meta.tokens_snapshot` содержит 7 pf-токенов (raw+rendered+label+data_type), но НЕТ ln-*, НЕТ package.*; верхнеуровневые snapshot-поля пусты.
 
-**Никогда не auto-save smart-date только из-за открытия анкеты.** Save только по явному действию пользователя.
+Решение: расширить существующий `meta.tokens_snapshot` (тот же ключ, тот же канонический add-only контракт) на providers `pf | ln | package` и заполнить `template_tokens_snapshot` для package-mode. **Не создаём параллельный контракт, не трогаем billing-поведение.**
 
-**Канонический reset override (отдельная RPC/edge action):**
-- DELETE по триплету `session_id + field_catalog_id + package_template_item_id` (с `IS NOT NULL` guard на item).
-- После reset UI сразу подтягивает общее значение и показывает бейдж «общее значение».
-- Кнопки «Очистить полностью» (записать NULL/empty session-level) и «Сбросить к общему» (delete per-item override) — **разные действия**, разные обработчики, разные подтверждения.
-- Запрещено очищать per-item значение upsert'ом пустой строки — это перекроет общий fallback вместо восстановления наследования.
+---
 
-## B. Bug: «Генерация» не видит сохранённую анкету
+## Scope изменений (только этот патч)
 
-**Единый SOT сессии и items для обеих вкладок.** Поднять `useDocumentPackageSession(packageCode)` + список items в общий родитель `PackagesWorkspace` и прокидывать props в обе вкладки. Если по архитектурным причинам остаются отдельные вызовы — идентичные query keys, никаких конкурирующих состояний.
+### A. Snapshot propagation — `supabase/functions/canonical-document-generate-strict/index.ts`
 
-**Инвалидация после save анкеты** — все связанные ключи:
-- `["package-session", packageCode]`;
-- per-item field values;
-- role assignments;
-- generation readiness/gate;
-- package summary.
+A
 
-Кнопка «Сгенерировать» должна разблокироваться сразу, без перезагрузки/переключения вкладок.
+1. Внутри блока `meta.tokens_snapshot` (≈1690) добавить итерацию `parsedPackageTokens`:
 
-**Предметный blocker генерации.** Вместо «Анкета не сохранена»:
-```
-Документ «Приказ о проведении ГОС»: не заполнено 2 поля и 1 роль
-Документ «Протокол ГОС»: не назначена 1 обязательная роль
-```
-Кнопка «Перейти к анкете»:
-1. открывает вкладку анкеты;
-2. раскрывает нужный `PackageDocumentCard`;
-3. скроллит к первой незаполненной секции;
-4. ставит focus на первый проблемный контрол.
+- Для `kind='package'`: `{ provider:'package', token: raw_inside, bag_key, raw_value: entry.value, rendered_value: resolved[raw_inside], source: entry.source, case_applied, format_applied }`.
+- Для `kind='ln'`: `{ provider:'ln', token, bag_key, persons: entry.persons, positions: entry.positions, rendered_value: resolved[raw_inside], format_applied, case_applied }`.
+- pf-блок остаётся как есть.
+- К каждой записи добавить `item_context: { package_session_id, package_template_item_id }` для исторической воспроизводимости.
 
-**STOP-condition для «Шаблонов: 0».** Если `session` существует, но `session.package_template_id !== pkg.templateId` или `items.length === 0`:
-- генерацию не запускать;
-- НЕ показывать ложное «анкета не сохранена»;
-- вывести диагностический код + реальные ID (`session.id`, `session.package_template_id`, `pkg.templateId`);
-- НЕ создавать новую сессию автоматически поверх существующей.
+A
 
-## C. UI Redesign в стиле карточки контакта (только presentation)
+2. В `template_tokens_snapshot` (≈1661) в package-mode дописать после `field:FLD-*` все распарсенные пакетные токены:
 
-**Scope clarification:** «редизайн не трогает hooks» относится **только к части C**. Части A/B и базовый аудит могут менять hooks, query orchestration и RPC в пределах ранее утверждённого плана.
+- `package.<ul|ip|fl>.FLD-XXXXXX` (из `parsedPackageTokens.bag_key` при `kind='package'`);
+- `ln-XXXXXX` (при `kind='ln'`);
+- `pf-XXXXXX` (из `parsedPfTokens`).
+Дедуп по строке. Billing-режим не меняется.
 
-**Бизнес-логика не дублируется в новых карточках:**
-- `PackageDocumentCard` — композиция, header, статус-бейджи, accordion control;
-- `PackageFieldMiniCard` — тонкая обёртка над существующим field renderer (контролы, валидация, сериализация, effective-value — на месте);
-- `PackageRoleRowCard` — обёртка над существующей ролевой логикой.
+A
 
-Валидация, сериализация дат, save, effective-value — остаются в существующих хуках/утилитах.
+3. `snapshot.fields` оставляем billing-only. Добавить inline-комментарий: «package/ln/pf canonical snapshot lives in `meta.tokens_snapshot`; this bag is reserved for billing `{{field:FLD-*}}`».
 
-**Композиция (как «Gorbova Club» → «Стандарт» в карточке контакта):**
-1. Шапка-карточка документа: иконка `Layers`, заголовок (# + название), правый ряд — статус-pill + счётчики, chevron.
-2. Раскрытие → вложенные подкарточки: «Поля документа» (`FileText`) и «Роли документа» (`Users`).
-3. Поля = grid `md:grid-cols-2 gap-3`, одинаковая `min-height`, единый `h-10` для контролов.
-4. Роли = список строк-карточек.
-5. **Pinned save-кнопка одна на весь `PackageDocumentCard`**, НЕ по одной на каждый внутренний блок.
+A
 
-**Mobile-проверка pinned-кнопки:**
-- не перекрывает последние поля (bottom padding в контенте);
-- safe-area-inset-bottom;
-- не конфликтует с экранной клавиатурой (focus-aware);
-- остаётся доступной при длинной анкете.
+4. `token_manifest_snapshot` оставляем billing-only (manifest = required-FLD контракт для billing). Комментарий: «pf-required-gate enforced upstream в orchestrator; manifest пустой для package-mode by design».
 
-**Расчёт статусов карточки:**
-```
-complete: все required fields имеют effective value AND все required roles назначены в этом item
-partial:  заполнена хотя бы одна требуемая сущность, но не все
-empty:    ничего не заполнено
-```
-«Сохранено» ≠ «Заполнено». Документ может быть сохранён, но оставаться `partial`/`empty`.
+Никаких изменений в Gotenberg, storage, файлах, allocate_document_number, immutability trigger, resolver_version.
 
-**Шапка ролей: `K/N ролей`**, где N — обязательные ролевые слоты конкретного item. Необязательные роли — отдельным под-счётчиком, не блокируют генерацию.
+### B. Reset per-item override
 
-**Dirty-state индикатор (постоянный, не временный):**
-- сохранено и без изменений → «Сохранено»;
-- любое изменение → «Есть несохранённые изменения» (амбер);
-- partial failure при save → точная ошибка по полям, без общего success-toast;
-- временный зелёный бейдж «Сохранено» на 3 сек не заменяет постоянный dirty-indicator.
+B
 
-**Дизайн-токены — доменно нейтральные** (никаких `paid`/`pending`):
-```
---status-success
---status-warning
---status-neutral
---surface-elevated
---surface-muted
-```
-Badge variants: `success-soft`, `warning-soft`, `neutral-soft`. Сначала проверить существующие токены — не создавать вторую палитру при наличии аналогов.
+1. Migration: RPC `delete_session_field_value(_session_id uuid, _field_catalog_id uuid, _package_template_item_id uuid)`:
 
-**Анимация.** Не добавлять Framer Motion ради одного аккордеона. Сначала проверить animation pattern карточки контакта (Radix Accordion + CSS keyframes) и переиспользовать 1:1. Новая зависимость допустима только если уже есть в проекте.
+- SECURITY DEFINER, SET search_path=public.
+- Guard: `_package_template_item_id IS NOT NULL` (через эту RPC нельзя удалить session-level — для этого есть upsert с `value:null`).
+- Authorization: проверка, что session принадлежит вызывающему профилю (либо admin/super_admin через `has_role_v2`).
+- DELETE FROM `document_package_session_field_values` WHERE `session_id=_session_id AND field_catalog_id=_field_catalog_id AND package_template_item_id=_package_template_item_id`.
+- Возвращает `jsonb { deleted: int }`.
 
-**Никаких технических ID (`pf-…`, `ln-…`, `FLD-…`, `PKR-…`) в клиентском UI** — только человекочитаемые названия.
+B
 
-## D. STOP-guards
-- Очистка мусорной даты — только через канонический write-path (RPC), не прямой UPDATE.
-- React Query keys остаются совместимыми (invalidate, не rename).
-- Не трогаем: RPC контракты канонической генерации, `ai_generated_documents`, Gotenberg, storage, имена токенов `{{ln-…}}` / `{{package.…}}`, schema `document_package_item_role_assignments`.
-- Никаких hardcoded цветов в новых компонентах.
+2. `src/hooks/usePackageSessionFields.ts`: добавить `resetOverride({field_catalog_id, package_template_item_id})` → вызов RPC → инвалидация `QK.values` + `pkg-gen-role-assignments` + `doc-pkg-session-q`.
 
-## E. Порядок исполнения
-1. SQL-диагностика бага 2036 (read-only) → определить root cause из 4 вариантов → отчёт.
-2. Hotfix вкладки «Генерация»: единый SOT session/items, инвалидация, STOP-condition, предметный blocker.
-3. Базовая часть аудита (per-item required gate, atomic save RPC, reset-override RPC, concurrent upsert, multi-tenant guard).
-4. Фикс подтверждённого источника 2036 + UI разделение 4 состояний даты + reset-override UI.
-5. Дизайн-токены `status-success/warning/neutral`, `surface-elevated/muted` + Badge variants.
-6. Новые компоненты `PackageDocumentCard` / `PackageFieldMiniCard` / `PackageRoleRowCard` (presentation-only).
-7. Подключение в `DocumentPackageQuestionnairesView` для всех пакетов.
-8. Mobile/desktop/light/dark проверка pinned save, accordion, статус-бейджей.
+B
 
-## F. Runtime proof — 4 сценария для даты
-1. Пустое поле остаётся пустым (без auto-save).
-2. Smart-date prefill → корректная текущая дата как «предложенное», save → переходит в «общее».
-3. Сохранённое общее значение → бейдж «общее значение».
-4. Per-item override → бейдж «собственное», reset → возвращает общее, бейдж «общее значение».
+3. UI: в существующем per-item рендере поля показать кнопку «Сбросить к общему» рядом со значением, когда `valuesByItemField.get(itemId)?.get(fieldId)` существует. При клике — `resetOverride`. После успеха `getEffectiveValue` автоматически вернёт session-level (visual transition без перезагрузки). Toast «Возвращено к общему значению». Никаких новых компонентов — кнопка в текущем `PackageFieldsClientForm`.
 
-Значение `2036-01-23` не должно появиться ни в одном сценарии без явного сохранения пользователем.
+---
 
-## G. UI/regression-тесты редизайна
-- один компонент работает минимум для 2 разных пакетов (Идеология + Годовое собрание);
-- desktop + mobile;
-- light + dark;
-- раскрытие/сворачивание карточек;
-- dirty / saved / error состояния;
-- переход из blocker генерации к нужному документу + фокус;
-- сохранение существующих date/datetime/select/multiselect/role данных без регрессий;
-- отсутствие технических `pf-/ln-/FLD-/PKR-` ID в клиентском UI.
+## DoD (узкий)
 
-## H. Финальный DoD (объединённый отчёт)
-1. Root cause даты 2036 + исправление подтверждённого источника.
-2. Синхронная session/items модель между вкладками (доказательство одинаковых данных).
-3. Per-item required gate (роли + поля).
-4. Atomic save RPC (rollback при partial failure).
-5. Reset override (delete триплета + UI fallback на общее).
-6. Concurrent upsert (partial unique indexes + ON CONFLICT NULL/NOT NULL).
-7. Multi-tenant isolation (RLS + RPC guards).
-8. Два документа с разными значениями одного pf (per-item override proof).
-9. D7 HTTP 200: оба DOCX сгенерированы, оба snapshot в `ai_generated_documents.meta`.
-10. D7 HTTP 422: при отсутствии required value — ни одного созданного документа.
-11. Before/after скриншоты нового интерфейса (desktop + mobile, light + dark).
+D7-snapshot proof (та же сессия `6a61a7e3-…`, тот же шаблон):
 
-**Discovery не расширять** за пределы этих проверок: функциональность ещё не используется клиентами, после установления root cause — сразу hotfix и редизайн.
+- Повторная генерация → `meta.tokens_snapshot[]` содержит:
+  - 7 × `provider='pf'` (как сейчас);
+  - ≥1 × `provider='ln'` с `persons` + `rendered_value` + `item_context`;
+  - ≥3 × `provider='package'` (org name, address, head FIO) с `raw_value`+`rendered_value`+`item_context`.
+- `template_tokens_snapshot` содержит все pf/ln/package токены шаблона (дедуплицировано).
+- Старая запись (`ba5e7b44-…`) удаляется до повторного запуска, чтобы не было idempotency-конфликта.
+- PDF рендерится идентично (без визуальных изменений).
+
+Reset override proof:
+
+- 1. Установить per-item override для `pf-000005` на `item_id=a1a40df2-…` со значением `2026-08-15`.
+- 2. Подтвердить в `document_package_session_field_values` row с непустым `package_template_item_id`.
+- 3. Вызвать `delete_session_field_value(...)`.
+- 4. Row исчез; UI показывает session-level `2026-07-01` без перезагрузки.
+- 5. Попытка `delete_session_field_value` с `package_template_item_id=NULL` → ошибка `cannot_delete_session_level_via_reset`.
+
+D7-422 — без регрессии (повтор предыдущего теста).
+
+Out-of-scope: atomic save, concurrent upsert, multi-tenant, редизайн карточек, новые snapshot-bag'и, замена `snapshot.fields`/`token_manifest_snapshot` контрактов.
+
+---
+
+## Не делаю в этом патче (зафиксировано явно)
+
+- НЕ создаю параллельный snapshot-bag.
+- НЕ меняю billing FLD-resolver.
+- НЕ трогаю Gotenberg/storage/numbering/immutability.
+- НЕ удаляю существующие snapshot-поля.
+- НЕ редизайню карточки.
+
+После approval — патчу edge function + миграцию RPC + hook + одну UI-кнопку, прогоняю D7-snapshot proof в этой же сессии, отчитываюсь конкретными JSON-выписками из БД.
