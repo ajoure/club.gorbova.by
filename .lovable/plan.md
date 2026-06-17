@@ -1,196 +1,268 @@
 # да, согласен, с учетом правок:
 
-1. **Исправить runtime-сценарий для «Идеологии».** По Stage 1 в активных шаблонах «Идеологии» нет detected `pf-*`. Поэтому проверять:
-  - общий orphan-блок `pf-000002`;
-  - внутри карточек — роли;
-  - блок «Поля документа» отсутствует или показывает корректное пустое состояние.
-  Формулировка «orphan-поля + детектированные поля + роли» для текущей «Идеологии» неверна.
-2. **Версию шаблона передавать по фактической активной связи item.** `_expected_template_version_id` брать из:
+1. **Исправить Stage 7: переход orphan → detected происходит не через** `document_package_item_field_assignments`**.** После перехода на token-driven модель поле считается detected только после появления `{{pf-XXXXXX}}` в **активной версии DOCX-шаблона**. Правильный сценарий:
   &nbsp;
   ```text
-  document_package_template_item
-  → document_template
-  → active_version_id
+  создать orphan-поле
+  → сохранить session-level значение
+  → вставить токен в DOCX
+  → загрузить/проверить/активировать новую версию
+  → поле исчезает из orphan-блока
+  → появляется только в карточке нужного документа
   ```
-  а не из случайной текущей или последней загруженной версии. При отсутствии активной версии сохранение блокируется предметной ошибкой.
-3. **Не смешивать field patch и effective fallback.** `getDirtyPatch()` должен возвращать только явно изменённые per-item значения:
-  - session-level fallback не отправлять как новый override;
-  - неизменённый smart-date prefill не отправлять до явного изменения/сохранения;
-  - reset override не кодировать пустым значением — использовать существующую отдельную RPC.
-4. **Role payload должен быть полным desired-state конкретного item.** Даже при изменении только полей в atomic RPC необходимо передать текущий полный набор управляемых ролей item, иначе пустой или неполный массив может архивировать существующие назначения. Перед вызовом различать:
+  Assignment-таблица не является SOT и не должна возвращаться в бизнес-логику.
+2. **Не удалять UAT B5 только по отсутствию assignments.** Этот критерий устарел. Перед удалением проверить:
+  - токен отсутствует во всех активных версиях шаблонов;
+  - поле не используется в текущих package sessions;
+  - нет исторических документов/snapshot, которым нужна запись каталога;
+  - это действительно тестовое поле.
+  Если поле уже имеет историческое использование, архивировать, а не удалять физически.
+3. **Не удалять** `token-aliases` **без точного dependency proof.** Поле `pf-XXXXXX` является package catalog entity. Удалять только сущности, доказуемо принадлежащие этому тестовому полю. Не выполнять широкую очистку alias registry по совпадению текста.
+4. **Хотфикс названий должен определить один канонический приоритет:**
   &nbsp;
   ```text
-  roles not loaded
-  roles loaded and empty
-  roles loaded with assignments
+  item.title_override
+  → document_template.name/title
+  → «Документ №N»
   ```
-  Сохранение запрещено, пока desired-state ролей не гидратирован.
-5. **Использовать фактический контракт ролей Stage 2 RPC.** Проверить реальные названия ключей и идентификаторов. Не вводить в UI условный `role_catalog_id`, если SOT использует `link_id`, `package_role_link_id` или иной канонический идентификатор. Payload должен 1:1 соответствовать доказанному runtime-контракту RPC.
-6. **Dirty-state карточки объединить корректно:**
+  Проверить фактические имена колонок. Не выводить пустое `#0 —`. Нумерацию в UI показывать человекочитаемо с `1`, даже если `sort_order=0`.
+5. **Для документа #0 сначала установить фактическую причину пустоты.** Badge «1 роль» означает наличие данных, но не доказывает наличие поля. Проверить отдельно:
+  - активную версию;
+  - detected pf-токены;
+  - role links;
+  - hydration desired-state;
+  - ошибки компонента;
+  - условный render секций.
+  Не создавать искусственный блок «Поля документа», если в DOCX действительно нет pf-токенов. В этом случае показывать:
+  ```text
+  В этом документе нет дополнительных полей
+  ```
+  но роли должны отображаться.
+6. **Не использовать** `document_package_item_field_assignments` **при диагностике #0 как источник отображаемых полей.** Канон полей документа:
   &nbsp;
   ```text
-  isDirty = fieldsDirty || rolesDirty
+  active_version_id
+  → detected_tokens
+  → pf catalog
   ```
-  После успешного atomic save:
-  - обновить baseline обоих локальных draft;
-  - снять dirty-state;
-  - обновить прогресс;
-  - не ждать полной перезагрузки карточки.
-  При ошибке оба draft и dirty-state сохраняются.
-7. **Не вызывать atomic RPC при clean-state.** Кнопка отключена при:
-  - `!isDirty`;
-  - загрузке полей или ролей;
-  - отсутствии session/item/activeVersion;
-  - незавершённой гидратации desired-state;
-  - текущем `isSaving`.
-8. **Старые write-path должны быть действительно отключены только внутри карточки.** После перехода:
-  - `fieldsRef.submit()` не вызывается;
-  - отдельный role `save()` не вызывается;
-  - orphan session-level форма продолжает использовать свой существующий save-path;
-  - другие административные экраны, использующие эти hooks, не ломаются.
-9. **Инвалидация должна происходить один раз через** `useAtomicDocumentSave`**.** Не дублировать invalidation дополнительно в карточке или дочерних формах. После успеха обновить:
-  - per-item field values;
-  - role assignments;
-  - package session/readiness;
-  - generation gate.
-10. **Одна карточка не должна создавать повторные независимые запросы ко всему пакету без необходимости.** Общие данные `session`, `items`, `persons`, `activeRoles`, detection map предпочтительно получить в родителе и передать props. Внутри карточки оставлять только item-specific state/mutations, чтобы новый пакет с большим числом документов не создавал N одинаковых запросов.
-11. **Сохранить ранее утверждённый клиентский UI-контракт:**
+  Assignments исторические и не определяют клиентскую анкету.
+7. **Редизайн Stage 5.0 должен полностью соответствовать ранее утверждённому контракту, а не быть минимальным косметическим патчем:**
+  - единая крупная карточка документа;
+  - вложенная карточка «Поля документа»;
+  - вложенная карточка «Роли документа»;
+  - статусы `готово / частично / пусто`;
+  - постоянный индикатор `Сохранено / Есть несохранённые изменения`;
+  - `X/Y полей` и `K/N обязательных ролей`;
+  - одна atomic save-кнопка;
+  - одинаковый интерфейс для всех пакетов;
+  - отсутствие технических `pf-/ln-/FLD-/PKR-` в клиентском UI;
+  - desktop/mobile, light/dark.
+8. **Не ограничивать дизайн только тёмной темой.** Требование «тёмная тема “Буква закона”» не должно означать hardcode под dark mode. Все компоненты обязаны корректно работать в light и dark через существующие семантические токены.
+9. **Не использовать** `N ролей` **вместо утверждённого прогресса.** В шапке:
+  &nbsp;
+  ```text
+  K/N обязательных ролей
+  ```
+  Необязательные назначения можно показать отдельным нейтральным счётчиком, но они не участвуют в readiness.
+10. **Статус карточки рассчитывать по данным конкретного item:**
+  &nbsp;
+  ```text
+  ready:
+    все required detected fields заполнены
+    AND все required roles этого item назначены
 
-- не показывать `pf-*`, `ln-*`, `FLD-*`, `PKR-*`;
-- `X/Y полей` — только detected fields item;
-- `K/N ролей` — назначенные/обязательные роли этого item;
-- состояния `готово / частично / пусто`;
-- отдельный индикатор `Сохранено / Есть несохранённые изменения`;
-- «заполнено» и «сохранено» не смешивать.
+  partial:
+    заполнена часть обязательных сущностей
 
-12. **Не использовать** `GlassCard`**, если это не существующий канонический компонент проекта.** Сначала переиспользовать фактическую карточку/accordion-pattern платформы. Не создавать новый визуальный примитив только для этого раздела.
-13. **Проверить мобильную карточку:**
+  empty:
+    обязательные сущности не заполнены
+  ```
+  Отдельно показывать dirty/saved. Статусы «готово» и «сохранено» не взаимозаменяемы.
+11. **Atomic save должен использовать только новый путь.** Runtime proof обязан подтвердить:
+  &nbsp;
+  ```text
+  1 × save_session_document_atomic
+  0 × отдельный field save
+  0 × отдельный role save
+  ```
+  Проверить все четыре сценария:
+  - только поле;
+  - только роль;
+  - поле и роль;
+  - clean-state.
+12. **При искусственной ошибке Stage 5 доказать UI-поведение:**
+  - RPC откатил всё;
+  - поля и роли в БД не изменились;
+  - audit success не создан;
+  - локальные изменения остались в форме;
+  - dirty-state сохранился;
+  - success-toast отсутствует;
+  - показана точная серверная ошибка.
+13. **Stage 6 не должен создавать “назначения полей” через старый assignment UI.** Новый пакет должен пройти канонический workflow:
+  &nbsp;
+  ```text
+  создать каталог pf-полей
+  → вставить токены pf в DOCX
+  → загрузить и активировать версии
+  → создать role links
+  → создать клиентскую сессию
+  → поля и роли появились автоматически
+  ```
+  Физические `document_package_item_field_assignments` не требуются.
+14. **Stage 6 должен включать реальную генерацию двух документов.**
+  - разные per-item значения одного `pf`;
+  - разные роли по документам;
+  - оба DOCX/PDF сформированы;
+  - значения не смешались;
+  - snapshots содержат правильный `package_template_item_id`;
+  - reload сохраняет введённые данные.
+15. **Stage 7 должен проверять сохранение orphan session-level значения.** После появления токена:
+  - orphan-блок исчезает;
+  - поле появляется в одном документе;
+  - ранее сохранённое общее значение становится fallback;
+  - per-item row не создаётся автоматически;
+  - только ручное изменение создаёт override;
+  - удаление токена и активация новой версии возвращают поле в orphan-блок без потери общего значения.
+16. **Удаление UAT-поля и создание нового orphan-поля не смешивать.** Сначала удалить/архивировать доказанный тестовый мусор. Для Stage 7 создать отдельное контролируемое поле с понятным названием, пройти переход и выполнить cleanup после proof.
+17. **Заголовки и данные карточки получать без N+1 запросов.** Названия шаблонов, active version IDs, detected tokens и item progress должны загружаться общим запросом/хуком родителя, а не отдельным полным запросом из каждой карточки.
+18. **Кнопка сохранения на мобильном:**
+  - не перекрывает последний контрол;
+  - учитывает `safe-area-inset-bottom`;
+  - остаётся доступной при длинной форме;
+  - не конфликтует с DatePicker и клавиатурой;
+  - tooltip disabled-причины должен иметь текстовую альтернативу для touch-устройств.
+19. **Lint/typecheck недостаточно.** Для Stage 5.0/5 прогнать:
+  - существующие тесты package fields;
+  - atomic save integration tests;
+  - role assignments tests;
+  - date/datetime controls;
+  - cross-package parity;
+  - UI-тесты карточки;
+  - production build.
+20. **Финальный отчёт должен содержать отдельную сверку:**
+  &nbsp;
+  ```text
+  Stage 5.0 data cleanup
+  Stage 5.0 document titles
+  Stage 5.0 empty-state fix
+  Stage 5.0 visual redesign
+  Stage 5 atomic runtime
+  Stage 6 new-package E2E
+  Stage 7 orphan transition
+  ```
+  Для каждого — `PASS / FAIL / deferred`, screenshots, SQL/runtime proof и список изменённых файлов.
 
-- кнопка не перекрывает поля;
-- DatePicker/Select не обрезаются контейнером;
-- длинное название документа переносится;
-- бейджи не ломают заголовок;
-- сохранение доступно при открытой клавиатуре.
-
-14. **Добавить тесты интеграции карточки:**
-
-- dirty fields only → один atomic RPC;
-- dirty roles only → один atomic RPC;
-- fields + roles → один atomic RPC;
-- clean → RPC не вызывается;
-- server error → baseline не меняется, dirty сохраняется;
-- stale version → точная ошибка;
-- orphan не попадает в payload;
-- роли другого item не попадают в desired-state;
-- после success старые последовательные mutations не вызываются.
-
-15. **Runtime proof дополнить network и DB-фактами:**
-
-- в Network ровно один `save_session_document_atomic`;
-- отдельных `upsert_session_field_values` и role-save от карточки нет;
-- audit появляется одной записью;
-- поля и роли изменены в одной операции;
-- orphan session-level row не изменён;
-- одинаковый компонент фактически работает в двух отдельных сессиях «Идеологии» и «Годового собрания».
-
-Остальной порядок сохраняется: извлечение единой карточки → atomic wiring → тесты и runtime proof → Stage 6 нового пакета → Stage 7 orphan transition.
+Все ранее утверждённые Stage 1–4 и snapshot/reset proof сохраняются add-only. Патч закрывается только после полного PASS Stage 5.0, 5, 6 и 7.
 
 &nbsp;
 
-План: Stage 5 — unified PackageDocumentCard
+План v2: Хотфиксы UI + Stage 5 runtime + Stage 6 E2E + Stage 7 orphan transition
 
-## Контекст
+Перед runtime-доказательствами нужно закрыть регрессии, видимые в превью «Идеологии»:
 
-Сейчас карточка документа существует как локальный компонент `ItemQuestionnaire` внутри `DocumentPackageQuestionnairesView.tsx` (~575 строк, оба пакета — «Идеология» и «Годовое собрание» — уже идут через один и тот же путь). Поведение единое по контракту (Stage 1 PASS), но:
+1. Висит тестовое orphan-поле `UAT B5 — дата подписания`.
+2. У карточек документов исчез заголовок (видно `#0 —`, `#1 —` вместо названия шаблона).
+3. У документа `#0` не разворачивается блок «Поля документа» (у `#1` поля есть, у `#0` пусто, хотя badge показывает «1 ролей»).
+4. Карточка `PackageDocumentCard` визуально не оформлена — нужен дизайн под систему «Буква закона».
 
-- `ItemQuestionnaire` не вынесен как отдельный переиспользуемый компонент;
-- сохранение полей и ролей идёт двумя последовательными вызовами (`fieldsRef.current.submit()` → `save(payload)`), не использует Stage 2 RPC `save_session_document_atomic`;
-- между сохранением полей и ролей возможна частичная фиксация (поля записаны, роли упали) — это и есть причина, ради которой Stage 2 RPC создавался;
-- визуальная структура карточки (бейджи прогресса, секции «Поля документа» / «Роли документа», кнопка сохранения) дублируется логикой, но не имеет единого корня для редизайна.
+Эти пункты делаем Stage 5.0 (хотфиксы) ПЕРЕД runtime-доказательством Stage 5, иначе proof снимется по сломанному UI.
 
-DoD редизайна (по утверждённому scope): единый `PackageDocumentCard` работает для обоих существующих пакетов без специальных условий по UUID/названию и для любого нового пакета.
-
-## Что делаем
-
-### 1. Извлечь `PackageDocumentCard`
-
-Файл: `src/components/ai-documents/packages/PackageDocumentCard.tsx`.
-
-Полностью переносим текущий `ItemQuestionnaire` (props, hydrate, draft state, бейджи, секции) — без изменений поведения. Внутри карточки используются те же хуки:
-
-- `usePackageSessionFields` — детектированные поля документа (`byItemId[item.id]`);
-- `useDocumentItemRoleAssignments` — текущие role assignments документа;
-- `PackageFieldsClientForm` — рендер полей (внутренний компонент, без редизайна на этом этапе).
-
-Orphan-блок остаётся на уровне `DocumentPackageQuestionnairesView` (Stage 1 контракт): карточка про orphan не знает и не показывает orphan-поля.
-
-### 2. Подключить atomic save через Stage 2 RPC
-
-Меняем `handleSaveAll` так, чтобы поля и роли уходили одним вызовом `useAtomicDocumentSave` (Stage 2). Контракт payload:
-
-- `session_id`, `package_template_item_id`, `template_version` (берётся из `usePackageSessionFields`/`useDocumentItemRoleAssignments`);
-- `field_values`: sparse-патч только для полей, реально присутствующих в шаблоне этого документа (`byItemId[item.id]`); orphan-поля в этот payload не попадают никогда;
-- `role_assignments`: desired-state массив `{role_catalog_id, person_id, position}` — отсутствующие в массиве роли архивируются Stage 2 RPC автоматически.
-
-После успешного RPC: единая инвалидация кешей (через хук), один тост, один индикатор `isSaving`. При ошибке RPC — ни поля, ни роли не зафиксированы (Stage 3 rollback proof).
-
-`PackageFieldsClientForm` в режиме `hideSaveButton` остаётся источником значений; вытаскиваем dirty-патч через ref (`getDirtyPatch()` — добавить, если ещё нет) и передаём в atomic-payload вместо вызова собственного `submit()`. Внутренняя запись из `PackageFieldsClientForm` отключается, когда карточка работает в atomic-режиме.
-
-### 3. Унифицированная вёрстка карточки (минимальный редизайн)
-
-В рамках утверждённого scope — без смены визуального языка, только консолидация:
-
-- единый `GlassCard`-обёртка для документа (вместо `AccordionItem` без рамки) с заголовком: `#sort_order` + иконка + название документа + бейджи `fields_progress`, `roles_progress`;
-- две секции внутри: «Поля документа» (если `hasFields`) и «Роли документа»;
-- одна кнопка `Сохранить документ` внизу карточки, единый `disabled = !isDirty || isSaving`;
-- состояния `loading / empty roles / empty fields` — общие для обоих пакетов.
-
-Никаких веток по `package_template_id`, названию или UUID — карточка получает только `item`, `sessionId`, `packageTemplateId`, `activeRoles`, `persons`.
-
-### 4. Подключить новый компонент в `DocumentPackageQuestionnairesView`
-
-Удаляем локальный `ItemQuestionnaire`, заменяем на `<PackageDocumentCard ... />` в `items.map`. Orphan-блок и заголовок секции — без изменений (Stage 1 контракт сохранён).
-
-### 5. Diagnose → Dry run → Verify
-
-- runtime-проверка в превью на «Идеологии» (есть orphan-поля + детектированные поля + роли) и «Годовом собрании» (только детектированные поля + роли);
-- сценарии: dirty fields only / dirty roles only / both / no changes → один atomic вызов, корректные бейджи прогресса после сохранения, orphan-значение продолжает храниться на session-level и не появляется в payload документа;
-- проверка, что `save_session_document_atomic` действительно вызывается (network log) и старый последовательный путь больше не используется.
-
-## DoD
-
-- `PackageDocumentCard` — единственная точка рендера карточки документа в обоих пакетах;
-- сохранение поля+роли документа = один atomic RPC вызов;
-- orphan-поля не попадают в per-item payload ни при каких условиях;
-- никаких ветвлений по названию пакета / UUID;
-- Stage 1 контракт (`byItemId` / `orphanCatalogIds`) сохранён;
-- готово к Stage 6 (новый пакет E2E) и Stage 7 (orphan transition).
-
-## Технические детали
-
-- Новый файл: `src/components/ai-documents/packages/PackageDocumentCard.tsx`.
-- Изменение: `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx` — удалить `ItemQuestionnaire`, импортировать новый компонент.
-- Возможное расширение: `src/components/ai-documents/packages/PackageFieldsClientForm.tsx` — добавить `getDirtyPatch()` к `PackageFieldsSubmitHandle` для отдачи sparse-патча в atomic-payload (без записи в БД из формы).
-- Использовать существующий `useAtomicDocumentSave` (Stage 2).
-- Артефакты proof: `.lovable/proofs/stage5_unified_package_document_card.md` + обновление `.lovable/plan.md`.
 ---
 
-## Статус (после Stage 5 implementation)
+## Stage 5.0 — хотфиксы (UI + data)
 
-- Stage 1 — cross-package parity: PASS
-- Stage 2 — atomic save RPC: PASS
-- Stage 3 — concurrency/rollback runtime: PASS
-- Stage 4 — multi-tenant isolation: PASS
-- **Stage 5 — unified PackageDocumentCard: code-complete, runtime proof PENDING**
-- Stage 6 — новый пакет E2E: NOT STARTED
-- Stage 7 — orphan transition: NOT STARTED
-- Patch: OPEN
+### 5.0.1 Удалить тестовое orphan-поле UAT B5
 
-Stage 5 implementation:
-- `PackageDocumentCard` — единая карточка для любого пакета, без ветвлений по UUID/названию;
-- save = один `save_session_document_atomic` (fields = sparse dirty patch, roles = ВСЕГДА полный desired-state, expected_template_version_id = `document_templates.active_version_id`);
-- `canSave` блокирует RPC пока: clean / loading / not hydrated / no active version / saving;
-- `markSaved()` сбрасывает field-baseline без перезагрузки;
-- единая инвалидация в `useAtomicDocumentSave.onSuccess`, без дубликатов;
-- Stage 1 orphan-контракт сохранён;
-- proof-документ: `.lovable/proofs/stage5_unified_package_document_card.md`.
+- Diagnose: найти запись в `document_package_field_catalog` (или связанной), относящуюся к UAT B5 / «дата подписания», и её session-level значение в `document_package_session_field_values`.
+- Plan: dry-run select → подтвердить, что поле НЕ связано ни с одним `document_package_item_field_assignments` (т.е. реально orphan и тестовое).
+- Execute: миграция, которая удаляет:
+  - session-level value(s) по этому field_id;
+  - запись из `document_package_field_catalog`;
+  - любые висящие token-aliases.
+- Verify: orphan-блок «Идеологии» становится пустым (или скрывается, если других orphan-полей нет).
+
+### 5.0.2 Восстановить заголовки документов в карточке
+
+- Diagnose: в `DocumentPackageQuestionnairesView` / `PackageDocumentCard` смотрим, какое поле рендерится в шапке. Сейчас в шапке `#{sort_order} <icon> —`, т.е. имя документа потеряно при последнем рефакторе.
+- Проверить `itemsQuery` — подтянуть `title` шаблона (через join к `document_templates.name` или `document_package_template_items.title_override`).
+- Fix: рендерить `template.name` (fallback на `item.title_override` → fallback на `Документ #{sort_order}`).
+- Verify: оба документа в «Идеологии» и все в «Годовом собрании» показывают человеческое название.
+
+### 5.0.3 Починить блок «Поля документа» у документа #0
+
+- Diagnose: у #0 badge показывает «1 ролей», но при раскрытии нет ни fields, ни roles UI — вероятно ранний return по `!activeVersionId` или по пустому fields-массиву.
+- Проверить состояние: есть ли `active_version_id` у шаблона #0, есть ли назначенные поля/роли в `document_package_item_field_assignments` / `document_package_item_role_assignments`.
+- Fix:
+  - если `active_version_id` отсутствует — отображать explicit состояние «нет активной версии шаблона» (CTA «Опубликовать версию»), а не пустую карточку;
+  - если активная версия есть, но fields/roles пусты — показывать соответствующую заглушку, а не скрывать секции целиком;
+  - убрать ранний `return null` в `PackageDocumentCard`, который скрывал контент.
+- Verify: у #0 видны либо корректные секции (поля + роли), либо явное сообщение о причине пустоты.
+
+### 5.0.4 Дизайн карточки PackageDocumentCard
+
+- Контекст: единая карточка для обоих пакетов, тёмная тема «Буква закона», семантические токены (`bg-card`, `border-border`, `text-foreground`, `text-muted-foreground`, accent — синий `primary`).
+- Что переделываем (frontend-only, без бизнес-логики):
+  - шапка карточки: `#sort_order` как chip, иконка документа, название (truncate), справа группа бейджей (`нет активной версии` warning, `7/7 полей` success, `N ролей` neutral), кнопка раскрытия;
+  - секции «Поля документа» / «Роли документа»: единый стиль заголовков с иконкой, разделитель `border-border`, сетка полей `grid md:grid-cols-2 gap-4`;
+  - футер: подсказка про atomic save + основная кнопка «Сохранить документ» (primary), disabled состояние с tooltip-причиной;
+  - hover/focus, скругления, тени — через дизайн-токены, без хардкода цветов;
+  - dirty-индикатор у кнопки сохранения (точка/«●»), success-state после сохранения (короткий fade).
+- Согласованность с карточкой «Общие поля пакета» — те же радиусы, отступы, типографика.
+- Не трогаем `save_session_document_atomic`, `useAtomicDocumentSave`, контракты payload и Stage 1 orphan-логику.
+
+### DoD Stage 5.0
+
+- Скриншоты «до/после» обоих пакетов.
+- SQL-выборка подтверждает удаление UAT B5 и отсутствие side-effects на другие сессии.
+- `npm run lint`/`typecheck` чисто.
+
+---
+
+## Stage 5 — runtime parity proof (после 5.0)
+
+Без изменений vs. предыдущая версия плана:
+
+- сессии «Идеология» и «Годовое собрание»;
+- сценарии: только поле / только роль / поле+роль / без изменений / искусственная ошибка;
+- network: одна `save_session_document_atomic` транзакция на сохранение;
+- БД: одна audit-запись, orphan session-row не затронут per-item операциями;
+- proof-файл: `.lovable/proofs/stage5_unified_runtime.md`.
+
+---
+
+## Stage 6 — E2E нового пакета
+
+Без изменений:
+
+- создать новый `document_package_template` + 2 документа + назначения полей и ролей через UI Sprint 3G;
+- создать сессию обычным пользователем (без admin bypass);
+- заполнить, сохранить, перезагрузить, проверить персистентность;
+- DoD: `.lovable/proofs/stage6_new_package_e2e.md` + cleanup.
+
+---
+
+## Stage 7 — orphan → detected transition
+
+Без изменений:
+
+- взять orphan-поле «Идеологии» (после 5.0.1 при необходимости создать НОВОЕ orphan-поле руками через каталог, без UAT-мусора);
+- привязать его к документу через `document_package_item_field_assignments`;
+- проверить, что значение подтягивается из session-level, per-item row создаётся только при явном изменении;
+- откат: отвязать → возвращается в orphan-блок;
+- DoD: `.lovable/proofs/stage7_orphan_transition.md`, Patch CLOSED.
+
+---
+
+## Технические заметки
+
+- Все файлы доказательств в `.lovable/proofs/`; `.lovable/plan.md` обновляем по итогам каждой стадии.
+- Никаких новых RPC/edge functions. Хотфикс 5.0.1 — отдельная маленькая миграция (data-only, обратимая через backup).
+- Дизайн — только семантические токены из `index.css` / `tailwind.config.ts`. Хардкод цветов запрещён (Core memory).
+- Любой найденный по ходу баг вне scope этих стадий → стоп, отчёт, отдельное обсуждение.
+
+## Итоговый DoD
+
+- Stage 5.0 / 5 / 6 / 7 → PASS в `.lovable/plan.md`.
+- 4 proof-файла (5.0 включён как раздел в stage5 runtime или отдельным `stage5_0_hotfixes.md` — решим в build mode).
+- UAT B5 удалён, заголовки документов на месте, блок полей #0 работает, карточка оформлена.
+- Patch CLOSED.
