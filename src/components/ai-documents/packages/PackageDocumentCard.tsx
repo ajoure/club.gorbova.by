@@ -120,10 +120,6 @@ export function PackageDocumentCard({
     return !rowsEqual(draft, baseline);
   }, [draft, baseline]);
 
-  const fieldsDirty = fieldsRef.current?.isDirty ?? false;
-  // fieldsDirtyTick принудительно ре-рендерит на onChange полей (handle.isDirty живёт вне React state карточки)
-  void fieldsDirtyTick;
-
   const isDirty = fieldsDirty || rolesDirty;
 
   const rolesHydrated = draft !== null;
