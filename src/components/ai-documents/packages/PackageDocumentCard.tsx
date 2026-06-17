@@ -16,7 +16,7 @@
  *  • Никаких ветвлений по `package_template_id`, названию или UUID.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import {
   AccordionItem, AccordionContent, AccordionTrigger,
 } from "@/components/ui/accordion";
