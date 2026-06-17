@@ -137,8 +137,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     for (const q of questions) {
       const existing = readRawValue(
         q.field,
-        packageTemplateItemId
-          ? getEffectiveValue(q.field.id, packageTemplateItemId)
+        effectiveItemId
+          ? getEffectiveValue(q.field.id, effectiveItemId)
           : valuesByField.get(q.field.id),
       );
       if (existing != null && existing !== "") {
@@ -167,7 +167,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     setDraft(next);
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions, valuesByField, isLoading, sessionCreatedAt, packageTemplateItemId]);
+  }, [questions, valuesByField, isLoading, sessionCreatedAt, effectiveItemId]);
 
   const handleChange = (fieldId: string, value: string | null) => {
     setDraft((d) => ({ ...d, [fieldId]: value }));
@@ -178,7 +178,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     const payload = questions.map((q) => ({
       field_catalog_id: q.field.id,
       value: (draft[q.field.id] ?? null) === "" ? null : draft[q.field.id] ?? null,
-      package_template_item_id: packageTemplateItemId ?? null,
+      package_template_item_id: effectiveItemId ?? null,
     }));
     try {
       await save(payload);
