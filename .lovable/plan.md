@@ -173,3 +173,24 @@ Orphan-блок остаётся на уровне `DocumentPackageQuestionnaire
 - Возможное расширение: `src/components/ai-documents/packages/PackageFieldsClientForm.tsx` — добавить `getDirtyPatch()` к `PackageFieldsSubmitHandle` для отдачи sparse-патча в atomic-payload (без записи в БД из формы).
 - Использовать существующий `useAtomicDocumentSave` (Stage 2).
 - Артефакты proof: `.lovable/proofs/stage5_unified_package_document_card.md` + обновление `.lovable/plan.md`.
+---
+
+## Статус (после Stage 5 implementation)
+
+- Stage 1 — cross-package parity: PASS
+- Stage 2 — atomic save RPC: PASS
+- Stage 3 — concurrency/rollback runtime: PASS
+- Stage 4 — multi-tenant isolation: PASS
+- **Stage 5 — unified PackageDocumentCard: code-complete, runtime proof PENDING**
+- Stage 6 — новый пакет E2E: NOT STARTED
+- Stage 7 — orphan transition: NOT STARTED
+- Patch: OPEN
+
+Stage 5 implementation:
+- `PackageDocumentCard` — единая карточка для любого пакета, без ветвлений по UUID/названию;
+- save = один `save_session_document_atomic` (fields = sparse dirty patch, roles = ВСЕГДА полный desired-state, expected_template_version_id = `document_templates.active_version_id`);
+- `canSave` блокирует RPC пока: clean / loading / not hydrated / no active version / saving;
+- `markSaved()` сбрасывает field-baseline без перезагрузки;
+- единая инвалидация в `useAtomicDocumentSave.onSuccess`, без дубликатов;
+- Stage 1 orphan-контракт сохранён;
+- proof-документ: `.lovable/proofs/stage5_unified_package_document_card.md`.
