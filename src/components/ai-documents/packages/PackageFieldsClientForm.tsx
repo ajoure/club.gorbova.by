@@ -270,6 +270,9 @@ interface FieldRowProps {
   onChange: (v: string | null) => void;
   disabled: boolean;
   inheritedFromSession?: boolean;
+  hasItemOverride?: boolean;
+  onResetOverride?: () => Promise<void> | void;
+  isResettingOverride?: boolean;
 }
 
 function isWideField(q: DedupedQuestion): boolean {
@@ -284,7 +287,7 @@ function isWideField(q: DedupedQuestion): boolean {
   return false;
 }
 
-function FieldRow({ question, value, onChange, disabled, inheritedFromSession }: FieldRowProps) {
+function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride }: FieldRowProps) {
   const { field, effective } = question;
   const wide = isWideField(question);
 
@@ -296,6 +299,24 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession }:
         <Badge variant="outline" className="text-[9px] h-3.5 px-1 leading-none font-normal text-muted-foreground">
           общее значение
         </Badge>
+      )}
+      {hasItemOverride && (
+        <Badge variant="secondary" className="text-[9px] h-3.5 px-1 leading-none font-normal">
+          переопределено
+        </Badge>
+      )}
+      {hasItemOverride && onResetOverride && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-4 px-1 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+          disabled={disabled || isResettingOverride}
+          onClick={() => { void onResetOverride(); }}
+        >
+          <RotateCcw className="h-2.5 w-2.5" />
+          Сбросить к общему
+        </Button>
       )}
     </Label>
   );
