@@ -23,7 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, RotateCcw } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { format } from "date-fns";
@@ -105,6 +105,8 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isLoading,
     save,
     isSaving,
+    resetOverride,
+    isResettingOverride,
   } = usePackageSessionFields(sessionId, packageTemplateId);
 
   const questions = useMemo<DedupedQuestion[]>(() => {
@@ -196,9 +198,20 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
         {questions.map((q) => {
           const sessionValue = valuesByField.get(q.field.id);
           const currentDraft = draft[q.field.id] ?? null;
+          const hasItemOverride = !!packageTemplateItemId
+            && isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
           const inheritedFromSession = !!packageTemplateItemId
             && isRowFilled(sessionValue)
-            && !isPerItemOverride(q.field.id, packageTemplateItemId, getEffectiveValue);
+            && !hasItemOverride;
+          const handleReset = hasItemOverride && packageTemplateItemId
+            ? async () => {
+                await resetOverride({
+                  field_catalog_id: q.field.id,
+                  package_template_item_id: packageTemplateItemId,
+                });
+                setDirty(false);
+              }
+            : undefined;
           return (
             <FieldRow
               key={q.field.id}
@@ -207,6 +220,9 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
               onChange={(v) => handleChange(q.field.id, v)}
               disabled={!!disabled}
               inheritedFromSession={inheritedFromSession}
+              hasItemOverride={hasItemOverride}
+              onResetOverride={handleReset}
+              isResettingOverride={isResettingOverride}
             />
           );
         })}
@@ -254,6 +270,9 @@ interface FieldRowProps {
   onChange: (v: string | null) => void;
   disabled: boolean;
   inheritedFromSession?: boolean;
+  hasItemOverride?: boolean;
+  onResetOverride?: () => Promise<void> | void;
+  isResettingOverride?: boolean;
 }
 
 function isWideField(q: DedupedQuestion): boolean {
@@ -268,7 +287,7 @@ function isWideField(q: DedupedQuestion): boolean {
   return false;
 }
 
-function FieldRow({ question, value, onChange, disabled, inheritedFromSession }: FieldRowProps) {
+function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride }: FieldRowProps) {
   const { field, effective } = question;
   const wide = isWideField(question);
 
@@ -280,6 +299,24 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession }:
         <Badge variant="outline" className="text-[9px] h-3.5 px-1 leading-none font-normal text-muted-foreground">
           общее значение
         </Badge>
+      )}
+      {hasItemOverride && (
+        <Badge variant="secondary" className="text-[9px] h-3.5 px-1 leading-none font-normal">
+          переопределено
+        </Badge>
+      )}
+      {hasItemOverride && onResetOverride && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-4 px-1 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+          disabled={disabled || isResettingOverride}
+          onClick={() => { void onResetOverride(); }}
+        >
+          <RotateCcw className="h-2.5 w-2.5" />
+          Сбросить к общему
+        </Button>
       )}
     </Label>
   );

@@ -208,6 +208,36 @@ export function usePackageSessionFields(
     onError: (e: Error) => toast.error(e.message),
   });
 
+  /**
+   * Reset per-item override → fallback к session-level.
+   * Канонический DELETE через RPC `delete_session_field_value`.
+   * Не используется для очистки session-level (RPC guard).
+   */
+  const resetOverrideMutation = useMutation({
+    mutationFn: async (input: { field_catalog_id: string; package_template_item_id: string }) => {
+      if (!sessionId) throw new Error("session_not_loaded");
+      const { data, error } = await supabase.rpc(
+        "delete_session_field_value" as never,
+        {
+          _session_id: sessionId,
+          _field_catalog_id: input.field_catalog_id,
+          _package_template_item_id: input.package_template_item_id,
+        } as never,
+      );
+      if (error) throw error;
+      return data as { deleted: number };
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: QK.values(sessionId) });
+      qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
+      qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      if ((res?.deleted ?? 0) > 0) {
+        toast.success("Возвращено к общему значению");
+      }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   /** Global progress: session-level required filled. */
   const progress = useMemo(() => {
     const required = questions.filter((q) => q.effective.required);
@@ -269,6 +299,8 @@ export function usePackageSessionFields(
       catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,
     isSaving: saveMutation.isPending,
+    resetOverride: resetOverrideMutation.mutateAsync,
+    isResettingOverride: resetOverrideMutation.isPending,
     progress,
   };
 }
