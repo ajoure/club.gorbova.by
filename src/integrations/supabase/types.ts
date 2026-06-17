@@ -17470,6 +17470,16 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      save_session_document_atomic: {
+        Args: {
+          _expected_template_version_id?: string
+          _field_values: Json
+          _package_template_item_id: string
+          _role_assignments: Json
+          _session_id: string
+        }
+        Returns: Json
+      }
       search_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string; p_search: string }
         Returns: {
