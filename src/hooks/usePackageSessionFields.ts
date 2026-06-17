@@ -326,6 +326,7 @@ export function usePackageSessionFields(
 
   return {
     questions,
+    orphanQuestions,
     values: valuesQuery.data ?? [],
     valuesByField,
     valuesByItemField,
