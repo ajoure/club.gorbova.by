@@ -132,8 +132,13 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       if (error) throw error;
       const ids = (items ?? []).map((r: any) => r.template_id);
       if (ids.length === 0) return [] as ItemRow[];
-      const { data: tpls } = await supabase
-        .from("document_templates").select("id, name, active_version_id").in("id", ids);
+      // Stage 5.0.2 fix: schema uses `current_version_id`, not `active_version_id`.
+      // Старый код падал на PostgREST с "column does not exist", из-за чего
+      // tpls был пуст: имя шаблона = "—" и active_version_id = null
+      // (отсюда же постоянный бейдж «нет активной версии» в карточке).
+      const { data: tpls, error: tErr } = await supabase
+        .from("document_templates").select("id, name, current_version_id").in("id", ids);
+      if (tErr) throw tErr;
       const map = new Map((tpls ?? []).map((t: any) => [t.id, t]));
       return (items ?? []).map((r: any) => {
         const tpl: any = map.get(r.template_id);
@@ -141,8 +146,8 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
           id: r.id,
           sort_order: r.sort_order,
           template_id: r.template_id,
-          template_name: (tpl?.name as string) ?? "—",
-          active_version_id: (tpl?.active_version_id as string | null) ?? null,
+          template_name: (tpl?.name as string) ?? "",
+          active_version_id: (tpl?.current_version_id as string | null) ?? null,
         };
       }) as ItemRow[];
     },
