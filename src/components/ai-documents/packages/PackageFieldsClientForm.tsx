@@ -317,8 +317,8 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession }:
       control = (
         <div className="max-w-[260px]">
           <DatePicker value={value ?? ""} onChange={(v) => onChange(v || null)} disabled={disabled}
-            placeholder="Выбрать дату" fromYear={1970}
-            toYear={new Date().getFullYear() + 10} />
+            placeholder="Выбрать дату" fromYear={2000}
+            toYear={new Date().getFullYear() + 2} />
         </div>
       );
       break;
