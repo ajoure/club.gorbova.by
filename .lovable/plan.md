@@ -1,205 +1,160 @@
-да, согласен, с учетом правок:
+План v3 (финальный): фикс дефолта 2036, починка вкладки «Генерация», редизайн анкеты + дополнения и уточнения
 
-1. **Backend-расширение SOT подтверждено.** Реализовать новую колонку `package_template_item_id`, partial UNIQUE, trigger-guard, обновление RPC и приоритет резолвинга:
-2. **Жёстко обеспечить SaaS-изоляцию данных.** Каждое значение должно принадлежать конкретной связке:
-  &nbsp;
-  ```text
-  workspace
-  → пользователь/владелец сессии
-  → document_package_session
-  → package_template
-  → package_template_item
-  → field_catalog
-  ```
-  Один клиент не должен иметь возможности читать, изменять или подставлять:
-  - чужую сессию;
-  - чужое юридическое лицо;
-  - чужие значения полей;
-  - item другого пакета;
-  - поле каталога другого workspace или package template.
-3. **RPC не должен доверять переданным ID.** `upsert_session_field_values` обязан серверно проверить:
-  - доступ текущего пользователя к сессии;
-  - принадлежность `field_catalog_id` пакету этой сессии;
-  - принадлежность `package_template_item_id` тому же `package_template_id`;
-  - что item действительно входит в пакет сессии;
-  - что поле реально обнаружено в активном шаблоне этого item;
-  - отсутствие архивности поля;
-  - допустимый тип и формат значения.
-4. **RLS строить не только через** `session_owner`**, но и через workspace membership/RBAC**, если сессии могут редактировать администраторы или сотрудники клиента. Должны поддерживаться:
-  - клиент — только свои сессии;
-  - уполномоченный администратор — сессии своего workspace;
-  - `service_role` — системные операции;
-  - никакого доступа между workspace.
-5. **Выбранное юридическое лицо также изолировано внутри сессии.** Проверить, что `selected_legal_entity_id` принадлежит текущему пользователю/workspace и не может быть подменено ID чужой организации. Значения полей одного юрлица не должны автоматически попадать в сессию другого клиента.
-6. **Исправить семантику required-ролей.** Нельзя считать обязательную роль заполненной, если она назначена «хотя бы в одном документе». Канон:
-  &nbsp;
-  ```text
-  для каждого package_template_item
-  каждая обязательная роль, используемая этим документом,
-  должна иметь назначение именно в этом item
-  ```
-  Gate должен агрегировать незаполненные пары:
-  ```text
-  package_template_item_id + role/link id
-  ```
-  а не только роль на уровне всего пакета.
-7. **Required-поля проверять также по каждому item.** Для каждой пары:
-  &nbsp;
-  ```text
-  package_template_item_id + field_catalog_id
-  ```
-  значение считается заполненным, если существует:
-  - непустое per-item значение;
-  - иначе непустое общее session-level значение.
-  Одно per-item значение другого документа не должно удовлетворять gate текущего документа.
-8. **Общее session-level значение сохранить как fallback, но не смешивать с per-item UI.** В анкете документа:
-  - показывать effective value: per-item либо общее;
-  - явно различать наследованное общее значение и собственное значение документа;
-  - при изменении создавать per-item override;
-  - очистка override должна возвращать fallback к общему, а не сохранять пустую строку как блокирующее значение.
-9. **Одна кнопка сохранения документа должна иметь определённую атомарность.** Зафиксировать поведение:
-  - сначала валидируются поля и роли;
-  - затем сохраняются обе части;
-  - при ошибке одной части пользователь получает точное сообщение;
-  - UI не должен заявлять «анкета сохранена», если поля сохранились, а роли — нет.
-  Предпочтительно использовать один orchestration RPC либо последовательное сохранение с явным partial-failure handling.
-10. **Не использовать** `ON DELETE CASCADE` **для item без проверки исторических последствий.** Удаление package template item может уничтожить введённые клиентом значения. Безопаснее:
-  - запретить физическое удаление используемого item;
-  - архивировать item;
-  - либо использовать `ON DELETE RESTRICT`.
-  `CASCADE` допустим только если доказано, что package template items никогда не удаляются после появления сессий.
-11. **Partial UNIQUE реализовать именованными индексами**, поскольку обычный `ON CONFLICT(column...)` не всегда однозначно работает с partial indexes. RPC должен использовать:
-  - явное UPDATE → INSERT;
-  - либо корректный `ON CONFLICT` с predicate;
-  - либо отдельную серверную функцию для общего и per-item уровня.
-  Добавить конкурентный тест двух параллельных upsert одного значения.
-12. **Не пересобирать RLS без необходимости удаления существующих политик.** Изменение колонки само по себе не требует новых CRUD-политик, если текущая политика уже корректно проверяет доступ через session. Добавить item/package guard в trigger/RPC, не расширяя права пользователя.
-13. **Резолвер должен получать** `package_template_item_id` **доказуемо.** Проверить полный путь генерации каждого документа. Нельзя надеяться на необязательный параметр:
-  &nbsp;
-  ```text
-  package generation
-  → конкретный item
-  → template version
-  → resolve-package-tokens(item_id)
-  ```
-  Если item context потерян, генерация должна остановиться с канонической ошибкой, а не молча взять общее значение, кроме действительно legacy-вызова без document-item контекста.
-14. **Уточнить формулировку “backend pipeline не меняется”.** Pipeline архитектурно не переписывается, но его поведение изменяется через resolver и передачу item context. Это должно быть отражено в proof и regression-тестах.
-15. **Шапка аккордеона должна считать заполнение конкретного документа:**
-  &nbsp;
-  ```text
-  X/Y полей · M/N ролей
-  ```
-  где:
-  - поля — уникальные required/total поля активного шаблона item;
-  - роли — назначенные/требуемые роли этого item;
-  - session fallback учитывается как заполненное поле.
-16. **Добавить runtime multi-tenant UAT.**
-  - Клиент A создаёт сессию и значения.
-  - Клиент B не может прочитать или изменить их через UI, RPC и прямой REST-запрос.
-  - Администратор workspace A видит данные согласно RBAC.
-  - Администратор workspace B не видит данные.
-  - Два клиента могут использовать один и тот же `pf-XXXXXX`, но получать полностью независимые значения.
-17. **Добавить runtime по двум документам одной сессии.**
-  - Один `pf-XXXXXX` присутствует в двух шаблонах.
-  - Для item A сохранено значение `A`.
-  - Для item B сохранено значение `B`.
-  - В двух итоговых DOCX подставляются разные значения.
-  - После удаления override item B используется общее значение сессии.
-  - Snapshot каждого документа содержит фактически использованное значение.
-18. **Предыдущие D7-проверки включить в новый итоговый прогон**, поскольку новая per-item модель меняет источник значения:
-  - HTTP 200;
-  - реальная подстановка;
-  - snapshot;
-  - HTTP 422 при отсутствии required effective value;
-  - отсутствие созданного документа при 422.
-19. **Не делать избыточный исторический discovery.** Функциональность ещё фактически не используется клиентами, поэтому достаточно короткого preflight существующих строк и проверки отсутствия дублей. После этого можно прямо внедрять новую модель без сложного compatibility-проекта.
+---
 
-Все остальные пункты сохраняются add-only.
+## A. Bug: «Дата проведения собрания» = 23.01.2036
 
-&nbsp;
+**Не фиксировать причину до завершения диагностики.** В отчёте явно указать root cause из 4 вариантов:
+1. сохранённое session-level значение в `document_package_session_field_values`;
+2. per-item override (с не-NULL `package_template_item_id`);
+3. сломанный `default_kind` в `document_package_field_catalog.options`;
+4. ошибка парсинга/границ DatePicker (`fromYear/toYear`, `parseLocalDate`).
 
-План: объединение анкеты ролей+полей по документам, восстановление кнопки генерации и per-document значения полей.
+Исправлять **только подтверждённый источник**. До диагностики — никаких миграций данных, никаких правок DatePicker «на всякий случай».
 
-1. **Проблема**
-  - Поля анкеты выводятся одной общей кучей сверху, а роли — внутри документов. Это не идеология.
-  - Кнопка «Сформировать пакет документов» остаётся заблокирована даже после полного заполнения анкеты — gate несовместим с новой моделью ролей.
-  - Одно и то же pf-поле сейчас имеет ОДНО значение на сессию. Нужно, как у ролей, разрешить разное значение этого же поля в каждом документе.
-2. **Диагностика**
-  - `DocumentPackageQuestionnairesView.tsx`: общий `PackageFieldsClientForm` стоит над аккордеоном документов; внутри документа — только роли (`useDocumentItemRoleAssignments`).
-  - `PackageGenerationPanel.tsx` (стр. 69–98):
-    - `requiredRolesStatus` считается через `pkg.participants` и `role_key`, т.е. читает legacy `document_package_session_participants`. Новая канонич. SOT ролей — `document_package_item_role_assignments` (per-document). Поэтому «Не заполнены обязательные роли» висит навсегда → `canGenerate=false`.
-    - `requiredFieldsSatisfied` берётся из `usePackageSessionFields(...)` по session+field_catalog_id — пока поля «общие на сессию», это работает; при переходе на per-document надо переориентировать gate на агрегацию по item+field.
-  - SOT значений полей сейчас — `document_package_session_field_values(session_id, field_catalog_id)` UNIQUE по этим двум колонкам. Резолвер шаблонов (`supabase/functions/_shared/resolve-package-tokens.ts`) тоже читает по (session, field_catalog_id) — per-item override на бекенде ещё не поддержан.
-  - Триггер `dpira_assert_package_match` гарантирует согласованность ролей по item. По полям такого ещё нет.
-3. **Предлагаемое решение**
-  3.1. **UI (фронт)**
-  - Из `DocumentPackageQuestionnairesView` убрать общий блок `PackageFieldsClientForm` сверху.
-  - Внутри каждого `AccordionItem` шаблона показывать единую анкету документа:
-    - блок полей этого документа (через `usePackageDetectedFields.byItemId[item.id]`);
-    - блок ролей этого документа (как сейчас, `useDocumentItemRoleAssignments`).
-  - Одна общая кнопка `Сохранить анкету документа` сохраняет и поля, и роли только этого документа.
-  - Поля показываем компактно, без `pf-XXXXXX` для клиента, канон календарей `DatePicker` / `DateTimePicker`.
-  - В шапке аккордеона: «N/N полей · M назначений».
-   3.2. **Per-document значения полей (BACKEND-расширение, аккуратно)**
-  - В `document_package_session_field_values`:
-    - добавить колонку `package_template_item_id uuid NULL` с FK на `document_package_template_items(id) ON DELETE CASCADE`;
-    - снять старый UNIQUE и поставить два partial UNIQUE:
-      - `UNIQUE(session_id, field_catalog_id) WHERE package_template_item_id IS NULL` — «общее значение пакета»;
-      - `UNIQUE(session_id, field_catalog_id, package_template_item_id) WHERE package_template_item_id IS NOT NULL` — «значение для конкретного документа»;
-    - триггер-валидатор: `package_template_item_id` должен принадлежать тому же `package_template_id`, что и сессия и каталог.
-  - Обновить RPC `upsert_session_field_values`:
-    - добавить опциональный аргумент `_package_template_item_id uuid` (NULL = общий уровень, не-NULL = per-document);
-    - upsert по соответствующему UNIQUE;
-    - все остальные guards/типизацию значений сохранить.
-  - Расширить резолвер `_shared/resolve-package-tokens.ts`:
-    - при разворачивании токена `{{pf-XXXXXX}}` в контексте конкретного `package_template_item_id` искать значение сначала per-item, затем fallback на общий уровень сессии;
-    - не менять контракт для не-пакетных вызовов.
-  - GRANT/RLS: пересобрать политики для новой колонки в той же миграции, оставить `SELECT/INSERT/UPDATE/DELETE` для `authenticated` через `session_owner`, `ALL` для `service_role`.
-   3.3. **Хук `usePackageSessionFields**`
-  - Дополнить запрос values: тянуть и общий уровень (`item_id IS NULL`), и per-item.
-  - Возвращать `valuesByField` (общие) и `valuesByItemField[item_id][field_id]` (per-item).
-  - В `save` принимать `package_template_item_id?: string` и пробрасывать в RPC.
-  - Расчёт `progress` по требуемым полям: поле считается заполненным, если для item существует per-item значение **или** общее значение сессии.
-   3.4. **Кнопка генерации (`PackageGenerationPanel`)**
-  - Заменить legacy-проверку обязательных ролей через `pkg.participants` на чтение SOT `document_package_item_role_assignments`, агрегированное по всем `package_template_item_id` пакета. Required = все обязательные роли пакета должны иметь ≥1 назначение хотя бы в одном документе (точная семантика берётся из текущей `Package Document-Level Questionnaires` memory: per-document SOT).
-  - `requiredFieldsSatisfied` агрегировать так же по items: required-поле, встречающееся в item, должно иметь либо per-item, либо общее значение.
-  - НЕ менять backend pipeline генерации, НЕ трогать `ai-generate-document-package` за пределами резолвера.
-4. **Изменяемые компоненты**
-  - Frontend:
-    - `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx`
-    - `src/components/ai-documents/packages/PackageFieldsClientForm.tsx` (рефакторинг в per-item renderer)
-    - `src/components/ai-documents/packages/PackageGenerationPanel.tsx` (gate)
-    - `src/hooks/usePackageSessionFields.ts`
-    - `src/hooks/useDocumentItemRoleAssignments.ts` (доп. агрегатор по всем items, либо новый узкий хук `usePackageRoleAssignmentsAll`)
-  - Backend:
-    - Новая миграция: колонка `package_template_item_id`, partial UNIQUE, валидирующий триггер, RPC расширение, обновлённые GRANT/RLS.
-    - `supabase/functions/_shared/resolve-package-tokens.ts` — fallback chain per-item → session.
-5. **Что не будет изменено**
-  - НЕ меняем `ai_generated_documents`, `canonical-document-generate-strict`, Gotenberg, storage.
-  - НЕ меняем `document_package_item_role_assignments` и его триггеры.
-  - НЕ возвращаем `document_package_item_field_assignments` как SOT.
-  - НЕ показываем клиенту технические `pf-XXXXXX` для копирования.
-  - НЕ создаём второй источник истины для значений полей; per-item — это просто дополнительный уровень в той же таблице.
-6. **Dry-run**
-  - На staging-сессии: получить snapshot existing `document_package_session_field_values`, убедиться, что все строки попадают под новый partial UNIQUE (`package_template_item_id IS NULL`).
-  - Прогнать `resolve-package-tokens.pf.test.ts` + добавить новый кейс: per-item override побеждает общее значение.
-  - Прогнать `usePackageSessionFields` dedup-тесты (`src/utils/packageFieldsDedup.ts`) с новой структурой values.
-7. **Execute**
-  - Сначала миграция (колонка + indexes + триггер + RPC), затем edge-функция резолвера, затем фронт.
-  - В RPC и резолвере явные guards: при mismatch `(session.package_template_id ≠ item.package_template_id)` — ошибка `pkg_field_value_item_mismatch`, без silent fallback.
-8. **STOP-guards**
-  - Если migration детектит дубли по новому UNIQUE — остановиться и репортить (не должно быть, т.к. сейчас уже UNIQUE по (session_id, field_catalog_id)).
-  - Если резолвер где-то вызывается без `package_template_item_id` контекста, fallback ОБЯЗАН вернуть общее значение, чтобы не сломать существующие шаблоны.
-  - Если в legacy gate генерации обнаружится зависимость от `document_package_session_participants` где-то ещё (генерация, биллинг) — НЕ убирать чтение participants глобально, только в UI gate.
-9. **DoD**
-  - В клиентской анкете нет общей кучи полей сверху; каждый шаблон содержит свои поля + роли + одну кнопку сохранения.
-  - Если pf-поле встречается в 3 документах, клиент может задать 3 разных значения; при отсутствии per-item значения подставляется общее значение сессии.
-  - Кнопка «Сформировать пакет документов» становится активной, когда заполнены все обязательные роли (per-document SOT) и все обязательные поля (per-item ИЛИ общее значение).
-  - Резолвер pf-токенов в edge-функции уважает приоритет per-item → session.
-  - Существующие сессии и шаблоны продолжают работать без миграции данных.
-  - Backend pipeline генерации не меняется.
-10. **Риски и зависимости**
-  - Расширение SOT значений — это backend-миграция и edge-функция; затрагивает резолвер шаблонов. Делать одной согласованной серией: миграция → edge → фронт.
-  - Если в будущем понадобится «фиксировать» общее значение при наличии per-item, это уже отдельный UX, не входит в этот патч.
-11. **Требуется дополнительная информация**
-  - Подтверждение, что готов идти на backend-расширение SOT (новая колонка + триггер + изменение RPC и резолвера). Без него остаётся только UI-перегруппировка и фикс gate генерации; per-document значения полей реализовать невозможно по текущему контракту таблицы.
+**Разделить 4 визуальных состояния даты:**
+- значения нет → placeholder, пустой input;
+- есть smart-date default, ещё не сохранённый → бейдж «предложенное значение» (не считается заполненным до явного save);
+- есть общее сохранённое значение → бейдж «общее значение»;
+- есть per-item override → бейдж «собственное значение документа».
+
+**Никогда не auto-save smart-date только из-за открытия анкеты.** Save только по явному действию пользователя.
+
+**Канонический reset override (отдельная RPC/edge action):**
+- DELETE по триплету `session_id + field_catalog_id + package_template_item_id` (с `IS NOT NULL` guard на item).
+- После reset UI сразу подтягивает общее значение и показывает бейдж «общее значение».
+- Кнопки «Очистить полностью» (записать NULL/empty session-level) и «Сбросить к общему» (delete per-item override) — **разные действия**, разные обработчики, разные подтверждения.
+- Запрещено очищать per-item значение upsert'ом пустой строки — это перекроет общий fallback вместо восстановления наследования.
+
+## B. Bug: «Генерация» не видит сохранённую анкету
+
+**Единый SOT сессии и items для обеих вкладок.** Поднять `useDocumentPackageSession(packageCode)` + список items в общий родитель `PackagesWorkspace` и прокидывать props в обе вкладки. Если по архитектурным причинам остаются отдельные вызовы — идентичные query keys, никаких конкурирующих состояний.
+
+**Инвалидация после save анкеты** — все связанные ключи:
+- `["package-session", packageCode]`;
+- per-item field values;
+- role assignments;
+- generation readiness/gate;
+- package summary.
+
+Кнопка «Сгенерировать» должна разблокироваться сразу, без перезагрузки/переключения вкладок.
+
+**Предметный blocker генерации.** Вместо «Анкета не сохранена»:
+```
+Документ «Приказ о проведении ГОС»: не заполнено 2 поля и 1 роль
+Документ «Протокол ГОС»: не назначена 1 обязательная роль
+```
+Кнопка «Перейти к анкете»:
+1. открывает вкладку анкеты;
+2. раскрывает нужный `PackageDocumentCard`;
+3. скроллит к первой незаполненной секции;
+4. ставит focus на первый проблемный контрол.
+
+**STOP-condition для «Шаблонов: 0».** Если `session` существует, но `session.package_template_id !== pkg.templateId` или `items.length === 0`:
+- генерацию не запускать;
+- НЕ показывать ложное «анкета не сохранена»;
+- вывести диагностический код + реальные ID (`session.id`, `session.package_template_id`, `pkg.templateId`);
+- НЕ создавать новую сессию автоматически поверх существующей.
+
+## C. UI Redesign в стиле карточки контакта (только presentation)
+
+**Scope clarification:** «редизайн не трогает hooks» относится **только к части C**. Части A/B и базовый аудит могут менять hooks, query orchestration и RPC в пределах ранее утверждённого плана.
+
+**Бизнес-логика не дублируется в новых карточках:**
+- `PackageDocumentCard` — композиция, header, статус-бейджи, accordion control;
+- `PackageFieldMiniCard` — тонкая обёртка над существующим field renderer (контролы, валидация, сериализация, effective-value — на месте);
+- `PackageRoleRowCard` — обёртка над существующей ролевой логикой.
+
+Валидация, сериализация дат, save, effective-value — остаются в существующих хуках/утилитах.
+
+**Композиция (как «Gorbova Club» → «Стандарт» в карточке контакта):**
+1. Шапка-карточка документа: иконка `Layers`, заголовок (# + название), правый ряд — статус-pill + счётчики, chevron.
+2. Раскрытие → вложенные подкарточки: «Поля документа» (`FileText`) и «Роли документа» (`Users`).
+3. Поля = grid `md:grid-cols-2 gap-3`, одинаковая `min-height`, единый `h-10` для контролов.
+4. Роли = список строк-карточек.
+5. **Pinned save-кнопка одна на весь `PackageDocumentCard`**, НЕ по одной на каждый внутренний блок.
+
+**Mobile-проверка pinned-кнопки:**
+- не перекрывает последние поля (bottom padding в контенте);
+- safe-area-inset-bottom;
+- не конфликтует с экранной клавиатурой (focus-aware);
+- остаётся доступной при длинной анкете.
+
+**Расчёт статусов карточки:**
+```
+complete: все required fields имеют effective value AND все required roles назначены в этом item
+partial:  заполнена хотя бы одна требуемая сущность, но не все
+empty:    ничего не заполнено
+```
+«Сохранено» ≠ «Заполнено». Документ может быть сохранён, но оставаться `partial`/`empty`.
+
+**Шапка ролей: `K/N ролей`**, где N — обязательные ролевые слоты конкретного item. Необязательные роли — отдельным под-счётчиком, не блокируют генерацию.
+
+**Dirty-state индикатор (постоянный, не временный):**
+- сохранено и без изменений → «Сохранено»;
+- любое изменение → «Есть несохранённые изменения» (амбер);
+- partial failure при save → точная ошибка по полям, без общего success-toast;
+- временный зелёный бейдж «Сохранено» на 3 сек не заменяет постоянный dirty-indicator.
+
+**Дизайн-токены — доменно нейтральные** (никаких `paid`/`pending`):
+```
+--status-success
+--status-warning
+--status-neutral
+--surface-elevated
+--surface-muted
+```
+Badge variants: `success-soft`, `warning-soft`, `neutral-soft`. Сначала проверить существующие токены — не создавать вторую палитру при наличии аналогов.
+
+**Анимация.** Не добавлять Framer Motion ради одного аккордеона. Сначала проверить animation pattern карточки контакта (Radix Accordion + CSS keyframes) и переиспользовать 1:1. Новая зависимость допустима только если уже есть в проекте.
+
+**Никаких технических ID (`pf-…`, `ln-…`, `FLD-…`, `PKR-…`) в клиентском UI** — только человекочитаемые названия.
+
+## D. STOP-guards
+- Очистка мусорной даты — только через канонический write-path (RPC), не прямой UPDATE.
+- React Query keys остаются совместимыми (invalidate, не rename).
+- Не трогаем: RPC контракты канонической генерации, `ai_generated_documents`, Gotenberg, storage, имена токенов `{{ln-…}}` / `{{package.…}}`, schema `document_package_item_role_assignments`.
+- Никаких hardcoded цветов в новых компонентах.
+
+## E. Порядок исполнения
+1. SQL-диагностика бага 2036 (read-only) → определить root cause из 4 вариантов → отчёт.
+2. Hotfix вкладки «Генерация»: единый SOT session/items, инвалидация, STOP-condition, предметный blocker.
+3. Базовая часть аудита (per-item required gate, atomic save RPC, reset-override RPC, concurrent upsert, multi-tenant guard).
+4. Фикс подтверждённого источника 2036 + UI разделение 4 состояний даты + reset-override UI.
+5. Дизайн-токены `status-success/warning/neutral`, `surface-elevated/muted` + Badge variants.
+6. Новые компоненты `PackageDocumentCard` / `PackageFieldMiniCard` / `PackageRoleRowCard` (presentation-only).
+7. Подключение в `DocumentPackageQuestionnairesView` для всех пакетов.
+8. Mobile/desktop/light/dark проверка pinned save, accordion, статус-бейджей.
+
+## F. Runtime proof — 4 сценария для даты
+1. Пустое поле остаётся пустым (без auto-save).
+2. Smart-date prefill → корректная текущая дата как «предложенное», save → переходит в «общее».
+3. Сохранённое общее значение → бейдж «общее значение».
+4. Per-item override → бейдж «собственное», reset → возвращает общее, бейдж «общее значение».
+
+Значение `2036-01-23` не должно появиться ни в одном сценарии без явного сохранения пользователем.
+
+## G. UI/regression-тесты редизайна
+- один компонент работает минимум для 2 разных пакетов (Идеология + Годовое собрание);
+- desktop + mobile;
+- light + dark;
+- раскрытие/сворачивание карточек;
+- dirty / saved / error состояния;
+- переход из blocker генерации к нужному документу + фокус;
+- сохранение существующих date/datetime/select/multiselect/role данных без регрессий;
+- отсутствие технических `pf-/ln-/FLD-/PKR-` ID в клиентском UI.
+
+## H. Финальный DoD (объединённый отчёт)
+1. Root cause даты 2036 + исправление подтверждённого источника.
+2. Синхронная session/items модель между вкладками (доказательство одинаковых данных).
+3. Per-item required gate (роли + поля).
+4. Atomic save RPC (rollback при partial failure).
+5. Reset override (delete триплета + UI fallback на общее).
+6. Concurrent upsert (partial unique indexes + ON CONFLICT NULL/NOT NULL).
+7. Multi-tenant isolation (RLS + RPC guards).
+8. Два документа с разными значениями одного pf (per-item override proof).
+9. D7 HTTP 200: оба DOCX сгенерированы, оба snapshot в `ai_generated_documents.meta`.
+10. D7 HTTP 422: при отсутствии required value — ни одного созданного документа.
+11. Before/after скриншоты нового интерфейса (desktop + mobile, light + dark).
+
+**Discovery не расширять** за пределы этих проверок: функциональность ещё не используется клиентами, после установления root cause — сразу hotfix и редизайн.
