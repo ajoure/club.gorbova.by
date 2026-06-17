@@ -153,16 +153,6 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions, valuesByField, isLoading, sessionCreatedAt, packageTemplateItemId]);
 
-  if (!sessionId || !packageTemplateId) return null;
-  if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка полей…
-      </div>
-    );
-  }
-  if (questions.length === 0) return null;
-
   const handleChange = (fieldId: string, value: string | null) => {
     setDraft((d) => ({ ...d, [fieldId]: value }));
     setDirty(true);
@@ -189,6 +179,16 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isDirty: dirty,
     isSaving,
   }), [dirty, isSaving, handleSave]);
+
+  if (!sessionId || !packageTemplateId) return null;
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка полей…
+      </div>
+    );
+  }
+  if (questions.length === 0) return null;
 
   return (
     <div className="space-y-2">
