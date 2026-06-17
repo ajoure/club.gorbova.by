@@ -1655,10 +1655,36 @@ Deno.serve(async (req) => {
       file_name: renderedFileNameWithExt,
       file_mime: 'application/pdf',
       storage_bucket: 'documents',
+      // NOTE: `snapshot.fields` and `token_manifest_snapshot` are reserved
+      // for billing-mode {{field:FLD-XXXXXX}} tokens. Package/ln/pf canonical
+      // snapshot lives in `meta.tokens_snapshot` per PATCH-PACKAGE-CUSTOM-FIELDS-V1
+      // (extended below to providers pf|ln|package). Manifest is empty for
+      // package-mode by design: pf-required-gate is enforced upstream by the
+      // package orchestrator before this function is called.
       snapshot: { fields: docFields },
       missing_tokens: missing,
       token_manifest_snapshot: manifest,
-      template_tokens_snapshot: allIds.map((f) => `field:${f}`),
+      // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (D7-snapshot): template_tokens_snapshot
+      // fixates the EXACT token strings encountered in the template,
+      // including modifiers (e.g. `pf-000005|format=full`). Dedup by raw token.
+      template_tokens_snapshot: (() => {
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const f of allIds) {
+          const k = `field:${f}`;
+          if (!seen.has(k)) { seen.add(k); out.push(k); }
+        }
+        if (generationContext === 'package_session') {
+          for (const pt of parsedPackageTokens) {
+            // raw_inside contains bag_key + all modifiers, exactly as in the template.
+            if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
+          }
+          for (const pt of parsedPfTokens) {
+            if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
+          }
+        }
+        return out;
+      })(),
       warnings_snapshot: (() => {
         const w: string[] = [];
         if (b97FallbackApplied > 0) w.push(`b97_live_fallback_used:${b97FallbackApplied}:non_empty=${b97FallbackNonEmpty}`);
@@ -1686,25 +1712,86 @@ Deno.serve(async (req) => {
         file_name_template_snapshot: fileNameTemplate,
         file_name_template_source: fileNameTemplateSource,
         file_name_warnings: fileNameWarnings,
-        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): add-only token snapshot for pf-XXXXXX.
+        // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (D7-snapshot): add-only token snapshot
+        // covering providers pf | ln | package. Dedup key = `${provider}:${raw_inside}`
+        // (raw_inside includes modifiers, so the same base id with different
+        // formatting yields distinct entries, each with its own rendered_value).
+        // For ln/package we record ONLY JSON-safe canonical fields, never the
+        // full resolver entry. item_context binds the snapshot to the exact
+        // package_template_item_id being generated (validated above as required
+        // package_context field, lines 383-389).
         tokens_snapshot: (() => {
           if (generationContext !== 'package_session') return [];
           const seen = new Set<string>();
           const out: any[] = [];
+          const itemContext = {
+            package_session_id: packageContext!.package_session_id,
+            package_template_item_id: packageContext!.package_template_item_id,
+          };
+          // 1) pf-* (existing contract preserved, augmented with item_context + raw_inside).
           for (const pt of parsedPfTokens) {
-            if (seen.has(pt.public_id)) continue;
-            seen.add(pt.public_id);
+            const key = `pf:${pt.raw_inside}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
             const e = (packageContext!.preresolved_pf_fields || {})[pt.public_id];
             if (!e) continue;
+            const rendered = resolved[pt.raw_inside];
             out.push({
               provider: 'pf',
+              raw_inside: pt.raw_inside,
               public_id: e.public_id,
               label: e.label,
               data_type: e.data_type,
               raw_value: e.raw_value,
-              rendered_value: e.rendered_value,
+              rendered_value: typeof rendered === 'string' ? rendered : (e.rendered_value ?? ''),
+              format: pt.format ?? null,
               default_kind_applied: e.default_kind_applied,
+              item_context: itemContext,
             });
+          }
+          // 2) ln-* and package.* (NEW providers).
+          for (const pt of parsedPackageTokens) {
+            const key = `${pt.kind === 'ln' ? 'ln' : 'package'}:${pt.raw_inside}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const rendered = resolved[pt.raw_inside];
+            // Skip silently only if raw_inside has no resolved entry AND no source trace —
+            // it means parsing recognised the token but resolver never wrote it (defence-in-depth).
+            const renderedValue = typeof rendered === 'string' ? rendered : '';
+            const trace = sourceTrace[pt.raw_inside] || {};
+            if (pt.kind === 'ln') {
+              const e: any = (packageContext!.preresolved_ln_tokens || {})[pt.bag_key] || {};
+              out.push({
+                provider: 'ln',
+                raw_inside: pt.raw_inside,
+                bag_key: pt.bag_key,
+                rendered_value: renderedValue,
+                persons: Array.isArray(e.persons) ? e.persons.map((s: any) => String(s)) : [],
+                positions: Array.isArray(e.positions) ? e.positions.map((s: any) => String(s)) : [],
+                format: pt.format ?? null,
+                case_modifier: pt.case_modifier ?? null,
+                include_position: pt.include_position === true,
+                join: pt.join ?? null,
+                format_applied: trace.format_applied === true,
+                case_applied: trace.case_applied === true,
+                item_context: itemContext,
+              });
+            } else {
+              const e: any = (packageContext!.preresolved_package_fields || {})[pt.bag_key] || {};
+              out.push({
+                provider: 'package',
+                raw_inside: pt.raw_inside,
+                bag_key: pt.bag_key,
+                raw_value: e.value ?? null,
+                rendered_value: renderedValue,
+                source: e.source ?? trace.source ?? null,
+                format: pt.format ?? null,
+                case_modifier: pt.case_modifier ?? null,
+                format_applied: trace.format_applied === true,
+                case_applied: trace.case_applied === true,
+                item_context: itemContext,
+              });
+            }
           }
           return out;
         })(),
