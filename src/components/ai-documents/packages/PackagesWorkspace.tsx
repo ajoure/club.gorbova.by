@@ -430,7 +430,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
 
           <TabsContent value="generation">
             <PackageGenerationPanel
-              packageCode={selectedPackage.code}
+              packageTemplateId={selectedPackage.id}
               packageName={selectedPackage.name}
             />
           </TabsContent>

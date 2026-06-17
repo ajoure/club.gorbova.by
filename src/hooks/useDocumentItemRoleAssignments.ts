@@ -116,6 +116,9 @@ export function useDocumentItemRoleAssignments(
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK(packageSessionId, packageTemplateItemId) });
+      // hotfix 2026-06-17: разблокировать кнопку «Сформировать пакет» без переключения вкладок.
+      qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
+      qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
       toast.success("Анкета документа сохранена");
     },
     onError: (e: Error) => toast.error(e.message),
