@@ -252,16 +252,16 @@ export function PackageDocumentCard({
             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
               <ListChecks className="h-3 w-3" /> Поля документа
             </div>
-            <div onInput={() => setFieldsDirtyTick((t) => t + 1)} onChange={() => setFieldsDirtyTick((t) => t + 1)} onClick={() => setFieldsDirtyTick((t) => t + 1)}>
-              <PackageFieldsClientForm
-                ref={fieldsRef}
-                sessionId={sessionId}
-                packageTemplateId={packageTemplateId}
-                packageTemplateItemId={item.id}
-                sessionCreatedAt={sessionCreatedAt}
-                hideSaveButton
-              />
-            </div>
+            <PackageFieldsClientForm
+              ref={fieldsRef}
+              sessionId={sessionId}
+              packageTemplateId={packageTemplateId}
+              packageTemplateItemId={item.id}
+              sessionCreatedAt={sessionCreatedAt}
+              hideSaveButton
+              onDirtyChange={setFieldsDirty}
+            />
+
           </div>
         )}
 
