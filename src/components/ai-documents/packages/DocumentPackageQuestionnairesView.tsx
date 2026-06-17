@@ -40,7 +40,8 @@ import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
-import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
+import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
+import { PackageDocumentCard } from "./PackageDocumentCard";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 interface Props {
