@@ -265,7 +265,20 @@ cross-package parity (detection + orphan UI) → atomic save RPC + hooks → con
 
 См. `.lovable/proofs/stage3_atomic_concurrent_runtime.md`. all_pass=true, 5/5 сценариев (orphan-per-item, stale-version, atomic rollback без audit и без leak, desired-state delete с архивированием ROLE_B, 5×parallel без дублей и с когерентным финальным состоянием). Proof выявил и устранил 4 реальных дефекта в `save_session_document_atomic`: (1) UPDATE-роль захватывала inactive-дубли → 23505; (2) race UPDATE→INSERT под параллельной нагрузкой; (3) ERRCODE 40001 для stale_template_version вызывал PostgREST retry loop; (4) audit-insert ссылался на несуществующие колонки и тихо откатывал все успешные транзакции. Все четыре исправлены. Транзитные артефакты (helper RPC, edge-функция, audit от прогона, временные роли) удалены.
 
-### Этап 4 — multi-tenant proof: NOT STARTED
+### Этап 4 — multi-tenant proof: PASS (2026-06-17)
+
+См. `.lovable/proofs/stage4_multitenant.md`. 11/11 сценариев PASS через транзиентную edge-функцию `proof-stage4-multitenant` с реальными JWT трёх пользователей (owner-A, foreign-B, admin):
+
+- T1 владелец сохраняет свою сессию — ok;
+- T2 чужой пользователь сохраняет сессию владельца → `forbidden`;
+- T3 владелец прикрепляет чужого `person_id` → `person_outside_session_owner`;
+- T4 подмена `session_id` на сессию другого пользователя → `forbidden`;
+- T5/T6/T7 item/field/role из другого пакета → соответствующие `*_outside_session_package`;
+- T8 админ сохраняет любую сессию — ok;
+- T9/T10 чужой пользователь не видит ни `session_field_values`, ни `item_role_assignments` сессии владельца (RLS);
+- T11 audit_logs: ровно 2 новые записи (T1 + T8), у foreign-B 0.
+
+Proof выявил cross-tenant дефект: предыдущая версия RPC проверяла `person_id` только через EXISTS и под SECURITY DEFINER принимала чужие `legal_details_persons.id`. Hardening: чтение `legal_details_persons.profile_id`, отказ при `profile_id IS NULL` (не-админ) и при `profile_id <> session_owner_profile` (не-админ); админ сохраняет bypass. Все fixtures и edge-функция удалены, leftover=0.
 
 ### Этап 5 — unified `PackageDocumentCard` (рефакторинг UI с использованием атомарного RPC): NOT STARTED
 
