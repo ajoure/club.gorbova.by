@@ -9,7 +9,7 @@
  *
  * Дедуп вопросов и каталог — без изменений.
  */
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -313,7 +313,7 @@ export function usePackageSessionFields(
   };
 
   /** Список вопросов для конкретного item (в порядке появления токена в шаблоне). */
-  const getItemQuestions = (itemId: string): DedupedQuestion[] => {
+  const getItemQuestions = useCallback((itemId: string): DedupedQuestion[] => {
     const publicIdsInItem = detected.byItemId[itemId] ?? [];
     const byPid = new Map(questions.map((q) => [q.field.public_id, q]));
     const out: DedupedQuestion[] = [];
@@ -322,7 +322,7 @@ export function usePackageSessionFields(
       if (q) out.push(q);
     }
     return out;
-  };
+  }, [questions, detected.byItemId]);
 
   return {
     questions,
