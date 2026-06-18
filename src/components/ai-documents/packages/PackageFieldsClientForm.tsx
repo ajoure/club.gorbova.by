@@ -417,7 +417,7 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
       control = (
         <Input type="number" inputMode="decimal" value={value ?? ""}
           onChange={(e) => onChange(e.target.value)} disabled={disabled}
-          className="h-9 text-sm max-w-[260px]" />
+          className="h-9 text-sm w-full" />
       );
       break;
     case "year":
@@ -425,12 +425,12 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
         <Input type="text" inputMode="numeric" maxLength={4} placeholder="ГГГГ"
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 4))}
-          disabled={disabled} className="h-9 text-sm max-w-[120px] tabular-nums" />
+          disabled={disabled} className="h-9 text-sm w-full tabular-nums" />
       );
       break;
     case "date":
       control = (
-        <div className="max-w-[260px]">
+        <div className="w-full [&_button]:w-full [&_button]:h-9 [&_button]:justify-start">
           <DatePicker value={value ?? ""} onChange={(v) => onChange(v || null)} disabled={disabled}
             placeholder="Выбрать дату" fromYear={2000}
             toYear={new Date().getFullYear() + 2} />
@@ -440,7 +440,7 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
     case "datetime": {
       const { date, time } = parseDateTime(value);
       control = (
-        <div className="max-w-[320px]">
+        <div className="w-full min-w-0 [&_button]:h-9 [&>div]:w-full [&_button]:justify-start [&_button]:truncate">
           <DateTimePicker
             date={date} time={time}
             onDateChange={(newDate) => {
@@ -471,7 +471,7 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
             const mm = Math.min(59, Number(m[2]));
             onChange(`${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`);
           }}
-          disabled={disabled} className="h-9 text-sm max-w-[120px] tabular-nums" />
+          disabled={disabled} className="h-9 text-sm w-full tabular-nums" />
       );
       break;
     case "checkbox":
