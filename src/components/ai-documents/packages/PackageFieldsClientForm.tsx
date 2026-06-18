@@ -440,7 +440,7 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
     case "datetime": {
       const { date, time } = parseDateTime(value);
       control = (
-        <div className="w-full min-w-0 [&_button]:h-9 [&>div]:w-full [&_button]:justify-start [&_button]:truncate">
+        <div className="w-full min-w-0 [&_button]:h-9 [&>div]:w-full [&_button]:justify-start [&_button]:truncate [&_button]:text-sm [&_button]:font-normal">
           <DateTimePicker
             date={date} time={time}
             onDateChange={(newDate) => {
