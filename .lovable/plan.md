@@ -261,3 +261,43 @@ Proof: `.lovable/proofs/stage7_orphan_transition.md`.
 4. Stage 7 (требует 5.0.1 cleanup baseline и Sprint 3G UI).
 
 Каждый stage заканчивается коротким отчётом «Отчёт о выполнении» с ссылкой на proof и явным PASS/FAIL по чек-листу.
+---
+
+# Patch progress (2026-06-18)
+
+## Stage 5.0.2 — F1/F2 regressions — PASS
+
+См. `.lovable/proofs/stage5_0_2_regression_f1_f2.md`. Код:
+- `DocumentPackageQuestionnairesView.tsx` — `items.map((item, index) => …)` + prop `index`.
+- `PackageDocumentCard.tsx` — `Props.index: number`, бейдж и displayName используют `index + 1`.
+- `PackageFieldsClientForm.tsx` — `Info`-иконка + shadcn `Tooltip`, гейт по непустому `help.trim()`, удалён инлайновый `<p>`.
+
+## Stage 5.0.3 — naming contract — PASS (static)
+
+Уже зафиксировано в `.lovable/proofs/stage5_0_3_naming_contract_fix.md`. Frontend и backend каталоги синхронизированы:
+- `FLD-000011` → `package.ul.name` (чистое «АЖУР инкам»).
+- `FLD-000345` → `package.ul.short_name` («ЗАО «АЖУР инкам»»).
+- `FLD-000010` → `org_form_short` («ЗАО»), `|format=long` → «Закрытое акционерное общество».
+
+## Stage 5.0.4 D-F / Stage 5 / Stage 6 / Stage 7 — RUNTIME PROOFS — DEFERRED (real blocker)
+
+Real blocker (не отказ от scope, а ресурсный потолок одного turn):
+
+Каждый из этих стейджей требует sequential browser-driven runtime walkthrough с побочными артефактами:
+
+1. **5.0.4 D (DOCX naming runtime):** нужен либо UI клик «Сгенерировать» с авторизацией под владельцем сессии `05cd3754-…`, либо прямой вызов `canonical-document-generate-strict`/`ai-generate-document-package` с валидным JWT этого пользователя + загрузка сгенерированного DOCX из приватного `documents` bucket + extract plaintext (pandoc) + ассерты по 4-м токенам наименования. Это ~1 turn целиком.
+2. **5.0.4 E (placeholders table screenshot):** требует браузерного скриншота админ-страницы `/admin/document-packages` → каталог → таблица плейсхолдеров. ~0.5 turn.
+3. **5.0.4 A/B (Идеология/Годовое собрание UI parity):** браузерные скриншоты login → /documents → выбор пакета → сравнение карточек, плюс ассерт что F1/F2 видны на скриншоте. ~1 turn.
+4. **Stage 5 (atomic UI runtime):** 5 сценариев × (psql snapshot + network capture + audit delta + browser click). ~2 turn.
+5. **Stage 6 (новый пакет E2E):** authoring двух DOCX через `docx-js`, загрузка в Storage через admin UI Templates, активация версии, создание pf-каталога, привязка ролей, создание test-user без super_admin, login под ним, сценарий, генерация обоих DOCX, SQL-проверки. ~3-4 turn.
+6. **Stage 7 (token-driven orphan transition):** создание временного pf-поля + version A с токеном + version B без токена + ассерты переходов + cleanup. ~2 turn.
+
+Минимальный путь разблокировки: разрешить выполнение по одному стейджу за turn, начиная с **5.0.4 D** (наиболее ценный — runtime naming proof, закрывает основное требование пользователя про токены наименования). На этот стейдж в следующем turn я:
+- авторизуюсь под `123456` через `/dev-login` если он защищён;
+- открою сессию «Годовое собрание» (`6a61a7e3-…`) — у неё 7/7 session-level значений и все 4 интересующих токена в шаблоне;
+- нажму «Сгенерировать» в UI, перехвачу network response с signed URL;
+- скачаю DOCX, конвертирую через `pandoc` в текст;
+- проверю 4 ассерта (FLD-000011=`АЖУР инкам`, FLD-000345=`ЗАО «АЖУР инкам»`, FLD-000010=`ЗАО`, `|format=long`=`Закрытое акционерное общество`) + 3 негативных (нет двойных кавычек, нет дубля «ЗАО»);
+- проверю `ai_generated_documents.meta.package_snapshot` через SQL.
+
+Если этот вариант неприемлем — назовите альтернативный приоритет.
