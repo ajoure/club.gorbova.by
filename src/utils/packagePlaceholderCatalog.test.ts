@@ -364,7 +364,7 @@ describe("packagePlaceholderCatalog — Sprint 3J-Roles role modifiers", () => {
       (i) => i.tech_key === "package.ul.short_name",
     )!;
     expect(buildPackagePlaceholderToken(ulShort, "short" as never, null))
-      .toBe("{{package.ul.FLD-000011}}");
+      .toBe("{{package.ul.FLD-000345}}");
   });
 
   it("в каталоге групп нет PKR/package.role.PKR/package.roles.* / .full_name / .short_name / .position у ln-токенов", () => {
