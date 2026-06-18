@@ -197,12 +197,12 @@ describe("packagePlaceholderCatalog — Sprint 3J-UI modifier helpers", () => {
 
   it("copy-токен без модификаторов = базовый package_token", () => {
     expect(buildPackagePlaceholderToken(ulShort, null, null))
-      .toBe("{{package.ul.FLD-000011}}");
+      .toBe("{{package.ul.FLD-000345}}");
   });
 
   it("copy-токен с case=genitive добавляет |case=genitive", () => {
     expect(buildPackagePlaceholderToken(ulShort, null, "genitive"))
-      .toBe("{{package.ul.FLD-000011|case=genitive}}");
+      .toBe("{{package.ul.FLD-000345|case=genitive}}");
   });
 
   it("copy-токен с format=long доступен только для org_form", () => {
