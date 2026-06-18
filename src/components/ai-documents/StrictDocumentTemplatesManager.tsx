@@ -780,6 +780,7 @@ export function StrictDocumentTemplatesManager({
       setPreviewValidation({
         status: "invalid",
         errors: [{ code: "docx_unreadable", message: String(e.message ?? e) }],
+        warnings: [],
         recognized: [],
         raw_tokens: [],
       });
