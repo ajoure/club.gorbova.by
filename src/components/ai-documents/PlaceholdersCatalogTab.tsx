@@ -60,6 +60,7 @@ import {
   type PackagePlaceholderStatus,
   type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
+import { ORG_FORM_SHORT_TO_FULL } from "@/lib/legal-entities/GrpAutofillService";
 
 interface CatalogRow {
   id: string;
