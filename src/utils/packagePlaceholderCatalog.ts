@@ -183,16 +183,20 @@ const EX_ADDR_FULL_LE = "220000, г. Минск, ул. Тестовая, д. 1, 
  * Источник: client_legal_details (leg_*, общие banking, phone, email).
  * ========================================================================= */
 const PACKAGE_UL: PackagePlaceholderItem[] = [
-  // Sprint 3L: short_name первым → FLD lookup даёт «ЗАО «Ажур инкам»».
-  ready("package_ul", "Краткое название", "FLD-000345", "FLD-000011",
-    "client_legal_details", "leg_name", "package.ul.short_name",
-    "ООО «Тестовая Компания»"),
-  ready("package_ul", "Название", "FLD-000342", "FLD-000011",
+  // Stage 5.0.3 (Variant A): канонический контракт наименования ЮЛ.
+  //   FLD-000011 → package.ul.name       → «АЖУР инкам» (чистое имя, без формы и кавычек)
+  //   FLD-000345 → package.ul.short_name → «ЗАО «АЖУР инкам»» (краткое наименование)
+  //   FLD-000010 → package.ul.org_form   → «ЗАО»; с |format=long → «Закрытое акционерное общество»
+  // Порядок строк = lookup priority для backend findByPackageToken (первый match).
+  ready("package_ul", "Название (без формы собственности)", "FLD-000342", "FLD-000011",
     "client_legal_details", "leg_name", "package.ul.name",
-    "Тестовая Компания"),
-  ready("package_ul", "Форма собственности", "FLD-000343", "FLD-000010",
+    "АЖУР инкам"),
+  ready("package_ul", "Краткое наименование", "FLD-000345", "FLD-000345",
+    "client_legal_details", "leg_name", "package.ul.short_name",
+    "ЗАО «АЖУР инкам»"),
+  ready("package_ul", "Форма собственности (кратко)", "FLD-000343", "FLD-000010",
     "client_legal_details", "leg_org_form", "package.ul.org_form",
-    "ООО"),
+    "ЗАО"),
   ready("package_ul", "УНП", "FLD-000346", "FLD-000009",
     "client_legal_details", "leg_unp", "package.ul.unp",
     "987654321"),
