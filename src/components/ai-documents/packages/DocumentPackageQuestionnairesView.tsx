@@ -317,10 +317,11 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
       ) : (
         <GlassCard className="p-3">
           <Accordion type="multiple" className="w-full">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <PackageDocumentCard
                 key={item.id}
                 item={item}
+                index={index}
                 packageTemplateId={packageTemplateId}
                 sessionId={sessionId}
                 sessionCreatedAt={(sessionQuery.data as any)?.created_at ?? null}
