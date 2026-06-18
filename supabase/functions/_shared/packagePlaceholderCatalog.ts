@@ -92,12 +92,14 @@ function deferred(
 }
 
 const PACKAGE_UL: PackagePlaceholderItem[] = [
-  // Sprint 3L: short_name резолвится первым для FLD-000011 lookup
-  // (`ЗАО «Ажур инкам»` вместо «голого» имени). `package.ul.name` остаётся
-  // доступен как прямой tech_key, но findByPackageToken('package.ul.FLD-000011')
-  // вернёт short_name.
-  ready("package_ul", "FLD-000011", "client_legal_details", "leg_name", "package.ul.short_name"),
+  // Stage 5.0.3 (Variant A): канонический контракт наименования ЮЛ.
+  //   FLD-000011 → package.ul.name      → чистое название («АЖУР инкам»)
+  //   FLD-000345 → package.ul.short_name → краткое наименование («ЗАО «АЖУР инкам»»)
+  //   FLD-000010 → package.ul.org_form   → форма собственности («ЗАО»; |format=long → «Закрытое акционерное общество»)
+  // findByPackageToken возвращает первый match по reused_fld, поэтому FLD-000011
+  // ОБЯЗАТЕЛЬНО стоит первым и резолвится в чистое имя через canonicalizeLegalEntity.
   ready("package_ul", "FLD-000011", "client_legal_details", "leg_name", "package.ul.name"),
+  ready("package_ul", "FLD-000345", "client_legal_details", "leg_name", "package.ul.short_name"),
   ready("package_ul", "FLD-000010", "client_legal_details", "leg_org_form", "package.ul.org_form"),
   ready("package_ul", "FLD-000009", "client_legal_details", "leg_unp", "package.ul.unp"),
   ready("package_ul", "FLD-000012", "client_legal_details", "leg_address", "package.ul.address_full"),
