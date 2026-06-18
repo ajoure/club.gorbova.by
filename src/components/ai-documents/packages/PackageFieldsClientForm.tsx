@@ -534,7 +534,6 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
     <div className={"space-y-1 " + (wide ? "md:col-span-2" : "")}>
       {labelEl}
       {control}
-      {help}
     </div>
   );
 }
