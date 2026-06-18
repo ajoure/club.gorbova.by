@@ -351,10 +351,32 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
   const { field, effective } = question;
   const wide = isWideField(question);
 
+  const helpText = effective.help?.trim() ?? "";
+  const helpIcon = helpText ? (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            tabIndex={0}
+            aria-label={`Подсказка: ${effective.label}`}
+            className="inline-flex items-center justify-center h-3.5 w-3.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-xs text-xs leading-snug">
+          {helpText}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  ) : null;
+
   const labelEl = (
     <Label className="text-xs flex items-center gap-1.5 leading-tight">
       <span className="font-medium text-foreground">{effective.label}</span>
       {effective.required && <span className="text-destructive">*</span>}
+      {helpIcon}
       {inheritedFromSession && (
         <Badge variant="outline" className="text-[9px] h-3.5 px-1 leading-none font-normal text-muted-foreground">
           общее значение
@@ -380,10 +402,6 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
       )}
     </Label>
   );
-
-  const help = effective.help ? (
-    <p className="text-[10px] text-muted-foreground leading-snug">{effective.help}</p>
-  ) : null;
 
   const choices: PackageFieldChoice[] = field.options?.choices ?? [];
   let control: React.ReactNode;
