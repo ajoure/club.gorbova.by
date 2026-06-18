@@ -1265,8 +1265,15 @@ Deno.serve(async (req) => {
           formatApplied = true;
           if (pt.case_modifier) caseApplied = true;
         }
-        // Sprint 3J: format=long допустим только для package.*.org_form
-        else if (pt.kind === 'package' && pt.format === 'long' && /\.org_form$/.test(pt.bag_key)) {
+        // Sprint 3J: format=long допустим только для package.*.org_form.
+        // bag_key содержит FLD-id (package.ul.FLD-000010), а признак org_form
+        // живёт в catalog tech_key (package.ul.org_form), который orchestrator
+        // прокидывает через entry.catalog_tech_key.
+        else if (
+          pt.kind === 'package'
+          && pt.format === 'long'
+          && /\.org_form$/.test(String(entry?.catalog_tech_key ?? ''))
+        ) {
           outVal = expandOrgFormToLong(outVal);
           formatApplied = true;
           if (pt.case_modifier) {
