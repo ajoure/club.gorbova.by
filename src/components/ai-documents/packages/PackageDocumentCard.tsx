@@ -78,6 +78,8 @@ export interface PackageDocumentCardRole {
 
 export interface PackageDocumentCardProps {
   item: PackageDocumentCardItem;
+  /** Index in the rendered (filtered + sorted) list. Used for the badge number. */
+  index: number;
   packageTemplateId: string;
   sessionId: string;
   sessionCreatedAt: string | null;
