@@ -732,10 +732,13 @@ Deno.serve(async (req) => {
         message: `Текст «${r.original_text}» не найден в DOCX — возможно изменён исходный документ.`,
       });
     }
+    // Sprint 3L: статический шаблон (без плейсхолдеров) — валидное состояние.
+    // Документ включается в пакет / генерируется «как есть» без token-substitution.
+    // Демоутим в warning, чтобы validation_status='valid' и активация была доступна.
     if (parsed.tokens.length === 0) {
-      validationErrors.push({
+      validationWarnings.push({
         code: 'no_placeholders_in_template',
-        message: 'В шаблоне не найдено ни одного плейсхолдера.',
+        message: 'В шаблоне нет плейсхолдеров — документ будет включён в пакет / сгенерирован как есть (статический).',
       });
     }
     // Sprint 3F: merge early package-aware warnings (deprecated syntax, etc.)

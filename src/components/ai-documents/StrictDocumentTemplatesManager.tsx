@@ -126,9 +126,15 @@ interface RecognizedToken {
     | "instrumental" | "prepositional" | null;
 }
 
+interface ValidationWarning {
+  code: "no_placeholders_in_template";
+  message: string;
+}
+
 interface ValidationResult {
   status: "valid" | "invalid";
   errors: ValidationError[];
+  warnings: ValidationWarning[];
   recognized: RecognizedToken[];
   raw_tokens: string[];
 }
@@ -251,16 +257,19 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     // Здесь просто помечаем как known token и идём дальше.
   }
 
+  const warnings: ValidationWarning[] = [];
   if (raw_tokens.length === 0) {
-    errors.push({
+    warnings.push({
       code: "no_placeholders_in_template",
-      message: "В шаблоне не найдено ни одного плейсхолдера. Разметьте его перед активацией.",
+      message:
+        "В шаблоне нет плейсхолдеров — документ будет включён в пакет / сгенерирован как есть (статический).",
     });
   }
 
   return {
     status: errors.length === 0 ? "valid" : "invalid",
     errors,
+    warnings,
     recognized,
     raw_tokens,
   };
@@ -771,6 +780,7 @@ export function StrictDocumentTemplatesManager({
       setPreviewValidation({
         status: "invalid",
         errors: [{ code: "docx_unreadable", message: String(e.message ?? e) }],
+        warnings: [],
         recognized: [],
         raw_tokens: [],
       });
@@ -1314,6 +1324,18 @@ function ValidationSummary({
           {validation.errors.length > 8 && (
             <li className="text-muted-foreground">…ещё {validation.errors.length - 8}</li>
           )}
+        </ul>
+      )}
+      {isValid && validation.warnings && validation.warnings.length > 0 && (
+        <ul className="mt-2 space-y-1 text-xs">
+          {validation.warnings.map((w, i) => (
+            <li key={i} className="text-amber-700 dark:text-amber-400">
+              <Badge variant="outline" className="mr-1 text-[9px] border-amber-400/50 text-amber-700 dark:text-amber-400">
+                {w.code}
+              </Badge>
+              {w.message}
+            </li>
+          ))}
         </ul>
       )}
     </div>
