@@ -60,6 +60,7 @@ import {
   type PackagePlaceholderStatus,
   type PackageRoleCatalogRow,
 } from "@/utils/packagePlaceholderCatalog";
+import { ORG_FORM_SHORT_TO_FULL } from "@/lib/legal-entities/GrpAutofillService";
 
 interface CatalogRow {
   id: string;
@@ -900,17 +901,36 @@ export function PlaceholdersCatalogTab() {
                             )}
                           </TableCell>
                           <TableCell className="py-2 text-xs text-foreground/80">
-                            {personNamePreview ? (
-                              <span className="italic whitespace-pre-line" title={`Demo: ${DEMO_PERSON_NAME}`}>
-                                {personNamePreview}
-                              </span>
-                            ) : p.example_value ? (
-                              <span className="italic" title="Демонстрационный пример">
-                                {p.example_value}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground/60 italic">— нет примера —</span>
-                            )}
+                            {(() => {
+                              // Stage 5.0.4 E: для package.*.org_form с |format=long
+                              // показываем развёрнутую форму из канонического словаря.
+                              const longExample =
+                                supportsLong && pkgSettings.format === "long" && p.example_value
+                                  ? (ORG_FORM_SHORT_TO_FULL[p.example_value.trim()] ?? p.example_value)
+                                  : null;
+                              if (personNamePreview) {
+                                return (
+                                  <span className="italic whitespace-pre-line" title={`Demo: ${DEMO_PERSON_NAME}`}>
+                                    {personNamePreview}
+                                  </span>
+                                );
+                              }
+                              if (longExample) {
+                                return (
+                                  <span className="italic" title="Демонстрационный пример (развёрнутая форма)">
+                                    {longExample}
+                                  </span>
+                                );
+                              }
+                              if (p.example_value) {
+                                return (
+                                  <span className="italic" title="Демонстрационный пример">
+                                    {p.example_value}
+                                  </span>
+                                );
+                              }
+                              return <span className="text-muted-foreground/60 italic">— нет примера —</span>;
+                            })()}
                           </TableCell>
                           <TableCell className="py-2">
                             {finalToken ? (
