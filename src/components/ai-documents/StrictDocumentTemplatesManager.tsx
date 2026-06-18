@@ -1326,6 +1326,18 @@ function ValidationSummary({
           )}
         </ul>
       )}
+      {isValid && validation.warnings && validation.warnings.length > 0 && (
+        <ul className="mt-2 space-y-1 text-xs">
+          {validation.warnings.map((w, i) => (
+            <li key={i} className="text-amber-700 dark:text-amber-400">
+              <Badge variant="outline" className="mr-1 text-[9px] border-amber-400/50 text-amber-700 dark:text-amber-400">
+                {w.code}
+              </Badge>
+              {w.message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
