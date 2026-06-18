@@ -126,9 +126,15 @@ interface RecognizedToken {
     | "instrumental" | "prepositional" | null;
 }
 
+interface ValidationWarning {
+  code: "no_placeholders_in_template";
+  message: string;
+}
+
 interface ValidationResult {
   status: "valid" | "invalid";
   errors: ValidationError[];
+  warnings: ValidationWarning[];
   recognized: RecognizedToken[];
   raw_tokens: string[];
 }
