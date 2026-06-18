@@ -78,6 +78,8 @@ export interface PackageDocumentCardRole {
 
 export interface PackageDocumentCardProps {
   item: PackageDocumentCardItem;
+  /** Index in the rendered (filtered + sorted) list. Used for the badge number. */
+  index: number;
   packageTemplateId: string;
   sessionId: string;
   sessionCreatedAt: string | null;
@@ -112,6 +114,7 @@ type CardStatus = "ready" | "partial" | "empty";
 
 export function PackageDocumentCard({
   item,
+  index,
   packageTemplateId,
   sessionId,
   sessionCreatedAt,
@@ -256,7 +259,7 @@ export function PackageDocumentCard({
   // ---------- header presentation ----------
   const displayName = item.template_name?.trim()
     ? item.template_name
-    : `Документ №${item.sort_order + 1}`;
+    : `Документ №${index + 1}`;
 
   const fieldsBadge = hasFields ? (
     <Badge
@@ -337,7 +340,7 @@ export function PackageDocumentCard({
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <div className="flex items-center gap-2 shrink-0">
             <span className="inline-flex items-center justify-center h-6 min-w-6 px-1.5 rounded-md bg-muted text-[11px] font-semibold text-muted-foreground tabular-nums">
-              {item.sort_order + 1}
+              {index + 1}
             </span>
             <FileText className="h-4 w-4 text-primary shrink-0" />
           </div>
