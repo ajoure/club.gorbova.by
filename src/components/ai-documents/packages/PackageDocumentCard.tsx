@@ -259,7 +259,7 @@ export function PackageDocumentCard({
   // ---------- header presentation ----------
   const displayName = item.template_name?.trim()
     ? item.template_name
-    : `Документ №${item.sort_order + 1}`;
+    : `Документ №${index + 1}`;
 
   const fieldsBadge = hasFields ? (
     <Badge
