@@ -114,6 +114,7 @@ type CardStatus = "ready" | "partial" | "empty";
 
 export function PackageDocumentCard({
   item,
+  index,
   packageTemplateId,
   sessionId,
   sessionCreatedAt,
