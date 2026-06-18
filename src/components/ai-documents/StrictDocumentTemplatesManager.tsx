@@ -257,16 +257,19 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     // Здесь просто помечаем как known token и идём дальше.
   }
 
+  const warnings: ValidationWarning[] = [];
   if (raw_tokens.length === 0) {
-    errors.push({
+    warnings.push({
       code: "no_placeholders_in_template",
-      message: "В шаблоне не найдено ни одного плейсхолдера. Разметьте его перед активацией.",
+      message:
+        "В шаблоне нет плейсхолдеров — документ будет включён в пакет / сгенерирован как есть (статический).",
     });
   }
 
   return {
     status: errors.length === 0 ? "valid" : "invalid",
     errors,
+    warnings,
     recognized,
     raw_tokens,
   };
