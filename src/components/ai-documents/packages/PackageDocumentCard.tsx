@@ -670,6 +670,108 @@ export function PackageDocumentCard({
           </RadioGroup>
         </section>
 
+        {/* ---------- Stage D.1: read-only stale/missing/последний запуск ---------- */}
+        {persistedMode === "per_role_person" && persistedRepeatRoleId && staleness.enabled && (
+          <section className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-2">
+            <header className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-7 w-7 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                  <Users className="h-3.5 w-3.5" />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-foreground">Получатели документа</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Состояние per-recipient документов по последнему запуску. Только индикация.
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {staleness.isLoading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загружаем состояние получателей…
+              </div>
+            ) : !staleness.latestBatchId ? (
+              <div className="text-[11px] text-muted-foreground border border-dashed border-border/60 rounded-md p-2">
+                Документы ещё не генерировались. Сформируйте пакет, чтобы увидеть состояние.
+              </div>
+            ) : (
+              <div className="space-y-2 text-[11px]">
+                {/* Состояние батчей */}
+                {staleness.hasFailedLastRun && staleness.latestSuccessBatchId && staleness.latestSuccessBatchId !== staleness.latestBatchId ? (
+                  <div className="text-[11px] border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300 rounded-md p-2 space-y-0.5">
+                    <div>
+                      Последний успешный batch: <span className="font-medium">{staleness.generatedCount}/{staleness.totalRecipients}</span>
+                      {staleness.latestSuccessBatchCreatedAt
+                        ? ` (${new Date(staleness.latestSuccessBatchCreatedAt).toLocaleString("ru-RU")})`
+                        : ""}
+                    </div>
+                    <div>
+                      Последний запуск: <span className="font-medium">{staleness.latestBatchStatus ?? "—"}</span>
+                      {staleness.latestBatchCreatedAt
+                        ? ` (${new Date(staleness.latestBatchCreatedAt).toLocaleString("ru-RU")})`
+                        : ""}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground">
+                    Сгенерировано получателей: <span className="font-medium text-foreground">{staleness.generatedCount}/{staleness.totalRecipients}</span>
+                    {staleness.latestSuccessBatchCreatedAt
+                      ? ` · ${new Date(staleness.latestSuccessBatchCreatedAt).toLocaleString("ru-RU")}`
+                      : ""}
+                  </div>
+                )}
+
+                {/* Stale */}
+                {staleness.stale.length > 0 && (
+                  <div className="border border-amber-500/30 bg-amber-500/5 rounded-md p-2 space-y-1">
+                    <div className="font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" />
+                      Устарели: участник удалён из роли ({staleness.stale.length})
+                    </div>
+                    <ul className="pl-4 list-disc text-muted-foreground space-y-0.5">
+                      {staleness.stale.map((d) => (
+                        <li key={d.id}>
+                          {d.recipient_display_name ?? `Получатель #${d.recipient_index ?? "?"}`}
+                          {d.document_number ? ` · № ${d.document_number}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Missing */}
+                {staleness.missing.length > 0 && (
+                  <div className="border border-rose-500/30 bg-rose-500/5 rounded-md p-2 space-y-1">
+                    <div className="font-medium text-rose-700 dark:text-rose-300 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      Не сгенерировано ({staleness.missing.length})
+                    </div>
+                    <ul className="pl-4 list-disc text-muted-foreground space-y-0.5">
+                      {staleness.missing.map((a) => (
+                        <li key={a.id}>{a.person_full_name ?? `Физлицо ${a.person_id.slice(0, 8)}`}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {(staleness.stale.length > 0 || staleness.missing.length > 0) && (
+                  <div className="text-[10px] text-muted-foreground flex items-start gap-1.5 pt-1">
+                    <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span>
+                      Чтобы синхронизировать состав получателей, сформируйте пакет заново через панель «Генерация пакета» —
+                      будет создан новый batch со всеми документами пакета. Точечная регенерация недостающих —
+                      отдельный будущий этап (Stage E).
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+
+
         {/* ---------- Роли документа ---------- */}
         <section className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-2">
           <header className="flex items-center justify-between gap-2">
