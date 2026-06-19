@@ -58,6 +58,9 @@ import { cn } from "@/lib/utils";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 import { useAtomicDocumentSave } from "@/hooks/useAtomicDocumentSave";
+import { usePackageItemGenerationMode } from "@/hooks/usePackageItemGenerationMode";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
 
