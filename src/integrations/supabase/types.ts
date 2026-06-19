@@ -16215,6 +16215,7 @@ export type Database = {
           access_status: string | null
           auth_user_id: string | null
           club_id: string | null
+          commercial_ended_at: string | null
           created_at: string | null
           email: string | null
           external_id_amo: string | null
@@ -16868,6 +16869,7 @@ export type Database = {
           access_status: string
           auth_user_id: string
           club_id: string
+          commercial_ended_at: string
           created_at: string
           email: string
           external_id_amo: string
@@ -17499,6 +17501,7 @@ export type Database = {
           access_status: string
           auth_user_id: string
           club_id: string
+          commercial_ended_at: string
           created_at: string
           email: string
           external_id_amo: string
