@@ -1869,6 +1869,10 @@ Deno.serve(async (req) => {
           for (const pt of parsedPfTokens) {
             if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
           }
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C)
+          for (const pt of parsedRecipientTokens) {
+            if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
+          }
         }
         return out;
       })(),
