@@ -58,6 +58,9 @@ interface Props {
   orphanOnly?: boolean;
   /** Сообщает родителю об изменении dirty-state (для atomic save в карточке). */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Stage 0.2: набор field_catalog_id, которые надо подсветить как
+   * required-empty (amber border у FieldRow). */
+  highlightFieldIds?: Set<string>;
 }
 
 type DraftMap = Record<string, string | null>;
@@ -119,6 +122,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   hideSaveButton = false,
   orphanOnly = false,
   onDirtyChange,
+  highlightFieldIds,
 }, ref) {
   const {
     questions: allQuestions,
@@ -283,6 +287,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
               hasItemOverride={hasItemOverride}
               onResetOverride={handleReset}
               isResettingOverride={isResettingOverride}
+              highlightMissing={!!highlightFieldIds?.has(q.field.id)}
             />
           );
         })}
@@ -333,6 +338,7 @@ interface FieldRowProps {
   hasItemOverride?: boolean;
   onResetOverride?: () => Promise<void> | void;
   isResettingOverride?: boolean;
+  highlightMissing?: boolean;
 }
 
 function isWideField(q: DedupedQuestion): boolean {
@@ -347,7 +353,7 @@ function isWideField(q: DedupedQuestion): boolean {
   return false;
 }
 
-function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride }: FieldRowProps) {
+function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride, highlightMissing }: FieldRowProps) {
   const { field, effective } = question;
   const wide = isWideField(question);
 
@@ -531,7 +537,15 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
   }
 
   return (
-    <div className={"space-y-1 min-w-0 " + (wide ? "md:col-span-2" : "")}>
+    <div
+      className={
+        "space-y-1 min-w-0 " +
+        (wide ? "md:col-span-2 " : "") +
+        (highlightMissing
+          ? "rounded-md border border-amber-500/40 bg-amber-500/5 p-2 -m-2"
+          : "")
+      }
+    >
       {labelEl}
       {control}
     </div>

@@ -241,6 +241,9 @@ export function usePackageSessionFields(
       // hotfix 2026-06-17: разблокировать кнопку «Сформировать пакет» без переключения вкладок.
       qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
       qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      // Stage 0.2: точечный refetch активного values-кэша, чтобы бейдж
+      // X/Y полей переключился без перехода на другую вкладку.
+      void qc.refetchQueries({ queryKey: QK.values(sessionId), type: "active" });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -268,6 +271,8 @@ export function usePackageSessionFields(
       qc.invalidateQueries({ queryKey: QK.values(sessionId) });
       qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
       qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      // Stage 0.2: refetch активного values-кэша.
+      void qc.refetchQueries({ queryKey: QK.values(sessionId), type: "active" });
       if ((res?.deleted ?? 0) > 0) {
         toast.success("Возвращено к общему значению");
       }
@@ -312,6 +317,21 @@ export function usePackageSessionFields(
     };
   };
 
+  /**
+   * Stage 0.2: список конкретных required-полей этого документа, которые
+   * сейчас не заполнены (ни per-item override, ни session-level).
+   * Используется UI для подсветки FieldRow и текста «Не заполнено: …».
+   */
+  const getItemMissingRequired = (itemId: string): DedupedQuestion[] => {
+    const publicIdsInItem = detected.byItemId[itemId] ?? [];
+    return questions.filter(
+      (q) =>
+        q.effective.required &&
+        publicIdsInItem.includes(q.field.public_id) &&
+        !isFilled(getEffectiveValue(q.field.id, itemId)),
+    );
+  };
+
   /** Список вопросов для конкретного item (в порядке появления токена в шаблоне). */
   const getItemQuestions = useCallback((itemId: string): DedupedQuestion[] => {
     const publicIdsInItem = detected.byItemId[itemId] ?? [];
@@ -333,6 +353,7 @@ export function usePackageSessionFields(
     getEffectiveValue,
     getItemQuestions,
     getItemProgress,
+    getItemMissingRequired,
     isLoading:
       catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,
