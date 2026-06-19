@@ -1,312 +1,228 @@
-# Ответ для Lovable:
-
 да, согласен, с учетом правок:
 
-1. Не сохранять автоматически первую активную роль при переключении в `per_role_person`.
+1. План можно выполнять. Диагностика корректная: проблема сейчас не в БД, а в read-model/cache UI. Если в БД уже стоит:
   &nbsp;
-  В плане указано: «если есть — сохраняем сразу с первой ролью как дефолтом». Это рискованно: можно случайно выбрать не ту роль, например «Ревизор» вместо «Участник».
-  Правильно:
-  - пользователь выбирает `Отдельный документ для каждого физлица с ролью`;
-  - селектор роли становится обязательным;
-  - пока роль не выбрана — не отправлять update в БД либо показывать validation state;
-  - сохранить `generation_mode='per_role_person'` можно только вместе с явно выбранным `repeat_role_catalog_id`.
-  Если в UI технически нужно временное состояние — держать его локально, но не писать в БД `per_role_person` без роли.
-2. В карточке документа блок «Режим генерации документа» должен быть не “под полями и назначениями ролей”, а лучше между «Поля документа» и «Роли документа» либо сразу перед «Роли документа».
-  Логика для пользователя:
-  - сначала поля;
-  - потом режим генерации;
-  - потом роли/назначения, которые участвуют в генерации.
-  Главное: блок должен быть видим без поиска на вкладке «Шаблоны пакета».
-3. Сохранение режима генерации должно быть понятно отделено от atomic save полей/ролей.
-  `save_session_document_atomic` сохраняет значения полей и role assignments сессии.  
-  `generation_mode / repeat_role_catalog_id` — это настройка `document_package_template_items`, то есть настройка template item.
-  Поэтому в proof нужно показать:
-  - какая мутация сохраняет режим генерации;
-  - что она не ломает `save_session_document_atomic`;
-  - что кнопка «Сохранить документ» не создаёт конфликт двух разных save-path.
-4. В UI нужно показать текущее состояние режима даже для `single`.
+  `generation_mode='per_role_person'`  
+  `repeat_role_catalog_id='c8fc4200-75c0-4c24-8eea-112c4e468aeb'`
+  а карточка показывает «Один документ», значит `PackageDocumentCard` получает неполный item без `generation_mode/repeat_role_catalog_id`.
+2. В `DocumentPackageQuestionnairesView.tsx` обязательно добавить в select не только:
   &nbsp;
-  В карточке документа должно быть видно:
-  - `Один документ` выбран по умолчанию;
-  - если включён repeat — бейдж `× по роли «Участник»`;
-  - если repeat включён, но роль по историческим данным отсутствует/архивирована — destructive state `роль не задана / роль неактивна`.
-5. В `PackageGenerationPanel` технический код ошибки можно оставить только в tooltip/title, но не в основном тексте.
+  `generation_mode, repeat_role_catalog_id`
+  но и проверить, не нужен ли `package_template_id` для корректной передачи в hook/role query. Если карточка не знает package_template_id, она может брать роли не из того источника или не обновлять правильный query key.
+3. Mutation в `usePackageItemGenerationMode.ts` должна возвращать полную минимальную строку:
   &nbsp;
-  Видимый текст должен быть человекочитаемый:
-  `Нет назначений для роли «Ревизор». Назначьте физлицо на эту роль или исправьте шаблон документа.`
-  Технический код допустим только как служебная подсказка:
-  `role_assignment_missing:ln-000014`
-6. Важно не смешивать две разные проблемы:
-  - `per_role_person` по роли «Участник» — это настройка множественной генерации;
-  - `{{ln-000014}}` = «Ревизор» в DOCX-шаблоне — это отдельная обязательная роль шаблона.
-  Если шаблон содержит `{{ln-000014}}`, то даже при repeat по «Участнику» генерация может корректно блокироваться, пока не назначен Ревизор или пока токен не заменён на `{{recipient.full_name}}`.
-  Поэтому UI должен объяснять это пользователю, а не показывать техническую ошибку.
-7. Backend bypass pre-scan делать строго только для repeat-роли.
-  &nbsp;
-  Правило:
-  - если отсутствует assignment для `repeat_role_catalog_id`, pre-scan не должен блокировать, потому что per-role ветка подставит текущего recipient;
-  - если отсутствует assignment для другой роли, например `ln-000014` «Ревизор», блокировка остаётся корректной.
-  Это должно быть отдельно доказано в proof двумя кейсами:
-  - repeat-role без assignment не падает в pre-scan;
-  - non-repeat роль без assignment продолжает давать понятную ошибку.
-8. Runtime proof разделить на два уровня.
-  &nbsp;
-  **Уровень 1 — обязательный для этого патча:**
-  - блок режима генерации виден в карточке «Извещение»;
-  - можно выбрать `per_role_person`;
-  - можно выбрать роль «Участник»;
-  - настройка сохраняется в `document_package_template_items`;
-  - UI показывает понятную ошибку по `ln-000014` = «Ревизор», если Ревизор не назначен;
-  - single-документы работают без изменений.
-  **Уровень 2 — полный финальный Stage C PASS:**
-  - после назначения Ревизора или исправления DOCX на `{{recipient.*}}`;
-  - генерация создаёт 3 отдельных извещения;
-  - в `ai_generated_documents.meta` заполнены `repeat_assignment_id`, `recipient_person_id`, `recipient_display_name`, `recipient_index`;
-  - в DOCX реально подставлен recipient.
-  Stage C нельзя закрывать как PASS, пока не выполнен уровень 2.
-9. Не начинать Stage D до полного Stage C PASS.
-  &nbsp;
-  Если после этого патча будет только UI + понятная ошибка по Ревизору, статус должен быть:
-  `Stage C runtime fix: PARTIAL, waiting for template/data readiness`
-  А не PASS.
-10. В proof добавить отдельную проверку, что настройка видна именно на вкладке «Анкеты документов», а не только на «Шаблоны пакета».
+  ```sql
+  id, package_template_id, generation_mode, repeat_role_catalog_id, updated_at
+  ```
+  Это нужно для точечного `setQueryData` и proof.
+4. Success toast показывать только после подтверждённого `.select(...).single()` response. Если Supabase вернул error, trigger error или пустой response — только error toast, без optimistic success.
+5. `setQueryData` должен обновлять все реальные read-models, где используется item:
+  - `['doc-pkg-template-items-q', packageTemplateId]`
+  - `['pkg-bound-templates', packageTemplateId]`
+  - `['document-package-items', packageTemplateId]`
+  Если в коде есть дополнительные keys для package items — их тоже добавить после `rg`.
+6. В `PackageDocumentCard` убрать любой `useEffect`, который на каждом render сбрасывает local mode из неполного/старого `item`. Локальный preview можно сбрасывать только когда пришёл подтверждённый persisted value из актуального query или mutation response.
+7. Проверить, что нет второго update `single/null`.
+  В proof нужен Network trace:
+  - один update payload:
+  - нет последующего payload:
+8. В `TemplateBindingControl` и `PackageDocumentCard` не должно быть двух разных реализаций сохранения. Оба должны использовать `usePackageItemGenerationMode`. Если останется локальная mutation в одном из компонентов — Stage не принимать.
+9. В proof добавить проверку hard refresh:
+  - сохранить `per_role_person`;
+  - обновить страницу браузера;
+  - открыть карточку «Извещение»;
+  - режим всё ещё `Отдельный документ для каждого физлица с ролью`;
+  - роль всё ещё `Участник`.
+10. В proof добавить сверку двух UI-точек:
 
-Обязательный скрин:
+- вкладка «Анкеты документов» / карточка «Извещение»;
+- вкладка «Шаблоны пакета» / тот же item.
 
-- карточка документа «2. Извещение…»;
-- виден блок «Режим генерации документа»;
-- выбран режим `Отдельный документ для каждого физлица с ролью`;
-- выбрана роль `Участник`.
+Обе должны показывать одинаково:
 
-11. В proof добавить SQL after:
+`per_role_person + Участник`.
 
-```sql
-SELECT id, title_override, generation_mode, repeat_role_catalog_id
-FROM document_package_template_items
-WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
-```
+11. Stage C после этого save-fix ещё не закрывать автоматически как full PASS.
 
-Ожидание:
+Этот патч закрывает только:
 
-```text
-generation_mode = 'per_role_person'
-repeat_role_catalog_id = id роли "Участник"
-```
+`runtime save/cache bug`.
 
-12. В proof добавить SQL по активным assignments именно для item «Извещение»:
+Полный Stage C PASS будет только после генерации 3 отдельных извещений или после явной фиксации, что оставшийся блокер — проблема шаблона `ln-000014 Ревизор`, а не механики `per_role_person`.
 
-```sql
-SELECT a.id, rc.public_id, rc.label, p.full_name
-FROM document_package_item_role_assignments a
-JOIN document_package_role_catalog rc ON rc.id = a.role_catalog_id
-LEFT JOIN legal_details_persons p ON p.id = a.person_id
-WHERE a.package_template_item_id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
-  AND a.is_active = true
-ORDER BY rc.public_id, a.sort_order, a.id;
-```
+12. После выполнения этого патча статус должен быть:
 
-13. Уточнить DoD:
+- если режим сохраняется, но генерация всё ещё блокируется из-за `ln-000014 Ревизор`:  
+`Stage C runtime: PARTIAL — UI/save fixed, waiting for template/data fix по Ревизору`.
+- если после назначения Ревизора или замены токена на `recipient.*` генерация дала 3 извещения:  
+`Stage C runtime: PASS`.
 
-- В карточке документа на вкладке «Анкеты документов» виден блок «Режим генерации документа»: PASS.
-- Роль не выбирается автоматически без явного действия пользователя: PASS.
-- Можно явно выбрать роль «Участник»: PASS.
-- Настройка сохраняется в `document_package_template_items`: PASS.
-- Ошибка `role_assignment_missing:ln-000014` отображается как «Нет назначений для роли “Ревизор”…»: PASS.
-- Pre-scan bypass работает только для repeat-роли: PASS.
-- Single-документы работают без изменений: PASS.
-- Полный Stage C PASS только после генерации 3 отдельных извещений с реальным recipient context: PASS.
+13. DoD дополнить:
+
+- `DocumentPackageQuestionnairesView` реально читает `generation_mode/repeat_role_catalog_id`: PASS.
+- Mutation response возвращает updated row: PASS.
+- Все query keys синхронизированы: PASS.
+- Нет второго update `single/null`: PASS.
+- После hard refresh режим сохраняется: PASS.
+- Карточка документа и `TemplateBindingControl` показывают одинаковое состояние: PASS.
+- SQL подтверждает `per_role_person + роль Участник`: PASS.
 - Stage D не начинать до полного Stage C PASS.
 
 После этих правок план можно выполнять.
 
 &nbsp;
 
-План: PATCH-C-STAGE-RUNTIME-FIX-V1 (v2) — закрытие Stage C runtime
+План:
 
-## Diagnose
+## 1. Проблема
 
-1. **UI per_role_person существует только в `TemplateBindingControl` (вкладка «Шаблоны пакета»)**, что **не является рабочим сценарием** пользователя. Пользователь работает с документом в его карточке на вкладке «Анкеты документов» (`PackageDocumentCard`) — именно туда он заходит, чтобы заполнить поля, назначить роли и запустить генерацию. Настройка режима генерации обязана быть **рядом с полями и ролями документа**, а не на отдельной admin-вкладке. Текущее расположение в `TemplateBindingControl` оставляем как админ-дубль, основной сценарий — карточка документа.
-2. `**role_assignment_missing:ln-000014` подтверждено**:
-  - `ln-000014` = «Ревизор», `ln-000015` = «Участник» в каталоге ролей пакета `21764469…`.
-  - Шаблон «2. Извещение…» содержит `{{ln-000014}}` (Ревизор).
-  - На item «Извещение…» назначены 3 человека, **все на роль «Участник»**, на «Ревизор» — никто.
-  - Это **корректная ошибка** (Ревизор реально не назначен), но техническое сообщение не объясняет, что произошло и что делать. Нужна человекочитаемая формулировка с label роли.
-3. **Bug-risk в pre-scan**: в `ai-generate-document-package/index.ts` строки 447–460 валидация `{{ln-XXX}}` идёт до per-role ветки (строка 581). Если назначений именно для repeat-роли нет (а recipient'ы должны прийти из resolver) — pre-scan ложно заблокирует item. Нужна точечная защита.
-4. **Жёсткое разделение проблем** (как требует пользователь):
-  - **Проблема A**: UI per_role_person/repeat_role_catalog_id должен быть в карточке документа — фиксим в этом патче.
-  - **Проблема B**: токен `{{ln-000014}}` (Ревизор) в шаблоне — это **отдельный вопрос**: либо назначить Ревизора, либо заменить токен на `{{recipient.full_name}}`. Решение принимает владелец шаблона/данных вне этого патча. UI-фикс per_role_person **не зависит** от того, как решат проблему B.
+Stage C runtime fix остаётся **FAIL/PARTIAL**: в карточке документа «Извещение» выбор режима `per_role_person` с ролью «Участник» показывает toast «Режим генерации сохранён», но UI сразу возвращается на «Один документ».
 
-## Scope
+## 2. Диагностика
 
-### 1. UI: блок «Режим генерации документа» в карточке документа (основной сценарий)
+Факты по текущему состоянию:
 
-Файл: `src/components/ai-documents/packages/PackageDocumentCard.tsx` (карточка одного документа на вкладке «Анкеты документов»).
+- В БД для item `febd1821-fba8-4290-babf-99c59c27f2f4` сейчас уже сохранено:
+  - `generation_mode = 'per_role_person'`
+  - `repeat_role_catalog_id = 'c8fc4200-75c0-4c24-8eea-112c4e468aeb'`
+- Роль `c8fc4200-75c0-4c24-8eea-112c4e468aeb` = «Участник», `public_id = ln-000015`, активна.
+- Trigger `trg_dpti_assert_repeat_role_consistency` есть и корректно требует:
+  - для `single`: `repeat_role_catalog_id IS NULL`
+  - для `per_role_person`: `repeat_role_catalog_id IS NOT NULL`, роль существует, активна и принадлежит тому же пакету.
+- Корневая UI-причина найдена: `DocumentPackageQuestionnairesView.tsx` запрашивает items через query key `['doc-pkg-template-items-q', packageTemplateId]`, но выбирает только `id, sort_order, template_id`. Поля `generation_mode` и `repeat_role_catalog_id` не читаются вообще.
+- `PackageDocumentCard` получает item без этих полей, поэтому вычисляет `persistedMode = 'single'` и после render/refetch откатывает UI на «Один документ», даже если БД уже сохранена правильно.
+- Shared hook `usePackageItemGenerationMode` инвалидирует `['pkg-bound-templates', packageTemplateId]` и `['document-package-items', packageTemplateId]`, но не инвалидирует фактический query key карточки `['doc-pkg-template-items-q', packageTemplateId]`.
+- Есть риск ложного success: mutation сейчас не возвращает обновлённую строку, поэтому UI не подтверждает payload response и не может сделать optimistic cache update по реальному результату.
 
-Добавить блок **под полями и назначениями ролей**, до кнопок генерации:
+## 3. Предлагаемое решение
 
-```
-Режим генерации документа
-( ) Один документ
-( ) Отдельный документ для каждого физлица с ролью
-    └─ Роль-источник повторения: [ Select: активные роли пакета ]
-```
+Сделать PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 точечно, без Stage D и без изменений генератора:
 
-Поведение:
+1. Исправить источник данных карточки документа:
+  - в `DocumentPackageQuestionnairesView.tsx` добавить в select items поля `generation_mode, repeat_role_catalog_id`;
+  - расширить `ItemRow`, чтобы `PackageDocumentCard` получал сохранённое состояние из БД.
+2. Исправить invalidation/cache consistency:
+  - в `usePackageItemGenerationMode.ts` добавить инвалидирование query key `['doc-pkg-template-items-q', packageTemplateId]`;
+  - оставить существующие keys для `TemplateBindingControl` и legacy hooks;
+  - при возможности добавить точечный `setQueryData` для `['doc-pkg-template-items-q', packageTemplateId]`, `['pkg-bound-templates', packageTemplateId]`, `['document-package-items', packageTemplateId]`, чтобы UI не мигал старым `single` между success и refetch.
+3. Сделать mutation подтверждаемой:
+  - заменить `.update(payload).eq('id', itemId)` на `.update(payload).eq('id', itemId).select('id, generation_mode, repeat_role_catalog_id').single()`;
+  - success toast показывать только после успешного update response;
+  - если trigger отклоняет update, показывать error toast, success не показывать.
+4. Убрать возможный локальный откат preview-state:
+  - в `PackageDocumentCard` не очищать `previewPerRole` до подтверждённого успеха update;
+  - для выбора роли использовать `mutateAsync`/`await`, затем очищать preview только после success;
+  - cleanup preview делать также при приходе persisted `per_role_person` из query.
+5. Синхронизировать `TemplateBindingControl` с тем же контрактом:
+  - wrapper не должен вручную инвалидировать query сразу после `genMode.update`, до подтверждения mutation;
+  - выбор роли должен отправлять один payload: `generation_mode='per_role_person'` + `repeat_role_catalog_id='<role_id>'`;
+  - очистка `repeat_role_catalog_id` допускается только при явном выборе «Один документ».
+6. Обновить proof:
+  - `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md` дополнить runtime-save evidence и оставить Stage C как PASS только после проверки DoD.
 
-- Источник опций селекта — `document_package_role_catalog` по `package_template_id` карточки, фильтр `is_active = true`. Используем уже существующий хук/запрос ролей пакета (тот же, что в `TemplateBindingControl`) либо лёгкий react-query.
-- При переключении в `per_role_person`:
-  - если активных ролей **нет** — опция disabled с подсказкой «Сначала добавьте роль пакета на вкладке „Роли и поля пакета"».
-  - если есть — сохраняем сразу с первой ролью как дефолтом (как уже сделано в `TemplateBindingControl`, поведение единое).
-- При выборе роли — апдейт `document_package_template_items` через ту же мутацию, что в `TemplateBindingControl` (RPC/прямой `update`). Извлечь общую логику в `src/hooks/usePackageItemGenerationMode.ts` (новый файл), переиспользовать в обоих местах — чтобы не было двух источников истины.
-- При возврате в `single` — `repeat_role_catalog_id = null`.
-- Бейдж в шапке карточки: `× по роли «<label>»`, при `per_role_person && !role` — `роль не задана` (destructive).
-- Optimistic + toast: «Режим сохранён», «Не удалось сохранить».
-- Якорь `id={`pkg-doc-card-${item.id}`}` на корне карточки — для будущих deeplink/scroll.
+## 4. Изменяемые компоненты
 
-Реальный сценарий: пользователь открывает «Извещение» в «Анкеты документов» → выбирает «Отдельный документ для каждого физлица с ролью» → выбирает «Участник» → сохраняется. SQL проверка после клика:
+Файлы:
+
+- `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx`
+- `src/components/ai-documents/packages/PackageDocumentCard.tsx`
+- `src/components/ai-documents/packages/TemplateBindingControl.tsx`
+- `src/hooks/usePackageItemGenerationMode.ts`
+- `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`
+
+Таблицы только читаются/обновляются существующим UI:
+
+- `document_package_template_items`
+- `document_package_role_catalog`
+
+DB schema/RPC/edge functions/cron/jobs не меняются.
+
+## 5. Что не будет изменено
+
+- Stage D не начинать.
+- `ai-generate-document-package` не менять в этом патче, если сохранение UI-настройки чинится на frontend/cache уровне.
+- Не менять trigger `dpti_assert_repeat_role_consistency`, если он подтверждает корректный контракт.
+- Не создавать новые таблицы/RPC/edge functions.
+- Не делать массовых UPDATE/DELETE.
+- Не менять semantics `role_assignment_missing` и генерацию DOCX в рамках этого save-fix патча.
+
+## 6. Dry-run
+
+Перед правкой/во время проверки:
+
+1. SQL before:
 
 ```sql
-SELECT id, generation_mode, repeat_role_catalog_id
+SELECT id, title_override, generation_mode, repeat_role_catalog_id, created_at
 FROM document_package_template_items
 WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
--- expected: generation_mode='per_role_person', repeat_role_catalog_id = id роли Участник (c8fc4200…)
 ```
 
-### 2. UI: человекочитаемые ошибки в результатах генерации
-
-Файл: `src/components/ai-documents/packages/PackageGenerationPanel.tsx`.
-
-В блоке «Результат последнего запуска» нормализовать строки ошибок:
-
-
-| Технический код                            | UI-сообщение                                                                                       |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `role_assignment_missing:ln-XXXXXX`        | `Нет назначений для роли «<label>». Назначьте физлицо на эту роль или исправьте шаблон документа.` |
-| `ln_token_unknown:ln-XXXXXX`               | `Шаблон ссылается на неизвестную роль «<ln-XXXXXX>».`                                              |
-| `ln_token_outside_bound_package:ln-XXXXXX` | `Роль «<label>» принадлежит другому пакету.`                                                       |
-| `per_role_no_active_recipients`            | `Для режима «по одному на каждого участника роли» нет активных назначений выбранной роли.`         |
-| `per_role_role_not_configured`             | `Не выбрана роль-источник. Откройте карточку документа и выберите роль.`                           |
-| `per_role_role_inactive`                   | `Выбранная роль-источник неактивна.`                                                               |
-| `per_role_role_package_mismatch`           | `Роль-источник принадлежит другому пакету.`                                                        |
-
-
-Резолв `ln-XXXXXX → label` через тот же запрос ролей пакета. Если label не найден — fallback на сам код.
-
-Бейдж «блок» остаётся; снизу — человекочитаемая строка вместо технической. Технический код доступен через `title`/тултип для саппорта.
-
-### 3. Backend: защита pre-scan от ложной блокировки repeat-роли
-
-Файл: `supabase/functions/ai-generate-document-package/index.ts` (строки ~447–460).
-
-Перед циклом по item-ам вычислить `repeatRolePublicId` для текущего item:
-
-- если `item.generation_mode === 'per_role_person'` и `repeat_role_catalog_id` задан → `repeatRolePublicId = roleById.get(repeat_role_catalog_id)?.public_id`.
-
-В ветке `LN_RE` (строка 447):
-
-- если `lnPublicId === repeatRolePublicId` и `asgs.length === 0` — **не пушить `role_assignment_missing**`, положить placeholder `preresolved_ln_tokens[lnPublicId] = { value: '', persons: [], positions: [], position_genders: [], role_catalog_id: repeat_role_catalog_id, person_id: null }`. Per-role ветка (строки 597–647) перепишет на каждого recipient.
-- если `lnPublicId !== repeatRolePublicId` (например, Ревизор в этом кейсе) — `role_assignment_missing:<lnPublicId>` остаётся как сегодня (корректная ошибка).
-
-Zero-diff для `generation_mode === 'single'`.
-
-### 4. Runtime proof (обязательный)
-
-Сценарий на пакете «Годовое собрание участников» (`package_template_id = 21764469-1ba9-49b3-90d9-5349bcbcd531`):
-
-a) В UI карточки «Извещение» включить `per_role_person`, роль = «Участник» (`ln-000015`).
-
-b) SQL after-проверка:
+2. Проверить роли:
 
 ```sql
-SELECT id, title_override, generation_mode, repeat_role_catalog_id
-FROM document_package_template_items
-WHERE package_template_id = '21764469-1ba9-49b3-90d9-5349bcbcd531'
-ORDER BY sort_order;
--- Инструкция, Приказ → single, NULL
--- Извещение → per_role_person, c8fc4200-75c0-4c24-8eea-112c4e468aeb
+SELECT id, label, public_id, is_active
+FROM document_package_role_catalog
+WHERE package_template_id = (
+  SELECT package_template_id
+  FROM document_package_template_items
+  WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
+)
+ORDER BY sort_order, label;
 ```
 
-c) SQL active assignments по «Извещение»:
+3. Проверить trigger contract:
 
 ```sql
-SELECT a.id, rc.public_id, rc.label, p.full_name
-FROM document_package_item_role_assignments a
-JOIN document_package_role_catalog rc ON rc.id = a.role_catalog_id
-LEFT JOIN legal_details_persons p ON p.id = a.person_id
-WHERE a.package_template_item_id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
-ORDER BY rc.public_id;
--- ожидание: 3 строки ln-000015 «Участник»
+SELECT pg_get_functiondef('public.dpti_assert_repeat_role_consistency()'::regprocedure);
 ```
 
-d) Запуск «Сформировать пакет документов». Возможны два исхода в зависимости от состояния шаблона «Извещение»:
+4. В UI/network проверить payload при выборе роли:
+  - item id = `febd1821-fba8-4290-babf-99c59c27f2f4`;
+  - `generation_mode = 'per_role_person'`;
+  - `repeat_role_catalog_id = ID роли «Участник»`;
+  - нет второго payload `single/null` после успешного выбора роли.
 
-- **d.1.** Если шаблон всё ещё содержит `{{ln-000014}}` (Ревизор) — генератор корректно блокирует item с **человекочитаемой** ошибкой «Нет назначений для роли „Ревизор"…». Это **доказательство Проблемы B**, не Проблемы A. Для полного runtime proof владелец данных делает одно из двух (это **вне scope патча**, но требуется для runtime прогона):
-  - назначить Ревизора на item «Извещение» (один человек), либо
-  - удалить `{{ln-000014}}` из DOCX «Извещение» / заменить на `{{recipient.full_name}}`.
-- **d.2.** После решения Проблемы B запускаем генерацию повторно: ожидаем «Инструкция» 1 + «Приказ» 1 + «Извещение» **3** = 5 документов.
+## 7. Execute
 
-e) SQL по `ai_generated_documents.meta` для каждого извещения:
+После утверждения плана:
 
-```sql
-SELECT id, meta->>'generation_mode', meta->>'repeat_role_catalog_id',
-       meta->>'repeat_assignment_id', meta->>'recipient_person_id',
-       meta->>'recipient_display_name', meta->>'recipient_index'
-FROM ai_generated_documents
-WHERE generation_batch_id = '<последний batch>'
-ORDER BY created_at;
--- ожидание:
---   Инструкция, Приказ — все meta-поля per-recipient = NULL (zero-diff)
---   Извещение × 3 — generation_mode='per_role_person',
---                   repeat_role_catalog_id = id роли Участник,
---                   recipient_index = 1,2,3,
---                   recipient_display_name = ФИО
-```
+1. Обновить `DocumentPackageQuestionnairesView.tsx`, чтобы карточка получала `generation_mode` и `repeat_role_catalog_id` из БД.
+2. Обновить `usePackageItemGenerationMode.ts`, чтобы mutation возвращала updated row и синхронно обновляла/инвалидировала все реальные query keys.
+3. Обновить `PackageDocumentCard.tsx`, чтобы preview-state не сбрасывал выбранный режим до подтверждённого success.
+4. Обновить `TemplateBindingControl.tsx`, чтобы он использовал тот же подтверждённый mutation flow без преждевременной инвалидции.
+5. Обновить proof-файл с before/after SQL, payload/response, refresh-проверкой и состоянием обеих вкладок.
 
-f) Скачать один DOCX «Извещение», убедиться, что `{{recipient.full_name}}` (если шаблон обновлён) или persisted поля — реально подставлены ФИО recipient'a.
+## 8. STOP-guards
 
-g) Скрин UI: карточка «Извещение» с открытым блоком «Режим генерации документа», выбран per_role_person и роль «Участник».
+Остановить выполнение и не считать Stage C PASS, если:
 
-h) Скрин UI: блок «Результат последнего запуска» с человекочитаемой строкой ошибки (если применимо) — техническая `role_assignment_missing:ln-000014` отсутствует в видимом тексте.
+- SQL after save не показывает `generation_mode='per_role_person'` для item «Извещение».
+- `repeat_role_catalog_id` не равен ID роли «Участник».
+- После выбора роли появляется второй update `single/null`.
+- Trigger отклоняет update, но UI показывает success.
+- После refresh карточка возвращается на «Один документ».
+- `TemplateBindingControl` показывает состояние, отличное от карточки документа.
+- Найдётся другой writer, который перетирает `document_package_template_items` после save.
 
-Proof-файл: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md` — все артефакты выше.
+## 9. DoD
 
-## Out of scope
+PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 считается выполненным только если:
 
-- `supabase/functions/_shared/resolve-per-role-recipients.ts` — не трогаем.
-- `canonical-document-generate-strict` — не трогаем (контракт `{{recipient.*}}` готов).
-- Редактирование DOCX шаблонов и назначение Ревизора — делает владелец данных, не агент.
-- Stage D (UI-группировка результатов по recipient, ретро-синхронизация) — отдельным планом, после закрытия Stage C runtime.
-- Полный редизайн `TemplateBindingControl` — оставляем как admin-дубль, синхронизирован через общий хук.
+- Выбор `per_role_person` не откатывается на `single`.
+- `repeat_role_catalog_id` сохраняется корректно.
+- Toast success показывается только после реального успешного update.
+- После refresh страницы режим остаётся `per_role_person`.
+- Карточка документа и вкладка «Шаблоны пакета» показывают одинаковое состояние.
+- SQL подтверждает `generation_mode='per_role_person'` и роль «Участник».
+- Proof обновлён: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`.
 
-## Технические детали
+## 10. Риски и зависимости
 
-**Файлы (frontend)**
+- Основной риск — разные query keys для одного SOT. Решение: добавить единый update/invalidate всех реально используемых keys.
+- Возможен race между local preview-state и refetch старой строки. Решение: mutation response + `setQueryData` до invalidation.
+- В текущей БД уже сохранено корректное значение; баг проявляется как UI/cache/read-model desync, а не обязательно как DB-write failure.
 
-- **NEW** `src/hooks/usePackageItemGenerationMode.ts` — единый хук: query ролей пакета + мутация апдейта `generation_mode`/`repeat_role_catalog_id` для item-а. Используется и в `PackageDocumentCard`, и в `TemplateBindingControl`.
-- `src/components/ai-documents/packages/PackageDocumentCard.tsx` — новый блок «Режим генерации документа» под полями/ролями, бейдж в шапке карточки, `id={pkg-doc-card-${item.id}}`.
-- `src/components/ai-documents/packages/TemplateBindingControl.tsx` — заменить локальные query+mutation на `usePackageItemGenerationMode`, поведение и разметка не меняются.
-- `src/components/ai-documents/packages/PackageGenerationPanel.tsx` — нормализатор ошибок (мапа кодов → текст с резолвом label роли).
+## 11. Требуется дополнительная информация
 
-**Файлы (backend)**
-
-- `supabase/functions/ai-generate-document-package/index.ts` — точечный bypass `role_assignment_missing` для repeat-роли в pre-scan (см. §3). Deploy через стандартный workflow.
-
-**Без миграций. Без изменений RLS/grants.**
-
-## DoD
-
-- В карточке документа на вкладке «Анкеты документов» виден блок «Режим генерации документа»: PASS
-- Можно выбрать «Отдельный документ для каждого физлица с ролью»: PASS
-- Можно выбрать роль «Участник» в селекте «Роль-источник повторения»: PASS
-- Настройка сохраняется в `document_package_template_items` (SQL-подтверждение): PASS
-- При попытке выбрать `per_role_person` без активных ролей — опция disabled с подсказкой: PASS
-- `TemplateBindingControl` и карточка документа используют единый хук (нет дублирования логики): PASS
-- Документ «Извещение» генерируется в 3 экземплярах по 3 участникам (после решения Проблемы B владельцем данных): PASS
-- `recipient.*` реально подставляется в DOCX: PASS
-- `ai_generated_documents.meta` per-recipient полностью заполнен; single-документы без recipient-meta (zero-diff): PASS
-- В UI результатов генерации **нет** технических `role_assignment_missing:ln-XXX` — только человекочитаемые сообщения с label роли: PASS
-- Pre-scan генератора не блокирует item, если отсутствует именно repeat-роль (другие ln-токены без назначений по-прежнему дают корректную ошибку): PASS
-- Single-документы «Инструкция» и «Приказ» работают без изменений: PASS
-- Proof создан: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`: PASS
-
-Stage D не начинаем до полного закрытия Stage C runtime.
+Дополнительная информация от пользователя не требуется. Можно выполнять патч после утверждения плана.

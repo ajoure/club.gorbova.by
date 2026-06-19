@@ -151,24 +151,26 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
   });
 
   // updateModeMutation вынесен в shared hook usePackageItemGenerationMode.
-  // Здесь оставлен тонкий wrapper, чтобы существующий ниже JSX продолжал работать.
+  // PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1: НЕ инвалидируем здесь самостоятельно —
+  // shared hook сам делает setQueryData + invalidate после подтверждённого
+  // mutation response. Дополнительный invalidate тут приводил к гонке и
+  // откату UI на старое single.
   const updateModeMutation = {
     isPending: genMode.isSaving,
     variables: genMode.isSaving ? { itemId: genMode.savingItemId } : undefined,
-    mutate: (input: {
+    mutateAsync: (input: {
       itemId: string;
       generation_mode: "single" | "per_role_person";
       repeat_role_catalog_id: string | null;
-    }) => {
-      genMode.update({
+    }) =>
+      genMode.updateAsync({
         itemId: input.itemId,
         packageTemplateId,
         generation_mode: input.generation_mode,
         repeat_role_catalog_id: input.repeat_role_catalog_id,
-      });
-      qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
-    },
+      }),
   } as const;
+
 
   const bound = boundQuery.data ?? [];
   const boundIds = new Set(bound.map((b) => b.template_id));
@@ -298,16 +300,23 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                   <Select
                     value={isPerRole ? "per_role_person" : "single"}
                     disabled={saving}
-                    onValueChange={(v) => {
+                    onValueChange={async (v) => {
                       const next = v as "single" | "per_role_person";
                       if (next === "single") {
-                        setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
-                        if (b.generation_mode === "single") return;
-                        updateModeMutation.mutate({
-                          itemId: b.id,
-                          generation_mode: "single",
-                          repeat_role_catalog_id: null,
-                        });
+                        if (b.generation_mode === "single") {
+                          setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                          return;
+                        }
+                        try {
+                          await updateModeMutation.mutateAsync({
+                            itemId: b.id,
+                            generation_mode: "single",
+                            repeat_role_catalog_id: null,
+                          });
+                          setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                        } catch {
+                          // toast уже показал ошибку; preview не трогаем.
+                        }
                       } else {
                         if (noRoles) {
                           toast.error("Сначала добавьте роль пакета, затем выберите её как источник повторения.");
@@ -334,14 +343,18 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                       <Select
                         value={b.repeat_role_catalog_id ?? ""}
                         disabled={saving || noRoles}
-                        onValueChange={(v) => {
+                        onValueChange={async (v) => {
                           if (!v) return;
-                          updateModeMutation.mutate({
-                            itemId: b.id,
-                            generation_mode: "per_role_person",
-                            repeat_role_catalog_id: v,
-                          });
-                          setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                          try {
+                            await updateModeMutation.mutateAsync({
+                              itemId: b.id,
+                              generation_mode: "per_role_person",
+                              repeat_role_catalog_id: v,
+                            });
+                            setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                          } catch {
+                            // toast уже показал ошибку; preview оставляем.
+                          }
                         }}
                       >
                         <SelectTrigger className="h-7 w-[220px] text-xs">
