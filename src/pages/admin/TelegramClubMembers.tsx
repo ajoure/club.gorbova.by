@@ -1533,6 +1533,8 @@ export default function TelegramClubMembers() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
                       <TableCell className="text-right">—</TableCell>
                     </TableRow>
                   ))}
