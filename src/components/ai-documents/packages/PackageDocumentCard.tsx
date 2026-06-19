@@ -67,6 +67,8 @@ export interface PackageDocumentCardItem {
   template_id: string;
   template_name: string;
   active_version_id: string | null;
+  generation_mode?: "single" | "per_role_person" | null;
+  repeat_role_catalog_id?: string | null;
 }
 
 export interface PackageDocumentCardRole {
