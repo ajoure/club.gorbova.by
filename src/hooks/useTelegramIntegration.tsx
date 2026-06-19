@@ -571,6 +571,9 @@ export interface EnrichedClubMember extends TelegramClubMember {
   is_bought_not_joined: boolean;
   is_relevant: boolean;
   is_unknown: boolean;  // H: not in any working tab
+  // Access window (derived from subscriptions_v2 + entitlements via product_club_mappings)
+  access_started_at: string | null;
+  access_ended_at: string | null;
 }
 
 // Helper to map RPC result to EnrichedClubMember
