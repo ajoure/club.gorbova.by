@@ -115,6 +115,64 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
   });
   const roleCatalog = roleCatalogQuery.data ?? [];
 
+  // Резолв `ln-XXXXXX` → label роли для человекочитаемых сообщений об ошибках.
+  // Один запрос на весь каталог ролей пакета (тот же шаблон, что и выше).
+  const roleByPublicIdQuery = useQuery({
+    queryKey: ["pkg-role-catalog-by-public-id", packageTemplateId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select("public_id, label")
+        .eq("package_template_id", packageTemplateId);
+      if (error) throw error;
+      const map = new Map<string, string>();
+      for (const r of (data ?? []) as Array<{ public_id: string; label: string }>) {
+        map.set(r.public_id, r.label);
+      }
+      return map;
+    },
+  });
+  const roleLabelByPublicId = roleByPublicIdQuery.data ?? new Map<string, string>();
+
+  /**
+   * Превращает технический код ошибки backend-а в человекочитаемое сообщение.
+   * Технический код остаётся доступен через `title` для саппорта.
+   */
+  function humanizeGenError(code: string): string {
+    const m = code.match(/^([a-z_]+):?(.*)$/);
+    const kind = m?.[1] ?? code;
+    const arg = m?.[2] ?? "";
+    const lnMatch = arg.match(/^(ln-\d{6})/);
+    const ln = lnMatch?.[1];
+    const lnLabel = ln ? roleLabelByPublicId.get(ln) : undefined;
+    switch (kind) {
+      case "role_assignment_missing":
+        return ln
+          ? `Нет назначений для роли «${lnLabel ?? ln}». Назначьте физлицо на эту роль в карточке документа или исправьте шаблон документа.`
+          : "Нет назначений обязательной роли.";
+      case "role_person_not_found":
+        return `Не найдено физлицо для роли «${lnLabel ?? ln ?? ""}». Проверьте, что назначенный человек существует и активен.`;
+      case "ln_token_unknown":
+        return `Шаблон ссылается на неизвестную роль «${ln ?? arg}».`;
+      case "ln_token_outside_bound_package":
+        return `Роль «${lnLabel ?? ln ?? arg}» принадлежит другому пакету.`;
+      case "per_role_no_active_recipients":
+        return "Для режима «отдельный документ для каждого физлица с ролью» нет активных назначений выбранной роли.";
+      case "per_role_role_not_configured":
+        return "Не выбрана роль-источник повторения. Откройте карточку документа и выберите роль.";
+      case "per_role_role_inactive":
+        return "Выбранная роль-источник неактивна. Откройте карточку документа и выберите другую роль.";
+      case "per_role_role_package_mismatch":
+        return "Роль-источник принадлежит другому пакету. Откройте карточку документа и выберите роль этого пакета.";
+      case "package_legal_entity_not_selected":
+        return "Не выбрано ЮЛ/ИП пакета.";
+      case "package_fl_role_context_missing":
+        return "Для документа не назначено физлицо (или назначено несколько — допустимо ровно одно).";
+      default:
+        return code;
+    }
+  }
+
   const { generatePackage, isGenerating } = useAiDocumentPackageGeneration();
 
   const [lastResult, setLastResult] = useState<PackageGenerationResult | null>(null);
