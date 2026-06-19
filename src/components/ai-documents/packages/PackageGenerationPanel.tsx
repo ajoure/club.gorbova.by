@@ -470,17 +470,27 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
                 r.status === "generated"
                   ? "bg-emerald-50 text-emerald-700 border-emerald-300"
                   : "bg-rose-50 text-rose-700 border-rose-300";
+              const humanErrors = (r.errors ?? []).map((e) => ({ code: e, text: humanizeGenError(e) }));
               return (
-                <div key={r.item_id} className="flex items-center gap-2 text-[11px] px-2 py-1.5 rounded border bg-background">
-                  <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                <div key={r.item_id} className="flex items-start gap-2 text-[11px] px-2 py-1.5 rounded border bg-background">
+                  <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{label}</div>
-                    {(r.document_number || r.errors?.length) && (
+                    {(r.document_number || r.document_date) && (
                       <div className="text-[10px] text-muted-foreground truncate">
                         {r.document_number ? `№ ${r.document_number}` : ""}
                         {r.document_date ? ` · ${new Date(r.document_date).toLocaleDateString("ru-RU")}` : ""}
-                        {r.errors?.length ? ` · ${r.errors.join("; ")}` : ""}
                       </div>
+                    )}
+                    {humanErrors.length > 0 && (
+                      <ul className="text-[10px] text-rose-700 dark:text-rose-400 mt-0.5 space-y-0.5">
+                        {humanErrors.map((he, i) => (
+                          <li key={i} title={he.code} className="flex items-start gap-1">
+                            <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+                            <span>{he.text}</span>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                   <Badge variant="outline" className={`text-[10px] ${statusCls}`}>
