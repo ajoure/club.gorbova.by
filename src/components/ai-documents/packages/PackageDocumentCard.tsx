@@ -128,7 +128,15 @@ export function PackageDocumentCard({
   const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
   const itemQuestions = fieldsState.getItemQuestions(item.id);
   const itemProgress = fieldsState.getItemProgress(item.id);
+  const itemMissingRequired = fieldsState.getItemMissingRequired(item.id);
+  const missingRequiredFieldIds = useMemo(
+    () => new Set(itemMissingRequired.map((q) => q.field.id)),
+    [itemMissingRequired],
+  );
   const atomicSave = useAtomicDocumentSave();
+  const valuesFetching = useIsFetching({
+    queryKey: ["package-session-values", sessionId],
+  }) > 0;
 
   // role draft: null до гидратации (Stage 5 требование #4)
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
