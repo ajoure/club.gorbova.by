@@ -16229,6 +16229,7 @@ export type Database = {
           is_orphaned: boolean | null
           joined_chat_at: string | null
           kicked_at: string | null
+          kicked_at_source: string | null
           link_status: string | null
           phone: string | null
           profile_id: string | null
@@ -16884,6 +16885,7 @@ export type Database = {
           is_unknown: boolean
           is_violator: boolean
           kicked_at: string
+          kicked_at_source: string
           link_status: string
           phone: string
           profile_id: string
@@ -17514,6 +17516,7 @@ export type Database = {
           is_unknown: boolean
           is_violator: boolean
           kicked_at: string
+          kicked_at_source: string
           link_status: string
           phone: string
           profile_id: string
