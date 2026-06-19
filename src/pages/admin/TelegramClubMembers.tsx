@@ -1333,7 +1333,7 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     <TableHead className="whitespace-nowrap">
                       <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
-                        Доступ до <SortIcon k="access_ended_at" />
+                        Доступ до / Кик <SortIcon k="access_ended_at" />
                       </button>
                     </TableHead>
                     <TableHead className="text-right">Действия</TableHead>
