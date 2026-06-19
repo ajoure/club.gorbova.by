@@ -412,8 +412,7 @@ export default function TelegramClubMembers() {
       );
       return row;
     });
-      return row;
-    });
+
 
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
