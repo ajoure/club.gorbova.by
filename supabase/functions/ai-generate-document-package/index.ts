@@ -166,9 +166,10 @@ Deno.serve(async (req) => {
     // ── load role catalog for this package (for ln preflight) ───────────
     const { data: roleRows } = await supabase
       .from('document_package_role_catalog')
-      .select('id, public_id, role_key, output_template, is_active, package_template_id')
+      .select('id, public_id, role_key, label, output_template, is_active, package_template_id')
       .eq('package_template_id', session.package_template_id);
     const roleByPublicId = new Map<string, any>((roleRows || []).map((r: any) => [r.public_id, r]));
+    const roleById = new Map<string, any>((roleRows || []).map((r: any) => [r.id, r]));
 
     // ── load all item-level role assignments at once ────────────────────
     const itemIds = items.map((i: any) => i.id);
