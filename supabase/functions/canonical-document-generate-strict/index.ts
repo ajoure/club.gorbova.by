@@ -1105,8 +1105,14 @@ Deno.serve(async (req) => {
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
 
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): per-recipient idempotency.
+    // Для single: pkg:{batch}:{item} (zero-diff). Для per_role_person: добавляем
+    // суффикс :assn:{assignment_id}, чтобы N документов на одного item не сливались
+    // в одну запись ai_generated_documents.
     const idempotencyKey: string = generationContext === 'package_session'
-      ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`
+      ? (packageContext!.repeat_assignment_id
+          ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}:assn:${packageContext!.repeat_assignment_id}`
+          : `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`)
       : ((typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
           ? String(body.idempotency_key).trim()
           : `strict:${tpl.id}:${ver.id}:${order.id}`);
@@ -1126,6 +1132,21 @@ Deno.serve(async (req) => {
           generation_batch_id: packageContext!.generation_batch_id,
           actor_type: 'system',
           source: 'package_orchestrator',
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+          // recipient snapshot — присутствует ТОЛЬКО для per_role_person.
+          ...(packageContext!.repeat_assignment_id
+            ? {
+                generation_mode: 'per_role_person',
+                source_package_template_item_id: packageContext!.package_template_item_id,
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_display_name: packageContext!.recipient_display_name
+                  ?? packageContext!.recipient?.full_name ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+                recipient_snapshot: packageContext!.recipient ?? null,
+              }
+            : {}),
         }
       : {};
     const auditContext: Record<string, unknown> = generationContext === 'package_session'
@@ -1134,6 +1155,15 @@ Deno.serve(async (req) => {
           package_template_id: packageContext!.package_template_id,
           package_item_id: packageContext!.package_template_item_id,
           generation_batch_id: packageContext!.generation_batch_id,
+          ...(packageContext!.repeat_assignment_id
+            ? {
+                generation_mode: 'per_role_person',
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+              }
+            : {}),
         }
       : { order_id: order.id };
     const auditActorType: string = generationContext === 'package_session' ? 'system' : 'user';
