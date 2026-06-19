@@ -336,6 +336,27 @@ export function PackageDocumentCard({
     </Badge>
   ) : null;
 
+  // Бейдж режима генерации — виден сразу в шапке карточки.
+  const modeBadge = persistedMode === "per_role_person" ? (
+    repeatRole ? (
+      <Badge
+        variant="outline"
+        className="text-[10px] h-5 px-1.5 gap-1 font-medium border-indigo-500/40 text-indigo-600 dark:text-indigo-400 bg-indigo-500/5"
+      >
+        <Users className="h-3 w-3" />
+        × по роли «{repeatRole.label}»
+      </Badge>
+    ) : (
+      <Badge
+        variant="outline"
+        className="text-[10px] h-5 px-1.5 gap-1 font-medium border-rose-500/40 text-rose-600 dark:text-rose-400 bg-rose-500/5"
+      >
+        <AlertCircle className="h-3 w-3" />
+        роль-источник не задана
+      </Badge>
+    )
+  ) : null;
+
   const dirtyBadge = isDirty ? (
     <Badge
       variant="outline"
