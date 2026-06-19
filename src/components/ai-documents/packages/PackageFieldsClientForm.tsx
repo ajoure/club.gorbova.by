@@ -537,7 +537,15 @@ function FieldRow({ question, value, onChange, disabled, inheritedFromSession, h
   }
 
   return (
-    <div className={"space-y-1 min-w-0 " + (wide ? "md:col-span-2" : "")}>
+    <div
+      className={
+        "space-y-1 min-w-0 " +
+        (wide ? "md:col-span-2 " : "") +
+        (highlightMissing
+          ? "rounded-md border border-amber-500/40 bg-amber-500/5 p-2 -m-2"
+          : "")
+      }
+    >
       {labelEl}
       {control}
     </div>
