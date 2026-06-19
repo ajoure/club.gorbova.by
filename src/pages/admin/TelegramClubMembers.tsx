@@ -168,6 +168,39 @@ export default function TelegramClubMembers() {
   const revokeAccess = useRevokeTelegramAccess();
 
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
+
+  // Sorting state for the members table
+  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at';
+  type SortDir = 'asc' | 'desc';
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  // Default sort per tab: removed → by access_ended_at DESC (newest kicks first)
+  useEffect(() => {
+    if (activeTab === 'removed') {
+      setSortKey('access_ended_at');
+      setSortDir('desc');
+    } else {
+      setSortKey(null);
+    }
+  }, [activeTab]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const SortIcon = ({ k }: { k: SortKey }) => {
+    if (sortKey !== k) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    return sortDir === 'asc'
+      ? <ArrowUp className="h-3 w-3 ml-1" />
+      : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<EnrichedClubMember | null>(null);
   
