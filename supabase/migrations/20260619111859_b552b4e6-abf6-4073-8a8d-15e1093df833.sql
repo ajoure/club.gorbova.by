@@ -1,0 +1,127 @@
+
+DROP FUNCTION IF EXISTS public.get_club_members_enriched(uuid, text);
+DROP FUNCTION IF EXISTS public.search_club_members_enriched(uuid, text, text, int, int);
+DROP FUNCTION IF EXISTS public.search_club_members_enriched(uuid, text, text);
+DROP VIEW IF EXISTS public.v_club_members_enriched CASCADE;
+
+CREATE VIEW public.v_club_members_enriched AS
+SELECT tcm.id, tcm.club_id, tcm.telegram_user_id, tcm.telegram_username,
+    tcm.telegram_first_name, tcm.telegram_last_name, tcm.in_chat, tcm.in_channel,
+    tcm.joined_chat_at, tcm.profile_id, tcm.link_status, tcm.access_status,
+    tcm.created_at, tcm.updated_at,
+    p.user_id AS auth_user_id, p.email, p.full_name, p.phone, p.external_id_amo,
+    CASE WHEN p.user_id IS NULL THEN false ELSE has_valid_access_for_club(p.user_id, tcm.club_id) END AS has_active_access,
+    CASE WHEN p.user_id IS NULL THEN false
+      ELSE (EXISTS (SELECT 1 FROM telegram_access ta WHERE ta.user_id = p.user_id AND ta.club_id = tcm.club_id))
+        OR (EXISTS (SELECT 1 FROM telegram_manual_access tma WHERE tma.user_id = p.user_id AND tma.club_id = tcm.club_id))
+        OR (EXISTS (SELECT 1 FROM telegram_access_grants tag WHERE tag.user_id = p.user_id AND tag.club_id = tcm.club_id))
+    END AS has_any_access_history,
+    CASE WHEN tc.channel_id IS NULL THEN COALESCE(tcm.in_chat, false)
+         WHEN tc.chat_id IS NULL THEN COALESCE(tcm.in_channel, false)
+         ELSE COALESCE(tcm.in_chat, false) OR COALESCE(tcm.in_channel, false) END AS in_any,
+    tcm.telegram_user_id IS NULL OR tcm.telegram_user_id < 100 AS is_orphaned,
+    CASE WHEN p.user_id IS NULL THEN tcm.joined_chat_at
+      ELSE COALESCE(
+        (SELECT min(s.access_start_at) FROM subscriptions_v2 s
+           JOIN product_club_mappings pcm ON pcm.product_id = s.product_id AND pcm.is_active = true
+          WHERE s.user_id = p.user_id AND pcm.club_id = tcm.club_id),
+        (SELECT min(o.created_at) FROM orders_v2 o
+           JOIN product_club_mappings pcm ON pcm.product_id = o.product_id AND pcm.is_active = true
+          WHERE o.user_id = p.user_id AND pcm.club_id = tcm.club_id AND o.status = 'paid'::order_status),
+        (SELECT min(e.created_at) FROM entitlements e
+           JOIN product_club_mappings pcm ON pcm.product_id = e.product_id AND pcm.is_active = true
+          WHERE e.user_id = p.user_id AND pcm.club_id = tcm.club_id),
+        tcm.joined_chat_at)
+    END AS access_started_at,
+    CASE WHEN tcm.access_status = 'removed'::text THEN NULL::timestamptz
+         WHEN p.user_id IS NULL THEN NULL::timestamptz
+         WHEN (EXISTS (SELECT 1 FROM entitlements e
+                 JOIN product_club_mappings pcm ON pcm.product_id = e.product_id AND pcm.is_active = true
+                WHERE e.user_id = p.user_id AND pcm.club_id = tcm.club_id AND e.expires_at > now())) THEN NULL::timestamptz
+         ELSE COALESCE(
+           (SELECT max(e.expires_at) FROM entitlements e
+              JOIN product_club_mappings pcm ON pcm.product_id = e.product_id AND pcm.is_active = true
+             WHERE e.user_id = p.user_id AND pcm.club_id = tcm.club_id),
+           (SELECT max(s.access_end_at) FROM subscriptions_v2 s
+              JOIN product_club_mappings pcm ON pcm.product_id = s.product_id AND pcm.is_active = true
+             WHERE s.user_id = p.user_id AND pcm.club_id = tcm.club_id))
+    END AS access_ended_at,
+    CASE WHEN p.user_id IS NULL THEN NULL::timestamptz
+         ELSE COALESCE(
+           (SELECT max(e.expires_at) FROM entitlements e
+              JOIN product_club_mappings pcm ON pcm.product_id = e.product_id AND pcm.is_active = true
+             WHERE e.user_id = p.user_id AND pcm.club_id = tcm.club_id),
+           (SELECT max(s.access_end_at) FROM subscriptions_v2 s
+              JOIN product_club_mappings pcm ON pcm.product_id = s.product_id AND pcm.is_active = true
+             WHERE s.user_id = p.user_id AND pcm.club_id = tcm.club_id))
+    END AS commercial_ended_at,
+    CASE WHEN tcm.access_status = 'removed'::text THEN (
+      SELECT max(al.created_at) FROM audit_logs al
+       WHERE (al.action = ANY (ARRAY['telegram.access_expired_revoke'::text, 'telegram.autokick.attempt'::text, 'AUTOKICK'::text, 'telegram.kick.manual'::text]))
+         AND (al.meta ->> 'club_id'::text) = tcm.club_id::text
+         AND (p.user_id IS NOT NULL AND al.target_user_id = p.user_id
+           OR tcm.telegram_user_id IS NOT NULL AND (al.meta ->> 'tg_user_id'::text) = tcm.telegram_user_id::text
+           OR tcm.telegram_user_id IS NOT NULL AND (al.meta ->> 'telegram_user_id'::text) = tcm.telegram_user_id::text
+           OR tcm.profile_id IS NOT NULL AND (al.meta ->> 'profile_id'::text) = tcm.profile_id::text)
+         AND COALESCE((al.meta ->> 'dry_run'::text)::boolean, false) = false
+         AND (COALESCE(al.meta ->> 'result'::text, 'success'::text) <> ALL (ARRAY['failed'::text, 'error'::text, 'skipped'::text, 'blocked'::text])))
+      ELSE NULL::timestamptz END AS kicked_at,
+    CASE WHEN tcm.access_status = 'removed'::text AND (EXISTS (
+      SELECT 1 FROM audit_logs al
+       WHERE (al.action = ANY (ARRAY['telegram.access_expired_revoke'::text, 'telegram.autokick.attempt'::text, 'AUTOKICK'::text, 'telegram.kick.manual'::text]))
+         AND (al.meta ->> 'club_id'::text) = tcm.club_id::text
+         AND (p.user_id IS NOT NULL AND al.target_user_id = p.user_id
+           OR tcm.telegram_user_id IS NOT NULL AND (al.meta ->> 'tg_user_id'::text) = tcm.telegram_user_id::text
+           OR tcm.telegram_user_id IS NOT NULL AND (al.meta ->> 'telegram_user_id'::text) = tcm.telegram_user_id::text
+           OR tcm.profile_id IS NOT NULL AND (al.meta ->> 'profile_id'::text) = tcm.profile_id::text)
+         AND COALESCE((al.meta ->> 'dry_run'::text)::boolean, false) = false
+         AND (COALESCE(al.meta ->> 'result'::text, 'success'::text) <> ALL (ARRAY['failed'::text, 'error'::text, 'skipped'::text, 'blocked'::text]))
+    )) THEN 'audit_log'::text
+    WHEN tcm.access_status = 'removed'::text THEN 'unknown'::text
+    ELSE NULL::text END AS kicked_at_source,
+    tcm.joined_chat_at IS NULL
+      AND (p.user_id IS NULL OR NOT (EXISTS (SELECT 1 FROM orders_v2 o
+            JOIN product_club_mappings pcm ON pcm.product_id = o.product_id AND pcm.is_active = true
+           WHERE o.user_id = p.user_id AND pcm.club_id = tcm.club_id AND o.status = 'paid'::order_status)))
+      AND (p.user_id IS NULL OR NOT (EXISTS (SELECT 1 FROM subscriptions_v2 s
+            JOIN product_club_mappings pcm ON pcm.product_id = s.product_id AND pcm.is_active = true
+           WHERE s.user_id = p.user_id AND pcm.club_id = tcm.club_id)))
+      AND (p.user_id IS NULL OR NOT (EXISTS (SELECT 1 FROM entitlements e
+            JOIN product_club_mappings pcm ON pcm.product_id = e.product_id AND pcm.is_active = true
+           WHERE e.user_id = p.user_id AND pcm.club_id = tcm.club_id))) AS is_commercial_orphan
+FROM telegram_club_members tcm
+LEFT JOIN profiles p ON p.id = tcm.profile_id
+LEFT JOIN telegram_clubs tc ON tc.id = tcm.club_id;
+
+GRANT SELECT ON public.v_club_members_enriched TO authenticated, service_role;
+
+CREATE FUNCTION public.get_club_members_enriched(p_club_id uuid, p_scope text DEFAULT 'relevant'::text)
+RETURNS TABLE(id uuid, club_id uuid, telegram_user_id bigint, telegram_username text, telegram_first_name text, telegram_last_name text, in_chat boolean, in_channel boolean, profile_id uuid, link_status text, access_status text, created_at timestamptz, updated_at timestamptz, auth_user_id uuid, email text, full_name text, phone text, external_id_amo text, has_active_access boolean, has_any_access_history boolean, in_any boolean, is_orphaned boolean, is_violator boolean, is_bought_not_joined boolean, is_relevant boolean, is_unknown boolean, access_started_at timestamptz, access_ended_at timestamptz, commercial_ended_at timestamptz, kicked_at timestamptz, kicked_at_source text, is_commercial_orphan boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_user_id uuid;
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL OR (NOT public.has_role(v_user_id, 'admin'::app_role) AND NOT public.has_role(v_user_id, 'superadmin'::app_role)) THEN
+    RAISE EXCEPTION 'Forbidden' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+  SELECT v.id, v.club_id, v.telegram_user_id, v.telegram_username, v.telegram_first_name, v.telegram_last_name,
+    v.in_chat, v.in_channel, v.profile_id, v.link_status, v.access_status, v.created_at, v.updated_at,
+    v.auth_user_id, v.email, v.full_name, v.phone, v.external_id_amo,
+    v.has_active_access, v.has_any_access_history, v.in_any, v.is_orphaned,
+    (v.in_any AND NOT COALESCE(v.has_active_access, false)) AS is_violator,
+    (COALESCE(v.has_active_access, false) AND NOT v.in_any AND v.access_status != 'removed') AS is_bought_not_joined,
+    (v.in_any OR v.access_status = 'removed' OR COALESCE(v.has_any_access_history, false)) AS is_relevant,
+    NOT (v.in_any OR COALESCE(v.has_active_access, false) OR v.access_status = 'removed') AS is_unknown,
+    v.access_started_at, v.access_ended_at, v.commercial_ended_at, v.kicked_at, v.kicked_at_source, v.is_commercial_orphan
+  FROM public.v_club_members_enriched v
+  WHERE v.club_id = p_club_id
+    AND (p_scope = 'all'
+      OR (p_scope = 'relevant' AND NOT COALESCE(v.is_orphaned, false)
+          AND (v.in_any OR v.access_status = 'removed' OR COALESCE(v.has_any_access_history, false))))
+  ORDER BY v.access_status, v.email NULLS LAST;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.get_club_members_enriched(uuid, text) TO authenticated, service_role;

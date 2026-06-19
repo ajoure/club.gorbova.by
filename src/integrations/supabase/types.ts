@@ -16215,6 +16215,7 @@ export type Database = {
           access_status: string | null
           auth_user_id: string | null
           club_id: string | null
+          commercial_ended_at: string | null
           created_at: string | null
           email: string | null
           external_id_amo: string | null
@@ -16868,6 +16869,7 @@ export type Database = {
           access_status: string
           auth_user_id: string
           club_id: string
+          commercial_ended_at: string
           created_at: string
           email: string
           external_id_amo: string
@@ -17490,42 +17492,6 @@ export type Database = {
           _session_id: string
         }
         Returns: Json
-      }
-      search_club_members_enriched: {
-        Args: { p_club_id: string; p_scope?: string; p_search: string }
-        Returns: {
-          access_ended_at: string
-          access_started_at: string
-          access_status: string
-          auth_user_id: string
-          club_id: string
-          created_at: string
-          email: string
-          external_id_amo: string
-          full_name: string
-          has_active_access: boolean
-          has_any_access_history: boolean
-          id: string
-          in_any: boolean
-          in_channel: boolean
-          in_chat: boolean
-          is_bought_not_joined: boolean
-          is_commercial_orphan: boolean
-          is_orphaned: boolean
-          is_relevant: boolean
-          is_unknown: boolean
-          is_violator: boolean
-          kicked_at: string
-          kicked_at_source: string
-          link_status: string
-          phone: string
-          profile_id: string
-          telegram_first_name: string
-          telegram_last_name: string
-          telegram_user_id: number
-          telegram_username: string
-          updated_at: string
-        }[]
       }
       search_deal_rows: {
         Args: {
