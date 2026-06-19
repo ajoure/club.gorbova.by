@@ -151,24 +151,26 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
   });
 
   // updateModeMutation вынесен в shared hook usePackageItemGenerationMode.
-  // Здесь оставлен тонкий wrapper, чтобы существующий ниже JSX продолжал работать.
+  // PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1: НЕ инвалидируем здесь самостоятельно —
+  // shared hook сам делает setQueryData + invalidate после подтверждённого
+  // mutation response. Дополнительный invalidate тут приводил к гонке и
+  // откату UI на старое single.
   const updateModeMutation = {
     isPending: genMode.isSaving,
     variables: genMode.isSaving ? { itemId: genMode.savingItemId } : undefined,
-    mutate: (input: {
+    mutateAsync: (input: {
       itemId: string;
       generation_mode: "single" | "per_role_person";
       repeat_role_catalog_id: string | null;
-    }) => {
-      genMode.update({
+    }) =>
+      genMode.updateAsync({
         itemId: input.itemId,
         packageTemplateId,
         generation_mode: input.generation_mode,
         repeat_role_catalog_id: input.repeat_role_catalog_id,
-      });
-      qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
-    },
+      }),
   } as const;
+
 
   const bound = boundQuery.data ?? [];
   const boundIds = new Set(bound.map((b) => b.template_id));
