@@ -780,6 +780,17 @@ Deno.serve(async (req) => {
       format: string | null;
     }
     const parsedPfTokens: ParsedPfToken[] = [];
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens.
+    interface ParsedRecipientToken {
+      raw_inside: string;
+      field: string; // full_name | short_name | email | phone | address | position
+      format: string | null;
+      case_modifier: string | null;
+    }
+    const parsedRecipientTokens: ParsedRecipientToken[] = [];
+    const recipientTokensOutsideContext: string[] = [];
+    const recipientTokensWithoutContext: string[] = [];
+    const unknownRecipientFields: string[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
 
