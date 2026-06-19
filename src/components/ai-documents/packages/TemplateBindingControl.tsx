@@ -334,13 +334,15 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                       <Select
                         value={b.repeat_role_catalog_id ?? ""}
                         disabled={saving || noRoles}
-                        onValueChange={(v) =>
+                        onValueChange={(v) => {
+                          if (!v) return;
                           updateModeMutation.mutate({
                             itemId: b.id,
                             generation_mode: "per_role_person",
-                            repeat_role_catalog_id: v || null,
-                          })
-                        }
+                            repeat_role_catalog_id: v,
+                          });
+                          setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                        }}
                       >
                         <SelectTrigger className="h-7 w-[220px] text-xs">
                           <SelectValue placeholder="Выберите роль…" />
