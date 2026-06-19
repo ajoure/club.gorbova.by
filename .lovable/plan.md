@@ -159,8 +159,26 @@ Stage D не начинать в этом же выполнении.
 - В DOCX остались литералы `{{recipient.full_name}}` или `{{ln-000014}}` → FAIL, проблема в token-резолвере.
 - Любая ошибка `role_assignment_missing:*` в response → FAIL, не считаем Stage C закрытым.
 
-## DoD Stage C (полный)
+## DoD Stage C (полный) — финал 2026-06-19
 
-- Code-level PASS
-- UI save/cache PASS (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1)
-- Business runtime PASS — закрывается этим планом: 3 «Извещения» сгенерированы, recipient.* подставлен, Ревизор подставлен, proof обновлён.
+- [x] Code-level PASS
+- [x] UI save/cache PASS (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1)
+- [x] Business runtime PASS — batch `758080c9-b86c-44c8-bccb-472755964db7`,
+      5/5 generated, 0 errors, 0 blocked, 3 отдельных Извещения для Петрова /
+      Иванова / Федорчука, `ln-000015` per-recipient в дательном падеже,
+      `ln-000014` (Ревизор) = Федорчук во всех 3, нет
+      cross-recipient contamination. Полный proof:
+      `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`
+      (раздел «Stage C runtime business prove — 2026-06-19»).
+
+## Финальный статус
+
+```
+Stage A           — PASS
+Stage B           — PASS
+Stage 0.3         — PASS
+Stage C code      — PASS
+Stage C UI/save   — PASS
+Stage C business  — PASS
+Stage D           — NOT STARTED
+```
