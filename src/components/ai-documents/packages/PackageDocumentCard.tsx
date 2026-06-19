@@ -169,6 +169,14 @@ export function PackageDocumentCard({
   );
   const isSavingMode = genMode.isSaving && genMode.savingItemId === item.id;
 
+  // Stage D.1: read-only stale/missing/N-of-M для per_role_person item.
+  const staleness = useRepeatableDocumentStaleness({
+    sessionId,
+    itemId: item.id,
+    repeatRoleCatalogId: persistedRepeatRoleId,
+    generationMode: persistedMode,
+  });
+
 
   // role draft: null до гидратации (Stage 5 требование #4)
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
