@@ -317,6 +317,21 @@ export function usePackageSessionFields(
     };
   };
 
+  /**
+   * Stage 0.2: список конкретных required-полей этого документа, которые
+   * сейчас не заполнены (ни per-item override, ни session-level).
+   * Используется UI для подсветки FieldRow и текста «Не заполнено: …».
+   */
+  const getItemMissingRequired = (itemId: string): DedupedQuestion[] => {
+    const publicIdsInItem = detected.byItemId[itemId] ?? [];
+    return questions.filter(
+      (q) =>
+        q.effective.required &&
+        publicIdsInItem.includes(q.field.public_id) &&
+        !isFilled(getEffectiveValue(q.field.id, itemId)),
+    );
+  };
+
   /** Список вопросов для конкретного item (в порядке появления токена в шаблоне). */
   const getItemQuestions = useCallback((itemId: string): DedupedQuestion[] => {
     const publicIdsInItem = detected.byItemId[itemId] ?? [];
