@@ -371,6 +371,21 @@ Deno.serve(async (req) => {
         effective_required: boolean;
         default_kind_applied: string | null;
       }>;
+      // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C)
+      generation_mode?: 'single' | 'per_role_person';
+      repeat_role_catalog_id?: string | null;
+      repeat_assignment_id?: string | null;
+      recipient_person_id?: string | null;
+      recipient_index?: number | null;
+      recipient_display_name?: string | null;
+      recipient?: {
+        full_name: string;
+        short_name: string | null;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+        position: string | null;
+      } | null;
     };
     let packageContext: PackageCtx | null = null;
 
@@ -402,6 +417,15 @@ Deno.serve(async (req) => {
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
         preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
+        generation_mode: (rawPackageCtx as any).generation_mode ?? 'single',
+        repeat_role_catalog_id: (rawPackageCtx as any).repeat_role_catalog_id ?? null,
+        repeat_assignment_id: (rawPackageCtx as any).repeat_assignment_id ?? null,
+        recipient_person_id: (rawPackageCtx as any).recipient_person_id ?? null,
+        recipient_index: typeof (rawPackageCtx as any).recipient_index === 'number'
+          ? (rawPackageCtx as any).recipient_index
+          : null,
+        recipient_display_name: (rawPackageCtx as any).recipient_display_name ?? null,
+        recipient: (rawPackageCtx as any).recipient ?? null,
       } as PackageCtx;
       // Package-mode: orchestrator is the trust anchor for profile_id /
       // ownership. Strict acts as system actor — no user JWT.
