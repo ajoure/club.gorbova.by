@@ -800,25 +800,28 @@ export default function TelegramClubMembers() {
   }, [selectedMembers]);
 
    // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
-  // PATCH-B: removed + has_access shows dual badge (removed + access marker)
-  const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
-    // has_active_access from backend is the SOLE source of truth
-    // PATCH-B: Special case: removed but still has active business access
-    if (hasActiveAccess === true && status === 'removed') {
+  // PATCH-ZOMBIE-GUARD: если access_ended_at в прошлом — никогда не показываем «Доступ активен»,
+  // даже если has_active_access=true (зомби past_due без entitlement у Инны Грудецкой и т.п.).
+  const getAccessStatusBadge = (
+    status: string,
+    linkStatus?: string,
+    hasActiveAccess?: boolean,
+    accessEndedAt?: string | null,
+  ) => {
+    const endedInPast = !!accessEndedAt && new Date(accessEndedAt).getTime() < Date.now();
+    const effectiveHasAccess = hasActiveAccess === true && !endedInPast;
+
+    // Если человек помечен removed — показываем только «Удалён», никакого «Доступ активен».
+    if (status === 'removed') {
       return (
-        <div className="flex flex-col gap-1">
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 gap-1 text-[10px]">
-            <CheckCircle className="h-3 w-3" />
-            Доступ активен
-          </Badge>
-        </div>
+        <Badge variant="secondary" className="gap-1">
+          <Trash2 className="h-3 w-3" />
+          Удалён
+        </Badge>
       );
     }
-    if (hasActiveAccess === true) {
+
+    if (effectiveHasAccess) {
       return (
         <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
           <CheckCircle className="h-3 w-3" />
@@ -826,24 +829,18 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
-    // If has_active_access is false — NEVER show green, regardless of cached access_status
-    if (hasActiveAccess === false) {
-      if (status === 'removed') {
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-        );
-      }
-      if (status === 'expired') {
-        return (
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Истёк
-          </Badge>
-        );
-      }
+
+    // Нет валидного доступа — никогда не зелёный
+    if (status === 'expired' || endedInPast) {
+      return (
+        <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Истёк
+        </Badge>
+      );
+    }
+
+    if (status === 'no_access' || hasActiveAccess === false) {
       return (
         <Badge variant="destructive" className="gap-1">
           <XCircle className="h-3 w-3" />
@@ -851,45 +848,25 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
-    // Fallback for cases where has_active_access is undefined
-    switch (status) {
-      case 'ok':
-        return (
-          <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
-            <CheckCircle className="h-3 w-3" />
-            С доступом
-          </Badge>
-        );
-      case 'no_access':
-        return (
-          <Badge variant="destructive" className="gap-1">
-            <XCircle className="h-3 w-3" />
-            Без доступа
-          </Badge>
-        );
-      case 'expired':
-        return (
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Истёк
-          </Badge>
-        );
-      case 'removed':
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <HelpCircle className="h-3 w-3" />
-            {status}
-          </Badge>
-        );
+
+    // Fallback for undefined cases
+    if (status === 'ok') {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
+          <CheckCircle className="h-3 w-3" />
+          С доступом
+        </Badge>
+      );
     }
+
+    return (
+      <Badge variant="secondary" className="gap-1">
+        <HelpCircle className="h-3 w-3" />
+        {status}
+      </Badge>
+    );
   };
+
 
   // Telegram status display — resource-mode aware
   const getTelegramStatus = (member: EnrichedClubMember) => {
