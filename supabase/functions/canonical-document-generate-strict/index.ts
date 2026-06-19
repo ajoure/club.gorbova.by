@@ -973,6 +973,26 @@ Deno.serve(async (req) => {
         tokens: Array.from(new Set(packageTokensOutsideContext)),
       }, 400);
     }
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* guards.
+    if (recipientTokensOutsideContext.length > 0) {
+      return json({
+        error: 'recipient_token_outside_package_context',
+        tokens: Array.from(new Set(recipientTokensOutsideContext)),
+      }, 400);
+    }
+    if (unknownRecipientFields.length > 0) {
+      return json({
+        error: 'unknown_recipient_field',
+        tokens: Array.from(new Set(unknownRecipientFields)),
+        allowed: Array.from(ALLOWED_RECIPIENT_FIELDS),
+      }, 400);
+    }
+    if (recipientTokensWithoutContext.length > 0) {
+      return json({
+        error: 'recipient_token_without_context',
+        tokens: Array.from(new Set(recipientTokensWithoutContext)),
+      }, 400);
+    }
 
     // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
     // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
