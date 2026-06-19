@@ -1169,6 +1169,20 @@ export default function TelegramClubMembers() {
                   <Download className="h-4 w-4 sm:mr-2" />
                   <span className="hidden sm:inline">Экспорт</span>
                 </Button>
+                {activeTab === 'removed' && (
+                  <Button
+                    variant={hideOrphans ? 'outline' : 'secondary'}
+                    size="sm"
+                    onClick={() => setHideOrphans(v => !v)}
+                    title="Мусорные = нет оплат/подписок/entitlements по продуктам клуба и не входил в чат"
+                  >
+                    {hideOrphans ? 'Показать мусорные' : 'Скрыть мусорные'}
+                    {(() => {
+                      const orphans = (members || []).filter(m => m.access_status === 'removed' && !m.in_any && m.is_commercial_orphan).length;
+                      return orphans > 0 ? <Badge variant="outline" className="ml-2 h-5 px-1.5 text-xs">{orphans}</Badge> : null;
+                    })()}
+                  </Button>
+                )}
                 {counts.violators > 0 && (
                   <Button
                     variant="destructive"
