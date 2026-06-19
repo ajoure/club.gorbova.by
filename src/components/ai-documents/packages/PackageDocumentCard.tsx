@@ -144,6 +144,22 @@ export function PackageDocumentCard({
     queryKey: ["package-session-values", sessionId],
   }) > 0;
 
+  // ---------- Режим генерации (per_role_person / single) ----------
+  const persistedMode: "single" | "per_role_person" =
+    item.generation_mode === "per_role_person" ? "per_role_person" : "single";
+  const persistedRepeatRoleId = item.repeat_role_catalog_id ?? null;
+  // Локальный preview-режим: позволяет показать селектор роли до записи в БД,
+  // пока пользователь не выбрал роль-источник.
+  const [previewPerRole, setPreviewPerRole] = useState(false);
+  const effectiveMode: "single" | "per_role_person" =
+    persistedMode === "per_role_person" || previewPerRole ? "per_role_person" : "single";
+  const genMode = usePackageItemGenerationMode(packageTemplateId);
+  const repeatRole = useMemo(
+    () => genMode.activeRoles.find((r) => r.id === persistedRepeatRoleId) ?? null,
+    [genMode.activeRoles, persistedRepeatRoleId],
+  );
+  const isSavingMode = genMode.isSaving && genMode.savingItemId === item.id;
+
   // role draft: null до гидратации (Stage 5 требование #4)
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
   const [baseline, setBaseline] = useState<DraftRow[] | null>(null);
