@@ -1281,24 +1281,50 @@ export default function TelegramClubMembers() {
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
-                    <TableHead>Telegram</TableHead>
-                    <TableHead>Связь с ЛК</TableHead>
-                    <TableHead>Статус доступа</TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('telegram_name')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Telegram <SortIcon k="telegram_name" />
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('crm_name')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Связь с ЛК <SortIcon k="crm_name" />
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('access_status')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Статус доступа <SortIcon k="access_status" />
+                      </button>
+                    </TableHead>
                     <TableHead className="text-center">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex items-center justify-center gap-1 cursor-help">
-                            <span>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}</span>
-                            <HelpCircle className="h-3 w-3 text-muted-foreground" />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
-                          <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <button onClick={() => toggleSort('chat_channel')} className="inline-flex items-center justify-center gap-1 hover:text-foreground transition-colors">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center gap-1 cursor-help">
+                              {hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}
+                              <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
+                            <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <SortIcon k="chat_channel" />
+                      </button>
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      <button onClick={() => toggleSort('access_started_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Доступ с <SortIcon k="access_started_at" />
+                      </button>
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Доступ до <SortIcon k="access_ended_at" />
+                      </button>
                     </TableHead>
                     <TableHead className="text-right">Действия</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>
