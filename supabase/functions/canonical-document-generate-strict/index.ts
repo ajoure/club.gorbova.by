@@ -259,6 +259,14 @@ const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
 const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens
+// для items с generation_mode='per_role_person'. Контекст текущего получателя
+// приходит в packageContext.recipient от оркестратора и заменяет токен на
+// конкретное значение этого экземпляра документа.
+const RECIPIENT_TOKEN_RE = /^recipient\.([a-z_]+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const ALLOWED_RECIPIENT_FIELDS: ReadonlySet<string> = new Set([
+  'full_name', 'short_name', 'email', 'phone', 'address', 'position',
+]);
 // Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
 const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
