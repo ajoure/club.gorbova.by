@@ -98,21 +98,8 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
     enabled: !!packageTemplateId,
   });
 
-  const rolesQuery = useQuery({
-    queryKey: ["pkg-roles-for-repeat", packageTemplateId],
-    queryFn: async () => {
-      if (!packageTemplateId) return [] as RoleOption[];
-      const { data, error } = await supabase
-        .from("document_package_role_catalog")
-        .select("id, role_key, label, is_active")
-        .eq("package_template_id", packageTemplateId)
-        .eq("is_active", true)
-        .order("sort_order", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as RoleOption[];
-    },
-    enabled: !!packageTemplateId,
-  });
+  const genMode = usePackageItemGenerationMode(packageTemplateId);
+  const rolesQuery = { data: genMode.activeRoles, isLoading: genMode.rolesLoading };
 
   const allTemplatesQuery = useQuery({
     queryKey: QK_ALL,
