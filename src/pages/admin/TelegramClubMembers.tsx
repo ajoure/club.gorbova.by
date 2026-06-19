@@ -217,6 +217,8 @@ export default function TelegramClubMembers() {
   const [massRevokeReason, setMassRevokeReason] = useState('');
   const [massActionLoading, setMassActionLoading] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  // v4: на вкладке «Удалённые» по умолчанию скрываем мусорные записи (нет paid/sub/entitlement и нет joined_chat_at)
+  const [hideOrphans, setHideOrphans] = useState(true);
   
   // Reinvite ghosts state
   const [showReinviteDialog, setShowReinviteDialog] = useState(false);
@@ -323,8 +325,10 @@ export default function TelegramClubMembers() {
           // PATCH: exclude admins, anti-contradiction: violator can't have valid access
           return member.is_violator && !isAdmin;
         case 'removed':
-          // PATCH: exclude admins from removed
-          return member.access_status === 'removed' && !member.in_any && !isAdmin;
+          // PATCH: exclude admins from removed; v4: optionally hide commercial orphans
+          if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
+          if (hideOrphans && member.is_commercial_orphan) return false;
+          return true;
         case 'admins':
           return isAdmin;
         default:
@@ -376,13 +380,14 @@ export default function TelegramClubMembers() {
           r = cmpDate(a.access_started_at, b.access_started_at);
           break;
         case 'access_ended_at':
-          r = cmpDate(a.access_ended_at, b.access_ended_at);
+          // v4: для removed используем kicked_at, иначе access_ended_at
+          r = cmpDate(a.kicked_at ?? a.access_ended_at, b.kicked_at ?? b.access_ended_at);
           break;
       }
       return r * dirMul;
     });
     return sorted;
-  }, [members, activeTab, adminTelegramIds, sortKey, sortDir]);
+  }, [members, activeTab, adminTelegramIds, sortKey, sortDir, hideOrphans]);
 
 
 
@@ -392,7 +397,7 @@ export default function TelegramClubMembers() {
     const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
     if (hasChat) baseHeaders.push('Чат');
     if (hasChannel) baseHeaders.push('Канал');
-    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до');
+    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до', 'Дата кика', 'Мусорная запись');
     const headers = baseHeaders;
     const rows = filteredMembers.map(m => {
       const row: (string | number | boolean | null)[] = [
@@ -409,6 +414,8 @@ export default function TelegramClubMembers() {
         m.profiles?.phone || '',
         m.access_started_at ? format(new Date(m.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '',
         m.access_ended_at ? format(new Date(m.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.kicked_at ? format(new Date(m.kicked_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.is_commercial_orphan ? 'Да' : 'Нет',
       );
       return row;
     });
@@ -1162,6 +1169,20 @@ export default function TelegramClubMembers() {
                   <Download className="h-4 w-4 sm:mr-2" />
                   <span className="hidden sm:inline">Экспорт</span>
                 </Button>
+                {activeTab === 'removed' && (
+                  <Button
+                    variant={hideOrphans ? 'outline' : 'secondary'}
+                    size="sm"
+                    onClick={() => setHideOrphans(v => !v)}
+                    title="Мусорные = нет оплат/подписок/entitlements по продуктам клуба и не входил в чат"
+                  >
+                    {hideOrphans ? 'Показать мусорные' : 'Скрыть мусорные'}
+                    {(() => {
+                      const orphans = (members || []).filter(m => m.access_status === 'removed' && !m.in_any && m.is_commercial_orphan).length;
+                      return orphans > 0 ? <Badge variant="outline" className="ml-2 h-5 px-1.5 text-xs">{orphans}</Badge> : null;
+                    })()}
+                  </Button>
+                )}
                 {counts.violators > 0 && (
                   <Button
                     variant="destructive"
@@ -1326,7 +1347,7 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     <TableHead className="whitespace-nowrap">
                       <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
-                        Доступ до <SortIcon k="access_ended_at" />
+                        Доступ до / Кик <SortIcon k="access_ended_at" />
                       </button>
                     </TableHead>
                     <TableHead className="text-right">Действия</TableHead>
@@ -1414,7 +1435,11 @@ export default function TelegramClubMembers() {
                         {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                        {member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                        {member.access_status === 'removed'
+                          ? (member.kicked_at
+                              ? <span title="Дата удаления">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
+                              : '—')
+                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
                       </TableCell>
 
                       <TableCell className="text-right">

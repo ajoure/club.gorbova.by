@@ -1,73 +1,107 @@
-# План (v3): даты доступа + сортировка в таблице участников клуба + фикс автокика
+## да, согласен, с учетом правок:
 
-## 1. Куда добавляем (никакой отдельной выгрузки)
+1. **План нельзя закрывать как полностью выполненный, пока не сделан root-fix резолвера.**  
+UI-guard убирает визуальную ложь, но не чинит источник проблемы. В DoD обязательно оставить проверку: `past_due` без валидного `entitlements.expires_at > now()` больше не даёт `access_status='ok'`.
+2. **Для удалённых нельзя считать** `access_ended_at` **датой кика.**  
+В текущем плане написано: «для удалённых вторая показывает дату кика по факту = `access_ended_at`». Это неверно.  
+Нужно добавить отдельное поле:
+  - `kicked_at`;
+  - желательно `kicked_at_source`.
+3. **Колонку лучше назвать не просто «Доступ до», а «Доступ до / Кик».**  
+Логика:
+  - `ok` / `no_access` → показывать `access_ended_at`;
+  - `removed` → показывать `kicked_at`;
+  - активный доступ → «—».
+4. **Нужно добавить фильтр мусорных удалённых.**  
+Иначе вкладка «Удалённые» останется грязной. Минимально:
+  - `is_commercial_orphan = true`, если нет paid orders, subscriptions, entitlements по продуктам клуба и `joined_chat_at IS NULL`;
+  - во вкладке «Удалённые» переключатель «Скрыть мусорные» по умолчанию ВКЛ;
+  - физически строки не удалять.
+5. `access_started_at` **нужно считать шире, чем только по** `subscriptions_v2.access_start_at`**.**  
+Иначе у разовых оплат и старых entitlements дата останется пустой. Fallback:
+  1. `MIN(subscriptions_v2.access_start_at)`;
+  2. иначе `MIN(orders_v2.paid_at)` по paid orders продуктов клуба;
+  3. иначе `MIN(entitlements.created_at)`;
+  4. иначе `joined_chat_at`.
+6. **CSV дополнить не только** `access_started_at` **/** `access_ended_at`**, но и:**
+  - `kicked_at`;
+  - `kicked_at_source`;
+  - `is_commercial_orphan`.
+7. **Отчёт исполнителя должен быть отдельным отчётом, а не смесью “готово + старый план”.**  
+Для закрытия нужен короткий proof-отчёт:
+  - какие файлы изменены;
+  - какая миграция применена;
+  - какие RPC возвращают новые поля;
+  - какие кейсы проверены: Julia Gr, Инна Грудецкая, Юлия Рабчевская, Татьяна Ярошевич;
+  - подтверждение, что ручных DML/DELETE по `telegram_club_members` не было.
 
-Страница `/admin/integrations/telegram/clubs/:clubId/members` — компонент `src/pages/admin/TelegramClubMembers.tsx`, таблица с вкладками «В клубе / С доступом / Не вошли / Нарушители / Удалённые / Админы».
+**Итог:** план в целом правильный, но в текущем виде закрывает только часть проблемы. Для быстрого завершения нужно не переписывать весь патч, а добавить маленький follow-up: `kicked_at` + `is_commercial_orphan` + root-fix резолвера.
 
-Источник данных — RPC `public.get_club_members_enriched(p_club_id uuid, p_scope text)` и `public.search_club_members_enriched(...)`. Сейчас они возвращают `access_status`, `has_active_access`, но **не возвращают сами даты доступа**. Их нужно добавить в RPC и пробросить в UI.
+&nbsp;
 
-## 2. Что меняем — 3 шага
+План v4: правильные даты «Доступ с / Доступ до / Дата кика» + чистка мусорных удалённых
 
-### Шаг 1. Миграция: RPC возвращают даты доступа
+### Diagnose
 
-Расширяю обе RPC двумя полями (без новых таблиц, без новых колонок в `telegram_club_members`):
+1. **«Будущая» 11.07.2026 у Julia Gr** — это НЕ дата кика. Текущая колонка «Доступ до» = `MAX(entitlements.expires_at | subscriptions_v2.access_end_at)`. У Julia есть оплачённый длинный entitlement до июля, но физически из чата её уже удалили (`access_status='removed'`). Поле показывает **коммерческое окно**, а не реальный момент удаления. Это и есть путаница.
+2. **Пустые даты у Анны Фёдоровой / Татьяны Конько (нет paid_orders в Gorbova-продуктах) / Елены Сивицкой / Никиты Рохмистрова** — мусорные записи: `joined_chat_at IS NULL`, `paid_orders=0`, ни subscriptions_v2, ни entitlements по club_id-продуктам. Они когда-то попали в `telegram_club_members` из исторического импорта/trial, но коммерчески к клубу не относятся.
+3. `**access_started_at**` сейчас берётся только из `subscriptions_v2.access_start_at`. Если у юзера были только разовые `orders_v2` без подписки или старые `entitlements` — пусто. Нужен fallback-chain.
 
-- `access_started_at timestamptz` — **первая дата начала доступа** пользователя к продукту этого клуба = `MIN(subscriptions_v2.access_start_at)` по `product_id` из `product_club_mappings` для данного `club_id` (для текущих и удалённых одинаково).
-- `access_ended_at timestamptz` — **дата окончания доступа**:
-  - если у пользователя есть валидный `entitlements.expires_at > now()` по продукту клуба → `NULL` (доступ ещё активен);
-  - иначе → `MAX(entitlements.expires_at)` по тому же продукту, либо `MAX(subscriptions_v2.access_end_at)` если entitlements пуст.
+### План работ
 
-Связка «клуб → продукт» уже существует: таблица `product_club_mappings` (см. memory *Telegram Club Engine*). Никаких новых сущностей.
+**Шаг 1. Миграция: пересобрать `v_club_members_enriched` + обе RPC (`get_club_members_enriched`, `search_club_members_enriched`).**
 
-Миграция: `CREATE OR REPLACE FUNCTION` для обеих RPC + `GRANT EXECUTE` тем же ролям, что и сейчас (без расширения прав). Тип возврата меняется → нужно `DROP FUNCTION ... CASCADE` и пересоздать; зависимостей на эти функции в БД нет, только клиент.
+Новые/изменённые поля в SELECT:
 
-### Шаг 2. UI: 2 новых столбца + сортировка
+- `access_started_at` — fallback-цепочка:
+  1. `MIN(subscriptions_v2.access_start_at)` по `product_id ∈ club_products`
+  2. иначе `MIN(orders_v2.paid_at)` по `user_id` где `product_id ∈ club_products AND status='paid'`
+  3. иначе `MIN(entitlements.created_at)` по `product_id ∈ club_products AND status IN ('active','expired')`
+  4. иначе `joined_chat_at`
+- `access_ended_at` — **только для статусов `ok`/`no_access**` (т.е. человек ещё формально с правом или истёк по сроку, но не кикнут):
+  - `MAX(entitlements.expires_at)` или `MAX(subscriptions_v2.access_end_at)`, NULL если есть `> now()` валидная запись.
+- `kicked_at` — **новое поле**, только для `access_status='removed'`:
+  1. `MAX(audit_logs.created_at)` где `action IN ('telegram.autokick.attempt','AUTOKICK','telegram.kick.manual')` и `meta->>'tg_user_id' = telegram_user_id::text` и (`meta->>'club_id' = club.id::text` ИЛИ NULL)
+  2. иначе `updated_at` записи `telegram_club_members` (как пессимистичный fallback)
+- `is_commercial_orphan` — **новое булево**: `TRUE` если:
+  - НЕТ ни одной строки в `orders_v2 (status='paid', product_id ∈ club_products)`
+  - И НЕТ ни одной строки в `subscriptions_v2 (product_id ∈ club_products)`
+  - И НЕТ ни одной строки в `entitlements (product_id ∈ club_products)`
+  - И `joined_chat_at IS NULL`
+  Это и есть «мусор»: исторические записи без коммерческой связи с клубом.
 
-Файл: `src/pages/admin/TelegramClubMembers.tsx`.
+**Шаг 2. UI `src/pages/admin/TelegramClubMembers.tsx`:**
 
-- Добавляю в `<TableHeader>` две колонки **«Доступ с»** и **«Доступ до»**, для удалённых вторая показывает дату кика по факту = `access_ended_at`. Формат `dd.MM.yyyy`, моноширинно (`tabular-nums`), пусто → «—».
-- Расширяю TypeScript-тип в `src/hooks/useTelegramIntegration.tsx` (`ClubMemberEnriched`) на `access_started_at` / `access_ended_at`.
-- Добавляю клиентскую сортировку (без серверной — данные уже в памяти):
-  - локальный state `sortKey` ∈ `telegram_name | crm_name | access_status | chat_channel | access_started_at | access_ended_at`, `sortDir` ∈ `asc | desc`;
-  - заголовки этих колонок становятся кликабельными (`Button` `variant="ghost"` с иконкой `ArrowUpDown` / `ArrowUp` / `ArrowDown` из lucide — уже используется в проекте);
-  - по умолчанию во вкладке «Удалённые» — сортировка по `access_ended_at DESC` (чтобы свежие кики были сверху, как просил пользователь);
-  - сортировка применяется в существующем `filteredMembers` через `useMemo`.
-- Никакой логики доступа/кика не меняю, только отображение и сортировка.
+1. Колонка «Доступ до» переименовать → **«Доступ до / Кик»**:
+  - `access_status ∈ ('ok','no_access')` → показываем `access_ended_at` (или «—» если NULL = активный).
+  - `access_status='removed'` → показываем `kicked_at` с лейблом «кикнут dd.MM.yyyy» (другой цвет — `text-muted-foreground`).
+2. «Доступ с» — без изменений в UI, но теперь заполнится у большинства за счёт fallback-chain.
+3. Сортировка по этой колонке: использовать COALESCE(`kicked_at`, `access_ended_at`) для всех вкладок.
+4. На вкладке **«Удалённые»** добавить переключатель **«Скрыть мусорные»** (по умолчанию ВКЛ) — фильтр `is_commercial_orphan === false`. Счётчик скрытых показывать рядом: «скрыто N мусорных».
+5. CSV-экспорт: добавить колонку `kicked_at`, `is_commercial_orphan`.
 
-### Шаг 3. Фикс «Доступ активен» у удалённого (Инна Грудецкая и ещё 2 случая)
+**Шаг 3. (опционально, не блокирует) «Корзина мусорных»** — отдельный экран позже. Сейчас только фильтр-тогглер.
 
-**Диагноз** (подтверждён данными из БД):
+**Шаг 4. Никаких ручных DELETE** из `telegram_club_members`. «Удалить» в смысле пользователя = «не показывать» (фильтр). Если позже нужно физически архивировать — отдельной задачей через soft-delete колонку.
 
-- У Инны (`profile_id=006b96cc-...`), Юлии Рабчевской и Татьяны Ярошевич в `telegram_club_members.access_status='ok'`, хотя последний валидный `entitlement` истёк (06/16/18.06.2026), а в `subscriptions_v2` только зомби-`past_due` без `access_end_at`.
-- Колонка `access_status` в `telegram_club_members` пишется фоновым резолвером (`telegram-members-sync` / `entitlement-sync-engine`). Он трактует `subscriptions_v2.status='past_due'` с `access_end_at IS NULL` как «доступ ещё есть» и оставляет `ok`. Поэтому автокик (`telegram_clubs.autokick_no_access=true`) их пропускает, а UI рисует жёлтый бейдж «Доступ активен» хотя пользователь уже удалён вручную (`in_chat=false`, `in_channel=false` после ручного кика, но `access_status` остался `ok`).
+### Не делаем
 
-**Фикс — два уровня, оба маленькие и канонические:**
+- Не правим backend autokick / валидатор (это отдельная задача из предыдущего цикла, уже частично закрыта).
+- Не трогаем `grant-access-for-order` / canonical write-path.
+- Не удаляем строки из `telegram_club_members` физически.
+- Не меняем CSV-экспорт прошлой версии — только дополняем.
 
-1. **UI guard в `getAccessStatusBadge`** (`TelegramClubMembers.tsx`, строки ~723-746): если `has_active_access === false` ИЛИ (`member.in_chat === false && member.in_channel === false && member.access_status !== 'no_access' && member.access_status !== 'removed'`) — никогда не показывать зелёный/жёлтый «Доступ активен», вместо этого «Доступ истёк» (серый). Это уберёт визуальную ложь мгновенно, без миграций.
-2. **Резолвер `access_status`** — добавляю условие: подписка в `past_due` НЕ считается «есть доступ», если по продукту нет валидного entitlement (`expires_at > now()`). Точечная правка в edge-функции, которая обновляет `telegram_club_members.access_status` (найду: `telegram-members-sync` / nightly reconcile из memory *Nightly Access Reconcile*). После правки запускаю однократный resync для клуба `fa547c41-...`, чтобы Инну и остальных «зомби» резолвер пометил `no_access` и `autokick_no_access` их кикнул сам.
+### DoD
 
-Это согласовано с memory **Telegram Renewal Sync Standard v2**, **Club Status Integrity**, **Canonical Telegram Grant Write-Path** — никаких ручных DML по `telegram_club_members`, всё через канонический резолвер.
+1. У Julia Gr (`@lalalajulia`) в колонке «Доступ до / Кик» — реальная дата кика (например 2026-06-19), не 11.07.2026.
+2. У всех `access_status='removed'` дата = `kicked_at` (из audit или updated_at), не из коммерческого окна.
+3. У Inna Grudetskaya / Татьяны Ярошевич / Юлии Рабчевской на вкладке «Удалённые» отображается реальная дата удаления, сортировка DESC ставит свежие сверху.
+4. На вкладке «Удалённые» по умолчанию скрыты Анна Фёдорова, Елена Сивицкая, Никита Рохмистров и аналогичные мусорные. Тогглер «Показать мусорные» возвращает их.
+5. «Доступ с» заполнен у всех, у кого был хотя бы один paid `orders_v2` по продуктам клуба.
+6. RPC возвращают новые поля; типы Supabase регенерированы; UI типизирован.
 
-## 3. Технические детали
+### Файлы
 
-- **Миграция:** обе RPC `SECURITY DEFINER`, `SET search_path = public`. JOIN-ы лёгкие (по `product_club_mappings.club_id` → `product_id`, далее `subscriptions_v2.user_id = m.auth_user_id AND product_id=...` и `entitlements.user_id = m.auth_user_id AND product_id=...`). Под индекс уже попадает (есть индексы по `user_id, product_id`).
-- **Тип `ClubMemberEnriched`** в `useTelegramIntegration.tsx` — расширяю; типы Supabase в `src/integrations/supabase/types.ts` обновятся автоматически после миграции.
-- **Сортировка** клиентская (`useMemo`), не ломает существующий поиск/фильтры.
-- **Регрессии:** не меняю поведение действий (кик, redeem, refresh), не трогаю tabs counts (они уже считаются по `has_active_access` и `access_status`).
-- **Smoke-test после деплоя:** открываем вкладку «Удалённые» → должны появиться 2 столбца, по умолчанию отсортировано по «Доступ до» DESC; у Инны не должно быть жёлтого «Доступ активен» (UI-guard); после ручного перезапуска members-sync — её `access_status` должен стать `no_access` и автокик отработает на следующих зомби автоматически.
-
-## 4. Что НЕ делаем
-
-- Не создаём отдельных файлов (CSV/Excel) — всё в существующей таблице.
-- Не добавляем новых таблиц/колонок в `telegram_club_members`.
-- Не трогаем canonical write-path для grant/revoke (`grant-access-for-order`, `telegram-grant-access`, `telegram-revoke-access`).
-- Не правим логику воронок/orders/subscriptions.
-
-## DoD
-
-- [ ] Миграция RPC применена, обе функции возвращают `access_started_at` / `access_ended_at`.
-- [ ] В `/admin/integrations/telegram/clubs/:id/members` появились 2 столбца с датами, отображаются на всех вкладках.
-- [ ] Сортировка по 6 колонкам работает; во «Удалённых» по умолчанию `access_ended_at DESC`.
-- [ ] У Инны Грудецкой (и любого «зомби past_due без entitlement») больше не отображается «Доступ активен».
-- [ ] После resync-а клуба `Gorbova Club` `telegram_club_members.access_status` у трёх «зомби» переключается на `no_access`, и автокик их обрабатывает в следующем цикле (cron 60 мин).
-- [ ] Никаких ручных DML по `telegram_club_members`, никаких новых ENV/секретов.
+- Новая миграция `…_club_members_kicked_at_and_orphan.sql` — `v_club_members_enriched`, обе RPC.
+- `src/pages/admin/TelegramClubMembers.tsx` — колонка/фильтр/сортировка/CSV.
+- `src/hooks/useTelegramIntegration.tsx` — расширение типа `ClubMemberEnriched` (`kicked_at`, `is_commercial_orphan`).
