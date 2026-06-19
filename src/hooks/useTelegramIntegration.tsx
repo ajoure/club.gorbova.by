@@ -574,8 +574,9 @@ export interface EnrichedClubMember extends TelegramClubMember {
   // Access window (derived from subscriptions_v2 + entitlements via product_club_mappings)
   access_started_at: string | null;
   access_ended_at: string | null;
-  // v4: реальная дата кика (для access_status='removed'); commercial orphan flag
+  // v5: реальная дата кика (для access_status='removed') строго из audit_logs; commercial orphan flag
   kicked_at: string | null;
+  kicked_at_source: 'audit_log' | 'unknown' | null;
   is_commercial_orphan: boolean;
 }
 
