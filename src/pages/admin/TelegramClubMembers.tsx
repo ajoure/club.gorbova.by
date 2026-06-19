@@ -170,7 +170,7 @@ export default function TelegramClubMembers() {
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
 
   // Sorting state for the members table
-  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at';
+  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at' | 'kicked_at';
   type SortDir = 'asc' | 'desc';
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -291,13 +291,12 @@ export default function TelegramClubMembers() {
   const counts = useMemo(() => {
     if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
 
-    // v7: removed-badge точно по финальному фильтру вкладки
-    // (removed AND !in_any AND !admin AND has_commercial_history AND !has_current_commercial_access; orphan = !has_commercial_history скрывается по hideOrphans)
+    // v8: removed-badge точно по финальному фильтру вкладки (без access_status — он ломается у зомби)
     const removedVisible = (members || []).filter(m => {
-      if (m.access_status !== 'removed' || m.in_any) return false;
+      if (m.in_any) return false;
       if (adminTelegramIds.has(m.telegram_user_id)) return false;
+      if (!m.has_commercial_history) return !hideOrphans;
       if (m.has_current_commercial_access) return false;
-      if (hideOrphans && !m.has_commercial_history) return false;
       return true;
     }).length;
 
@@ -333,11 +332,11 @@ export default function TelegramClubMembers() {
           // PATCH: exclude admins, anti-contradiction: violator can't have valid access
           return member.is_violator && !isAdmin;
         case 'removed':
-          // v7: фильтр «Удалённые» — был коммерческим клиентом, сейчас доступа нет, физически не в клубе
-          // has_active_access НЕ используется (он ломался у зомби). Только has_commercial_history + has_current_commercial_access.
-          if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
+          // v8: «Удалённые» = был платным клиентом, сейчас коммерческого доступа нет,
+          // физически не в чате/канале. access_status НЕ используется (зомби с has_active_access=true).
+          if (member.in_any || isAdmin) return false;
+          if (!member.has_commercial_history) return !hideOrphans; // мусорные — только под toggle
           if (member.has_current_commercial_access) return false;
-          if (hideOrphans && !member.has_commercial_history) return false;
           return true;
         case 'admins':
           return isAdmin;
@@ -390,8 +389,11 @@ export default function TelegramClubMembers() {
           r = cmpDate(a.access_started_at, b.access_started_at);
           break;
         case 'access_ended_at':
-          // v4: для removed используем kicked_at, иначе access_ended_at
-          r = cmpDate(a.kicked_at ?? a.access_ended_at, b.kicked_at ?? b.access_ended_at);
+          // v8: сортировать по тому, что отображается в колонке («Доступ до» = commercial_ended_at)
+          r = cmpDate(a.commercial_ended_at, b.commercial_ended_at);
+          break;
+        case 'kicked_at':
+          r = cmpDate(a.kicked_at, b.kicked_at);
           break;
       }
       return r * dirMul;
@@ -1366,7 +1368,11 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     {activeTab === 'removed' && (
                       <>
-                        <TableHead className="whitespace-nowrap">Кикнут</TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          <button onClick={() => toggleSort('kicked_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                            Кикнут <SortIcon k="kicked_at" />
+                          </button>
+                        </TableHead>
                         <TableHead className="whitespace-nowrap text-right">Сверх доступа</TableHead>
                       </>
                     )}
