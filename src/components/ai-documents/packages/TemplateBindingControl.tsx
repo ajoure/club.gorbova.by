@@ -296,31 +296,25 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                 <div className="flex items-center gap-2 pl-7 text-xs">
                   <span className="text-muted-foreground shrink-0">Режим генерации:</span>
                   <Select
-                    value={b.generation_mode}
+                    value={isPerRole ? "per_role_person" : "single"}
                     disabled={saving}
                     onValueChange={(v) => {
                       const next = v as "single" | "per_role_person";
-                      if (next === b.generation_mode) return;
                       if (next === "single") {
+                        setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                        if (b.generation_mode === "single") return;
                         updateModeMutation.mutate({
                           itemId: b.id,
                           generation_mode: "single",
                           repeat_role_catalog_id: null,
                         });
                       } else {
-                        // per_role_person: требуем выбора роли, поэтому не сохраняем до выбора.
-                        // Локально переключаем в селекте через optimistic? Нет — оставляем сохранение на выбор роли.
                         if (noRoles) {
                           toast.error("Сначала добавьте роль пакета, затем выберите её как источник повторения.");
                           return;
                         }
-                        // Если есть хотя бы одна роль — мгновенно сохраняем с первой как дефолтом? Нет, безопаснее открыть селектор без коммита.
-                        // Чтобы UI отразил выбор и одновременно соблюдал триггер: коммитим сразу с первой активной ролью.
-                        updateModeMutation.mutate({
-                          itemId: b.id,
-                          generation_mode: "per_role_person",
-                          repeat_role_catalog_id: roles[0].id,
-                        });
+                        // НЕ сохраняем без явного выбора роли — открываем селектор локально.
+                        setPreviewPerRole((s) => ({ ...s, [b.id]: true }));
                       }
                     }}
                   >
