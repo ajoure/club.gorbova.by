@@ -151,6 +151,14 @@ export function PackageDocumentCard({
   // Локальный preview-режим: позволяет показать селектор роли до записи в БД,
   // пока пользователь не выбрал роль-источник.
   const [previewPerRole, setPreviewPerRole] = useState(false);
+  // PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1: как только persisted значение
+  // приходит из БД per_role_person — снимаем локальный preview, чтобы он
+  // не оставался в висячем состоянии. НЕ сбрасываем persisted значение здесь.
+  useEffect(() => {
+    if (persistedMode === "per_role_person" && previewPerRole) {
+      setPreviewPerRole(false);
+    }
+  }, [persistedMode, previewPerRole]);
   const effectiveMode: "single" | "per_role_person" =
     persistedMode === "per_role_person" || previewPerRole ? "per_role_person" : "single";
   const genMode = usePackageItemGenerationMode(packageTemplateId);
@@ -159,6 +167,7 @@ export function PackageDocumentCard({
     [genMode.activeRoles, persistedRepeatRoleId],
   );
   const isSavingMode = genMode.isSaving && genMode.savingItemId === item.id;
+
 
   // role draft: null до гидратации (Stage 5 требование #4)
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
@@ -581,17 +590,24 @@ export function PackageDocumentCard({
                     <Select
                       value={persistedRepeatRoleId ?? ""}
                       disabled={isSavingMode}
-                      onValueChange={(v) => {
+                      onValueChange={async (v) => {
                         if (!v) return;
-                        genMode.update({
-                          itemId: item.id,
-                          packageTemplateId,
-                          generation_mode: "per_role_person",
-                          repeat_role_catalog_id: v,
-                        });
-                        setPreviewPerRole(false);
+                        try {
+                          await genMode.updateAsync({
+                            itemId: item.id,
+                            packageTemplateId,
+                            generation_mode: "per_role_person",
+                            repeat_role_catalog_id: v,
+                          });
+                          // Снимаем preview ТОЛЬКО после подтверждённого success.
+                          setPreviewPerRole(false);
+                        } catch {
+                          // toast уже показал onError; preview оставляем, чтобы
+                          // селектор роли остался виден и пользователь мог повторить.
+                        }
                       }}
                     >
+
                       <SelectTrigger className="h-8 text-[11px]">
                         <SelectValue placeholder="Выберите роль…" />
                       </SelectTrigger>
