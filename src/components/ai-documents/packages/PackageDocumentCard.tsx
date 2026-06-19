@@ -280,9 +280,13 @@ export function PackageDocumentCard({
           : "text-muted-foreground",
       )}
     >
-      {itemProgress.allRequiredFilled
-        ? <CheckCircle2 className="h-3 w-3" />
-        : <Circle className="h-3 w-3" />}
+      {valuesFetching ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : itemProgress.allRequiredFilled ? (
+        <CheckCircle2 className="h-3 w-3" />
+      ) : (
+        <Circle className="h-3 w-3" />
+      )}
       {itemProgress.filled}/{itemProgress.total} полей
     </Badge>
   ) : null;
