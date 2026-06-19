@@ -1,182 +1,224 @@
 да, согласен, с учетом правок:
 
-1. **Не фиксировать “ровно 1 follow-up select” как обязательный PASS-критерий.** После Stage 0.2 может быть:
+1. **Название режима лучше оставить единым с ранее утверждённой терминологией.**  
+Сейчас в плане указано:
   &nbsp;
   ```text
-  1 × save_session_document_atomic
-  + refetch package-session-values
-  + возможные lightweight refetch/readiness queries
+  generation_mode IN ('single','per_role')
   ```
-  PASS-критерий: нет второго write/RPC-save и нет лишних write-path, а не строго один select.
-2. **Network-критерий сформулировать так:**
-  &nbsp;
+  Ранее мы называли режим:
   ```text
-  1 × POST /rpc/save_session_document_atomic
-  0 × отдельный field-save
-  0 × отдельный role-save
-  0 × write-RPC для соседних items
+  per_role_person
   ```
-  Read-only refetch-запросы допустимы, если они не создают N+1-loop и не пишут данные.
-3. **Для combined field+role использовать только активное detected-поле.** Не использовать `pf-000002 / UAT B5` и любые archived fields. В proof явно указать:
-4. **В role desired-state передать полный актуальный набор управляемых ролей item.** Не отправлять только изменённую роль, если RPC трактует массив как desired-state. Иначе тест может искусственно удалить роли и исказить proof.
-5. **Проверку “ассайнменты, не вошедшие в desired-state, стали inactive” делать только если это намеренная часть сценария.** Для основного combined proof лучше:
-  - изменить/добавить одну роль;
-  - сохранить остальные роли в desired-state;
-  - проверить, что непредназначенных удалений нет.
-  Отдельный desired-state delete уже был доказан раньше.
-6. **Audit action проверить по фактическому имени.** В прошлых отчётах встречалось:
-  &nbsp;
+  Чтобы смысл был однозначный, лучше использовать:
   ```text
-  package_document_atomic_save
+  single
+  per_role_person
   ```
-  Убедиться, что в SQL используется точное значение action, которое реально пишет RPC.
-7. **Rollback negative-сценарии сравнивать полным snapshot, а не только COUNT.** До/после:
-  - значения полей;
-  - `updated_at`;
-  - `is_active`;
-  - `person_id`;
-  - `metadata`;
-  - audit delta.
-8. **Не использовать** `gen_random_uuid()` **в DevTools JS как literal без подготовки.** Для stale version можно передать заранее заданный валидный UUID:
+  `per_role` слишком общий: потом может быть генерация по роли юрлица, по группе, по подписанту и т.п.
+2. **В Stage A не добавлять генераторную семантику в код, но сразу заложить точное название колонок.**
   &nbsp;
+  Итоговая схема:
+3. **Триггер должен проверять не только пакет, но и активность роли.**
+  &nbsp;
+  При `generation_mode='per_role_person'`:
+  - `repeat_role_catalog_id IS NOT NULL`;
+  - роль существует;
+  - `role.package_template_id = item.package_template_id`;
+  - если в `document_package_role_catalog` есть `is_active`, роль должна быть активной.
+  При `generation_mode='single'`:
+  - `repeat_role_catalog_id IS NULL`.
+4. **UI при переключении обратно в** `single` **обязан очищать** `repeat_role_catalog_id`**.**
+  &nbsp;
+  Нельзя оставлять скрытое значение роли при режиме `single`, иначе потом генератор или UI могут ошибочно интерпретировать item как частично настроенный repeat-документ.
+5. **В списке ролей показывать только роли текущего package template.**
+  &nbsp;
+  Не брать роли из session assignments и не брать роли других пакетов. Источник для select:
+6. **UI должен поддерживать сценарий “сначала шаблон, потом роль”.**
+  &nbsp;
+  Если ролей ещё нет:
+  - режим `per_role_person` можно показать disabled;
+  - рядом текст:
   ```text
-  00000000-0000-4000-8000-000000000001
+  Сначала добавьте роль пакета, затем выберите её как источник повторения.
   ```
-  или получить UUID SQL-запросом до теста.
-9. **Проверить UI-state после success.** Помимо БД:
-  - dirty badge исчез;
-  - кнопка снова disabled;
-  - `X/Y` обновился без refresh;
-  - role badge обновился;
-  - success-toast один.
-10. **После PASS этого stage сразу переходить к repeatable-by-role PATCH.** Не возвращаться к уже закрытым Stage 0.1/0.2, если нет нового runtime-факта.
-11. &nbsp;
-12. План: STAGE-5 — VERIFY COMBINED FIELD+ROLE SINGLE-RPC
+  После создания роли item можно открыть и выбрать её без пересоздания документа.
+7. **Сохранение item-настроек должно быть audit-able.**
+  Если в проекте уже есть audit для изменения `document_package_template_items`, использовать его. Если нет — хотя бы в proof показать SQL before/after. Новый audit-механизм в Stage A не создавать.
+8. **RLS/права проверить отдельно.**
+  В DoD добавить:
+  - super_admin/admin может изменить `generation_mode`;
+  - обычный клиент не может менять template item settings;
+  - клиентская анкета только читает этот режим.
+9. **Не использовать** `document_package_session_participants` **как источник repeat-получателей.**
+  &nbsp;
+  Правильно, что он указан как session-level. В proof отдельно зафиксировать:
+10. **В Stage A proof добавить проверку обратимости.**
 
-## Контекст
+Проверить:
 
-RPC `public.save_session_document_atomic(_session_id, _package_template_item_id, _field_values, _role_assignments, _expected_template_version_id)` уже существует и используется через `useAtomicDocumentSave` в `PackageDocumentCard.handleSaveAll`. Stage 5 — это **доказательство контракта**, а не новая реализация. Никаких миграций и кода не меняем.
-
-## Контракт, который нужно подтвердить
-
-Один вызов `save_session_document_atomic` за одну транзакцию:
-
-1. Пишет в `document_package_session_field_values` только те field_values, чьи `field_catalog_id` входят в `detected_tokens` активной версии целевого item (per-item, `package_template_item_id = _package_template_item_id`).
-2. Применяет к `document_package_item_role_assignments` полный desired-state управляемых ролей этого item:
-  - UPSERT новых/изменённых;
-  - soft delete (`is_active=false`) для активных ассайнментов, не вошедших в desired-state.
-3. Пишет ровно 1 запись в `audit_logs` с `action='package_document_atomic_save'`, `entity_id=_package_template_item_id`, `meta` с дельтой (`written_fields`, `written_roles`, `deleted_roles`, `template_version_id`).
-4. Не трогает:
-  - field_values других item'ов (per-item `package_template_item_id` строго `<>`);
-  - session-level/orphan-значения (`package_template_item_id IS NULL`);
-  - role assignments других item'ов;
-  - другие сессии того же пакета.
-5. Откат при первой ошибке (FOUND/EXCEPTION) — частичных записей нет.
-
-## Метод проверки (read-only + один контрольный save через UI)
-
-### Baseline snapshot (psql)
-
-Снять до save для пакета «Годовое собрание» и целевого item `f9962f6b-...` (1. Приказ):
-
-```sql
--- A. Per-item values этого item
-SELECT field_catalog_id, value_text, value_number, value_date, value_datetime, value_time, updated_at
-FROM document_package_session_field_values
-WHERE session_id = :sid AND package_template_item_id = :item_id
-ORDER BY field_catalog_id;
-
--- B. Per-item values соседних items (febd1821-..., 63bb4030-...)
-SELECT package_template_item_id, field_catalog_id, value_text, value_number, value_date, updated_at
-FROM document_package_session_field_values
-WHERE session_id = :sid AND package_template_item_id <> :item_id;
-
--- C. Session-level / orphan values (item_id IS NULL)
-SELECT field_catalog_id, value_text, value_number, value_date, updated_at
-FROM document_package_session_field_values
-WHERE session_id = :sid AND package_template_item_id IS NULL;
-
--- D. Role assignments этого item
-SELECT id, role_catalog_id, person_id, metadata->>'position' AS pos, sort_order, is_active, updated_at
-FROM document_package_item_role_assignments
-WHERE package_session_id = :sid AND package_template_item_id = :item_id
-ORDER BY sort_order, id;
-
--- E. Role assignments соседних items
-SELECT package_template_item_id, role_catalog_id, person_id, is_active, updated_at
-FROM document_package_item_role_assignments
-WHERE package_session_id = :sid AND package_template_item_id <> :item_id;
-
--- F. Последние записи audit для этого item
-SELECT id, action, entity_id, created_at, meta
-FROM audit_logs
-WHERE action = 'package_document_atomic_save' AND entity_id = :item_id
-ORDER BY created_at DESC LIMIT 5;
+```text
+single/null
+→ per_role_person + uchastnik
+→ single/null
 ```
 
-### Контрольное действие
+После возврата в `single` в БД должно быть:
 
-В UI на `/admin/documents` открыть карточку «1. Приказ…», изменить:
+```text
+generation_mode = 'single'
+repeat_role_catalog_id IS NULL
+```
 
-- одно pf-поле (например, `pf-000003` «Дата приказа» → новая дата);
-- одно role assignment (изменить person для существующей роли ИЛИ добавить новое назначение).
+11. **Не утверждать “нулевой regression risk”, лучше “минимальный regression risk”.**
 
-Нажать «Сохранить документ». Зафиксировать через DevTools Network:
+Схема add-only, но типы Supabase и UI могут затронуть места, где item ожидается старой формы. Поэтому обязательны:
 
-- ровно 1 запрос `POST .../rpc/save_session_document_atomic`;
-- ровно 1 follow-up `select document_package_session_field_values` (active refetch из Stage 0.2);
-- никаких прочих rpc/select для других items.
+- `typecheck`;
+- поиск мест использования `document_package_template_items`;
+- smoke открытия существующих пакетов.
 
-### After snapshot
+12. **Stage A не должен блокировать текущую генерацию.**
 
-Повторить A–F. Проверки:
+После миграции, но до Stage B/C:
 
+- все существующие item имеют `single`;
+- текущий генератор игнорирует новые поля;
+- пакет «Годовое собрание» генерируется как раньше.
 
-| #   | Проверка                                                                                                                                                              | Ожидание |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 1   | A: ровно 1 строка изменилась (новый `updated_at`, value = новое значение).                                                                                            | passed   |
-| 2   | A: остальные 6 строк item имеют `updated_at` без изменений.                                                                                                           | passed   |
-| 3   | D: изменённый ассайнмент имеет новый `updated_at`/`person_id`; ассайнменты, не вошедшие в desired-state, переключились в `is_active=false`; новые — `is_active=true`. | passed   |
-| 4   | B: ни одна строка соседних items не изменилась (`updated_at` идентичен).                                                                                              | passed   |
-| 5   | C: orphan/session-level (`item_id IS NULL`) — `updated_at` идентичен.                                                                                                 | passed   |
-| 6   | E: ассайнменты соседних items — `updated_at` и `is_active` идентичны.                                                                                                 | passed   |
-| 7   | F: появилась ровно 1 новая запись `package_document_atomic_save` с `meta.written_fields=1`, `meta.written_roles>=1`, `entity_id=:item_id`.                            | passed   |
-| 8   | Бейдж X/Y и подсветка required-empty (Stage 0.2) переключились без ручного refresh.                                                                                   | passed   |
+Это нужно явно проверить.
 
+13. **В proof добавить список изменённых файлов.**
 
-### Отрицательные сценарии (read-only от UI; psql проверка побочных эффектов)
+Минимум:
 
-1. Stale version: передать `_expected_template_version_id = gen_random_uuid()` — RPC должен поднять `stale_template_version`, ни одной строки в A/D/F не появилось.
-2. Person outside owner: указать `person_id` чужого профиля — `person_not_accessible` / `person_outside_session_owner`, никаких частичных записей.
-3. Inactive role: указать `role_catalog_id` неактивной роли — соответствующая ошибка, без записи.
+```text
+migration file
+PackageAdminPanel / item settings component
+Supabase generated types
+proof file
+```
 
-Все три выполняем через скриптовый rpc-вызов в DevTools console (await supabase.rpc(...)) и сверяем snapshot — никаких миграций, никакого нового UI.
+После этих правок Stage A можно выполнять.
 
-## Изменения в коде
+&nbsp;
 
-Никаких. Stage 5 — только верификация и proof.
+План: PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 — Stage A (Discovery + Schema)
 
-## Proof
+## 1. Проблема
 
-Создать `.lovable/proofs/atomic_save_combined_field_role_v1.md`:
+Документы пакета («Извещение», «Доверенность» и т.п.) сейчас генерируются строго 1 раз на item. Бизнес-сценарий «Годовое собрание» требует, чтобы один и тот же template_item раскрывался в N экземпляров по числу назначений конкретной роли (например, по каждому «Участнику» — отдельное извещение). На текущей схеме это невозможно: нет ни признака режима генерации у item, ни ссылки на роль-источник повторения, ни recipient-контекста.
 
-1. Фикстура: session_id, item_id (Приказ), соседние item_ids, выбранные field/role для контроля.
-2. Snapshots A–F до и после (вырезки psql).
-3. Network лог (1×rpc + 1×select).
-4. Audit запись (id, meta).
-5. Таблица проверок 1–8 со статусом.
-6. 3 отрицательных сценария с RPC-ответом и snapshot-дельтой = 0.
-7. Ссылка на код: `useAtomicDocumentSave`, `save_session_document_atomic`, `PackageDocumentCard.handleSaveAll`.
+## 2. Диагностика (factual)
 
-## DoD
+Проверено через information_schema и БД:
 
-- ✅ Контракт (1 вызов → ровно поле + ровно роль + ровно 1 audit, соседи и orphan не тронуты) подтверждён живыми snapshots.
-- ✅ Отрицательные кейсы возвращают ошибку и не оставляют частичных записей.
-- ✅ Proof опубликован.
-- После закрытия Stage 5 — стартует основной `PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1`.
+- `document_package_template_items` (7 колонок): `id, package_template_id, template_id, sort_order, is_required, title_override, created_at`. Полей `metadata`, `generation_mode`, `repeat_role_catalog_id` НЕТ.
+- `document_package_role_catalog` существует, ключ — `id` (UUID), скоуп — `package_template_id`. Для пакета «Годовое собрание» уже заведены роли `revizor`, `uchastnik`.
+- `document_package_item_role_assignments` существует, хранит desired-state ролей per item (`package_session_id`, `package_template_item_id`, `role_catalog_id`, `person_id`, `is_active`, `sort_order`, `metadata`). Stage 5 подтвердил контракт `save_session_document_atomic`.
+- `document_package_session_participants` — session-level участники (`role_key`, `role_catalog_id`, `person_id/legal_entity_id`). Это session-scope, не item-scope.
+- `ai_generated_documents` — единственный SoT сгенерированных файлов (Document File Name Template / Sprint 3K / 3H-fix уже на этой таблице).
 
-## Out of scope
+Дублей generation_mode/repeat_* в schema, RPC, edge functions и UI не найдено (`rg` по проекту).
 
-- Любые миграции / новые RPC / изменения схемы.
-- Refactor `useAtomicDocumentSave` / `PackageDocumentCard`.
-- Repeatable-by-role логика — отдельный PATCH после закрытия Stage 5.
+## 3. Предлагаемое решение (только Stage A)
+
+Stage A покрывает ТОЛЬКО Discovery + Schema. Recipient-resolver, генератор и retro-fix — отдельные стадии этого же PATCH (B/C/D), они описаны ниже только как scope-references, кода в Stage A не меняем.
+
+### 3.1. Миграция (schema-only, add-only)
+
+Добавить к `document_package_template_items` две колонки:
+
+- `generation_mode text NOT NULL DEFAULT 'single'` с CHECK `generation_mode IN ('single','per_role')`.
+- `repeat_role_catalog_id uuid NULL` с FK → `document_package_role_catalog(id) ON DELETE RESTRICT`.
+
+Constraint целостности (триггер, не CHECK — ссылается на другую таблицу):
+
+- При `generation_mode='per_role'`: `repeat_role_catalog_id` обязателен и должен принадлежать тому же `package_template_id`, что и item.
+- При `generation_mode='single'`: `repeat_role_catalog_id` должен быть `NULL`.
+
+Существующие 100% строк остаются `'single' + NULL` — поведение не меняется. Никаких backfill.
+
+### 3.2. UI-настройка у уже добавленного документа пакета
+
+Точка входа: админка пакета (`PackageAdminPanel` / редактирование item-а template).
+
+- Добавить в форму item-а селектор «Режим генерации»: «Один документ» (single) / «По одному на роль» (per_role).
+- При выборе `per_role` появляется обязательный селектор «Роль-источник повторения» — список из `document_package_role_catalog` по текущему `package_template_id` (только `is_active=true`).
+- Сабмит обновляет ровно эти 2 колонки через существующий update-канал items.
+- Read-only визуализация в списке item-ов: badge `× по роли «<label>»` для per_role.
+
+### 3.3. Что НЕ делаем в Stage A
+
+- Не трогаем `save_session_document_atomic` (Stage 5 PASS).
+- Не меняем `document_package_session_field_values`, `document_package_item_role_assignments` — их схема уже совместима.
+- Не реализуем recipient-resolver, генератор N документов, ретро-генерацию по уже сохранённым ассайнментам, маркап шаблонов с recipient-токенами — это Stage B/C/D.
+- Не плодим новых таблиц/RPC/enum (соблюдено правило 9/15 ENGINEERING_RULES).
+
+## 4. Изменяемые компоненты
+
+Миграция:
+
+- `public.document_package_template_items` (+2 колонки, +1 trigger для cross-table constraint).
+
+Code (UI only):
+
+- `src/components/ai-documents/packages/PackageAdminPanel.tsx` (или дочерняя форма item-а — уточняется при чтении файла перед Stage A.execute).
+- `src/integrations/supabase/types.ts` — auto-regen после миграции.
+
+Edge functions: нет.
+RPC: нет.
+Cron: нет.
+
+## 5. Что не будет изменено
+
+- `save_session_document_atomic` и его контракт.
+- Структура и поведение `document_package_item_role_assignments`, `document_package_session_field_values`.
+- Текущий `single`-флоу генерации (`ai-generate-document-package`, `canonical-document-generate-strict`) до Stage C.
+- Document File Name Template (Sprint 3K), package token aliases (3D), per-document questionnaires (3G/3H-fix) — все остаются как есть.
+
+## 6. Dry-run
+
+1. `SELECT count(*) FROM document_package_template_items;` — фиксируем N.
+2. На staging-копии (или в транзакции с ROLLBACK через psql) выполнить миграцию, проверить:
+  - все строки получили `generation_mode='single'`, `repeat_role_catalog_id IS NULL`;
+  - попытка `UPDATE ... SET generation_mode='per_role'` без `repeat_role_catalog_id` → trigger error;
+  - попытка указать `repeat_role_catalog_id` из чужого пакета → trigger error;
+  - попытка `single + repeat_role_catalog_id NOT NULL` → trigger error.
+3. UI: открыть item «1. Приказ…» пакета «Годовое собрание», переключить в `per_role` → выбрать роль `uchastnik` → сохранить → перечитать → проверить, что значение сохранилось; вернуть обратно в `single` (контроль обратимости).
+
+## 7. Execute
+
+1. Применить миграцию через `supabase--migration` (add column + check + FK + trigger). После approve регенерируется types.
+2. Доработать UI item-формы (только React, без бизнес-логики генерации).
+3. Smoke: открыть `/admin/documents`, проверить отображение badge у переключённого item-а и отсутствие регрессии в существующих single-item.
+
+## 8. STOP-guards
+
+- Найдено существующее поле/флаг с эквивалентным смыслом (`metadata.generation_mode`, кастомный JSONB-флаг и т.п.) — остановиться, переиспользовать.
+- `document_package_template_items` оказывается партиционирована/имеет триггеры, ломающиеся от ALTER — остановиться, переоформить.
+- В коде обнаруживается активный consumer, ожидающий ровно 7 колонок (например, явный SELECT-list или generated types, ломающие сборку) — зафиксировать и поправить точечно.
+- На staging dry-run миграция фейлится или меняет >0 существующих строк по факту — откат, новый план.
+
+## 9. DoD
+
+- В `document_package_template_items` присутствуют `generation_mode` (NOT NULL DEFAULT 'single', CHECK) и `repeat_role_catalog_id` (NULL, FK).
+- Триггер cross-table consistency активен и покрыт 3 negative-тестами (см. dry-run).
+- Все существующие items имеют `single`/`NULL`; ни один существующий генератор/UI-флоу не меняет поведение.
+- В админке пакета можно у конкретного item включить `per_role` и выбрать роль из каталога этого пакета; значение читается обратно без рефреша.
+- Никаких новых RPC/edge functions/cron/enum/таблиц не создано.
+- Proof-файл `.lovable/proofs/package_repeatable_documents_schema_v1.md`: миграция, SQL до/после, 3 negative-теста, UI-скрин/описание.
+
+## 10. Риски и зависимости
+
+- Регенерация `src/integrations/supabase/types.ts` после миграции — может потребоваться обновление мест, где тип item-а используется как литерал (низкий риск, add-only).
+- UI item-формы может быть размазана между несколькими компонентами — перед `execute` обязательно прочитать `PackageAdminPanel.tsx` и связанные диалоги (`TemplateBindingControl.tsx` и пр.) и выбрать единственную точку.
+- Recipient-resolver и генератор (Stage B/C) спроектированы так, чтобы читать новые колонки и НЕ зависеть от старого поведения single — но это валидируется на их собственных стадиях.
+
+## 11. Stage B/C/D (scope-reference, НЕ часть Stage A)
+
+- **B. Recipient context**: shared helper `resolvePerRoleRecipients(session_id, item_id)` → массив `{ role_assignment_id, person_id, sort_order }` из активных `document_package_item_role_assignments` по `repeat_role_catalog_id` item-а. Только чтение.
+- **C. Generator**: расширить `ai-generate-document-package` (и канонический `canonical-document-generate-strict`-вызов) ветвью `per_role`: для каждого recipient — отдельный `ai_generated_documents` с `meta.recipient.role_assignment_id`, snapshot `file_name_template`. Один item → N документов, идемпотентно по `(session_id, item_id, role_assignment_id)`.
+- **D. Retro**: при изменении desired-state ассайнментов per_role item-а — пересинхронизировать набор документов (новые → generate, удалённые → archive, без удаления файлов), всё через canonical write-path.
+
+Каждая из B/C/D оформляется отдельным планом «PATCH ... Stage B/…» после PASS текущего Stage A.

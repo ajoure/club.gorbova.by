@@ -43,6 +43,15 @@ interface BoundItem {
   sort_order: number;
   template_name: string;
   template_status: string;
+  generation_mode: "single" | "per_role_person";
+  repeat_role_catalog_id: string | null;
+}
+
+interface RoleOption {
+  id: string;
+  role_key: string;
+  label: string;
+  is_active: boolean;
 }
 
 const QK_BOUND = (pkgId: string | null) => ["pkg-bound-templates", pkgId];
@@ -58,7 +67,7 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
       if (!packageTemplateId) return [] as BoundItem[];
       const { data, error } = await supabase
         .from("document_package_template_items")
-        .select("id, template_id, sort_order")
+        .select("id, template_id, sort_order, generation_mode, repeat_role_catalog_id")
         .eq("package_template_id", packageTemplateId)
         .order("sort_order", { ascending: true });
       if (error) throw error;
@@ -79,10 +88,27 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
             template_name: t?.name ?? "—",
             template_status: t?.template_status ?? "—",
             template_deleted: !!t?.deleted_at,
+            generation_mode: (r.generation_mode ?? "single") as "single" | "per_role_person",
+            repeat_role_catalog_id: r.repeat_role_catalog_id ?? null,
           };
         })
         .filter((r: any) => !r.template_deleted) as BoundItem[];
+    },
+    enabled: !!packageTemplateId,
+  });
 
+  const rolesQuery = useQuery({
+    queryKey: ["pkg-roles-for-repeat", packageTemplateId],
+    queryFn: async () => {
+      if (!packageTemplateId) return [] as RoleOption[];
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select("id, role_key, label, is_active")
+        .eq("package_template_id", packageTemplateId)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as RoleOption[];
     },
     enabled: !!packageTemplateId,
   });
@@ -133,6 +159,28 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
       toast.success("Шаблон отвязан");
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  const updateModeMutation = useMutation({
+    mutationFn: async (input: {
+      itemId: string;
+      generation_mode: "single" | "per_role_person";
+      repeat_role_catalog_id: string | null;
+    }) => {
+      const { error } = await supabase
+        .from("document_package_template_items")
+        .update({
+          generation_mode: input.generation_mode,
+          repeat_role_catalog_id: input.repeat_role_catalog_id,
+        })
+        .eq("id", input.itemId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
+      toast.success("Режим генерации сохранён");
+    },
+    onError: (e: Error) => toast.error(`Не удалось сохранить режим: ${e.message}`),
   });
 
   const bound = boundQuery.data ?? [];
@@ -216,29 +264,125 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
         </div>
       ) : (
         <ul className="divide-y border rounded">
-          {bound.map((b) => (
-            <li key={b.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-              <Badge variant="outline" className="text-[10px] h-4 px-1.5">
-                #{b.sort_order}
-              </Badge>
-              <FileText className="h-3.5 w-3.5 text-emerald-500" />
-              <span className="flex-1 truncate">{b.template_name}</span>
-              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                {b.template_status}
-              </Badge>
-              <HelpTooltip helpKey="" customShort="Убрать шаблон из пакета. На сам шаблон в каталоге не влияет." alwaysShow>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={unbindMutation.isPending}
-                  onClick={() => unbindMutation.mutate(b.template_id)}
-                  aria-label="Отвязать шаблон от пакета"
-                >
-                  <Unlink className="h-3.5 w-3.5 mr-1" /> Отвязать
-                </Button>
-              </HelpTooltip>
-            </li>
-          ))}
+          {bound.map((b) => {
+            const roles = rolesQuery.data ?? [];
+            const noRoles = roles.length === 0;
+            const isPerRole = b.generation_mode === "per_role_person";
+            const repeatRole = isPerRole
+              ? roles.find((r) => r.id === b.repeat_role_catalog_id) ?? null
+              : null;
+            const saving = updateModeMutation.isPending && updateModeMutation.variables?.itemId === b.id;
+            return (
+              <li key={b.id} className="flex flex-col gap-2 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+                    #{b.sort_order}
+                  </Badge>
+                  <FileText className="h-3.5 w-3.5 text-emerald-500" />
+                  <span className="flex-1 truncate">{b.template_name}</span>
+                  {isPerRole && repeatRole && (
+                    <Badge variant="default" className="text-[10px] h-4 px-1.5 bg-indigo-500 hover:bg-indigo-500">
+                      × по роли «{repeatRole.label}»
+                    </Badge>
+                  )}
+                  {isPerRole && !repeatRole && (
+                    <Badge variant="destructive" className="text-[10px] h-4 px-1.5">
+                      роль не задана
+                    </Badge>
+                  )}
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                    {b.template_status}
+                  </Badge>
+                  <HelpTooltip helpKey="" customShort="Убрать шаблон из пакета. На сам шаблон в каталоге не влияет." alwaysShow>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={unbindMutation.isPending}
+                      onClick={() => unbindMutation.mutate(b.template_id)}
+                      aria-label="Отвязать шаблон от пакета"
+                    >
+                      <Unlink className="h-3.5 w-3.5 mr-1" /> Отвязать
+                    </Button>
+                  </HelpTooltip>
+                </div>
+                <div className="flex items-center gap-2 pl-7 text-xs">
+                  <span className="text-muted-foreground shrink-0">Режим генерации:</span>
+                  <Select
+                    value={b.generation_mode}
+                    disabled={saving}
+                    onValueChange={(v) => {
+                      const next = v as "single" | "per_role_person";
+                      if (next === b.generation_mode) return;
+                      if (next === "single") {
+                        updateModeMutation.mutate({
+                          itemId: b.id,
+                          generation_mode: "single",
+                          repeat_role_catalog_id: null,
+                        });
+                      } else {
+                        // per_role_person: требуем выбора роли, поэтому не сохраняем до выбора.
+                        // Локально переключаем в селекте через optimistic? Нет — оставляем сохранение на выбор роли.
+                        if (noRoles) {
+                          toast.error("Сначала добавьте роль пакета, затем выберите её как источник повторения.");
+                          return;
+                        }
+                        // Если есть хотя бы одна роль — мгновенно сохраняем с первой как дефолтом? Нет, безопаснее открыть селектор без коммита.
+                        // Чтобы UI отразил выбор и одновременно соблюдал триггер: коммитим сразу с первой активной ролью.
+                        updateModeMutation.mutate({
+                          itemId: b.id,
+                          generation_mode: "per_role_person",
+                          repeat_role_catalog_id: roles[0].id,
+                        });
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-7 w-[200px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="single">Один документ</SelectItem>
+                      <SelectItem value="per_role_person" disabled={noRoles}>
+                        По одному на каждого участника роли
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {isPerRole && (
+                    <>
+                      <span className="text-muted-foreground shrink-0">Роль-источник:</span>
+                      <Select
+                        value={b.repeat_role_catalog_id ?? ""}
+                        disabled={saving || noRoles}
+                        onValueChange={(v) =>
+                          updateModeMutation.mutate({
+                            itemId: b.id,
+                            generation_mode: "per_role_person",
+                            repeat_role_catalog_id: v || null,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-7 w-[220px] text-xs">
+                          <SelectValue placeholder="Выберите роль…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roles.map((r) => (
+                            <SelectItem key={r.id} value={r.id}>
+                              {r.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                  {noRoles && (
+                    <span className="text-muted-foreground italic">
+                      Сначала добавьте роль пакета, затем выберите её как источник повторения.
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </Card>

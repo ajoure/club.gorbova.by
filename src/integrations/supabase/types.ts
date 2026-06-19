@@ -4545,27 +4545,33 @@ export type Database = {
       document_package_template_items: {
         Row: {
           created_at: string
+          generation_mode: string
           id: string
           is_required: boolean
           package_template_id: string
+          repeat_role_catalog_id: string | null
           sort_order: number
           template_id: string
           title_override: string | null
         }
         Insert: {
           created_at?: string
+          generation_mode?: string
           id?: string
           is_required?: boolean
           package_template_id: string
+          repeat_role_catalog_id?: string | null
           sort_order?: number
           template_id: string
           title_override?: string | null
         }
         Update: {
           created_at?: string
+          generation_mode?: string
           id?: string
           is_required?: boolean
           package_template_id?: string
+          repeat_role_catalog_id?: string | null
           sort_order?: number
           template_id?: string
           title_override?: string | null
@@ -4576,6 +4582,13 @@ export type Database = {
             columns: ["package_template_id"]
             isOneToOne: false
             referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_template_items_repeat_role_catalog_id_fkey"
+            columns: ["repeat_role_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_role_catalog"
             referencedColumns: ["id"]
           },
           {
