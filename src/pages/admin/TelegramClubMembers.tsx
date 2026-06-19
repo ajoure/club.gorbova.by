@@ -332,11 +332,11 @@ export default function TelegramClubMembers() {
           // PATCH: exclude admins, anti-contradiction: violator can't have valid access
           return member.is_violator && !isAdmin;
         case 'removed':
-          // v7: фильтр «Удалённые» — был коммерческим клиентом, сейчас доступа нет, физически не в клубе
-          // has_active_access НЕ используется (он ломался у зомби). Только has_commercial_history + has_current_commercial_access.
-          if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
+          // v8: «Удалённые» = был платным клиентом, сейчас коммерческого доступа нет,
+          // физически не в чате/канале. access_status НЕ используется (зомби с has_active_access=true).
+          if (member.in_any || isAdmin) return false;
+          if (!member.has_commercial_history) return !hideOrphans; // мусорные — только под toggle
           if (member.has_current_commercial_access) return false;
-          if (hideOrphans && !member.has_commercial_history) return false;
           return true;
         case 'admins':
           return isAdmin;
