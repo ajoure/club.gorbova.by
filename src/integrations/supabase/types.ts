@@ -16225,7 +16225,10 @@ export type Database = {
           in_any: boolean | null
           in_channel: boolean | null
           in_chat: boolean | null
+          is_commercial_orphan: boolean | null
           is_orphaned: boolean | null
+          joined_chat_at: string | null
+          kicked_at: string | null
           link_status: string | null
           phone: string | null
           profile_id: string | null
@@ -16875,10 +16878,12 @@ export type Database = {
           in_channel: boolean
           in_chat: boolean
           is_bought_not_joined: boolean
+          is_commercial_orphan: boolean
           is_orphaned: boolean
           is_relevant: boolean
           is_unknown: boolean
           is_violator: boolean
+          kicked_at: string
           link_status: string
           phone: string
           profile_id: string
@@ -17503,10 +17508,12 @@ export type Database = {
           in_channel: boolean
           in_chat: boolean
           is_bought_not_joined: boolean
+          is_commercial_orphan: boolean
           is_orphaned: boolean
           is_relevant: boolean
           is_unknown: boolean
           is_violator: boolean
+          kicked_at: string
           link_status: string
           phone: string
           profile_id: string
