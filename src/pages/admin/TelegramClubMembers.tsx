@@ -77,6 +77,9 @@ import {
   Send,
   ShieldCheck,
   Bot,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
