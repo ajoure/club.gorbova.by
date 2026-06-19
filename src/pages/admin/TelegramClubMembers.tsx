@@ -291,13 +291,12 @@ export default function TelegramClubMembers() {
   const counts = useMemo(() => {
     if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
 
-    // v7: removed-badge точно по финальному фильтру вкладки
-    // (removed AND !in_any AND !admin AND has_commercial_history AND !has_current_commercial_access; orphan = !has_commercial_history скрывается по hideOrphans)
+    // v8: removed-badge точно по финальному фильтру вкладки (без access_status — он ломается у зомби)
     const removedVisible = (members || []).filter(m => {
-      if (m.access_status !== 'removed' || m.in_any) return false;
+      if (m.in_any) return false;
       if (adminTelegramIds.has(m.telegram_user_id)) return false;
+      if (!m.has_commercial_history) return !hideOrphans;
       if (m.has_current_commercial_access) return false;
-      if (hideOrphans && !m.has_commercial_history) return false;
       return true;
     }).length;
 
