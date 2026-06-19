@@ -291,13 +291,13 @@ export default function TelegramClubMembers() {
   const counts = useMemo(() => {
     if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
 
-    // v6: локальный пересчёт removed-badge точно по фильтру вкладки
-    // (removed AND !in_any AND !admin AND !has_active_access AND !is_commercial_orphan when hideOrphans)
+    // v7: removed-badge точно по финальному фильтру вкладки
+    // (removed AND !in_any AND !admin AND has_commercial_history AND !has_current_commercial_access; orphan = !has_commercial_history скрывается по hideOrphans)
     const removedVisible = (members || []).filter(m => {
       if (m.access_status !== 'removed' || m.in_any) return false;
       if (adminTelegramIds.has(m.telegram_user_id)) return false;
-      if (m.has_active_access) return false;
-      if (hideOrphans && m.is_commercial_orphan) return false;
+      if (m.has_current_commercial_access) return false;
+      if (hideOrphans && !m.has_commercial_history) return false;
       return true;
     }).length;
 
@@ -309,8 +309,6 @@ export default function TelegramClubMembers() {
       bought_not_joined: summary.bought_not_joined_count,
       violators: summary.violators_count,
       removed: removedVisible,
-      // PATCH-STAT-6: Badge Админы = adminsList.length (single SoT with admin tab rendering)
-      // adminsList = human admins from telegram_club_members + bot admin from telegram_clubs
       admins: adminsList.length,
     };
   }, [summary, adminsList.length, members, adminTelegramIds, hideOrphans]);
@@ -335,11 +333,11 @@ export default function TelegramClubMembers() {
           // PATCH: exclude admins, anti-contradiction: violator can't have valid access
           return member.is_violator && !isAdmin;
         case 'removed':
-          // PATCH: exclude admins from removed; v4: optionally hide commercial orphans
-          // v6: re-purchase auto-hide — если у removed-пользователя снова активный доступ, он должен исчезнуть из «Удалённых»
+          // v7: фильтр «Удалённые» — был коммерческим клиентом, сейчас доступа нет, физически не в клубе
+          // has_active_access НЕ используется (он ломался у зомби). Только has_commercial_history + has_current_commercial_access.
           if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
-          if (member.has_active_access) return false;
-          if (hideOrphans && member.is_commercial_orphan) return false;
+          if (member.has_current_commercial_access) return false;
+          if (hideOrphans && !member.has_commercial_history) return false;
           return true;
         case 'admins':
           return isAdmin;
@@ -409,7 +407,7 @@ export default function TelegramClubMembers() {
     const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
     if (hasChat) baseHeaders.push('Чат');
     if (hasChannel) baseHeaders.push('Канал');
-    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до', 'Дата кика', 'Источник даты кика', 'Мусорная запись');
+    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до', 'Кикнут', 'Источник даты кика', 'Сверх доступа (дн)', 'Коммерческая история', 'Текущий коммерческий доступ', 'Мусорная запись');
     const headers = baseHeaders;
     const rows = filteredMembers.map(m => {
       const row: (string | number | boolean | null)[] = [
@@ -425,10 +423,13 @@ export default function TelegramClubMembers() {
         m.profiles?.email || '',
         m.profiles?.phone || '',
         m.access_started_at ? format(new Date(m.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '',
-        m.access_ended_at ? format(new Date(m.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.commercial_ended_at ? format(new Date(m.commercial_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
         m.kicked_at ? format(new Date(m.kicked_at), 'dd.MM.yyyy', { locale: ru }) : '',
         m.kicked_at_source || '',
-        m.is_commercial_orphan ? 'Да' : 'Нет',
+        m.illegal_access_days ?? '',
+        m.has_commercial_history ? 'Да' : 'Нет',
+        m.has_current_commercial_access ? 'Да' : 'Нет',
+        m.has_commercial_history ? 'Нет' : 'Да',
       );
       return row;
     });
@@ -1187,11 +1188,11 @@ export default function TelegramClubMembers() {
                     variant={hideOrphans ? 'outline' : 'secondary'}
                     size="sm"
                     onClick={() => setHideOrphans(v => !v)}
-                    title="Мусорные = нет оплат/подписок/entitlements по продуктам клуба и не входил в чат"
+                    title="Мусорные = нет ни одной оплаты / подписки / entitlement по продуктам клуба"
                   >
                     {hideOrphans ? 'Показать мусорные' : 'Скрыть мусорные'}
                     {(() => {
-                      const orphans = (members || []).filter(m => m.access_status === 'removed' && !m.in_any && m.is_commercial_orphan).length;
+                      const orphans = (members || []).filter(m => m.access_status === 'removed' && !m.in_any && !m.has_commercial_history).length;
                       return orphans > 0 ? <Badge variant="outline" className="ml-2 h-5 px-1.5 text-xs">{orphans}</Badge> : null;
                     })()}
                   </Button>
@@ -1360,9 +1361,15 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     <TableHead className="whitespace-nowrap">
                       <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
-                        Доступ до / Кик <SortIcon k="access_ended_at" />
+                        Доступ до <SortIcon k="access_ended_at" />
                       </button>
                     </TableHead>
+                    {activeTab === 'removed' && (
+                      <>
+                        <TableHead className="whitespace-nowrap">Кикнут</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">Сверх доступа</TableHead>
+                      </>
+                    )}
                     <TableHead className="text-right">Действия</TableHead>
 
                   </TableRow>
@@ -1448,14 +1455,24 @@ export default function TelegramClubMembers() {
                         {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                        {member.access_status === 'removed'
-                          ? (member.kicked_at
-                              ? <span title="Дата удаления из audit_logs">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                              : (member.commercial_ended_at
-                                  ? <span className="opacity-70" title="Точная дата кика не найдена в audit_logs, показана дата окончания коммерческого доступа">доступ до {format(new Date(member.commercial_ended_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                                  : <span className="italic opacity-60" title="Нет ни события кика в audit_logs, ни даты окончания доступа">дата неизвестна</span>))
-                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
+                        {member.commercial_ended_at
+                          ? format(new Date(member.commercial_ended_at), 'dd.MM.yyyy', { locale: ru })
+                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : <span className="italic opacity-60">неизвестно</span>)}
                       </TableCell>
+                      {activeTab === 'removed' && (
+                        <>
+                          <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                            {member.kicked_at
+                              ? format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })
+                              : <span className="italic opacity-60" title="Событие кика не найдено в audit_logs">неизвестно</span>}
+                          </TableCell>
+                          <TableCell className="text-xs tabular-nums whitespace-nowrap text-right">
+                            {member.illegal_access_days != null && member.illegal_access_days > 0
+                              ? <span className="text-amber-600 font-medium" title="Сколько дней пользователь оставался в клубе после окончания оплаченного доступа">+{member.illegal_access_days} дн</span>
+                              : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                        </>
+                      )}
 
                       <TableCell className="text-right">
                         <DropdownMenu>

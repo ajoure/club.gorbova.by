@@ -1,135 +1,154 @@
-## Да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. Во вкладке «Удалённые» по умолчанию должны отображаться только реальные бывшие клиенты клуба:
-  - `access_status='removed'`;
-  - `is_commercial_orphan=false`;
-  - `has_active_access=false`;
-  - `in_chat=false`;
-  - `in_channel=false`;
-  - не admin.
-2. `is_commercial_orphan=true` скрывать по умолчанию.  
-Это исторический мусор / ошибочные входы / trial / записи без коммерческой связи. Их не удаляем физически, но в рабочем списке «Удалённые» они не нужны.
-3. Если у removed-клиента `kicked_at IS NULL`, но есть `access_ended_at`, в колонке «Доступ до / Кик» показывать не «дата кика неизвестна», а:
-  - `доступ до dd.MM.yyyy`;
-  - визуально muted;
-  - tooltip: `Точная дата кика не найдена в audit_logs, показана дата окончания коммерческого доступа`.
-  Это важно для таких клиентов, как Ольга Червейко: сделки есть, клиент реальный, но точного audit-события кика нет. Такой клиент должен оставаться в «Удалённых», а не выглядеть как мусор.
-4. Если у removed-записи нет ни `kicked_at`, ни `access_ended_at`, тогда показывать:
+1. **Не оставлять колонку «Доступ до / Кик» смешанной.**  
+Нужно разделить на отдельные колонки:
+  - **Доступ с** = `commercial_started_at`;
+  - **Доступ до** = `commercial_ended_at`;
+  - **Кикнут** = `kicked_at`;
+  - **Сверх доступа** = `illegal_access_days`.
+2. **Добавить во view/RPC поле** `illegal_access_days`**.**
   &nbsp;
-  - `дата неизвестна`;
-  - и такая строка должна быть видна только если `is_commercial_orphan=false`.  
-  Если `is_commercial_orphan=true` — скрывать по умолчанию.
-5. Для Татьяны Ярошевич и Юлии Рабчевской отдельно проверить, почему ручной кик не попал в `audit_logs`:
-  - если кик был сделан через UI, значит manual kick action не пишет корректный audit event либо RPC/view не матчят его;
-  - нужно добавить future-fix: все ручные кики через UI обязаны писать audit event с `action='telegram.kick.manual'`, `club_id`, `telegram_user_id`/`tg_user_id`, `profile_id/auth_user_id`, `actor_user_id`.
-  В рамках текущего hotfix без ручного DML не восстанавливать задним числом дату кика, если её нет в audit_logs.
-6. Для re-purchase:
-  - если пользователь снова купил продукт и `has_active_access=true`, он не должен отображаться во вкладке «Удалённые»;
-  - он должен отображаться в «С доступом» / «В клубе» по текущему состоянию.
-7. Локальный `counts.removed` должен считаться так же, как фактический список вкладки:  
-`removed AND !is_commercial_orphan AND !has_active_access AND !in_chat AND !in_channel AND !admin`.
-8. Proof дополнить:
-  - сколько всего `removed`;
-  - сколько скрыто как `is_commercial_orphan=true`;
-  - сколько скрыто как `has_active_access=true` / re-purchase;
-  - сколько реально показывается во вкладке «Удалённые»;
-  - 10 примеров видимых бывших клиентов с `kicked_at`;
-  - 10 примеров видимых бывших клиентов без `kicked_at`, но с `access_ended_at`;
-  - 10 примеров скрытых orphan-записей;
-  - отдельно проверить Ольгу Червейко, Татьяну Ярошевич, Юлию Рабчевскую.
-9. Никакого физического DELETE/DML по `telegram_club_members`.  
-Только UI-фильтр, корректное отображение и proof.
+  Логика:
+3. `commercial_ended_at` **должен считаться как реальная дата окончания оплаченного доступа.**  
+Приоритет:
+  &nbsp;
+  ```text
+  MAX(entitlements.expires_at)
+  иначе MAX(subscriptions_v2.access_end_at)
+  иначе MAX(orders_v2.paid_at + interval '30 days')
+  ```
+  Для Gorbova Club, если нет entitlement/subscription окна, оплаченный доступ считать **30 дней от оплаты**.
+4. `kicked_at` **не должен заменять** `commercial_ended_at`**.**  
+Дата кика — это только факт удаления из Telegram.  
+Главная дата для бывшего клиента — **когда закончился оплаченный доступ**.
+5. **Фильтр вкладки «Удалённые» правильный, оставить так:**
+  &nbsp;
+  ```text
+  access_status='removed'
+  AND in_chat=false
+  AND in_channel=false
+  AND !isAdmin
+  AND has_commercial_history=true
+  AND has_current_commercial_access=false
+  ```
+  `has_active_access` больше нигде не должен управлять вкладкой «Удалённые».
+6. **Orphan-логика правильная, но зафиксировать жёстко:**
+  &nbsp;
+  ```text
+  is_commercial_orphan = NOT has_commercial_history
+  ```
+  `joined_chat_at` не использовать для определения мусора.  
+  Никита Рохмистров должен скрываться, если нет paid orders / subscriptions / entitlements по продуктам клуба.
+7. **UI во вкладке «Удалённые»:**
+  &nbsp;
+  Колонки:
+  ```text
+  Telegram
+  Связь с ЛК
+  Статус
+  Чат / Канал
+  Доступ с
+  Доступ до
+  Кикнут
+  Сверх доступа
+  Действия
+  ```
+  Отображение:
+8. **Сортировка по умолчанию во вкладке «Удалённые»:**
+9. **CSV дополнить колонками:**
+10. **Proof по целевым людям расширить.**  
+По Ярошевич, Рабчевской, Грудецкой, Червейко, Рохмистрову обязательно показать:
 
-&nbsp;
-
-Итоговая логика колонки «Доступ до / Кик»:
-
-- `removed + kicked_at` → `кикнут dd.MM.yyyy`;
-- `removed + kicked_at IS NULL + access_ended_at` → `доступ до dd.MM.yyyy`;
-- `removed + kicked_at IS NULL + access_ended_at IS NULL` → `дата неизвестна`;
-- `ok/no_access` → `access_ended_at` или `—`.
-
-Цель: «Удалённые» = реальные бывшие платные участники клуба, с понятным периодом доступа. Мусорные записи скрыты, повторно купившие клиенты убраны из «Удалённых».
-
-&nbsp;
-
-План: финальный cleanup вкладки «Удалённые»
-
-### Diagnose (что уже есть)
-
-Текущее состояние по клубу Горбова (`fa547c41-...`):
-
-- `removed` всего: **49**
-- `removed` + `is_commercial_orphan=true`: **9** (мусор)
-- `removed` + `is_commercial_orphan=false`: **40** (реальные бывшие клиенты)
-
-Что **уже** реализовано в v4/v5:
-
-- `v_club_members_enriched.is_commercial_orphan` рассчитан строго по требованию:
-`joined_chat_at IS NULL` AND нет paid `orders_v2`, нет `subscriptions_v2`, нет `entitlements` по `product_club_mappings` клуба.
-- UI: тогглер «Скрыть мусорные» во вкладке «Удалённые», **по умолчанию ON**, бейдж со счётчиком скрытых.
-- `kicked_at` берётся только из `audit_logs` (без `updated_at`-fallback).
-
-Что **не доделано** (баг сортировки/видимости):
-
-- В фильтре вкладки `removed` (строка 329) условие — только `access_status!=='removed' || in_any || isAdmin`. **Не учитывается `has_active_access**` — если бывший removed-пользователь снова купил продукт и получил активный доступ, он останется в «Удалённых». Нужно исключать таких из вкладки `removed` и оставлять их только в «С доступом» / «В клубе».
-
-### Plan (что делаю)
-
-**1. UI — `src/pages/admin/TelegramClubMembers.tsx**` (frontend-only, без миграции):
-
-- В фильтре `case 'removed'` добавить условие: если `member.has_active_access === true` → исключить из вкладки (re-purchase auto-hide). Пользователь автоматически появится в «С доступом» / «В клубе» по существующей логике.
-- Подсчёт `counts.removed` (через summary RPC) не трогаю — это серверный счётчик. Но если он завышает за счёт re-purchasers, добавлю клиентскую коррекцию: считать локально по `members` отфильтрованным как и таб (как уже делается для бейджа orphans).
-- Бейдж скрытых orphans оставить.
-
-**2. Proof (read-only SQL, без DML)** — после изменения UI выполнить и приложить в отчёте:
-
-```sql
--- 1. removed всего
-SELECT COUNT(*) FROM v_club_members_enriched
-WHERE club_id='fa547c41-...' AND access_status='removed';
-
--- 2. removed + orphan=true
-SELECT COUNT(*) ... AND is_commercial_orphan=true;
-
--- 3. removed + orphan=false
-SELECT COUNT(*) ... AND is_commercial_orphan=false;
-
--- 4. показываются во вкладке по умолчанию
--- (= removed AND NOT in_any AND NOT is_commercial_orphan AND NOT has_active_access AND NOT admin)
-
--- 5. 10 примеров orphan=true (скрытые)
-SELECT telegram_username, full_name, email, joined_chat_at
-FROM v_club_members_enriched
-WHERE club_id='fa547c41-...' AND access_status='removed' AND is_commercial_orphan=true LIMIT 10;
-
--- 6. 10 примеров реальных бывших клиентов
-SELECT telegram_username, full_name, email, access_started_at, kicked_at, kicked_at_source
-FROM v_club_members_enriched
-WHERE club_id='fa547c41-...' AND access_status='removed' AND is_commercial_orphan=false
-ORDER BY kicked_at DESC NULLS LAST LIMIT 10;
-
--- 7. Подтверждение отсутствия DML по telegram_club_members
-SELECT COUNT(*) FROM audit_logs
-WHERE action ILIKE '%telegram_club_members%delete%'
-  AND created_at >= CURRENT_DATE;
+```text
+paid_orders_count
+subscriptions_count
+entitlements_count
+commercial_started_at
+commercial_ended_at
+kicked_at
+illegal_access_days
+has_commercial_history
+has_current_commercial_access
+is_commercial_orphan
+виден во вкладке Удалённые: да/нет
+причина
 ```
 
-### Что НЕ трогаю
+11. **Финальный DoD дополнить:**
 
-- Канонический write-path grant/revoke.
-- Автокик и `telegram-grant-access`.
-- Физический DELETE строк в `telegram_club_members` (только видимость через флаг).
-- Миграции БД — изменения только в одном файле UI.
+- Ярошевич, Рабчевская, Грудецкая, Червейко видны в «Удалённых», если есть коммерческая история и текущего доступа нет.
+- Рохмистров скрыт как orphan, если коммерческой истории нет.
+- В таблице отдельно видно:
+  - доступ с;
+  - доступ до;
+  - кикнут;
+  - сверх доступа.
+- `has_active_access` нигде не используется для фильтра «Удалённых».
+- `updated_at` нигде не используется как дата кика.
+- физического DELETE/UPDATE по `telegram_club_members` нет.
 
-### DoD
+В остальном план можно запускать. Главная правка: **разделить коммерческий период доступа и факт кика**, иначе патч снова даст путаницу.
 
-- В «Удалённых» по умолчанию: только `removed` + `!orphan` + `!has_active_access` + `!in_any` + `!admin`.
-- Re-purchase автоматически убирает из «Удалённых».
-- Тогглер «Скрыть мусорные» доступен для диагностики.
-- Proof-блок (7 запросов) приложен в отчёте.
-- Никакого DML.
+&nbsp;
 
-### Файлы
+План: v7 hotfix вкладки «Удалённые» — устранить регрессию скрытия бывших клиентов
 
-- `src/pages/admin/TelegramClubMembers.tsx` — 1 строка в `case 'removed'` фильтре + локальный пересчёт `counts.removed`.
+Diagnose
+
+Текущая v6-логика (view `v_club_members_enriched` + UI `TelegramClubMembers.tsx`):
+
+- Скрытие из «Удалённых» завязано на `has_active_access` (legacy resolver `has_valid_access_for_club`). Этот флаг ломался у зомби (past_due, истёкшие entitlements не подчищены), поэтому реально удалённые сегодня клиенты (Ярошевич, Рабчевская, Грудецкая, Червейко) исчезают из вкладки.
+- `is_commercial_orphan` требует `joined_chat_at IS NULL` AND нет orders/subs/ent. Из-за условия по `joined_chat_at` мусорные записи с любой технической датой (Рохмистров) остаются видимыми.
+- В колонке «Доступ до / Кик» приоритет — `kicked_at`, а не коммерческая дата окончания.
+
+Plan (что меняем)
+
+1. View `v_club_members_enriched` + RPC `get_club_members_enriched` / `search_club_members_enriched` (миграция, без DML по `telegram_club_members`):
+  - Добавить колонку `has_commercial_history boolean` — TRUE, если по `product_club_mappings(club_id, is_active=true)` есть хотя бы одна запись в `orders_v2` (status='paid'), `subscriptions_v2` или `entitlements` для `profiles.user_id`. Если `user_id IS NULL` → FALSE.
+  - Добавить колонку `has_current_commercial_access boolean` — TRUE только если:
+    - есть `entitlements.expires_at > now()` по продукту клуба, ИЛИ
+    - есть `subscriptions_v2` со `status IN ('active','trialing')` И `access_end_at > now()` по продукту клуба.
+    - `past_due` / истёкшие окна → FALSE.
+  - Переписать `is_commercial_orphan` = `NOT has_commercial_history` (убрать условие по `joined_chat_at`; оставить `joined_chat_at IS NULL` только для отдельного диагностического поля `is_ghost_join` — опционально).
+  - `kicked_at` / `kicked_at_source` / `commercial_ended_at` / `access_started_at` / `access_ended_at` — без изменений.
+  - RPC: обновить SELECT-список (добавить два новых поля) и тип возврата.
+2. Frontend `src/hooks/useTelegramIntegration.tsx`:
+  - В `ClubMemberEnriched` добавить `has_commercial_history: boolean` и `has_current_commercial_access: boolean`.
+3. Frontend `src/pages/admin/TelegramClubMembers.tsx`:
+  - Фильтр `case 'removed'` (≈ строки 337–343) и summary-расчёт (≈ 295–316):
+    ```
+    access_status='removed'
+    AND !in_any
+    AND !isAdmin
+    AND has_commercial_history
+    AND !has_current_commercial_access
+    ```
+    `has_active_access` из критерия удалить.
+  - Тогглер «Показать мусорные» = переключение `has_commercial_history` (orphan = `!has_commercial_history`); orphans скрыты по умолчанию.
+  - Колонка «Доступ до / Кик» (вкладка removed):
+    1. `commercial_ended_at` → «доступ до dd.MM.yyyy»
+    2. иначе `kicked_at` → «кикнут dd.MM.yyyy» (muted)
+    3. иначе → «дата неизвестна» (italic muted)
+    `kicked_at` показывать как tooltip/secondary под основной датой, если оба известны.
+  - CSV-экспорт: добавить колонки «Коммерческая история», «Текущий коммерческий доступ».
+  - Бейдж `counts.removed` пересчитывать локально по финальному фильтру.
+4. Что НЕ трогаем: canonical write-path `grant-access-for-order` / revoke, автокик, физические DELETE/DML по `telegram_club_members`, миграции данных.
+
+Dry run / Verify (read-only proof по Gorbova Club `fa547c41-...`)
+
+- COUNT removed total.
+- COUNT removed + `has_commercial_history=true`.
+- COUNT removed + `has_commercial_history=false`.
+- COUNT removed + `has_current_commercial_access=true`.
+- COUNT финальной видимости («Удалённые» по умолчанию).
+- Топ-10 скрытых orphan (имя, tg_id, joined_chat_at).
+- Топ-10 видимых бывших клиентов (имя, commercial_started_at, commercial_ended_at, kicked_at).
+- Отдельная таблица по 5 целевым: Ярошевич, Рабчевская, Грудецкая, Червейко, Рохмистров — поля: paid orders count, subs count, entitlements count, commercial_started_at, commercial_ended_at, kicked_at, has_current_commercial_access, is_commercial_orphan, ожидаемая видимость.
+- Подтверждение `audit_logs` за сегодня: 0 строк `telegram_club_members%delete%`.
+
+DoD
+
+- Ярошевич, Рабчевская, Грудецкая, Червейко видны в «Удалённых» с коммерческой датой окончания доступа.
+- Рохмистров скрыт по умолчанию (orphan) и появляется только при «Показать мусорные».
+- Никаких изменений в `telegram_club_members` (физических DELETE/UPDATE нет).
+- `has_active_access` больше не управляет видимостью вкладки «Удалённые».
