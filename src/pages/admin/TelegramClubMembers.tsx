@@ -1399,11 +1399,18 @@ export default function TelegramClubMembers() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {getAccessStatusBadge(member.access_status, member.link_status, member.has_active_access)}
+                        {getAccessStatusBadge(member.access_status, member.link_status, member.has_active_access, member.access_ended_at)}
                       </TableCell>
                       <TableCell className="text-center">
                         {getTelegramStatus(member)}
                       </TableCell>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                      </TableCell>
+
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
