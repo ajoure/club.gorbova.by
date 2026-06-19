@@ -66,16 +66,23 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
       if (ids.length === 0) return [];
       const { data: tpls } = await supabase
         .from("document_templates")
-        .select("id, name, template_status")
+        .select("id, name, template_status, deleted_at")
         .in("id", ids);
       const map = new Map((tpls ?? []).map((t: any) => [t.id, t]));
-      return (data ?? []).map((r: any) => ({
-        id: r.id,
-        template_id: r.template_id,
-        sort_order: r.sort_order,
-        template_name: (map.get(r.template_id) as any)?.name ?? "—",
-        template_status: (map.get(r.template_id) as any)?.template_status ?? "—",
-      })) as BoundItem[];
+      return (data ?? [])
+        .map((r: any) => {
+          const t: any = map.get(r.template_id);
+          return {
+            id: r.id,
+            template_id: r.template_id,
+            sort_order: r.sort_order,
+            template_name: t?.name ?? "—",
+            template_status: t?.template_status ?? "—",
+            template_deleted: !!t?.deleted_at,
+          };
+        })
+        .filter((r: any) => !r.template_deleted) as BoundItem[];
+
     },
     enabled: !!packageTemplateId,
   });
