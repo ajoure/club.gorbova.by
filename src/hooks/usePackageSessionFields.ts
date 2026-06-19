@@ -19,6 +19,10 @@ import type {
   PackageFieldChoice,
 } from "@/hooks/usePackageFieldCatalog";
 import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
+import {
+  resolveSmartDatePrefill,
+  isValidSmartDatePrefill,
+} from "@/lib/packageFields/smartDate";
 
 export interface SessionFieldValueRow {
   id: string;
@@ -76,6 +80,13 @@ function isFilled(v: SessionFieldValueRow | undefined): boolean {
 export function usePackageSessionFields(
   sessionId: string | null,
   packageTemplateId: string | null,
+  /**
+   * Stage 0.3: контекст для smart-date prefill (используется только в readiness-
+   * чеках `progress` / `getItemProgress` / `getItemMissingRequired`). NULL =>
+   * smart-date в readiness не учитывается (старое поведение); рекомендуется
+   * передавать `document_package_sessions.created_at`.
+   */
+  sessionCreatedAt: string | null = null,
 ) {
   const qc = useQueryClient();
   const detected = usePackageDetectedFields(packageTemplateId);
@@ -280,21 +291,51 @@ export function usePackageSessionFields(
     onError: (e: Error) => toast.error(e.message),
   });
 
+  /**
+   * Stage 0.3: shared readiness-чек для одного DedupedQuestion.
+   * Поле считается заполненным, если:
+   *   1) есть фактическое значение в БД (per-item override → fallback session-level), ИЛИ
+   *   2) у поля настроен `options.default_kind`, и smart-date resolver
+   *      возвращает валидное под data_type значение.
+   *
+   * Smart-date prefill НЕ материализуется в БД здесь — только используется
+   * как readiness-сигнал. Та же логика зеркалируется в edge-генераторе
+   * (`ai-generate-document-package`), чтобы UI ready = generation ready.
+   */
+  const isQuestionFilledForReadiness = useCallback(
+    (q: DedupedQuestion, itemId: string | null): boolean => {
+      if (isFilled(getEffectiveValue(q.field.id, itemId))) return true;
+      const kind = q.field.options?.default_kind as SmartDateKind | undefined;
+      if (!kind || kind === "none") return false;
+      const prefill = resolveSmartDatePrefill(kind, {
+        sessionCreatedAt: sessionCreatedAt ?? undefined,
+        dataType: q.field.data_type,
+      });
+      return isValidSmartDatePrefill(prefill, q.field.data_type);
+    },
+    // valuesByField/valuesByItemField влияют через getEffectiveValue.
+    // sessionCreatedAt стабилен в рамках сессии.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [valuesByField, valuesByItemField, sessionCreatedAt],
+  );
+
   /** Global progress: session-level required filled. */
   const progress = useMemo(() => {
     const required = questions.filter((q) => q.effective.required);
-    const filledRequired = required.filter((q) => isFilled(valuesByField.get(q.field.id))).length;
+    const filledRequired = required.filter((q) =>
+      isQuestionFilledForReadiness(q, null),
+    ).length;
     return {
       total: questions.length,
       requiredTotal: required.length,
       requiredFilled: filledRequired,
       allRequiredFilled: filledRequired === required.length,
     };
-  }, [questions, valuesByField]);
+  }, [questions, isQuestionFilledForReadiness]);
 
   /**
    * Per-item progress: required pf-поле этого item заполнено, если есть per-item
-   * value ИЛИ session-level value.
+   * value ИЛИ session-level value ИЛИ валидный smart-date prefill (Stage 0.3).
    */
   const getItemProgress = (itemId: string) => {
     const publicIdsInItem = detected.byItemId[itemId] ?? [];
@@ -303,10 +344,10 @@ export function usePackageSessionFields(
     );
     const requiredInItem = fieldsInItem.filter((q) => q.effective.required);
     const filledRequired = requiredInItem.filter((q) =>
-      isFilled(getEffectiveValue(q.field.id, itemId)),
+      isQuestionFilledForReadiness(q, itemId),
     ).length;
     const filledTotal = fieldsInItem.filter((q) =>
-      isFilled(getEffectiveValue(q.field.id, itemId)),
+      isQuestionFilledForReadiness(q, itemId),
     ).length;
     return {
       total: fieldsInItem.length,
@@ -318,9 +359,8 @@ export function usePackageSessionFields(
   };
 
   /**
-   * Stage 0.2: список конкретных required-полей этого документа, которые
-   * сейчас не заполнены (ни per-item override, ни session-level).
-   * Используется UI для подсветки FieldRow и текста «Не заполнено: …».
+   * Stage 0.2 + 0.3: список required-полей этого документа, у которых
+   * НЕТ ни сохранённого значения, ни валидного smart-date prefill.
    */
   const getItemMissingRequired = (itemId: string): DedupedQuestion[] => {
     const publicIdsInItem = detected.byItemId[itemId] ?? [];
@@ -328,7 +368,7 @@ export function usePackageSessionFields(
       (q) =>
         q.effective.required &&
         publicIdsInItem.includes(q.field.public_id) &&
-        !isFilled(getEffectiveValue(q.field.id, itemId)),
+        !isQuestionFilledForReadiness(q, itemId),
     );
   };
 

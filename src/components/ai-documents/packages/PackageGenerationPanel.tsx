@@ -171,7 +171,7 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
     !!session && session.package_template_id && session.package_template_id !== packageTemplateId;
 
   // Required pf-fields per-item.
-  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
+  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId, (session as any)?.created_at ?? null);
   const requiredFieldsGate = useMemo(() => {
     let missing = 0;
     let total = 0;

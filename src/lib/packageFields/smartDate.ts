@@ -262,3 +262,47 @@ export function isSmartDateKindAllowedForType(
 ): boolean {
   return allowedSmartDateKindsForType(t).includes(k);
 }
+
+/**
+ * Stage 0.3 (smart-date readiness): строгий валидатор формата prefill значения
+ * под конкретный data_type. Зеркало `supabase/functions/_shared/smart-date-prefill.ts`.
+ * Используется и в readiness-чеке (usePackageSessionFields), и в edge-генераторе,
+ * чтобы UI и generation gate сходились по «заполненности».
+ *
+ *   - year     → 4 цифры, 1000..9999
+ *   - date     → YYYY-MM-DD, реальная календарная дата
+ *   - datetime → YYYY-MM-DDTHH:mm:ss(.sss)?
+ *   - прочие   → false
+ */
+export function isValidSmartDatePrefill(
+  value: string | null | undefined,
+  dataType: PackageFieldDataType | undefined,
+): boolean {
+  if (value == null) return false;
+  const s = String(value).trim();
+  if (s === "") return false;
+  if (dataType === "year") {
+    if (!/^\d{4}$/.test(s)) return false;
+    const n = Number(s);
+    return Number.isFinite(n) && n >= 1000 && n <= 9999;
+  }
+  if (dataType === "date") {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return false;
+    const Y = Number(m[1]), Mo = Number(m[2]), D = Number(m[3]);
+    if (Mo < 1 || Mo > 12 || D < 1 || D > 31) return false;
+    const d = new Date(Y, Mo - 1, D);
+    return d.getFullYear() === Y && d.getMonth() === Mo - 1 && d.getDate() === D;
+  }
+  if (dataType === "datetime") {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?$/);
+    if (!m) return false;
+    const Y = Number(m[1]), Mo = Number(m[2]), D = Number(m[3]);
+    const h = Number(m[4]), mi = Number(m[5]), se = Number(m[6]);
+    if (Mo < 1 || Mo > 12 || D < 1 || D > 31) return false;
+    if (h > 23 || mi > 59 || se > 59) return false;
+    const d = new Date(Y, Mo - 1, D, h, mi, se);
+    return d.getFullYear() === Y && d.getMonth() === Mo - 1 && d.getDate() === D;
+  }
+  return false;
+}

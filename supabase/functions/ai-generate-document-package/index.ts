@@ -31,6 +31,10 @@ import {
   SYSTEM_FIELD_VALUE_IDS,
 } from '../_shared/system-field-values.ts';
 import { formatPfValue } from '../_shared/resolve-package-tokens.ts';
+import {
+  resolveSmartDatePrefill,
+  isValidSmartDatePrefill,
+} from '../_shared/smart-date-prefill.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -110,7 +114,7 @@ Deno.serve(async (req) => {
     // ── load session + ownership ─────────────────────────────────────────
     const { data: session } = await supabase
       .from('document_package_sessions')
-      .select('id, profile_id, package_template_id, selected_legal_entity_id, status')
+      .select('id, profile_id, package_template_id, selected_legal_entity_id, status, created_at')
       .eq('id', packageSessionId)
       .maybeSingle();
     if (!session) return j({ error: 'package_session_not_found' }, 404);
@@ -504,13 +508,41 @@ Deno.serve(async (req) => {
             ? asg.is_required_override
             : !!field.required;
           const label: string = asg?.label_override || field.label || pfPublicId;
-          const raw = extractPfRawValue(field, pfValueFor(item.id, field.id));
+          let raw = extractPfRawValue(field, pfValueFor(item.id, field.id));
+          // Stage 0.3 (smart-date readiness alignment): если БД-значения нет,
+          // но у поля настроен валидный options.default_kind — материализуем
+          // prefill, чтобы generator увидел то же, что UI считает заполненным.
+          let default_kind_applied: string | null = null;
+          const optsDefaultKind =
+            field.options && typeof field.options === 'object'
+              ? (field.options as any).default_kind
+              : null;
+          if (
+            (raw == null || raw === '') &&
+            typeof optsDefaultKind === 'string' &&
+            optsDefaultKind !== 'none'
+          ) {
+            const prefill = resolveSmartDatePrefill(optsDefaultKind, {
+              sessionCreatedAt: (session as any)?.created_at ?? null,
+              dataType: field.data_type,
+            });
+            if (prefill && isValidSmartDatePrefill(prefill, field.data_type)) {
+              raw = field.data_type === 'year' ? Number(prefill) : prefill;
+              default_kind_applied = optsDefaultKind;
+            }
+          }
+          // Legacy fallback: некоторые исторические записи держали default_kind
+          // в metadata вместо options. Сохраняем для совместимости снапшота.
+          if (
+            !default_kind_applied &&
+            field.metadata &&
+            typeof field.metadata === 'object' &&
+            typeof (field.metadata as any).default_kind === 'string'
+          ) {
+            default_kind_applied = (field.metadata as any).default_kind;
+          }
           const fmt = formatPfValue(field.data_type, raw, field.options, undefined);
           const rendered = 'value' in fmt ? fmt.value : '';
-          const default_kind_applied: string | null =
-            (field.metadata && typeof field.metadata === 'object' && typeof (field.metadata as any).default_kind === 'string')
-              ? (field.metadata as any).default_kind
-              : null;
           preresolved_pf_fields[pfPublicId] = {
             public_id: pfPublicId,
             label,
