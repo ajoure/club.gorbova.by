@@ -733,6 +733,11 @@ Deno.serve(async (req) => {
     if (generated === 0 && (errors > 0 || blocked > 0)) finalStatus = blocked > errors ? 'blocked' : 'failed';
     else if (errors > 0 || blocked > 0) finalStatus = 'partial';
 
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+    // total_items — число позиций шаблона; total_documents — фактическое число документов
+    // (generated + errors + blocked). Раздельные счётчики не пересекаются.
+    const totalDocuments = generated + errors + blocked;
+
     await supabase
       .from('ai_document_generation_batches')
       .update({
@@ -741,6 +746,7 @@ Deno.serve(async (req) => {
           package_session_id: packageSessionId,
           run_mode: runMode,
           total_items: items.length,
+          total_documents: totalDocuments,
           generated,
           errors,
           blocked,
@@ -759,7 +765,8 @@ Deno.serve(async (req) => {
         generation_batch_id: batch.id,
         run_mode: runMode,
         status: finalStatus,
-        total: items.length,
+        total_items: items.length,
+        total_documents: totalDocuments,
         generated,
         errors,
         blocked,
@@ -770,7 +777,8 @@ Deno.serve(async (req) => {
       success: finalStatus === 'generated' || finalStatus === 'partial',
       batch_id: batch.id,
       status: finalStatus,
-      total: items.length,
+      total_items: items.length,
+      total_documents: totalDocuments,
       generated,
       errors,
       blocked,
