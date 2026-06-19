@@ -890,6 +890,51 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // 3.6) PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* token.
+      //      Канон resolver-а: SoT — packageContext.recipient (orchestrator).
+      //      Допустимые модификаторы:
+      //        - case=<ALLOWED_CASES> на любом recipient-поле;
+      //        - format=full|short|signature_short только на recipient.full_name.
+      const recipientMatch = inside.match(RECIPIENT_TOKEN_RE);
+      if (recipientMatch) {
+        const field = recipientMatch[1];
+        if (generationContext !== 'package_session') {
+          recipientTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        if (!ALLOWED_RECIPIENT_FIELDS.has(field)) {
+          unknownRecipientFields.push(`{{${inside}}}`);
+          continue;
+        }
+        if (!packageContext!.recipient) {
+          recipientTokensWithoutContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (recipientMatch[2] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else if (
+            k === 'format'
+            && field === 'full_name'
+            && PERSON_NAME_FORMATS.has(v)
+          ) fmt = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedRecipientTokens.push({
+          raw_inside: inside,
+          field,
+          format: fmt,
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+
       // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
