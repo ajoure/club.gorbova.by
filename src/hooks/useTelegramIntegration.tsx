@@ -580,6 +580,10 @@ export interface EnrichedClubMember extends TelegramClubMember {
   kicked_at: string | null;
   kicked_at_source: 'audit_log' | 'unknown' | null;
   is_commercial_orphan: boolean;
+  // v7: коммерческие флаги — основа фильтра «Удалённые»
+  has_commercial_history: boolean;
+  has_current_commercial_access: boolean;
+  illegal_access_days: number | null;
 }
 
 // Helper to map RPC result to EnrichedClubMember
