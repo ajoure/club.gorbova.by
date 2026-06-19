@@ -325,8 +325,10 @@ export default function TelegramClubMembers() {
           // PATCH: exclude admins, anti-contradiction: violator can't have valid access
           return member.is_violator && !isAdmin;
         case 'removed':
-          // PATCH: exclude admins from removed
-          return member.access_status === 'removed' && !member.in_any && !isAdmin;
+          // PATCH: exclude admins from removed; v4: optionally hide commercial orphans
+          if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
+          if (hideOrphans && member.is_commercial_orphan) return false;
+          return true;
         case 'admins':
           return isAdmin;
         default:
