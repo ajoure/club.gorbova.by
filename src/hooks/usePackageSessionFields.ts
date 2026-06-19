@@ -271,6 +271,8 @@ export function usePackageSessionFields(
       qc.invalidateQueries({ queryKey: QK.values(sessionId) });
       qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
       qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      // Stage 0.2: refetch активного values-кэша.
+      void qc.refetchQueries({ queryKey: QK.values(sessionId), type: "active" });
       if ((res?.deleted ?? 0) > 0) {
         toast.success("Возвращено к общему значению");
       }
