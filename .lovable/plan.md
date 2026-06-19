@@ -1,295 +1,182 @@
 да, согласен, с учетом правок:
 
-Stage 0.2 в целом согласован: корень не в readiness-формуле, а в stale cache / несинхронном отображении прогресса после save.
+1. **Не фиксировать “ровно 1 follow-up select” как обязательный PASS-критерий.** После Stage 0.2 может быть:
+  &nbsp;
+  ```text
+  1 × save_session_document_atomic
+  + refetch package-session-values
+  + возможные lightweight refetch/readiness queries
+  ```
+  PASS-критерий: нет второго write/RPC-save и нет лишних write-path, а не строго один select.
+2. **Network-критерий сформулировать так:**
+  &nbsp;
+  ```text
+  1 × POST /rpc/save_session_document_atomic
+  0 × отдельный field-save
+  0 × отдельный role-save
+  0 × write-RPC для соседних items
+  ```
+  Read-only refetch-запросы допустимы, если они не создают N+1-loop и не пишут данные.
+3. **Для combined field+role использовать только активное detected-поле.** Не использовать `pf-000002 / UAT B5` и любые archived fields. В proof явно указать:
+4. **В role desired-state передать полный актуальный набор управляемых ролей item.** Не отправлять только изменённую роль, если RPC трактует массив как desired-state. Иначе тест может искусственно удалить роли и исказить proof.
+5. **Проверку “ассайнменты, не вошедшие в desired-state, стали inactive” делать только если это намеренная часть сценария.** Для основного combined proof лучше:
+  - изменить/добавить одну роль;
+  - сохранить остальные роли в desired-state;
+  - проверить, что непредназначенных удалений нет.
+  Отдельный desired-state delete уже был доказан раньше.
+6. **Audit action проверить по фактическому имени.** В прошлых отчётах встречалось:
+  &nbsp;
+  ```text
+  package_document_atomic_save
+  ```
+  Убедиться, что в SQL используется точное значение action, которое реально пишет RPC.
+7. **Rollback negative-сценарии сравнивать полным snapshot, а не только COUNT.** До/после:
+  - значения полей;
+  - `updated_at`;
+  - `is_active`;
+  - `person_id`;
+  - `metadata`;
+  - audit delta.
+8. **Не использовать** `gen_random_uuid()` **в DevTools JS как literal без подготовки.** Для stale version можно передать заранее заданный валидный UUID:
+  &nbsp;
+  ```text
+  00000000-0000-4000-8000-000000000001
+  ```
+  или получить UUID SQL-запросом до теста.
+9. **Проверить UI-state после success.** Помимо БД:
+  - dirty badge исчез;
+  - кнопка снова disabled;
+  - `X/Y` обновился без refresh;
+  - role badge обновился;
+  - success-toast один.
+10. **После PASS этого stage сразу переходить к repeatable-by-role PATCH.** Не возвращаться к уже закрытым Stage 0.1/0.2, если нет нового runtime-факта.
+11. &nbsp;
+12. План: STAGE-5 — VERIFY COMBINED FIELD+ROLE SINGLE-RPC
 
-Внеси следующие уточнения перед execute.
+## Контекст
 
----
+RPC `public.save_session_document_atomic(_session_id, _package_template_item_id, _field_values, _role_assignments, _expected_template_version_id)` уже существует и используется через `useAtomicDocumentSave` в `PackageDocumentCard.handleSaveAll`. Stage 5 — это **доказательство контракта**, а не новая реализация. Никаких миграций и кода не меняем.
 
+## Контракт, который нужно подтвердить
 
+Один вызов `save_session_document_atomic` за одну транзакцию:
 
-## **1. Не ограничиваться только**
+1. Пишет в `document_package_session_field_values` только те field_values, чьи `field_catalog_id` входят в `detected_tokens` активной версии целевого item (per-item, `package_template_item_id = _package_template_item_id`).
+2. Применяет к `document_package_item_role_assignments` полный desired-state управляемых ролей этого item:
+  - UPSERT новых/изменённых;
+  - soft delete (`is_active=false`) для активных ассайнментов, не вошедших в desired-state.
+3. Пишет ровно 1 запись в `audit_logs` с `action='package_document_atomic_save'`, `entity_id=_package_template_item_id`, `meta` с дельтой (`written_fields`, `written_roles`, `deleted_roles`, `template_version_id`).
+4. Не трогает:
+  - field_values других item'ов (per-item `package_template_item_id` строго `<>`);
+  - session-level/orphan-значения (`package_template_item_id IS NULL`);
+  - role assignments других item'ов;
+  - другие сессии того же пакета.
+5. Откат при первой ошибке (FOUND/EXCEPTION) — частичных записей нет.
 
-`usePackageSessionFields.saveMutation`
+## Метод проверки (read-only + один контрольный save через UI)
 
-Сейчас документ сохраняется через atomic RPC:
+### Baseline snapshot (psql)
 
-```text
-save_session_document_atomic
+Снять до save для пакета «Годовое собрание» и целевого item `f9962f6b-...` (1. Приказ):
+
+```sql
+-- A. Per-item values этого item
+SELECT field_catalog_id, value_text, value_number, value_date, value_datetime, value_time, updated_at
+FROM document_package_session_field_values
+WHERE session_id = :sid AND package_template_item_id = :item_id
+ORDER BY field_catalog_id;
+
+-- B. Per-item values соседних items (febd1821-..., 63bb4030-...)
+SELECT package_template_item_id, field_catalog_id, value_text, value_number, value_date, updated_at
+FROM document_package_session_field_values
+WHERE session_id = :sid AND package_template_item_id <> :item_id;
+
+-- C. Session-level / orphan values (item_id IS NULL)
+SELECT field_catalog_id, value_text, value_number, value_date, updated_at
+FROM document_package_session_field_values
+WHERE session_id = :sid AND package_template_item_id IS NULL;
+
+-- D. Role assignments этого item
+SELECT id, role_catalog_id, person_id, metadata->>'position' AS pos, sort_order, is_active, updated_at
+FROM document_package_item_role_assignments
+WHERE package_session_id = :sid AND package_template_item_id = :item_id
+ORDER BY sort_order, id;
+
+-- E. Role assignments соседних items
+SELECT package_template_item_id, role_catalog_id, person_id, is_active, updated_at
+FROM document_package_item_role_assignments
+WHERE package_session_id = :sid AND package_template_item_id <> :item_id;
+
+-- F. Последние записи audit для этого item
+SELECT id, action, entity_id, created_at, meta
+FROM audit_logs
+WHERE action = 'package_document_atomic_save' AND entity_id = :item_id
+ORDER BY created_at DESC LIMIT 5;
 ```
 
-Поэтому stale progress может возникать не только после старого `usePackageSessionFields.saveMutation`, но и после:
+### Контрольное действие
 
-- `useAtomicDocumentSave`;
-- reset override;
-- role save / desired-state save;
-- сохранения общих session-level значений;
-- изменения active/current version шаблона.
+В UI на `/admin/documents` открыть карточку «1. Приказ…», изменить:
 
-Обязательное требование:
+- одно pf-поле (например, `pf-000003` «Дата приказа» → новая дата);
+- одно role assignment (изменить person для существующей роли ИЛИ добавить новое назначение).
 
-```text
-После любого успешного save, который может повлиять на прогресс документа, должны обновляться одни и те же query keys.
-```
+Нажать «Сохранить документ». Зафиксировать через DevTools Network:
 
-Минимально проверить и синхронизировать invalidation/refetch в:
+- ровно 1 запрос `POST .../rpc/save_session_document_atomic`;
+- ровно 1 follow-up `select document_package_session_field_values` (active refetch из Stage 0.2);
+- никаких прочих rpc/select для других items.
 
-```text
-usePackageSessionFields.saveMutation.onSuccess
-usePackageSessionFields.resetOverrideMutation.onSuccess
-useAtomicDocumentSave.onSuccess
-PackageFieldsClientForm orphan/session-level save path
-```
+### After snapshot
 
----
+Повторить A–F. Проверки:
 
 
+| #   | Проверка                                                                                                                                                              | Ожидание |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | A: ровно 1 строка изменилась (новый `updated_at`, value = новое значение).                                                                                            | passed   |
+| 2   | A: остальные 6 строк item имеют `updated_at` без изменений.                                                                                                           | passed   |
+| 3   | D: изменённый ассайнмент имеет новый `updated_at`/`person_id`; ассайнменты, не вошедшие в desired-state, переключились в `is_active=false`; новые — `is_active=true`. | passed   |
+| 4   | B: ни одна строка соседних items не изменилась (`updated_at` идентичен).                                                                                              | passed   |
+| 5   | C: orphan/session-level (`item_id IS NULL`) — `updated_at` идентичен.                                                                                                 | passed   |
+| 6   | E: ассайнменты соседних items — `updated_at` и `is_active` идентичны.                                                                                                 | passed   |
+| 7   | F: появилась ровно 1 новая запись `package_document_atomic_save` с `meta.written_fields=1`, `meta.written_roles>=1`, `entity_id=:item_id`.                            | passed   |
+| 8   | Бейдж X/Y и подсветка required-empty (Stage 0.2) переключились без ручного refresh.                                                                                   | passed   |
 
 
+### Отрицательные сценарии (read-only от UI; psql проверка побочных эффектов)
 
-## **2. Не использовать только**
+1. Stale version: передать `_expected_template_version_id = gen_random_uuid()` — RPC должен поднять `stale_template_version`, ни одной строки в A/D/F не появилось.
+2. Person outside owner: указать `person_id` чужого профиля — `person_not_accessible` / `person_outside_session_owner`, никаких частичных записей.
+3. Inactive role: указать `role_catalog_id` неактивной роли — соответствующая ошибка, без записи.
 
-`refetchQueries` **как универсальный фикс**
+Все три выполняем через скриптовый rpc-вызов в DevTools console (await supabase.rpc(...)) и сверяем snapshot — никаких миграций, никакого нового UI.
 
-`refetchQueries` допустим, но нужно не устроить лишний N+1 / каскадный refetch.
+## Изменения в коде
 
-Правильный подход:
+Никаких. Stage 5 — только верификация и proof.
 
-```text
-invalidateQueries для всех связанных keys
-+ точечный refetch active values key, если карточка открыта
-+ optimistic/local baseline update после успешного atomic save
-```
+## Proof
 
-В proof показать, что после save:
+Создать `.lovable/proofs/atomic_save_combined_field_role_v1.md`:
 
-- нет бесконечного refetch loop;
-- нет N одинаковых запросов на каждую карточку;
-- badge обновляется без ручного refresh;
-- соседние карточки не получают лишние тяжелые запросы сверх разумного.
+1. Фикстура: session_id, item_id (Приказ), соседние item_ids, выбранные field/role для контроля.
+2. Snapshots A–F до и после (вырезки psql).
+3. Network лог (1×rpc + 1×select).
+4. Audit запись (id, meta).
+5. Таблица проверок 1–8 со статусом.
+6. 3 отрицательных сценария с RPC-ответом и snapshot-дельтой = 0.
+7. Ссылка на код: `useAtomicDocumentSave`, `save_session_document_atomic`, `PackageDocumentCard.handleSaveAll`.
 
----
+## DoD
 
-## **3. Список «Не заполнено» должен считаться по required-полям, а badge X/Y — по всем видимым полям**
+- ✅ Контракт (1 вызов → ровно поле + ровно роль + ровно 1 audit, соседи и orphan не тронуты) подтверждён живыми snapshots.
+- ✅ Отрицательные кейсы возвращают ошибку и не оставляют частичных записей.
+- ✅ Proof опубликован.
+- После закрытия Stage 5 — стартует основной `PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1`.
 
-Сейчас badge показывает:
+## Out of scope
 
-```text
-filled / total
-```
-
-где `total = все fieldsInItem`, не только required.
-
-Это можно оставить, но UX должен явно разделять:
-
-```text
-Прогресс: 6/7 полей
-Блокируют генерацию: только required поля
-```
-
-Если незаполнено необязательное поле, документ может быть ready.
-
-Поэтому:
-
-- `X/Y полей` — все поля;
-- блок «Не заполнено» для генерации — только required;
-- ready/green status — по required fields + required roles;
-- optional empty fields не должны блокировать генерацию.
-
----
-
-## **4. Если badge 6/7 из-за optional field, это не ошибка готовности**
-
-В proof отдельно показать:
-
-```text
-totalFilled / totalFields
-requiredFilled / requiredTotal
-readyForGeneration
-```
-
-Например:
-
-```text
-6/7 полей
-6/6 обязательных
-ready = true
-```
-
-В таком случае карточка может быть green/ready, даже если badge не 7/7. Если бизнес хочет зелёный только при 7/7 — это отдельное UX-решение, но генерацию блокировать нельзя.
-
----
-
-## **5. Подсветка FieldRow только для blocking required-empty**
-
-Не подсвечивать amber все пустые optional-поля.
-
-Правило:
-
-```text
-required && !isFilled(effectiveValue) → amber + сообщение
-optional && !isFilled(effectiveValue) → без warning, максимум muted hint
-```
-
----
-
-## **6. Ошибка генерации должна возвращать человекочитаемые labels**
-
-Если генерация блокируется, текст ошибки должен быть:
-
-```text
-Документ «1. Приказ…» не готов: не заполнено поле «Дата приказа».
-```
-
-Не:
-
-```text
-pf-000003 missing
-required field missing
-```
-
-Технический `public_id` допустим только в dev/meta/proof.
-
----
-
-## **7. Проверить role-readiness одновременно**
-
-На скриншоте также есть роли. Для итогового ready-state документа нужно учитывать:
-
-```text
-required fields ready
-AND required roles ready
-```
-
-В proof Stage 0.2 добавить:
-
-```text
-requiredRolesFilled / requiredRolesTotal
-readyReason
-```
-
-Если поле 7/7, но обязательная роль не назначена, документ не должен быть green/ready.
-
----
-
-## **8. Smoke должен включать atomic save**
-
-Проверить не только старый save поля, но и текущий путь карточки:
-
-```text
-PackageDocumentCard → save_session_document_atomic → values refetch/baseline update → badge обновился
-```
-
-Иначе можно починить старый hook, но не исправить актуальный путь сохранения.
-
----
-
-## **9. Stage 0.2 proof**
-
-Создать proof:
-
-```text
-.lovable/proofs/package_field_readiness_mismatch_fix.md
-```
-
-Включить:
-
-1. baseline 6/7 screenshot or SQL reconstruction;
-2. таблицу 7 полей;
-3. `filled/total`;
-4. `requiredFilled/requiredTotal`;
-5. `requiredRolesFilled/requiredRolesTotal`;
-6. конкретный root cause stale cache;
-7. изменённые query keys;
-8. network before/after;
-9. screenshot после save без refresh;
-10. генерация проходит, если all required ready.
-
----
-
-## **10. После Stage 0.2**
-
-После закрытия Stage 0.2:
-
-1. закрыть фактический Stage 5 combined `field+role` одним RPC;
-2. только потом переходить к `PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1`.
-
-PATCH repeatable-by-role не начинать, пока Stage 0.2 и Stage 5 combined не закрыты.
-
-&nbsp;
-
-План: STAGE-0.2 — DIAGNOSE READINESS MISMATCH 6/7
-
-## Объекты диагностики
-
-- Пакет: `document_package_templates.id = 21764469-1ba9-49b3-90d9-5349bcbcd531` («Годовое собрание участников»)
-- Документ: `document_package_template_items.id = f9962f6b-b3a5-411d-ad2c-fa651aa8b6e9` («1. Приказ…»)
-- Шаблон: `document_templates.id = 9231032b-271c-47e0-9a41-0dd8b45574db`
-- Активная версия: `document_template_versions.id = 64332e6c-cbcf-4939-91e6-ccd960b26fe5` (`is_current=true`, `validation_status=valid`, `markup_status=marked`)
-- Сессия: `document_package_sessions.id = 6a61a7e3-04b5-4e3c-aacb-8af1dbef6d53`
-
-## Что считает readiness (источник истины)
-
-`src/hooks/usePackageSessionFields.ts → getItemProgress(itemId)`:
-
-1. `detected.byItemId[item.id]` — pf-public_ids из `document_template_versions.detected_tokens` активной версии (token-driven, дедуп).
-2. `questions` = `document_package_field_catalog` пакета `WHERE is_active=true`, пересечение с detected.
-3. `fieldsInItem` = questions, у которых `public_id ∈ detected.byItemId[item.id]`.
-4. `filled` = `isFilled(getEffectiveValue(field.id, itemId))`, где effective = per-item value → fallback session-level.
-5. Badge: `{filled}/{total}` (total = fieldsInItem.length, без фильтра required).
-
-Логика корректна: token-scoped, required-aware для `allRequiredFilled`, per-item с fallback. Никаких архивных полей и старых версий не учитывается (фильтр `is_active=true` + `is_current=true`).
-
-## Таблица: 7 detected required fields Приказа
-
-```
-public_id  | label                     | data_type | required | active | per_item_value | session_value | resolved | isFilled
------------+---------------------------+-----------+----------+--------+----------------+---------------+----------+---------
-pf-000003  | Дата приказа              | date      | yes      | yes    | 2026-01-01     | —             | per-item | true
-pf-000004  | Номер приказа             | number    | no       | yes    | 55             | —             | per-item | true
-pf-000005  | Дата проведения собрания  | date      | yes      | yes    | 2026-02-10     | —             | per-item | true
-pf-000007  | Дата извещения            | date      | yes      | yes    | 2026-01-01     | —             | per-item | true
-pf-000008  | Год отчетности            | year      | yes      | yes    | 2025           | —             | per-item | true
-pf-000009  | Дата предложений          | date      | yes      | yes    | 2026-02-09     | —             | per-item | true
-pf-000010  | Время проведения собрания | time      | yes      | yes    | 12:10:00       | —             | per-item | true
-```
-
-Текущая DB: **7/7 filled**, 6/6 required filled. Никакого blocker-поля сейчас нет.
-
-## Корень рассинхрона на скриншоте «6/7»
-
-`updated_at` per-item значений:
-
-- pf-000003/004/005/007/010: `2026-06-19 13:02:01`
-- pf-000008 «Год отчетности» и pf-000009 «Дата предложений»: `2026-06-19 13:05:47`
-
-Скриншот «6/7» был сделан **в окне между 13:02 и 13:05**, когда одно из двух полей (pf-000008 «Год отчетности» или pf-000009 «Дата предложений») ещё не было сохранено. После повторного save readiness стал 7/7, но UI продолжал показывать «6/7» из-за **stale react-query cache**: invalidation в `usePackageSessionFields.saveMutation.onSuccess` инвалидирует только `QK.values(sessionId)` и `pkg-gen-role-assignments`/`doc-pkg-session-q` — на тот документ-cardе, где идёт визуальный обмер прогресса, повторного refetch может не произойти, если RPC отработал, но onSuccess дошёл уже после re-mount.
-
-Архивных полей, чужих версий, чужих assignments не задействовано — readiness/UI работают с одним SOT (`detected_tokens` + active catalog + per-item value/session fallback).
-
-## Минимальный fix (без изменения логики readiness)
-
-Никаких изменений в формуле прогресса не требуется — она верна и совпадает с UI.
-
-Изменения только в инвалидации/синхронизации:
-
-1. В `usePackageSessionFields.saveMutation.onSuccess` и `resetOverrideMutation.onSuccess` добавить `refetchQueries` (а не только invalidate) для:
-  - `["package-session-values", sessionId]`
-  - `["package-detected-fields", packageTemplateId]` (на случай смены активной версии)
-2. В `PackageDocumentCard` подписаться на `valuesQuery` через `useIsFetching` и показать тонкий спиннер у бейджа «X/Y полей», пока values refetching — чтобы пользователь не путал старое значение с актуальным.
-3. Когда `requiredFilled < requiredTotal`, под бейджем (или в подсказке) показать список конкретных полей: «Не заполнено: &nbsp;, &nbsp;». Текст берётся из `fieldsInItem.filter(q => q.effective.required && !isFilled(getEffectiveValue(q.field.id, itemId)))`. FieldRow для этих полей подсвечивается amber-рамкой (тот же класс, что у `requiredRolesBadge` amber).
-4. Smoke: повторить save → бейдж переключается на «7/7» в пределах < 300 мс без переключения вкладок.
-
-Никаких миграций, RPC-изменений, изменений в `detected_tokens`/каталоге, в правилах активации шаблонов — не делается.
-
-## Готово (DoD)
-
-- Badge «X/Y полей» совпадает с фактом БД после каждого save без ручного refresh.
-- При неполных required видно конкретные названия полей и их FieldRow подсвечен.
-- Stage 0.2 закрыт: переход к Stage 5 (combined field+role single-RPC) и далее к основному PATCH PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1.
-
-## Out of scope (Stage 0.2)
-
-- Изменения в формуле readiness, в `detected_tokens`, в каталоге, в RPC `upsert_session_field_values`.
-- Любая работа по repeatable-by-role (отдельный PATCH).
-- Stage 5 combined-RPC (следующий обязательный шаг до основного PATCH).
+- Любые миграции / новые RPC / изменения схемы.
+- Refactor `useAtomicDocumentSave` / `PackageDocumentCard`.
+- Repeatable-by-role логика — отдельный PATCH после закрытия Stage 5.
