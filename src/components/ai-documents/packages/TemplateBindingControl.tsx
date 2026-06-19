@@ -43,6 +43,15 @@ interface BoundItem {
   sort_order: number;
   template_name: string;
   template_status: string;
+  generation_mode: "single" | "per_role_person";
+  repeat_role_catalog_id: string | null;
+}
+
+interface RoleOption {
+  id: string;
+  role_key: string;
+  label: string;
+  is_active: boolean;
 }
 
 const QK_BOUND = (pkgId: string | null) => ["pkg-bound-templates", pkgId];
