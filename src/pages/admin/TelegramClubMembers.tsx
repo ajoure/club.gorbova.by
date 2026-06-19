@@ -1421,7 +1421,11 @@ export default function TelegramClubMembers() {
                         {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                        {member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                        {member.access_status === 'removed'
+                          ? (member.kicked_at
+                              ? <span title="Дата удаления">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
+                              : '—')
+                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
                       </TableCell>
 
                       <TableCell className="text-right">
