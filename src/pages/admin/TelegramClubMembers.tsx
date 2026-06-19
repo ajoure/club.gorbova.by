@@ -170,7 +170,7 @@ export default function TelegramClubMembers() {
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
 
   // Sorting state for the members table
-  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at';
+  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at' | 'kicked_at';
   type SortDir = 'asc' | 'desc';
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('desc');
