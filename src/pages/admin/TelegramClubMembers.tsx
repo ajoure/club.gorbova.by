@@ -392,7 +392,7 @@ export default function TelegramClubMembers() {
     const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
     if (hasChat) baseHeaders.push('Чат');
     if (hasChannel) baseHeaders.push('Канал');
-    baseHeaders.push('Email', 'Телефон');
+    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до');
     const headers = baseHeaders;
     const rows = filteredMembers.map(m => {
       const row: (string | number | boolean | null)[] = [
@@ -404,7 +404,14 @@ export default function TelegramClubMembers() {
       ];
       if (hasChat) row.push(m.in_chat ? 'Да' : 'Нет');
       if (hasChannel) row.push(m.in_channel ? 'Да' : 'Нет');
-      row.push(m.profiles?.email || '', m.profiles?.phone || '');
+      row.push(
+        m.profiles?.email || '',
+        m.profiles?.phone || '',
+        m.access_started_at ? format(new Date(m.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.access_ended_at ? format(new Date(m.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
+      );
+      return row;
+    });
       return row;
     });
 
