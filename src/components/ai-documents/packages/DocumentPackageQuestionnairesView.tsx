@@ -55,6 +55,8 @@ interface ItemRow {
   template_id: string;
   template_name: string;
   active_version_id: string | null;
+  generation_mode: "single" | "per_role_person" | null;
+  repeat_role_catalog_id: string | null;
 }
 
 function entityDisplay(e: ClientLegalDetails): string {
@@ -126,16 +128,12 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
     queryFn: async () => {
       const { data: items, error } = await supabase
         .from("document_package_template_items")
-        .select("id, sort_order, template_id")
+        .select("id, sort_order, template_id, generation_mode, repeat_role_catalog_id")
         .eq("package_template_id", packageTemplateId)
         .order("sort_order");
       if (error) throw error;
       const ids = (items ?? []).map((r: any) => r.template_id);
       if (ids.length === 0) return [] as ItemRow[];
-      // Stage 5.0.2 fix: schema uses `current_version_id`, not `active_version_id`.
-      // Старый код падал на PostgREST с "column does not exist", из-за чего
-      // tpls был пуст: имя шаблона = "—" и active_version_id = null
-      // (отсюда же постоянный бейдж «нет активной версии» в карточке).
       const { data: tpls, error: tErr } = await supabase
         .from("document_templates").select("id, name, current_version_id").in("id", ids);
       if (tErr) throw tErr;
@@ -148,6 +146,8 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
           template_id: r.template_id,
           template_name: (tpl?.name as string) ?? "",
           active_version_id: (tpl?.current_version_id as string | null) ?? null,
+          generation_mode: (r.generation_mode ?? "single") as "single" | "per_role_person",
+          repeat_role_catalog_id: (r.repeat_role_catalog_id as string | null) ?? null,
         };
       }) as ItemRow[];
     },
