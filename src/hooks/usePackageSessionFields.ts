@@ -19,6 +19,10 @@ import type {
   PackageFieldChoice,
 } from "@/hooks/usePackageFieldCatalog";
 import { usePackageDetectedFields } from "@/hooks/usePackageDetectedFields";
+import {
+  resolveSmartDatePrefill,
+  isValidSmartDatePrefill,
+} from "@/lib/packageFields/smartDate";
 
 export interface SessionFieldValueRow {
   id: string;
