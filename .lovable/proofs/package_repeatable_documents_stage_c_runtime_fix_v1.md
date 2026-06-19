@@ -335,8 +335,189 @@ WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
 
 ## Статус Stage C
 
-- Stage C runtime save bug: **PASS** (этот патч).
-- Stage C runtime generation: **PARTIAL** — ждёт фикса
-  `ln-000014 Ревизор` (назначение участника на роль ИЛИ замена токена в
-  шаблоне «Извещение» на `{{recipient.full_name}}`).
-- Stage D: **не начинать** до полного Stage C PASS.
+- Stage C runtime save bug: **PASS** (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1).
+- Stage C runtime generation: **PASS** (этот раздел, runtime прогон 2026-06-19).
+- Stage D: **не начат** (по плану — не стартует в этом же прогоне).
+
+---
+
+## Stage C runtime business prove — 2026-06-19 17:52 UTC
+
+### A. SQL before — template item (UI/SQL parity)
+
+`document_package_template_items` для item «2. Извещение о проведении годового
+общего собрания участников» (id `febd1821-fba8-4290-babf-99c59c27f2f4`):
+
+| generation_mode | repeat_role_catalog_id                  | template_id (Извещение)               |
+|-----------------|------------------------------------------|---------------------------------------|
+| per_role_person | c8fc4200-75c0-4c24-8eea-112c4e468aeb     | 7d3d8b53-3f80-4c3e-9a2d-043ba49d3a30  |
+
+`repeat_role_catalog_id` = `ln-000015 «Участник»` (active). Подтверждено в UI
+карточки «Извещение» вкладки «Анкеты документов»: radio
+`Отдельный документ для каждого физлица с ролью` выбран, селектор
+`Роль-источник повторения` = «Участник» (скрин из чата пользователя
+`docs/2026-06-19_stage_c_per_role_card.png`).
+
+### B. SQL before — assignments на item (разделено по ролям)
+
+```sql
+SELECT rc.public_id, rc.label, COUNT(dpira.id) AS active_assignments
+FROM document_package_role_catalog rc
+LEFT JOIN document_package_item_role_assignments dpira
+  ON dpira.role_catalog_id = rc.id
+ AND dpira.package_template_item_id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
+ AND dpira.is_active = true
+WHERE rc.public_id IN ('ln-000014','ln-000015')
+GROUP BY rc.public_id, rc.label;
+```
+
+| public_id   | label    | active_assignments |
+|-------------|----------|--------------------|
+| ln-000014   | Ревизор  | 1                  |
+| ln-000015   | Участник | 3                  |
+
+Назначения Участников:
+
+| assignment_id                               | person_id                              | sort_order |
+|----------------------------------------------|----------------------------------------|------------|
+| 77540e62-b6b2-45ae-85c6-aff796a61680         | 9f6a564a-… (Петров Петр Петрович)      | 10         |
+| 0c458f06-cc15-4f8f-a095-bfadedff660b         | 77aa175a-… (Иванов Петр)               | 20         |
+| 44d5ce98-785c-4b9b-b454-4581a99441f7         | 26402449-… (Федорчук Сергей Валерьвич) | 30         |
+
+Назначение Ревизора:
+
+| assignment_id                               | person_id                              |
+|----------------------------------------------|----------------------------------------|
+| c4c8caa1-edc7-4661-b97f-a051dcafa61d         | 26402449-… (Федорчук Сергей Валерьвич) |
+
+### C. Прогон генерации
+
+Edge-функция `ai-generate-document-package` (контракт
+`{ package_session_id, run_mode }`, флага `dry_run` нет — переход к реальной
+генерации согласован планом):
+
+```json
+POST /functions/v1/ai-generate-document-package
+{ "package_session_id": "6a61a7e3-04b5-4e3c-aacb-8af1dbef6d53",
+  "run_mode": "admin_test" }
+```
+
+Response (HTTP 200, `batch_id=758080c9-b86c-44c8-bccb-472755964db7`):
+
+```json
+{
+  "total_items": 3,
+  "total_documents": 5,
+  "generated": 5,
+  "errors": 0,
+  "blocked": 0,
+  "status": "generated"
+}
+```
+
+Результаты по items:
+
+| sort | item                                | template                                                                    | mode             | docs | recipient_index → display_name                                              |
+|------|--------------------------------------|------------------------------------------------------------------------------|------------------|------|------------------------------------------------------------------------------|
+| 0    | 63bb4030-… Инструкция                | 95a5992e-…                                                                  | single           | 1    | —                                                                            |
+| 1    | f9962f6b-… Приказ                    | 9231032b-…                                                                  | single           | 1    | —                                                                            |
+| 2    | febd1821-… Извещение                 | 7d3d8b53-…                                                                  | per_role_person  | 3    | 1 → Петров Петр Петрович · 2 → Иванов Петр · 3 → Федорчук Сергей Валерьвич   |
+
+### D. SQL after — `ai_generated_documents` (canonical write-path)
+
+Все 3 извещения — отдельные строки c уникальным `meta.repeat_assignment_id`,
+`meta.recipient_person_id`, `meta.recipient_index`, `meta.recipient_display_name`,
+а также детерминированным `idempotency_key`
+`pkg:{batch}:{item}:assn:{assignment_id}`:
+
+| doc_id                                 | recipient                    | idx | repeat_assignment_id                     | recipient_person_id                    | idempotency_key suffix                   |
+|----------------------------------------|------------------------------|-----|------------------------------------------|----------------------------------------|------------------------------------------|
+| 18205281-d482-4128-8958-b3107457473e   | Петров Петр Петрович         | 1   | 77540e62-b6b2-45ae-85c6-aff796a61680     | 9f6a564a-935d-4f03-a42b-04dd5366137b   | `:assn:77540e62-…`                       |
+| df6252a3-c93a-4113-94b6-4aab3ce02605   | Иванов Петр                  | 2   | 0c458f06-cc15-4f8f-a095-bfadedff660b     | 77aa175a-a085-44b9-9d52-73e264b8f478   | `:assn:0c458f06-…`                       |
+| d75e2903-a9fc-424c-a9b1-45a05fff570c   | Федорчук Сергей Валерьвич    | 3   | 44d5ce98-785c-4b9b-b454-4581a99441f7     | 26402449-4eb1-4b87-a004-8f5cbbc2ff65   | `:assn:44d5ce98-…`                       |
+
+Все 3 documents:
+- `meta.generation_mode = 'per_role_person'`,
+- `meta.repeat_role_catalog_id = c8fc4200-…` (Участник),
+- `storage_bucket = 'documents'`, файл — реальный PDF (~29 KB, content-type
+  `application/pdf`, скачан через `document-download` HTTP 200),
+- `missing_tokens = []`.
+
+Single-документы (Инструкция, Приказ):
+
+| doc_id                                 | meta.generation_mode | recipient_* поля | idempotency_key                                   |
+|----------------------------------------|----------------------|------------------|---------------------------------------------------|
+| 5a281439-… Инструкция                  | (нет ключа)          | null             | `pkg:758080c9-…:63bb4030-…` (без `:assn:`)        |
+| 128fda50-… Приказ                      | (нет ключа)          | null             | `pkg:758080c9-…:f9962f6b-…` (без `:assn:`)        |
+
+Контракт не пересекается: single docs не получают ни `repeat_assignment_id`,
+ни `recipient_*`, ни суффикс `:assn:` в idempotency_key.
+
+### E. Cross-recipient contamination check (рендеренные значения токенов)
+
+Источник истины: `ai_generated_documents.meta.tokens_snapshot[*].rendered_value`
+(значения, реально подставленные в DOCX перед Gotenberg). Выборка по
+`raw_inside ILIKE 'ln-000014%' OR 'ln-000015%'`:
+
+| idx | document recipient            | ln-000015\|case=dative (Участник, recipient)     | ln-000014 (Ревизор)              |
+|-----|--------------------------------|---------------------------------------------------|-----------------------------------|
+| 1   | Петров Петр Петрович           | **Петрову Петру Петровичу**                       | Федорчук Сергей Валерьвич         |
+| 2   | Иванов Петр                    | **Иванову Петру**                                 | Федорчук Сергей Валерьвич         |
+| 3   | Федорчук Сергей Валерьвич      | **Федорчуку Сергею Валерьвичу**                   | Федорчук Сергей Валерьвич         |
+
+Выводы:
+
+- `ln-000015` (репит-роль) корректно перепривязан per recipient с учётом
+  падежа `case=dative`. Cross-contamination отсутствует: в каждом документе
+  recipient = текущий участник и **не** упоминаются другие участники по этой
+  токен-позиции.
+- `ln-000014` (Ревизор) одинаков во всех 3 документах = Федорчук Сергей
+  Валерьвич — это норма, потому что Ревизор — отдельная роль с одним активным
+  назначением, не recipient.
+- Ни одной ошибки `role_assignment_missing:*` ни в response, ни в meta.
+
+### F. Batch-level summary
+
+```json
+{
+  "batch_id": "758080c9-b86c-44c8-bccb-472755964db7",
+  "total_items": 3,
+  "total_documents": 5,
+  "generated": 5,
+  "errors": 0,
+  "blocked": 0,
+  "status": "generated"
+}
+```
+
+### G. DoD Stage C business runtime — финальный чек-лист
+
+- [x] UI карточки «Извещение» показывает `per_role_person + Участник` (скрин).
+- [x] SQL подтверждает `generation_mode='per_role_person'` и
+      `repeat_role_catalog_id=Участник (ln-000015)`.
+- [x] 3 активных назначения Участника и 1 назначение Ревизора подтверждены.
+- [x] Реальная генерация создаёт 3 отдельных извещения (item febd1821-…).
+- [x] У всех 3 разные `repeat_assignment_id`, `recipient_person_id`,
+      `recipient_display_name`, `recipient_index`.
+- [x] `ln-000015` (recipient) подставлен per-recipient в дательном падеже,
+      cross-recipient contamination отсутствует.
+- [x] `ln-000014` (Ревизор) подставлен (= единственный активный Ревизор) и
+      не блокирует генерацию.
+- [x] Single-документы (Инструкция, Приказ) сгенерированы без `recipient_*`
+      meta и без суффикса `:assn:` в idempotency_key.
+- [x] Backend generation PASS. UI «Результат последнего запуска» — backend
+      контракт подтверждён, UI-группировка результатов (если потребуется)
+      переносится в Stage D без блокировки Stage C.
+
+### Финальный статус
+
+```
+Stage A           — PASS
+Stage B           — PASS
+Stage 0.3         — PASS
+Stage C code      — PASS
+Stage C UI/save   — PASS (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1)
+Stage C business  — PASS (этот раздел)
+Stage D           — NOT STARTED
+```
+
