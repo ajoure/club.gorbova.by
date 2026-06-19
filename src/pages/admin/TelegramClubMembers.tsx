@@ -217,6 +217,8 @@ export default function TelegramClubMembers() {
   const [massRevokeReason, setMassRevokeReason] = useState('');
   const [massActionLoading, setMassActionLoading] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  // v4: на вкладке «Удалённые» по умолчанию скрываем мусорные записи (нет paid/sub/entitlement и нет joined_chat_at)
+  const [hideOrphans, setHideOrphans] = useState(true);
   
   // Reinvite ghosts state
   const [showReinviteDialog, setShowReinviteDialog] = useState(false);
