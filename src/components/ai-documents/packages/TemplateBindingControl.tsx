@@ -25,6 +25,7 @@ import {
 import { Loader2, Link2, Unlink, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { usePackageItemGenerationMode } from "@/hooks/usePackageItemGenerationMode";
 
 interface Props {
   packageTemplateId: string | null;
@@ -60,6 +61,7 @@ const QK_ALL = ["pkg-all-templates"];
 export function TemplateBindingControl({ packageTemplateId }: Props) {
   const qc = useQueryClient();
   const [pendingTemplateId, setPendingTemplateId] = useState<string>("");
+  const [previewPerRole, setPreviewPerRole] = useState<Record<string, boolean>>({});
 
   const boundQuery = useQuery({
     queryKey: QK_BOUND(packageTemplateId),
@@ -97,21 +99,8 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
     enabled: !!packageTemplateId,
   });
 
-  const rolesQuery = useQuery({
-    queryKey: ["pkg-roles-for-repeat", packageTemplateId],
-    queryFn: async () => {
-      if (!packageTemplateId) return [] as RoleOption[];
-      const { data, error } = await supabase
-        .from("document_package_role_catalog")
-        .select("id, role_key, label, is_active")
-        .eq("package_template_id", packageTemplateId)
-        .eq("is_active", true)
-        .order("sort_order", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as RoleOption[];
-    },
-    enabled: !!packageTemplateId,
-  });
+  const genMode = usePackageItemGenerationMode(packageTemplateId);
+  const rolesQuery = { data: genMode.activeRoles, isLoading: genMode.rolesLoading };
 
   const allTemplatesQuery = useQuery({
     queryKey: QK_ALL,
@@ -161,27 +150,25 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const updateModeMutation = useMutation({
-    mutationFn: async (input: {
+  // updateModeMutation вынесен в shared hook usePackageItemGenerationMode.
+  // Здесь оставлен тонкий wrapper, чтобы существующий ниже JSX продолжал работать.
+  const updateModeMutation = {
+    isPending: genMode.isSaving,
+    variables: genMode.isSaving ? { itemId: genMode.savingItemId } : undefined,
+    mutate: (input: {
       itemId: string;
       generation_mode: "single" | "per_role_person";
       repeat_role_catalog_id: string | null;
     }) => {
-      const { error } = await supabase
-        .from("document_package_template_items")
-        .update({
-          generation_mode: input.generation_mode,
-          repeat_role_catalog_id: input.repeat_role_catalog_id,
-        })
-        .eq("id", input.itemId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
+      genMode.update({
+        itemId: input.itemId,
+        packageTemplateId,
+        generation_mode: input.generation_mode,
+        repeat_role_catalog_id: input.repeat_role_catalog_id,
+      });
       qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
-      toast.success("Режим генерации сохранён");
     },
-    onError: (e: Error) => toast.error(`Не удалось сохранить режим: ${e.message}`),
-  });
+  } as const;
 
   const bound = boundQuery.data ?? [];
   const boundIds = new Set(bound.map((b) => b.template_id));
@@ -267,8 +254,9 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
           {bound.map((b) => {
             const roles = rolesQuery.data ?? [];
             const noRoles = roles.length === 0;
-            const isPerRole = b.generation_mode === "per_role_person";
-            const repeatRole = isPerRole
+            const isPerRolePersisted = b.generation_mode === "per_role_person";
+            const isPerRole = isPerRolePersisted || !!previewPerRole[b.id];
+            const repeatRole = isPerRolePersisted
               ? roles.find((r) => r.id === b.repeat_role_catalog_id) ?? null
               : null;
             const saving = updateModeMutation.isPending && updateModeMutation.variables?.itemId === b.id;
@@ -308,31 +296,25 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                 <div className="flex items-center gap-2 pl-7 text-xs">
                   <span className="text-muted-foreground shrink-0">Режим генерации:</span>
                   <Select
-                    value={b.generation_mode}
+                    value={isPerRole ? "per_role_person" : "single"}
                     disabled={saving}
                     onValueChange={(v) => {
                       const next = v as "single" | "per_role_person";
-                      if (next === b.generation_mode) return;
                       if (next === "single") {
+                        setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                        if (b.generation_mode === "single") return;
                         updateModeMutation.mutate({
                           itemId: b.id,
                           generation_mode: "single",
                           repeat_role_catalog_id: null,
                         });
                       } else {
-                        // per_role_person: требуем выбора роли, поэтому не сохраняем до выбора.
-                        // Локально переключаем в селекте через optimistic? Нет — оставляем сохранение на выбор роли.
                         if (noRoles) {
                           toast.error("Сначала добавьте роль пакета, затем выберите её как источник повторения.");
                           return;
                         }
-                        // Если есть хотя бы одна роль — мгновенно сохраняем с первой как дефолтом? Нет, безопаснее открыть селектор без коммита.
-                        // Чтобы UI отразил выбор и одновременно соблюдал триггер: коммитим сразу с первой активной ролью.
-                        updateModeMutation.mutate({
-                          itemId: b.id,
-                          generation_mode: "per_role_person",
-                          repeat_role_catalog_id: roles[0].id,
-                        });
+                        // НЕ сохраняем без явного выбора роли — открываем селектор локально.
+                        setPreviewPerRole((s) => ({ ...s, [b.id]: true }));
                       }
                     }}
                   >
@@ -352,13 +334,15 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
                       <Select
                         value={b.repeat_role_catalog_id ?? ""}
                         disabled={saving || noRoles}
-                        onValueChange={(v) =>
+                        onValueChange={(v) => {
+                          if (!v) return;
                           updateModeMutation.mutate({
                             itemId: b.id,
                             generation_mode: "per_role_person",
-                            repeat_role_catalog_id: v || null,
-                          })
-                        }
+                            repeat_role_catalog_id: v,
+                          });
+                          setPreviewPerRole((s) => ({ ...s, [b.id]: false }));
+                        }}
                       >
                         <SelectTrigger className="h-7 w-[220px] text-xs">
                           <SelectValue placeholder="Выберите роль…" />

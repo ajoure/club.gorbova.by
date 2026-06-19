@@ -58,6 +58,9 @@ import { cn } from "@/lib/utils";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 import { useAtomicDocumentSave } from "@/hooks/useAtomicDocumentSave";
+import { usePackageItemGenerationMode } from "@/hooks/usePackageItemGenerationMode";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
 
@@ -67,6 +70,8 @@ export interface PackageDocumentCardItem {
   template_id: string;
   template_name: string;
   active_version_id: string | null;
+  generation_mode?: "single" | "per_role_person" | null;
+  repeat_role_catalog_id?: string | null;
 }
 
 export interface PackageDocumentCardRole {
@@ -138,6 +143,22 @@ export function PackageDocumentCard({
   const valuesFetching = useIsFetching({
     queryKey: ["package-session-values", sessionId],
   }) > 0;
+
+  // ---------- Режим генерации (per_role_person / single) ----------
+  const persistedMode: "single" | "per_role_person" =
+    item.generation_mode === "per_role_person" ? "per_role_person" : "single";
+  const persistedRepeatRoleId = item.repeat_role_catalog_id ?? null;
+  // Локальный preview-режим: позволяет показать селектор роли до записи в БД,
+  // пока пользователь не выбрал роль-источник.
+  const [previewPerRole, setPreviewPerRole] = useState(false);
+  const effectiveMode: "single" | "per_role_person" =
+    persistedMode === "per_role_person" || previewPerRole ? "per_role_person" : "single";
+  const genMode = usePackageItemGenerationMode(packageTemplateId);
+  const repeatRole = useMemo(
+    () => genMode.activeRoles.find((r) => r.id === persistedRepeatRoleId) ?? null,
+    [genMode.activeRoles, persistedRepeatRoleId],
+  );
+  const isSavingMode = genMode.isSaving && genMode.savingItemId === item.id;
 
   // role draft: null до гидратации (Stage 5 требование #4)
   const [draft, setDraft] = useState<DraftRow[] | null>(null);
@@ -315,6 +336,27 @@ export function PackageDocumentCard({
     </Badge>
   ) : null;
 
+  // Бейдж режима генерации — виден сразу в шапке карточки.
+  const modeBadge = persistedMode === "per_role_person" ? (
+    repeatRole ? (
+      <Badge
+        variant="outline"
+        className="text-[10px] h-5 px-1.5 gap-1 font-medium border-indigo-500/40 text-indigo-600 dark:text-indigo-400 bg-indigo-500/5"
+      >
+        <Users className="h-3 w-3" />
+        × по роли «{repeatRole.label}»
+      </Badge>
+    ) : (
+      <Badge
+        variant="outline"
+        className="text-[10px] h-5 px-1.5 gap-1 font-medium border-rose-500/40 text-rose-600 dark:text-rose-400 bg-rose-500/5"
+      >
+        <AlertCircle className="h-3 w-3" />
+        роль-источник не задана
+      </Badge>
+    )
+  ) : null;
+
   const dirtyBadge = isDirty ? (
     <Badge
       variant="outline"
@@ -375,6 +417,7 @@ export function PackageDocumentCard({
               {fieldsBadge}
               {requiredRolesBadge}
               {optionalRolesBadge}
+              {modeBadge}
               {dirtyBadge}
             </div>
           </div>
@@ -442,6 +485,141 @@ export function PackageDocumentCard({
               />
             </>
           )}
+        </section>
+
+        {/* ---------- Режим генерации документа ---------- */}
+        <section
+          id={`pkg-doc-card-${item.id}-mode`}
+          className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-3"
+        >
+          <header className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                <Sparkles className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-foreground">Режим генерации документа</div>
+                <div className="text-[10px] text-muted-foreground">
+                  Сколько документов создать для этого шаблона при генерации пакета.
+                </div>
+              </div>
+            </div>
+            {isSavingMode && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          </header>
+
+          <RadioGroup
+            value={effectiveMode}
+            onValueChange={(v) => {
+              const next = v as "single" | "per_role_person";
+              if (next === "single") {
+                setPreviewPerRole(false);
+                if (persistedMode === "single") return;
+                genMode.update({
+                  itemId: item.id,
+                  packageTemplateId,
+                  generation_mode: "single",
+                  repeat_role_catalog_id: null,
+                });
+              } else {
+                // per_role_person: НЕ сохраняем без явного выбора роли.
+                setPreviewPerRole(true);
+              }
+            }}
+            className="space-y-1.5"
+            disabled={isSavingMode}
+          >
+            <div className="flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-2">
+              <RadioGroupItem value="single" id={`mode-single-${item.id}`} className="mt-0.5" />
+              <Label htmlFor={`mode-single-${item.id}`} className="text-xs font-normal cursor-pointer leading-snug">
+                <span className="font-medium text-foreground">Один документ</span>
+                <span className="block text-[10px] text-muted-foreground mt-0.5">
+                  Будет создан ровно один документ по этому шаблону.
+                </span>
+              </Label>
+            </div>
+
+            <div
+              className={cn(
+                "flex items-start gap-2 rounded-md border p-2",
+                effectiveMode === "per_role_person"
+                  ? "border-indigo-500/40 bg-indigo-500/[0.04]"
+                  : "border-border/60 bg-background/40",
+                genMode.activeRoles.length === 0 && "opacity-60",
+              )}
+            >
+              <RadioGroupItem
+                value="per_role_person"
+                id={`mode-per-role-${item.id}`}
+                className="mt-0.5"
+                disabled={genMode.activeRoles.length === 0}
+              />
+              <div className="flex-1 min-w-0 space-y-2">
+                <Label
+                  htmlFor={`mode-per-role-${item.id}`}
+                  className="text-xs font-normal cursor-pointer leading-snug block"
+                >
+                  <span className="font-medium text-foreground">
+                    Отдельный документ для каждого физлица с ролью
+                  </span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">
+                    Сколько физлиц назначено на выбранную роль — столько копий документа будет создано.
+                  </span>
+                </Label>
+
+                {genMode.activeRoles.length === 0 ? (
+                  <div className="text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded p-1.5 flex items-start gap-1.5">
+                    <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span>
+                      В пакете нет активных ролей. Сначала добавьте роль во вкладке «Роли и поля пакета».
+                    </span>
+                  </div>
+                ) : effectiveMode === "per_role_person" && (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-medium text-muted-foreground">
+                      Роль-источник повторения
+                    </div>
+                    <Select
+                      value={persistedRepeatRoleId ?? ""}
+                      disabled={isSavingMode}
+                      onValueChange={(v) => {
+                        if (!v) return;
+                        genMode.update({
+                          itemId: item.id,
+                          packageTemplateId,
+                          generation_mode: "per_role_person",
+                          repeat_role_catalog_id: v,
+                        });
+                        setPreviewPerRole(false);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-[11px]">
+                        <SelectValue placeholder="Выберите роль…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {genMode.activeRoles.map((r) => (
+                          <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                            {r.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!persistedRepeatRoleId && (
+                      <div className="text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Выберите роль — режим сохранится автоматически.
+                      </div>
+                    )}
+                    {persistedRepeatRoleId && !repeatRole && (
+                      <div className="text-[10px] text-rose-700 dark:text-rose-400 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Сохранённая роль больше неактивна. Выберите другую.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </RadioGroup>
         </section>
 
         {/* ---------- Роли документа ---------- */}

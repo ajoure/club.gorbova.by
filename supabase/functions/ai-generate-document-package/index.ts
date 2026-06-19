@@ -452,9 +452,29 @@ Deno.serve(async (req) => {
             itemErrors.push(`ln_token_outside_bound_package:${lnPublicId}`);
             continue;
           }
+          // Stage C runtime fix: если этот item генерируется в режиме per_role_person
+          // и текущий ln-токен == repeat-роль — НЕ блокируем pre-scan по отсутствию
+          // назначений (recipient'ы придут из resolvePerRoleRecipients в per-role ветке
+          // ниже и перезапишут placeholder).
+          const isRepeatRolePerRole =
+            item.generation_mode === 'per_role_person' &&
+            item.repeat_role_catalog_id &&
+            role.id === item.repeat_role_catalog_id;
           const k = `${item.id}::${role.id}`;
           const asgs = assignByItemRole.get(k) || [];
           if (asgs.length === 0) {
+            if (isRepeatRolePerRole) {
+              // Placeholder; per-role ветка позднее перезапишет под каждого recipient.
+              (preresolved_ln_tokens as any)[lnPublicId] = {
+                value: '',
+                persons: [],
+                positions: [],
+                position_genders: [],
+                role_catalog_id: role.id,
+                person_id: null,
+              };
+              continue;
+            }
             itemErrors.push(`role_assignment_missing:${lnPublicId}`);
             continue;
           }
@@ -479,6 +499,17 @@ Deno.serve(async (req) => {
             positionGenders.push(pg);
           }
           if (fullNames.length === 0 || !firstPersonId) {
+            if (isRepeatRolePerRole) {
+              (preresolved_ln_tokens as any)[lnPublicId] = {
+                value: '',
+                persons: [],
+                positions: [],
+                position_genders: [],
+                role_catalog_id: role.id,
+                person_id: null,
+              };
+              continue;
+            }
             itemErrors.push(`role_person_not_found:${lnPublicId}`);
             continue;
           }
