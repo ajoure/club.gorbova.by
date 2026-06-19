@@ -420,15 +420,27 @@ export function PackageDocumentCard({
               <span>В этом документе нет дополнительных полей — все нужные значения берутся из общих полей пакета.</span>
             </div>
           ) : (
-            <PackageFieldsClientForm
-              ref={fieldsRef}
-              sessionId={sessionId}
-              packageTemplateId={packageTemplateId}
-              packageTemplateItemId={item.id}
-              sessionCreatedAt={sessionCreatedAt}
-              hideSaveButton
-              onDirtyChange={setFieldsDirty}
-            />
+            <>
+              {itemMissingRequired.length > 0 && (
+                <div className="text-[11px] border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300 rounded-md p-2 flex items-start gap-2">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-medium">Не заполнено:</span>{" "}
+                    {itemMissingRequired.map((q) => q.effective.label).join(", ")}
+                  </div>
+                </div>
+              )}
+              <PackageFieldsClientForm
+                ref={fieldsRef}
+                sessionId={sessionId}
+                packageTemplateId={packageTemplateId}
+                packageTemplateItemId={item.id}
+                sessionCreatedAt={sessionCreatedAt}
+                hideSaveButton
+                onDirtyChange={setFieldsDirty}
+                highlightFieldIds={missingRequiredFieldIds}
+              />
+            </>
           )}
         </section>
 
