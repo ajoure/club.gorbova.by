@@ -1458,7 +1458,49 @@ Deno.serve(async (req) => {
           default_kind_applied: entry?.default_kind_applied ?? null,
         };
       }
+
+      // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): resolve recipient.*
+      // Источник — packageContext.recipient (присутствие гарантировано guard'ом выше).
+      const recipientCtx = packageContext!.recipient;
+      for (const pt of parsedRecipientTokens) {
+        if (!recipientCtx) {
+          // Defence-in-depth — guard выше уже отверг бы запрос.
+          resolved[pt.raw_inside] = '';
+          sourceTrace[pt.raw_inside] = { status: 'empty', source: 'recipient', kind: 'recipient', field: pt.field };
+          continue;
+        }
+        const rawVal: string = (() => {
+          const v = (recipientCtx as any)[pt.field];
+          return typeof v === 'string' ? v : (v == null ? '' : String(v));
+        })();
+        let outVal = fmtVal(rawVal);
+        let formatApplied = false;
+        let caseApplied = false;
+        // format (только full_name) — переформатируем ФИО.
+        if (pt.field === 'full_name' && pt.format && PERSON_NAME_FORMATS.has(pt.format)) {
+          outVal = formatPersonName(rawVal, {
+            format: pt.format as PersonNameFormat,
+            case: (pt.case_modifier as RuCase | null) ?? null,
+          });
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        } else if (pt.case_modifier) {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+        }
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: 'recipient',
+          kind: 'recipient',
+          field: pt.field,
+          value: outVal,
+          format_applied: formatApplied,
+          case_applied: caseApplied,
+        };
+      }
     }
+
 
 
 
