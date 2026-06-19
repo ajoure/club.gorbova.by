@@ -58,6 +58,9 @@ interface Props {
   orphanOnly?: boolean;
   /** Сообщает родителю об изменении dirty-state (для atomic save в карточке). */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Stage 0.2: набор field_catalog_id, которые надо подсветить как
+   * required-empty (amber border у FieldRow). */
+  highlightFieldIds?: Set<string>;
 }
 
 type DraftMap = Record<string, string | null>;
