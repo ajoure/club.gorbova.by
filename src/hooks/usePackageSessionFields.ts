@@ -80,6 +80,13 @@ function isFilled(v: SessionFieldValueRow | undefined): boolean {
 export function usePackageSessionFields(
   sessionId: string | null,
   packageTemplateId: string | null,
+  /**
+   * Stage 0.3: контекст для smart-date prefill (используется только в readiness-
+   * чеках `progress` / `getItemProgress` / `getItemMissingRequired`). NULL =>
+   * smart-date в readiness не учитывается (старое поведение); рекомендуется
+   * передавать `document_package_sessions.created_at`.
+   */
+  sessionCreatedAt: string | null = null,
 ) {
   const qc = useQueryClient();
   const detected = usePackageDetectedFields(packageTemplateId);
