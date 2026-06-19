@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
     // ── load session + ownership ─────────────────────────────────────────
     const { data: session } = await supabase
       .from('document_package_sessions')
-      .select('id, profile_id, package_template_id, selected_legal_entity_id, status')
+      .select('id, profile_id, package_template_id, selected_legal_entity_id, status, created_at')
       .eq('id', packageSessionId)
       .maybeSingle();
     if (!session) return j({ error: 'package_session_not_found' }, 404);
