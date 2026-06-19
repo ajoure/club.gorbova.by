@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
     // ── load items + templates ───────────────────────────────────────────
     const { data: items } = await supabase
       .from('document_package_template_items')
-      .select('id, package_template_id, template_id, title_override, sort_order')
+      .select('id, package_template_id, template_id, title_override, sort_order, generation_mode, repeat_role_catalog_id')
       .eq('package_template_id', session.package_template_id)
       .order('sort_order', { ascending: true });
     if (!items || items.length === 0) return j({ error: 'package_has_no_items' }, 400);
