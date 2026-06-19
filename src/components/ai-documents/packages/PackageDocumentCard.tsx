@@ -375,6 +375,28 @@ export function PackageDocumentCard({
     )
   ) : null;
 
+  // Stage D.1: «N/M получателей» по latest successful batch.
+  // Показывается ТОЛЬКО для per_role_person item с заданной ролью и при наличии
+  // хотя бы одного успешного batch.
+  const recipientsBadge =
+    persistedMode === "per_role_person" &&
+    persistedRepeatRoleId &&
+    staleness.latestSuccessBatchId ? (
+      <Badge
+        variant="outline"
+        className={cn(
+          "text-[10px] h-5 px-1.5 gap-1 font-medium",
+          staleness.generatedCount === staleness.totalRecipients && staleness.totalRecipients > 0
+            ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5"
+            : "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5",
+        )}
+        title="Сгенерировано получателей в последнем успешном batch"
+      >
+        <Users className="h-3 w-3" />
+        {staleness.generatedCount}/{staleness.totalRecipients} получ.
+      </Badge>
+    ) : null;
+
   const dirtyBadge = isDirty ? (
     <Badge
       variant="outline"
