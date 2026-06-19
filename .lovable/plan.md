@@ -1,170 +1,58 @@
-# План v8 **можно запускать**, но с важной правкой: **не называть это “Удалённые” только по факту отсутствия в чате/канале**. Это фактически вкладка **“Бывшие клиенты без текущего доступа и не в Telegram”**. Для hotfix это допустимо, потому что `access_status` сейчас ненадёжен.
+План:
 
-да, согласен, с учетом правок:
+## Проблема (диагностика)
 
-1. План v8 принимаем как UI-only hotfix, без миграций и без DML.
-2. Правильно: во вкладке «Удалённые» больше не использовать `access_status`, потому что он сломан у зомби-клиентов (`ok` при фактически закончившемся доступе).
-
-Финальная логика вкладки «Удалённые»:
-
-```text
-!member.in_any
-AND !isAdmin
-AND has_commercial_history=true
-AND has_current_commercial_access=false
-```
-
-3. Для мусорных записей:
-
-```text
-has_commercial_history=false
-```
-
-Они скрыты по умолчанию и показываются только при «Показать мусорные».
-
-4. Важно: `has_active_access` нигде не использовать для фильтра «Удалённых».  
-Он legacy/ненадёжный и уже доказанно ломал список.
-5. Исправить сортировку:
-
-- «Доступ до» сортировать по `commercial_ended_at`, а не по `kicked_at ?? access_ended_at`;
-- «Кикнут» сделать сортируемой колонкой по `kicked_at`;
-- `SortKey` расширить значением `'kicked_at'`.
-
-6. Бейдж `Удалённые` считать локально по той же формуле, что и таблица.  
-Счётчик не должен браться из старого summary, если summary считает по `access_status`.
-7. Проверить UI-колонки во вкладке «Удалённые»:
-
-```text
-Доступ с → commercial_started_at
-Доступ до → commercial_ended_at
-Кикнут → kicked_at или "дата кика неизвестна"
-Сверх доступа → illegal_access_days
-```
-
-8. Не менять:
-
-- RPC/view;
-- grant/revoke canonical write-path;
-- автокик;
-- `telegram_club_members`;
-- Supabase types, если они уже актуальны.
-
-9. Proof после выполнения:
-
-- Ярошевич видна в «Удалённых»;
-- Рабчевская видна в «Удалённых»;
-- Грудецкая видна в «Удалённых»;
-- Рохмистров виден, если у него реально есть коммерческая история;
-- Анастасия Ярошевич скрыта как orphan, если `has_commercial_history=false`;
-- Валентина Ярошевич не видна в «Удалённых», если `in_chat=true`;
-- бейдж «Удалённые» совпадает с количеством строк;
-- сортировка «Доступ до» сортирует по видимой дате;
-- сортировка «Кикнут» работает;
-- DML/DELETE/UPDATE по `telegram_club_members` не выполнялись.
-
-10. Финальный критерий закрытия патча:
-
-Во вкладке «Удалённые» должны быть не просто строки со статусом `removed`, а все реальные бывшие платные клиенты клуба, которые:
-
-```text
-были коммерческими клиентами
-сейчас не имеют текущего коммерческого доступа
-физически не находятся в чате/канале
-не являются админами
-```
-
-Мусорные записи без коммерческой истории скрыты по умолчанию.
-
-Ключевое: **v8 правильно уходит от** `access_status`, потому что он сейчас ненадёжен. Для закрытия патча достаточно UI-only hotfix, а отдельный root-fix резолвера `access_status` можно оставить следующим патчем.
-
-&nbsp;
-
-План: v8 hotfix вкладки «Удалённые» (UI-only)
-
-## Diagnose
-
-Проверил `v_club_members_enriched` для клуба Gorbova (`fa547c41-…`):
-
-1. **Сортировка «Доступ до» сортирует не то, что показано.**
-  В колонке выводится `commercial_ended_at`, а sort-функция в `useMemo filteredMembers` (строка 394) делает `cmpDate(a.kicked_at ?? a.access_ended_at, …)`. Поэтому даты в колонке выглядят неупорядоченно.
-2. **У колонки «Кикнут» нет сортировки вообще.**
-  `<TableHead>Кикнут</TableHead>` (строка 1369) — обычный заголовок без `toggleSort` и `<SortIcon>`.
-3. **Реально кикнутые клиенты не попадают в «Удалённые».**
-  Пример (клуб Gorbova, проверено в БД):
-
-  | tg_id     | имя               | in_any | access_status | has_active_access | has_commercial_history | has_current_commercial_access | commercial_ended_at |
-  | --------- | ----------------- | ------ | ------------- | ----------------- | ---------------------- | ----------------------------- | ------------------- |
-  | 490672308 | Татьяна Ярошевич  | f      | **ok**        | t (зомби)         | t                      | f                             | 2026-06-18 (прошёл) |
-  | 482412497 | Юлия Рабчевская   | f      | **ok**        | t (зомби)         | t                      | f                             | 2026-06-16 (прошёл) |
-  | 129317027 | Грудецкая Инна    | f      | **ok**        | t (зомби)         | t                      | f                             | 2026-06-06 (прошёл) |
-  | 440911989 | Никита Рохмистров | f      | removed       | —                 | t                      | f                             | 2026-02-19          |
-
-   Рохмистров виден (`access_status='removed'`). Ярошевич / Рабчевская / Грудецкая — НЕ видны: фильтр требует `access_status='removed'`, а у этих троих он `'ok'`, потому что view-флаг `has_active_access=true` (зомби-entitlement). Это ровно та проблема «зомби», от которой v7 ушёл частично — фильтр всё ещё опирается на сломанный `access_status`.
-   В то же время «мусорные» 10 строк остаются видимыми по `Показать мусорные`.
-
-## Fix (только фронт, без миграций, без write-path)
-
-### 1. `src/pages/admin/TelegramClubMembers.tsx`
-
-**1.1. Фильтр вкладки `removed**` (строки 335-341): убрать зависимость от сломанного `access_status` и требовать только коммерческие признаки.
+Скриншот «Шаблоны пакета» в пакете «Годовое собрание участников» показывает 7 элементов, из которых #1–#3 — это привязки к soft-deleted шаблонам:
 
 ```
-case 'removed':
-  // v8: «Удалённые» = был платным клиентом, сейчас коммерческого доступа нет,
-  // физически не в чате/канале. access_status НЕ используется (ломается зомби).
-  if (member.in_any || isAdmin) return false;
-  if (!member.has_commercial_history) {
-    // мусорные — только под toggle «Показать мусорные»
-    return !hideOrphans;
-  }
-  if (member.has_current_commercial_access) return false;
-  return true;
+#1 1. Приказ … ООО         tpl 682b16e8…  deleted_at 2026-06-19 12:35:54
+#2 0. Приказ … инструкция  tpl aec8c851…  deleted_at 2026-06-19 12:35:56
+#3 2. Извещение …          tpl 5b087851…  deleted_at 2026-06-19 12:35:59
+#4 0. Приказ … инструкция  tpl 17c3105e…  активный (новый)
+#5 1. Приказ … ООО         tpl a1934ddb…  активный (новый, draft)
+#6 1. Приказ … (без ООО)   tpl fe2262c0…  активный
+#7 2. Извещение …          tpl f8e2d8be…  активный (новый)
 ```
 
-**1.2. Бейдж `counts.removed**` (строки 296-302): пересобрать той же формулой, что и фильтр (убрать `m.access_status !== 'removed'`).
+Причина: `document_templates` использует soft-delete (`deleted_at`), а `document_package_template_items.template_id` имеет FK `ON DELETE RESTRICT` и не реагирует на soft-delete. Поэтому при удалении и пересоздании шаблона старые привязки остаются в пакете и в UI выглядят как дубликаты.
 
-**1.3. Sort «Доступ до»** (строка 394): сортировать по тому, что отображается:
+## DoD
 
-```
-case 'access_ended_at':
-  r = cmpDate(a.commercial_ended_at, b.commercial_ended_at);
-  break;
-```
+- При soft-delete шаблона (`document_templates.deleted_at = now()`) все строки `document_package_template_items.template_id = <tpl>` удаляются автоматически на уровне БД.
+- В существующих пакетах не остаётся ни одной привязки на soft-deleted шаблон (одноразовый бэкфилл).
+- UI «Шаблоны пакета» отдаёт только привязки, у которых базовый шаблон не удалён (defense-in-depth).
+- Канонический write-path не трогается: write-операции остаются через текущие хуки/UI; новая логика только удаляет битые ссылки.
 
-**1.4. Sort «Кикнут»** (строка 1369): сделать колонку сортируемой:
+## Изменения
 
-```
-<TableHead className="whitespace-nowrap">
-  <button onClick={() => toggleSort('kicked_at')} className="inline-flex items-center hover:text-foreground transition-colors">
-    Кикнут <SortIcon k="kicked_at" />
-  </button>
-</TableHead>
-```
+### 1. Миграция (single file)
 
-И добавить ветку в `switch (sortKey)`:
+a) Trigger `trg_package_items_unbind_on_template_soft_delete` на `document_templates AFTER UPDATE`:
+   - если `OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL` → `DELETE FROM document_package_template_items WHERE template_id = NEW.id`.
+   - SECURITY DEFINER, `SET search_path = public`.
+   - Каскадно (через существующий FK CASCADE) подчистятся `document_package_item_field_assignments` и `document_package_item_role_assignments`. Сессионные значения (`document_package_session_field_values`) остаются (FK RESTRICT) — они исторические; ни сессии, ни сгенерированные документы не трогаем.
 
-```
-case 'kicked_at':
-  r = cmpDate(a.kicked_at, b.kicked_at);
-  break;
-```
+b) Бэкфилл одноразово: `DELETE FROM document_package_template_items WHERE template_id IN (SELECT id FROM document_templates WHERE deleted_at IS NOT NULL);` — это уберёт ровно те 3 «исторических» элемента из скриншота (и любые аналогичные в других пакетах).
 
-**1.5. Тип `SortKey**`: добавить `'kicked_at'` в union (там же где `'access_ended_at'`).
+c) Если бэкфилл наткнётся на ON DELETE RESTRICT от `document_package_session_field_values` — выполнить delete в two-step: сперва обнулить ссылку или пропустить items, у которых уже есть session-values (защита истории). Реализовать через `WHERE NOT EXISTS (SELECT 1 FROM document_package_session_field_values v WHERE v.package_template_item_id = i.id)`. Для остальных оставить — в UI они всё равно будут скрыты фильтром (см. п.2).
 
-## NOT touched
+### 2. UI hook `src/hooks/useDocumentPackages.ts`
 
-- Никаких миграций / изменений `v_club_members_enriched` / RPC.
-- Канонический write-path grant/revoke не трогается.
-- Автокик не трогается.
-- Никакого DML/DELETE по `telegram_club_members`.
-- `useTelegramIntegration.tsx` и `types.ts` уже содержат нужные поля — не редактируются.
+В `useDocumentPackageItems` после join с `document_templates` фильтровать `item.template_deleted === true` из возвращаемого массива (всё ещё помечать «(удалён)» нам не нужно — таких просто не будет). Это нужно как страховка для пакетов, где session-values заблокировали удаление в бэкфилле.
 
-## DoD / Verify
+Никаких других файлов не правим. Канонический generate-strict / package-tokens resolver / sessions не трогаем.
 
-1. После сборки во вкладке «Удалённые» (Gorbova, `hideOrphans=true` по умолчанию) видны Татьяна Ярошевич, Юлия Рабчевская, Грудецкая Инна, Никита Рохмистров и остальные с `has_commercial_history=true && !has_current_commercial_access && !in_any`.
-2. Валентина Ярошевич (in_chat=true) НЕ во вкладке «Удалённые».
-3. Анастасия Ярошевич (`has_commercial_history=false`) скрыта по умолчанию, видна только при «Показать мусорные».
-4. Бейдж `Удалённые` совпадает с числом строк в таблице.
-5. Клик по «Доступ до» сортирует по `commercial_ended_at` (видимая колонка), пустые — в конец.
-6. Клик по «Кикнут» сортирует по `kicked_at` обе стороны.
-7. Proof-запрос подтверждает, что физических DELETE по `telegram_club_members` не было (счётчик строк до/после = одинаковый).
+## Технические детали
+
+- Файлы:
+  - `supabase/migrations/<ts>_package_items_auto_unbind.sql` — функция + триггер + бэкфилл.
+  - `src/hooks/useDocumentPackages.ts` — добавить `.filter(i => !i.template_deleted)` перед `return` в `useDocumentPackageItems`.
+- Аудит: добавить `RAISE NOTICE` в триггер не требуется — есть существующий `trg_audit_package_template_items` на DELETE, он зафиксирует автокаскад.
+- Memory: тема узкая, новой записи в `mem://` не требуется.
+
+## Проверка
+
+После применения миграции:
+1. `SELECT count(*) FROM document_package_template_items i JOIN document_templates t ON t.id=i.template_id WHERE t.deleted_at IS NOT NULL;` → 0 (или равно числу items, защищённых session-values; их UI скроет).
+2. В UI пакета «Годовое собрание участников» останутся только #4–#7 (новые шаблоны), номера пересчитаются автоматически (`sort_order` уже разный — список покажется как 1..4).
+3. Soft-delete любого шаблона из «Шаблоны документов» → запись в пакете пропадает без ручного «Отвязать».
