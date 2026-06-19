@@ -387,7 +387,7 @@ export default function TelegramClubMembers() {
       return r * dirMul;
     });
     return sorted;
-  }, [members, activeTab, adminTelegramIds, sortKey, sortDir]);
+  }, [members, activeTab, adminTelegramIds, sortKey, sortDir, hideOrphans]);
 
 
 
