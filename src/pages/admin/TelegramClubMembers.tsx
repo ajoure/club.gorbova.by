@@ -380,7 +380,8 @@ export default function TelegramClubMembers() {
           r = cmpDate(a.access_started_at, b.access_started_at);
           break;
         case 'access_ended_at':
-          r = cmpDate(a.access_ended_at, b.access_ended_at);
+          // v4: для removed используем kicked_at, иначе access_ended_at
+          r = cmpDate(a.kicked_at ?? a.access_ended_at, b.kicked_at ?? b.access_ended_at);
           break;
       }
       return r * dirMul;
