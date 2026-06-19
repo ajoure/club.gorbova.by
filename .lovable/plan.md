@@ -2,57 +2,68 @@
 
 ## Проблема (диагностика)
 
-Скриншот «Шаблоны пакета» в пакете «Годовое собрание участников» показывает 7 элементов, из которых #1–#3 — это привязки к soft-deleted шаблонам:
+После soft-delete старых шаблонов + повторной загрузки новых в пакете «Годовое собрание участников»:
 
-```
-#1 1. Приказ … ООО         tpl 682b16e8…  deleted_at 2026-06-19 12:35:54
-#2 0. Приказ … инструкция  tpl aec8c851…  deleted_at 2026-06-19 12:35:56
-#3 2. Извещение …          tpl 5b087851…  deleted_at 2026-06-19 12:35:59
-#4 0. Приказ … инструкция  tpl 17c3105e…  активный (новый)
-#5 1. Приказ … ООО         tpl a1934ddb…  активный (новый, draft)
-#6 1. Приказ … (без ООО)   tpl fe2262c0…  активный
-#7 2. Извещение …          tpl f8e2d8be…  активный (новый)
-```
-
-Причина: `document_templates` использует soft-delete (`deleted_at`), а `document_package_template_items.template_id` имеет FK `ON DELETE RESTRICT` и не реагирует на soft-delete. Поэтому при удалении и пересоздании шаблона старые привязки остаются в пакете и в UI выглядят как дубликаты.
+1. В таблице `document_package_template_items` остались **2 строки**, ведущие на soft-deleted шаблоны:
+   - item `a1a40df2…` → tpl `682b16e8…` «1. Приказ … ООО» (`deleted_at` стоит)
+   - item `652b2288…` → tpl `5b087851…` «2. Извещение …» (`deleted_at` стоит)
+2. Bulk-delete из прошлой миграции не сработал на этих двух — они защищены FK `document_package_session_field_values.package_template_item_id` (`ON DELETE RESTRICT`); по ним 12 исторических значений анкеты тестовых сессий.
+3. UI `TemplateBindingControl` (вкладка «Шаблоны пакета») делает свой запрос без `deleted_at IS NULL` и без join с `document_templates.deleted_at`, поэтому показывает эти 2 «зомби»-привязки со статусом `active` (статус самого шаблона), хотя шаблон уже удалён.
+4. Счётчик «Шаблонов в пакете: 0» во вкладке «Генерация» — другой запрос, он фильтрует по deleted_at, поэтому видит 0, а соседняя вкладка — 2. Отсюда расхождение и впечатление «привязалось к старым данным».
+5. Сессионные значения старой анкеты (`Анкета пакета сохранена ✓` + бэйджи «7/7», «6/6») всё ещё лежат в `document_package_session_field_values` для тех же зомби-items.
 
 ## DoD
 
-- При soft-delete шаблона (`document_templates.deleted_at = now()`) все строки `document_package_template_items.template_id = <tpl>` удаляются автоматически на уровне БД.
-- В существующих пакетах не остаётся ни одной привязки на soft-deleted шаблон (одноразовый бэкфилл).
-- UI «Шаблоны пакета» отдаёт только привязки, у которых базовый шаблон не удалён (defense-in-depth).
-- Канонический write-path не трогается: write-операции остаются через текущие хуки/UI; новая логика только удаляет битые ссылки.
+- В пакете «Годовое собрание участников» (и любом другом) не остаётся ни одной строки `document_package_template_items`, ведущей на шаблон с `deleted_at IS NOT NULL`. Включая защищённые сессионными значениями.
+- Старые тестовые значения этих сессий (`document_package_session_field_values` по удалённым items) физически удаляются — каскадом, не вручную.
+- Вкладка «Шаблоны пакета» дополнительно фильтрует deleted-шаблоны в собственном запросе (defense-in-depth, на случай, если впредь кто-то снова попадёт в RESTRICT).
+- Канонический write-path не меняется: bind/unbind по-прежнему через RPC `package_template_bind_template` / `package_template_unbind_template`; новых INSERT/UPDATE не добавляем.
+- Сами `document_package_sessions` и `ai_generated_documents` не трогаем (исторические сессии остаются как audit trail, без обнулённых значений по удалённым items).
 
 ## Изменения
 
-### 1. Миграция (single file)
+### 1. Миграция — single file
 
-a) Trigger `trg_package_items_unbind_on_template_soft_delete` на `document_templates AFTER UPDATE`:
-   - если `OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL` → `DELETE FROM document_package_template_items WHERE template_id = NEW.id`.
-   - SECURITY DEFINER, `SET search_path = public`.
-   - Каскадно (через существующий FK CASCADE) подчистятся `document_package_item_field_assignments` и `document_package_item_role_assignments`. Сессионные значения (`document_package_session_field_values`) остаются (FK RESTRICT) — они исторические; ни сессии, ни сгенерированные документы не трогаем.
+a) Сменить FK `document_package_session_field_values.package_template_item_id` с `ON DELETE RESTRICT` на `ON DELETE CASCADE`. Обоснование: если привязка шаблона удалена/отвязана, сессионные значения по ней теряют смысл — мы и сейчас не используем их в генерации, потому что шаблона нет.
 
-b) Бэкфилл одноразово: `DELETE FROM document_package_template_items WHERE template_id IN (SELECT id FROM document_templates WHERE deleted_at IS NOT NULL);` — это уберёт ровно те 3 «исторических» элемента из скриншота (и любые аналогичные в других пакетах).
+```sql
+ALTER TABLE public.document_package_session_field_values
+  DROP CONSTRAINT document_package_session_field_va_package_template_item_id_fkey,
+  ADD  CONSTRAINT document_package_session_field_va_package_template_item_id_fkey
+    FOREIGN KEY (package_template_item_id)
+    REFERENCES public.document_package_template_items(id)
+    ON DELETE CASCADE;
+```
 
-c) Если бэкфилл наткнётся на ON DELETE RESTRICT от `document_package_session_field_values` — выполнить delete в two-step: сперва обнулить ссылку или пропустить items, у которых уже есть session-values (защита истории). Реализовать через `WHERE NOT EXISTS (SELECT 1 FROM document_package_session_field_values v WHERE v.package_template_item_id = i.id)`. Для остальных оставить — в UI они всё равно будут скрыты фильтром (см. п.2).
+b) Перезапустить бэкфилл (теперь сработает на 2 оставшихся):
 
-### 2. UI hook `src/hooks/useDocumentPackages.ts`
+```sql
+DELETE FROM public.document_package_template_items i
+WHERE i.template_id IN (
+  SELECT id FROM public.document_templates WHERE deleted_at IS NOT NULL
+);
+```
 
-В `useDocumentPackageItems` после join с `document_templates` фильтровать `item.template_deleted === true` из возвращаемого массива (всё ещё помечать «(удалён)» нам не нужно — таких просто не будет). Это нужно как страховка для пакетов, где session-values заблокировали удаление в бэкфилле.
+c) Триггер `package_items_unbind_on_template_soft_delete` уже существует и работает корректно — оставляем как есть; убираем из него условие `NOT EXISTS … session_field_values`, так как CASCADE теперь сам подчищает значения. Перевыпускаем `CREATE OR REPLACE FUNCTION` без этого условия.
 
-Никаких других файлов не правим. Канонический generate-strict / package-tokens resolver / sessions не трогаем.
+### 2. UI `src/components/ai-documents/packages/TemplateBindingControl.tsx`
+
+В `boundQuery` после загрузки шаблонов отфильтровать привязки на удалённые шаблоны: добавить выбор поля `deleted_at` в select по `document_templates` и в финальном `.map`/`.filter` убрать те, у которых `tpl.deleted_at != null`. Это нужно как страховка; в норме после миграции таких записей не будет.
+
+### 3. Memory
+
+Тема узкая, новой памяти не требуется. Существующее правило «Canonical Write Path» не нарушено — мы только смягчаем каскад на чистку.
 
 ## Технические детали
 
 - Файлы:
-  - `supabase/migrations/<ts>_package_items_auto_unbind.sql` — функция + триггер + бэкфилл.
-  - `src/hooks/useDocumentPackages.ts` — добавить `.filter(i => !i.template_deleted)` перед `return` в `useDocumentPackageItems`.
-- Аудит: добавить `RAISE NOTICE` в триггер не требуется — есть существующий `trg_audit_package_template_items` на DELETE, он зафиксирует автокаскад.
-- Memory: тема узкая, новой записи в `mem://` не требуется.
+  - `supabase/migrations/<ts>_package_items_cascade_session_values.sql` — ALTER FK + DELETE + переcоздание trigger function (без NOT EXISTS).
+  - `src/components/ai-documents/packages/TemplateBindingControl.tsx` — расширить select и .filter.
+- После миграции инвалидация UI-кэша произойдёт автоматически при следующем переходе в пакет (React Query reload по mount).
 
 ## Проверка
 
-После применения миграции:
-1. `SELECT count(*) FROM document_package_template_items i JOIN document_templates t ON t.id=i.template_id WHERE t.deleted_at IS NOT NULL;` → 0 (или равно числу items, защищённых session-values; их UI скроет).
-2. В UI пакета «Годовое собрание участников» останутся только #4–#7 (новые шаблоны), номера пересчитаются автоматически (`sort_order` уже разный — список покажется как 1..4).
-3. Soft-delete любого шаблона из «Шаблоны документов» → запись в пакете пропадает без ручного «Отвязать».
+1. `SELECT count(*) FROM document_package_template_items i JOIN document_templates t ON t.id=i.template_id WHERE t.deleted_at IS NOT NULL;` → 0.
+2. `SELECT count(*) FROM document_package_session_field_values v LEFT JOIN document_package_template_items i ON i.id=v.package_template_item_id WHERE i.id IS NULL;` → 0 (каскад отработал).
+3. В UI пакета «Годовое собрание участников» вкладка «Шаблоны пакета» становится пустой → ползунок «Привязать» работает для новых шаблонов; счётчики «Шаблонов в пакете» в «Генерация» и список во вкладке «Шаблоны пакета» совпадают.
+4. Soft-delete любого шаблона из «Шаблоны документов» → строка в пакете и связанные session_field_values исчезают автоматически.
