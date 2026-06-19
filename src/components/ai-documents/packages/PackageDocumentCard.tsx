@@ -417,6 +417,7 @@ export function PackageDocumentCard({
               {fieldsBadge}
               {requiredRolesBadge}
               {optionalRolesBadge}
+              {modeBadge}
               {dirtyBadge}
             </div>
           </div>
