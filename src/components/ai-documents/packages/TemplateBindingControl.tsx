@@ -161,6 +161,28 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const updateModeMutation = useMutation({
+    mutationFn: async (input: {
+      itemId: string;
+      generation_mode: "single" | "per_role_person";
+      repeat_role_catalog_id: string | null;
+    }) => {
+      const { error } = await supabase
+        .from("document_package_template_items")
+        .update({
+          generation_mode: input.generation_mode,
+          repeat_role_catalog_id: input.repeat_role_catalog_id,
+        })
+        .eq("id", input.itemId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
+      toast.success("Режим генерации сохранён");
+    },
+    onError: (e: Error) => toast.error(`Не удалось сохранить режим: ${e.message}`),
+  });
+
   const bound = boundQuery.data ?? [];
   const boundIds = new Set(bound.map((b) => b.template_id));
   const available = (allTemplatesQuery.data ?? []).filter((t) => !boundIds.has(t.id));
