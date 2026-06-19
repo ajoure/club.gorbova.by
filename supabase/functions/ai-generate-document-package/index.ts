@@ -31,6 +31,10 @@ import {
   SYSTEM_FIELD_VALUE_IDS,
 } from '../_shared/system-field-values.ts';
 import { formatPfValue } from '../_shared/resolve-package-tokens.ts';
+import {
+  resolveSmartDatePrefill,
+  isValidSmartDatePrefill,
+} from '../_shared/smart-date-prefill.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
