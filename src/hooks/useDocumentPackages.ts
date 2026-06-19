@@ -150,16 +150,19 @@ export function useDocumentPackageItems(packageId: string | null) {
 
       const tplMap = new Map((templates || []).map((t: any) => [t.id, t]));
 
-      return data.map((item: any) => {
-        const t: any = tplMap.get(item.template_id);
-        const isDeleted = !!t?.deleted_at;
-        return {
-          ...item,
-          template_name: (t?.name ? `${t.name}${isDeleted ? " (удалён)" : ""}` : "—"),
-          template_document_type: t?.document_type || "—",
-          template_deleted: isDeleted,
-        };
-      }) as DocumentPackageItem[];
+      return data
+        .map((item: any) => {
+          const t: any = tplMap.get(item.template_id);
+          const isDeleted = !!t?.deleted_at;
+          return {
+            ...item,
+            template_name: (t?.name ? `${t.name}${isDeleted ? " (удалён)" : ""}` : "—"),
+            template_document_type: t?.document_type || "—",
+            template_deleted: isDeleted,
+          };
+        })
+        .filter((item: any) => !item.template_deleted) as DocumentPackageItem[];
+
     },
     enabled: !!packageId,
   });
