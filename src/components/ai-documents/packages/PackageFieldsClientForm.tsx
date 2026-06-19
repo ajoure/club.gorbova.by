@@ -135,7 +135,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
     isSaving,
     resetOverride,
     isResettingOverride,
-  } = usePackageSessionFields(sessionId, packageTemplateId);
+  } = usePackageSessionFields(sessionId, packageTemplateId, sessionCreatedAt);
 
   // orphanOnly игнорирует packageTemplateItemId — orphan-поля сохраняются строго session-level.
   const effectiveItemId = orphanOnly ? null : packageTemplateItemId;
