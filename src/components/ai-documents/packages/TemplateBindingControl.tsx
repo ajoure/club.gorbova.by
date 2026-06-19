@@ -25,6 +25,7 @@ import {
 import { Loader2, Link2, Unlink, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { HelpTooltip } from "@/components/help/HelpComponents";
+import { usePackageItemGenerationMode } from "@/hooks/usePackageItemGenerationMode";
 
 interface Props {
   packageTemplateId: string | null;
