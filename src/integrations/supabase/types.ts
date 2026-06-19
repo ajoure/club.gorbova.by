@@ -16222,7 +16222,10 @@ export type Database = {
           full_name: string | null
           has_active_access: boolean | null
           has_any_access_history: boolean | null
+          has_commercial_history: boolean | null
+          has_current_commercial_access: boolean | null
           id: string | null
+          illegal_access_days: number | null
           in_any: boolean | null
           in_channel: boolean | null
           in_chat: boolean | null
@@ -16876,7 +16879,10 @@ export type Database = {
           full_name: string
           has_active_access: boolean
           has_any_access_history: boolean
+          has_commercial_history: boolean
+          has_current_commercial_access: boolean
           id: string
+          illegal_access_days: number
           in_any: boolean
           in_channel: boolean
           in_chat: boolean
@@ -17508,7 +17514,10 @@ export type Database = {
           full_name: string
           has_active_access: boolean
           has_any_access_history: boolean
+          has_commercial_history: boolean
+          has_current_commercial_access: boolean
           id: string
+          illegal_access_days: number
           in_any: boolean
           in_channel: boolean
           in_chat: boolean
