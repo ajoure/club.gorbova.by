@@ -254,8 +254,9 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
           {bound.map((b) => {
             const roles = rolesQuery.data ?? [];
             const noRoles = roles.length === 0;
-            const isPerRole = b.generation_mode === "per_role_person";
-            const repeatRole = isPerRole
+            const isPerRolePersisted = b.generation_mode === "per_role_person";
+            const isPerRole = isPerRolePersisted || !!previewPerRole[b.id];
+            const repeatRole = isPerRolePersisted
               ? roles.find((r) => r.id === b.repeat_role_catalog_id) ?? null
               : null;
             const saving = updateModeMutation.isPending && updateModeMutation.variables?.itemId === b.id;
