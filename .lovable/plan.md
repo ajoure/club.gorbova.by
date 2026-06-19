@@ -1,3 +1,16 @@
+## Текущий статус
+
+```
+Stage A   — PASS
+Stage B   — PASS
+Stage C   — PASS
+Stage D.1 — PASS  (UI grouping + read-only stale/missing indicators)
+            proof: .lovable/proofs/package_repeatable_documents_stage_d1_ui_grouping_v1.md
+Stage E   — NOT STARTED  (selective regeneration / cleanup actions, backend + UI)
+```
+
+---
+
 Ответ для Lovable:
 
 да, согласен, с учетом правок:
