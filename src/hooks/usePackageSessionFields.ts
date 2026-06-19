@@ -353,6 +353,7 @@ export function usePackageSessionFields(
     getEffectiveValue,
     getItemQuestions,
     getItemProgress,
+    getItemMissingRequired,
     isLoading:
       catalogQuery.isLoading || valuesQuery.isLoading || detected.isLoading,
     save: saveMutation.mutateAsync,
