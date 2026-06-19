@@ -287,6 +287,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
               hasItemOverride={hasItemOverride}
               onResetOverride={handleReset}
               isResettingOverride={isResettingOverride}
+              highlightMissing={!!highlightFieldIds?.has(q.field.id)}
             />
           );
         })}
