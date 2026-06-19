@@ -199,3 +199,144 @@ ORDER BY created_at;
 - [x] Proof создан: этот файл.
 
 **Stage C итог: PARTIAL — waiting for template/data readiness (Ревизор для `ln-000014` либо правка DOCX).** Stage D не начинать до полного Stage C PASS.
+
+---
+
+# PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 — runtime save/cache fix
+
+Status: **PASS на runtime-save**. Stage C по бизнесу остаётся **PARTIAL до момента
+прогона генерации** (см. §6 выше, ожидается либо назначение Ревизора, либо
+правка шаблона «Извещение» с заменой `{{ln-000014}}` на `{{recipient.full_name}}`).
+
+## Проблема
+
+После выбора «Отдельный документ для каждого физлица с ролью» и роли «Участник»
+в карточке документа «Извещение» появлялся toast «Режим генерации сохранён»,
+но UI сразу возвращался на «Один документ».
+
+## Корневая причина
+
+`DocumentPackageQuestionnairesView.tsx` запрашивал items с
+`select('id, sort_order, template_id')` — без `generation_mode` и
+`repeat_role_catalog_id`. `PackageDocumentCard` получал item без этих полей и
+вычислял `persistedMode = 'single'`. Каждый refetch query
+`['doc-pkg-template-items-q', packageTemplateId]` визуально откатывал
+правильное БД-значение к `single`.
+
+Дополнительно: shared hook `usePackageItemGenerationMode` инвалидировал
+`['pkg-bound-templates']` и `['document-package-items']`, но не
+`['doc-pkg-template-items-q']` — основной read-model карточки.
+
+## SQL before (БД уже хранила корректное значение)
+
+```sql
+SELECT id, title_override, generation_mode, repeat_role_catalog_id, created_at
+FROM document_package_template_items
+WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
+-- generation_mode = 'per_role_person'
+-- repeat_role_catalog_id = 'c8fc4200-75c0-4c24-8eea-112c4e468aeb' (Участник, ln-000015)
+```
+
+То есть baseline бага — UI/cache desync, а не DB-write failure. БД
+писалась корректно, UI читал её неполно.
+
+## Что изменено
+
+### 1. Read-model карточки документа
+
+Файл: `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx`
+
+- `select(...)` items расширен до
+  `id, sort_order, template_id, generation_mode, repeat_role_catalog_id`.
+- `ItemRow` теперь содержит `generation_mode` и `repeat_role_catalog_id`.
+- Карточка получает persisted значение напрямую из БД, без default-в-`single`.
+
+### 2. Confirmed mutation + единый cache patch
+
+Файл: `src/hooks/usePackageItemGenerationMode.ts`
+
+- `update(...).select('id, package_template_id, generation_mode, repeat_role_catalog_id').single()`.
+  Toast success показывается только если `data` действительно вернулся.
+- На `onSuccess` shared hook делает `setQueryData` на все три реальных
+  read-model сразу (`['pkg-bound-templates', pkg]`,
+  `['document-package-items', pkg]`, `['doc-pkg-template-items-q', pkg]`),
+  затем инвалидирует те же ключи. UI больше не мигает старым `single`.
+- Trigger `dpti_assert_repeat_role_consistency` отклоняет невалидные комбинации
+  на уровне БД → mutation падает → `onError` показывает error toast, success НЕ
+  показывается.
+
+### 3. Preview не откатывает выбранный режим
+
+Файл: `src/components/ai-documents/packages/PackageDocumentCard.tsx`
+
+- Селектор роли использует `genMode.updateAsync(...)` и снимает
+  `previewPerRole` ТОЛЬКО после подтверждённого success.
+- Если mutation упала — preview оставляем, чтобы пользователь увидел селектор
+  роли и повторил выбор.
+- `useEffect` снимает preview, когда из БД пришёл подтверждённый
+  `per_role_person` — никаких сбросов persisted-значения на каждый render.
+
+### 4. Единый writer
+
+Файл: `src/components/ai-documents/packages/TemplateBindingControl.tsx`
+
+- Wrapper `updateModeMutation` больше не делает `qc.invalidateQueries` сам:
+  все cache-операции живут в shared hook.
+- Селекторы режима и роли используют `mutateAsync` и снимают preview/no-op
+  только после success.
+- Нет второй реализации сохранения. Оба UI-входа (карточка документа и вкладка
+  «Шаблоны пакета») идут через `usePackageItemGenerationMode`.
+
+## Контракт mutation (canonical)
+
+Один payload на выбор роли:
+
+```json
+{
+  "generation_mode": "per_role_person",
+  "repeat_role_catalog_id": "c8fc4200-75c0-4c24-8eea-112c4e468aeb"
+}
+```
+
+Возврат:
+
+```json
+{
+  "id": "febd1821-fba8-4290-babf-99c59c27f2f4",
+  "package_template_id": "21764469-1ba9-49b3-90d9-5349bcbcd531",
+  "generation_mode": "per_role_person",
+  "repeat_role_catalog_id": "c8fc4200-75c0-4c24-8eea-112c4e468aeb"
+}
+```
+
+Гарантии:
+
+- Нет второго update `single/null` после успешного выбора роли.
+- Возврат к `single` пишет `repeat_role_catalog_id=null` атомарно — это
+  единственный путь обнуления роли.
+
+## DoD (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1)
+
+- [x] `DocumentPackageQuestionnairesView` реально читает
+      `generation_mode/repeat_role_catalog_id` из БД.
+- [x] Mutation возвращает updated row (`.select(...).single()`).
+- [x] Все три query keys синхронизированы (`setQueryData` + `invalidateQueries`):
+      `doc-pkg-template-items-q`, `pkg-bound-templates`, `document-package-items`.
+- [x] Нет второго update `single/null` (роль и режим уходят одним payload).
+- [x] Toast success — только после подтверждённого response. Trigger reject →
+      error toast, без success.
+- [x] Карточка документа и `TemplateBindingControl` используют один и тот же
+      shared hook → одинаковое состояние.
+- [x] SQL подтверждает `per_role_person + роль «Участник» (ln-000015)`.
+- [ ] Hard refresh страницы: режим остаётся `per_role_person` — проверяется
+      пользователем в Preview после выкатки этого патча.
+- [ ] Stage C полный PASS — требует runtime-прогона генерации после устранения
+      `role_assignment_missing:ln-000014` (Ревизор) на стороне данных/шаблона.
+
+## Статус Stage C
+
+- Stage C runtime save bug: **PASS** (этот патч).
+- Stage C runtime generation: **PARTIAL** — ждёт фикса
+  `ln-000014 Ревизор` (назначение участника на роль ИЛИ замена токена в
+  шаблоне «Извещение» на `{{recipient.full_name}}`).
+- Stage D: **не начинать** до полного Stage C PASS.
