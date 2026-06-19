@@ -306,11 +306,11 @@ export default function TelegramClubMembers() {
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
     if (!members) return [];
-    
-    return members.filter(member => {
+
+    const filtered = members.filter(member => {
       // Anti-contradiction guard: admin is never violator or removed
       const isAdmin = adminTelegramIds.has(member.telegram_user_id);
-      
+
       switch (activeTab) {
         case 'in_club':
           return member.in_any;
@@ -331,7 +331,60 @@ export default function TelegramClubMembers() {
           return true;
       }
     });
-  }, [members, activeTab, adminTelegramIds]);
+
+    if (!sortKey) return filtered;
+
+    const dirMul = sortDir === 'asc' ? 1 : -1;
+    const cmpStr = (a: string | null | undefined, b: string | null | undefined) => {
+      const av = (a ?? '').toString().toLowerCase();
+      const bv = (b ?? '').toString().toLowerCase();
+      if (!av && !bv) return 0;
+      if (!av) return 1;   // empty values always last
+      if (!bv) return -1;
+      return av.localeCompare(bv, 'ru');
+    };
+    const cmpDate = (a: string | null | undefined, b: string | null | undefined) => {
+      const at = a ? new Date(a).getTime() : null;
+      const bt = b ? new Date(b).getTime() : null;
+      if (at === null && bt === null) return 0;
+      if (at === null) return 1;   // empty always last
+      if (bt === null) return -1;
+      return at - bt;
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      let r = 0;
+      switch (sortKey) {
+        case 'telegram_name':
+          r = cmpStr(
+            `${a.telegram_first_name || ''} ${a.telegram_last_name || ''} ${a.telegram_username || ''}`,
+            `${b.telegram_first_name || ''} ${b.telegram_last_name || ''} ${b.telegram_username || ''}`,
+          );
+          break;
+        case 'crm_name':
+          r = cmpStr(a.profiles?.full_name || a.profiles?.email, b.profiles?.full_name || b.profiles?.email);
+          break;
+        case 'access_status':
+          r = cmpStr(a.access_status, b.access_status);
+          break;
+        case 'chat_channel':
+          r = (Number(!!b.in_chat) + Number(!!b.in_channel)) - (Number(!!a.in_chat) + Number(!!a.in_channel));
+          // already desc-like; flip when asc
+          if (sortDir === 'asc') r = -r;
+          return r;
+        case 'access_started_at':
+          r = cmpDate(a.access_started_at, b.access_started_at);
+          break;
+        case 'access_ended_at':
+          r = cmpDate(a.access_ended_at, b.access_ended_at);
+          break;
+      }
+      return r * dirMul;
+    });
+    return sorted;
+  }, [members, activeTab, adminTelegramIds, sortKey, sortDir]);
+
+
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
