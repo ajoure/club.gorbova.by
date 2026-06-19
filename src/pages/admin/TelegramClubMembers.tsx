@@ -1368,7 +1368,11 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     {activeTab === 'removed' && (
                       <>
-                        <TableHead className="whitespace-nowrap">Кикнут</TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          <button onClick={() => toggleSort('kicked_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                            Кикнут <SortIcon k="kicked_at" />
+                          </button>
+                        </TableHead>
                         <TableHead className="whitespace-nowrap text-right">Сверх доступа</TableHead>
                       </>
                     )}
