@@ -1438,8 +1438,8 @@ export default function TelegramClubMembers() {
                       <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
                         {member.access_status === 'removed'
                           ? (member.kicked_at
-                              ? <span title="Дата удаления">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                              : '—')
+                              ? <span title="Дата удаления из audit_logs">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
+                              : <span className="italic opacity-60" title="В audit_logs нет события кика для этой записи">дата кика неизвестна</span>)
                           : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
                       </TableCell>
 
