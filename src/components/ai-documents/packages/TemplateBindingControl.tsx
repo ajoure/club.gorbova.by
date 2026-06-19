@@ -61,6 +61,7 @@ const QK_ALL = ["pkg-all-templates"];
 export function TemplateBindingControl({ packageTemplateId }: Props) {
   const qc = useQueryClient();
   const [pendingTemplateId, setPendingTemplateId] = useState<string>("");
+  const [previewPerRole, setPreviewPerRole] = useState<Record<string, boolean>>({});
 
   const boundQuery = useQuery({
     queryKey: QK_BOUND(packageTemplateId),
