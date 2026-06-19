@@ -1,228 +1,166 @@
+Ответ для Lovable:
+
 да, согласен, с учетом правок:
 
-1. План можно выполнять. Диагностика корректная: проблема сейчас не в БД, а в read-model/cache UI. Если в БД уже стоит:
+1. План можно выполнять. Это правильный финальный runtime-прогон Stage C, без перехода к Stage D.
+2. В Diagnose обязательно добавить проверку, что режим `per_role_person` виден и сохранён именно в UI карточки документа «Извещение» на вкладке «Анкеты документов», а не только SQL.
   &nbsp;
-  `generation_mode='per_role_person'`  
-  `repeat_role_catalog_id='c8fc4200-75c0-4c24-8eea-112c4e468aeb'`
-  а карточка показывает «Один документ», значит `PackageDocumentCard` получает неполный item без `generation_mode/repeat_role_catalog_id`.
-2. В `DocumentPackageQuestionnairesView.tsx` обязательно добавить в select не только:
+  Proof должен содержать:
+  - скрин карточки «Извещение»;
+  - выбран режим `Отдельный документ для каждого физлица с ролью`;
+  - роль-источник = `Участник`.
+3. В SQL по assignments нужно явно разделить роли:
   &nbsp;
-  `generation_mode, repeat_role_catalog_id`
-  но и проверить, не нужен ли `package_template_id` для корректной передачи в hook/role query. Если карточка не знает package_template_id, она может брать роли не из того источника или не обновлять правильный query key.
-3. Mutation в `usePackageItemGenerationMode.ts` должна возвращать полную минимальную строку:
   &nbsp;
-  ```sql
-  id, package_template_id, generation_mode, repeat_role_catalog_id, updated_at
-  ```
-  Это нужно для точечного `setQueryData` и proof.
-4. Success toast показывать только после подтверждённого `.select(...).single()` response. Если Supabase вернул error, trigger error или пустой response — только error toast, без optimistic success.
-5. `setQueryData` должен обновлять все реальные read-models, где используется item:
-  - `['doc-pkg-template-items-q', packageTemplateId]`
-  - `['pkg-bound-templates', packageTemplateId]`
-  - `['document-package-items', packageTemplateId]`
-  Если в коде есть дополнительные keys для package items — их тоже добавить после `rg`.
-6. В `PackageDocumentCard` убрать любой `useEffect`, который на каждом render сбрасывает local mode из неполного/старого `item`. Локальный preview можно сбрасывать только когда пришёл подтверждённый persisted value из актуального query или mutation response.
-7. Проверить, что нет второго update `single/null`.
-  В proof нужен Network trace:
-  - один update payload:
-  - нет последующего payload:
-8. В `TemplateBindingControl` и `PackageDocumentCard` не должно быть двух разных реализаций сохранения. Оба должны использовать `usePackageItemGenerationMode`. Если останется локальная mutation в одном из компонентов — Stage не принимать.
-9. В proof добавить проверку hard refresh:
-  - сохранить `per_role_person`;
-  - обновить страницу браузера;
-  - открыть карточку «Извещение»;
-  - режим всё ещё `Отдельный документ для каждого физлица с ролью`;
-  - роль всё ещё `Участник`.
-10. В proof добавить сверку двух UI-точек:
-
-- вкладка «Анкеты документов» / карточка «Извещение»;
-- вкладка «Шаблоны пакета» / тот же item.
-
-Обе должны показывать одинаково:
-
-`per_role_person + Участник`.
-
-11. Stage C после этого save-fix ещё не закрывать автоматически как full PASS.
-
-Этот патч закрывает только:
-
-`runtime save/cache bug`.
-
-Полный Stage C PASS будет только после генерации 3 отдельных извещений или после явной фиксации, что оставшийся блокер — проблема шаблона `ln-000014 Ревизор`, а не механики `per_role_person`.
-
-12. После выполнения этого патча статус должен быть:
-
-- если режим сохраняется, но генерация всё ещё блокируется из-за `ln-000014 Ревизор`:  
-`Stage C runtime: PARTIAL — UI/save fixed, waiting for template/data fix по Ревизору`.
-- если после назначения Ревизора или замены токена на `recipient.*` генерация дала 3 извещения:  
-`Stage C runtime: PASS`.
-
-13. DoD дополнить:
-
-- `DocumentPackageQuestionnairesView` реально читает `generation_mode/repeat_role_catalog_id`: PASS.
-- Mutation response возвращает updated row: PASS.
-- Все query keys синхронизированы: PASS.
-- Нет второго update `single/null`: PASS.
-- После hard refresh режим сохраняется: PASS.
-- Карточка документа и `TemplateBindingControl` показывают одинаковое состояние: PASS.
-- SQL подтверждает `per_role_person + роль Участник`: PASS.
-- Stage D не начинать до полного Stage C PASS.
-
-После этих правок план можно выполнять.
+  - repeat-role:  
+  `ln-000015 = Участник` → 3 активных назначения;
+  - обычная обязательная роль шаблона:  
+  `ln-000014 = Ревизор` → минимум 1 активное назначение.
+  Если Ревизор не назначен — STOP, не запускать генерацию и не считать это ошибкой Stage C mechanics.
+4. Dry-run должен показать не просто «3 строки для item Извещение», а структуру по каждому recipient:
+  - assignment_id;
+  - person_id;
+  - recipient_display_name;
+  - recipient_index;
+  - generation_mode = `per_role_person`.
+5. В реальной генерации проверять не только `template_id`, а именно связку:
+  - `source_package_template_item_id = febd1821-fba8-4290-babf-99c59c27f2f4`;
+  - `generation_mode = per_role_person`;
+  - `repeat_role_catalog_id = роль Участник`;
+  - разные `repeat_assignment_id`;
+  - разные `recipient_person_id`.
+6. В SQL after не использовать только `meta.recipient.person_id`, если фактическая структура meta хранит recipient иначе. Проверять все реально записанные поля:
+  - `meta->>'generation_mode'`;
+  - `meta->>'repeat_role_catalog_id'`;
+  - `meta->>'repeat_assignment_id'`;
+  - `meta->>'recipient_person_id'`;
+  - `meta->>'recipient_display_name'`;
+  - `meta->>'recipient_index'`;
+  - при наличии `recipient_snapshot` — показать его отдельно.
+7. Проверка DOCX должна быть не только на одном файле. Минимум:
+  - открыть один файл полностью и показать excerpt `document.xml`;
+  - дополнительно по всем 3 извещениям проверить, что `recipient_display_name` в meta соответствует имени в DOCX либо в generated snapshot.
+  Нельзя закрывать PASS, если все 3 файла имеют одинакового recipient.
+8. Обязательно проверить отсутствие cross-recipient contamination:
+  - извещение Петрова содержит Петрова и не содержит Иванова/Федорчука как recipient;
+  - извещение Иванова содержит Иванова и не содержит Петрова/Федорчука как recipient;
+  - извещение Федорчука содержит Федорчука и не содержит Петрова/Иванова как recipient.
+  Ревизор может повторяться во всех документах — это нормально, потому что это отдельная роль `ln-000014`, а не recipient.
+9. Проверить, что `ln-000014` действительно подставлен как Ревизор во всех трёх извещениях, если токен остаётся в шаблоне.
+  &nbsp;
+  Это отдельная проверка от `recipient.*`.
+10. Проверить, что single-документы не получили recipient meta:
 
 &nbsp;
 
-План:
+- Инструкция;
+- Приказ.
 
-## 1. Проблема
+Для них должно остаться:
 
-Stage C runtime fix остаётся **FAIL/PARTIAL**: в карточке документа «Извещение» выбор режима `per_role_person` с ролью «Участник» показывает toast «Режим генерации сохранён», но UI сразу возвращается на «Один документ».
+- 1 документ на item;
+- старый idempotency key без `:assn:`;
+- отсутствие `repeat_assignment_id`, `recipient_person_id`, `recipient_display_name`, `recipient_index`.
 
-## 2. Диагностика
+11. В proof добавить batch-level summary:
 
-Факты по текущему состоянию:
-
-- В БД для item `febd1821-fba8-4290-babf-99c59c27f2f4` сейчас уже сохранено:
-  - `generation_mode = 'per_role_person'`
-  - `repeat_role_catalog_id = 'c8fc4200-75c0-4c24-8eea-112c4e468aeb'`
-- Роль `c8fc4200-75c0-4c24-8eea-112c4e468aeb` = «Участник», `public_id = ln-000015`, активна.
-- Trigger `trg_dpti_assert_repeat_role_consistency` есть и корректно требует:
-  - для `single`: `repeat_role_catalog_id IS NULL`
-  - для `per_role_person`: `repeat_role_catalog_id IS NOT NULL`, роль существует, активна и принадлежит тому же пакету.
-- Корневая UI-причина найдена: `DocumentPackageQuestionnairesView.tsx` запрашивает items через query key `['doc-pkg-template-items-q', packageTemplateId]`, но выбирает только `id, sort_order, template_id`. Поля `generation_mode` и `repeat_role_catalog_id` не читаются вообще.
-- `PackageDocumentCard` получает item без этих полей, поэтому вычисляет `persistedMode = 'single'` и после render/refetch откатывает UI на «Один документ», даже если БД уже сохранена правильно.
-- Shared hook `usePackageItemGenerationMode` инвалидирует `['pkg-bound-templates', packageTemplateId]` и `['document-package-items', packageTemplateId]`, но не инвалидирует фактический query key карточки `['doc-pkg-template-items-q', packageTemplateId]`.
-- Есть риск ложного success: mutation сейчас не возвращает обновлённую строку, поэтому UI не подтверждает payload response и не может сделать optimistic cache update по реальному результату.
-
-## 3. Предлагаемое решение
-
-Сделать PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 точечно, без Stage D и без изменений генератора:
-
-1. Исправить источник данных карточки документа:
-  - в `DocumentPackageQuestionnairesView.tsx` добавить в select items поля `generation_mode, repeat_role_catalog_id`;
-  - расширить `ItemRow`, чтобы `PackageDocumentCard` получал сохранённое состояние из БД.
-2. Исправить invalidation/cache consistency:
-  - в `usePackageItemGenerationMode.ts` добавить инвалидирование query key `['doc-pkg-template-items-q', packageTemplateId]`;
-  - оставить существующие keys для `TemplateBindingControl` и legacy hooks;
-  - при возможности добавить точечный `setQueryData` для `['doc-pkg-template-items-q', packageTemplateId]`, `['pkg-bound-templates', packageTemplateId]`, `['document-package-items', packageTemplateId]`, чтобы UI не мигал старым `single` между success и refetch.
-3. Сделать mutation подтверждаемой:
-  - заменить `.update(payload).eq('id', itemId)` на `.update(payload).eq('id', itemId).select('id, generation_mode, repeat_role_catalog_id').single()`;
-  - success toast показывать только после успешного update response;
-  - если trigger отклоняет update, показывать error toast, success не показывать.
-4. Убрать возможный локальный откат preview-state:
-  - в `PackageDocumentCard` не очищать `previewPerRole` до подтверждённого успеха update;
-  - для выбора роли использовать `mutateAsync`/`await`, затем очищать preview только после success;
-  - cleanup preview делать также при приходе persisted `per_role_person` из query.
-5. Синхронизировать `TemplateBindingControl` с тем же контрактом:
-  - wrapper не должен вручную инвалидировать query сразу после `genMode.update`, до подтверждения mutation;
-  - выбор роли должен отправлять один payload: `generation_mode='per_role_person'` + `repeat_role_catalog_id='<role_id>'`;
-  - очистка `repeat_role_catalog_id` допускается только при явном выборе «Один документ».
-6. Обновить proof:
-  - `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md` дополнить runtime-save evidence и оставить Stage C как PASS только после проверки DoD.
-
-## 4. Изменяемые компоненты
-
-Файлы:
-
-- `src/components/ai-documents/packages/DocumentPackageQuestionnairesView.tsx`
-- `src/components/ai-documents/packages/PackageDocumentCard.tsx`
-- `src/components/ai-documents/packages/TemplateBindingControl.tsx`
-- `src/hooks/usePackageItemGenerationMode.ts`
-- `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`
-
-Таблицы только читаются/обновляются существующим UI:
-
-- `document_package_template_items`
-- `document_package_role_catalog`
-
-DB schema/RPC/edge functions/cron/jobs не меняются.
-
-## 5. Что не будет изменено
-
-- Stage D не начинать.
-- `ai-generate-document-package` не менять в этом патче, если сохранение UI-настройки чинится на frontend/cache уровне.
-- Не менять trigger `dpti_assert_repeat_role_consistency`, если он подтверждает корректный контракт.
-- Не создавать новые таблицы/RPC/edge functions.
-- Не делать массовых UPDATE/DELETE.
-- Не менять semantics `role_assignment_missing` и генерацию DOCX в рамках этого save-fix патча.
-
-## 6. Dry-run
-
-Перед правкой/во время проверки:
-
-1. SQL before:
-
-```sql
-SELECT id, title_override, generation_mode, repeat_role_catalog_id, created_at
-FROM document_package_template_items
-WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
+```json
+{
+  "total_items": 3,
+  "total_documents": 5,
+  "generated": 5,
+  "errors": 0,
+  "blocked": 0
+}
 ```
 
-2. Проверить роли:
+Если фактическое количество items отличается — указать реальное, но принцип тот же: `total_items` = позиции шаблона, `total_documents` = фактически созданные документы.
 
-```sql
-SELECT id, label, public_id, is_active
-FROM document_package_role_catalog
-WHERE package_template_id = (
-  SELECT package_template_id
-  FROM document_package_template_items
-  WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
-)
-ORDER BY sort_order, label;
+12. Если в response/dry-run/SQL остаётся любая `role_assignment_missing:*`, Stage C не закрывать.
+13. Если генерация создаёт только 1 «Извещение», Stage C не закрывать.
+14. Если генерация создаёт 3 записи в БД, но UI в «Результате последнего запуска» показывает их как один документ или скрывает часть результатов, Stage C mechanics можно считать backend PASS, но UI-группировку результатов вынести в Stage D. В proof это нужно явно разделить:
+
+- backend generation PASS;
+- UI grouping deferred to Stage D.
+
+15. После успешного прогона обновить статус:
+
+```text
+Stage C — PASS
+Stage D — NOT STARTED
 ```
 
-3. Проверить trigger contract:
+Stage D не начинать в этом же выполнении.
 
-```sql
-SELECT pg_get_functiondef('public.dpti_assert_repeat_role_consistency()'::regprocedure);
-```
+Итоговый DoD Stage C business runtime:
 
-4. В UI/network проверить payload при выборе роли:
-  - item id = `febd1821-fba8-4290-babf-99c59c27f2f4`;
-  - `generation_mode = 'per_role_person'`;
-  - `repeat_role_catalog_id = ID роли «Участник»`;
-  - нет второго payload `single/null` после успешного выбора роли.
+- UI показывает `per_role_person + Участник` в карточке «Извещение»: PASS.
+- SQL подтверждает `generation_mode='per_role_person'` и `repeat_role_catalog_id=Участник`: PASS.
+- 3 активных назначения Участника и минимум 1 назначение Ревизора подтверждены: PASS.
+- Dry-run показывает 3 recipient-плана для «Извещения»: PASS.
+- Реальная генерация создаёт 3 отдельных извещения: PASS.
+- У всех 3 разные `repeat_assignment_id`, `recipient_person_id`, `recipient_display_name`, `recipient_index`: PASS.
+- `recipient.*` подставлен в DOCX: PASS.
+- `ln-000014` Ревизор подставлен и не блокирует генерацию: PASS.
+- Нет cross-recipient contamination: PASS.
+- Single-документы работают без recipient meta: PASS.
+- Proof обновлён:  
+`.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`
+- &nbsp;
+- План: Stage C business runtime — финальный прогон и proof
 
-## 7. Execute
+## Цель
 
-После утверждения плана:
+Закрыть Stage C — PASS: подтвердить, что в режиме per_role_person по роли «Участник» в пакете из примера фактически генерируются 3 отдельных «Извещения», recipient.* подставляется, ln-000014 (Ревизор) больше не блокирует генерацию (роль Ревизор назначена пользователем).
 
-1. Обновить `DocumentPackageQuestionnairesView.tsx`, чтобы карточка получала `generation_mode` и `repeat_role_catalog_id` из БД.
-2. Обновить `usePackageItemGenerationMode.ts`, чтобы mutation возвращала updated row и синхронно обновляла/инвалидировала все реальные query keys.
-3. Обновить `PackageDocumentCard.tsx`, чтобы preview-state не сбрасывал выбранный режим до подтверждённого success.
-4. Обновить `TemplateBindingControl.tsx`, чтобы он использовал тот же подтверждённый mutation flow без преждевременной инвалидции.
-5. Обновить proof-файл с before/after SQL, payload/response, refresh-проверкой и состоянием обеих вкладок.
+## Шаги
 
-## 8. STOP-guards
+1. **Diagnose (read-only, до генерации)**
+  - SQL: подтвердить состояние item `febd1821-fba8-4290-babf-99c59c27f2f4`
+    - `generation_mode='per_role_person'`, `repeat_role_catalog_id=c8fc4200-... (Участник)`
+    - `document_package_item_role_assignments`: 3 назначения с role_catalog_id Участника + минимум 1 назначение с role_catalog_id `40b6dd45-...` (Ревизор)
+  - SQL: подтвердить `template_path` шаблона «Извещение» и наличие токенов `{{ln-000014}}`, `{{ln-000015}}`/`{{recipient.full_name}}` (через unpacked DOCX).
+  - Если Ревизор по факту не назначен в БД — STOP, попросить пользователя подтвердить назначение в UI.
+2. **Dry-run генерации пакета**
+  - Вызвать `ai-generate-document-package` с `dry_run=true` для текущей session.
+  - DoD dry-run:
+    - В плане появляется 3 строки для item «Извещение» (per-recipient breakdown).
+    - Нет ошибок `role_assignment_missing:ln-000014` и `role_assignment_missing:ln-000015`.
+    - LN-token pre-scan для repeat-role обходится корректно (как в PATCH-C-STAGE-C v1).
+  - Если хоть одна ошибка — фиксируем код, причину, останавливаемся.
+3. **Реальная генерация**
+  - Вызвать `ai-generate-document-package` без dry_run.
+  - DoD:
+    - В `ai_generated_documents` появляется 3 новых записи по template_id «Извещение» с разными `meta.recipient.person_id`.
+    - У каждого документа `meta.generation_mode='per_role_person'`, `meta.repeat_role_catalog_id=Участник`, `meta.recipient.full_name` = ФИО трёх участников (Петров, Иванов, Федорчук).
+    - `status` всех трёх = успешный (готов к скачиванию).
+    - Остальные single-документы пакета сгенерированы как раньше — 1 экземпляр на item.
+4. **Проверка содержимого DOCX (минимум 1 файл)**
+  - Скачать один из трёх «Извещений» из storage, распаковать `word/document.xml`, убедиться что `{{recipient.full_name}}` (или соответствующий разрешённый токен) реально заменён на ФИО конкретного участника, а `{{ln-000014}}` заменён на назначенного Ревизора.
+5. **Proof + статус**
+  - Дополнить `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md` секцией «Stage C business runtime — PASS»:
+    - SQL before (item + assignments)
+    - dry-run plan output (3 строки)
+    - SQL after (3 ai_generated_documents с meta)
+    - Excerpt из document.xml одного DOCX
+  - Обновить `.lovable/plan.md`: Stage C — PASS (полностью). Stage D остаётся NOT STARTED.
 
-Остановить выполнение и не считать Stage C PASS, если:
+## Что НЕ делаем
 
-- SQL after save не показывает `generation_mode='per_role_person'` для item «Извещение».
-- `repeat_role_catalog_id` не равен ID роли «Участник».
-- После выбора роли появляется второй update `single/null`.
-- Trigger отклоняет update, но UI показывает success.
-- После refresh карточка возвращается на «Один документ».
-- `TemplateBindingControl` показывает состояние, отличное от карточки документа.
-- Найдётся другой writer, который перетирает `document_package_template_items` после save.
+- Не трогаем DOCX-шаблон (по решению пользователя — Ревизор назначен, токен ln-000014 остаётся).
+- Не меняем код save/cache flow (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 уже PASS).
+- Не запускаем Stage D.
+- Не делаем миграций БД.
 
-## 9. DoD
+## Stop-guards
 
-PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1 считается выполненным только если:
+- 3 «Извещений» не создано → FAIL, диагностируем resolver per-role.
+- meta.recipient.* пустой или одинаковый для всех 3 копий → FAIL.
+- В DOCX остались литералы `{{recipient.full_name}}` или `{{ln-000014}}` → FAIL, проблема в token-резолвере.
+- Любая ошибка `role_assignment_missing:*` в response → FAIL, не считаем Stage C закрытым.
 
-- Выбор `per_role_person` не откатывается на `single`.
-- `repeat_role_catalog_id` сохраняется корректно.
-- Toast success показывается только после реального успешного update.
-- После refresh страницы режим остаётся `per_role_person`.
-- Карточка документа и вкладка «Шаблоны пакета» показывают одинаковое состояние.
-- SQL подтверждает `generation_mode='per_role_person'` и роль «Участник».
-- Proof обновлён: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`.
+## DoD Stage C (полный)
 
-## 10. Риски и зависимости
-
-- Основной риск — разные query keys для одного SOT. Решение: добавить единый update/invalidate всех реально используемых keys.
-- Возможен race между local preview-state и refetch старой строки. Решение: mutation response + `setQueryData` до invalidation.
-- В текущей БД уже сохранено корректное значение; баг проявляется как UI/cache/read-model desync, а не обязательно как DB-write failure.
-
-## 11. Требуется дополнительная информация
-
-Дополнительная информация от пользователя не требуется. Можно выполнять патч после утверждения плана.
+- Code-level PASS
+- UI save/cache PASS (PATCH-C-STAGE-RUNTIME-SAVE-FIX-V1)
+- Business runtime PASS — закрывается этим планом: 3 «Извещения» сгенерированы, recipient.* подставлен, Ревизор подставлен, proof обновлён.
