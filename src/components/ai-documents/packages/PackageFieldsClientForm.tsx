@@ -353,7 +353,7 @@ function isWideField(q: DedupedQuestion): boolean {
   return false;
 }
 
-function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride }: FieldRowProps) {
+function FieldRow({ question, value, onChange, disabled, inheritedFromSession, hasItemOverride, onResetOverride, isResettingOverride, highlightMissing }: FieldRowProps) {
   const { field, effective } = question;
   const wide = isWideField(question);
 
