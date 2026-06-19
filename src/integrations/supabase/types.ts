@@ -16210,6 +16210,8 @@ export type Database = {
       }
       v_club_members_enriched: {
         Row: {
+          access_ended_at: string | null
+          access_started_at: string | null
           access_status: string | null
           auth_user_id: string | null
           club_id: string | null
@@ -16857,6 +16859,8 @@ export type Database = {
       get_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string }
         Returns: {
+          access_ended_at: string
+          access_started_at: string
           access_status: string
           auth_user_id: string
           club_id: string
@@ -17483,6 +17487,8 @@ export type Database = {
       search_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string; p_search: string }
         Returns: {
+          access_ended_at: string
+          access_started_at: string
           access_status: string
           auth_user_id: string
           club_id: string

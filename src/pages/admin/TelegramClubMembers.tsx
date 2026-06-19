@@ -77,6 +77,9 @@ import {
   Send,
   ShieldCheck,
   Bot,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
@@ -165,6 +168,39 @@ export default function TelegramClubMembers() {
   const revokeAccess = useRevokeTelegramAccess();
 
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
+
+  // Sorting state for the members table
+  type SortKey = 'telegram_name' | 'crm_name' | 'access_status' | 'chat_channel' | 'access_started_at' | 'access_ended_at';
+  type SortDir = 'asc' | 'desc';
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  // Default sort per tab: removed → by access_ended_at DESC (newest kicks first)
+  useEffect(() => {
+    if (activeTab === 'removed') {
+      setSortKey('access_ended_at');
+      setSortDir('desc');
+    } else {
+      setSortKey(null);
+    }
+  }, [activeTab]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const SortIcon = ({ k }: { k: SortKey }) => {
+    if (sortKey !== k) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    return sortDir === 'asc'
+      ? <ArrowUp className="h-3 w-3 ml-1" />
+      : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<EnrichedClubMember | null>(null);
   
@@ -270,11 +306,11 @@ export default function TelegramClubMembers() {
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
     if (!members) return [];
-    
-    return members.filter(member => {
+
+    const filtered = members.filter(member => {
       // Anti-contradiction guard: admin is never violator or removed
       const isAdmin = adminTelegramIds.has(member.telegram_user_id);
-      
+
       switch (activeTab) {
         case 'in_club':
           return member.in_any;
@@ -295,7 +331,60 @@ export default function TelegramClubMembers() {
           return true;
       }
     });
-  }, [members, activeTab, adminTelegramIds]);
+
+    if (!sortKey) return filtered;
+
+    const dirMul = sortDir === 'asc' ? 1 : -1;
+    const cmpStr = (a: string | null | undefined, b: string | null | undefined) => {
+      const av = (a ?? '').toString().toLowerCase();
+      const bv = (b ?? '').toString().toLowerCase();
+      if (!av && !bv) return 0;
+      if (!av) return 1;   // empty values always last
+      if (!bv) return -1;
+      return av.localeCompare(bv, 'ru');
+    };
+    const cmpDate = (a: string | null | undefined, b: string | null | undefined) => {
+      const at = a ? new Date(a).getTime() : null;
+      const bt = b ? new Date(b).getTime() : null;
+      if (at === null && bt === null) return 0;
+      if (at === null) return 1;   // empty always last
+      if (bt === null) return -1;
+      return at - bt;
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      let r = 0;
+      switch (sortKey) {
+        case 'telegram_name':
+          r = cmpStr(
+            `${a.telegram_first_name || ''} ${a.telegram_last_name || ''} ${a.telegram_username || ''}`,
+            `${b.telegram_first_name || ''} ${b.telegram_last_name || ''} ${b.telegram_username || ''}`,
+          );
+          break;
+        case 'crm_name':
+          r = cmpStr(a.profiles?.full_name || a.profiles?.email, b.profiles?.full_name || b.profiles?.email);
+          break;
+        case 'access_status':
+          r = cmpStr(a.access_status, b.access_status);
+          break;
+        case 'chat_channel':
+          r = (Number(!!b.in_chat) + Number(!!b.in_channel)) - (Number(!!a.in_chat) + Number(!!a.in_channel));
+          // already desc-like; flip when asc
+          if (sortDir === 'asc') r = -r;
+          return r;
+        case 'access_started_at':
+          r = cmpDate(a.access_started_at, b.access_started_at);
+          break;
+        case 'access_ended_at':
+          r = cmpDate(a.access_ended_at, b.access_ended_at);
+          break;
+      }
+      return r * dirMul;
+    });
+    return sorted;
+  }, [members, activeTab, adminTelegramIds, sortKey, sortDir]);
+
+
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
@@ -303,7 +392,7 @@ export default function TelegramClubMembers() {
     const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
     if (hasChat) baseHeaders.push('Чат');
     if (hasChannel) baseHeaders.push('Канал');
-    baseHeaders.push('Email', 'Телефон');
+    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до');
     const headers = baseHeaders;
     const rows = filteredMembers.map(m => {
       const row: (string | number | boolean | null)[] = [
@@ -315,9 +404,15 @@ export default function TelegramClubMembers() {
       ];
       if (hasChat) row.push(m.in_chat ? 'Да' : 'Нет');
       if (hasChannel) row.push(m.in_channel ? 'Да' : 'Нет');
-      row.push(m.profiles?.email || '', m.profiles?.phone || '');
+      row.push(
+        m.profiles?.email || '',
+        m.profiles?.phone || '',
+        m.access_started_at ? format(new Date(m.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.access_ended_at ? format(new Date(m.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
+      );
       return row;
     });
+
 
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -711,25 +806,28 @@ export default function TelegramClubMembers() {
   }, [selectedMembers]);
 
    // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
-  // PATCH-B: removed + has_access shows dual badge (removed + access marker)
-  const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
-    // has_active_access from backend is the SOLE source of truth
-    // PATCH-B: Special case: removed but still has active business access
-    if (hasActiveAccess === true && status === 'removed') {
+  // PATCH-ZOMBIE-GUARD: если access_ended_at в прошлом — никогда не показываем «Доступ активен»,
+  // даже если has_active_access=true (зомби past_due без entitlement у Инны Грудецкой и т.п.).
+  const getAccessStatusBadge = (
+    status: string,
+    linkStatus?: string,
+    hasActiveAccess?: boolean,
+    accessEndedAt?: string | null,
+  ) => {
+    const endedInPast = !!accessEndedAt && new Date(accessEndedAt).getTime() < Date.now();
+    const effectiveHasAccess = hasActiveAccess === true && !endedInPast;
+
+    // Если человек помечен removed — показываем только «Удалён», никакого «Доступ активен».
+    if (status === 'removed') {
       return (
-        <div className="flex flex-col gap-1">
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 gap-1 text-[10px]">
-            <CheckCircle className="h-3 w-3" />
-            Доступ активен
-          </Badge>
-        </div>
+        <Badge variant="secondary" className="gap-1">
+          <Trash2 className="h-3 w-3" />
+          Удалён
+        </Badge>
       );
     }
-    if (hasActiveAccess === true) {
+
+    if (effectiveHasAccess) {
       return (
         <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
           <CheckCircle className="h-3 w-3" />
@@ -737,24 +835,18 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
-    // If has_active_access is false — NEVER show green, regardless of cached access_status
-    if (hasActiveAccess === false) {
-      if (status === 'removed') {
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-        );
-      }
-      if (status === 'expired') {
-        return (
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Истёк
-          </Badge>
-        );
-      }
+
+    // Нет валидного доступа — никогда не зелёный
+    if (status === 'expired' || endedInPast) {
+      return (
+        <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Истёк
+        </Badge>
+      );
+    }
+
+    if (status === 'no_access' || hasActiveAccess === false) {
       return (
         <Badge variant="destructive" className="gap-1">
           <XCircle className="h-3 w-3" />
@@ -762,45 +854,25 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
-    // Fallback for cases where has_active_access is undefined
-    switch (status) {
-      case 'ok':
-        return (
-          <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
-            <CheckCircle className="h-3 w-3" />
-            С доступом
-          </Badge>
-        );
-      case 'no_access':
-        return (
-          <Badge variant="destructive" className="gap-1">
-            <XCircle className="h-3 w-3" />
-            Без доступа
-          </Badge>
-        );
-      case 'expired':
-        return (
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Истёк
-          </Badge>
-        );
-      case 'removed':
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <Trash2 className="h-3 w-3" />
-            Удалён
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <HelpCircle className="h-3 w-3" />
-            {status}
-          </Badge>
-        );
+
+    // Fallback for undefined cases
+    if (status === 'ok') {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
+          <CheckCircle className="h-3 w-3" />
+          С доступом
+        </Badge>
+      );
     }
+
+    return (
+      <Badge variant="secondary" className="gap-1">
+        <HelpCircle className="h-3 w-3" />
+        {status}
+      </Badge>
+    );
   };
+
 
   // Telegram status display — resource-mode aware
   const getTelegramStatus = (member: EnrichedClubMember) => {
@@ -1215,24 +1287,50 @@ export default function TelegramClubMembers() {
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
-                    <TableHead>Telegram</TableHead>
-                    <TableHead>Связь с ЛК</TableHead>
-                    <TableHead>Статус доступа</TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('telegram_name')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Telegram <SortIcon k="telegram_name" />
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('crm_name')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Связь с ЛК <SortIcon k="crm_name" />
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button onClick={() => toggleSort('access_status')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Статус доступа <SortIcon k="access_status" />
+                      </button>
+                    </TableHead>
                     <TableHead className="text-center">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex items-center justify-center gap-1 cursor-help">
-                            <span>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}</span>
-                            <HelpCircle className="h-3 w-3 text-muted-foreground" />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
-                          <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <button onClick={() => toggleSort('chat_channel')} className="inline-flex items-center justify-center gap-1 hover:text-foreground transition-colors">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center gap-1 cursor-help">
+                              {hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}
+                              <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
+                            <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <SortIcon k="chat_channel" />
+                      </button>
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      <button onClick={() => toggleSort('access_started_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Доступ с <SortIcon k="access_started_at" />
+                      </button>
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
+                        Доступ до <SortIcon k="access_ended_at" />
+                      </button>
                     </TableHead>
                     <TableHead className="text-right">Действия</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1307,11 +1405,18 @@ export default function TelegramClubMembers() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {getAccessStatusBadge(member.access_status, member.link_status, member.has_active_access)}
+                        {getAccessStatusBadge(member.access_status, member.link_status, member.has_active_access, member.access_ended_at)}
                       </TableCell>
                       <TableCell className="text-center">
                         {getTelegramStatus(member)}
                       </TableCell>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
+                      </TableCell>
+
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -1434,6 +1539,8 @@ export default function TelegramClubMembers() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
                       <TableCell className="text-right">—</TableCell>
                     </TableRow>
                   ))}
