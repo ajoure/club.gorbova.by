@@ -1,120 +1,73 @@
-да, согласен, с учетом правок:
+# План (v3): даты доступа + сортировка в таблице участников клуба + фикс автокика
 
-1. **Статический шаблон должен быть валиден не только для пакета, но и для обычной генерации.** Если документ без плейсхолдеров активирован как standalone-шаблон, он также должен генерироваться без замен. Не делать отдельную логику «только для пакетов», если валидатор общий.
-2. **Не обещать byte-for-byte после PDF.** Корректная формулировка:
-  &nbsp;
-  ```text
-  DOCX после генерации должен сохранить исходное содержимое без token-substitution.
-  PDF создаётся через Gotenberg из этого DOCX, но не является byte-for-byte копией.
-  ```
-  Byte-for-byte можно сравнивать только исходный DOCX и generated DOCX, если генератор действительно не перепаковывает файл. Если DOCX перепаковывается библиотекой, сравнивать нужно plain-text/content XML, а не байты.
-3. **Проверить backend activation gate отдельно.** Недостаточно, что `validation_status='valid'`. Нужно явно проверить функцию/путь активации:
-  - UI-кнопка активна;
-  - backend activation endpoint/RPC не содержит отдельного запрета по пустому `token_manifest`;
-  - `current_version_id` реально обновился.
-4. **Warning должен сохраняться в существующей модели без миграции.** Если в `document_template_versions` уже есть `validation_warnings` — использовать его. Если такого поля нет, не добавлять миграцию в этом патче без отдельного согласования. Тогда warning должен жить в существующем `validation_result/meta`, если такой контейнер уже есть. В proof указать фактическое место хранения warning.
-5. **Frontend и backend должны иметь одинаковый код warning.**
-  &nbsp;
-  ```text
-  no_placeholders_in_template
-  ```
-  Один и тот же code должен отображаться в UI и возвращаться backend-валидацией. Не создавать разные коды вроде `static_template` / `empty_token_manifest`.
-6. **Token manifest для статического документа должен быть пустым, но валидным.**  
-Проверить:
-  - `token_manifest = []` или канонически пустая структура;
-  - `detected_tokens = []`;
-  - нет `null`, который ломает генератор, snapshot или UI.
-7. **Package readiness не должна требовать заполнения полей для статического документа.** В карточке пакета такой документ должен показываться как:
-  &nbsp;
-  ```text
-  Поля документа: нет дополнительных полей
-  ```
-  и не блокировать генерацию пакета.
-8. **Генерация пакета должна включать статический документ в итоговый набор.** Проверить не только одиночную генерацию strict, но и пакетную сборку:
-  - статический документ попал в output;
-  - порядок документов в пакете сохранён;
-  - остальные документы с токенами продолжают заменяться;
-  - snapshots по статическому документу корректно показывают пустой token snapshot, а не ошибку.
-9. **Регресс-тест на реальные ошибки обязателен.** Помимо `unknown_field_public_id`, проверить хотя бы один package-context gate:
-  &nbsp;
-  ```text
-  package_token_outside_package_context
-  ```
-  Он должен оставаться `invalid` и блокировать активацию.
-10. **Не смешивать этот hotfix с незакрытым Stage 5 field+role.** Static-template activation можно добавить отдельным блоком в отчёт, но Stage 5 по-прежнему не закрыт, пока не выполнен фактический combined `field+role` одним RPC.
-11. **В финальном proof указать изменённые файлы и deploy.**  
-Минимально:
+## 1. Куда добавляем (никакой отдельной выгрузки)
 
-- frontend file;
-- edge function file;
-- deploy timestamp / function version;
-- screenshot UI;
-- SQL before/after по `validation_status`, warnings и `current_version_id`.
+Страница `/admin/integrations/telegram/clubs/:clubId/members` — компонент `src/pages/admin/TelegramClubMembers.tsx`, таблица с вкладками «В клубе / С доступом / Не вошли / Нарушители / Удалённые / Админы».
 
-12. **DoD дополнить итоговым статусом:**
+Источник данных — RPC `public.get_club_members_enriched(p_club_id uuid, p_scope text)` и `public.search_club_members_enriched(...)`. Сейчас они возвращают `access_status`, `has_active_access`, но **не возвращают сами даты доступа**. Их нужно добавить в RPC и пробросить в UI.
 
-```text
-Static-template activation: PASS
-Stage 5 field+role combined: still required
-Stage 6/7: still blocked only by DOCX upload, unless static-template hotfix unblocks them
-Patch: OPEN until full PASS
+## 2. Что меняем — 3 шага
 
-План: разрешить активацию шаблонов без плейсхолдеров
-```
+### Шаг 1. Миграция: RPC возвращают даты доступа
 
-## Проблема
+Расширяю обе RPC двумя полями (без новых таблиц, без новых колонок в `telegram_club_members`):
 
-Шаблон без `{{field:...}}`/`{{pf-...}}`/`{{ln-...}}`/`{{package.*}}` помечается как `invalid` с ошибкой `no_placeholders_in_template`, кнопка «Активировать шаблон» заблокирована, и такой документ нельзя положить в пакет. По бизнес-требованию документ без плейсхолдеров — это валидный статический документ: при генерации пакета он должен попадать в выходной набор «как есть» (байт-в-байт DOCX → PDF Gotenberg).
+- `access_started_at timestamptz` — **первая дата начала доступа** пользователя к продукту этого клуба = `MIN(subscriptions_v2.access_start_at)` по `product_id` из `product_club_mappings` для данного `club_id` (для текущих и удалённых одинаково).
+- `access_ended_at timestamptz` — **дата окончания доступа**:
+  - если у пользователя есть валидный `entitlements.expires_at > now()` по продукту клуба → `NULL` (доступ ещё активен);
+  - иначе → `MAX(entitlements.expires_at)` по тому же продукту, либо `MAX(subscriptions_v2.access_end_at)` если entitlements пуст.
 
-## Diagnose
+Связка «клуб → продукт» уже существует: таблица `product_club_mappings` (см. memory *Telegram Club Engine*). Никаких новых сущностей.
 
-- `supabase/functions/canonical-template-apply-markup/index.ts:735-740` — backend SOT добавляет ошибку `no_placeholders_in_template` в `validationErrors`, из-за чего `validationStatus='invalid'`, активация версии блокируется (та же функция, строки `validation_status !== 'valid'` + UI-гейт `ValidationBadge`).
-- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx:254-259` — фронтовый strict-валидатор зеркалит то же поведение (panel «Проверка и исправление полей»).
-- Генератор `canonical-document-generate-strict` и сборка пакета не требуют наличия токенов: при пустом `token_manifest` файл просто копируется без замен — статический документ корректно ляжет в ZIP/папку пакета и проедет через Gotenberg.
-- Остальные гейты (`package_token_outside_package_context`, `unknown_field_public_id`, `invalid_legacy_role_placeholder` и т.д.) остаются ошибками — на них правка не распространяется.
+Миграция: `CREATE OR REPLACE FUNCTION` для обеих RPC + `GRANT EXECUTE` тем же ролям, что и сейчас (без расширения прав). Тип возврата меняется → нужно `DROP FUNCTION ... CASCADE` и пересоздать; зависимостей на эти функции в БД нет, только клиент.
 
-## Решение (минимальная поверхностная правка)
+### Шаг 2. UI: 2 новых столбца + сортировка
 
-Демоутить `no_placeholders_in_template` из ошибки в **warning** в обоих местах валидации. Активация и публикация версии разрешаются, статус становится `valid`, в UI остаётся информационное сообщение «В шаблоне нет плейсхолдеров — документ будет вставлен в пакет как есть».
+Файл: `src/pages/admin/TelegramClubMembers.tsx`.
 
-### Изменения
+- Добавляю в `<TableHeader>` две колонки **«Доступ с»** и **«Доступ до»**, для удалённых вторая показывает дату кика по факту = `access_ended_at`. Формат `dd.MM.yyyy`, моноширинно (`tabular-nums`), пусто → «—».
+- Расширяю TypeScript-тип в `src/hooks/useTelegramIntegration.tsx` (`ClubMemberEnriched`) на `access_started_at` / `access_ended_at`.
+- Добавляю клиентскую сортировку (без серверной — данные уже в памяти):
+  - локальный state `sortKey` ∈ `telegram_name | crm_name | access_status | chat_channel | access_started_at | access_ended_at`, `sortDir` ∈ `asc | desc`;
+  - заголовки этих колонок становятся кликабельными (`Button` `variant="ghost"` с иконкой `ArrowUpDown` / `ArrowUp` / `ArrowDown` из lucide — уже используется в проекте);
+  - по умолчанию во вкладке «Удалённые» — сортировка по `access_ended_at DESC` (чтобы свежие кики были сверху, как просил пользователь);
+  - сортировка применяется в существующем `filteredMembers` через `useMemo`.
+- Никакой логики доступа/кика не меняю, только отображение и сортировка.
 
-1. `**supabase/functions/canonical-template-apply-markup/index.ts**` (≈строки 735-740):
-  - Заменить `validationErrors.push({ code: 'no_placeholders_in_template', ... })` на `validationWarnings.push({ code: 'no_placeholders_in_template', message: 'В шаблоне нет плейсхолдеров — документ будет включён в пакет как есть (статический).' })`.
-  - `validationStatus` останется `valid` при отсутствии других ошибок.
-2. `**src/components/ai-documents/StrictDocumentTemplatesManager.tsx**`:
-  - В `ValidationError` union тип `no_placeholders_in_template` перевести в новый список `ValidationWarning` (или отдать через отдельный канал — проще: вернуть `status: 'valid'` + warning-массив).
-  - В `strictValidate` (строки 254-259): не пушить в `errors`; вернуть warning. Если других ошибок нет — `status='valid'`, кнопка «Активировать шаблон» включается.
-  - В UI карточке версии (там, где сейчас красная плашка «no_placeholders_in_template…») показывать жёлтую/инфо-плашку с текстом «Шаблон без плейсхолдеров — будет включён в пакет как есть».
-3. **Пакетная сборка / генерация** — кода трогать не нужно: `canonical-document-generate-strict` уже корректно обрабатывает версию с пустым `token_manifest` (нет замен → исходный DOCX в выход). Проверим это smoke-тестом после правки.
+### Шаг 3. Фикс «Доступ активен» у удалённого (Инна Грудецкая и ещё 2 случая)
 
-### Что НЕ меняем
+**Диагноз** (подтверждён данными из БД):
 
-- Контракт `document_template_versions` (`validation_status`, `validation_errors`, `token_manifest`) — без миграций.
-- Гейты для `pf-*`/`ln-*` и неизвестных FLD — остаются ошибками.
-- RPC `save_session_document_atomic`, `access_rules`, права, RLS, GRANT — не затронуты.
-- Backend write-path активации (`canonical-template-activate-version` / эквивалент) — не правим: он уже зависит только от `validation_status='valid'`, который теперь будет проставляться.
+- У Инны (`profile_id=006b96cc-...`), Юлии Рабчевской и Татьяны Ярошевич в `telegram_club_members.access_status='ok'`, хотя последний валидный `entitlement` истёк (06/16/18.06.2026), а в `subscriptions_v2` только зомби-`past_due` без `access_end_at`.
+- Колонка `access_status` в `telegram_club_members` пишется фоновым резолвером (`telegram-members-sync` / `entitlement-sync-engine`). Он трактует `subscriptions_v2.status='past_due'` с `access_end_at IS NULL` как «доступ ещё есть» и оставляет `ok`. Поэтому автокик (`telegram_clubs.autokick_no_access=true`) их пропускает, а UI рисует жёлтый бейдж «Доступ активен» хотя пользователь уже удалён вручную (`in_chat=false`, `in_channel=false` после ручного кика, но `access_status` остался `ok`).
 
-## Dry run
+**Фикс — два уровня, оба маленькие и канонические:**
 
-- Текущее состояние из скриншота: шаблон «0. Приказ … инструкция» v1, `validation_status=invalid`, единственная ошибка — `no_placeholders_in_template`. После правки повторный прогон `canonical-template-apply-markup` (или /resave версии) даст `validation_status=valid`, warning виден в карточке, кнопка «Активировать шаблон» доступна.
-- В пакете «Идеология» этот шаблон станет выбираемым в `document_package_template_items`; генерация выдаст исходный DOCX без модификаций.
+1. **UI guard в `getAccessStatusBadge`** (`TelegramClubMembers.tsx`, строки ~723-746): если `has_active_access === false` ИЛИ (`member.in_chat === false && member.in_channel === false && member.access_status !== 'no_access' && member.access_status !== 'removed'`) — никогда не показывать зелёный/жёлтый «Доступ активен», вместо этого «Доступ истёк» (серый). Это уберёт визуальную ложь мгновенно, без миграций.
+2. **Резолвер `access_status`** — добавляю условие: подписка в `past_due` НЕ считается «есть доступ», если по продукту нет валидного entitlement (`expires_at > now()`). Точечная правка в edge-функции, которая обновляет `telegram_club_members.access_status` (найду: `telegram-members-sync` / nightly reconcile из memory *Nightly Access Reconcile*). После правки запускаю однократный resync для клуба `fa547c41-...`, чтобы Инну и остальных «зомби» резолвер пометил `no_access` и `autokick_no_access` их кикнул сам.
 
-## Execute (по шагам в build mode)
+Это согласовано с memory **Telegram Renewal Sync Standard v2**, **Club Status Integrity**, **Canonical Telegram Grant Write-Path** — никаких ручных DML по `telegram_club_members`, всё через канонический резолвер.
 
-1. Патч edge-функции `canonical-template-apply-markup` (1 блок).
-2. Патч `StrictDocumentTemplatesManager.tsx`: union типов + UI плашки + ветка `status` (минимально).
-3. Deploy edge-функции.
+## 3. Технические детали
 
-## Verify / DoD
+- **Миграция:** обе RPC `SECURITY DEFINER`, `SET search_path = public`. JOIN-ы лёгкие (по `product_club_mappings.club_id` → `product_id`, далее `subscriptions_v2.user_id = m.auth_user_id AND product_id=...` и `entitlements.user_id = m.auth_user_id AND product_id=...`). Под индекс уже попадает (есть индексы по `user_id, product_id`).
+- **Тип `ClubMemberEnriched`** в `useTelegramIntegration.tsx` — расширяю; типы Supabase в `src/integrations/supabase/types.ts` обновятся автоматически после миграции.
+- **Сортировка** клиентская (`useMemo`), не ломает существующий поиск/фильтры.
+- **Регрессии:** не меняю поведение действий (кик, redeem, refresh), не трогаю tabs counts (они уже считаются по `has_active_access` и `access_status`).
+- **Smoke-test после деплоя:** открываем вкладку «Удалённые» → должны появиться 2 столбца, по умолчанию отсортировано по «Доступ до» DESC; у Инны не должно быть жёлтого «Доступ активен» (UI-guard); после ручного перезапуска members-sync — её `access_status` должен стать `no_access` и автокик отработает на следующих зомби автоматически.
 
-- Edge unit-вызов `canonical-template-apply-markup` на версии без токенов → `validation.status='valid'`, `validation.warnings[0].code='no_placeholders_in_template'`.
-- В UI `/admin/documents` → «Шаблоны документов»: карточка «0. Приказ … инструкция» показывает жёлтую плашку (а не красную), кнопка «Активировать шаблон» активна; после клика версия становится `active`.
-- В «Пакеты документов» этот шаблон выбирается; `canonical-document-generate-strict` для пакета возвращает файл с исходным содержимым (байты совпадают со storage-исходником).
-- Шаблон с реальной ошибкой (например, `unknown_field_public_id`) по-прежнему `invalid`, активация заблокирована — регрессии нет.
-- Audit `document_template.markup_applied` пишется как и раньше; новых полей не требуется.
-- Скрин из preview с зелёной/жёлтой плашкой и активной кнопкой «Активировать шаблон».
+## 4. Что НЕ делаем
 
-## Отчёт по завершении
+- Не создаём отдельных файлов (CSV/Excel) — всё в существующей таблице.
+- Не добавляем новых таблиц/колонок в `telegram_club_members`.
+- Не трогаем canonical write-path для grant/revoke (`grant-access-for-order`, `telegram-grant-access`, `telegram-revoke-access`).
+- Не правим логику воронок/orders/subscriptions.
 
-Отдельный блок «Static-template activation — PASS/FAIL» в финальном отчёте Stage 5/6.
+## DoD
+
+- [ ] Миграция RPC применена, обе функции возвращают `access_started_at` / `access_ended_at`.
+- [ ] В `/admin/integrations/telegram/clubs/:id/members` появились 2 столбца с датами, отображаются на всех вкладках.
+- [ ] Сортировка по 6 колонкам работает; во «Удалённых» по умолчанию `access_ended_at DESC`.
+- [ ] У Инны Грудецкой (и любого «зомби past_due без entitlement») больше не отображается «Доступ активен».
+- [ ] После resync-а клуба `Gorbova Club` `telegram_club_members.access_status` у трёх «зомби» переключается на `no_access`, и автокик их обрабатывает в следующем цикле (cron 60 мин).
+- [ ] Никаких ручных DML по `telegram_club_members`, никаких новых ENV/секретов.
