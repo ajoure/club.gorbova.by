@@ -290,7 +290,17 @@ export default function TelegramClubMembers() {
   // adminsList comes from useClubAdmins which is the same source as adminTelegramIds and admin tab rendering
   const counts = useMemo(() => {
     if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
-    
+
+    // v6: локальный пересчёт removed-badge точно по фильтру вкладки
+    // (removed AND !in_any AND !admin AND !has_active_access AND !is_commercial_orphan when hideOrphans)
+    const removedVisible = (members || []).filter(m => {
+      if (m.access_status !== 'removed' || m.in_any) return false;
+      if (adminTelegramIds.has(m.telegram_user_id)) return false;
+      if (m.has_active_access) return false;
+      if (hideOrphans && m.is_commercial_orphan) return false;
+      return true;
+    }).length;
+
     return {
       in_club: summary.in_club_total,
       in_club_regular: summary.in_club_regular,
@@ -298,12 +308,12 @@ export default function TelegramClubMembers() {
       with_access: summary.with_access_total,
       bought_not_joined: summary.bought_not_joined_count,
       violators: summary.violators_count,
-      removed: summary.removed_count,
+      removed: removedVisible,
       // PATCH-STAT-6: Badge Админы = adminsList.length (single SoT with admin tab rendering)
       // adminsList = human admins from telegram_club_members + bot admin from telegram_clubs
       admins: adminsList.length,
     };
-  }, [summary, adminsList.length]);
+  }, [summary, adminsList.length, members, adminTelegramIds, hideOrphans]);
 
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
@@ -326,7 +336,9 @@ export default function TelegramClubMembers() {
           return member.is_violator && !isAdmin;
         case 'removed':
           // PATCH: exclude admins from removed; v4: optionally hide commercial orphans
+          // v6: re-purchase auto-hide — если у removed-пользователя снова активный доступ, он должен исчезнуть из «Удалённых»
           if (member.access_status !== 'removed' || member.in_any || isAdmin) return false;
+          if (member.has_active_access) return false;
           if (hideOrphans && member.is_commercial_orphan) return false;
           return true;
         case 'admins':
@@ -1439,7 +1451,9 @@ export default function TelegramClubMembers() {
                         {member.access_status === 'removed'
                           ? (member.kicked_at
                               ? <span title="Дата удаления из audit_logs">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                              : <span className="italic opacity-60" title="В audit_logs нет события кика для этой записи">дата кика неизвестна</span>)
+                              : (member.access_ended_at
+                                  ? <span className="opacity-70" title="Точная дата кика не найдена в audit_logs, показана дата окончания коммерческого доступа">доступ до {format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru })}</span>
+                                  : <span className="italic opacity-60" title="Нет ни события кика в audit_logs, ни даты окончания доступа">дата неизвестна</span>))
                           : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
                       </TableCell>
 
