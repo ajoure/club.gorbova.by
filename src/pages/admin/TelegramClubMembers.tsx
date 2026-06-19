@@ -1361,9 +1361,15 @@ export default function TelegramClubMembers() {
                     </TableHead>
                     <TableHead className="whitespace-nowrap">
                       <button onClick={() => toggleSort('access_ended_at')} className="inline-flex items-center hover:text-foreground transition-colors">
-                        Доступ до / Кик <SortIcon k="access_ended_at" />
+                        Доступ до <SortIcon k="access_ended_at" />
                       </button>
                     </TableHead>
+                    {activeTab === 'removed' && (
+                      <>
+                        <TableHead className="whitespace-nowrap">Кикнут</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">Сверх доступа</TableHead>
+                      </>
+                    )}
                     <TableHead className="text-right">Действия</TableHead>
 
                   </TableRow>
@@ -1449,14 +1455,24 @@ export default function TelegramClubMembers() {
                         {member.access_started_at ? format(new Date(member.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '—'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                        {member.access_status === 'removed'
-                          ? (member.kicked_at
-                              ? <span title="Дата удаления из audit_logs">кикнут {format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                              : (member.commercial_ended_at
-                                  ? <span className="opacity-70" title="Точная дата кика не найдена в audit_logs, показана дата окончания коммерческого доступа">доступ до {format(new Date(member.commercial_ended_at), 'dd.MM.yyyy', { locale: ru })}</span>
-                                  : <span className="italic opacity-60" title="Нет ни события кика в audit_logs, ни даты окончания доступа">дата неизвестна</span>))
-                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '—')}
+                        {member.commercial_ended_at
+                          ? format(new Date(member.commercial_ended_at), 'dd.MM.yyyy', { locale: ru })
+                          : (member.access_ended_at ? format(new Date(member.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : <span className="italic opacity-60">неизвестно</span>)}
                       </TableCell>
+                      {activeTab === 'removed' && (
+                        <>
+                          <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                            {member.kicked_at
+                              ? format(new Date(member.kicked_at), 'dd.MM.yyyy', { locale: ru })
+                              : <span className="italic opacity-60" title="Событие кика не найдено в audit_logs">неизвестно</span>}
+                          </TableCell>
+                          <TableCell className="text-xs tabular-nums whitespace-nowrap text-right">
+                            {member.illegal_access_days != null && member.illegal_access_days > 0
+                              ? <span className="text-amber-600 font-medium" title="Сколько дней пользователь оставался в клубе после окончания оплаченного доступа">+{member.illegal_access_days} дн</span>
+                              : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                        </>
+                      )}
 
                       <TableCell className="text-right">
                         <DropdownMenu>
