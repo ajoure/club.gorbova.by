@@ -1984,6 +1984,37 @@ Deno.serve(async (req) => {
               });
             }
           }
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+          // recipient.* tokens (per-recipient документ).
+          for (const pt of parsedRecipientTokens) {
+            const key = `recipient:${pt.raw_inside}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const rendered = resolved[pt.raw_inside];
+            const renderedValue = typeof rendered === 'string' ? rendered : '';
+            const trace = sourceTrace[pt.raw_inside] || {};
+            const rawV = packageContext!.recipient
+              ? (packageContext!.recipient as any)[pt.field]
+              : null;
+            out.push({
+              provider: 'recipient',
+              raw_inside: pt.raw_inside,
+              field: pt.field,
+              raw_value: typeof rawV === 'string' ? rawV : (rawV == null ? null : String(rawV)),
+              rendered_value: renderedValue,
+              format: pt.format ?? null,
+              case_modifier: pt.case_modifier ?? null,
+              format_applied: trace.format_applied === true,
+              case_applied: trace.case_applied === true,
+              recipient_context: {
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id ?? null,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+              },
+              item_context: itemContext,
+            });
+          }
           return out;
         })(),
         ...gotenbergMeta,
