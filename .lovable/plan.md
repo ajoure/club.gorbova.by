@@ -1,261 +1,312 @@
+# Ответ для Lovable:
+
 да, согласен, с учетом правок:
 
-1. **Не переопределять** `ln-*` **как основной способ recipient-подстановки.**  
-В плане написано, что для repeat-роли нужно переопределять `preresolved_ln_tokens[repeat_role_public_id]` на текущего recipient. Это допустимо только как совместимость, но основной контракт Stage C должен быть через новый namespace:
+1. Не сохранять автоматически первую активную роль при переключении в `per_role_person`.
   &nbsp;
-  ```text
-  {{recipient.full_name}}
-  {{recipient.email}}
-  {{recipient.phone}}
-  {{recipient.address}}
-  {{recipient.position}}
-  ```
-  Иначе `ln-*` потеряет исходный смысл «роль в документе» и станет зависеть от режима генерации. Правильно:
-  - `recipient.*` — текущий получатель экземпляра;
-  - `ln-*` — роли документа как раньше;
-  - опционально: для repeat-роли можно добавить compatibility override `ln-*`, но только если это не ломает существующие шаблоны.
-2. **В** `canonical-document-generate-strict` **нужно передать не только IDs recipient, но и сам recipient context.**  
-Сейчас в strict предлагается добавить только:
+  В плане указано: «если есть — сохраняем сразу с первой ролью как дефолтом». Это рискованно: можно случайно выбрать не ту роль, например «Ревизор» вместо «Участник».
+  Правильно:
+  - пользователь выбирает `Отдельный документ для каждого физлица с ролью`;
+  - селектор роли становится обязательным;
+  - пока роль не выбрана — не отправлять update в БД либо показывать validation state;
+  - сохранить `generation_mode='per_role_person'` можно только вместе с явно выбранным `repeat_role_catalog_id`.
+  Если в UI технически нужно временное состояние — держать его локально, но не писать в БД `per_role_person` без роли.
+2. В карточке документа блок «Режим генерации документа» должен быть не “под полями и назначениями ролей”, а лучше между «Поля документа» и «Роли документа» либо сразу перед «Роли документа».
+  Логика для пользователя:
+  - сначала поля;
+  - потом режим генерации;
+  - потом роли/назначения, которые участвуют в генерации.
+  Главное: блок должен быть видим без поиска на вкладке «Шаблоны пакета».
+3. Сохранение режима генерации должно быть понятно отделено от atomic save полей/ролей.
+  `save_session_document_atomic` сохраняет значения полей и role assignments сессии.  
+  `generation_mode / repeat_role_catalog_id` — это настройка `document_package_template_items`, то есть настройка template item.
+  Поэтому в proof нужно показать:
+  - какая мутация сохраняет режим генерации;
+  - что она не ломает `save_session_document_atomic`;
+  - что кнопка «Сохранить документ» не создаёт конфликт двух разных save-path.
+4. В UI нужно показать текущее состояние режима даже для `single`.
   &nbsp;
-  ```text
-  repeat_assignment_id
-  repeat_role_catalog_id
-  recipient_person_id
-  ```
-  Этого недостаточно для рендера `{{recipient.full_name}}`. Нужно передавать:
-3. **Strict должен уметь резолвить** `recipient.*` **токены.**  
-Если strict остаётся «глупым исполнителем», он всё равно должен знать, как заменить уже переданный `recipient` context в DOCX. Минимальная правка:
+  В карточке документа должно быть видно:
+  - `Один документ` выбран по умолчанию;
+  - если включён repeat — бейдж `× по роли «Участник»`;
+  - если repeat включён, но роль по историческим данным отсутствует/архивирована — destructive state `роль не задана / роль неактивна`.
+5. В `PackageGenerationPanel` технический код ошибки можно оставить только в tooltip/title, но не в основном тексте.
   &nbsp;
-  ```text
-  token starts with recipient.
-  → взять значение из packageContext.recipient
-  → записать в tokens_snapshot
-  ```
-  Без этого Stage C создаст N файлов, но recipient-плейсхолдеры останутся сырыми.
-4. **Добавить валидацию неизвестных recipient-токенов.**  
-Если в шаблоне есть:
+  Видимый текст должен быть человекочитаемый:
+  `Нет назначений для роли «Ревизор». Назначьте физлицо на эту роль или исправьте шаблон документа.`
+  Технический код допустим только как служебная подсказка:
+  `role_assignment_missing:ln-000014`
+6. Важно не смешивать две разные проблемы:
+  - `per_role_person` по роли «Участник» — это настройка множественной генерации;
+  - `{{ln-000014}}` = «Ревизор» в DOCX-шаблоне — это отдельная обязательная роль шаблона.
+  Если шаблон содержит `{{ln-000014}}`, то даже при repeat по «Участнику» генерация может корректно блокироваться, пока не назначен Ревизор или пока токен не заменён на `{{recipient.full_name}}`.
+  Поэтому UI должен объяснять это пользователю, а не показывать техническую ошибку.
+7. Backend bypass pre-scan делать строго только для repeat-роли.
   &nbsp;
-  ```text
-  {{recipient.foo}}
-  ```
-  а такого поля нет, шаблон/генерация не должны молча подставлять пустоту. Нужна понятная ошибка:
-  ```text
-  unknown_recipient_field
-  ```
-  Для Stage C достаточно runtime guard в strict; полноценную template validation можно вынести, но сырые токены оставлять нельзя.
-5. **Не менять поведение** `ln-*` **для других ролей.**  
-Если выбран repeat по роли «Участник», то:
-  - `recipient.*` меняется на каждого участника;
-  - `ln-участник` можно переопределить только при явном решении compatibility mode;
-  - все остальные `ln-*` должны работать как сейчас.
-6. **Если repeat-role не используется в шаблоне через** `ln-*`**, это не ошибка.**  
-Это правильно указано в плане. Но при наличии `recipient.*` токенов именно они должны рендериться. Если нет ни `recipient.*`, ни `ln-*` по этой роли, документ всё равно генерируется N раз, но в proof добавить warning:
-7. **Idempotency key должен учитывать batch policy.**  
-План предлагает:
+  Правило:
+  - если отсутствует assignment для `repeat_role_catalog_id`, pre-scan не должен блокировать, потому что per-role ветка подставит текущего recipient;
+  - если отсутствует assignment для другой роли, например `ln-000014` «Ревизор», блокировка остаётся корректной.
+  Это должно быть отдельно доказано в proof двумя кейсами:
+  - repeat-role без assignment не падает в pre-scan;
+  - non-repeat роль без assignment продолжает давать понятную ошибку.
+8. Runtime proof разделить на два уровня.
   &nbsp;
-  ```text
-  pkg:{batch_id}:{item_id}:assn:{assignment_id}
-  ```
-  Это ок, если `batch_id` один и тот же при повторном запуске retry этого же batch. Но если пользователь запускает новую генерацию пакета, новый batch должен создавать новый набор документов. В proof явно проверить:
-  - retry same batch → дублей нет;
-  - new batch → создаётся новый набор.
-8. `total_items` **и** `total_documents` **должны быть разведены в audit/meta.**  
-Зафиксировать в `document.package_generation_completed.meta`:
+  **Уровень 1 — обязательный для этого патча:**
+  - блок режима генерации виден в карточке «Извещение»;
+  - можно выбрать `per_role_person`;
+  - можно выбрать роль «Участник»;
+  - настройка сохраняется в `document_package_template_items`;
+  - UI показывает понятную ошибку по `ln-000014` = «Ревизор», если Ревизор не назначен;
+  - single-документы работают без изменений.
+  **Уровень 2 — полный финальный Stage C PASS:**
+  - после назначения Ревизора или исправления DOCX на `{{recipient.*}}`;
+  - генерация создаёт 3 отдельных извещения;
+  - в `ai_generated_documents.meta` заполнены `repeat_assignment_id`, `recipient_person_id`, `recipient_display_name`, `recipient_index`;
+  - в DOCX реально подставлен recipient.
+  Stage C нельзя закрывать как PASS, пока не выполнен уровень 2.
+9. Не начинать Stage D до полного Stage C PASS.
   &nbsp;
-  ```json
-  {
-    "total_items": 3,
-    "total_documents": 5,
-    "generated": 5,
-    "errors": 0,
-    "blocked": 0
-  }
-  ```
-  Не переиспользовать старое поле `total`, если оно уже означало количество items, без явного mapping.
-9. `results[]` **для blocked/error per_role item должен быть предсказуемым.**  
-Если `per_role_person` заблокирован из-за отсутствия получателей, в `results[]` должна быть одна запись по item:
-  &nbsp;
-  ```json
-  {
-    "item_id": "...",
-    "generation_mode": "per_role_person",
-    "status": "blocked",
-    "errors": ["per_role_no_active_recipients"]
-  }
-  ```
-  Не создавать фиктивный recipient.
-10. **Snapshot для per-recipient документа обязателен.**  
-В `ai_generated_documents.meta` добавить:
+  Если после этого патча будет только UI + понятная ошибка по Ревизору, статус должен быть:
+  `Stage C runtime fix: PARTIAL, waiting for template/data readiness`
+  А не PASS.
+10. В proof добавить отдельную проверку, что настройка видна именно на вкладке «Анкеты документов», а не только на «Шаблоны пакета».
 
-```json
-{
-  "generation_mode": "per_role_person",
-  "source_package_template_item_id": "...",
-  "repeat_role_catalog_id": "...",
-  "repeat_assignment_id": "...",
-  "recipient_person_id": "...",
-  "recipient_display_name": "...",
-  "recipient_index": 1
-}
+Обязательный скрин:
+
+- карточка документа «2. Извещение…»;
+- виден блок «Режим генерации документа»;
+- выбран режим `Отдельный документ для каждого физлица с ролью`;
+- выбрана роль `Участник`.
+
+11. В proof добавить SQL after:
+
+```sql
+SELECT id, title_override, generation_mode, repeat_role_catalog_id
+FROM document_package_template_items
+WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
 ```
 
-И в `tokens_snapshot[]` должны быть `recipient.*` токены с `provider='recipient'`.
-
-11. **Проверить порядок output-файлов.**  
-В proof показать порядок:
+Ожидание:
 
 ```text
-item 1 single
-item 2 recipient 1
-item 2 recipient 2
-item 3 single
+generation_mode = 'per_role_person'
+repeat_role_catalog_id = id роли "Участник"
 ```
 
-То есть порядок item сохраняется, а repeat-документы раскрываются внутри позиции item.
+12. В proof добавить SQL по активным assignments именно для item «Извещение»:
 
-12. **Проверить отсутствие смешения данных.**  
-В runtime proof обязательно:
-
-- документ Иванова содержит Иванова;
-- документ Иванова не содержит Петрова;
-- документ Петрова содержит Петрова;
-- документ Петрова не содержит Иванова.
-
-13. **Не считать Stage C завершённым без реального DOCX с** `recipient.*`**.**  
-Нужен тестовый шаблон, где есть минимум:
-
-```text
-{{recipient.full_name}}
-{{recipient.email}}
-{{recipient.position}}
+```sql
+SELECT a.id, rc.public_id, rc.label, p.full_name
+FROM document_package_item_role_assignments a
+JOIN document_package_role_catalog rc ON rc.id = a.role_catalog_id
+LEFT JOIN legal_details_persons p ON p.id = a.person_id
+WHERE a.package_template_item_id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
+  AND a.is_active = true
+ORDER BY rc.public_id, a.sort_order, a.id;
 ```
 
-Иначе будет доказано только размножение файлов, но не recipient resolver.
+13. Уточнить DoD:
 
-14. **Single zero-diff проверить на фактическом существующем пакете.**  
-Для item с `generation_mode='single'` убедиться:
+- В карточке документа на вкладке «Анкеты документов» виден блок «Режим генерации документа»: PASS.
+- Роль не выбирается автоматически без явного действия пользователя: PASS.
+- Можно явно выбрать роль «Участник»: PASS.
+- Настройка сохраняется в `document_package_template_items`: PASS.
+- Ошибка `role_assignment_missing:ln-000014` отображается как «Нет назначений для роли “Ревизор”…»: PASS.
+- Pre-scan bypass работает только для repeat-роли: PASS.
+- Single-документы работают без изменений: PASS.
+- Полный Stage C PASS только после генерации 3 отдельных извещений с реальным recipient context: PASS.
+- Stage D не начинать до полного Stage C PASS.
 
-- idempotency key прежний;
-- meta без recipient;
-- количество документов прежнее;
-- `ln-*`, `pf-*`, `package.*` работают как раньше.
-
-15. **После Stage C не делать retro-sync автоматически.**  
-Это верно указано. Если изменились назначения ролей после генерации, старые generated documents пока не трогать. Stage D отдельно решит archive/regenerate policy.
-16. **Deployment обязателен.**  
-Так как меняются edge functions, в proof добавить:
-
-```text
-deployed ai-generate-document-package
-deployed canonical-document-generate-strict
-deploy timestamp
-```
-
-17. **DoD дополнить:**
-
-```text
-recipient.* tokens rendered: PASS
-unknown recipient token guarded: PASS
-same batch idempotency: PASS
-new batch creates new generated set: PASS
-single zero-diff: PASS
-per-role N docs: PASS
-no cross-recipient contamination: PASS
-meta recipient fields: PASS
-tokens_snapshot provider=recipient: PASS
-```
+После этих правок план можно выполнять.
 
 &nbsp;
 
-&nbsp;
+План: PATCH-C-STAGE-RUNTIME-FIX-V1 (v2) — закрытие Stage C runtime
 
-План: Stage C — подключение `resolvePerRoleRecipients` в `ai-generate-document-package`
+## Diagnose
 
-## Цель
+1. **UI per_role_person существует только в `TemplateBindingControl` (вкладка «Шаблоны пакета»)**, что **не является рабочим сценарием** пользователя. Пользователь работает с документом в его карточке на вкладке «Анкеты документов» (`PackageDocumentCard`) — именно туда он заходит, чтобы заполнить поля, назначить роли и запустить генерацию. Настройка режима генерации обязана быть **рядом с полями и ролями документа**, а не на отдельной admin-вкладке. Текущее расположение в `TemplateBindingControl` оставляем как админ-дубль, основной сценарий — карточка документа.
+2. `**role_assignment_missing:ln-000014` подтверждено**:
+  - `ln-000014` = «Ревизор», `ln-000015` = «Участник» в каталоге ролей пакета `21764469…`.
+  - Шаблон «2. Извещение…» содержит `{{ln-000014}}` (Ревизор).
+  - На item «Извещение…» назначены 3 человека, **все на роль «Участник»**, на «Ревизор» — никто.
+  - Это **корректная ошибка** (Ревизор реально не назначен), но техническое сообщение не объясняет, что произошло и что делать. Нужна человекочитаемая формулировка с label роли.
+3. **Bug-risk в pre-scan**: в `ai-generate-document-package/index.ts` строки 447–460 валидация `{{ln-XXX}}` идёт до per-role ветки (строка 581). Если назначений именно для repeat-роли нет (а recipient'ы должны прийти из resolver) — pre-scan ложно заблокирует item. Нужна точечная защита.
+4. **Жёсткое разделение проблем** (как требует пользователь):
+  - **Проблема A**: UI per_role_person/repeat_role_catalog_id должен быть в карточке документа — фиксим в этом патче.
+  - **Проблема B**: токен `{{ln-000014}}` (Ревизор) в шаблоне — это **отдельный вопрос**: либо назначить Ревизора, либо заменить токен на `{{recipient.full_name}}`. Решение принимает владелец шаблона/данных вне этого патча. UI-фикс per_role_person **не зависит** от того, как решат проблему B.
 
-Для items пакета с `generation_mode='per_role_person'` генератор создаёт **по одному документу на каждого активного recipient** из `document_package_item_role_assignments` для `repeat_role_catalog_id`. Items с `generation_mode='single'` ведут себя ровно как сейчас (zero-diff). Никаких изменений в Stage A/B/0.x.
+## Scope
 
-## Контракт
+### 1. UI: блок «Режим генерации документа» в карточке документа (основной сценарий)
+
+Файл: `src/components/ai-documents/packages/PackageDocumentCard.tsx` (карточка одного документа на вкладке «Анкеты документов»).
+
+Добавить блок **под полями и назначениями ролей**, до кнопок генерации:
+
+```
+Режим генерации документа
+( ) Один документ
+( ) Отдельный документ для каждого физлица с ролью
+    └─ Роль-источник повторения: [ Select: активные роли пакета ]
+```
+
+Поведение:
+
+- Источник опций селекта — `document_package_role_catalog` по `package_template_id` карточки, фильтр `is_active = true`. Используем уже существующий хук/запрос ролей пакета (тот же, что в `TemplateBindingControl`) либо лёгкий react-query.
+- При переключении в `per_role_person`:
+  - если активных ролей **нет** — опция disabled с подсказкой «Сначала добавьте роль пакета на вкладке „Роли и поля пакета"».
+  - если есть — сохраняем сразу с первой ролью как дефолтом (как уже сделано в `TemplateBindingControl`, поведение единое).
+- При выборе роли — апдейт `document_package_template_items` через ту же мутацию, что в `TemplateBindingControl` (RPC/прямой `update`). Извлечь общую логику в `src/hooks/usePackageItemGenerationMode.ts` (новый файл), переиспользовать в обоих местах — чтобы не было двух источников истины.
+- При возврате в `single` — `repeat_role_catalog_id = null`.
+- Бейдж в шапке карточки: `× по роли «<label>»`, при `per_role_person && !role` — `роль не задана` (destructive).
+- Optimistic + toast: «Режим сохранён», «Не удалось сохранить».
+- Якорь `id={`pkg-doc-card-${item.id}`}` на корне карточки — для будущих deeplink/scroll.
+
+Реальный сценарий: пользователь открывает «Извещение» в «Анкеты документов» → выбирает «Отдельный документ для каждого физлица с ролью» → выбирает «Участник» → сохраняется. SQL проверка после клика:
+
+```sql
+SELECT id, generation_mode, repeat_role_catalog_id
+FROM document_package_template_items
+WHERE id = 'febd1821-fba8-4290-babf-99c59c27f2f4';
+-- expected: generation_mode='per_role_person', repeat_role_catalog_id = id роли Участник (c8fc4200…)
+```
+
+### 2. UI: человекочитаемые ошибки в результатах генерации
+
+Файл: `src/components/ai-documents/packages/PackageGenerationPanel.tsx`.
+
+В блоке «Результат последнего запуска» нормализовать строки ошибок:
 
 
-| Аспект                                           | Single (как сейчас)               | Per-role-person (Stage C)                                                                                          |
-| ------------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Кол-во документов на item                        | 1                                 | N = число активных персональных assignments по `repeat_role_catalog_id`                                            |
-| Идемпотентность                                  | `pkg:{batch_id}:{item_id}`        | `pkg:{batch_id}:{item_id}:assn:{assignment_id}`                                                                    |
-| `preresolved_ln_tokens[<repeat_role_public_id>]` | как сейчас (все assignments роли) | **переопределяется**: persons=[recipient.full_name], positions=[recipient.position], person_id=recipient.person_id |
-| Остальные `ln-*` токены                          | как сейчас                        | как сейчас (другие роли — все участники роли)                                                                      |
-| `ai_generated_documents.meta`                    | без recipient                     | добавляются `repeat_role_catalog_id`, `repeat_assignment_id`, `recipient_person_id`                                |
-| `recipient` в `results[]`                        | отсутствует                       | `{ assignment_id, person_id, role_catalog_id }`                                                                    |
+| Технический код                            | UI-сообщение                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `role_assignment_missing:ln-XXXXXX`        | `Нет назначений для роли «<label>». Назначьте физлицо на эту роль или исправьте шаблон документа.` |
+| `ln_token_unknown:ln-XXXXXX`               | `Шаблон ссылается на неизвестную роль «<ln-XXXXXX>».`                                              |
+| `ln_token_outside_bound_package:ln-XXXXXX` | `Роль «<label>» принадлежит другому пакету.`                                                       |
+| `per_role_no_active_recipients`            | `Для режима «по одному на каждого участника роли» нет активных назначений выбранной роли.`         |
+| `per_role_role_not_configured`             | `Не выбрана роль-источник. Откройте карточку документа и выберите роль.`                           |
+| `per_role_role_inactive`                   | `Выбранная роль-источник неактивна.`                                                               |
+| `per_role_role_package_mismatch`           | `Роль-источник принадлежит другому пакету.`                                                        |
 
 
-## Изменения
+Резолв `ln-XXXXXX → label` через тот же запрос ролей пакета. Если label не найден — fallback на сам код.
 
-### 1. `supabase/functions/ai-generate-document-package/index.ts`
+Бейдж «блок» остаётся; снизу — человекочитаемая строка вместо технической. Технический код доступен через `title`/тултип для саппорта.
 
-- SELECT items дополнить полями `generation_mode, repeat_role_catalog_id`.
-- После сбора `preresolved_*` для item (без изменений в самой сборке):
-  - если `generation_mode !== 'per_role_person'` → один вызов strict как сейчас;
-  - иначе:
-    1. Импортировать и вызвать `resolvePerRoleRecipients({ supabase, sessionId, itemId })`.
-    2. Маппинг status → результат:
-      - `ok` → итерация по recipients;
-      - `no_active_assignments` → `blocked`, `errors:['per_role_no_active_recipients']`, 1 запись в `results`;
-      - `role_not_configured | role_inactive | role_package_mismatch | item_outside_session_package | session_not_found | item_not_found` → `error`, `errors:[<status>]`;
-      - `resolver_error` → `error`, `errors:['per_role_resolver_error', ...reasons]`;
-      - `single_mode` → дефенсивно: fallback на single-путь (по идее не случится, т.к. ветка только при per_role_person).
-    3. Для каждого recipient:
-      - Найти роль `repeat_role_catalog_id` в `roleByPublicId`/`roleRows`, получить её `public_id` (ln-токен).
-      - Создать `perRecipientLn` = клон `preresolved_ln_tokens` и переопределить запись по `lnPublicId`:
-        ```
-        { value: recipient.recipient.full_name,
-          persons: [recipient.recipient.full_name],
-          positions: [recipient.recipient.position ?? ''],
-          position_genders: [null],
-          role_catalog_id, person_id: recipient.person_id }
-        ```
-        Если эта роль вообще не упоминалась в шаблоне (нет `lnPublicId` в bag) — это **не ошибка**: документ всё равно рендерится N раз (бизнес-сценарий: индивидуальные приложения), но в strict уходит дополнительный recipient hint (см. ниже).
-      - Передать в strict `packageContext` с новыми полями:
-        - `repeat_assignment_id: recipient.assignment_id`
-        - `repeat_role_catalog_id`
-        - `recipient_person_id: recipient.person_id`
-        - `preresolved_ln_tokens: perRecipientLn`
-      - Инкремент `generated/errors` per recipient.
-    4. В `results[]` для per_role_person item — N записей, каждая с `recipient: { assignment_id, person_id, role_catalog_id, sort_order }`.
-- `total_items` в batch.meta оставить = `items.length` (число шаблонных позиций), добавить `total_documents = generated + errors + blocked` для прозрачности.
+### 3. Backend: защита pre-scan от ложной блокировки repeat-роли
 
-### 2. `supabase/functions/canonical-document-generate-strict/index.ts`
+Файл: `supabase/functions/ai-generate-document-package/index.ts` (строки ~447–460).
 
-Минимальная поверхностная правка, без изменения логики токенов:
+Перед циклом по item-ам вычислить `repeatRolePublicId` для текущего item:
 
-- Расширить `PackageCtx` опциональными `repeat_assignment_id?`, `repeat_role_catalog_id?`, `recipient_person_id?`.
-- В вычислении `idempotencyKey` при `generation_context==='package_session'`:
-  - если `repeat_assignment_id` задан → `pkg:{batch}:{item}:assn:{assignment_id}`;
-  - иначе → текущий `pkg:{batch}:{item}` (zero-diff для single).
-- В `packageMetaExtras` и `auditContext` добавить эти три поля, **только если присутствуют**. Это попадёт в `ai_generated_documents.meta` и `audit_logs.meta`, не меняя single-сценарий.
-- Никаких новых ошибок/гардов: strict остаётся «глупым» исполнителем; политику выбора recipient определяет оркестратор.
+- если `item.generation_mode === 'per_role_person'` и `repeat_role_catalog_id` задан → `repeatRolePublicId = roleById.get(repeat_role_catalog_id)?.public_id`.
 
-### 3. Без изменений
+В ветке `LN_RE` (строка 447):
 
-- `resolve-per-role-recipients.ts` (готов, Stage B, PASS).
-- UI пакетов, smart-date prefill (Stage 0.3), schema/триггер `dpti_assert_repeat_role_consistency` (Stage A).
-- `document_package_item_role_assignments`, `save_session_document_atomic` (Stage 5).
-- `document_package_session_participants` — не читаем (Stage B SoT).
-- Retro-sync для уже сгенерированных пакетов — это **Stage D**, не сюда.
+- если `lnPublicId === repeatRolePublicId` и `asgs.length === 0` — **не пушить `role_assignment_missing**`, положить placeholder `preresolved_ln_tokens[lnPublicId] = { value: '', persons: [], positions: [], position_genders: [], role_catalog_id: repeat_role_catalog_id, person_id: null }`. Per-role ветка (строки 597–647) перепишет на каждого recipient.
+- если `lnPublicId !== repeatRolePublicId` (например, Ревизор в этом кейсе) — `role_assignment_missing:<lnPublicId>` остаётся как сегодня (корректная ошибка).
+
+Zero-diff для `generation_mode === 'single'`.
+
+### 4. Runtime proof (обязательный)
+
+Сценарий на пакете «Годовое собрание участников» (`package_template_id = 21764469-1ba9-49b3-90d9-5349bcbcd531`):
+
+a) В UI карточки «Извещение» включить `per_role_person`, роль = «Участник» (`ln-000015`).
+
+b) SQL after-проверка:
+
+```sql
+SELECT id, title_override, generation_mode, repeat_role_catalog_id
+FROM document_package_template_items
+WHERE package_template_id = '21764469-1ba9-49b3-90d9-5349bcbcd531'
+ORDER BY sort_order;
+-- Инструкция, Приказ → single, NULL
+-- Извещение → per_role_person, c8fc4200-75c0-4c24-8eea-112c4e468aeb
+```
+
+c) SQL active assignments по «Извещение»:
+
+```sql
+SELECT a.id, rc.public_id, rc.label, p.full_name
+FROM document_package_item_role_assignments a
+JOIN document_package_role_catalog rc ON rc.id = a.role_catalog_id
+LEFT JOIN legal_details_persons p ON p.id = a.person_id
+WHERE a.package_template_item_id = 'febd1821-fba8-4290-babf-99c59c27f2f4'
+ORDER BY rc.public_id;
+-- ожидание: 3 строки ln-000015 «Участник»
+```
+
+d) Запуск «Сформировать пакет документов». Возможны два исхода в зависимости от состояния шаблона «Извещение»:
+
+- **d.1.** Если шаблон всё ещё содержит `{{ln-000014}}` (Ревизор) — генератор корректно блокирует item с **человекочитаемой** ошибкой «Нет назначений для роли „Ревизор"…». Это **доказательство Проблемы B**, не Проблемы A. Для полного runtime proof владелец данных делает одно из двух (это **вне scope патча**, но требуется для runtime прогона):
+  - назначить Ревизора на item «Извещение» (один человек), либо
+  - удалить `{{ln-000014}}` из DOCX «Извещение» / заменить на `{{recipient.full_name}}`.
+- **d.2.** После решения Проблемы B запускаем генерацию повторно: ожидаем «Инструкция» 1 + «Приказ» 1 + «Извещение» **3** = 5 документов.
+
+e) SQL по `ai_generated_documents.meta` для каждого извещения:
+
+```sql
+SELECT id, meta->>'generation_mode', meta->>'repeat_role_catalog_id',
+       meta->>'repeat_assignment_id', meta->>'recipient_person_id',
+       meta->>'recipient_display_name', meta->>'recipient_index'
+FROM ai_generated_documents
+WHERE generation_batch_id = '<последний batch>'
+ORDER BY created_at;
+-- ожидание:
+--   Инструкция, Приказ — все meta-поля per-recipient = NULL (zero-diff)
+--   Извещение × 3 — generation_mode='per_role_person',
+--                   repeat_role_catalog_id = id роли Участник,
+--                   recipient_index = 1,2,3,
+--                   recipient_display_name = ФИО
+```
+
+f) Скачать один DOCX «Извещение», убедиться, что `{{recipient.full_name}}` (если шаблон обновлён) или persisted поля — реально подставлены ФИО recipient'a.
+
+g) Скрин UI: карточка «Извещение» с открытым блоком «Режим генерации документа», выбран per_role_person и роль «Участник».
+
+h) Скрин UI: блок «Результат последнего запуска» с человекочитаемой строкой ошибки (если применимо) — техническая `role_assignment_missing:ln-000014` отсутствует в видимом тексте.
+
+Proof-файл: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md` — все артефакты выше.
+
+## Out of scope
+
+- `supabase/functions/_shared/resolve-per-role-recipients.ts` — не трогаем.
+- `canonical-document-generate-strict` — не трогаем (контракт `{{recipient.*}}` готов).
+- Редактирование DOCX шаблонов и назначение Ревизора — делает владелец данных, не агент.
+- Stage D (UI-группировка результатов по recipient, ретро-синхронизация) — отдельным планом, после закрытия Stage C runtime.
+- Полный редизайн `TemplateBindingControl` — оставляем как admin-дубль, синхронизирован через общий хук.
+
+## Технические детали
+
+**Файлы (frontend)**
+
+- **NEW** `src/hooks/usePackageItemGenerationMode.ts` — единый хук: query ролей пакета + мутация апдейта `generation_mode`/`repeat_role_catalog_id` для item-а. Используется и в `PackageDocumentCard`, и в `TemplateBindingControl`.
+- `src/components/ai-documents/packages/PackageDocumentCard.tsx` — новый блок «Режим генерации документа» под полями/ролями, бейдж в шапке карточки, `id={pkg-doc-card-${item.id}}`.
+- `src/components/ai-documents/packages/TemplateBindingControl.tsx` — заменить локальные query+mutation на `usePackageItemGenerationMode`, поведение и разметка не меняются.
+- `src/components/ai-documents/packages/PackageGenerationPanel.tsx` — нормализатор ошибок (мапа кодов → текст с резолвом label роли).
+
+**Файлы (backend)**
+
+- `supabase/functions/ai-generate-document-package/index.ts` — точечный bypass `role_assignment_missing` для repeat-роли в pre-scan (см. §3). Deploy через стандартный workflow.
+
+**Без миграций. Без изменений RLS/grants.**
 
 ## DoD
 
-- Stage C generator per-role iteration: PASS
-- Single item zero-diff (идемпотентный ключ, meta, audit, кол-во документов): PASS
-- Per-role item: N документов = N активных assignments, порядок = sort_order resolver: PASS
-- Idempotency: повторный запуск того же batch не создаёт дубликатов (по `pkg:{batch}:{item}:assn:{aid}`): PASS
-- `ai_generated_documents.meta.repeat_assignment_id / recipient_person_id / repeat_role_catalog_id` присутствуют для per-role и **отсутствуют** для single: PASS
-- Resolver-статусы корректно маппятся в `results[].status` без throw: PASS
-- `audit_logs.document.package_generation_completed.meta` содержит `generated/errors/blocked` по документам, `total` — по items: PASS
-- Strict вне package_session-режима не затронут (regression-проверка single order generation): PASS
-- Proof: `.lovable/proofs/package_repeatable_documents_generator_v1.md` с реальным runtime прогоном (single+per_role в одном пакете).
+- В карточке документа на вкладке «Анкеты документов» виден блок «Режим генерации документа»: PASS
+- Можно выбрать «Отдельный документ для каждого физлица с ролью»: PASS
+- Можно выбрать роль «Участник» в селекте «Роль-источник повторения»: PASS
+- Настройка сохраняется в `document_package_template_items` (SQL-подтверждение): PASS
+- При попытке выбрать `per_role_person` без активных ролей — опция disabled с подсказкой: PASS
+- `TemplateBindingControl` и карточка документа используют единый хук (нет дублирования логики): PASS
+- Документ «Извещение» генерируется в 3 экземплярах по 3 участникам (после решения Проблемы B владельцем данных): PASS
+- `recipient.*` реально подставляется в DOCX: PASS
+- `ai_generated_documents.meta` per-recipient полностью заполнен; single-документы без recipient-meta (zero-diff): PASS
+- В UI результатов генерации **нет** технических `role_assignment_missing:ln-XXX` — только человекочитаемые сообщения с label роли: PASS
+- Pre-scan генератора не блокирует item, если отсутствует именно repeat-роль (другие ln-токены без назначений по-прежнему дают корректную ошибку): PASS
+- Single-документы «Инструкция» и «Приказ» работают без изменений: PASS
+- Proof создан: `.lovable/proofs/package_repeatable_documents_stage_c_runtime_fix_v1.md`: PASS
 
-## Out of scope (отдельные stage)
-
-- Stage D: retro-применение к ранее сгенерированным пакетам и UI-вывод per-recipient документов в карточке пакета.
-- Любые изменения по smart-date / readiness / Stage 0.x.
-- Изменение SoT назначений или resolver-контракта.
+Stage D не начинаем до полного закрытия Stage C runtime.
