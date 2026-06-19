@@ -126,7 +126,7 @@ export function PackageDocumentCard({
 }: PackageDocumentCardProps) {
   const { assignments, isLoading: rolesLoading } = useDocumentItemRoleAssignments(sessionId, item.id);
   const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
-  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId);
+  const fieldsState = usePackageSessionFields(sessionId, packageTemplateId, sessionCreatedAt);
   const itemQuestions = fieldsState.getItemQuestions(item.id);
   const itemProgress = fieldsState.getItemProgress(item.id);
   const itemMissingRequired = fieldsState.getItemMissingRequired(item.id);
