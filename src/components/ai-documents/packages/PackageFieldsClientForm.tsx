@@ -122,6 +122,7 @@ export const PackageFieldsClientForm = forwardRef<PackageFieldsSubmitHandle, Pro
   hideSaveButton = false,
   orphanOnly = false,
   onDirtyChange,
+  highlightFieldIds,
 }, ref) {
   const {
     questions: allQuestions,
