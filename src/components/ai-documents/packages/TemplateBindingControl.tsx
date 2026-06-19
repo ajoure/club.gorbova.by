@@ -149,27 +149,25 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const updateModeMutation = useMutation({
-    mutationFn: async (input: {
+  // updateModeMutation вынесен в shared hook usePackageItemGenerationMode.
+  // Здесь оставлен тонкий wrapper, чтобы существующий ниже JSX продолжал работать.
+  const updateModeMutation = {
+    isPending: genMode.isSaving,
+    variables: genMode.isSaving ? { itemId: genMode.savingItemId } : undefined,
+    mutate: (input: {
       itemId: string;
       generation_mode: "single" | "per_role_person";
       repeat_role_catalog_id: string | null;
     }) => {
-      const { error } = await supabase
-        .from("document_package_template_items")
-        .update({
-          generation_mode: input.generation_mode,
-          repeat_role_catalog_id: input.repeat_role_catalog_id,
-        })
-        .eq("id", input.itemId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
+      genMode.update({
+        itemId: input.itemId,
+        packageTemplateId,
+        generation_mode: input.generation_mode,
+        repeat_role_catalog_id: input.repeat_role_catalog_id,
+      });
       qc.invalidateQueries({ queryKey: QK_BOUND(packageTemplateId) });
-      toast.success("Режим генерации сохранён");
     },
-    onError: (e: Error) => toast.error(`Не удалось сохранить режим: ${e.message}`),
-  });
+  } as const;
 
   const bound = boundQuery.data ?? [];
   const boundIds = new Set(bound.map((b) => b.template_id));
