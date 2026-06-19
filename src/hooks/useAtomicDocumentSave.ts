@@ -61,11 +61,19 @@ export function useAtomicDocumentSave() {
       return data as AtomicSaveResult;
     },
     onSuccess: (_data, vars) => {
-      // Inv只алидация после `ok:true` — никакого optimistic UI.
+      // Invalidate + refetch активного values-кэша после `ok:true`.
+      // Stage 0.2 fix: канонический ключ — ["package-session-values", sessionId]
+      // (как в usePackageSessionFields). Старый "pkg-session-field-values"
+      // никем не использовался и не вызывал refetch.
       qc.invalidateQueries({ queryKey: ["doc-item-role-assignments", vars.sessionId, vars.packageTemplateItemId] });
-      qc.invalidateQueries({ queryKey: ["pkg-session-field-values"] });
       qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
       qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      // Точечный refetch active key карточки — гарантирует обновление
+      // прогресса без перехода на другую вкладку.
+      void qc.refetchQueries({
+        queryKey: ["package-session-values", vars.sessionId],
+        type: "active",
+      });
     },
   });
 }
