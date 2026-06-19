@@ -35,6 +35,7 @@ import {
   resolveSmartDatePrefill,
   isValidSmartDatePrefill,
 } from '../_shared/smart-date-prefill.ts';
+import { resolvePerRoleRecipients } from '../_shared/resolve-per-role-recipients.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -132,7 +133,7 @@ Deno.serve(async (req) => {
     // ── load items + templates ───────────────────────────────────────────
     const { data: items } = await supabase
       .from('document_package_template_items')
-      .select('id, package_template_id, template_id, title_override, sort_order')
+      .select('id, package_template_id, template_id, title_override, sort_order, generation_mode, repeat_role_catalog_id')
       .eq('package_template_id', session.package_template_id)
       .order('sort_order', { ascending: true });
     if (!items || items.length === 0) return j({ error: 'package_has_no_items' }, 400);
@@ -165,9 +166,10 @@ Deno.serve(async (req) => {
     // ── load role catalog for this package (for ln preflight) ───────────
     const { data: roleRows } = await supabase
       .from('document_package_role_catalog')
-      .select('id, public_id, role_key, output_template, is_active, package_template_id')
+      .select('id, public_id, role_key, label, output_template, is_active, package_template_id')
       .eq('package_template_id', session.package_template_id);
     const roleByPublicId = new Map<string, any>((roleRows || []).map((r: any) => [r.public_id, r]));
+    const roleById = new Map<string, any>((roleRows || []).map((r: any) => [r.id, r]));
 
     // ── load all item-level role assignments at once ────────────────────
     const itemIds = items.map((i: any) => i.id);
@@ -571,59 +573,170 @@ Deno.serve(async (req) => {
 
 
 
-      // ── invoke strict in package mode (service-role + internal marker) ─
-      const strictRes = await fetch(`${SUPABASE_URL}/functions/v1/canonical-document-generate-strict`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SERVICE_KEY,
-          'Authorization': `Bearer ${SERVICE_KEY}`,
-          'x-internal-call': 'package-orchestrator',
-        },
-        body: JSON.stringify({
-          mode: 'generate',
-          packageContext: {
-            package_session_id: packageSessionId,
-            package_template_id: session.package_template_id,
-            package_template_item_id: item.id,
-            generation_batch_id: batch.id,
-            profile_id: session.profile_id,
+      // ── PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C) ─────────
+      // Если item.generation_mode='per_role_person' — генерируем N документов
+      // (по одному на recipient), переопределяя preresolved_ln_tokens для
+      // repeat-роли (compatibility) и прокидывая полный recipient context
+      // (canonical SoT для {{recipient.*}}).
+      const isPerRole = item.generation_mode === 'per_role_person';
+
+      type StrictPlan = {
+        packageContextExtras: Record<string, unknown>;
+        lnTokens: typeof preresolved_ln_tokens;
+        recipientMeta: { assignment_id: string; person_id: string; role_catalog_id: string; sort_order: number; index: number } | null;
+      };
+      const plans: StrictPlan[] = [];
+
+      if (!isPerRole) {
+        plans.push({
+          packageContextExtras: { generation_mode: 'single' },
+          lnTokens: preresolved_ln_tokens,
+          recipientMeta: null,
+        });
+      } else {
+        const res = await resolvePerRoleRecipients(supabase, {
+          session_id: packageSessionId,
+          item_id: item.id,
+        });
+        if (res.status === 'ok' && res.recipients.length > 0) {
+          const repeatRole = roleById.get(res.repeat_role_catalog_id || '');
+          const repeatRolePublicId: string | null = repeatRole?.public_id ?? null;
+          let idx = 0;
+          for (const rcp of res.recipients) {
+            idx += 1;
+            const lnClone: Record<string, any> = { ...preresolved_ln_tokens };
+            // Compatibility ln-* override: только если шаблон ссылается на эту роль
+            // через ln-token (ключ есть в bag). Иначе документ всё равно рендерится N раз
+            // через {{recipient.*}}; ln прочих ролей не трогаем.
+            if (repeatRolePublicId && Object.prototype.hasOwnProperty.call(lnClone, repeatRolePublicId)) {
+              lnClone[repeatRolePublicId] = {
+                value: rcp.recipient.full_name,
+                persons: [rcp.recipient.full_name],
+                positions: [rcp.recipient.position ?? ''],
+                position_genders: [null],
+                role_catalog_id: rcp.role_catalog_id,
+                person_id: rcp.person_id,
+              };
+            }
+            plans.push({
+              lnTokens: lnClone,
+              packageContextExtras: {
+                generation_mode: 'per_role_person',
+                repeat_role_catalog_id: res.repeat_role_catalog_id,
+                repeat_assignment_id: rcp.assignment_id,
+                recipient_person_id: rcp.person_id,
+                recipient_index: idx,
+                recipient_display_name: rcp.recipient.full_name,
+                recipient: {
+                  full_name: rcp.recipient.full_name,
+                  short_name: rcp.recipient.short_name,
+                  email: rcp.recipient.email,
+                  phone: rcp.recipient.phone,
+                  address: rcp.recipient.address,
+                  position: rcp.recipient.position,
+                },
+              },
+              recipientMeta: {
+                assignment_id: rcp.assignment_id,
+                person_id: rcp.person_id,
+                role_catalog_id: rcp.role_catalog_id,
+                sort_order: rcp.sort_order,
+                index: idx,
+              },
+            });
+          }
+        } else {
+          // resolver не дал получателей — единая запись по item, генерация не запускается.
+          const statusToError: Record<string, string> = {
+            no_active_assignments: 'per_role_no_active_recipients',
+            role_not_configured: 'per_role_role_not_configured',
+            role_inactive: 'per_role_role_inactive',
+            role_package_mismatch: 'per_role_role_package_mismatch',
+            item_outside_session_package: 'per_role_item_outside_session_package',
+            session_not_found: 'per_role_session_not_found',
+            item_not_found: 'per_role_item_not_found',
+            resolver_error: 'per_role_resolver_error',
+            single_mode: 'per_role_single_mode_inconsistency',
+          };
+          const code = statusToError[res.status] || 'per_role_unknown_status';
+          const isBlocked = res.status === 'no_active_assignments';
+          if (isBlocked) blocked++; else errors++;
+          results.push({
+            item_id: item.id,
             template_id: tpl.id,
-            title_override: item.title_override,
-            preresolved_fields,
-            preresolved_package_fields,
-            preresolved_ln_tokens,
-            preresolved_pf_fields,
+            generation_mode: 'per_role_person',
+            status: isBlocked ? 'blocked' : 'error',
+            errors: [code, ...(res.reasons || [])],
+          });
+          continue;
+        }
+      }
+
+      // ── invoke strict in package mode (service-role + internal marker) ─
+      for (const plan of plans) {
+        const strictRes = await fetch(`${SUPABASE_URL}/functions/v1/canonical-document-generate-strict`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SERVICE_KEY,
+            'Authorization': `Bearer ${SERVICE_KEY}`,
+            'x-internal-call': 'package-orchestrator',
           },
-        }),
-      });
-      const strictBody: any = await strictRes.json().catch(() => ({}));
-      if (!strictRes.ok || !strictBody?.success) {
-        errors++;
+          body: JSON.stringify({
+            mode: 'generate',
+            packageContext: {
+              package_session_id: packageSessionId,
+              package_template_id: session.package_template_id,
+              package_template_item_id: item.id,
+              generation_batch_id: batch.id,
+              profile_id: session.profile_id,
+              template_id: tpl.id,
+              title_override: item.title_override,
+              preresolved_fields,
+              preresolved_package_fields,
+              preresolved_ln_tokens: plan.lnTokens,
+              preresolved_pf_fields,
+              ...plan.packageContextExtras,
+            },
+          }),
+        });
+        const strictBody: any = await strictRes.json().catch(() => ({}));
+        if (!strictRes.ok || !strictBody?.success) {
+          errors++;
+          results.push({
+            item_id: item.id,
+            template_id: tpl.id,
+            generation_mode: isPerRole ? 'per_role_person' : 'single',
+            status: 'error',
+            errors: [strictBody?.error || `http_${strictRes.status}`],
+            details: strictBody,
+            ...(plan.recipientMeta ? { recipient: plan.recipientMeta } : {}),
+          });
+          continue;
+        }
+        generated++;
         results.push({
           item_id: item.id,
           template_id: tpl.id,
-          status: 'error',
-          errors: [strictBody?.error || `http_${strictRes.status}`],
-          details: strictBody,
+          generation_mode: isPerRole ? 'per_role_person' : 'single',
+          status: 'generated',
+          document_id: strictBody.document_id,
+          document_number: strictBody.document_number,
+          document_date: strictBody.document_date,
+          download_url: strictBody.download_url,
+          ...(plan.recipientMeta ? { recipient: plan.recipientMeta } : {}),
         });
-        continue;
       }
-      generated++;
-      results.push({
-        item_id: item.id,
-        template_id: tpl.id,
-        status: 'generated',
-        document_id: strictBody.document_id,
-        document_number: strictBody.document_number,
-        document_date: strictBody.document_date,
-        download_url: strictBody.download_url,
-      });
     }
 
     let finalStatus: 'generated' | 'partial' | 'failed' | 'blocked' = 'generated';
     if (generated === 0 && (errors > 0 || blocked > 0)) finalStatus = blocked > errors ? 'blocked' : 'failed';
     else if (errors > 0 || blocked > 0) finalStatus = 'partial';
+
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+    // total_items — число позиций шаблона; total_documents — фактическое число документов
+    // (generated + errors + blocked). Раздельные счётчики не пересекаются.
+    const totalDocuments = generated + errors + blocked;
 
     await supabase
       .from('ai_document_generation_batches')
@@ -633,6 +746,7 @@ Deno.serve(async (req) => {
           package_session_id: packageSessionId,
           run_mode: runMode,
           total_items: items.length,
+          total_documents: totalDocuments,
           generated,
           errors,
           blocked,
@@ -651,7 +765,8 @@ Deno.serve(async (req) => {
         generation_batch_id: batch.id,
         run_mode: runMode,
         status: finalStatus,
-        total: items.length,
+        total_items: items.length,
+        total_documents: totalDocuments,
         generated,
         errors,
         blocked,
@@ -662,7 +777,8 @@ Deno.serve(async (req) => {
       success: finalStatus === 'generated' || finalStatus === 'partial',
       batch_id: batch.id,
       status: finalStatus,
-      total: items.length,
+      total_items: items.length,
+      total_documents: totalDocuments,
       generated,
       errors,
       blocked,

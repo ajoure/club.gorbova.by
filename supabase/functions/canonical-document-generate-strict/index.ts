@@ -259,6 +259,14 @@ const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
 const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens
+// для items с generation_mode='per_role_person'. Контекст текущего получателя
+// приходит в packageContext.recipient от оркестратора и заменяет токен на
+// конкретное значение этого экземпляра документа.
+const RECIPIENT_TOKEN_RE = /^recipient\.([a-z_]+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+const ALLOWED_RECIPIENT_FIELDS: ReadonlySet<string> = new Set([
+  'full_name', 'short_name', 'email', 'phone', 'address', 'position',
+]);
 // Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
 const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
@@ -363,6 +371,21 @@ Deno.serve(async (req) => {
         effective_required: boolean;
         default_kind_applied: string | null;
       }>;
+      // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C)
+      generation_mode?: 'single' | 'per_role_person';
+      repeat_role_catalog_id?: string | null;
+      repeat_assignment_id?: string | null;
+      recipient_person_id?: string | null;
+      recipient_index?: number | null;
+      recipient_display_name?: string | null;
+      recipient?: {
+        full_name: string;
+        short_name: string | null;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+        position: string | null;
+      } | null;
     };
     let packageContext: PackageCtx | null = null;
 
@@ -394,6 +417,15 @@ Deno.serve(async (req) => {
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
         preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
+        generation_mode: (rawPackageCtx as any).generation_mode ?? 'single',
+        repeat_role_catalog_id: (rawPackageCtx as any).repeat_role_catalog_id ?? null,
+        repeat_assignment_id: (rawPackageCtx as any).repeat_assignment_id ?? null,
+        recipient_person_id: (rawPackageCtx as any).recipient_person_id ?? null,
+        recipient_index: typeof (rawPackageCtx as any).recipient_index === 'number'
+          ? (rawPackageCtx as any).recipient_index
+          : null,
+        recipient_display_name: (rawPackageCtx as any).recipient_display_name ?? null,
+        recipient: (rawPackageCtx as any).recipient ?? null,
       } as PackageCtx;
       // Package-mode: orchestrator is the trust anchor for profile_id /
       // ownership. Strict acts as system actor — no user JWT.
@@ -748,6 +780,17 @@ Deno.serve(async (req) => {
       format: string | null;
     }
     const parsedPfTokens: ParsedPfToken[] = [];
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens.
+    interface ParsedRecipientToken {
+      raw_inside: string;
+      field: string; // full_name | short_name | email | phone | address | position
+      format: string | null;
+      case_modifier: string | null;
+    }
+    const parsedRecipientTokens: ParsedRecipientToken[] = [];
+    const recipientTokensOutsideContext: string[] = [];
+    const recipientTokensWithoutContext: string[] = [];
+    const unknownRecipientFields: string[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
 
@@ -847,6 +890,51 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // 3.6) PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* token.
+      //      Канон resolver-а: SoT — packageContext.recipient (orchestrator).
+      //      Допустимые модификаторы:
+      //        - case=<ALLOWED_CASES> на любом recipient-поле;
+      //        - format=full|short|signature_short только на recipient.full_name.
+      const recipientMatch = inside.match(RECIPIENT_TOKEN_RE);
+      if (recipientMatch) {
+        const field = recipientMatch[1];
+        if (generationContext !== 'package_session') {
+          recipientTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        if (!ALLOWED_RECIPIENT_FIELDS.has(field)) {
+          unknownRecipientFields.push(`{{${inside}}}`);
+          continue;
+        }
+        if (!packageContext!.recipient) {
+          recipientTokensWithoutContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (recipientMatch[2] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) cs = v;
+          else if (
+            k === 'format'
+            && field === 'full_name'
+            && PERSON_NAME_FORMATS.has(v)
+          ) fmt = v;
+          else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+        }
+        if (badMod) continue;
+        parsedRecipientTokens.push({
+          raw_inside: inside,
+          field,
+          format: fmt,
+          case_modifier: cs,
+        });
+        continue;
+      }
+
+
       // 4) Legacy billing-style namespaces forbidden in BOTH modes.
       if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         legacyTokens.push(`{{${inside}}}`);
@@ -883,6 +971,26 @@ Deno.serve(async (req) => {
       return json({
         error: 'package_token_outside_package_context',
         tokens: Array.from(new Set(packageTokensOutsideContext)),
+      }, 400);
+    }
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* guards.
+    if (recipientTokensOutsideContext.length > 0) {
+      return json({
+        error: 'recipient_token_outside_package_context',
+        tokens: Array.from(new Set(recipientTokensOutsideContext)),
+      }, 400);
+    }
+    if (unknownRecipientFields.length > 0) {
+      return json({
+        error: 'unknown_recipient_field',
+        tokens: Array.from(new Set(unknownRecipientFields)),
+        allowed: Array.from(ALLOWED_RECIPIENT_FIELDS),
+      }, 400);
+    }
+    if (recipientTokensWithoutContext.length > 0) {
+      return json({
+        error: 'recipient_token_without_context',
+        tokens: Array.from(new Set(recipientTokensWithoutContext)),
       }, 400);
     }
 
@@ -997,8 +1105,14 @@ Deno.serve(async (req) => {
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
 
+    // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): per-recipient idempotency.
+    // Для single: pkg:{batch}:{item} (zero-diff). Для per_role_person: добавляем
+    // суффикс :assn:{assignment_id}, чтобы N документов на одного item не сливались
+    // в одну запись ai_generated_documents.
     const idempotencyKey: string = generationContext === 'package_session'
-      ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`
+      ? (packageContext!.repeat_assignment_id
+          ? `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}:assn:${packageContext!.repeat_assignment_id}`
+          : `pkg:${packageContext!.generation_batch_id}:${packageContext!.package_template_item_id}`)
       : ((typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
           ? String(body.idempotency_key).trim()
           : `strict:${tpl.id}:${ver.id}:${order.id}`);
@@ -1018,6 +1132,21 @@ Deno.serve(async (req) => {
           generation_batch_id: packageContext!.generation_batch_id,
           actor_type: 'system',
           source: 'package_orchestrator',
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+          // recipient snapshot — присутствует ТОЛЬКО для per_role_person.
+          ...(packageContext!.repeat_assignment_id
+            ? {
+                generation_mode: 'per_role_person',
+                source_package_template_item_id: packageContext!.package_template_item_id,
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_display_name: packageContext!.recipient_display_name
+                  ?? packageContext!.recipient?.full_name ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+                recipient_snapshot: packageContext!.recipient ?? null,
+              }
+            : {}),
         }
       : {};
     const auditContext: Record<string, unknown> = generationContext === 'package_session'
@@ -1026,6 +1155,15 @@ Deno.serve(async (req) => {
           package_template_id: packageContext!.package_template_id,
           package_item_id: packageContext!.package_template_item_id,
           generation_batch_id: packageContext!.generation_batch_id,
+          ...(packageContext!.repeat_assignment_id
+            ? {
+                generation_mode: 'per_role_person',
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+              }
+            : {}),
         }
       : { order_id: order.id };
     const auditActorType: string = generationContext === 'package_session' ? 'system' : 'user';
@@ -1320,7 +1458,49 @@ Deno.serve(async (req) => {
           default_kind_applied: entry?.default_kind_applied ?? null,
         };
       }
+
+      // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): resolve recipient.*
+      // Источник — packageContext.recipient (присутствие гарантировано guard'ом выше).
+      const recipientCtx = packageContext!.recipient;
+      for (const pt of parsedRecipientTokens) {
+        if (!recipientCtx) {
+          // Defence-in-depth — guard выше уже отверг бы запрос.
+          resolved[pt.raw_inside] = '';
+          sourceTrace[pt.raw_inside] = { status: 'empty', source: 'recipient', kind: 'recipient', field: pt.field };
+          continue;
+        }
+        const rawVal: string = (() => {
+          const v = (recipientCtx as any)[pt.field];
+          return typeof v === 'string' ? v : (v == null ? '' : String(v));
+        })();
+        let outVal = fmtVal(rawVal);
+        let formatApplied = false;
+        let caseApplied = false;
+        // format (только full_name) — переформатируем ФИО.
+        if (pt.field === 'full_name' && pt.format && PERSON_NAME_FORMATS.has(pt.format)) {
+          outVal = formatPersonName(rawVal, {
+            format: pt.format as PersonNameFormat,
+            case: (pt.case_modifier as RuCase | null) ?? null,
+          });
+          formatApplied = true;
+          if (pt.case_modifier) caseApplied = true;
+        } else if (pt.case_modifier) {
+          const inf = inflectRu(outVal, pt.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+        }
+        resolved[pt.raw_inside] = outVal;
+        sourceTrace[pt.raw_inside] = {
+          status: outVal === '' ? 'empty' : 'resolved',
+          source: 'recipient',
+          kind: 'recipient',
+          field: pt.field,
+          value: outVal,
+          format_applied: formatApplied,
+          case_applied: caseApplied,
+        };
+      }
     }
+
 
 
 
@@ -1689,6 +1869,10 @@ Deno.serve(async (req) => {
           for (const pt of parsedPfTokens) {
             if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
           }
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C)
+          for (const pt of parsedRecipientTokens) {
+            if (!seen.has(pt.raw_inside)) { seen.add(pt.raw_inside); out.push(pt.raw_inside); }
+          }
         }
         return out;
       })(),
@@ -1799,6 +1983,37 @@ Deno.serve(async (req) => {
                 item_context: itemContext,
               });
             }
+          }
+          // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C):
+          // recipient.* tokens (per-recipient документ).
+          for (const pt of parsedRecipientTokens) {
+            const key = `recipient:${pt.raw_inside}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const rendered = resolved[pt.raw_inside];
+            const renderedValue = typeof rendered === 'string' ? rendered : '';
+            const trace = sourceTrace[pt.raw_inside] || {};
+            const rawV = packageContext!.recipient
+              ? (packageContext!.recipient as any)[pt.field]
+              : null;
+            out.push({
+              provider: 'recipient',
+              raw_inside: pt.raw_inside,
+              field: pt.field,
+              raw_value: typeof rawV === 'string' ? rawV : (rawV == null ? null : String(rawV)),
+              rendered_value: renderedValue,
+              format: pt.format ?? null,
+              case_modifier: pt.case_modifier ?? null,
+              format_applied: trace.format_applied === true,
+              case_applied: trace.case_applied === true,
+              recipient_context: {
+                repeat_role_catalog_id: packageContext!.repeat_role_catalog_id ?? null,
+                repeat_assignment_id: packageContext!.repeat_assignment_id ?? null,
+                recipient_person_id: packageContext!.recipient_person_id ?? null,
+                recipient_index: packageContext!.recipient_index ?? null,
+              },
+              item_context: itemContext,
+            });
           }
           return out;
         })(),
