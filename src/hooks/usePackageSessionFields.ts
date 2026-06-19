@@ -241,6 +241,9 @@ export function usePackageSessionFields(
       // hotfix 2026-06-17: разблокировать кнопку «Сформировать пакет» без переключения вкладок.
       qc.invalidateQueries({ queryKey: ["pkg-gen-role-assignments"] });
       qc.invalidateQueries({ queryKey: ["doc-pkg-session-q"] });
+      // Stage 0.2: точечный refetch активного values-кэша, чтобы бейдж
+      // X/Y полей переключился без перехода на другую вкладку.
+      void qc.refetchQueries({ queryKey: QK.values(sessionId), type: "active" });
     },
     onError: (e: Error) => toast.error(e.message),
   });
