@@ -389,8 +389,11 @@ export default function TelegramClubMembers() {
           r = cmpDate(a.access_started_at, b.access_started_at);
           break;
         case 'access_ended_at':
-          // v4: для removed используем kicked_at, иначе access_ended_at
-          r = cmpDate(a.kicked_at ?? a.access_ended_at, b.kicked_at ?? b.access_ended_at);
+          // v8: сортировать по тому, что отображается в колонке («Доступ до» = commercial_ended_at)
+          r = cmpDate(a.commercial_ended_at, b.commercial_ended_at);
+          break;
+        case 'kicked_at':
+          r = cmpDate(a.kicked_at, b.kicked_at);
           break;
       }
       return r * dirMul;
