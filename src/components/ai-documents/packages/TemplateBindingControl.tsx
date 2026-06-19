@@ -67,7 +67,7 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
       if (!packageTemplateId) return [] as BoundItem[];
       const { data, error } = await supabase
         .from("document_package_template_items")
-        .select("id, template_id, sort_order")
+        .select("id, template_id, sort_order, generation_mode, repeat_role_catalog_id")
         .eq("package_template_id", packageTemplateId)
         .order("sort_order", { ascending: true });
       if (error) throw error;
@@ -88,10 +88,27 @@ export function TemplateBindingControl({ packageTemplateId }: Props) {
             template_name: t?.name ?? "—",
             template_status: t?.template_status ?? "—",
             template_deleted: !!t?.deleted_at,
+            generation_mode: (r.generation_mode ?? "single") as "single" | "per_role_person",
+            repeat_role_catalog_id: r.repeat_role_catalog_id ?? null,
           };
         })
         .filter((r: any) => !r.template_deleted) as BoundItem[];
+    },
+    enabled: !!packageTemplateId,
+  });
 
+  const rolesQuery = useQuery({
+    queryKey: ["pkg-roles-for-repeat", packageTemplateId],
+    queryFn: async () => {
+      if (!packageTemplateId) return [] as RoleOption[];
+      const { data, error } = await supabase
+        .from("document_package_role_catalog")
+        .select("id, role_key, label, is_active")
+        .eq("package_template_id", packageTemplateId)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as RoleOption[];
     },
     enabled: !!packageTemplateId,
   });
