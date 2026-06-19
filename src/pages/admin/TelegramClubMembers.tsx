@@ -397,7 +397,7 @@ export default function TelegramClubMembers() {
     const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
     if (hasChat) baseHeaders.push('Чат');
     if (hasChannel) baseHeaders.push('Канал');
-    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до');
+    baseHeaders.push('Email', 'Телефон', 'Доступ с', 'Доступ до', 'Дата кика', 'Мусорная запись');
     const headers = baseHeaders;
     const rows = filteredMembers.map(m => {
       const row: (string | number | boolean | null)[] = [
@@ -414,6 +414,8 @@ export default function TelegramClubMembers() {
         m.profiles?.phone || '',
         m.access_started_at ? format(new Date(m.access_started_at), 'dd.MM.yyyy', { locale: ru }) : '',
         m.access_ended_at ? format(new Date(m.access_ended_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.kicked_at ? format(new Date(m.kicked_at), 'dd.MM.yyyy', { locale: ru }) : '',
+        m.is_commercial_orphan ? 'Да' : 'Нет',
       );
       return row;
     });
