@@ -1,121 +1,135 @@
-# да, согласен, с учетом правок:
+## Да, согласен, с учетом правок:
 
-1. **Не включать** `data_repair.patch2_orphan_grant_revoke`**,** `mass_telegram_revoke`**,** `cleanup.telegram_orphans` **как kick-actions без доказанного entity-match.**  
-Их можно использовать только если в `audit_logs` есть точная связь с конкретным участником клуба: `telegram_user_id` / `tg_user_id` / `profile_id` / `auth_user_id` + `club_id`.  
-Если связи нет — не использовать для `kicked_at`.
-2. **Матчинг audit_logs сделать строго по участнику и клубу.**  
-Недостаточно только `action IN (...)`. Нужно, чтобы событие относилось именно к этой строке `telegram_club_members`:
-  - `club_id` совпадает с текущим клубом;
-  - Telegram/user/profile идентификатор совпадает с участником;
-  - `admin_protected`, `guard_skip`, `dry_run`, `failed` — исключить.
-3. `kicked_at_source='unknown'` **лучше вернуть как** `NULL` **или** `'audit_log' | 'unknown'`**, но в UI не показывать source.**  
-В CSV — да, можно.
-4. **В Proof добавить проверку по sources:**
-
-```sql
-SELECT kicked_at_source, COUNT(*)
-FROM v_club_members_enriched
-WHERE club_id = 'fa547c41-3a84-4c4f-904a-427332a0506e'
-  AND access_status = 'removed'
-GROUP BY kicked_at_source;
-```
-
-5. **В Proof обязательно показать проблемные строки, где раньше была ложная дата 19.06.2026:**
-
-```sql
-SELECT telegram_name, telegram_username, access_started_at, kicked_at, kicked_at_source
-FROM v_club_members_enriched
-WHERE club_id = 'fa547c41-3a84-4c4f-904a-427332a0506e'
-  AND access_status = 'removed'
-ORDER BY kicked_at DESC NULLS LAST
-LIMIT 30;
-```
-
-6. **DoD уточнить:**  
-Не просто «нет строк `кикнут 19.06.2026`», а:
-  - если `кикнут 19.06.2026` остался — у каждой такой строки должен быть реальный `audit_log` kick-event за 19.06.2026;
-  - если audit-event нет — UI обязан показывать «дата кика неизвестна».
-
-Остальное согласовано. Это правильный hotfix: **убрать** `updated_at` **как источник даты кика, показывать только audit-based дату либо “дата кика неизвестна”**.
+1. Во вкладке «Удалённые» по умолчанию должны отображаться только реальные бывшие клиенты клуба:
+  - `access_status='removed'`;
+  - `is_commercial_orphan=false`;
+  - `has_active_access=false`;
+  - `in_chat=false`;
+  - `in_channel=false`;
+  - не admin.
+2. `is_commercial_orphan=true` скрывать по умолчанию.  
+Это исторический мусор / ошибочные входы / trial / записи без коммерческой связи. Их не удаляем физически, но в рабочем списке «Удалённые» они не нужны.
+3. Если у removed-клиента `kicked_at IS NULL`, но есть `access_ended_at`, в колонке «Доступ до / Кик» показывать не «дата кика неизвестна», а:
+  - `доступ до dd.MM.yyyy`;
+  - визуально muted;
+  - tooltip: `Точная дата кика не найдена в audit_logs, показана дата окончания коммерческого доступа`.
+  Это важно для таких клиентов, как Ольга Червейко: сделки есть, клиент реальный, но точного audit-события кика нет. Такой клиент должен оставаться в «Удалённых», а не выглядеть как мусор.
+4. Если у removed-записи нет ни `kicked_at`, ни `access_ended_at`, тогда показывать:
+  &nbsp;
+  - `дата неизвестна`;
+  - и такая строка должна быть видна только если `is_commercial_orphan=false`.  
+  Если `is_commercial_orphan=true` — скрывать по умолчанию.
+5. Для Татьяны Ярошевич и Юлии Рабчевской отдельно проверить, почему ручной кик не попал в `audit_logs`:
+  - если кик был сделан через UI, значит manual kick action не пишет корректный audit event либо RPC/view не матчят его;
+  - нужно добавить future-fix: все ручные кики через UI обязаны писать audit event с `action='telegram.kick.manual'`, `club_id`, `telegram_user_id`/`tg_user_id`, `profile_id/auth_user_id`, `actor_user_id`.
+  В рамках текущего hotfix без ручного DML не восстанавливать задним числом дату кика, если её нет в audit_logs.
+6. Для re-purchase:
+  - если пользователь снова купил продукт и `has_active_access=true`, он не должен отображаться во вкладке «Удалённые»;
+  - он должен отображаться в «С доступом» / «В клубе» по текущему состоянию.
+7. Локальный `counts.removed` должен считаться так же, как фактический список вкладки:  
+`removed AND !is_commercial_orphan AND !has_active_access AND !in_chat AND !in_channel AND !admin`.
+8. Proof дополнить:
+  - сколько всего `removed`;
+  - сколько скрыто как `is_commercial_orphan=true`;
+  - сколько скрыто как `has_active_access=true` / re-purchase;
+  - сколько реально показывается во вкладке «Удалённые»;
+  - 10 примеров видимых бывших клиентов с `kicked_at`;
+  - 10 примеров видимых бывших клиентов без `kicked_at`, но с `access_ended_at`;
+  - 10 примеров скрытых orphan-записей;
+  - отдельно проверить Ольгу Червейко, Татьяну Ярошевич, Юлию Рабчевскую.
+9. Никакого физического DELETE/DML по `telegram_club_members`.  
+Только UI-фильтр, корректное отображение и proof.
 
 &nbsp;
 
-План v5 (hotfix): убрать ложную дату «кикнут 19.06.2026»
+Итоговая логика колонки «Доступ до / Кик»:
 
-## Проблема (подтверждена в БД)
+- `removed + kicked_at` → `кикнут dd.MM.yyyy`;
+- `removed + kicked_at IS NULL + access_ended_at` → `доступ до dd.MM.yyyy`;
+- `removed + kicked_at IS NULL + access_ended_at IS NULL` → `дата неизвестна`;
+- `ok/no_access` → `access_ended_at` или `—`.
 
-`v_club_members_enriched` (миграция v4) для `kicked_at` использует:
+Цель: «Удалённые» = реальные бывшие платные участники клуба, с понятным периодом доступа. Мусорные записи скрыты, повторно купившие клиенты убраны из «Удалённых».
+
+&nbsp;
+
+План: финальный cleanup вкладки «Удалённые»
+
+### Diagnose (что уже есть)
+
+Текущее состояние по клубу Горбова (`fa547c41-...`):
+
+- `removed` всего: **49**
+- `removed` + `is_commercial_orphan=true`: **9** (мусор)
+- `removed` + `is_commercial_orphan=false`: **40** (реальные бывшие клиенты)
+
+Что **уже** реализовано в v4/v5:
+
+- `v_club_members_enriched.is_commercial_orphan` рассчитан строго по требованию:
+`joined_chat_at IS NULL` AND нет paid `orders_v2`, нет `subscriptions_v2`, нет `entitlements` по `product_club_mappings` клуба.
+- UI: тогглер «Скрыть мусорные» во вкладке «Удалённые», **по умолчанию ON**, бейдж со счётчиком скрытых.
+- `kicked_at` берётся только из `audit_logs` (без `updated_at`-fallback).
+
+Что **не доделано** (баг сортировки/видимости):
+
+- В фильтре вкладки `removed` (строка 329) условие — только `access_status!=='removed' || in_any || isAdmin`. **Не учитывается `has_active_access**` — если бывший removed-пользователь снова купил продукт и получил активный доступ, он останется в «Удалённых». Нужно исключать таких из вкладки `removed` и оставлять их только в «С доступом» / «В клубе».
+
+### Plan (что делаю)
+
+**1. UI — `src/pages/admin/TelegramClubMembers.tsx**` (frontend-only, без миграции):
+
+- В фильтре `case 'removed'` добавить условие: если `member.has_active_access === true` → исключить из вкладки (re-purchase auto-hide). Пользователь автоматически появится в «С доступом» / «В клубе» по существующей логике.
+- Подсчёт `counts.removed` (через summary RPC) не трогаю — это серверный счётчик. Но если он завышает за счёт re-purchasers, добавлю клиентскую коррекцию: считать локально по `members` отфильтрованным как и таб (как уже делается для бейджа orphans).
+- Бейдж скрытых orphans оставить.
+
+**2. Proof (read-only SQL, без DML)** — после изменения UI выполнить и приложить в отчёте:
 
 ```sql
-COALESCE(MAX(audit_logs где action IN (...)), tcm.updated_at)
+-- 1. removed всего
+SELECT COUNT(*) FROM v_club_members_enriched
+WHERE club_id='fa547c41-...' AND access_status='removed';
+
+-- 2. removed + orphan=true
+SELECT COUNT(*) ... AND is_commercial_orphan=true;
+
+-- 3. removed + orphan=false
+SELECT COUNT(*) ... AND is_commercial_orphan=false;
+
+-- 4. показываются во вкладке по умолчанию
+-- (= removed AND NOT in_any AND NOT is_commercial_orphan AND NOT has_active_access AND NOT admin)
+
+-- 5. 10 примеров orphan=true (скрытые)
+SELECT telegram_username, full_name, email, joined_chat_at
+FROM v_club_members_enriched
+WHERE club_id='fa547c41-...' AND access_status='removed' AND is_commercial_orphan=true LIMIT 10;
+
+-- 6. 10 примеров реальных бывших клиентов
+SELECT telegram_username, full_name, email, access_started_at, kicked_at, kicked_at_source
+FROM v_club_members_enriched
+WHERE club_id='fa547c41-...' AND access_status='removed' AND is_commercial_orphan=false
+ORDER BY kicked_at DESC NULLS LAST LIMIT 10;
+
+-- 7. Подтверждение отсутствия DML по telegram_club_members
+SELECT COUNT(*) FROM audit_logs
+WHERE action ILIKE '%telegram_club_members%delete%'
+  AND created_at >= CURRENT_DATE;
 ```
 
-`tcm.updated_at` массово обновился сегодня (19.06.2026) после resync/миграций — отсюда «кикнут 19.06.2026» у большинства removed-записей.
+### Что НЕ трогаю
 
-Discovery audit_actions по `club_id = fa547c41…`:
+- Канонический write-path grant/revoke.
+- Автокик и `telegram-grant-access`.
+- Физический DELETE строк в `telegram_club_members` (только видимость через флаг).
+- Миграции БД — изменения только в одном файле UI.
 
-- `telegram.autokick.attempt` — **1 155** (это и есть реальные кики)
-- `telegram.access_expired_revoke` — 42
-- `telegram.autokick.admin_protected` — 1 398 (НЕ кик, защита)
-- `data_repair.patch2_orphan_grant_revoke` — 1
-- `AUTOKICK`, `telegram.kick.manual` — 0 (в текущих данных)
+### DoD
 
-Текущий SQL уже включает `telegram.autokick.attempt`, но `admin_protected` НЕ кик и не должен попадать (он и не попадает — ок). Главная беда — fallback на `updated_at`.
+- В «Удалённых» по умолчанию: только `removed` + `!orphan` + `!has_active_access` + `!in_any` + `!admin`.
+- Re-purchase автоматически убирает из «Удалённых».
+- Тогглер «Скрыть мусорные» доступен для диагностики.
+- Proof-блок (7 запросов) приложен в отчёте.
+- Никакого DML.
 
-## Что меняем
+### Файлы
 
-### 1. Миграция v5 (новый файл)
-
-Пересоздать `v_club_members_enriched` + обе RPC `get_club_members_enriched` / `search_club_members_enriched`:
-
-- `kicked_at` = **только** `MAX(audit_logs.created_at)` по реальным kick-actions, **без** fallback на `updated_at`. Если событий нет → `NULL`.
-- Расширить список actions до:
-`telegram.access_expired_revoke`, `telegram.autokick.attempt`, `AUTOKICK`, `telegram.kick.manual`, `data_repair.patch2_orphan_grant_revoke`, `mass_telegram_revoke`, `cleanup.telegram_orphans`.
-(Проверены по `audit_logs` глобально, без `admin_protected` и `guard_skip`.)
-- Добавить колонку `kicked_at_source text` в view/RPC со значениями:
-  - `'audit_log'` — взято из audit;
-  - `'unknown'` — событий нет, `kicked_at IS NULL`.
-- `is_commercial_orphan` оставить как есть.
-- Жёстко: `kicked_at` определяется **только для `access_status='removed'**`, иначе `NULL`.
-
-### 2. UI (`TelegramClubMembers.tsx`)
-
-- Колонка «Доступ до / Кик»:
-  - `ok`/`no_access` → `access_ended_at` как сейчас;
-  - `removed` + `kicked_at IS NOT NULL` → «кикнут dd.MM.yyyy»;
-  - `removed` + `kicked_at IS NULL` → «дата кика неизвестна» (muted).
-- Сортировка по `COALESCE(kicked_at, access_ended_at)` остаётся.
-- CSV экспорт: колонки «Дата кика» (пустая если NULL) и новая «Источник даты кика» (`kicked_at_source`).
-- Никаких `updated_at` в UI как «дата кика».
-
-### 3. `useTelegramIntegration.tsx` / `types.ts`
-
-Расширить тип `ClubMemberEnriched` полем `kicked_at_source: 'audit_log' | 'unknown' | null`.
-
-### 4. Proof (после применения миграции)
-
-Прогнать read-only запросы и приложить в отчёт:
-
-1. `COUNT(*) WHERE access_status='removed' AND kicked_at_source='audit_log'`
-2. `COUNT(*) WHERE access_status='removed' AND kicked_at IS NULL`
-3. `COUNT(*) WHERE access_status='removed'` (общий)
-4. 10 строк `WHERE access_status='removed' AND kicked_at::date = CURRENT_DATE` — проверить, что у них есть реальный audit-event сегодня, иначе должны быть NULL.
-
-## Чего НЕ делаем
-
-- Никакого DML/DELETE по `telegram_club_members`.
-- Не трогаем canonical write-path (`grant-access-for-order`, `telegram-grant-access`, cron).
-- Не меняем `validator`/`cron-sync` (отдельный план «zombie access» остаётся в backlog).
-
-## Файлы
-
-- `supabase/migrations/<ts>_club_members_kicked_at_v5_no_updated_at.sql`
-- `src/pages/admin/TelegramClubMembers.tsx`
-- `src/hooks/useTelegramIntegration.tsx`
-- `src/integrations/supabase/types.ts` (после реген.)
-
-## DoD
-
-- На вкладке «Удалённые» нет ни одной строки `кикнут 19.06.2026`, если в audit_logs нет соответствующего события сегодня.
-- Записи без audit-событий показывают «дата кика неизвестна».
-- Proof-запросы приложены в отчёт.
+- `src/pages/admin/TelegramClubMembers.tsx` — 1 строка в `case 'removed'` фильтре + локальный пересчёт `counts.removed`.
