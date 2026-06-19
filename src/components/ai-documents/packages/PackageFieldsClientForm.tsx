@@ -338,6 +338,7 @@ interface FieldRowProps {
   hasItemOverride?: boolean;
   onResetOverride?: () => Promise<void> | void;
   isResettingOverride?: boolean;
+  highlightMissing?: boolean;
 }
 
 function isWideField(q: DedupedQuestion): boolean {
