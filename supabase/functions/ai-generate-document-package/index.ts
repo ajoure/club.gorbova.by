@@ -35,6 +35,7 @@ import {
   resolveSmartDatePrefill,
   isValidSmartDatePrefill,
 } from '../_shared/smart-date-prefill.ts';
+import { resolvePerRoleRecipients } from '../_shared/resolve-per-role-recipients.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
