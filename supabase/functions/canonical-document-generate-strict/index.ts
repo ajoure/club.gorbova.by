@@ -2073,7 +2073,7 @@ Deno.serve(async (req) => {
           }
           // 2) ln-* and package.* (NEW providers).
           for (const pt of parsedPackageTokens) {
-            const key = `${pt.kind === 'ln' ? 'ln' : 'package'}:${pt.raw_inside}`;
+            const key = `${pt.kind === 'ln' ? 'ln' : pt.kind === 'ln_sub' ? 'ln_sub' : 'package'}:${pt.raw_inside}`;
             if (seen.has(key)) continue;
             seen.add(key);
             const rendered = resolved[pt.raw_inside];
