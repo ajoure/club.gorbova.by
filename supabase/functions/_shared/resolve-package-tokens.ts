@@ -31,7 +31,14 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { isCaseModifier, type CaseContext } from './case-format.ts';
 import { formatPersonName, type PersonNameFormat } from './typed-tokens-resolver.ts';
-import type { RuCase } from './ru-inflection.ts';
+import { inflectRu, type RuCase } from './ru-inflection.ts';
+import {
+  LN_SUB_FIELD_BY_KEY,
+  LN_SUB_DATE_FORMATS,
+  LN_SUB_NAME_FORMATS,
+  extractLnSubFieldRaw,
+  formatLnDate,
+} from './ln-subfield-spec.ts';
 
 /** Жёсткий выключатель: production-вызов всегда возвращает FEATURE_DISABLED. */
 export const HARDCODED_ENABLED = false;
