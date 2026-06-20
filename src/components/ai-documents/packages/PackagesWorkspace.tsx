@@ -14,6 +14,7 @@
  *      mode="admin" → Шаблоны / Анкеты / Роли / Проверка / Генерация
  */
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
