@@ -323,6 +323,19 @@ Deno.serve(async (req) => {
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
       const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; positions: string[]; position_genders: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }> = {};
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: bag для {{ln-XXXXXX.<sub_field>}}.
+      // Ключ — `${lnPublicId}.${subField}`. Хранит raw-значения per-person,
+      // strict сам применяет format/case при рендере.
+      const preresolved_ln_subfield_tokens: Record<string, {
+        ln_public_id: string;
+        sub_field: string;
+        kind: LnSubFieldSpec['kind'];
+        supports_case: boolean;
+        multi_policy: 'join' | 'error';
+        role_catalog_id: string;
+        person_ids: string[];
+        raw_values: string[];
+      }> = {};
       // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX preresolved bag.
       const preresolved_pf_fields: Record<string, {
         public_id: string;
