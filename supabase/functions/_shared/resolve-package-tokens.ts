@@ -72,6 +72,11 @@ export type PackageTokenResolveCode =
   | 'ln_token_not_found'
   | 'ln_token_outside_bound_package'
   | 'role_assignment_missing'
+  // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+  | 'ln_subfield_unknown'
+  | 'ln_case_not_supported_for_subfield'
+  | 'multiple_persons_for_scalar_role_subfield'
+  | 'ln_subfield_value_empty'
   // PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX branch
   | 'pf_token_not_found'
   | 'pf_token_outside_bound_package'
