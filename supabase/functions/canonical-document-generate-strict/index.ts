@@ -1428,15 +1428,55 @@ Deno.serve(async (req) => {
       for (const pt of parsedPackageTokens) {
         const bag = pt.kind === 'ln'
           ? packageContext!.preresolved_ln_tokens
-          : packageContext!.preresolved_package_fields;
+          : pt.kind === 'ln_sub'
+            ? packageContext!.preresolved_ln_subfield_tokens
+            : packageContext!.preresolved_package_fields;
         const entry: any = (bag as any)[pt.bag_key];
         let outVal = fmtVal(entry?.value);
         let formatApplied = false;
         let caseApplied = false;
         let caseReason: string | null = null;
 
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln_sub render.
+        if (pt.kind === 'ln_sub') {
+          const rawValues: string[] = Array.isArray(entry?.raw_values) ? entry.raw_values : [];
+          const personIds: string[] = Array.isArray(entry?.person_ids) ? entry.person_ids : [];
+          const kind = entry?.kind as 'name' | 'date' | 'text' | 'address_full' | 'address_part';
+          const multiPolicy = (entry?.multi_policy ?? 'error') as 'join' | 'error';
+          // Multi-person policy для scalar (non-name/address) → ошибка.
+          if (personIds.length > 1 && multiPolicy === 'error') {
+            outVal = '';
+            caseReason = `multiple_persons_for_scalar_role_subfield:${entry?.ln_public_id}.${entry?.sub_field}:n=${personIds.length}`;
+          } else {
+            const cs = (pt.case_modifier as RuCase | null) ?? null;
+            const fmt = pt.format;
+            const parts: string[] = [];
+            for (const raw of rawValues) {
+              if (!raw) continue;
+              let v = raw;
+              if (kind === 'name') {
+                const f = (fmt ?? 'full') as PersonNameFormat;
+                v = formatPersonName(raw, { format: f, case: cs });
+                if (fmt) formatApplied = true;
+                if (cs) caseApplied = true;
+              } else if (kind === 'date') {
+                v = formatLnDate(raw, fmt ?? 'dotted');
+                if (fmt) formatApplied = true;
+              } else if (kind === 'address_full' || kind === 'address_part' || kind === 'text') {
+                if (cs && (kind === 'address_full' || kind === 'address_part')) {
+                  const inf = inflectRu(v, cs);
+                  if (inf.applied) { v = inf.value; caseApplied = true; }
+                  else { caseReason = inf.reason || 'inflection_unsafe'; }
+                }
+              }
+              if (v) parts.push(v);
+            }
+            const sep = '; ';
+            outVal = parts.join(sep);
+          }
+        }
         // Sprint 3L: единая ln-ветка. Per-person ФИО + опц. должность + join.
-        if (pt.kind === 'ln') {
+        else if (pt.kind === 'ln') {
           const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
           if (persons.length === 0 && entry?.value) {
             // defence-in-depth: split joined value.
