@@ -264,6 +264,8 @@ const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 // ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
 const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>[|...]
+const LN_SUB_TOKEN_RE = /^(ln-\d+)\.([a-z_]+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
 const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens
