@@ -76,6 +76,14 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
   const rbac = useRbac();
   const isAdminUI = mode === "admin" && (rbac.isAdmin || rbac.isSuperAdmin);
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const validTabs = isAdminUI ? ADMIN_TABS : USER_TABS;
+  const urlPkg = searchParams.get("pkg");
+  const urlPkgTab = searchParams.get("pkgTab");
+  const initialTab: string = urlPkgTab && (validTabs as readonly string[]).includes(urlPkgTab)
+    ? urlPkgTab
+    : "anketa";
 
   const packagesQuery = useQuery({
     queryKey: ["workspace-package-templates"],
@@ -90,18 +98,50 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
   });
 
   const packages = packagesQuery.data ?? [];
+  const packagesLoaded = packagesQuery.isSuccess;
   const ideology = useMemo(
     () => packages.find((p) => p.code === "ideology") ?? packages[0] ?? null,
     [packages],
   );
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(urlPkg ?? null);
   useEffect(() => {
-    if (!selectedId && ideology) setSelectedId(ideology.id);
-  }, [selectedId, ideology]);
+    if (!packagesLoaded) return;
+    // Validate URL pkg only after packages are loaded
+    if (selectedId && packages.some((p) => p.id === selectedId)) return;
+    // Invalid or empty -> fallback to ideology
+    if (ideology) setSelectedId(ideology.id);
+  }, [packagesLoaded, selectedId, ideology, packages]);
 
   const selectedPackage = packages.find((p) => p.id === selectedId) ?? null;
-  const [tab, setTab] = useState<string>("anketa");
+  const [tab, setTab] = useState<string>(initialTab);
+
+  // Re-guard tab when admin flag changes (e.g. user-mode opening admin-only tab from URL)
+  useEffect(() => {
+    if (!(validTabs as readonly string[]).includes(tab)) {
+      setTab("anketa");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdminUI]);
+
+  // Sync selectedId -> URL ?pkg=
+  useEffect(() => {
+    if (!selectedId) return;
+    if (searchParams.get("pkg") === selectedId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("pkg", selectedId);
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // Sync tab -> URL ?pkgTab=
+  useEffect(() => {
+    if (searchParams.get("pkgTab") === tab) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("pkgTab", tab);
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   // ---- Admin CRUD state ---------------------------------------------------
   const [dialogOpen, setDialogOpen] = useState(false);
