@@ -39,7 +39,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileStack, ClipboardList, FileText, Users, ShieldCheck, Sparkles,
-  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff,
+  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff, Tag,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRbac } from "@/hooks/useRbac";
