@@ -1069,6 +1069,19 @@ Deno.serve(async (req) => {
         tokens: Array.from(new Set(recipientTokensWithoutContext)),
       }, 400);
     }
+    // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-sub guards.
+    if (lnSubFieldUnknownTokens.length > 0) {
+      return json({
+        error: 'ln_subfield_unknown',
+        tokens: Array.from(new Set(lnSubFieldUnknownTokens)),
+      }, 400);
+    }
+    if (lnSubFieldCaseNotSupported.length > 0) {
+      return json({
+        error: 'ln_case_not_supported_for_subfield',
+        tokens: Array.from(new Set(lnSubFieldCaseNotSupported)),
+      }, 400);
+    }
 
     // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
     // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
