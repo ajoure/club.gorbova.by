@@ -2098,6 +2098,24 @@ Deno.serve(async (req) => {
                 case_applied: trace.case_applied === true,
                 item_context: itemContext,
               });
+            } else if (pt.kind === 'ln_sub') {
+              const e: any = (packageContext!.preresolved_ln_subfield_tokens || {})[pt.bag_key] || {};
+              out.push({
+                provider: 'ln_sub',
+                raw_inside: pt.raw_inside,
+                bag_key: pt.bag_key,
+                rendered_value: renderedValue,
+                ln_public_id: e.ln_public_id ?? null,
+                sub_field: e.sub_field ?? null,
+                kind: e.kind ?? null,
+                raw_values: Array.isArray(e.raw_values) ? e.raw_values.map((s: any) => String(s)) : [],
+                person_ids: Array.isArray(e.person_ids) ? e.person_ids.map((s: any) => String(s)) : [],
+                format: pt.format ?? null,
+                case_modifier: pt.case_modifier ?? null,
+                format_applied: trace.format_applied === true,
+                case_applied: trace.case_applied === true,
+                item_context: itemContext,
+              });
             } else {
               const e: any = (packageContext!.preresolved_package_fields || {})[pt.bag_key] || {};
               out.push({
