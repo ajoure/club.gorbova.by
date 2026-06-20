@@ -796,6 +796,7 @@ Deno.serve(async (req) => {
               preresolved_fields,
               preresolved_package_fields,
               preresolved_ln_tokens: plan.lnTokens,
+              preresolved_ln_subfield_tokens,
               preresolved_pf_fields,
               ...plan.packageContextExtras,
             },
