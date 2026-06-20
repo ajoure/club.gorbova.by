@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from "react";
+import { useSearchParams } from "react-router-dom";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
 import { FileDropZone, type UploadedFile, processDroppedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
@@ -248,10 +249,27 @@ interface AiPageContentProps {
 export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageContentProps) {
   const rbac = useRbac();
   const isAdminUser = rbac.isAdmin || rbac.isSuperAdmin;
-  
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const initialSec: Section = initialSection ?? "ai";
+  const urlSubRaw = searchParams.get("sub") as SubTab | null;
+  const initialSub: SubTab = (urlSubRaw && (urlSubRaw as string).length > 0)
+    ? urlSubRaw
+    : DEFAULT_SUB[initialSec];
+
   const [inputValue, setInputValue] = useState("");
-  const [activeSection, setActiveSection] = useState<Section>(initialSection ?? "ai");
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>(DEFAULT_SUB[initialSection ?? "ai"]);
+  const [activeSection, setActiveSection] = useState<Section>(initialSec);
+  const [activeSubTab, setActiveSubTab] = useState<SubTab>(initialSub);
+
+  // Sync activeSubTab -> URL ?sub=...
+  useEffect(() => {
+    const current = searchParams.get("sub");
+    if (current === activeSubTab) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("sub", activeSubTab);
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubTab]);
 
   const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
   const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
