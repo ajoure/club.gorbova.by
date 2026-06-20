@@ -1,403 +1,177 @@
-## Текущий статус
+# да, согласен, с учетом правок:
 
-```
-Stage A   — PASS
-Stage B   — PASS
-Stage C   — PASS
-Stage D.1 — PASS  (UI grouping + read-only stale/missing indicators)
-            proof: .lovable/proofs/package_repeatable_documents_stage_d1_ui_grouping_v1.md
-Stage E   — NOT STARTED  (selective regeneration / cleanup actions, backend + UI)
-```
-
----
-
-Ответ для Lovable:
-
-да, согласен, с учетом правок:
-
-1. План можно выполнять как **Stage D.1 — UI grouping + read-only stale/missing indicators**.
-  &nbsp;
-  Важно: это не закрывает selective regeneration и не закрывает полноценный cleanup. Это только:
-  - группировка per-recipient результатов;
-  - read-only индикация stale/missing/mode_changed;
-  - честная кнопка/переход «Сформировать пакет заново» без обещания точечной регенерации.
-2. В Discovery дополнительно проверить фактическое поле item id в `ai_generated_documents`.
-  &nbsp;
-  В разных местах ранее использовались названия:
-  - `package_template_item_id`;
-  - `source_package_template_item_id`;
-  - `meta.source_package_template_item_id`.
-  В D.1 нельзя завязаться на несуществующее поле. Нужно в proof явно указать, какое поле реально используется для группировки item-а.
-  Приоритет:
-3. Latest batch определять не только по `max(created_at)` отдельного документа, а по batch-группе.
+1. **План можно выполнять как frontend-only.**  
+Новая вкладка «Плейсхолдеры» внутри пакета и persistence через URL query params — корректное решение без БД/RPC/edge.
+2. **Не перетирать существующие query params.**  
+При обновлении `sub`, `pkg`, `pkgTab` использовать текущие `searchParams`, а не создавать объект заново с потерей остальных параметров.
   &nbsp;
   Правильно:
-  ```text
-  сгруппировать документы по generation_batch_id
-  определить batch created_at = max(created_at) или batch-level timestamp, если он есть
-  latest batch = batch с самым поздним batch created_at
-  ```
-  Не выбирать отдельную строку и не смешивать batch.
-4. В истории batch-группы должны быть разделены явно.
+3. **Не делать fallback на пакет до загрузки списка packages.**  
+Если `packages` ещё грузятся, нельзя сразу считать `pkg` из URL невалидным и переписывать URL на `ideology`.
   &nbsp;
-  Заголовок batch:
-  ```text
-  Batch <short id> · дата/время · generated/errors/blocked
-  ```
-  Внутри batch — группы по item.
-5. Для per-role group сортировка:
+  Логика:
+4. **Валидация** `pkgTab` **должна учитывать** `isAdminUI`**.**
   &nbsp;
+  Admin-valid tabs:
   ```text
-  recipient_index ASC NULLS LAST
-  created_at ASC
-  id ASC
+  templates, anketa, roles, placeholders, validation, generation
   ```
-  `id` нужен как последний tie-breaker, чтобы порядок не прыгал.
-6. В fallback ФИО получателя добавить поддержку фактической структуры `recipient_snapshot`.
-  &nbsp;
-  Использовать порядок:
-7. Для кнопки «Скачать» у failed/error recipient уточнить условие:
-  - если файл/URL есть — кнопку показывать;
-  - если файла нет — показывать disabled state `Файл не создан`.
-  Не должно быть клика на несуществующий файл.
-8. В `PackageDocumentCard` индикатор `N/M получателей` показывать только для item с текущим:
+  User-valid tabs:
+  ```text
+  anketa, generation
+  ```
+  Если user открывает:
+  ```text
+  ?pkgTab=placeholders
+  ```
+  должен быть fallback на:
+5. **Новую вкладку** `placeholders` **добавлять только в admin UI.**  
+Она не должна появляться у обычного пользователя, даже если URL содержит `pkgTab=placeholders`.
+6. **Порядок вкладок внутри пакета зафиксировать так:**
   &nbsp;
   ```text
-  generation_mode = 'per_role_person'
-  repeat_role_catalog_id IS NOT NULL
+  Шаблоны пакета
+  Анкеты документов
+  Роли и поля пакета
+  Плейсхолдеры
+  Проверка шаблонов
+  Генерация
   ```
-  Для single item не добавлять новый шум.
-9. Stale/missing считать только для latest successful batch.
+  Если фактический порядок сейчас другой — сохранить текущий порядок, но вставить «Плейсхолдеры» строго между `roles` и `validation`.
+7. **Импорт** `PlaceholdersCatalogTab` **должен быть прямым переиспользованием.**  
+Не создавать новый каталог, не копировать код, не делать отдельный filtered/embedded вариант.
   &nbsp;
-  Если latest batch failed/blocked, отдельно показывать:
+  Ожидание:
+8. **Проверить, что** `PlaceholdersCatalogTab` **нормально работает внутри nested tabs.**  
+Если внутри компонента есть свои tabs/search/state — они должны работать без конфликта с `PackagesWorkspace`.
+9. **URL должен сохранять одновременно верхнюю секцию и состояние пакета.**
+  &nbsp;
+  Пример ожидаемого URL:
   ```text
-  Последний успешный batch: N/M
-  Последний запуск: blocked/error
+  /admin/documents?sub=packages&pkg=<uuid>&pkgTab=anketa
   ```
-  Stale/missing не считать по failed batch как по нормальному результату.
-10. Для active assignments в `useRepeatableDocumentStaleness` обязательно учитывать дедуп по `person_id`, как в Stage B resolver.
+  Если фактическое значение верхней вкладки называется не `packages`, использовать реальное значение, но принцип тот же.
+10. **Не ломать старые ссылки без params.**
 
-Если в активных assignments случайно две строки на одного person, UI не должен считать это двумя разными missing, если resolver берёт первую. Нужно либо:
-
-- использовать тот же порядок/дедуп, что resolver;
-- либо явно показать warning `duplicate active assignment`.
-
-11. `useRepeatableDocumentStaleness` должен быть read-only.
-
-В proof добавить `rg`/кодовое подтверждение, что hook не вызывает:
-
-- `update`;
-- `insert`;
-- `delete`;
-- edge function;
-- RPC write-path.
-
-12. Кнопка «Сформировать пакет заново» не должна называться «синхронизировать» или «досоздать недостающие».
-
-Допустимый текст:
+Сценарий:
 
 ```text
-Сформировать пакет заново
+/admin/documents
 ```
 
-Tooltip:
+должен открываться как раньше, с дефолтной вкладкой и дефолтным пакетом.
+
+11. **При смене верхней вкладки не удалять** `pkg/pkgTab` **без необходимости.**  
+Лучше сохранить их в URL, чтобы при возврате в «Пакеты документов» восстановилось прежнее состояние.
+12. **Избежать infinite loop в** `useEffect`**.**  
+URL → state и state → URL должны быть разведены аккуратно:
+
+- сначала валидировать params;
+- обновлять URL только если значение реально отличается;
+- `replace: true`;
+- не делать `setState`/`setSearchParams` на каждом render.
+
+13. **DoD дополнить проверкой hard refresh для всех ключевых вкладок:**
 
 ```text
-Создаст новый batch со всеми документами пакета. Точечная регенерация недостающих будет отдельным Stage E.
+pkgTab=anketa
+pkgTab=roles
+pkgTab=placeholders
+pkgTab=generation
 ```
 
-13. В proof stale/missing сценарии выполнять только безопасно.
+После F5 пользователь должен остаться в том же пакете и той же подвкладке.
 
-Допустимые варианты:
+14. **DoD дополнить проверкой share-link.**
 
-- тестовая сессия;
-- SQL transaction + ROLLBACK;
-- UI-изменение с последующим восстановлением.
-
-После сценария обязательно SQL-подтверждение, что исходная сессия восстановлена.
-
-14. В `DocumentHistoryView` проверить регрессию отдельно.
-
-Если `DocumentHistoryView` показывает глобальную историю не только package generation, нельзя ломать его группировкой. Если общий компонент используется несколькими режимами, группировку включать только для package-session документов с `meta.generation_mode='per_role_person'`.
-
-15. Не менять backend и схему.
-
-Если при реализации выяснится, что нужных meta-полей нет или не хватает для корректной группировки, остановиться и оформить D.0/backend data patch. Не придумывать frontend workaround, который группирует по title/template_name.
-
-16. В DoD добавить проверку mixed-status group:
-
-- один recipient success;
-- один recipient failed/error;
-- заголовок группы показывает `1 из N с ошибкой`;
-- successful recipient можно скачать;
-- failed recipient показывает ошибку и disabled download, если файла нет.
-
-17. В proof добавить итоговый статус строго так:
+Скопировать URL с:
 
 ```text
-Stage A — PASS
-Stage B — PASS
-Stage C — PASS
-Stage D.1 — PASS: UI grouping + read-only stale/missing indicators
-Stage E — NOT STARTED: selective regeneration / cleanup actions
+?sub=packages&pkg=<uuid>&pkgTab=placeholders
 ```
 
-Не писать `Stage D — PASS`, чтобы не создать впечатление, что selective regeneration/cleanup уже реализованы.
+открыть в новой вкладке браузера → должен открыться тот же пакет и внутренняя вкладка «Плейсхолдеры».
 
-После этих правок Stage D.1 можно выполнять.
+15. **Proof-файл создать обязательно.**
+
+```text
+.lovable/proofs/package_placeholders_tab_and_url_persistence_v1.md
+```
+
+В proof указать:
+
+- изменённые файлы;
+- before/after URL;
+- скрин/описание новой вкладки «Плейсхолдеры» внутри пакета;
+- F5-проверки;
+- user-mode fallback;
+- отсутствие backend/DB/RPC изменений.
+
+После этих правок план можно выполнять.
 
 &nbsp;
 
-План: Stage D.1 — UI grouping + read-only stale/missing indicators (frontend-only)
+План: «Плейсхолдеры» внутри пакета + persistence UI-состояния
 
-## Контекст и разделение
+Frontend-only. Никаких изменений в БД, RPC, edge-функциях, никаких новых компонентов плейсхолдеров — переиспользуем существующий `PlaceholdersCatalogTab`.
 
-Предыдущий Stage D смешивал две разные задачи:
+## Задача 1 — Копия вкладки «Плейсхолдеры» внутри пакета документов
 
-- **D.2** — UI-группировка per-recipient документов (frontend-only).
-- **D.3** — retro/cleanup/«перегенерировать только недостающих» (требует backend selective regeneration, **не** frontend-only).
+**Где:** `src/components/ai-documents/packages/PackagesWorkspace.tsx`
 
-Ключевая ошибка прежнего плана: текущий idempotency-ключ генератора —
+**Что:**
 
-```
-pkg:{batch_id}:{item_id}:assn:{assignment_id}
-```
+- В `TabsList` пакета добавить новый `<TabsTrigger value="placeholders">` (только при `isAdminUI`, как и соседние admin-вкладки).
+- Расположение — строго между «Роли и поля пакета» (`roles`) и «Проверка шаблонов» (`validation`), как на скриншоте со стрелкой.
+- Иконка — `Tag` (lucide), как у верхней «Плейсхолдеры», подпись «Плейсхолдеры».
+- HelpTooltip: «Те же плейсхолдеры, что и во вкладке «Документы → Плейсхолдеры». Удобно копировать прямо отсюда, не выходя из пакета.»
+- В `TabsContent value="placeholders"` рендерим уже существующий `<PlaceholdersCatalogTab />` (импорт из `@/components/ai-documents/PlaceholdersCatalogTab`). Никаких пропсов/фильтров — это полная копия каталога, как просил пользователь.
 
-При повторном вызове `ai-generate-document-package` без новых параметров создаётся **новый** `batch_id`, и генератор пересоздаёт весь пакет, а не только missing. Поэтому кнопка «Перегенерировать только недостающих» в текущем backend-контракте невозможна.
+**Чего НЕ делаем:**
 
-Решение — разделить:
+- Не создаём новый компонент, не дублируем код каталога.
+- Не трогаем верхнюю вкладку «Документы → Плейсхолдеры» — она остаётся.
+- Не меняем `AiPageContent`, навигацию, маршруты, RBAC, БД.
 
-- **Stage D.1 (этот план)** — frontend-only: UI grouping + read-only stale/missing indicators. Никакой selective regeneration. Кнопка «Сформировать пакет заново» — это обычный запуск пакета, который создаёт новый batch и помечается как таковой.
-- **Stage E (отдельный план, не сейчас)** — backend selective regeneration (новый контракт генератора `only_missing=true` / `target_item_id` / `target_assignment_ids`, новый proof по idempotency). Не часть Stage D.
+## Задача 2 — Сохранение UI-состояния пакета при перезагрузке
 
-## Цель Stage D.1
+**Проблема:** при F5 на `/admin/documents` всегда открывается верхняя вкладка «Плейсхолдеры» (`DEFAULT_SUB.documents`), выбранный пакет и его подвкладка теряются.
 
-1. Пользователь видит per-recipient результаты сгруппированно по latest successful batch, в карточке документа понятно «N из M получателей».
-2. Пользователь видит stale (участник удалён из роли) и missing (новый участник без документа) **только как индикацию**, без backend-действий по точечной регенерации.
-3. История генераций не смешивает разные batch.
+**Решение:** persistence через URL query params (deep-linkable, переживает refresh, не зависит от localStorage, не ломает share-ссылки).
 
-## Шаги
+### 2.1 — `AiPageContent.tsx` (верхний уровень)
 
-### D.1.0 Discovery (read-only)
+- При маунте читаем `?sub=<SubTab>` из `useSearchParams` (react-router-dom уже используется в проекте). Если значение валидно для текущей секции — используем его вместо `DEFAULT_SUB[section]`.
+- При `setActiveSubTab` обновляем `?sub=...` через `setSearchParams({ ...prev, sub }, { replace: true })`.
+- Никаких изменений в `Section`-логике, hidden sections, RBAC.
 
-Прочитать:
+### 2.2 — `PackagesWorkspace.tsx` (внутри секции «Пакеты документов»)
 
-- `src/components/ai-documents/packages/PackageGenerationHistory.tsx`
-- `src/components/ai-documents/packages/PackageDocumentCard.tsx`
-- `src/components/ai-documents/packages/PackageGenerationPanel.tsx`
-- `src/components/ai-documents/DocumentHistoryView.tsx` (регрессия)
+- Читаем из URL `?pkg=<uuid>` и `?pkgTab=<templates|anketa|roles|placeholders|validation|generation>`.
+- Инициализация `selectedId`: если в URL есть валидный `pkg` (есть в `packages`) — используем его, иначе fallback на `ideology`, как сейчас.
+- Инициализация `tab`: если в URL есть валидный `pkgTab` — используем его (с проверкой видимости: например, `templates/roles/validation/placeholders` — только при `isAdminUI`, иначе fallback на `anketa`).
+- На каждое изменение `selectedId` / `tab` обновляем URL через `setSearchParams({ ...prev, pkg, pkgTab }, { replace: true })`. `replace: true` — чтобы не засорять history навигацией по вкладкам.
+- Если выбранный из URL пакет невалиден (удалён/нет доступа) — мягкий fallback на `ideology` + перезапись URL.
 
-Зафиксировать реальный набор полей в `ai_generated_documents.meta` для тестовой сессии `758080c9-...`:
+### 2.3 — Поведение
 
-```sql
-SELECT id,
-       generation_batch_id,
-       package_template_item_id,
-       status,
-       meta->>'generation_mode'         AS generation_mode,
-       meta->>'repeat_role_catalog_id'  AS repeat_role_catalog_id,
-       meta->>'repeat_assignment_id'    AS repeat_assignment_id,
-       meta->>'recipient_person_id'     AS recipient_person_id,
-       meta->>'recipient_display_name'  AS recipient_display_name,
-       meta->>'recipient_index'         AS recipient_index,
-       meta->'recipient_snapshot'       AS recipient_snapshot,
-       created_at
-FROM ai_generated_documents
-WHERE package_session_id = '<session_id>'
-ORDER BY generation_batch_id DESC, package_template_item_id,
-         (meta->>'recipient_index')::int NULLS LAST, created_at;
-```
+- F5 на любой вкладке пакета → возвращаемся ровно туда же (та же секция, тот же пакет, та же подвкладка пакета).
+- Переход в другую секцию админки и обратно по сайдбару — работает как сейчас (URL params читаются при маунте).
+- Старые ссылки без params — работают как сейчас (используются дефолты).
 
-Канонические поля для D.1 (используем именно эти, не `meta.recipient.full_name`):
+## Out of scope (для возможных будущих этапов, не делаем сейчас)
 
-- `meta.generation_mode`
-- `meta.repeat_role_catalog_id`
-- `meta.repeat_assignment_id`
-- `meta.recipient_person_id`
-- `meta.recipient_display_name`
-- `meta.recipient_index`
-- `meta.recipient_snapshot` (fallback ФИО, если `recipient_display_name` пуст)
+- Persistence состояния внутри `PlaceholdersCatalogTab` (поиск, фильтры, скролл) — пользователь не просил.
+- Persistence состояния внутренних вкладок «Анкеты документов» / «Генерация» (внутренние стейты компонентов) — не просил.
+- Никаких backend-изменений, миграций, RPC.
 
-Fallback порядок отображения ФИО получателя:
-`recipient_display_name` → `recipient_snapshot.full_name` → `recipient_person_id (short)` → `«Получатель #{recipient_index}»`.
+## DoD
 
-### D.1.1 UI-группировка per-recipient (frontend-only)
-
-Файлы: `PackageGenerationHistory.tsx`, `PackageDocumentCard.tsx`.
-
-Расширить select: добавить `generation_batch_id, meta, created_at`.
-
-Группировка — обязательно по тройке + batch:
-
-```
-(generation_batch_id, package_template_item_id, meta.generation_mode)
-```
-
-Алгоритм:
-
-- Загрузить документы текущей сессии.
-- Определить **latest batch** = max(`created_at`) среди `generation_batch_id` сессии.
-- В «Результате последнего запуска» отрисовывать **только latest batch**.
-- В «Истории» отрисовывать batch-группы отдельно: заголовок batch = дата + status агрегата + режим, внутри — items.
-- Внутри batch для каждого item:
-  - если все строки `meta.generation_mode != 'per_role_person'` → одна строка (как сейчас).
-  - если `per_role_person` → сворачиваемая карточка «{template_name} — {N} получателей»:
-    - сортировка по `meta.recipient_index` ASC NULLS LAST, потом `created_at` ASC;
-    - в каждой строке: ФИО (fallback chain), `status`, `document_number`/`document_date` если есть, кнопка «Скачать»;
-    - если есть `failed`/`error` → бейдж «X из N с ошибкой» на заголовке группы;
-    - кнопка «Скачать» сохраняется для всех получателей, в т.ч. failed (если файл есть).
-
-В `PackageDocumentCard`:
-
-- Индикатор «Сгенерировано N/M получателей» считается **по latest successful batch** для этого item. Если последний batch failed/blocked, показываем две строки:
-  - «Последний успешный batch: N/M»
-  - «Последний запуск: blocked/error» (без подмены статуса).
-- Если у item никогда не было успешного batch — индикатор не показывается.
-- Для single-документов индикатор не меняется.
-
-Запрет искусственной группировки:
-
-- Single-документы (1 строка, `generation_mode != 'per_role_person'`) **никогда** не сворачиваются в группу.
-- Документы из разных `generation_batch_id` **никогда** не смешиваются в одну группу.
-
-### D.1.2 Read-only stale / missing / mode_changed
-
-Файлы: новый hook `src/hooks/useRepeatableDocumentStaleness.ts`, использование в `PackageDocumentCard.tsx`.
-
-Источник истины «active assignments»:
-
-```sql
-SELECT id AS assignment_id, person_id
-FROM document_package_item_role_assignments
-WHERE package_session_id = :session_id
-  AND package_template_item_id = :item_id
-  AND role_catalog_id = :repeat_role_catalog_id
-  AND is_active = true
-  AND person_id IS NOT NULL;
-```
-
-Сравнение делаем **только внутри latest batch текущего item и его текущего `repeat_role_catalog_id**`:
-
-- **stale** — документ latest batch имеет `meta.repeat_assignment_id`, которого нет в active assignments → бейдж «Устарело: участник удалён из роли». Скачивание остаётся.
-- **missing** — есть active assignment, по которому в latest batch нет документа → строка-плейсхолдер «Не сгенерировано» + ФИО (из `legal_details_persons` через assignment).
-- **mode_changed** — у item сейчас `generation_mode='single'`, но в `latest batch` (или в истории) есть `per_role_person` документы. Не помечаем устаревшими автоматически; показываем нейтральную пометку на batch-группе истории: «Создано в прежнем режиме: по роли». Скачивание не блокируем. Аналогично для обратного перехода.
-
-Старые batch:
-
-- Stale/missing **не считаются** для документов из не-latest batch. Старый batch — это исторический срез, в нём может не быть текущих ассайнментов, и это норма. В истории показываем нейтрально, без бейджей ошибок.
-
-В карточке документа (`PackageDocumentCard`) дополнительно (только read-only):
-
-- счётчик «X устаревших, Y не сгенерировано» относительно latest batch и текущих active assignments;
-- подсказка-текст: «Чтобы синхронизировать состав получателей, сформируйте пакет заново»;
-- кнопка «Сформировать пакет заново» — это обычный запуск `ai-generate-document-package` через существующий `PackageGenerationPanel` flow. **Честная подпись** и tooltip: «Создаст новый batch со всеми документами пакета». Никакой selective-логики, никаких новых параметров.
-
-Запрещено в D.1:
-
-- Кнопка «Перегенерировать только недостающих» — не добавлять.
-- DELETE/UPDATE по `ai_generated_documents` со стороны UI — не делать.
-- Новые параметры у edge function — не вводить.
-
-### D.1.3 Proof-сценарии (безопасные, без ручных удалений в боевой сессии)
-
-Запрещено для proof: руками удалять `document_package_item_role_assignments` в боевой сессии без восстановления.
-
-Допустимые сценарии proof:
-
-1. **Тестовая сессия / тестовый item** — клонировать сценарий «Извещение per_role_person + 3 Участника» в отдельную тестовую `document_package_sessions` запись, проверять stale/missing там.
-2. **UI-изменение assignment** — через существующую карточку документа деактивировать/добавить ассайнмент (если такой UI есть), затем восстановить.
-3. **SQL в транзакции с явным ROLLBACK** — `BEGIN; UPDATE ... is_active=false WHERE id=...; <read UI>; ROLLBACK;` — только для read-only проверки бейджей.
-
-Каждый proof-сценарий обязан заканчиваться явным восстановлением состояния и SQL-подтверждением, что boевая сессия не повреждена.
-
-### D.1.4 Proof + статус
-
-Создать `.lovable/proofs/package_repeatable_documents_stage_d1_ui_grouping_v1.md`.
-
-Обязательное содержание:
-
-- SQL по batch boundary (latest batch сессии):
-  ```sql
-  SELECT generation_batch_id, package_template_item_id,
-         meta->>'generation_mode'        AS generation_mode,
-         meta->>'repeat_assignment_id'   AS repeat_assignment_id,
-         meta->>'recipient_display_name' AS recipient_display_name,
-         meta->>'recipient_index'        AS recipient_index,
-         status
-  FROM ai_generated_documents
-  WHERE generation_batch_id = '<batch_id>'
-  ORDER BY package_template_item_id,
-           (meta->>'recipient_index')::int NULLS LAST,
-           created_at;
-  ```
-- SQL active assignments для item.
-- Описание/скриншот: «Извещение — 3 получателя», раскрытие Петров / Иванов / Федорчук в порядке `recipient_index`.
-- Сценарий stale (через тестовую сессию или SQL+rollback) — бейдж появился, restore подтверждён.
-- Сценарий missing — плейсхолдер появился, restore подтверждён.
-- Сценарий mode_changed — нейтральная пометка, скачивание работает.
-- Сценарий «latest batch failed» — индикатор показывает обе строки (last success + last run).
-- Явный раздел «Backend не менялся»: `ai-generate-document-package`, схема БД, idempotency-ключ, edge functions registry — без изменений.
-
-Обновить `.lovable/plan.md`:
-
-```
-Stage A           — PASS
-Stage B           — PASS
-Stage C (all)     — PASS
-Stage D.1         — PASS  (UI grouping + read-only stale/missing indicators)
-Stage E           — NOT STARTED  (selective regeneration / cleanup actions, backend + UI)
-```
-
-## DoD D.1.1 (UI grouping)
-
-- Latest batch показывает «Извещение — 3 получателя».
-- Раскрытие выводит Петров / Иванов / Федорчук в порядке `recipient_index`.
-- У каждого получателя своя кнопка «Скачать», включая failed (если файл есть).
-- Single-документы («Инструкция», «Приказ») не группируются.
-- Документы из разных batch не смешиваются — каждый batch в истории отдельно.
-- Failed-получатель показывает бейдж ошибки на заголовке группы.
-- Технические поля (`document_number`, `document_date`, скачивание) сохранены.
-- Нет регрессии в `DocumentHistoryView`.
-
-## DoD D.1.2 (read-only stale/missing/mode_changed)
-
-- Stale-документ помечен бейджем «Устарело: участник удалён из роли» только относительно latest batch.
-- Missing-ассайнмент показан плейсхолдером «Не сгенерировано» с ФИО.
-- mode_changed → нейтральная пометка на batch-группе истории, без блокировок.
-- Старые batch не помечаются stale/missing.
-- Карточка документа показывает «X устаревших, Y не сгенерировано» по latest batch.
-- Кнопка только «Сформировать пакет заново», подпись честная (новый batch, не selective).
-- Нет кнопки «Перегенерировать только недостающих».
-- Нет UI-операций DELETE/UPDATE по `ai_generated_documents`.
-
-## DoD D.1.3 (карточка документа индикатор)
-
-- «N/M получателей» считается по latest successful batch.
-- При failed/blocked последнего запуска показаны две строки (last success + last run).
-- Если успешного batch не было — индикатор скрыт, без подмены статуса.
-
-## Stop-guards
-
-- Любая необходимость менять backend (новый параметр генератора, изменение схемы, новый ключ в `meta`) → STOP, переоформить как Stage E. D.1 — строго frontend-only.
-- Любая UI-операция, которая удаляет/правит `ai_generated_documents` или `document_package_item_role_assignments` → STOP.
-- Proof-сценарий без восстановления состояния боевой сессии → STOP.
-
-## Что НЕ делаем в Stage D.1
-
-- Не трогаем `ai-generate-document-package` и любые edge functions.
-- Не меняем схему БД, не добавляем колонки, индексы, enum.
-- Не вводим selective regeneration (`only_missing`, `target_assignment_ids`).
-- Не удаляем и не правим уже сгенерированные документы.
-- Не трогаем DOCX-шаблоны.
-- Не начинаем Stage E.
-
-## Stage E (только обозначение, не выполняем)
-
-Будущий отдельный план:
-
-- Новый контракт генератора: `only_missing=true`, `target_item_id`, `target_assignment_ids`.
-- Новый proof idempotency: повторный вызов создаёт документы **только** для missing ассайнментов, без нового полного batch (или с явным batch-flag «partial»).
-- UI-кнопка «Перегенерировать только недостающих» появляется **только** после Stage E PASS.
-- Cleanup policy для stale (опционально, отдельным подэтапом).
-
-После Stage E итог пересматривается, до тех пор Stage D.1 не претендует на закрытие retro/cleanup.
+1. На `/admin/documents` → «Пакеты документов» → выбран пакет «Идеология» → между «Роли и поля пакета» и «Проверка шаблонов» появилась вкладка «Плейсхолдеры» с иконкой `Tag`.
+2. Клик по новой вкладке открывает тот же каталог, что и верхняя «Плейсхолдеры» (визуально идентичный, тот же `PlaceholdersCatalogTab`).
+3. Верхняя «Документы → Плейсхолдеры» работает без регрессий.
+4. Открыли пакет «Идеология» → вкладка «Анкеты документов» → F5 → остались на «Анкеты документов» внутри пакета «Идеология». URL содержит `?sub=pkg-...&pkg=<uuid>&pkgTab=anketa` (или эквивалент).
+5. Открыли вкладку «Плейсхолдеры» внутри пакета → F5 → остались на ней же.
+6. Если в URL `pkg=<несуществующий-uuid>` — открывается «Идеология» без ошибки, URL чинится.
+7. У user-режима admin-вкладки (включая новую «Плейсхолдеры») по-прежнему скрыты; если в URL `pkgTab=placeholders` для user — fallback на `anketa`.
+8. Нет регрессий в навигации сайдбара, нет console errors, нет лишних ре-рендеров (state-флоу остаётся локальным).
