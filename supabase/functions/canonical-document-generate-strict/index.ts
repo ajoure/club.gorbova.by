@@ -436,6 +436,7 @@ Deno.serve(async (req) => {
         preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+        preresolved_ln_subfield_tokens: (rawPackageCtx as any).preresolved_ln_subfield_tokens ?? {},
         preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
         generation_mode: (rawPackageCtx as any).generation_mode ?? 'single',
         repeat_role_catalog_id: (rawPackageCtx as any).repeat_role_catalog_id ?? null,
