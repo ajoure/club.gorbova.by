@@ -466,6 +466,54 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+        if ((mm = inside.match(LN_SUB_RE))) {
+          const lnPublicId = mm[1];
+          const subField = mm[2];
+          const role = roleByPublicId.get(lnPublicId);
+          if (!role) { itemErrors.push(`ln_token_unknown:${lnPublicId}`); continue; }
+          if (role.package_template_id !== session.package_template_id) {
+            itemErrors.push(`ln_token_outside_bound_package:${lnPublicId}`);
+            continue;
+          }
+          const spec = LN_SUB_FIELD_BY_KEY.get(subField);
+          if (!spec) {
+            itemErrors.push(`ln_subfield_unknown:${lnPublicId}.${subField}`);
+            continue;
+          }
+          const k = `${item.id}::${role.id}`;
+          const asgs = assignByItemRole.get(k) || [];
+          if (asgs.length === 0) {
+            itemErrors.push(`role_assignment_missing:${lnPublicId}.${subField}`);
+            continue;
+          }
+          const rawValues: string[] = [];
+          const personIds: string[] = [];
+          for (const a of asgs) {
+            if (!a.person_id) continue;
+            const p = personMap.get(a.person_id);
+            if (!p) continue;
+            const v = extractLnSubFieldRaw(p as Record<string, unknown>, spec);
+            rawValues.push(v);
+            personIds.push(a.person_id);
+          }
+          if (personIds.length === 0) {
+            itemErrors.push(`role_person_not_found:${lnPublicId}.${subField}`);
+            continue;
+          }
+          preresolved_ln_subfield_tokens[`${lnPublicId}.${subField}`] = {
+            ln_public_id: lnPublicId,
+            sub_field: subField,
+            kind: spec.kind,
+            supports_case: spec.supports_case,
+            multi_policy: spec.multi_policy,
+            role_catalog_id: role.id,
+            person_ids: personIds,
+            raw_values: rawValues,
+          };
+          continue;
+        }
+
         if ((mm = inside.match(LN_RE))) {
           const lnPublicId = mm[1];
           const role = roleByPublicId.get(lnPublicId);
