@@ -370,6 +370,17 @@ Deno.serve(async (req) => {
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
       preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+      preresolved_ln_subfield_tokens: Record<string, {
+        ln_public_id: string;
+        sub_field: string;
+        kind: 'name' | 'date' | 'text' | 'address_full' | 'address_part';
+        supports_case: boolean;
+        multi_policy: 'join' | 'error';
+        role_catalog_id: string;
+        person_ids: string[];
+        raw_values: string[];
+      }>;
       // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4)
       preresolved_pf_fields: Record<string, {
         public_id: string;
