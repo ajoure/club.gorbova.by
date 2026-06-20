@@ -684,6 +684,7 @@ Deno.serve(async (req) => {
       type StrictPlan = {
         packageContextExtras: Record<string, unknown>;
         lnTokens: typeof preresolved_ln_tokens;
+        lnSubFieldTokens: typeof preresolved_ln_subfield_tokens;
         recipientMeta: { assignment_id: string; person_id: string; role_catalog_id: string; sort_order: number; index: number } | null;
       };
       const plans: StrictPlan[] = [];
@@ -692,6 +693,7 @@ Deno.serve(async (req) => {
         plans.push({
           packageContextExtras: { generation_mode: 'single' },
           lnTokens: preresolved_ln_tokens,
+          lnSubFieldTokens: preresolved_ln_subfield_tokens,
           recipientMeta: null,
         });
       } else {
