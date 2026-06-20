@@ -860,6 +860,55 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // 3.0) PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: {{ln-XXXXXX.<sub_field>[|...]}}
+      //      Проверяем ДО основного LN_TOKEN_RE (sub имеет приоритет).
+      const lnSubMatch = inside.match(LN_SUB_TOKEN_RE);
+      if (lnSubMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const subField = lnSubMatch[2];
+        const spec = LN_SUB_FIELD_BY_KEY.get(subField);
+        if (!spec) {
+          lnSubFieldUnknownTokens.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (lnSubMatch[3] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) {
+            if (!spec.supports_case) {
+              lnSubFieldCaseNotSupported.push(`{{${inside}}}`);
+              badMod = true;
+              break;
+            }
+            cs = v;
+          } else if (k === 'format') {
+            if (spec.kind === 'date' && LN_SUB_DATE_FORMATS.has(v)) fmt = v;
+            else if (spec.kind === 'name' && LN_SUB_NAME_FORMATS.has(v)) fmt = v;
+            else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+          } else {
+            unknownModifierTokens.push(`{{${inside}}}`);
+            badMod = true;
+            break;
+          }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'ln_sub',
+          bag_key: `${lnSubMatch[1]}.${subField}`,
+          sub_field: subField,
+          case_modifier: cs,
+          format: fmt,
+        });
+        continue;
+      }
+
       // 3) Role token {{ln-XXXXXX[|format=full|short|signature_short][|case=…]}}
       const lnMatch = inside.match(LN_TOKEN_RE);
       if (lnMatch) {
