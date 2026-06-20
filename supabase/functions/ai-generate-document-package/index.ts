@@ -721,8 +721,27 @@ Deno.serve(async (req) => {
                 person_id: rcp.person_id,
               };
             }
+            // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: per-recipient override
+            // sub-field bag для repeat-роли — оставляем только данные ОДНОГО получателя.
+            const lnSubClone: Record<string, any> = {};
+            const recipientPerson = personMap.get(rcp.person_id);
+            for (const [bagKey, entry] of Object.entries(preresolved_ln_subfield_tokens)) {
+              if (entry.ln_public_id === repeatRolePublicId && recipientPerson) {
+                const spec = LN_SUB_FIELD_BY_KEY.get(entry.sub_field);
+                if (spec) {
+                  lnSubClone[bagKey] = {
+                    ...entry,
+                    person_ids: [rcp.person_id],
+                    raw_values: [extractLnSubFieldRaw(recipientPerson as Record<string, unknown>, spec)],
+                  };
+                  continue;
+                }
+              }
+              lnSubClone[bagKey] = entry;
+            }
             plans.push({
               lnTokens: lnClone,
+              lnSubFieldTokens: lnSubClone,
               packageContextExtras: {
                 generation_mode: 'per_role_person',
                 repeat_role_catalog_id: res.repeat_role_catalog_id,
