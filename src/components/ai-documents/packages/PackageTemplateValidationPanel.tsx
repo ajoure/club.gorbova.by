@@ -157,6 +157,26 @@ function classify(
       hint: "Канонический формат роли пакета {{ln-XXXXXX}} (один токен → output_template)." };
   }
 
+  if (c.kind === "package_role_subfield") {
+    // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+    const lnId = c.public_id;
+    const role = lnCatalog.get(lnId);
+    if (!role) {
+      return { token, severity: "error", code: "ln_token_not_found",
+        hint: `Роль ${lnId} не найдена в каталоге ролей пакетов.` };
+    }
+    if (packageTemplateId && role.package_template_id !== packageTemplateId) {
+      return { token, severity: "error", code: "ln_token_outside_bound_package",
+        hint: `Роль ${lnId} принадлежит другому пакету.` };
+    }
+    if (assignedRoleCatalogIds && !assignedRoleCatalogIds.has(role.id)) {
+      return { token, severity: "warning", code: "role_assignment_missing",
+        hint: "Для этой роли в анкете документа ещё не выбран человек." };
+    }
+    return { token, severity: "valid", code: "package_role_subfield_ok",
+      hint: `Поле физлица роли: ${c.sub_field}. Резолвится из legal_details_persons по назначению.` };
+  }
+
   if (c.kind === "legacy_role_format") {
     return { token, severity: "error", code: "invalid_legacy_role_placeholder",
       hint: "Устаревший формат плейсхолдера роли. Используйте плейсхолдер вида {{ln-XXXXXX}} из группы «Пакет: Роли»." };
