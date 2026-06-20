@@ -50,6 +50,10 @@ import { PackageFieldsManager } from "./PackageFieldsManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
+import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
+
+const ADMIN_TABS = ["templates", "anketa", "roles", "placeholders", "validation", "generation"] as const;
+const USER_TABS = ["anketa", "generation"] as const;
 
 
 
