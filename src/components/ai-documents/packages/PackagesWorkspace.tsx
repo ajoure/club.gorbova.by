@@ -475,6 +475,12 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
           )}
 
           {isAdminUI && (
+            <TabsContent value="placeholders">
+              <PlaceholdersCatalogTab />
+            </TabsContent>
+          )}
+
+          {isAdminUI && (
             <TabsContent value="validation">
               <PackageTemplateValidationPanel packageTemplateId={selectedPackage.id} />
             </TabsContent>
