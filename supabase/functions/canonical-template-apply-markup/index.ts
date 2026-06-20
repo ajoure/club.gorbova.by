@@ -627,6 +627,17 @@ Deno.serve(async (req) => {
         packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'role', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
         continue;
       }
+      if (c.kind === 'package_role_subfield') {
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+        packageTokens.push({
+          placeholder: `{{${inside}}}`,
+          kind: 'role',
+          public_id: c.public_id,
+          format: (c.format ?? null) as any,
+          case_modifier: c.case_modifier,
+        });
+        continue;
+      }
       if (c.kind === 'package_field') {
         packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'package_field', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
         continue;
