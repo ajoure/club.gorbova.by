@@ -373,6 +373,8 @@ Deno.serve(async (req) => {
         let baseKey: string | null = null;
         if ((mm = inside.match(FIELD_RE))) baseKey = `field:${mm[1]}`;
         else if ((mm = inside.match(PACKAGE_FLD_RE))) baseKey = `package.${mm[1]}.${mm[2]}`;
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-sub проверяем до ln (re-anchor).
+        else if ((mm = inside.match(LN_SUB_RE))) baseKey = `${mm[1]}.${mm[2]}`;
         else if ((mm = inside.match(LN_RE))) baseKey = mm[1];
         else if ((mm = inside.match(PF_RE))) baseKey = mm[1];
         else baseKey = inside;
