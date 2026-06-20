@@ -1561,7 +1561,7 @@ Deno.serve(async (req) => {
         resolved[pt.raw_inside] = outVal;
         sourceTrace[pt.raw_inside] = {
           status: outVal === '' ? 'empty' : 'resolved',
-          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : 'package_requisite'),
+          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : pt.kind === 'ln_sub' ? 'package_ln_sub' : 'package_requisite'),
           kind: pt.kind,
           bag_key: pt.bag_key,
           value: outVal,
