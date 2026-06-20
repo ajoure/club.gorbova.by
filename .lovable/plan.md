@@ -256,3 +256,27 @@ bank_account, bank_name, bank_code
 2. Multi-person scalar для паспорта/телефона/email — гарантируем ошибку `multiple_persons_for_scalar_role_subfield` (рекомендация), или всё-таки join через `;` ?
 3. Реализуем сразу `address_*`-breakdown из `address_structured` jsonb или v1 только `address_full` (строка), а breakdown — отдельный Sprint?
 4. Нужен ли в v1 уже table-repeat по списку участников (один ряд на физлицо) или это явный Stage E?
+---
+
+## Отчет о выполнении PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+
+Статус: **DONE** (v1, scalar-only, без table-repeat).
+
+Реализовано:
+
+- Backend (production-путь): orchestrator `ai-generate-document-package` + strict generator `canonical-document-generate-strict` распознают `{{ln-XXXXXX.<sub_field>[|case=…][|format=…]}}` и рендерят значения из `legal_details_persons` через `document_package_item_role_assignments`.
+- Shared spec: `supabase/functions/_shared/ln-subfield-spec.ts` (SOT whitelist 25 полей) + frontend mirror `src/lib/documents/lnSubFieldSpec.ts`.
+- Классификатор (shared + frontend) умеет новый kind `package_role_subfield`; upload-validator (`canonical-template-apply-markup`) и `PackageTemplateValidationPanel` его принимают.
+- Dry-run резолвер (`_shared/resolve-package-tokens.ts`) обновлён: `resolveLnSubFieldToken` + новые коды `ln_subfield_unknown`, `ln_case_not_supported_for_subfield`, `multiple_persons_for_scalar_role_subfield`, `ln_subfield_value_empty`.
+- Per_role_person mode: bag клонируется per-recipient — для repeat-роли остаётся только person_id текущего получателя, благодаря чему паспорт/личный номер/банк работают (multi-policy=error не срабатывает).
+- UI каталог: `buildPackageRoleItems` добавляет copy-ready item для каждого (role × sub_field). Видно и в верхней вкладке «Плейсхолдеры», и в копии вкладки внутри пакета (один компонент).
+- Голый `{{ln-XXXXXX}}` НЕ изменён, как и `package.fl.*`, `pf-*`, `field:FLD-*`, `recipient.*`.
+- Proof: `.lovable/proofs/role_scoped_person_placeholders_v1.md`.
+- Memory: `mem://architecture/documents/package-token-aliases-v1` дополнен §9.
+
+НЕ входит (явные backlog'и):
+
+- Stage E: table-repeat по списку участников (один ряд на физлицо) — нужен docxtemplater-loop, отдельный план.
+- Полноценные modifier-controls UI для sub-field tokens (формат даты, падежи) прямо в каталоге.
+- Smoke/pf тесты резолвера (резолвер обновлён; тесты будут отдельным sprint'ом).
+
