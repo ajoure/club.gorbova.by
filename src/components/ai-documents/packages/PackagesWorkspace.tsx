@@ -434,6 +434,13 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               </HelpTooltip>
             )}
             {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Те же плейсхолдеры, что и во вкладке «Документы → Плейсхолдеры». Удобно копировать прямо отсюда, не выходя из пакета." alwaysShow>
+                <TabsTrigger value="placeholders">
+                  <Tag className="h-3.5 w-3.5 mr-1.5" /> Плейсхолдеры
+                </TabsTrigger>
+              </HelpTooltip>
+            )}
+            {isAdminUI && (
               <HelpTooltip helpKey="" customShort="Безопасная проверка: ищет плейсхолдеры и нехватку данных. Документы не создаёт." alwaysShow>
                 <TabsTrigger value="validation">
                   <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Проверка шаблонов
