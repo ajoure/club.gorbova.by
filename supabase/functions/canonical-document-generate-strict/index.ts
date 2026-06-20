@@ -43,6 +43,13 @@ import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts'
 import { resolveDocumentScenario, type PayerType } from '../_shared/document-scenario-resolver.ts';
 import { derivePaymentChannel } from '../_shared/document-resolver-v2/payment-channel.ts';
 import { formatAmountWithWordsByRublesAndKopecks } from '../_shared/amount-with-words.ts';
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+import {
+  LN_SUB_FIELD_BY_KEY,
+  LN_SUB_DATE_FORMATS,
+  LN_SUB_NAME_FORMATS,
+  formatLnDate,
+} from '../_shared/ln-subfield-spec.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
