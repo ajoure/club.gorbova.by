@@ -63,6 +63,14 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+      kind: 'package_role_subfield';
+      public_id: string;          // ln-XXXXXX
+      sub_field: string;          // whitelist на резолвере (LN_SUB_FIELD_SPECS)
+      format: PlaceholderFormat | string | null;  // 'dotted'|'short'|'full' для date или name-format
+      case_modifier: PlaceholderCase | null;
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
