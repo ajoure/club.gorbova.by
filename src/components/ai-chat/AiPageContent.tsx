@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from "react";
+import { useSearchParams } from "react-router-dom";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
 import { FileDropZone, type UploadedFile, processDroppedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
