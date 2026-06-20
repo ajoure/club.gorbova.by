@@ -175,6 +175,25 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
     };
   }
 
+  const mRoleSub = raw.match(RE_PACKAGE_ROLE_SUB);
+  if (mRoleSub) {
+    // Допустимый набор format-значений для sub-field шире обычного name-формата
+    // (включая 'dotted' для дат). Полная валидация по whitelist sub_field —
+    // на резолвере; здесь принимаем любой синтаксически валидный модификатор.
+    const FORMATS_LN_SUB = new Set<PlaceholderFormat | string>([
+      'full', 'short', 'signature_short', 'dotted',
+    ]);
+    const mods = parseModifiers(mRoleSub[3] || '', FORMATS_LN_SUB as Set<PlaceholderFormat>);
+    if (mods.error) return mods.error;
+    return {
+      kind: 'package_role_subfield',
+      public_id: mRoleSub[1],
+      sub_field: mRoleSub[2],
+      format: mods.format,
+      case_modifier: mods.case_modifier,
+    };
+  }
+
   const mRole = raw.match(RE_PACKAGE_ROLE);
   if (mRole) {
     const mods = parseModifiers(mRole[2] || '', FORMATS_LN);
