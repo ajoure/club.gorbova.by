@@ -36,6 +36,11 @@ import {
   isValidSmartDatePrefill,
 } from '../_shared/smart-date-prefill.ts';
 import { resolvePerRoleRecipients } from '../_shared/resolve-per-role-recipients.ts';
+import {
+  LN_SUB_FIELD_BY_KEY,
+  extractLnSubFieldRaw,
+  type LnSubFieldSpec,
+} from '../_shared/ln-subfield-spec.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
