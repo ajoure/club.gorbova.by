@@ -784,16 +784,22 @@ Deno.serve(async (req) => {
     // Sprint 3I-A-1.B: package/ln tokens collected here (package_session only).
     interface ParsedPkgToken {
       raw_inside: string;
-      kind: 'package' | 'ln';
+      kind: 'package' | 'ln' | 'ln_sub';
       bag_key: string;
       case_modifier: string | null;
       format: string | null;
       // Sprint 3L: ln-only modifiers
       include_position?: boolean;
       join?: 'semicolon' | 'comma' | 'newline';
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln_sub только
+      sub_field?: string;
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
+    // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: накопление специальных ошибок ln-sub.
+    const lnSubFieldUnknownTokens: string[] = [];
+    const lnSubFieldCaseNotSupported: string[] = [];
+    const lnSubFieldMultiPersonsError: string[] = [];
     // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): parsed pf-XXXXXX tokens.
     interface ParsedPfToken {
       raw_inside: string;
