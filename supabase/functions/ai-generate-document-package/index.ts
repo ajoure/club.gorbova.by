@@ -36,6 +36,11 @@ import {
   isValidSmartDatePrefill,
 } from '../_shared/smart-date-prefill.ts';
 import { resolvePerRoleRecipients } from '../_shared/resolve-per-role-recipients.ts';
+import {
+  LN_SUB_FIELD_BY_KEY,
+  extractLnSubFieldRaw,
+  type LnSubFieldSpec,
+} from '../_shared/ln-subfield-spec.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -57,6 +62,8 @@ const ALLOWED_FIELD_ENTITY_TYPES = new Set([
 
 const FIELD_RE = /^field:(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const PACKAGE_FLD_RE = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field> ДОЛЖЕН проверяться ДО LN_RE.
+const LN_SUB_RE = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_RE = /^(ln-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX custom-field placeholders.
 const PF_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
@@ -316,6 +323,19 @@ Deno.serve(async (req) => {
       const preresolved_fields: Record<string, { value: string; source: string }> = {};
       const preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key: string }> = {};
       const preresolved_ln_tokens: Record<string, { value: string; persons: string[]; positions: string[]; position_genders: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }> = {};
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: bag для {{ln-XXXXXX.<sub_field>}}.
+      // Ключ — `${lnPublicId}.${subField}`. Хранит raw-значения per-person,
+      // strict сам применяет format/case при рендере.
+      const preresolved_ln_subfield_tokens: Record<string, {
+        ln_public_id: string;
+        sub_field: string;
+        kind: LnSubFieldSpec['kind'];
+        supports_case: boolean;
+        multi_policy: 'join' | 'error';
+        role_catalog_id: string;
+        person_ids: string[];
+        raw_values: string[];
+      }> = {};
       // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX preresolved bag.
       const preresolved_pf_fields: Record<string, {
         public_id: string;
@@ -353,6 +373,8 @@ Deno.serve(async (req) => {
         let baseKey: string | null = null;
         if ((mm = inside.match(FIELD_RE))) baseKey = `field:${mm[1]}`;
         else if ((mm = inside.match(PACKAGE_FLD_RE))) baseKey = `package.${mm[1]}.${mm[2]}`;
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-sub проверяем до ln (re-anchor).
+        else if ((mm = inside.match(LN_SUB_RE))) baseKey = `${mm[1]}.${mm[2]}`;
         else if ((mm = inside.match(LN_RE))) baseKey = mm[1];
         else if ((mm = inside.match(PF_RE))) baseKey = mm[1];
         else baseKey = inside;
@@ -441,6 +463,54 @@ Deno.serve(async (req) => {
             }
             preresolved_package_fields[bagKey] = entry;
           }
+          continue;
+        }
+
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+        if ((mm = inside.match(LN_SUB_RE))) {
+          const lnPublicId = mm[1];
+          const subField = mm[2];
+          const role = roleByPublicId.get(lnPublicId);
+          if (!role) { itemErrors.push(`ln_token_unknown:${lnPublicId}`); continue; }
+          if (role.package_template_id !== session.package_template_id) {
+            itemErrors.push(`ln_token_outside_bound_package:${lnPublicId}`);
+            continue;
+          }
+          const spec = LN_SUB_FIELD_BY_KEY.get(subField);
+          if (!spec) {
+            itemErrors.push(`ln_subfield_unknown:${lnPublicId}.${subField}`);
+            continue;
+          }
+          const k = `${item.id}::${role.id}`;
+          const asgs = assignByItemRole.get(k) || [];
+          if (asgs.length === 0) {
+            itemErrors.push(`role_assignment_missing:${lnPublicId}.${subField}`);
+            continue;
+          }
+          const rawValues: string[] = [];
+          const personIds: string[] = [];
+          for (const a of asgs) {
+            if (!a.person_id) continue;
+            const p = personMap.get(a.person_id);
+            if (!p) continue;
+            const v = extractLnSubFieldRaw(p as Record<string, unknown>, spec);
+            rawValues.push(v);
+            personIds.push(a.person_id);
+          }
+          if (personIds.length === 0) {
+            itemErrors.push(`role_person_not_found:${lnPublicId}.${subField}`);
+            continue;
+          }
+          preresolved_ln_subfield_tokens[`${lnPublicId}.${subField}`] = {
+            ln_public_id: lnPublicId,
+            sub_field: subField,
+            kind: spec.kind,
+            supports_case: spec.supports_case,
+            multi_policy: spec.multi_policy,
+            role_catalog_id: role.id,
+            person_ids: personIds,
+            raw_values: rawValues,
+          };
           continue;
         }
 
@@ -614,6 +684,7 @@ Deno.serve(async (req) => {
       type StrictPlan = {
         packageContextExtras: Record<string, unknown>;
         lnTokens: typeof preresolved_ln_tokens;
+        lnSubFieldTokens: typeof preresolved_ln_subfield_tokens;
         recipientMeta: { assignment_id: string; person_id: string; role_catalog_id: string; sort_order: number; index: number } | null;
       };
       const plans: StrictPlan[] = [];
@@ -622,6 +693,7 @@ Deno.serve(async (req) => {
         plans.push({
           packageContextExtras: { generation_mode: 'single' },
           lnTokens: preresolved_ln_tokens,
+          lnSubFieldTokens: preresolved_ln_subfield_tokens,
           recipientMeta: null,
         });
       } else {
@@ -649,8 +721,27 @@ Deno.serve(async (req) => {
                 person_id: rcp.person_id,
               };
             }
+            // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: per-recipient override
+            // sub-field bag для repeat-роли — оставляем только данные ОДНОГО получателя.
+            const lnSubClone: Record<string, any> = {};
+            const recipientPerson = personMap.get(rcp.person_id);
+            for (const [bagKey, entry] of Object.entries(preresolved_ln_subfield_tokens)) {
+              if (entry.ln_public_id === repeatRolePublicId && recipientPerson) {
+                const spec = LN_SUB_FIELD_BY_KEY.get(entry.sub_field);
+                if (spec) {
+                  lnSubClone[bagKey] = {
+                    ...entry,
+                    person_ids: [rcp.person_id],
+                    raw_values: [extractLnSubFieldRaw(recipientPerson as Record<string, unknown>, spec)],
+                  };
+                  continue;
+                }
+              }
+              lnSubClone[bagKey] = entry;
+            }
             plans.push({
               lnTokens: lnClone,
+              lnSubFieldTokens: lnSubClone,
               packageContextExtras: {
                 generation_mode: 'per_role_person',
                 repeat_role_catalog_id: res.repeat_role_catalog_id,
@@ -726,6 +817,7 @@ Deno.serve(async (req) => {
               preresolved_fields,
               preresolved_package_fields,
               preresolved_ln_tokens: plan.lnTokens,
+              preresolved_ln_subfield_tokens: plan.lnSubFieldTokens,
               preresolved_pf_fields,
               ...plan.packageContextExtras,
             },

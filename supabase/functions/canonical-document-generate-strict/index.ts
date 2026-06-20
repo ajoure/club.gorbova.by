@@ -43,6 +43,13 @@ import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts'
 import { resolveDocumentScenario, type PayerType } from '../_shared/document-scenario-resolver.ts';
 import { derivePaymentChannel } from '../_shared/document-resolver-v2/payment-channel.ts';
 import { formatAmountWithWordsByRublesAndKopecks } from '../_shared/amount-with-words.ts';
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+import {
+  LN_SUB_FIELD_BY_KEY,
+  LN_SUB_DATE_FORMATS,
+  LN_SUB_NAME_FORMATS,
+  formatLnDate,
+} from '../_shared/ln-subfield-spec.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -257,6 +264,8 @@ const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 // ── Sprint 3I-A-1.B: package-mode tokens (Variant A — case modifier supported)
 const PKG_REQ_RE = /^package\.(ul|ip|fl)\.(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 const LN_TOKEN_RE = /^(ln-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>[|...]
+const LN_SUB_TOKEN_RE = /^(ln-\d+)\.([a-z_]+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): pf-XXXXXX placeholders (package only).
 const PF_TOKEN_RE = /^(pf-\d{6})((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // PATCH-PACKAGE-REPEATABLE-DOCUMENTS-BY-ROLE-V1 (Stage C): recipient.* tokens
@@ -361,6 +370,17 @@ Deno.serve(async (req) => {
       preresolved_fields: Record<string, { value: string; source: string }>;
       preresolved_package_fields: Record<string, { value: string; source: string; catalog_tech_key?: string }>;
       preresolved_ln_tokens: Record<string, { value: string; persons?: string[]; positions?: string[]; position_genders?: Array<'m'|'f'|null>; role_catalog_id: string; person_id: string }>;
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+      preresolved_ln_subfield_tokens: Record<string, {
+        ln_public_id: string;
+        sub_field: string;
+        kind: 'name' | 'date' | 'text' | 'address_full' | 'address_part';
+        supports_case: boolean;
+        multi_policy: 'join' | 'error';
+        role_catalog_id: string;
+        person_ids: string[];
+        raw_values: string[];
+      }>;
       // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4)
       preresolved_pf_fields: Record<string, {
         public_id: string;
@@ -416,6 +436,7 @@ Deno.serve(async (req) => {
         preresolved_fields: (rawPackageCtx as any).preresolved_fields ?? {},
         preresolved_package_fields: (rawPackageCtx as any).preresolved_package_fields ?? {},
         preresolved_ln_tokens: (rawPackageCtx as any).preresolved_ln_tokens ?? {},
+        preresolved_ln_subfield_tokens: (rawPackageCtx as any).preresolved_ln_subfield_tokens ?? {},
         preresolved_pf_fields: (rawPackageCtx as any).preresolved_pf_fields ?? {},
         generation_mode: (rawPackageCtx as any).generation_mode ?? 'single',
         repeat_role_catalog_id: (rawPackageCtx as any).repeat_role_catalog_id ?? null,
@@ -763,16 +784,22 @@ Deno.serve(async (req) => {
     // Sprint 3I-A-1.B: package/ln tokens collected here (package_session only).
     interface ParsedPkgToken {
       raw_inside: string;
-      kind: 'package' | 'ln';
+      kind: 'package' | 'ln' | 'ln_sub';
       bag_key: string;
       case_modifier: string | null;
       format: string | null;
       // Sprint 3L: ln-only modifiers
       include_position?: boolean;
       join?: 'semicolon' | 'comma' | 'newline';
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln_sub только
+      sub_field?: string;
     }
     const parsedPackageTokens: ParsedPkgToken[] = [];
     const packageTokensOutsideContext: string[] = [];
+    // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: накопление специальных ошибок ln-sub.
+    const lnSubFieldUnknownTokens: string[] = [];
+    const lnSubFieldCaseNotSupported: string[] = [];
+    const lnSubFieldMultiPersonsError: string[] = [];
     // PATCH-PACKAGE-CUSTOM-FIELDS-V1 (B4): parsed pf-XXXXXX tokens.
     interface ParsedPfToken {
       raw_inside: string;
@@ -827,6 +854,55 @@ Deno.serve(async (req) => {
           raw_inside: inside,
           kind: 'package',
           bag_key: `package.${pkgMatch[1]}.${pkgMatch[2]}`,
+          case_modifier: cs,
+          format: fmt,
+        });
+        continue;
+      }
+
+      // 3.0) PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: {{ln-XXXXXX.<sub_field>[|...]}}
+      //      Проверяем ДО основного LN_TOKEN_RE (sub имеет приоритет).
+      const lnSubMatch = inside.match(LN_SUB_TOKEN_RE);
+      if (lnSubMatch) {
+        if (generationContext !== 'package_session') {
+          packageTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        const subField = lnSubMatch[2];
+        const spec = LN_SUB_FIELD_BY_KEY.get(subField);
+        if (!spec) {
+          lnSubFieldUnknownTokens.push(`{{${inside}}}`);
+          continue;
+        }
+        const tail = (lnSubMatch[3] || '').split('|').filter(Boolean);
+        let cs: string | null = null;
+        let fmt: string | null = null;
+        let badMod = false;
+        for (const part of tail) {
+          const [k, v] = part.split('=');
+          if (k === 'case' && ALLOWED_CASES.has(v)) {
+            if (!spec.supports_case) {
+              lnSubFieldCaseNotSupported.push(`{{${inside}}}`);
+              badMod = true;
+              break;
+            }
+            cs = v;
+          } else if (k === 'format') {
+            if (spec.kind === 'date' && LN_SUB_DATE_FORMATS.has(v)) fmt = v;
+            else if (spec.kind === 'name' && LN_SUB_NAME_FORMATS.has(v)) fmt = v;
+            else { unknownModifierTokens.push(`{{${inside}}}`); badMod = true; break; }
+          } else {
+            unknownModifierTokens.push(`{{${inside}}}`);
+            badMod = true;
+            break;
+          }
+        }
+        if (badMod) continue;
+        parsedPackageTokens.push({
+          raw_inside: inside,
+          kind: 'ln_sub',
+          bag_key: `${lnSubMatch[1]}.${subField}`,
+          sub_field: subField,
           case_modifier: cs,
           format: fmt,
         });
@@ -993,6 +1069,19 @@ Deno.serve(async (req) => {
         tokens: Array.from(new Set(recipientTokensWithoutContext)),
       }, 400);
     }
+    // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-sub guards.
+    if (lnSubFieldUnknownTokens.length > 0) {
+      return json({
+        error: 'ln_subfield_unknown',
+        tokens: Array.from(new Set(lnSubFieldUnknownTokens)),
+      }, 400);
+    }
+    if (lnSubFieldCaseNotSupported.length > 0) {
+      return json({
+        error: 'ln_case_not_supported_for_subfield',
+        tokens: Array.from(new Set(lnSubFieldCaseNotSupported)),
+      }, 400);
+    }
 
     // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
     // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
@@ -1002,7 +1091,9 @@ Deno.serve(async (req) => {
       for (const pt of parsedPackageTokens) {
         const bag = pt.kind === 'ln'
           ? packageContext!.preresolved_ln_tokens
-          : packageContext!.preresolved_package_fields;
+          : pt.kind === 'ln_sub'
+            ? packageContext!.preresolved_ln_subfield_tokens
+            : packageContext!.preresolved_package_fields;
         if (!bag || !Object.prototype.hasOwnProperty.call(bag, pt.bag_key)) {
           missingPkg.push(`{{${pt.raw_inside}}}`);
         }
@@ -1337,15 +1428,55 @@ Deno.serve(async (req) => {
       for (const pt of parsedPackageTokens) {
         const bag = pt.kind === 'ln'
           ? packageContext!.preresolved_ln_tokens
-          : packageContext!.preresolved_package_fields;
+          : pt.kind === 'ln_sub'
+            ? packageContext!.preresolved_ln_subfield_tokens
+            : packageContext!.preresolved_package_fields;
         const entry: any = (bag as any)[pt.bag_key];
         let outVal = fmtVal(entry?.value);
         let formatApplied = false;
         let caseApplied = false;
         let caseReason: string | null = null;
 
+        // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln_sub render.
+        if (pt.kind === 'ln_sub') {
+          const rawValues: string[] = Array.isArray(entry?.raw_values) ? entry.raw_values : [];
+          const personIds: string[] = Array.isArray(entry?.person_ids) ? entry.person_ids : [];
+          const kind = entry?.kind as 'name' | 'date' | 'text' | 'address_full' | 'address_part';
+          const multiPolicy = (entry?.multi_policy ?? 'error') as 'join' | 'error';
+          // Multi-person policy для scalar (non-name/address) → ошибка.
+          if (personIds.length > 1 && multiPolicy === 'error') {
+            outVal = '';
+            caseReason = `multiple_persons_for_scalar_role_subfield:${entry?.ln_public_id}.${entry?.sub_field}:n=${personIds.length}`;
+          } else {
+            const cs = (pt.case_modifier as RuCase | null) ?? null;
+            const fmt = pt.format;
+            const parts: string[] = [];
+            for (const raw of rawValues) {
+              if (!raw) continue;
+              let v = raw;
+              if (kind === 'name') {
+                const f = (fmt ?? 'full') as PersonNameFormat;
+                v = formatPersonName(raw, { format: f, case: cs });
+                if (fmt) formatApplied = true;
+                if (cs) caseApplied = true;
+              } else if (kind === 'date') {
+                v = formatLnDate(raw, fmt ?? 'dotted');
+                if (fmt) formatApplied = true;
+              } else if (kind === 'address_full' || kind === 'address_part' || kind === 'text') {
+                if (cs && (kind === 'address_full' || kind === 'address_part')) {
+                  const inf = inflectRu(v, cs);
+                  if (inf.applied) { v = inf.value; caseApplied = true; }
+                  else { caseReason = inf.reason || 'inflection_unsafe'; }
+                }
+              }
+              if (v) parts.push(v);
+            }
+            const sep = '; ';
+            outVal = parts.join(sep);
+          }
+        }
         // Sprint 3L: единая ln-ветка. Per-person ФИО + опц. должность + join.
-        if (pt.kind === 'ln') {
+        else if (pt.kind === 'ln') {
           const persons: string[] = Array.isArray(entry?.persons) ? entry.persons : [];
           if (persons.length === 0 && entry?.value) {
             // defence-in-depth: split joined value.
@@ -1430,7 +1561,7 @@ Deno.serve(async (req) => {
         resolved[pt.raw_inside] = outVal;
         sourceTrace[pt.raw_inside] = {
           status: outVal === '' ? 'empty' : 'resolved',
-          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : 'package_requisite'),
+          source: entry?.source || (pt.kind === 'ln' ? 'package_ln' : pt.kind === 'ln_sub' ? 'package_ln_sub' : 'package_requisite'),
           kind: pt.kind,
           bag_key: pt.bag_key,
           value: outVal,
@@ -1942,7 +2073,7 @@ Deno.serve(async (req) => {
           }
           // 2) ln-* and package.* (NEW providers).
           for (const pt of parsedPackageTokens) {
-            const key = `${pt.kind === 'ln' ? 'ln' : 'package'}:${pt.raw_inside}`;
+            const key = `${pt.kind === 'ln' ? 'ln' : pt.kind === 'ln_sub' ? 'ln_sub' : 'package'}:${pt.raw_inside}`;
             if (seen.has(key)) continue;
             seen.add(key);
             const rendered = resolved[pt.raw_inside];
@@ -1963,6 +2094,24 @@ Deno.serve(async (req) => {
                 case_modifier: pt.case_modifier ?? null,
                 include_position: pt.include_position === true,
                 join: pt.join ?? null,
+                format_applied: trace.format_applied === true,
+                case_applied: trace.case_applied === true,
+                item_context: itemContext,
+              });
+            } else if (pt.kind === 'ln_sub') {
+              const e: any = (packageContext!.preresolved_ln_subfield_tokens || {})[pt.bag_key] || {};
+              out.push({
+                provider: 'ln_sub',
+                raw_inside: pt.raw_inside,
+                bag_key: pt.bag_key,
+                rendered_value: renderedValue,
+                ln_public_id: e.ln_public_id ?? null,
+                sub_field: e.sub_field ?? null,
+                kind: e.kind ?? null,
+                raw_values: Array.isArray(e.raw_values) ? e.raw_values.map((s: any) => String(s)) : [],
+                person_ids: Array.isArray(e.person_ids) ? e.person_ids.map((s: any) => String(s)) : [],
+                format: pt.format ?? null,
+                case_modifier: pt.case_modifier ?? null,
                 format_applied: trace.format_applied === true,
                 case_applied: trace.case_applied === true,
                 item_context: itemContext,

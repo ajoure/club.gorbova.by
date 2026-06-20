@@ -63,6 +63,14 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+      kind: 'package_role_subfield';
+      public_id: string;
+      sub_field: string;
+      format: PlaceholderFormat | string | null;
+      case_modifier: PlaceholderCase | null;
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
@@ -90,6 +98,7 @@ const CASES = new Set<PlaceholderCase>([
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+const RE_PACKAGE_ROLE_SUB = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_FIELD  = /^(pf-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_LEGACY_PKR     = /^package\.role\.PKR-\d{6}(?:\|[^}]*)?$/;
 const RE_LEGACY_ROLES   = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(?:\|[^}]*)?$/;
@@ -158,6 +167,22 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
       kind: 'package_requisite',
       entity: mReq[1] as 'ul' | 'ip' | 'fl',
       public_id: mReq[2],
+      format: mods.format,
+      case_modifier: mods.case_modifier,
+    };
+  }
+
+  const mRoleSub = raw.match(RE_PACKAGE_ROLE_SUB);
+  if (mRoleSub) {
+    const FORMATS_LN_SUB = new Set<PlaceholderFormat | string>([
+      'full', 'short', 'signature_short', 'dotted',
+    ]);
+    const mods = parseModifiers(mRoleSub[3] || '', FORMATS_LN_SUB as Set<PlaceholderFormat>);
+    if (mods.error) return mods.error;
+    return {
+      kind: 'package_role_subfield',
+      public_id: mRoleSub[1],
+      sub_field: mRoleSub[2],
       format: mods.format,
       case_modifier: mods.case_modifier,
     };

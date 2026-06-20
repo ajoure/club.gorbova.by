@@ -610,12 +610,16 @@ export interface PackageRoleCatalogRow {
   sort_order: number;
 }
 
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: импорт whitelist sub-полей.
+import { LN_SUB_FIELD_SPECS as _LN_SUB } from "@/lib/documents/lnSubFieldSpec";
+
 export function buildPackageRoleItems(
   rows: PackageRoleCatalogRow[],
 ): PackagePlaceholderItem[] {
-  return rows
-    .filter((r) => r.is_active)
-    .map<PackagePlaceholderItem>((r) => ({
+  const out: PackagePlaceholderItem[] = [];
+  for (const r of rows.filter((x) => x.is_active)) {
+    // 1) Базовый токен роли — {{ln-XXXXXX}}.
+    out.push({
       groupId: "package_roles",
       label_ru: `${r.package_template_name} — ${r.label}`,
       source_table: "legal_details_persons",
@@ -631,8 +635,31 @@ export function buildPackageRoleItems(
           : 'output_template (NULL) → дефолт «{{position}}, {{full_name}}»',
       status: "copy_ready",
       tech_key: `ln.${r.public_id}`,
-      // Роль рендерится по output_template из БД — статичного «примера» нет,
-      // UI покажет hint резолвера.
       example_value: null,
-    }));
+    });
+    // 2) PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1:
+    //    sub-field токены физлица, назначенного на эту роль.
+    for (const spec of _LN_SUB) {
+      out.push({
+        groupId: "package_roles",
+        label_ru: `${r.label} — ${spec.label_ru}`,
+        source_table: "legal_details_persons",
+        source_path:
+          `${r.public_id} → document_package_item_role_assignments → legal_details_persons.` +
+          (spec.column ?? `address_structured->>'${spec.jsonb_key}'`),
+        billing_fld_analog: null,
+        reused_fld: null,
+        package_token: `{{${r.public_id}.${spec.key}}}`,
+        package_resolver_hint:
+          spec.multi_policy === 'error'
+            ? `Скаляр поля физлица. Несколько назначений → ошибка multiple_persons_for_scalar_role_subfield.`
+            : `Поле физлица. Несколько назначений → join через "; ".`,
+        status: "copy_ready",
+        tech_key: `ln.${r.public_id}.${spec.key}`,
+        example_value: null,
+      });
+    }
+  }
+  return out;
 }
+

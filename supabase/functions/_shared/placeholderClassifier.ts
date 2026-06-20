@@ -63,6 +63,14 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
+      kind: 'package_role_subfield';
+      public_id: string;          // ln-XXXXXX
+      sub_field: string;          // whitelist на резолвере (LN_SUB_FIELD_SPECS)
+      format: PlaceholderFormat | string | null;  // 'dotted'|'short'|'full' для date или name-format
+      case_modifier: PlaceholderCase | null;
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
@@ -90,6 +98,10 @@ const CASES = new Set<PlaceholderCase>([
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: {{ln-XXXXXX.<sub_field>[|...]}}.
+// Sub-field whitelist валидируется backend-резолвером (LN_SUB_FIELD_SPECS);
+// классификатор остаётся pure-синтаксическим.
+const RE_PACKAGE_ROLE_SUB = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_FIELD  = /^(pf-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_LEGACY_PKR     = /^package\.role\.PKR-\d{6}(?:\|[^}]*)?$/;
 const RE_LEGACY_ROLES   = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(?:\|[^}]*)?$/;
@@ -158,6 +170,25 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
       kind: 'package_requisite',
       entity: mReq[1] as 'ul' | 'ip' | 'fl',
       public_id: mReq[2],
+      format: mods.format,
+      case_modifier: mods.case_modifier,
+    };
+  }
+
+  const mRoleSub = raw.match(RE_PACKAGE_ROLE_SUB);
+  if (mRoleSub) {
+    // Допустимый набор format-значений для sub-field шире обычного name-формата
+    // (включая 'dotted' для дат). Полная валидация по whitelist sub_field —
+    // на резолвере; здесь принимаем любой синтаксически валидный модификатор.
+    const FORMATS_LN_SUB = new Set<PlaceholderFormat | string>([
+      'full', 'short', 'signature_short', 'dotted',
+    ]);
+    const mods = parseModifiers(mRoleSub[3] || '', FORMATS_LN_SUB as Set<PlaceholderFormat>);
+    if (mods.error) return mods.error;
+    return {
+      kind: 'package_role_subfield',
+      public_id: mRoleSub[1],
+      sub_field: mRoleSub[2],
       format: mods.format,
       case_modifier: mods.case_modifier,
     };

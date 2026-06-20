@@ -31,7 +31,14 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { isCaseModifier, type CaseContext } from './case-format.ts';
 import { formatPersonName, type PersonNameFormat } from './typed-tokens-resolver.ts';
-import type { RuCase } from './ru-inflection.ts';
+import { inflectRu, type RuCase } from './ru-inflection.ts';
+import {
+  LN_SUB_FIELD_BY_KEY,
+  LN_SUB_DATE_FORMATS,
+  LN_SUB_NAME_FORMATS,
+  extractLnSubFieldRaw,
+  formatLnDate,
+} from './ln-subfield-spec.ts';
 
 /** Жёсткий выключатель: production-вызов всегда возвращает FEATURE_DISABLED. */
 export const HARDCODED_ENABLED = false;
@@ -65,6 +72,11 @@ export type PackageTokenResolveCode =
   | 'ln_token_not_found'
   | 'ln_token_outside_bound_package'
   | 'role_assignment_missing'
+  // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+  | 'ln_subfield_unknown'
+  | 'ln_case_not_supported_for_subfield'
+  | 'multiple_persons_for_scalar_role_subfield'
+  | 'ln_subfield_value_empty'
   // PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX branch
   | 'pf_token_not_found'
   | 'pf_token_outside_bound_package'
@@ -297,6 +309,153 @@ async function resolveLnRoleToken(
     canonicalFieldPublicId: lnPublicId,
     roleKey: role.role_key,
     contextKind: 'package_role_ln',
+  };
+}
+
+/**
+ * PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+ * Резолв {{ln-XXXXXX.<sub_field>[|case=...][|format=...]}} для dry-run.
+ */
+async function resolveLnSubFieldToken(
+  input: PackageTokenResolveInput,
+  lnPublicId: string,
+  subField: string,
+  caseMod: string | undefined,
+  formatMod: string | undefined,
+): Promise<PackageTokenResolveResult> {
+  if (!input.packageTemplateItemId) {
+    return { resolved: false, code: 'config_error', warning: 'ln_token_requires_package_template_item_id' };
+  }
+  const spec = LN_SUB_FIELD_BY_KEY.get(subField);
+  if (!spec) {
+    return { resolved: false, code: 'ln_subfield_unknown', warning: `ln_subfield_unknown:${lnPublicId}.${subField}` };
+  }
+  if (caseMod && !spec.supports_case) {
+    return {
+      resolved: false,
+      code: 'ln_case_not_supported_for_subfield',
+      warning: `ln_case_not_supported_for_subfield:${lnPublicId}.${subField}`,
+    };
+  }
+  if (formatMod) {
+    if (spec.kind === 'date' && !LN_SUB_DATE_FORMATS.has(formatMod)) {
+      return { resolved: false, code: 'config_error', warning: `ln_subfield_unknown_format:${formatMod}` };
+    }
+    if (spec.kind === 'name' && !LN_SUB_NAME_FORMATS.has(formatMod)) {
+      return { resolved: false, code: 'config_error', warning: `ln_subfield_unknown_format:${formatMod}` };
+    }
+  }
+  if (caseMod && !isCaseModifier(caseMod)) {
+    return { resolved: false, code: 'config_error', warning: `ln_unknown_case_modifier:${caseMod}` };
+  }
+
+  // 1. role catalog row
+  const { data: roleRow } = await input.supabase
+    .from('document_package_role_catalog')
+    .select('id, package_template_id, role_key')
+    .eq('public_id', lnPublicId)
+    .maybeSingle();
+  if (!roleRow) {
+    return { resolved: false, code: 'ln_token_not_found', warning: `ln_token_not_found:${lnPublicId}` };
+  }
+  const role = roleRow as { id: string; package_template_id: string; role_key: string };
+
+  // 2. item ↔ template binding check
+  const { data: itemRow } = await input.supabase
+    .from('document_package_template_items')
+    .select('package_template_id')
+    .eq('id', input.packageTemplateItemId)
+    .maybeSingle();
+  if (!itemRow || (itemRow as { package_template_id: string }).package_template_id !== role.package_template_id) {
+    return {
+      resolved: false,
+      code: 'ln_token_outside_bound_package',
+      warning: `ln_token_outside_bound_package:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // 3. assignments → person_ids
+  const { data: asgs } = await input.supabase
+    .from('document_package_item_role_assignments')
+    .select('person_id, sort_order, created_at')
+    .eq('package_session_id', input.packageSessionId)
+    .eq('package_template_item_id', input.packageTemplateItemId)
+    .eq('role_catalog_id', role.id)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  const personIds = ((asgs ?? []) as Array<{ person_id: string | null }>)
+    .map((a) => a.person_id).filter((x): x is string => !!x);
+  if (personIds.length === 0) {
+    return { resolved: false, code: 'role_assignment_missing', warning: `role_assignment_missing:${lnPublicId}.${subField}`, roleKey: role.role_key };
+  }
+
+  // 4. persons with all columns
+  const { data: persons } = await input.supabase
+    .from('legal_details_persons')
+    .select('*')
+    .in('id', personIds);
+  const personById = new Map<string, Record<string, unknown>>(
+    ((persons ?? []) as Array<Record<string, unknown>>).map((p) => [(p as any).id, p]),
+  );
+
+  const rawValues = personIds
+    .map((pid) => personById.get(pid))
+    .filter((p): p is Record<string, unknown> => !!p)
+    .map((p) => extractLnSubFieldRaw(p, spec))
+    .filter((v) => v.length > 0);
+
+  if (rawValues.length === 0) {
+    return {
+      resolved: false,
+      code: 'ln_subfield_value_empty',
+      warning: `ln_subfield_value_empty:${lnPublicId}.${subField}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // multi-policy
+  if (rawValues.length > 1 && spec.multi_policy === 'error') {
+    return {
+      resolved: false,
+      code: 'multiple_persons_for_scalar_role_subfield',
+      warning: `multiple_persons_for_scalar_role_subfield:${lnPublicId}.${subField}:n=${rawValues.length}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  const cs = (caseMod ?? null) as RuCase | null;
+  const fmt = formatMod ?? null;
+  const renderedParts: string[] = [];
+  for (const raw of rawValues) {
+    let v = raw;
+    if (spec.kind === 'name') {
+      v = formatPersonName(raw, { format: (fmt ?? 'full') as PersonNameFormat, case: cs });
+    } else if (spec.kind === 'date') {
+      v = formatLnDate(raw, fmt ?? 'dotted');
+    } else if ((spec.kind === 'address_full' || spec.kind === 'address_part') && cs) {
+      const inf = inflectRu(v, cs);
+      if (inf.applied) v = inf.value;
+    }
+    if (v) renderedParts.push(v);
+  }
+  const value = renderedParts.join('; ');
+  if (!value) {
+    return {
+      resolved: false,
+      code: 'ln_subfield_value_empty',
+      warning: `ln_subfield_value_empty:${lnPublicId}.${subField}`,
+      roleKey: role.role_key,
+    };
+  }
+  return {
+    resolved: true,
+    value,
+    aliasId: role.id,
+    canonicalFieldPublicId: `${lnPublicId}.${subField}`,
+    roleKey: role.role_key,
+    contextKind: 'package_role_ln_sub',
   };
 }
 
@@ -583,6 +742,12 @@ export async function resolvePackageTokenCore(
   }
 
   // Sprint 3H-fix: канонический Word-токен роли — {{ln-XXXXXX}}.
+  // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: sub-field вариант проверяется ДО основного.
+  const LN_SUB_RE = /^ln-(\d{6})\.([a-z_]+)$/;
+  const lnSubMatch = aliasToken.match(LN_SUB_RE);
+  if (lnSubMatch) {
+    return resolveLnSubFieldToken(input, `ln-${lnSubMatch[1]}`, lnSubMatch[2], caseMod, formatMod);
+  }
   const LN_RE = /^ln-\d{6}$/;
   if (LN_RE.test(aliasToken)) {
     return resolveLnRoleToken(input, aliasToken, caseMod, formatMod);

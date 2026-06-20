@@ -122,8 +122,10 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     }
   });
 
-  // Sprint 3H-fix: канон роли — {{ln-XXXXXX}}, legacy package.role.PKR/package.roles.* запрещены в каталоге
-  it("buildPackageRoleItems генерирует ровно один {{ln-XXXXXX}} токен на роль (канон Sprint 3H)", () => {
+  // Sprint 3H-fix + PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1:
+  //   на каждую активную роль каталог отдаёт базовый {{ln-XXXXXX}} +
+  //   per-sub_field copy-ready items (legal_details_persons whitelist).
+  it("buildPackageRoleItems генерирует базовый ln-токен + sub-field items на роль", () => {
     const rows: PackageRoleCatalogRow[] = [
       {
         public_id: "ln-000003",
@@ -151,18 +153,22 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
       },
     ];
     const items = buildPackageRoleItems(rows);
-    expect(items.length).toBe(2);
-    expect(items[0].package_token).toBe("{{ln-000003}}");
-    expect(items[1].package_token).toBe("{{ln-000099}}");
-    expect(items[0].groupId).toBe("package_roles");
-    expect(items[0].status).toBe("copy_ready");
+    // base + N sub-fields per role (N = LN_SUB_FIELD_SPECS.length).
+    const baseTokens = items.filter((i) => /^\{\{ln-\d{6}\}\}$/.test(i.package_token!));
+    expect(baseTokens.length).toBe(2);
+    expect(baseTokens[0].package_token).toBe("{{ln-000003}}");
+    expect(baseTokens[1].package_token).toBe("{{ln-000099}}");
     for (const i of items) {
+      expect(i.groupId).toBe("package_roles");
+      expect(i.status).toBe("copy_ready");
       expect(i.package_token).not.toMatch(/package\.role\.PKR-/);
       expect(i.package_token).not.toMatch(/package\.roles\./);
-      expect(i.package_token).not.toMatch(/\.(full_name|short_name|position)/);
-      // ровно один copy-token
+      // ровно один copy-token (нет legacy `.full_name` без ln-префикса)
       expect((i.package_token!.match(/\{\{/g) || []).length).toBe(1);
     }
+    // среди sub-field items ожидаем passport_number_full, birth_date, address_city.
+    expect(items.some((i) => i.package_token === "{{ln-000003.passport_number_full}}")).toBe(true);
+    expect(items.some((i) => i.package_token === "{{ln-000099.address_city}}")).toBe(true);
   });
 
   it("buildPackageRoleItems отфильтровывает is_active=false", () => {

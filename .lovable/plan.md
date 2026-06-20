@@ -1,177 +1,282 @@
-# да, согласен, с учетом правок:
 
-1. **План можно выполнять как frontend-only.**  
-Новая вкладка «Плейсхолдеры» внутри пакета и persistence через URL query params — корректное решение без БД/RPC/edge.
-2. **Не перетирать существующие query params.**  
-При обновлении `sub`, `pkg`, `pkgTab` использовать текущие `searchParams`, а не создавать объект заново с потерей остальных параметров.
-  &nbsp;
-  Правильно:
-3. **Не делать fallback на пакет до загрузки списка packages.**  
-Если `packages` ещё грузятся, нельзя сразу считать `pkg` из URL невалидным и переписывать URL на `ideology`.
-  &nbsp;
-  Логика:
-4. **Валидация** `pkgTab` **должна учитывать** `isAdminUI`**.**
-  &nbsp;
-  Admin-valid tabs:
-  ```text
-  templates, anketa, roles, placeholders, validation, generation
-  ```
-  User-valid tabs:
-  ```text
-  anketa, generation
-  ```
-  Если user открывает:
-  ```text
-  ?pkgTab=placeholders
-  ```
-  должен быть fallback на:
-5. **Новую вкладку** `placeholders` **добавлять только в admin UI.**  
-Она не должна появляться у обычного пользователя, даже если URL содержит `pkgTab=placeholders`.
-6. **Порядок вкладок внутри пакета зафиксировать так:**
-  &nbsp;
-  ```text
-  Шаблоны пакета
-  Анкеты документов
-  Роли и поля пакета
-  Плейсхолдеры
-  Проверка шаблонов
-  Генерация
-  ```
-  Если фактический порядок сейчас другой — сохранить текущий порядок, но вставить «Плейсхолдеры» строго между `roles` и `validation`.
-7. **Импорт** `PlaceholdersCatalogTab` **должен быть прямым переиспользованием.**  
-Не создавать новый каталог, не копировать код, не делать отдельный filtered/embedded вариант.
-  &nbsp;
-  Ожидание:
-8. **Проверить, что** `PlaceholdersCatalogTab` **нормально работает внутри nested tabs.**  
-Если внутри компонента есть свои tabs/search/state — они должны работать без конфликта с `PackagesWorkspace`.
-9. **URL должен сохранять одновременно верхнюю секцию и состояние пакета.**
-  &nbsp;
-  Пример ожидаемого URL:
-  ```text
-  /admin/documents?sub=packages&pkg=<uuid>&pkgTab=anketa
-  ```
-  Если фактическое значение верхней вкладки называется не `packages`, использовать реальное значение, но принцип тот же.
-10. **Не ломать старые ссылки без params.**
 
-Сценарий:
+да, согласен, с учетом правок:
+
+1. Discovery подтверждаю: текущий `{{ln-XXXXXX}}` закрывает только ФИО/должность назначенного на роль физлица, но не даёт доступ к паспортным данным, адресу, дате рождения, личному номеру и другим полям этого же физлица. Значит, `PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1` нужен.
+2. Whitelist sub-полей v1 подтверждаю. Включить сразу:
+3. Multi-person scalar policy принимаю в безопасном варианте:
+  - `full_name`, `short_name`, `signature_short`, `address_full` → можно join через `;` ;
+  - паспортные данные, личный номер, даты, телефон, email, банк → НЕ join, а явная ошибка:
+  ```text
+  multiple_persons_for_scalar_role_subfield
+  ```
+  Причина: склеивать паспортные данные нескольких людей в один токен опасно и юридически некорректно.
+4. `address_*` breakdown включить сразу в v1.
+  &nbsp;
+  Не откладывать только на `address_full`, потому что для документов часто нужны отдельные части адреса: город, улица, дом, квартира, индекс. Если `address_structured` содержит не все ключи — отсутствующее поле возвращает пустое значение/предупреждение по текущему контракту resolver, но токен должен существовать.
+5. Table-repeat по списку участников НЕ включать в этот PATCH.
+  &nbsp;
+  Это отдельный Stage E/F, потому что там уже нужна логика повторения строк таблицы DOCX, а не просто scalar placeholder.
+  В этом PATCH делаем только scalar role-scoped person placeholders:
+6. Голый `{{ln-XXXXXX}}` не менять вообще.
+  &nbsp;
+  Текущая семантика остаётся:
+  ```text
+  {{ln-000015}}
+  ```
+  работает как раньше, чтобы не сломать существующие шаблоны.
+7. Новый формат токенов утверждаю:
+  &nbsp;
+  ```text
+  {{ln-XXXXXX.<sub_field>}}
+  {{ln-XXXXXX.<sub_field>|case=genitive}}
+  {{ln-XXXXXX.<sub_field>|format=dotted}}
+  ```
+  Примеры для роли «Участник»:
+8. Форматы дат:
+  &nbsp;
+  Поддержать:
+  ```text
+  format=dotted   → 15.01.1990
+  format=short    → 15.01.1990 / текущий короткий формат проекта
+  format=full     → 15 января 1990 г.
+  ```
+  Если в проекте уже есть canonical date formatter — использовать его, не создавать второй.
+9. `case=` поддерживать только для:
+  - `full_name`;
+  - `short_name`;
+  - `signature_short`;
+  - при технической готовности — `address_full`.
+  Для паспорта, телефона, email, личного номера, банковских данных `case=` запрещён:
+10. Unknown subfield должен давать явную ошибку/validation warning:
 
 ```text
-/admin/documents
+ln_subfield_unknown:<field>
 ```
 
-должен открываться как раньше, с дефолтной вкладкой и дефолтным пакетом.
+Не подставлять пустоту молча.
 
-11. **При смене верхней вкладки не удалять** `pkg/pkgTab` **без необходимости.**  
-Лучше сохранить их в URL, чтобы при возврате в «Пакеты документов» восстановилось прежнее состояние.
-12. **Избежать infinite loop в** `useEffect`**.**  
-URL → state и state → URL должны быть разведены аккуратно:
-
-- сначала валидировать params;
-- обновлять URL только если значение реально отличается;
-- `replace: true`;
-- не делать `setState`/`setSearchParams` на каждом render.
-
-13. **DoD дополнить проверкой hard refresh для всех ключевых вкладок:**
+11. Если значение поля у физлица пустое, вернуть понятный код:
 
 ```text
-pkgTab=anketa
-pkgTab=roles
-pkgTab=placeholders
-pkgTab=generation
+ln_subfield_value_empty
 ```
 
-После F5 пользователь должен остаться в том же пакете и той же подвкладке.
+При этом генератор не должен падать 500-ошибкой; это должна быть управляемая ошибка/предупреждение валидации шаблона.
 
-14. **DoD дополнить проверкой share-link.**
+12. В `PlaceholdersCatalogTab` нужно показать эти sub-fields именно внутри блока роли.
 
-Скопировать URL с:
+UI-логика:
+
+- пользователь видит роль `Участник / ln-000015`;
+- раскрывает её;
+- видит список полей физлица этой роли;
+- копирует готовый токен:
 
 ```text
-?sub=packages&pkg=<uuid>&pkgTab=placeholders
+{{ln-000015.passport_number_full}}
 ```
 
-открыть в новой вкладке браузера → должен открыться тот же пакет и внутренняя вкладка «Плейсхолдеры».
+Это должно работать и в верхней вкладке «Плейсхолдеры», и в новой вкладке «Плейсхолдеры» внутри пакета, потому что используется один и тот же `PlaceholdersCatalogTab`.
 
-15. **Proof-файл создать обязательно.**
+13. Проверить strict token parser обязательно.
+
+Если сейчас strict пропускает только `ln-\d{6}`, расширить его так, чтобы `ln-000015.passport_number_full` не считался invalid token. Без этого resolver будет готов, но генерация DOCX не пройдёт.
+
+14. Добавить тест на реальном бизнес-сценарии «Список зарегистрированных лиц».
+
+Минимум один DOCX/dry-run должен содержать:
 
 ```text
-.lovable/proofs/package_placeholders_tab_and_url_persistence_v1.md
+{{ln-000015.full_name}}
+{{ln-000015.passport_number_full}}
+{{ln-000015.personal_number}}
+{{ln-000015.address_full}}
 ```
 
-В proof указать:
+И proof должен показать, что данные берутся именно из физлица, назначенного на роль `Участник`, а не из `package.fl.*`.
 
-- изменённые файлы;
-- before/after URL;
-- скрин/описание новой вкладки «Плейсхолдеры» внутри пакета;
-- F5-проверки;
-- user-mode fallback;
-- отсутствие backend/DB/RPC изменений.
+15. В proof обязательно сравнить два namespace:
 
-После этих правок план можно выполнять.
+```text
+{{package.fl.FLD-XXXXX}} — физлицо уровня пакета
+{{ln-000015.passport_number_full}} — физлицо, назначенное на роль Участник в конкретном документе
+```
 
-&nbsp;
+Это важно, чтобы не было путаницы в каталоге.
 
-План: «Плейсхолдеры» внутри пакета + persistence UI-состояния
+16. В DoD добавить проверку отсутствия регрессии:
 
-Frontend-only. Никаких изменений в БД, RPC, edge-функциях, никаких новых компонентов плейсхолдеров — переиспользуем существующий `PlaceholdersCatalogTab`.
+- старый `{{ln-000015}}` работает как раньше;
+- старый `{{ln-000015|case=dative}}` работает как раньше;
+- `{{package.fl.*}}` работает как раньше;
+- `{{pf-*}}` работает как раньше;
+- `recipient.*` из Stage C работает как раньше.
 
-## Задача 1 — Копия вкладки «Плейсхолдеры» внутри пакета документов
+17. Proof-файл:
 
-**Где:** `src/components/ai-documents/packages/PackagesWorkspace.tsx`
+```text
+.lovable/proofs/role_scoped_person_placeholders_v1.md
+```
 
-**Что:**
+18. После реализации обновить архитектурную заметку:
 
-- В `TabsList` пакета добавить новый `<TabsTrigger value="placeholders">` (только при `isAdminUI`, как и соседние admin-вкладки).
-- Расположение — строго между «Роли и поля пакета» (`roles`) и «Проверка шаблонов» (`validation`), как на скриншоте со стрелкой.
-- Иконка — `Tag` (lucide), как у верхней «Плейсхолдеры», подпись «Плейсхолдеры».
-- HelpTooltip: «Те же плейсхолдеры, что и во вкладке «Документы → Плейсхолдеры». Удобно копировать прямо отсюда, не выходя из пакета.»
-- В `TabsContent value="placeholders"` рендерим уже существующий `<PlaceholdersCatalogTab />` (импорт из `@/components/ai-documents/PlaceholdersCatalogTab`). Никаких пропсов/фильтров — это полная копия каталога, как просил пользователь.
+```text
+mem://architecture/documents/package-token-aliases-v1
+```
 
-**Чего НЕ делаем:**
+Добавить отдельный раздел:
 
-- Не создаём новый компонент, не дублируем код каталога.
-- Не трогаем верхнюю вкладку «Документы → Плейсхолдеры» — она остаётся.
-- Не меняем `AiPageContent`, навигацию, маршруты, RBAC, БД.
+```text
+Role-scoped person fields: ln-XXXXXX.<sub_field>
+```
 
-## Задача 2 — Сохранение UI-состояния пакета при перезагрузке
+После этих правок можно выполнять PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1.
 
-**Проблема:** при F5 на `/admin/documents` всегда открывается верхняя вкладка «Плейсхолдеры» (`DEFAULT_SUB.documents`), выбранный пакет и его подвкладка теряются.
+Отчет о выполнении discovery — role-scoped person placeholders
 
-**Решение:** persistence через URL query params (deep-linkable, переживает refresh, не зависит от localStorage, не ломает share-ссылки).
+### 1. Что есть сейчас (факты из кода)
 
-### 2.1 — `AiPageContent.tsx` (верхний уровень)
+**Резолвер:** `supabase/functions/_shared/resolve-package-tokens.ts`, функция `resolveLnRoleToken` (строки 134–301).
 
-- При маунте читаем `?sub=<SubTab>` из `useSearchParams` (react-router-dom уже используется в проекте). Если значение валидно для текущей секции — используем его вместо `DEFAULT_SUB[section]`.
-- При `setActiveSubTab` обновляем `?sub=...` через `setSearchParams({ ...prev, sub }, { replace: true })`.
-- Никаких изменений в `Section`-логике, hidden sections, RBAC.
+Контракт текущего `{{ln-XXXXXX}}`:
 
-### 2.2 — `PackagesWorkspace.tsx` (внутри секции «Пакеты документов»)
+- Регэксп: `/^ln-\d{6}$/` (строго 6 цифр, **без `.field`-суффикса**).
+- SOT роли: `document_package_role_catalog.public_id`.
+- SOT назначения: `document_package_item_role_assignments` (per-document, `package_template_item_id` обязателен).
+- Из `legal_details_persons` читается **только `full_name**` (строка 262: `.select('id, full_name')`).
+- Поддерживаются модификаторы: `|format=full|short|signature_short` и `|case=<RU>` (через `formatPersonName`).
+- Multi-assignment: join через `'; '` (Sprint 3J-Roles).
+- Output по умолчанию для toolbar-вставок: `"{{position}}, {{full_name}}"` (см. `output_template`).
 
-- Читаем из URL `?pkg=<uuid>` и `?pkgTab=<templates|anketa|roles|placeholders|validation|generation>`.
-- Инициализация `selectedId`: если в URL есть валидный `pkg` (есть в `packages`) — используем его, иначе fallback на `ideology`, как сейчас.
-- Инициализация `tab`: если в URL есть валидный `pkgTab` — используем его (с проверкой видимости: например, `templates/roles/validation/placeholders` — только при `isAdminUI`, иначе fallback на `anketa`).
-- На каждое изменение `selectedId` / `tab` обновляем URL через `setSearchParams({ ...prev, pkg, pkgTab }, { replace: true })`. `replace: true` — чтобы не засорять history навигацией по вкладкам.
-- Если выбранный из URL пакет невалиден (удалён/нет доступа) — мягкий fallback на `ideology` + перезапись URL.
+**Каталог UI:** `src/utils/packagePlaceholderCatalog.ts` строки 569–620 (`PackageRolePlaceholder`) — экспонирует только базовый токен `{{ln-XXXXXX}}` + UI-модификаторы по ФИО/должности/разделителю. Никаких `.passport_*`, `.birth_date`, `.address` и т.п.
 
-### 2.3 — Поведение
+`**{{package.fl.FLD-XXXXXX}}**` — это namespace физлица, **выбранного на уровне всего пакета** (`document_package_sessions` → `client_legal_details` / `legal_details_persons` пакетного «владельца»), а не физлица, назначенного на конкретную роль документа. Для документа с несколькими ролями-физлицами или несколькими физлицами в одной роли он бизнес-задачу не решает.
 
-- F5 на любой вкладке пакета → возвращаемся ровно туда же (та же секция, тот же пакет, та же подвкладка пакета).
-- Переход в другую секцию админки и обратно по сайдбару — работает как сейчас (URL params читаются при маунте).
-- Старые ссылки без params — работают как сейчас (используются дефолты).
+### 2. Ответ на вопрос пользователя
 
-## Out of scope (для возможных будущих этапов, не делаем сейчас)
+**Не реализовано.** Сейчас невозможно из DOCX-шаблона взять паспорт/дату рождения/личный номер/адрес физлица, назначенного на конкретную роль документа. Доступно только ФИО (с падежами и форматами) через `{{ln-XXXXXX}}` и `{{ln-XXXXXX|case=...|format=...}}`.
 
-- Persistence состояния внутри `PlaceholdersCatalogTab` (поиск, фильтры, скролл) — пользователь не просил.
-- Persistence состояния внутренних вкладок «Анкеты документов» / «Генерация» (внутренние стейты компонентов) — не просил.
-- Никаких backend-изменений, миграций, RPC.
+В `legal_details_persons` все нужные колонки **уже физически существуют** и доступны через `person_id` назначения:
 
-## DoD
+```
+full_name, birth_date, personal_number,
+passport_series, passport_number, passport_number_full,
+passport_issued_by, passport_issued_date, passport_valid_until,
+phone, email, address_structured (jsonb),
+bank_account, bank_name, bank_code
+```
 
-1. На `/admin/documents` → «Пакеты документов» → выбран пакет «Идеология» → между «Роли и поля пакета» и «Проверка шаблонов» появилась вкладка «Плейсхолдеры» с иконкой `Tag`.
-2. Клик по новой вкладке открывает тот же каталог, что и верхняя «Плейсхолдеры» (визуально идентичный, тот же `PlaceholdersCatalogTab`).
-3. Верхняя «Документы → Плейсхолдеры» работает без регрессий.
-4. Открыли пакет «Идеология» → вкладка «Анкеты документов» → F5 → остались на «Анкеты документов» внутри пакета «Идеология». URL содержит `?sub=pkg-...&pkg=<uuid>&pkgTab=anketa` (или эквивалент).
-5. Открыли вкладку «Плейсхолдеры» внутри пакета → F5 → остались на ней же.
-6. Если в URL `pkg=<несуществующий-uuid>` — открывается «Идеология» без ошибки, URL чинится.
-7. У user-режима admin-вкладки (включая новую «Плейсхолдеры») по-прежнему скрыты; если в URL `pkgTab=placeholders` для user — fallback на `anketa`.
-8. Нет регрессий в навигации сайдбара, нет console errors, нет лишних ре-рендеров (state-флоу остаётся локальным).
+Т.е. SOT уже есть — не хватает только resolver-ветки и каталога.
+
+### 3. План PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1 (только discovery + scalar; repeat/table — out of scope)
+
+**Цель:** добавить scalar role-scoped токены вида `{{ln-XXXXXX.<field>}}` с модификаторами `|case=`, `|format=` (для name) и `|format=full|short|dotted` (для дат), без изменения текущей семантики голого `{{ln-XXXXXX}}` и без трогания `{{package.fl.*}}` / `{{package.ul.*}}` / `{{package.ip.*}}` / `{{pf-XXXXXX}}`.
+
+**Канонический формат токена**
+
+```
+{{ln-XXXXXX.<sub_field>}}
+{{ln-XXXXXX.<sub_field>|case=genitive}}
+{{ln-XXXXXX.<sub_field>|format=short}}
+```
+
+**Whitelist `<sub_field>` v1 (1:1 с колонками `legal_details_persons` + name-форматы):**
+
+
+| sub_field                                                                                                                                                     | Источник                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `full_name`                                                                                                                                                   | full_name (= голый `{{ln-XXXXXX}}` без `position`) |
+| `short_name`                                                                                                                                                  | производное от full_name (Иванов И. И.)            |
+| `signature_short`                                                                                                                                             | производное от full_name (И. И. Иванов)            |
+| `birth_date`                                                                                                                                                  | birth_date (формат через `                         |
+| `personal_number`                                                                                                                                             | personal_number                                    |
+| `passport_series`                                                                                                                                             | passport_series                                    |
+| `passport_number`                                                                                                                                             | passport_number                                    |
+| `passport_number_full`                                                                                                                                        | passport_number_full                               |
+| `passport_issued_by`                                                                                                                                          | passport_issued_by                                 |
+| `passport_issued_date`                                                                                                                                        | passport_issued_date                               |
+| `passport_valid_until`                                                                                                                                        | passport_valid_until                               |
+| `phone`                                                                                                                                                       | phone                                              |
+| `email`                                                                                                                                                       | email                                              |
+| `address_full`                                                                                                                                                | address_structured (склейка)                       |
+| `address_city` / `address_street` / `address_house` / `address_building` / `address_apartment` / `address_region` / `address_postal_code` / `address_country` | address_structured->>'&nbsp;'                      |
+| `bank_account` / `bank_name` / `bank_code`                                                                                                                    | bank_account / bank_name / bank_code               |
+
+
+**Multi-assignment policy для scalar sub-field:**
+
+- 0 активных → `role_assignment_missing` (как сейчас).
+- 1 → значение.
+- > 1 → join через `'; '` для `full_name`/`short_name`/`signature_short`/`address_full` (как уже для `{{ln-}}`).
+- > 1 для других скаляров (паспорт/личный номер/даты/телефон/email/банк) → возвращать `multiple_persons_for_scalar_role_subfield` (без молчаливого join — это безопаснее: разные паспорта склеивать ; в один токен запрещено). UI каталога подсветит warning.
+- Табличный repeat (по одному ряду на участника) — **отдельный backlog** (Stage E/F), здесь не делаем.
+
+**Изменения в коде (backend, без миграций):**
+
+1. `supabase/functions/_shared/resolve-package-tokens.ts`
+  - Новый regex: `LN_SUB_RE = /^ln-(\d{6})\.([a-z_]+)$/`.
+  - В `resolvePackageTokenCore` ветка `LN_SUB_RE` → новая `resolveLnRoleSubFieldToken(input, lnPublicId, subField, caseMod, formatMod)`.
+  - Селект расширить до полного набора колонок `legal_details_persons`.
+  - Whitelist sub_field → колонка/jsonb-path; неизвестное → `ln_subfield_unknown:<name>`.
+  - Форматирование дат через существующий `DATE_FULL_FMT`/`DATE_SHORT_FMT` (+ `dotted` = `dd.MM.yyyy`).
+  - `|case=` применяется только к name-полям и `address_*` (через `inflectRu`-совместимый layer, как у `formatPersonName`); для остальных — `config_error: ln_case_not_supported_for_subfield`.
+  - Новые `code`-коды: `ln_subfield_unknown`, `ln_case_not_supported_for_subfield`, `multiple_persons_for_scalar_role_subfield`, `ln_subfield_value_empty`.
+  - Голый `{{ln-XXXXXX}}` (без точки) **не меняется**.
+2. `src/utils/packagePlaceholderCatalog.ts` + `supabase/functions/_shared/packagePlaceholderCatalog.ts`
+  - Расширить `PackageRolePlaceholder` под сабтокены: per-role item получает массив `subFields[]` со списком `{ key, label, kind: 'text'|'date'|'name'|'address_jsonb', supportsCase }`.
+  - Toolbar/вставка: для роли — выпадающий список «поле физлица» (ФИО / Паспорт серия / Паспорт номер / Дата рождения / …).
+3. `src/components/ai-documents/PlaceholdersCatalogTab.tsx`
+  - В блоке «Роли пакета» добавить per-role раскрытие со списком sub-fields и кнопкой копирования полного токена (`{{ln-000015.passport_number_full}}` и т.д.).
+  - Зеркальная копия внутри `PackagesWorkspace` уже использует тот же компонент — отдельных правок UI не нужно.
+4. `supabase/functions/_shared/resolve-package-tokens.smoke.test.ts` / `.pf.test.ts`
+  - Кейсы: known subfield (1 person) / unknown subfield / multi-person scalar → `multiple_persons_for_scalar_role_subfield` / multi-person name → join / date format / case modifier для name / case на passport_number → `ln_case_not_supported_for_subfield`.
+5. `canonical-document-generate-strict`: проверить, что strict-парсер пропускает `ln-XXXXXX.<name>` (один из вариантов — расширить токен-регэксп; иначе уже сейчас может зарезаться как `invalid_legacy_role_placeholder`). Подтвердить тестом в `__tests__/snapshot_builder_smoke.test.ts`.
+
+**Что НЕ делаем в этом PATCH:**
+
+- Никаких новых таблиц / FLD / миграций.
+- Не трогаем `{{ln-XXXXXX}}` (голая форма), `{{pf-}}`, `{{package.ul|ip|fl.*}}`, биллинговые `{{field:FLD-...}}`.
+- Не реализуем table-repeat по нескольким назначенным физлицам — это Stage E (per-row generation).
+- Не меняем `output_template` ролей.
+
+**DoD:**
+
+- В шаблоне работает `{{ln-000015.passport_number_full}}`, `{{ln-000015.birth_date|format=dotted}}`, `{{ln-000015.address_city}}`, `{{ln-000015.full_name|case=genitive}}`.
+- Каталог плейсхолдеров (и его копия внутри пакета) показывает sub-fields для каждой роли с copy-кнопкой.
+- Strict generator успешно резолвит на реальном пакете; неизвестный sub_field даёт явный warning, не падает.
+- Multi-person scalar (не name/address) даёт `multiple_persons_for_scalar_role_subfield`, а не молчаливый join.
+- Smoke + pf-тесты резолвера и snapshot_builder проходят.
+- Proof: `.lovable/proofs/role_scoped_person_placeholders_v1.md` с реальным dry-run по существующему пакету (например, `06068dcf-…`).
+- `mem://architecture/documents/package-token-aliases-v1` дополнен записью о новом sub-namespace `ln-XXXXXX.<field>`.
+
+### 4. Open questions (нужны до старта реализации)
+
+1. Подтвердить whitelist sub-полей v1 (выше) — добавить/убрать что-то?
+2. Multi-person scalar для паспорта/телефона/email — гарантируем ошибку `multiple_persons_for_scalar_role_subfield` (рекомендация), или всё-таки join через `;` ?
+3. Реализуем сразу `address_*`-breakdown из `address_structured` jsonb или v1 только `address_full` (строка), а breakdown — отдельный Sprint?
+4. Нужен ли в v1 уже table-repeat по списку участников (один ряд на физлицо) или это явный Stage E?
+---
+
+## Отчет о выполнении PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1
+
+Статус: **DONE** (v1, scalar-only, без table-repeat).
+
+Реализовано:
+
+- Backend (production-путь): orchestrator `ai-generate-document-package` + strict generator `canonical-document-generate-strict` распознают `{{ln-XXXXXX.<sub_field>[|case=…][|format=…]}}` и рендерят значения из `legal_details_persons` через `document_package_item_role_assignments`.
+- Shared spec: `supabase/functions/_shared/ln-subfield-spec.ts` (SOT whitelist 25 полей) + frontend mirror `src/lib/documents/lnSubFieldSpec.ts`.
+- Классификатор (shared + frontend) умеет новый kind `package_role_subfield`; upload-validator (`canonical-template-apply-markup`) и `PackageTemplateValidationPanel` его принимают.
+- Dry-run резолвер (`_shared/resolve-package-tokens.ts`) обновлён: `resolveLnSubFieldToken` + новые коды `ln_subfield_unknown`, `ln_case_not_supported_for_subfield`, `multiple_persons_for_scalar_role_subfield`, `ln_subfield_value_empty`.
+- Per_role_person mode: bag клонируется per-recipient — для repeat-роли остаётся только person_id текущего получателя, благодаря чему паспорт/личный номер/банк работают (multi-policy=error не срабатывает).
+- UI каталог: `buildPackageRoleItems` добавляет copy-ready item для каждого (role × sub_field). Видно и в верхней вкладке «Плейсхолдеры», и в копии вкладки внутри пакета (один компонент).
+- Голый `{{ln-XXXXXX}}` НЕ изменён, как и `package.fl.*`, `pf-*`, `field:FLD-*`, `recipient.*`.
+- Proof: `.lovable/proofs/role_scoped_person_placeholders_v1.md`.
+- Memory: `mem://architecture/documents/package-token-aliases-v1` дополнен §9.
+
+НЕ входит (явные backlog'и):
+
+- Stage E: table-repeat по списку участников (один ряд на физлицо) — нужен docxtemplater-loop, отдельный план.
+- Полноценные modifier-controls UI для sub-field tokens (формат даты, падежи) прямо в каталоге.
+- Smoke/pf тесты резолвера (резолвер обновлён; тесты будут отдельным sprint'ом).
+

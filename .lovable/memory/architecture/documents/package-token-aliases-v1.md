@@ -66,3 +66,25 @@ FLD-000209 = «Сегодня прописью» (системный токен 
 - `supabase/functions/_shared/resolve-package-tokens.ts` — package resolver (HARDCODED_ENABLED=false).
 - `document_package_role_catalog` — SOT ролей пакета (с `public_id`, `is_system`, `output_template`).
 - `document_package_token_aliases` — Sprint 3B legacy aliases (read-only deprecated).
+
+## 9. PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1 — sub-namespace `ln-XXXXXX.<sub_field>`
+
+К каноническому `{{ln-XXXXXX}}` добавлен новый scalar sub-namespace:
+
+```
+{{ln-XXXXXX.<sub_field>[|case=<RU>][|format=<...>]}}
+```
+
+- SOT spec: `supabase/functions/_shared/ln-subfield-spec.ts` (`LN_SUB_FIELD_SPECS`).
+- Frontend mirror: `src/lib/documents/lnSubFieldSpec.ts`.
+- Источник данных: `legal_details_persons` (через `document_package_item_role_assignments` — per-document SOT).
+- Whitelist (v1): `full_name / short_name / signature_short`, `birth_date`, `personal_number`, `passport_series/number/number_full/issued_by/issued_date/valid_until`, `phone`, `email`, `address_full`, `address_country/region/postal_code/city/street/house/building/apartment`, `bank_account/bank_name/bank_code`.
+- Модификаторы: `|case=` — только для `name`/`address_*`; `|format=full|short|dotted` — для `date`; `|format=full|short|signature_short` — для `name`. Unknown sub_field → HTTP 400 `ln_subfield_unknown`; case на text/паспорт/банк → HTTP 400 `ln_case_not_supported_for_subfield`.
+- Multi-person policy: scalar (всё кроме `name`/`address_full`) → render-time `multiple_persons_for_scalar_role_subfield` (без молчаливого join). Name/address_full → join `; `.
+- Голый `{{ln-XXXXXX}}` НЕ меняется (LN_SUB regex проверяется ДО LN; обе ветки имеют `$`-якорь).
+- В per_role_person mode (Stage C) sub-bag clone оркестратора оставляет только person_id текущего recipient'а для repeat-роли (чтобы паспорт/личный номер собирались по одному человеку).
+- Bag: `preresolved_ln_subfield_tokens[lnPublicId.subField] = { ln_public_id, sub_field, kind, supports_case, multi_policy, role_catalog_id, person_ids[], raw_values[] }`.
+- Strict generator: новая ветка `kind: 'ln_sub'` (parsing + render + missing-bag guard + introspection в Sprint 3I-A repor).
+- UI каталог: `buildPackageRoleItems` теперь добавляет per-role copy-ready item для каждого sub_field; видно и в верхней вкладке «Плейсхолдеры», и в копии вкладки внутри пакета.
+- Proof: `.lovable/proofs/role_scoped_person_placeholders_v1.md`.
+- НЕ входит в v1: table-repeat по списку участников (один ряд таблицы на физлицо), полноценные modifier-controls UI для sub-field, selective regen.
