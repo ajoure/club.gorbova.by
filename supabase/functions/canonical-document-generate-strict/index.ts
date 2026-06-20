@@ -1091,7 +1091,9 @@ Deno.serve(async (req) => {
       for (const pt of parsedPackageTokens) {
         const bag = pt.kind === 'ln'
           ? packageContext!.preresolved_ln_tokens
-          : packageContext!.preresolved_package_fields;
+          : pt.kind === 'ln_sub'
+            ? packageContext!.preresolved_ln_subfield_tokens
+            : packageContext!.preresolved_package_fields;
         if (!bag || !Object.prototype.hasOwnProperty.call(bag, pt.bag_key)) {
           missingPkg.push(`{{${pt.raw_inside}}}`);
         }
