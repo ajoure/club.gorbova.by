@@ -583,6 +583,12 @@ export async function resolvePackageTokenCore(
   }
 
   // Sprint 3H-fix: канонический Word-токен роли — {{ln-XXXXXX}}.
+  // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: sub-field вариант проверяется ДО основного.
+  const LN_SUB_RE = /^ln-(\d{6})\.([a-z_]+)$/;
+  const lnSubMatch = aliasToken.match(LN_SUB_RE);
+  if (lnSubMatch) {
+    return resolveLnSubFieldToken(input, `ln-${lnSubMatch[1]}`, lnSubMatch[2], caseMod, formatMod);
+  }
   const LN_RE = /^ln-\d{6}$/;
   if (LN_RE.test(aliasToken)) {
     return resolveLnRoleToken(input, aliasToken, caseMod, formatMod);
