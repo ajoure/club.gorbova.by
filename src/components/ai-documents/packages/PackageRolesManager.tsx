@@ -104,6 +104,20 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
               </Tooltip>
             </TooltipProvider>
           )}
+          {Boolean((r.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]) && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="h-5 gap-1 text-[10px]">
+                    <IdCard className="h-3 w-3" /> реквизиты ФЛ
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  В каталоге плейсхолдеров для этой роли видны паспорт, адрес, дата рождения и другие данные физлица.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
       </div>
       <div className="col-span-7 min-w-0">
