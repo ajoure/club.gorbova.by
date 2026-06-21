@@ -108,6 +108,9 @@ const CASES = new Set<PlaceholderCase>([
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — должен проверяться ДО
+// RE_PACKAGE_ROLE_SUB, чтобы `ln-XXXXXX.custom.<key>` не попадал в sub-field branch.
+const RE_PACKAGE_ROLE_CUSTOM = /^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_ROLE_SUB = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_FIELD  = /^(pf-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_LEGACY_PKR     = /^package\.role\.PKR-\d{6}(?:\|[^}]*)?$/;
