@@ -608,17 +608,39 @@ export interface PackageRoleCatalogRow {
   package_template_name: string;
   output_template: string | null;
   sort_order: number;
+  /**
+   * PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1.
+   * jsonb из document_package_role_catalog.metadata.
+   * Ключ `enable_person_subfields: true` → в каталоге плейсхолдеров
+   * выводятся 25 sub-field токенов физлица, назначенного на эту роль.
+   * По умолчанию (отсутствует или false) — только базовый {{ln-XXXXXX}}
+   * + одна сервисная подсказка «Расширенные данные скрыты».
+   * Бэкенд-резолвер {{ln-XXXXXX.<sub_field>}} НЕ зависит от этой настройки.
+   */
+  metadata: Record<string, unknown> | null;
 }
 
 // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: импорт whitelist sub-полей.
 import { LN_SUB_FIELD_SPECS as _LN_SUB } from "@/lib/documents/lnSubFieldSpec";
+
+/** Локальная группировка sub-fields для каталога (без правки spec'а). */
+type LnSubGroup = "ФИО" | "Паспорт" | "Адрес" | "Контакты" | "Банк" | "Прочее";
+function lnSubFieldGroup(key: string): LnSubGroup {
+  if (key === "full_name" || key === "short_name" || key === "signature_short") return "ФИО";
+  if (key.startsWith("passport_")) return "Паспорт";
+  if (key.startsWith("address_")) return "Адрес";
+  if (key === "phone" || key === "email") return "Контакты";
+  if (key.startsWith("bank_")) return "Банк";
+  if (key === "birth_date" || key === "personal_number") return "Паспорт";
+  return "Прочее";
+}
 
 export function buildPackageRoleItems(
   rows: PackageRoleCatalogRow[],
 ): PackagePlaceholderItem[] {
   const out: PackagePlaceholderItem[] = [];
   for (const r of rows.filter((x) => x.is_active)) {
-    // 1) Базовый токен роли — {{ln-XXXXXX}}.
+    // 1) Базовый токен роли — {{ln-XXXXXX}} (всегда виден).
     out.push({
       groupId: "package_roles",
       label_ru: `${r.package_template_name} — ${r.label}`,
@@ -637,12 +659,51 @@ export function buildPackageRoleItems(
       tech_key: `ln.${r.public_id}`,
       example_value: null,
     });
-    // 2) PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1:
-    //    sub-field токены физлица, назначенного на эту роль.
-    for (const spec of _LN_SUB) {
+
+    // 2) PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1:
+    //    расширенные sub-field токены показываем только если у роли явно
+    //    включена настройка `metadata.enable_person_subfields === true`.
+    const enableSub =
+      Boolean((r.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]) === true;
+
+    if (!enableSub) {
+      // Одна сервисная карточка-подсказка. Не плейсхолдер:
+      //  • package_token = null → колонка «токен» пустая, кнопки «Скопировать» нет;
+      //  • status = "deferred" → существующий бейдж (без новых типов);
+      //  • label_ru намеренно без слов «паспорт/адрес/телефон/банк»,
+      //    чтобы поиск по этим словам не вытаскивал скрытые поля роли;
+      //  • полный пояснительный текст лежит в package_resolver_hint,
+      //    который в поиске каталога НЕ участвует.
       out.push({
         groupId: "package_roles",
-        label_ru: `${r.label} — ${spec.label_ru}`,
+        label_ru: `${r.label} — расширенные данные физлица скрыты`,
+        source_table: "legal_details_persons",
+        source_path: null,
+        billing_fld_analog: null,
+        reused_fld: null,
+        package_token: null,
+        package_resolver_hint:
+          'Расширенные данные физлица скрыты для этой роли. ' +
+          'Включите их в настройках роли (Роли и поля пакета → Редактировать → ' +
+          '«Расширенные данные физлица»), если нужны паспортные данные, адрес, ' +
+          'дата рождения и другие реквизиты. ' +
+          'Бэкенд-резолвер продолжает поддерживать {{' + r.public_id + '.<sub_field>}} ' +
+          'даже при выключенной настройке.',
+        status: "deferred",
+        tech_key: `ln.${r.public_id}.__subfields_hidden_hint__`,
+        example_value: null,
+      });
+      continue;
+    }
+
+    // 3) Расширенные sub-field токены физлица, назначенного на эту роль.
+    //    Префикс группы в label_ru → визуальная группировка
+    //    ФИО / Паспорт / Адрес / Контакты / Банк прямо в таблице каталога.
+    for (const spec of _LN_SUB) {
+      const grp = lnSubFieldGroup(spec.key);
+      out.push({
+        groupId: "package_roles",
+        label_ru: `${r.label} · ${grp} · ${spec.label_ru}`,
         source_table: "legal_details_persons",
         source_path:
           `${r.public_id} → document_package_item_role_assignments → legal_details_persons.` +
@@ -662,4 +723,5 @@ export function buildPackageRoleItems(
   }
   return out;
 }
+
 
