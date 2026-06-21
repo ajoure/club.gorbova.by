@@ -457,8 +457,9 @@ function EditRoleDialog({
         return;
       }
       const v = validateCustomFieldKey(key);
-      if (!v.ok) {
-        errors[i] = v.code === "reserved" ? "Ключ зарезервирован" : "Только латиница, цифры, _, начало с буквы (≤50)";
+      if (v.ok !== true) {
+        const code = (v as { code: string }).code;
+        errors[i] = code === "reserved" ? "Ключ зарезервирован" : "Только латиница, цифры, _, начало с буквы (≤50)";
         return;
       }
       if (seen.has(key)) {
