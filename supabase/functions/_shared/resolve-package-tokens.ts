@@ -84,7 +84,11 @@ export type PackageTokenResolveCode =
   | 'pf_required_value_missing'
   | 'pf_invalid_choice'
   | 'pf_value_type_mismatch'
-  | 'pf_unsupported_modifier';
+  | 'pf_unsupported_modifier'
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: ln-XXXXXX.custom.<key> branch
+  | 'role_no_custom_field_def'
+  | 'multiple_persons_for_scalar_role_custom_field'
+  | 'ln_custom_value_empty';
 
 export type PackageTokenResolveResult =
   | {
