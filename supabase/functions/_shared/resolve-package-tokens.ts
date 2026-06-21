@@ -879,6 +879,15 @@ export async function resolvePackageTokenCore(
     };
   }
 
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: {{ln-XXXXXX.custom.<key>}}.
+  // Должен проверяться ДО LN_SUB_RE, иначе sub-field-резолвер
+  // зацепит `custom` как unknown sub-field.
+  const LN_CUSTOM_RE = /^ln-(\d{6})\.custom\.([a-z][a-z0-9_]{0,49})$/;
+  const lnCustomMatch = aliasToken.match(LN_CUSTOM_RE);
+  if (lnCustomMatch) {
+    return resolveLnCustomToken(input, `ln-${lnCustomMatch[1]}`, lnCustomMatch[2]);
+  }
+
   // Sprint 3H-fix: канонический Word-токен роли — {{ln-XXXXXX}}.
   // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: sub-field вариант проверяется ДО основного.
   const LN_SUB_RE = /^ln-(\d{6})\.([a-z_]+)$/;
