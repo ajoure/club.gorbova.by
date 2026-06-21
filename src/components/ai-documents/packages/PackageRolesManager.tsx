@@ -31,7 +31,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield, ChevronDown, ChevronRight, Search, IdCard } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   usePackageRoleCatalog,
