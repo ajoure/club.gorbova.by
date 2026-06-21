@@ -21,7 +21,24 @@ export interface AtomicFieldPatch {
 export interface AtomicRoleAssignment {
   role_catalog_id: string;
   person_id: string;
+  /**
+   * Position contract (PATCH-DPIRA-METADATA-MERGE-V1):
+   *   undefined → не трогаем; null|"" → удаляем metadata.position; non-empty → save.
+   */
   position?: string | null;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: тот же контракт, что у position.
+   * Опциональное поле, RPC merge-aware (см. миграцию dpira_metadata_merge_v1 extension).
+   */
+  position_gender?: string | null;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   undefined        — не трогаем metadata.custom
+   *   { [key]: "" }    — явная очистка значения по этому ключу
+   *   { [key]: value } — запись значения
+   * RPC merge-aware: остальные ключи metadata.custom сохраняются.
+   */
+  custom?: Record<string, string>;
   sort_order?: number;
 }
 
