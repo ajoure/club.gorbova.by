@@ -143,6 +143,7 @@ Deno.serve(async (req) => {
       package_session_id: sessionId,
       alias_tokens_count: aliasTokens.length,
       alias_tokens: aliasTokens,
+      package_template_item_id: packageTemplateItemId,
       codes: codeCounts,
     },
   });
