@@ -145,9 +145,11 @@ export function useDocumentItemRoleAssignments(
           }
 
           // custom: undefined → сохраняем prevCustom; иначе merge новых в prev.
+          // Stage E.1a contract: keepEmpty=true → пустая строка означает
+          // явную очистку значения (metadata.custom[key] = ""), а не удаление ключа.
           const customForMerge =
             a.custom === undefined ? prevCustom : { ...prevCustom, ...a.custom };
-          const meta = mergeAssignmentMetadataWithCustom(base, customForMerge);
+          const meta = mergeAssignmentMetadataWithCustom(base, customForMerge, { keepEmpty: true });
 
           return {
             package_session_id: packageSessionId,
