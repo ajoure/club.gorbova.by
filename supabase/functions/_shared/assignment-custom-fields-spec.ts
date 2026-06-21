@@ -4,15 +4,17 @@
  * Mirror для: src/lib/documents/assignmentCustomFieldsSpec.ts
  * При изменениях обновлять оба файла одновременно.
  *
- * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1.
+ * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1 + E.1a.
  */
 
 export type AssignmentCustomFieldType = "text" | "number" | "percent" | "date";
+export type AssignmentCustomFieldKindV1 = "scalar_text";
 
 export interface AssignmentCustomFieldDef {
   key: string;
   label: string;
   type: AssignmentCustomFieldType;
+  kind?: AssignmentCustomFieldKindV1;
   placeholder?: string;
   required?: boolean;
 }
@@ -72,6 +74,7 @@ export function readAssignmentCustomFieldDefs(
     if (!isValidCustomFieldKey(key)) continue;
     if (type !== "text" && type !== "number" && type !== "percent" && type !== "date") continue;
     const def: AssignmentCustomFieldDef = { key, label, type };
+    if (obj.kind === "scalar_text") def.kind = "scalar_text";
     if (typeof obj.placeholder === "string") def.placeholder = obj.placeholder;
     if (typeof obj.required === "boolean") def.required = obj.required;
     out.push(def);
@@ -94,10 +97,16 @@ export function readAssignmentCustomValues(
   return out;
 }
 
+export interface MergeCustomOptions {
+  keepEmpty?: boolean;
+}
+
 export function mergeAssignmentMetadataWithCustom(
   existingMetadata: Record<string, unknown> | null | undefined,
   custom: Record<string, string> | undefined,
+  options?: MergeCustomOptions,
 ): Record<string, unknown> {
+  const keepEmpty = options?.keepEmpty === true;
   const base: Record<string, unknown> =
     existingMetadata && typeof existingMetadata === "object"
       ? { ...existingMetadata }
@@ -108,7 +117,7 @@ export function mergeAssignmentMetadataWithCustom(
       if (!isValidCustomFieldKey(k)) continue;
       if (v == null) continue;
       const str = typeof v === "string" ? v : String(v);
-      if (str.length === 0) continue;
+      if (str.length === 0 && !keepEmpty) continue;
       cleanCustom[k] = str;
     }
   }
