@@ -94,6 +94,10 @@ Deno.serve(async (req) => {
   if (!UUID_RE.test(sessionId)) return bad(400, 'invalid_package_session_id');
   if (aliasTokens.length === 0) return bad(400, 'alias_tokens_required');
   if (aliasTokens.length > 20) return bad(400, 'too_many_tokens_max_20');
+  const packageTemplateItemId =
+    typeof body.package_template_item_id === 'string' && UUID_RE.test(body.package_template_item_id)
+      ? body.package_template_item_id
+      : null;
 
   // 5. Resolve каждый токен через CORE (минуя HARDCODED_ENABLED).
   const results = [];
@@ -102,6 +106,7 @@ Deno.serve(async (req) => {
     const r = await resolvePackageTokenCore({
       rawToken: raw,
       packageSessionId: sessionId,
+      packageTemplateItemId,
       supabase: service,
     });
     if (r.resolved) {
