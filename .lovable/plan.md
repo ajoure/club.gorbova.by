@@ -255,3 +255,12 @@ Proof `.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`:
 `Stage E.1a — PASS: custom fields schema + values UI + dry-run scalar resolver. Реальная DOCX-подстановка перенесена в E.4.`
 
 После E.1a — отдельный отчёт. К E.2 не переходить без подтверждения.
+---
+
+## Stage E.1a — EXECUTED (2026-06-21)
+
+**Статус: PASS — custom fields schema + values UI + dry-run scalar resolver.**
+**Реальная DOCX-подстановка `{{ln-XXXXXX.custom.<key>}}` перенесена в Stage E.4.**
+
+Proof: `.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`.
+Миграция: `..._e1a_custom_fields_extend_rpc.sql` (тело RPC, сигнатура / RLS / GRANT не менялись).
