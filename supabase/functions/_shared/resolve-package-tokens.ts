@@ -464,6 +464,140 @@ async function resolveLnSubFieldToken(
 }
 
 // ============================================================================
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a
+// ----------------------------------------------------------------------------
+// {{ln-XXXXXX.custom.<key>}} — scalar custom assignment field.
+//
+// Контракт (dry-run only; реальная DOCX-подстановка в Stage E.4):
+//   • Schema SOT:    document_package_role_catalog.metadata.assignment_custom_fields[]
+//   • Values SOT:    document_package_item_role_assignments.metadata.custom.<key>
+//   • Strict scope:  package_session_id + package_template_item_id + role_catalog_id
+//                    + is_active=true + person_id IS NOT NULL.
+//   • Состояния:
+//       ok                                            — 1 assignment + ключ в schema + значение.
+//       ln_token_not_found                            — public_id не найден в catalog.
+//       ln_token_outside_bound_package                — роль из другого пакета.
+//       role_no_custom_field_def                      — ключ не объявлен в schema роли.
+//       role_assignment_missing                       — 0 active assignments (тот же код,
+//                                                       что у sub-field резолвера).
+//       multiple_persons_for_scalar_role_custom_field — >1 active assignments
+//                                                       (controlled warning, не error).
+//       ln_custom_value_empty                         — значение отсутствует / пустая строка.
+// ============================================================================
+
+async function resolveLnCustomToken(
+  input: PackageTokenResolveInput,
+  lnPublicId: string,
+  customKey: string,
+): Promise<PackageTokenResolveResult> {
+  if (!input.packageTemplateItemId) {
+    return { resolved: false, code: 'config_error', warning: 'ln_token_requires_package_template_item_id' };
+  }
+
+  // 1. role catalog row + schema
+  const { data: roleRow } = await input.supabase
+    .from('document_package_role_catalog')
+    .select('id, package_template_id, role_key, metadata')
+    .eq('public_id', lnPublicId)
+    .maybeSingle();
+  if (!roleRow) {
+    return { resolved: false, code: 'ln_token_not_found', warning: `ln_token_not_found:${lnPublicId}` };
+  }
+  const role = roleRow as {
+    id: string;
+    package_template_id: string;
+    role_key: string;
+    metadata: Record<string, unknown> | null;
+  };
+
+  // 2. item ↔ template binding
+  const { data: itemRow } = await input.supabase
+    .from('document_package_template_items')
+    .select('package_template_id')
+    .eq('id', input.packageTemplateItemId)
+    .maybeSingle();
+  if (!itemRow || (itemRow as { package_template_id: string }).package_template_id !== role.package_template_id) {
+    return {
+      resolved: false,
+      code: 'ln_token_outside_bound_package',
+      warning: `ln_token_outside_bound_package:${lnPublicId}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // 3. Schema check — есть ли ключ в assignment_custom_fields[]
+  const defs = Array.isArray(role.metadata?.['assignment_custom_fields'])
+    ? (role.metadata!['assignment_custom_fields'] as Array<Record<string, unknown>>)
+    : [];
+  const hasDef = defs.some((d) => typeof d?.key === 'string' && d.key === customKey);
+  if (!hasDef) {
+    return {
+      resolved: false,
+      code: 'role_no_custom_field_def',
+      warning: `role_no_custom_field_def:${lnPublicId}.${customKey}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // 4. active assignments (scope: session + item + role)
+  const { data: asgs } = await input.supabase
+    .from('document_package_item_role_assignments')
+    .select('person_id, metadata, sort_order, created_at')
+    .eq('package_session_id', input.packageSessionId)
+    .eq('package_template_item_id', input.packageTemplateItemId)
+    .eq('role_catalog_id', role.id)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  const rows = ((asgs ?? []) as Array<{ person_id: string | null; metadata: unknown }>)
+    .filter((r) => r.person_id != null);
+  if (rows.length === 0) {
+    // Same code as sub-field resolver to keep UI behavior consistent.
+    return {
+      resolved: false,
+      code: 'role_assignment_missing',
+      warning: `role_assignment_missing:${lnPublicId}.custom.${customKey}`,
+      roleKey: role.role_key,
+    };
+  }
+  if (rows.length > 1) {
+    return {
+      resolved: false,
+      code: 'multiple_persons_for_scalar_role_custom_field',
+      warning: `multiple_persons_for_scalar_role_custom_field:${lnPublicId}.custom.${customKey}:n=${rows.length}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  // 5. read value
+  const meta = (rows[0].metadata && typeof rows[0].metadata === 'object')
+    ? (rows[0].metadata as Record<string, unknown>)
+    : {};
+  const custom = (meta['custom'] && typeof meta['custom'] === 'object')
+    ? (meta['custom'] as Record<string, unknown>)
+    : {};
+  const raw = custom[customKey];
+  const value = raw == null ? '' : String(raw);
+  if (value.length === 0) {
+    return {
+      resolved: false,
+      code: 'ln_custom_value_empty',
+      warning: `ln_custom_value_empty:${lnPublicId}.custom.${customKey}`,
+      roleKey: role.role_key,
+    };
+  }
+
+  return {
+    resolved: true,
+    value,
+    aliasId: role.id,
+    canonicalFieldPublicId: `${lnPublicId}.custom.${customKey}`,
+    roleKey: role.role_key,
+    contextKind: 'package_role_ln_custom',
+  };
+}
+
+// ============================================================================
 // PATCH-PACKAGE-CUSTOM-FIELDS-V1: pf-XXXXXX (per-package custom field) branch
 // ----------------------------------------------------------------------------
 // Контракт:
