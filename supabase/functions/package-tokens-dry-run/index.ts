@@ -27,6 +27,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 interface Body {
   package_session_id?: unknown;
   alias_tokens?: unknown;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   Опционально. Нужен для ln-XXXXXX, ln-XXXXXX.<sub_field> и
+   *   ln-XXXXXX.custom.<key> резолверов (document-level SOT).
+   */
+  package_template_item_id?: unknown;
 }
 
 function bad(status: number, error: string, extra?: Record<string, unknown>) {
