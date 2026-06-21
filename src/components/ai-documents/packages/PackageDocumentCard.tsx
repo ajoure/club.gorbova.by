@@ -866,74 +866,109 @@ export function PackageDocumentCard({
                 <div className="space-y-1.5">
                   {draft.map((row) => {
                     const isRequired = requiredRoleIds.has(row.role_catalog_id);
+                    const customDefs = customSchemaByRoleId.get(row.role_catalog_id) ?? [];
                     return (
                       <div
                         key={row.uid}
                         className={cn(
-                          "flex items-start gap-1.5 rounded-md border p-2 transition-colors",
+                          "rounded-md border p-2 transition-colors space-y-1.5",
                           isRequired
                             ? "border-primary/30 bg-primary/[0.03]"
                             : "border-border/60 bg-background/40",
                         )}
                       >
-                        <Select
-                          value={row.role_catalog_id}
-                          onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}
-                        >
-                          <SelectTrigger className="h-8 text-[11px] flex-1">
-                            <SelectValue placeholder="Роль…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {activeRoles.map((r) => (
-                              <SelectItem key={r.id} value={r.id} className="text-[11px]">
-                                {r.label}
-                                {r.required && (
-                                  <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400">
-                                    (обяз.)
-                                  </span>
-                                )}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={row.person_id}
-                          onValueChange={(v) => updateRow(row.uid, { person_id: v })}
-                        >
-                          <SelectTrigger className="h-8 text-[11px] flex-1">
-                            <SelectValue placeholder="Физлицо…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {personsLoading ? (
-                              <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
-                            ) : persons.filter((p) => p.is_active).length === 0 ? (
-                              <div className="px-2 py-1 text-[11px] text-muted-foreground">
-                                Нет физлиц. Добавьте их во вкладке «Реквизиты».
-                              </div>
-                            ) : (
-                              persons.filter((p) => p.is_active).map((p) => (
-                                <SelectItem key={p.id} value={p.id} className="text-[11px]">
-                                  {p.full_name ?? "—"}
+                        <div className="flex items-start gap-1.5">
+                          <Select
+                            value={row.role_catalog_id}
+                            onValueChange={(v) => {
+                              // Перерасчёт custom: оставляем только ключи, которые есть в schema новой роли.
+                              const nextDefs = customSchemaByRoleId.get(v) ?? [];
+                              const nextCustom: Record<string, string> = {};
+                              for (const d of nextDefs) {
+                                nextCustom[d.key] = row.custom[d.key] ?? "";
+                              }
+                              updateRow(row.uid, { role_catalog_id: v, custom: nextCustom });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-[11px] flex-1">
+                              <SelectValue placeholder="Роль…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {activeRoles.map((r) => (
+                                <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                                  {r.label}
+                                  {r.required && (
+                                    <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400">
+                                      (обяз.)
+                                    </span>
+                                  )}
                                 </SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          value={row.position}
-                          onChange={(e) => updateRow(row.uid, { position: e.target.value })}
-                          placeholder="Должность (опц.)"
-                          className="h-8 text-[11px] flex-1"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeRow(row.uid)}
-                          aria-label="Удалить назначение"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={row.person_id}
+                            onValueChange={(v) => updateRow(row.uid, { person_id: v })}
+                          >
+                            <SelectTrigger className="h-8 text-[11px] flex-1">
+                              <SelectValue placeholder="Физлицо…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {personsLoading ? (
+                                <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
+                              ) : persons.filter((p) => p.is_active).length === 0 ? (
+                                <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                                  Нет физлиц. Добавьте их во вкладке «Реквизиты».
+                                </div>
+                              ) : (
+                                persons.filter((p) => p.is_active).map((p) => (
+                                  <SelectItem key={p.id} value={p.id} className="text-[11px]">
+                                    {p.full_name ?? "—"}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={row.position}
+                            onChange={(e) => updateRow(row.uid, { position: e.target.value })}
+                            placeholder="Должность (опц.)"
+                            className="h-8 text-[11px] flex-1"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeRow(row.uid)}
+                            aria-label="Удалить назначение"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        {/* PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+                            custom assignment fields для этой роли. */}
+                        {customDefs.length > 0 && (
+                          <div className="grid grid-cols-2 gap-1.5 pl-1">
+                            {customDefs.map((d) => (
+                              <div key={d.key} className="space-y-0.5">
+                                <div className="text-[10px] text-muted-foreground font-medium">
+                                  {d.label}
+                                  <code className="ml-1 font-mono opacity-60">{d.key}</code>
+                                </div>
+                                <Input
+                                  value={row.custom[d.key] ?? ""}
+                                  onChange={(e) =>
+                                    updateRow(row.uid, {
+                                      custom: { ...row.custom, [d.key]: e.target.value },
+                                    })
+                                  }
+                                  placeholder={d.placeholder ?? `${d.label}…`}
+                                  className="h-7 text-[11px]"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
