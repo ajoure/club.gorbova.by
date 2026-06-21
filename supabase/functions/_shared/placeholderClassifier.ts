@@ -107,6 +107,8 @@ const CASES = new Set<PlaceholderCase>([
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — проверять ДО RE_PACKAGE_ROLE_SUB.
+const RE_PACKAGE_ROLE_CUSTOM = /^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})((?:\|[a-z_]+=[a-z_]+)*)$/;
 // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: {{ln-XXXXXX.<sub_field>[|...]}}.
 // Sub-field whitelist валидируется backend-резолвером (LN_SUB_FIELD_SPECS);
 // классификатор остаётся pure-синтаксическим.
