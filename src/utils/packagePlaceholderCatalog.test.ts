@@ -125,7 +125,7 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
   // Sprint 3H-fix + PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1:
   //   на каждую активную роль каталог отдаёт базовый {{ln-XXXXXX}} +
   //   per-sub_field copy-ready items (legal_details_persons whitelist).
-  it("buildPackageRoleItems генерирует базовый ln-токен + sub-field items на роль", () => {
+  it("buildPackageRoleItems генерирует базовый ln-токен + sub-field items на роль (при enable_person_subfields=true)", () => {
     const rows: PackageRoleCatalogRow[] = [
       {
         public_id: "ln-000003",
@@ -138,6 +138,7 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
         package_template_name: "Идеология",
         output_template: null,
         sort_order: 3,
+        metadata: { enable_person_subfields: true },
       },
       {
         public_id: "ln-000099",
@@ -150,11 +151,12 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
         package_template_name: "Идеология",
         output_template: "{{full_name}} ({{position}})",
         sort_order: 99,
+        metadata: { enable_person_subfields: true },
       },
     ];
     const items = buildPackageRoleItems(rows);
     // base + N sub-fields per role (N = LN_SUB_FIELD_SPECS.length).
-    const baseTokens = items.filter((i) => /^\{\{ln-\d{6}\}\}$/.test(i.package_token!));
+    const baseTokens = items.filter((i) => /^\{\{ln-\d{6}\}\}$/.test(i.package_token ?? ""));
     expect(baseTokens.length).toBe(2);
     expect(baseTokens[0].package_token).toBe("{{ln-000003}}");
     expect(baseTokens[1].package_token).toBe("{{ln-000099}}");
@@ -171,17 +173,41 @@ describe("packagePlaceholderCatalog — Sprint 3D/3F", () => {
     expect(items.some((i) => i.package_token === "{{ln-000099.address_city}}")).toBe(true);
   });
 
+  // PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1.
+  it("buildPackageRoleItems по умолчанию (enable_person_subfields отсутствует) скрывает 25 sub-fields и выдаёт одну сервисную подсказку", () => {
+    const rows: PackageRoleCatalogRow[] = [
+      {
+        public_id: "ln-000050", role_key: "auditor", label: "Ревизор",
+        description: null, is_system: false, is_active: true,
+        package_template_id: "p", package_template_name: "P",
+        output_template: null, sort_order: 1, metadata: null,
+      },
+    ];
+    const items = buildPackageRoleItems(rows);
+    const copyReady = items.filter((i) => i.status === "copy_ready");
+    const hints = items.filter((i) => i.status === "deferred");
+    expect(copyReady.length).toBe(1);
+    expect(copyReady[0].package_token).toBe("{{ln-000050}}");
+    expect(hints.length).toBe(1);
+    expect(hints[0].package_token).toBeNull();
+    expect(hints[0].label_ru).not.toMatch(/паспорт/i);
+    expect(hints[0].label_ru).not.toMatch(/адрес/i);
+    // никаких {{ln-000050.<sub>}} не должно быть
+    expect(items.some((i) => /^\{\{ln-000050\.[a-z_]+\}\}$/.test(i.package_token ?? ""))).toBe(false);
+  });
+
   it("buildPackageRoleItems отфильтровывает is_active=false", () => {
     const rows: PackageRoleCatalogRow[] = [
       {
         public_id: "ln-000001", role_key: "x", label: "X",
         description: null, is_system: true, is_active: false,
         package_template_id: "p", package_template_name: "P",
-        output_template: null, sort_order: 1,
+        output_template: null, sort_order: 1, metadata: null,
       },
     ];
     expect(buildPackageRoleItems(rows)).toEqual([]);
   });
+
 
   it("в каталоге групп нет legacy package.roles.<key>.* и package.role.PKR- токенов", () => {
     const stringified = JSON.stringify(PACKAGE_PLACEHOLDER_CATALOG);
