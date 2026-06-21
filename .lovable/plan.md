@@ -1,4 +1,13 @@
-# да, согласен, с учетом правок:
+# PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1
+
+**Текущий статус:** Stage E.0.1 ✅ Discovery → Stage E.1 ✅ Storage+Specs → **ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ** для Stage E.1a.
+
+Proof'ы:
+- `.lovable/proofs/docx_table_repeat_by_role_e01_discovery.md`
+- `.lovable/proofs/docx_table_repeat_by_role_e1_storage.md`
+
+---
+
 
 1. План в целом правильный. Главное исправление после моего предыдущего замечания учтено: `votes`, `share_percent` и любые будущие данные не должны быть хардкодом, а должны быть **custom fields назначения роли**.
   &nbsp;

@@ -4548,6 +4548,7 @@ export type Database = {
           generation_mode: string
           id: string
           is_required: boolean
+          metadata: Json
           package_template_id: string
           repeat_role_catalog_id: string | null
           sort_order: number
@@ -4559,6 +4560,7 @@ export type Database = {
           generation_mode?: string
           id?: string
           is_required?: boolean
+          metadata?: Json
           package_template_id: string
           repeat_role_catalog_id?: string | null
           sort_order?: number
@@ -4570,6 +4572,7 @@ export type Database = {
           generation_mode?: string
           id?: string
           is_required?: boolean
+          metadata?: Json
           package_template_id?: string
           repeat_role_catalog_id?: string | null
           sort_order?: number
