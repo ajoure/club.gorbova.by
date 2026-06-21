@@ -112,6 +112,15 @@ interface DraftRow {
   role_catalog_id: string;
   person_id: string;
   position: string;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   Локальный draft значений custom assignment fields. Ключи — это `key`
+   *   из schema роли (role.metadata.assignment_custom_fields[]). Значения —
+   *   строки, пустая строка означает явную очистку (v1 keepEmpty=true).
+   *   Старые «orphan»-значения (по ключам, удалённым из schema) в этот
+   *   объект не подтягиваются, в UI не показываются и не очищаются автоматически.
+   */
+  custom: Record<string, string>;
 }
 
 function newUid() {
@@ -120,8 +129,11 @@ function newUid() {
 
 function rowsEqual(a: DraftRow[], b: DraftRow[]): boolean {
   if (a.length !== b.length) return false;
-  const norm = (r: DraftRow) =>
-    `${r.role_catalog_id}|${r.person_id}|${r.position.trim()}`;
+  const norm = (r: DraftRow) => {
+    const customKeys = Object.keys(r.custom).sort();
+    const customStr = customKeys.map((k) => `${k}=${r.custom[k]}`).join("&");
+    return `${r.role_catalog_id}|${r.person_id}|${r.position.trim()}|${customStr}`;
+  };
   const sa = a.map(norm).sort();
   const sb = b.map(norm).sort();
   for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
