@@ -206,18 +206,37 @@ export function PackageDocumentCard({
   const [baseline, setBaseline] = useState<DraftRow[] | null>(null);
   const [fieldsDirty, setFieldsDirty] = useState(false);
 
+  // Хелпер: map role_id → custom schema (assignment_custom_fields[]).
+  const customSchemaByRoleId = useMemo(() => {
+    const m = new Map<string, AssignmentCustomFieldDef[]>();
+    for (const r of activeRoles) {
+      m.set(r.id, readAssignmentCustomFieldDefs(r.metadata));
+    }
+    return m;
+  }, [activeRoles]);
+
   useEffect(() => {
     if (rolesLoading) return;
     if (draft !== null) return;
-    const initial = assignments.map((a) => ({
-      uid: a.id,
-      role_catalog_id: a.role_catalog_id,
-      person_id: a.person_id ?? "",
-      position: ((a.metadata as any)?.position as string) ?? "",
-    }));
+    const initial: DraftRow[] = assignments.map((a) => {
+      // Гидратируем custom только по ключам ТЕКУЩЕЙ schema роли (orphan-policy).
+      const defs = customSchemaByRoleId.get(a.role_catalog_id) ?? [];
+      const allValues = readAssignmentCustomValues(a.metadata);
+      const custom: Record<string, string> = {};
+      for (const d of defs) {
+        custom[d.key] = allValues[d.key] ?? "";
+      }
+      return {
+        uid: a.id,
+        role_catalog_id: a.role_catalog_id,
+        person_id: a.person_id ?? "",
+        position: ((a.metadata as any)?.position as string) ?? "",
+        custom,
+      };
+    });
     setDraft(initial);
     setBaseline(initial);
-  }, [rolesLoading, assignments, draft]);
+  }, [rolesLoading, assignments, draft, customSchemaByRoleId]);
 
   // ---------- роли: required vs optional ----------
   const requiredRoleIds = useMemo(
