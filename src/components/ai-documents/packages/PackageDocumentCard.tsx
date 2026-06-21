@@ -81,6 +81,12 @@ export interface PackageDocumentCardRole {
   role_key: string;
   public_id: string;
   required?: boolean;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   `metadata.assignment_custom_fields[]` определяет per-assignment custom поля
+   *   роли. Если null/пусто — custom-инпуты не рендерятся.
+   */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface PackageDocumentCardProps {
