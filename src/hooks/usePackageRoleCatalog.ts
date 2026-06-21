@@ -58,6 +58,13 @@ export interface UpdatePackageRoleInput {
   sort_order?: number;
   output_template?: string | null;
   is_active?: boolean;
+  /**
+   * PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1.
+   * Частичный патч ключей metadata. Хук читает текущий metadata из БД
+   * и делает merge `{ ...current, ...metadata }`, чтобы не затереть
+   * остальные ключи jsonb.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 const QK = (packageTemplateId: string | null) => ["package-role-catalog", packageTemplateId];
