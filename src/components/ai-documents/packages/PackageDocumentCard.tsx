@@ -294,7 +294,7 @@ export function PackageDocumentCard({
       : undefined;
     setDraft((prev) => [
       ...(prev ?? []),
-      { uid: newUid(), role_catalog_id: role?.id ?? "", person_id: "", position: "" },
+      { uid: newUid(), role_catalog_id: role?.id ?? "", person_id: "", position: "", custom: {} },
     ]);
   };
   const updateRow = (uid: string, patch: Partial<DraftRow>) => {
