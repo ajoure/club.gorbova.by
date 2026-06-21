@@ -38,6 +38,12 @@ import {
   usePackageRoleCatalog,
   type PackageRoleRow,
 } from "@/hooks/usePackageRoleCatalog";
+import {
+  readAssignmentCustomFieldDefs,
+  validateCustomFieldKey,
+  type AssignmentCustomFieldDef,
+} from "@/lib/documents/assignmentCustomFieldsSpec";
+import { Trash2 } from "lucide-react";
 
 interface Props {
   packageTemplateId: string | null;
