@@ -13,11 +13,21 @@
  * STOP:
  *  • НЕ трогаем canonical-document-generate-strict, Gotenberg, billing resolver.
  *  • НЕ пишем в `document_package_session_participants` (legacy).
+ *
+ * PATCH-DPIRA-METADATA-MERGE-V1:
+ *  Replace-save больше не теряет существующие верхнеуровневые ключи
+ *  `metadata` (`custom`, `position_gender`, …). prevMeta снимается до
+ *  архивации и переносится в новую активную запись с учётом контракта
+ *  `position` / `position_gender` / `custom`.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import {
+  mergeAssignmentMetadataWithCustom,
+  readAssignmentCustomValues,
+} from "@/lib/documents/assignmentCustomFieldsSpec";
 
 export interface ItemRoleAssignmentRow {
   id: string;
@@ -35,7 +45,23 @@ export interface ItemRoleAssignmentRow {
 export interface ItemAssignmentInput {
   role_catalog_id: string;
   person_id: string;
+  /**
+   * Position contract (PATCH-DPIRA-METADATA-MERGE-V1):
+   *   undefined        — не трогаем существующее metadata.position
+   *   null | ""        — удаляем metadata.position
+   *   non-empty string — сохраняем
+   */
   position?: string | null;
+  /**
+   * Position gender — тот же контракт, что у position.
+   */
+  position_gender?: string | null;
+  /**
+   * Custom values (role.assignment_custom_fields).
+   *   undefined        — не трогаем metadata.custom
+   *   Record<key, str> — merge через mergeAssignmentMetadataWithCustom
+   */
+  custom?: Record<string, string>;
   sort_order?: number;
 }
 
@@ -67,11 +93,6 @@ export function useDocumentItemRoleAssignments(
     enabled: !!packageSessionId && !!packageTemplateItemId,
   });
 
-  /**
-   * Replace-save для одного документа пакета.
-   * Old approach: soft-archive все активные + insert новые. Атомарность —
-   * backlog (RPC `replace_item_role_assignments`).
-   */
   const saveMutation = useMutation({
     mutationFn: async (assignments: ItemAssignmentInput[]) => {
       if (!packageSessionId || !packageTemplateItemId) {
@@ -79,7 +100,20 @@ export function useDocumentItemRoleAssignments(
       }
       if (!user) throw new Error("Не авторизован");
 
-      // 1. Архивируем все текущие активные (нельзя hard-delete политикой).
+      // 0. Снимаем prevMeta активных строк до архивации.
+      const prevByKey = new Map<string, Record<string, unknown>>();
+      for (const row of listQuery.data ?? []) {
+        if (!row.role_catalog_id || !row.person_id) continue;
+        const key = `${row.role_catalog_id}|${row.person_id}`;
+        prevByKey.set(
+          key,
+          (row.metadata && typeof row.metadata === "object"
+            ? (row.metadata as Record<string, unknown>)
+            : {}) as Record<string, unknown>,
+        );
+      }
+
+      // 1. Архивируем все текущие активные.
       const { error: archErr } = await supabase
         .from("document_package_item_role_assignments" as any)
         .update({ is_active: false, updated_by: user.id })
@@ -88,12 +122,33 @@ export function useDocumentItemRoleAssignments(
         .eq("is_active", true);
       if (archErr) throw archErr;
 
-      // 2. Вставляем новые активные.
+      // 2. Вставляем новые активные с merged metadata.
       const rows = assignments
         .filter((a) => a.role_catalog_id && a.person_id)
         .map((a, idx) => {
-          const pos = typeof a.position === "string" ? a.position.trim() : "";
-          const meta: Record<string, string> = pos ? { position: pos } : {};
+          const prev = prevByKey.get(`${a.role_catalog_id}|${a.person_id}`) ?? {};
+          const base: Record<string, unknown> = { ...prev };
+          const prevCustom = readAssignmentCustomValues(prev);
+          delete base.custom;
+
+          // position contract
+          if (a.position !== undefined) {
+            const t = typeof a.position === "string" ? a.position.trim() : "";
+            if (t.length > 0) base.position = t;
+            else delete base.position;
+          }
+          // position_gender contract
+          if (a.position_gender !== undefined) {
+            const g = typeof a.position_gender === "string" ? a.position_gender.trim() : "";
+            if (g.length > 0) base.position_gender = g;
+            else delete base.position_gender;
+          }
+
+          // custom: undefined → сохраняем prevCustom; иначе merge новых в prev.
+          const customForMerge =
+            a.custom === undefined ? prevCustom : { ...prevCustom, ...a.custom };
+          const meta = mergeAssignmentMetadataWithCustom(base, customForMerge);
+
           return {
             package_session_id: packageSessionId,
             package_template_item_id: packageTemplateItemId,
