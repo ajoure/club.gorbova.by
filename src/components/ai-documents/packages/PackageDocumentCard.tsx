@@ -313,12 +313,23 @@ export function PackageDocumentCard({
     const fieldsPatch = fieldsRef.current?.getDirtyPatch() ?? [];
     const rolesDesired = (draft ?? [])
       .filter((r) => r.role_catalog_id && r.person_id)
-      .map((r, idx) => ({
-        role_catalog_id: r.role_catalog_id,
-        person_id: r.person_id,
-        position: r.position.trim() || null,
-        sort_order: (idx + 1) * 10,
-      }));
+      .map((r, idx) => {
+        // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+        //   передаём ТОЛЬКО те ключи custom, которые описаны в ТЕКУЩЕЙ
+        //   schema роли. Orphan-значения остаются в БД (per-key merge на RPC).
+        const defs = customSchemaByRoleId.get(r.role_catalog_id) ?? [];
+        const custom: Record<string, string> = {};
+        for (const d of defs) {
+          custom[d.key] = r.custom[d.key] ?? "";
+        }
+        return {
+          role_catalog_id: r.role_catalog_id,
+          person_id: r.person_id,
+          position: r.position.trim() || null,
+          custom: defs.length > 0 ? custom : undefined,
+          sort_order: (idx + 1) * 10,
+        };
+      });
 
     try {
       const res = await atomicSave.mutateAsync({
