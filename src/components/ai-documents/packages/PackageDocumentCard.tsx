@@ -64,6 +64,11 @@ import { useRepeatableDocumentStaleness } from "@/hooks/useRepeatableDocumentSta
 import { Label } from "@/components/ui/label";
 import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
+import {
+  readAssignmentCustomFieldDefs,
+  readAssignmentCustomValues,
+  type AssignmentCustomFieldDef,
+} from "@/lib/documents/assignmentCustomFieldsSpec";
 
 export interface PackageDocumentCardItem {
   id: string;
