@@ -16,10 +16,20 @@
 
 export type AssignmentCustomFieldType = "text" | "number" | "percent" | "date";
 
+/**
+ * v1 «scalar_text»-alias (PATCH-E1a). Используется только в UI-редакторе схемы
+ * для упрощённой формы (key/label). Для storage/резолва маппится в `type:'text'`.
+ * Существующие типы text|number|percent|date НЕ удаляются — они уже могут
+ * использоваться в `tableRepeatSpec` и более поздних этапах.
+ */
+export type AssignmentCustomFieldKindV1 = "scalar_text";
+
 export interface AssignmentCustomFieldDef {
   key: string;
   label: string;
   type: AssignmentCustomFieldType;
+  /** v1 UI hint; не нарушает контракт `type`. */
+  kind?: AssignmentCustomFieldKindV1;
   placeholder?: string;
   required?: boolean;
 }
