@@ -58,6 +58,13 @@ export interface UpdatePackageRoleInput {
   sort_order?: number;
   output_template?: string | null;
   is_active?: boolean;
+  /**
+   * PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1.
+   * Частичный патч ключей metadata. Хук читает текущий metadata из БД
+   * и делает merge `{ ...current, ...metadata }`, чтобы не затереть
+   * остальные ключи jsonb.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 const QK = (packageTemplateId: string | null) => ["package-role-catalog", packageTemplateId];
@@ -152,10 +159,31 @@ export function usePackageRoleCatalog(packageTemplateId: string | null) {
 
   const updateMutation = useMutation({
     mutationFn: async (input: UpdatePackageRoleInput) => {
-      const { id, ...patch } = input;
+      const { id, metadata: metadataPatch, ...patch } = input;
+
+      // PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1:
+      // merge metadata, чтобы не затереть остальные ключи jsonb.
+      let mergedMetadata: Record<string, unknown> | undefined;
+      if (metadataPatch && Object.keys(metadataPatch).length > 0) {
+        const { data: current, error: fetchErr } = await supabase
+          .from("document_package_role_catalog")
+          .select("metadata")
+          .eq("id", id)
+          .single();
+        if (fetchErr) throw fetchErr;
+        const currentObj =
+          (current?.metadata && typeof current.metadata === "object" && !Array.isArray(current.metadata)
+            ? (current.metadata as Record<string, unknown>)
+            : {});
+        mergedMetadata = { ...currentObj, ...metadataPatch };
+      }
+
+      const updatePayload: Record<string, unknown> = { ...patch };
+      if (mergedMetadata !== undefined) updatePayload.metadata = mergedMetadata;
+
       const { error } = await supabase
         .from("document_package_role_catalog")
-        .update(patch)
+        .update(updatePayload as any)
         .eq("id", id);
       if (error) throw error;
     },

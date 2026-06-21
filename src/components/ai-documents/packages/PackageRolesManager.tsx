@@ -31,7 +31,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Copy, Plus, Pencil, Archive, RotateCcw, Lock, Shield, ChevronDown, ChevronRight, Search, IdCard } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   usePackageRoleCatalog,
@@ -99,6 +100,20 @@ export function PackageRolesManager({ packageTemplateId }: Props) {
                 </TooltipTrigger>
                 <TooltipContent>
                   Системную роль нельзя удалить и переименовать — она нужна для работы пакета.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {Boolean((r.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]) && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="h-5 gap-1 text-[10px]">
+                    <IdCard className="h-3 w-3" /> реквизиты ФЛ
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  В каталоге плейсхолдеров для этой роли видны паспорт, адрес, дата рождения и другие данные физлица.
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -368,15 +383,25 @@ function EditRoleDialog({
   onSave: (patch: {
     label?: string;
     description?: string | null;
+    metadata?: Record<string, unknown>;
   }) => void;
 }) {
   const [label, setLabel] = useState(row?.label ?? "");
   const [description, setDescription] = useState(row?.description ?? "");
+  const [enableSubfields, setEnableSubfields] = useState<boolean>(
+    Boolean((row?.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]),
+  );
+  const initialEnableSubfields = Boolean(
+    (row?.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"],
+  );
 
   useEffect(() => {
     if (row) {
       setLabel(row.label ?? "");
       setDescription(row.description ?? "");
+      setEnableSubfields(
+        Boolean((row.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]),
+      );
     }
   }, [row]);
 
@@ -406,15 +431,45 @@ function EditRoleDialog({
               rows={2}
             />
           </div>
+          {/* PATCH-ROLE-SCOPED-PLACEHOLDERS-CATALOG-VISIBILITY-V1 */}
+          <div className="rounded-md border p-3 space-y-2 bg-muted/30">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-0.5">
+                <Label className="text-sm">Расширенные данные физлица</Label>
+                <p className="text-xs text-muted-foreground">
+                  Показывать паспортные, адресные и личные данные для этой роли
+                  в каталоге плейсхолдеров. Бэкенд продолжит резолвить
+                  <code className="mx-1">{`{{${row.public_id}.<sub_field>}}`}</code>
+                  даже если переключатель выключен — это управляет только
+                  видимостью в каталоге.
+                </p>
+              </div>
+              <Switch
+                checked={enableSubfields}
+                onCheckedChange={setEnableSubfields}
+                aria-label="Показывать расширенные данные физлица"
+              />
+            </div>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
           <Button
             disabled={updating || !label.trim()}
-            onClick={() => onSave({
-              label: label.trim(),
-              description: description?.trim() || null,
-            })}
+            onClick={() => {
+              const patch: {
+                label?: string;
+                description?: string | null;
+                metadata?: Record<string, unknown>;
+              } = {
+                label: label.trim(),
+                description: description?.trim() || null,
+              };
+              if (enableSubfields !== initialEnableSubfields) {
+                patch.metadata = { enable_person_subfields: enableSubfields };
+              }
+              onSave(patch);
+            }}
           >
             Сохранить
           </Button>
