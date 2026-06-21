@@ -723,6 +723,37 @@ export function buildPackageRoleItems(
       });
     }
   }
+
+  // 4) PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+  //    custom assignment fields роли. Items добавляются ТОЛЬКО если у роли
+  //    есть непустой `metadata.assignment_custom_fields[]`. Видимость не
+  //    зависит от `enable_person_subfields` (это другая семантика).
+  for (const r of rows.filter((x) => x.is_active)) {
+    const defs = readAssignmentCustomFieldDefs(r.metadata);
+    if (defs.length === 0) continue;
+    for (const def of defs) {
+      out.push({
+        groupId: "package_roles",
+        label_ru: `${r.label} · Доп. поле · ${def.label}`,
+        source_table: null,
+        source_path:
+          `${r.public_id} → document_package_item_role_assignments.metadata.custom.${def.key}`,
+        billing_fld_analog: null,
+        reused_fld: null,
+        package_token: `{{${r.public_id}.custom.${def.key}}}`,
+        package_resolver_hint:
+          'Скалярное доп. поле назначения роли. ' +
+          'Для обычного scalar-токена роль должна иметь ровно одно активное назначение. ' +
+          'Если назначений несколько, используйте table-repeat (Stage E.2/E.3). ' +
+          'Реальная DOCX-подстановка станет доступна в Stage E.4; ' +
+          'в текущем этапе токен резолвится только в package-tokens-dry-run.',
+        status: "copy_ready",
+        tech_key: `ln.${r.public_id}.custom.${def.key}`,
+        example_value: null,
+      });
+    }
+  }
+
   return out;
 }
 
