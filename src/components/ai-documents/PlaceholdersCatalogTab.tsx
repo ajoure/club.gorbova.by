@@ -309,7 +309,7 @@ export function PlaceholdersCatalogTab() {
         .from("document_package_role_catalog")
         .select(`
           public_id, role_key, label, description, is_system, is_active,
-          package_template_id, output_template, sort_order,
+          package_template_id, output_template, sort_order, metadata,
           package:document_package_templates!document_package_role_catalog_package_template_id_fkey(name)
         `)
         .eq("is_active", true)
@@ -330,6 +330,7 @@ export function PlaceholdersCatalogTab() {
         package_template_name: r.package?.name ?? "—",
         output_template: r.output_template ?? null,
         sort_order: r.sort_order ?? 0,
+        metadata: (r.metadata ?? null) as Record<string, unknown> | null,
       }));
       setPackageRoleRows(mapped);
     })();
