@@ -622,6 +622,8 @@ export interface PackageRoleCatalogRow {
 
 // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: импорт whitelist sub-полей.
 import { LN_SUB_FIELD_SPECS as _LN_SUB } from "@/lib/documents/lnSubFieldSpec";
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: чтение схемы custom-полей роли.
+import { readAssignmentCustomFieldDefs } from "@/lib/documents/assignmentCustomFieldsSpec";
 
 /** Локальная группировка sub-fields для каталога (без правки spec'а). */
 type LnSubGroup = "ФИО" | "Паспорт" | "Адрес" | "Контакты" | "Банк" | "Прочее";
