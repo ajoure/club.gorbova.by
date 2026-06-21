@@ -71,6 +71,16 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+      //   {{ln-XXXXXX.custom.<key>}} — scalar custom assignment field.
+      //   Резолв только в package-tokens-dry-run (Stage E.1a);
+      //   реальная DOCX-подстановка переносится в Stage E.4.
+      kind: 'package_role_custom_field';
+      public_id: string;        // ln-XXXXXX
+      custom_key: string;       // ^[a-z][a-z0-9_]{0,49}$
+      case_modifier: PlaceholderCase | null;
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
