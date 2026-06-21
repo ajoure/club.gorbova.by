@@ -27,6 +27,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 interface Body {
   package_session_id?: unknown;
   alias_tokens?: unknown;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   Опционально. Нужен для ln-XXXXXX, ln-XXXXXX.<sub_field> и
+   *   ln-XXXXXX.custom.<key> резолверов (document-level SOT).
+   */
+  package_template_item_id?: unknown;
 }
 
 function bad(status: number, error: string, extra?: Record<string, unknown>) {
@@ -88,6 +94,10 @@ Deno.serve(async (req) => {
   if (!UUID_RE.test(sessionId)) return bad(400, 'invalid_package_session_id');
   if (aliasTokens.length === 0) return bad(400, 'alias_tokens_required');
   if (aliasTokens.length > 20) return bad(400, 'too_many_tokens_max_20');
+  const packageTemplateItemId =
+    typeof body.package_template_item_id === 'string' && UUID_RE.test(body.package_template_item_id)
+      ? body.package_template_item_id
+      : null;
 
   // 5. Resolve каждый токен через CORE (минуя HARDCODED_ENABLED).
   const results = [];
@@ -96,6 +106,7 @@ Deno.serve(async (req) => {
     const r = await resolvePackageTokenCore({
       rawToken: raw,
       packageSessionId: sessionId,
+      packageTemplateItemId,
       supabase: service,
     });
     if (r.resolved) {
@@ -132,6 +143,7 @@ Deno.serve(async (req) => {
       package_session_id: sessionId,
       alias_tokens_count: aliasTokens.length,
       alias_tokens: aliasTokens,
+      package_template_item_id: packageTemplateItemId,
       codes: codeCounts,
     },
   });

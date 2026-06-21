@@ -16,10 +16,20 @@
 
 export type AssignmentCustomFieldType = "text" | "number" | "percent" | "date";
 
+/**
+ * v1 «scalar_text»-alias (PATCH-E1a). Используется только в UI-редакторе схемы
+ * для упрощённой формы (key/label). Для storage/резолва маппится в `type:'text'`.
+ * Существующие типы text|number|percent|date НЕ удаляются — они уже могут
+ * использоваться в `tableRepeatSpec` и более поздних этапах.
+ */
+export type AssignmentCustomFieldKindV1 = "scalar_text";
+
 export interface AssignmentCustomFieldDef {
   key: string;
   label: string;
   type: AssignmentCustomFieldType;
+  /** v1 UI hint; не нарушает контракт `type`. */
+  kind?: AssignmentCustomFieldKindV1;
   placeholder?: string;
   required?: boolean;
 }
@@ -88,6 +98,7 @@ export function readAssignmentCustomFieldDefs(
     if (!isValidCustomFieldKey(key)) continue;
     if (type !== "text" && type !== "number" && type !== "percent" && type !== "date") continue;
     const def: AssignmentCustomFieldDef = { key, label, type };
+    if (obj.kind === "scalar_text") def.kind = "scalar_text";
     if (typeof obj.placeholder === "string") def.placeholder = obj.placeholder;
     if (typeof obj.required === "boolean") def.required = obj.required;
     out.push(def);
@@ -114,6 +125,16 @@ export function readAssignmentCustomValues(
   return out;
 }
 
+export interface MergeCustomOptions {
+  /**
+   * v1 (PATCH-E1a): по контракту custom — `""` ОЗНАЧАЕТ явную пустую строку
+   * (`metadata.custom[key] = ""`), а НЕ «удалить ключ». Контракт `position`/
+   * `position_gender` отдельный: `""` для них = удалить ключ верхнего уровня.
+   * Default false — поведение старого кода (пустые отбрасываются).
+   */
+  keepEmpty?: boolean;
+}
+
 /**
  * Merge новых custom values с существующим metadata назначения, СОХРАНЯЯ
  * системные ключи верхнего уровня (`position`, `position_gender` и т.п.).
@@ -122,7 +143,9 @@ export function readAssignmentCustomValues(
 export function mergeAssignmentMetadataWithCustom(
   existingMetadata: Record<string, unknown> | null | undefined,
   custom: Record<string, string> | undefined,
+  options?: MergeCustomOptions,
 ): Record<string, unknown> {
+  const keepEmpty = options?.keepEmpty === true;
   const base: Record<string, unknown> =
     existingMetadata && typeof existingMetadata === "object"
       ? { ...existingMetadata }
@@ -133,15 +156,13 @@ export function mergeAssignmentMetadataWithCustom(
       if (!isValidCustomFieldKey(k)) continue;
       if (v == null) continue;
       const str = typeof v === "string" ? v : String(v);
-      // Пустые значения не пишем (чтобы не плодить шум) — но и не падаем.
-      if (str.length === 0) continue;
+      if (str.length === 0 && !keepEmpty) continue;
       cleanCustom[k] = str;
     }
   }
   if (Object.keys(cleanCustom).length > 0) {
     base.custom = cleanCustom;
   } else {
-    // Удаляем пустой custom, чтобы не оставлять `{ custom: {} }` в БД.
     delete base.custom;
   }
   return base;

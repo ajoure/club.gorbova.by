@@ -38,6 +38,12 @@ import {
   usePackageRoleCatalog,
   type PackageRoleRow,
 } from "@/hooks/usePackageRoleCatalog";
+import {
+  readAssignmentCustomFieldDefs,
+  validateCustomFieldKey,
+  type AssignmentCustomFieldDef,
+} from "@/lib/documents/assignmentCustomFieldsSpec";
+import { Trash2 } from "lucide-react";
 
 interface Props {
   packageTemplateId: string | null;
@@ -395,6 +401,14 @@ function EditRoleDialog({
     (row?.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"],
   );
 
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: custom assignment fields schema.
+  const initialDefs = useMemo<AssignmentCustomFieldDef[]>(
+    () => readAssignmentCustomFieldDefs(row?.metadata),
+    [row?.metadata],
+  );
+  const [customDefs, setCustomDefs] = useState<AssignmentCustomFieldDef[]>(initialDefs);
+  const [keyErrors, setKeyErrors] = useState<Record<number, string>>({});
+
   useEffect(() => {
     if (row) {
       setLabel(row.label ?? "");
@@ -402,13 +416,111 @@ function EditRoleDialog({
       setEnableSubfields(
         Boolean((row.metadata as Record<string, unknown> | null | undefined)?.["enable_person_subfields"]),
       );
+      setCustomDefs(readAssignmentCustomFieldDefs(row.metadata));
+      setKeyErrors({});
     }
   }, [row]);
 
   if (!row) return null;
+
+  const addDef = () => {
+    setCustomDefs((prev) => [
+      ...prev,
+      { key: "", label: "", type: "text", kind: "scalar_text" },
+    ]);
+  };
+  const updateDef = (idx: number, patch: Partial<AssignmentCustomFieldDef>) => {
+    setCustomDefs((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)));
+  };
+  const removeDef = (idx: number) => {
+    setCustomDefs((prev) => prev.filter((_, i) => i !== idx));
+    setKeyErrors((prev) => {
+      const next: Record<number, string> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = Number(k);
+        if (ki < idx) next[ki] = v;
+        else if (ki > idx) next[ki - 1] = v;
+      });
+      return next;
+    });
+  };
+
+  const validateAll = (): boolean => {
+    const errors: Record<number, string> = {};
+    const seen = new Set<string>();
+    customDefs.forEach((d, i) => {
+      const key = d.key.trim();
+      const label = d.label.trim();
+      if (!key && !label) return; // пустая строка — игнор при save
+      if (!key) {
+        errors[i] = "Укажите технический ключ";
+        return;
+      }
+      const v = validateCustomFieldKey(key);
+      if (v.ok !== true) {
+        const code = (v as { code: string }).code;
+        errors[i] = code === "reserved" ? "Ключ зарезервирован" : "Только латиница, цифры, _, начало с буквы (≤50)";
+        return;
+      }
+      if (seen.has(key)) {
+        errors[i] = "Дублирующийся ключ";
+        return;
+      }
+      seen.add(key);
+      if (!label) errors[i] = "Укажите название";
+    });
+    setKeyErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSave = () => {
+    if (!validateAll()) {
+      toast.error("Исправьте ошибки в доп. полях роли");
+      return;
+    }
+    // Соберём metadata-patch ТОЛЬКО из тех ключей, что реально меняются.
+    // usePackageRoleCatalog re-читает текущий metadata и делает shallow merge —
+    // чтобы не затереть прочие ключи (например, enable_person_subfields).
+    const metaPatch: Record<string, unknown> = {};
+    if (enableSubfields !== initialEnableSubfields) {
+      metaPatch.enable_person_subfields = enableSubfields;
+    }
+    const cleanDefs = customDefs
+      .map((d) => ({ ...d, key: d.key.trim(), label: d.label.trim() }))
+      .filter((d) => d.key.length > 0 && d.label.length > 0);
+    const defsChanged =
+      cleanDefs.length !== initialDefs.length ||
+      cleanDefs.some((d, i) =>
+        !initialDefs[i] ||
+        d.key !== initialDefs[i].key ||
+        d.label !== initialDefs[i].label ||
+        d.type !== initialDefs[i].type ||
+        d.kind !== initialDefs[i].kind,
+      );
+    if (defsChanged) {
+      // Storage: оставляем `type:'text'` для forward-compat, plus v1-kind alias.
+      metaPatch.assignment_custom_fields = cleanDefs.map((d) => ({
+        key: d.key,
+        label: d.label,
+        type: d.type ?? "text",
+        kind: d.kind ?? "scalar_text",
+      }));
+    }
+    const patch: {
+      label?: string;
+      description?: string | null;
+      metadata?: Record<string, unknown>;
+    } = {
+      label: label.trim(),
+      description: description?.trim() || null,
+    };
+    if (Object.keys(metaPatch).length > 0) patch.metadata = metaPatch;
+    onSave(patch);
+  };
+
   return (
     <Dialog open={!!row} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             Редактирование роли · <span className="font-mono text-sm">{row.public_id}</span>
@@ -418,7 +530,7 @@ function EditRoleDialog({
             остаётся прежним, поэтому уже настроенные шаблоны продолжат работать.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto">
           <div>
             <Label>Название роли</Label>
             <Input value={label} onChange={(e) => setLabel(e.target.value)} />
@@ -451,25 +563,72 @@ function EditRoleDialog({
               />
             </div>
           </div>
+
+          {/* PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: custom fields schema */}
+          <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+            <div className="space-y-1">
+              <Label className="text-sm">Доп. поля назначения роли</Label>
+              <p className="text-xs text-muted-foreground">
+                Скалярные поля, которые администратор пакета заполняет на каждое
+                назначение роли в анкете документа. Токен в Word:
+                <code className="mx-1">{`{{${row.public_id}.custom.<key>}}`}</code>.
+                Для обычного scalar-токена роль должна иметь ровно одно активное
+                назначение — иначе при dry-run появится предупреждение.
+                Реальная DOCX-подстановка появится в Stage E.4.
+              </p>
+            </div>
+            {customDefs.length === 0 ? (
+              <div className="text-xs text-muted-foreground italic">
+                Доп. полей пока нет. Можно добавить, например, «Голоса» или «Доля».
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {customDefs.map((d, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2 items-start">
+                    <div className="col-span-4">
+                      <Input
+                        value={d.key}
+                        onChange={(e) => updateDef(i, { key: e.target.value })}
+                        placeholder="ключ (votes)"
+                        className="h-8 font-mono text-xs"
+                      />
+                    </div>
+                    <div className="col-span-7">
+                      <Input
+                        value={d.label}
+                        onChange={(e) => updateDef(i, { label: e.target.value })}
+                        placeholder="Название (Голоса)"
+                        className="h-8 text-xs"
+                      />
+                      {keyErrors[i] && (
+                        <p className="text-[10px] text-destructive mt-0.5">{keyErrors[i]}</p>
+                      )}
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeDef(i)}
+                        aria-label="Удалить поле"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant="outline" onClick={addDef} className="h-8">
+              <Plus className="h-3.5 w-3.5 mr-1" /> Добавить доп. поле
+            </Button>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
           <Button
             disabled={updating || !label.trim()}
-            onClick={() => {
-              const patch: {
-                label?: string;
-                description?: string | null;
-                metadata?: Record<string, unknown>;
-              } = {
-                label: label.trim(),
-                description: description?.trim() || null,
-              };
-              if (enableSubfields !== initialEnableSubfields) {
-                patch.metadata = { enable_person_subfields: enableSubfields };
-              }
-              onSave(patch);
-            }}
+            onClick={handleSave}
           >
             Сохранить
           </Button>

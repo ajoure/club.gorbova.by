@@ -64,6 +64,11 @@ import { useRepeatableDocumentStaleness } from "@/hooks/useRepeatableDocumentSta
 import { Label } from "@/components/ui/label";
 import { PackageFieldsClientForm, type PackageFieldsSubmitHandle } from "./PackageFieldsClientForm";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
+import {
+  readAssignmentCustomFieldDefs,
+  readAssignmentCustomValues,
+  type AssignmentCustomFieldDef,
+} from "@/lib/documents/assignmentCustomFieldsSpec";
 
 export interface PackageDocumentCardItem {
   id: string;
@@ -81,6 +86,12 @@ export interface PackageDocumentCardRole {
   role_key: string;
   public_id: string;
   required?: boolean;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   `metadata.assignment_custom_fields[]` определяет per-assignment custom поля
+   *   роли. Если null/пусто — custom-инпуты не рендерятся.
+   */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface PackageDocumentCardProps {
@@ -101,6 +112,15 @@ interface DraftRow {
   role_catalog_id: string;
   person_id: string;
   position: string;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+   *   Локальный draft значений custom assignment fields. Ключи — это `key`
+   *   из schema роли (role.metadata.assignment_custom_fields[]). Значения —
+   *   строки, пустая строка означает явную очистку (v1 keepEmpty=true).
+   *   Старые «orphan»-значения (по ключам, удалённым из schema) в этот
+   *   объект не подтягиваются, в UI не показываются и не очищаются автоматически.
+   */
+  custom: Record<string, string>;
 }
 
 function newUid() {
@@ -109,8 +129,11 @@ function newUid() {
 
 function rowsEqual(a: DraftRow[], b: DraftRow[]): boolean {
   if (a.length !== b.length) return false;
-  const norm = (r: DraftRow) =>
-    `${r.role_catalog_id}|${r.person_id}|${r.position.trim()}`;
+  const norm = (r: DraftRow) => {
+    const customKeys = Object.keys(r.custom).sort();
+    const customStr = customKeys.map((k) => `${k}=${r.custom[k]}`).join("&");
+    return `${r.role_catalog_id}|${r.person_id}|${r.position.trim()}|${customStr}`;
+  };
   const sa = a.map(norm).sort();
   const sb = b.map(norm).sort();
   for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
@@ -183,18 +206,37 @@ export function PackageDocumentCard({
   const [baseline, setBaseline] = useState<DraftRow[] | null>(null);
   const [fieldsDirty, setFieldsDirty] = useState(false);
 
+  // Хелпер: map role_id → custom schema (assignment_custom_fields[]).
+  const customSchemaByRoleId = useMemo(() => {
+    const m = new Map<string, AssignmentCustomFieldDef[]>();
+    for (const r of activeRoles) {
+      m.set(r.id, readAssignmentCustomFieldDefs(r.metadata));
+    }
+    return m;
+  }, [activeRoles]);
+
   useEffect(() => {
     if (rolesLoading) return;
     if (draft !== null) return;
-    const initial = assignments.map((a) => ({
-      uid: a.id,
-      role_catalog_id: a.role_catalog_id,
-      person_id: a.person_id ?? "",
-      position: ((a.metadata as any)?.position as string) ?? "",
-    }));
+    const initial: DraftRow[] = assignments.map((a) => {
+      // Гидратируем custom только по ключам ТЕКУЩЕЙ schema роли (orphan-policy).
+      const defs = customSchemaByRoleId.get(a.role_catalog_id) ?? [];
+      const allValues = readAssignmentCustomValues(a.metadata);
+      const custom: Record<string, string> = {};
+      for (const d of defs) {
+        custom[d.key] = allValues[d.key] ?? "";
+      }
+      return {
+        uid: a.id,
+        role_catalog_id: a.role_catalog_id,
+        person_id: a.person_id ?? "",
+        position: ((a.metadata as any)?.position as string) ?? "",
+        custom,
+      };
+    });
     setDraft(initial);
     setBaseline(initial);
-  }, [rolesLoading, assignments, draft]);
+  }, [rolesLoading, assignments, draft, customSchemaByRoleId]);
 
   // ---------- роли: required vs optional ----------
   const requiredRoleIds = useMemo(
@@ -252,7 +294,7 @@ export function PackageDocumentCard({
       : undefined;
     setDraft((prev) => [
       ...(prev ?? []),
-      { uid: newUid(), role_catalog_id: role?.id ?? "", person_id: "", position: "" },
+      { uid: newUid(), role_catalog_id: role?.id ?? "", person_id: "", position: "", custom: {} },
     ]);
   };
   const updateRow = (uid: string, patch: Partial<DraftRow>) => {
@@ -271,12 +313,23 @@ export function PackageDocumentCard({
     const fieldsPatch = fieldsRef.current?.getDirtyPatch() ?? [];
     const rolesDesired = (draft ?? [])
       .filter((r) => r.role_catalog_id && r.person_id)
-      .map((r, idx) => ({
-        role_catalog_id: r.role_catalog_id,
-        person_id: r.person_id,
-        position: r.position.trim() || null,
-        sort_order: (idx + 1) * 10,
-      }));
+      .map((r, idx) => {
+        // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+        //   передаём ТОЛЬКО те ключи custom, которые описаны в ТЕКУЩЕЙ
+        //   schema роли. Orphan-значения остаются в БД (per-key merge на RPC).
+        const defs = customSchemaByRoleId.get(r.role_catalog_id) ?? [];
+        const custom: Record<string, string> = {};
+        for (const d of defs) {
+          custom[d.key] = r.custom[d.key] ?? "";
+        }
+        return {
+          role_catalog_id: r.role_catalog_id,
+          person_id: r.person_id,
+          position: r.position.trim() || null,
+          custom: defs.length > 0 ? custom : undefined,
+          sort_order: (idx + 1) * 10,
+        };
+      });
 
     try {
       const res = await atomicSave.mutateAsync({
@@ -813,74 +866,109 @@ export function PackageDocumentCard({
                 <div className="space-y-1.5">
                   {draft.map((row) => {
                     const isRequired = requiredRoleIds.has(row.role_catalog_id);
+                    const customDefs = customSchemaByRoleId.get(row.role_catalog_id) ?? [];
                     return (
                       <div
                         key={row.uid}
                         className={cn(
-                          "flex items-start gap-1.5 rounded-md border p-2 transition-colors",
+                          "rounded-md border p-2 transition-colors space-y-1.5",
                           isRequired
                             ? "border-primary/30 bg-primary/[0.03]"
                             : "border-border/60 bg-background/40",
                         )}
                       >
-                        <Select
-                          value={row.role_catalog_id}
-                          onValueChange={(v) => updateRow(row.uid, { role_catalog_id: v })}
-                        >
-                          <SelectTrigger className="h-8 text-[11px] flex-1">
-                            <SelectValue placeholder="Роль…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {activeRoles.map((r) => (
-                              <SelectItem key={r.id} value={r.id} className="text-[11px]">
-                                {r.label}
-                                {r.required && (
-                                  <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400">
-                                    (обяз.)
-                                  </span>
-                                )}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={row.person_id}
-                          onValueChange={(v) => updateRow(row.uid, { person_id: v })}
-                        >
-                          <SelectTrigger className="h-8 text-[11px] flex-1">
-                            <SelectValue placeholder="Физлицо…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {personsLoading ? (
-                              <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
-                            ) : persons.filter((p) => p.is_active).length === 0 ? (
-                              <div className="px-2 py-1 text-[11px] text-muted-foreground">
-                                Нет физлиц. Добавьте их во вкладке «Реквизиты».
-                              </div>
-                            ) : (
-                              persons.filter((p) => p.is_active).map((p) => (
-                                <SelectItem key={p.id} value={p.id} className="text-[11px]">
-                                  {p.full_name ?? "—"}
+                        <div className="flex items-start gap-1.5">
+                          <Select
+                            value={row.role_catalog_id}
+                            onValueChange={(v) => {
+                              // Перерасчёт custom: оставляем только ключи, которые есть в schema новой роли.
+                              const nextDefs = customSchemaByRoleId.get(v) ?? [];
+                              const nextCustom: Record<string, string> = {};
+                              for (const d of nextDefs) {
+                                nextCustom[d.key] = row.custom[d.key] ?? "";
+                              }
+                              updateRow(row.uid, { role_catalog_id: v, custom: nextCustom });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-[11px] flex-1">
+                              <SelectValue placeholder="Роль…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {activeRoles.map((r) => (
+                                <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                                  {r.label}
+                                  {r.required && (
+                                    <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400">
+                                      (обяз.)
+                                    </span>
+                                  )}
                                 </SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          value={row.position}
-                          onChange={(e) => updateRow(row.uid, { position: e.target.value })}
-                          placeholder="Должность (опц.)"
-                          className="h-8 text-[11px] flex-1"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeRow(row.uid)}
-                          aria-label="Удалить назначение"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={row.person_id}
+                            onValueChange={(v) => updateRow(row.uid, { person_id: v })}
+                          >
+                            <SelectTrigger className="h-8 text-[11px] flex-1">
+                              <SelectValue placeholder="Физлицо…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {personsLoading ? (
+                                <div className="px-2 py-1 text-[11px] text-muted-foreground">Загрузка…</div>
+                              ) : persons.filter((p) => p.is_active).length === 0 ? (
+                                <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                                  Нет физлиц. Добавьте их во вкладке «Реквизиты».
+                                </div>
+                              ) : (
+                                persons.filter((p) => p.is_active).map((p) => (
+                                  <SelectItem key={p.id} value={p.id} className="text-[11px]">
+                                    {p.full_name ?? "—"}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={row.position}
+                            onChange={(e) => updateRow(row.uid, { position: e.target.value })}
+                            placeholder="Должность (опц.)"
+                            className="h-8 text-[11px] flex-1"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeRow(row.uid)}
+                            aria-label="Удалить назначение"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        {/* PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
+                            custom assignment fields для этой роли. */}
+                        {customDefs.length > 0 && (
+                          <div className="grid grid-cols-2 gap-1.5 pl-1">
+                            {customDefs.map((d) => (
+                              <div key={d.key} className="space-y-0.5">
+                                <div className="text-[10px] text-muted-foreground font-medium">
+                                  {d.label}
+                                  <code className="ml-1 font-mono opacity-60">{d.key}</code>
+                                </div>
+                                <Input
+                                  value={row.custom[d.key] ?? ""}
+                                  onChange={(e) =>
+                                    updateRow(row.uid, {
+                                      custom: { ...row.custom, [d.key]: e.target.value },
+                                    })
+                                  }
+                                  placeholder={d.placeholder ?? `${d.label}…`}
+                                  className="h-7 text-[11px]"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
