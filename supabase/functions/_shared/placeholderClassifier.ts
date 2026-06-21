@@ -186,6 +186,20 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
     };
   }
 
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: {{ln-XXXXXX.custom.<key>}}.
+  const mRoleCustom = raw.match(RE_PACKAGE_ROLE_CUSTOM);
+  if (mRoleCustom) {
+    const FORMATS_LN_CUSTOM = new Set<PlaceholderFormat>();
+    const mods = parseModifiers(mRoleCustom[3] || '', FORMATS_LN_CUSTOM);
+    if (mods.error) return mods.error;
+    return {
+      kind: 'package_role_custom_field',
+      public_id: mRoleCustom[1],
+      custom_key: mRoleCustom[2],
+      case_modifier: mods.case_modifier,
+    };
+  }
+
   const mRoleSub = raw.match(RE_PACKAGE_ROLE_SUB);
   if (mRoleSub) {
     // Допустимый набор format-значений для sub-field шире обычного name-формата
