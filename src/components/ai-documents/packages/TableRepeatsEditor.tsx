@@ -365,6 +365,18 @@ export function TableRepeatsEditor({
                           >
                             <ClipboardCopy className="h-3 w-3 mr-1" /> Скопировать маркер
                           </Button>
+                          {isSuperAdmin && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              onClick={() => runDryRun(cfg.id)}
+                              title="Stage E.3 — резолвит preview из package-tokens-dry-run (super_admin only)."
+                            >
+                              <FlaskConical className="h-3 w-3 mr-1" /> Dry-run preview
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             variant="ghost"
