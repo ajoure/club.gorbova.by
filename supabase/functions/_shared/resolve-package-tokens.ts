@@ -1102,3 +1102,385 @@ export async function resolvePackageToken(
   if (!HARDCODED_ENABLED) return FEATURE_DISABLED();
   return resolvePackageTokenCore(input);
 }
+
+// ============================================================================
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3
+// ----------------------------------------------------------------------------
+// {{tableRepeat:TR-XXXXXX}} — structured dry-run resolver.
+//
+// Контракт (НЕ применяется в canonical-document-generate-strict; только в
+// package-tokens-dry-run, super_admin gated):
+//   • Source-of-truth конфигов: document_package_template_items.metadata.table_repeats[]
+//   • Source-of-truth строк:    document_package_item_role_assignments
+//                               (session+item+role, is_active=true, ordered).
+//   • Per-row context: каждая строка резолвится для своего assignment отдельно;
+//     scalar `resolveLnCustomToken`/`resolveLnSubFieldToken` НЕ переиспользуются
+//     (их multi-policy ломала бы preview с 2+ участниками).
+//   • Длина каждой cell.value ограничена 200 символами (truncated:true иначе).
+//   • Превью ограничено первыми 5 строками (truncated_rows:true иначе).
+//   • Не пишет в БД, не возвращает чувствительные данные за пределы preview.
+// ============================================================================
+
+export const TABLE_REPEAT_PREVIEW_MAX_ROWS = 5;
+export const TABLE_REPEAT_CELL_VALUE_MAX_CHARS = 200;
+
+export type TableRepeatResolveCode =
+  | 'tr_no_template_item'
+  | 'tr_id_not_found'
+  | 'tr_role_has_no_assignments'
+  | 'tr_config_invalid'
+  | 'tr_column_resolve_failed';
+
+export interface TableRepeatCellPreview {
+  cell_index: number;
+  source_type: string;
+  source_key?: string;
+  value: string | null;
+  truncated?: boolean;
+  hint?: string;       // e.g. 'package_field_same_for_all_rows'
+  code?: string;       // non-empty when cell could not be resolved
+}
+
+export interface TableRepeatRowPreview {
+  row_number: number;
+  cells: TableRepeatCellPreview[];
+}
+
+export interface TableRepeatColumnSummary {
+  cell_index: number;
+  source_type: string;
+  source_key?: string;
+  hint?: string;
+}
+
+export type TableRepeatResolveResult =
+  | {
+      resolved: true;
+      kind: 'package_table_repeat';
+      tr_id: string;
+      role_catalog_id: string;
+      role_key: string;
+      rows_count: number;
+      rows_preview_limit: number;
+      rows_preview_truncated: boolean;
+      columns: TableRepeatColumnSummary[];
+      rows_preview: TableRepeatRowPreview[];
+      cell_codes_summary: Record<string, number>;
+    }
+  | {
+      resolved: false;
+      kind: 'package_table_repeat';
+      tr_id: string;
+      code: TableRepeatResolveCode;
+      warning: string;
+      issues?: TableRepeatIssue[];
+    };
+
+export interface TableRepeatResolveInput {
+  trId: string;
+  packageSessionId: string;
+  packageTemplateItemId: string | null;
+  supabase: SupabaseClient;
+  /** super_admin → разрешён source_type='assignment_metadata'. */
+  isSuperAdmin?: boolean;
+}
+
+function truncateForPreview(raw: string): { value: string; truncated: boolean } {
+  if (raw.length <= TABLE_REPEAT_CELL_VALUE_MAX_CHARS) return { value: raw, truncated: false };
+  return {
+    value: raw.slice(0, TABLE_REPEAT_CELL_VALUE_MAX_CHARS) + '…',
+    truncated: true,
+  };
+}
+
+function renderRolePersonCell(
+  col: TableRepeatColumn,
+  person: Record<string, unknown> | undefined,
+): { value: string; code?: string } {
+  if (!person) return { value: '', code: 'no_person' };
+  const subKey = col.source_key ?? 'full_name';
+  const spec = LN_SUB_FIELD_BY_KEY.get(subKey);
+  if (!spec) return { value: '', code: 'ln_subfield_unknown' };
+  const raw = extractLnSubFieldRaw(person, spec);
+  if (!raw) return { value: '', code: 'ln_subfield_value_empty' };
+  let v = raw;
+  if (spec.kind === 'name') {
+    const fmt = col.format && LN_SUB_NAME_FORMATS.has(col.format) ? col.format : 'full';
+    v = formatPersonName(raw, { format: fmt as PersonNameFormat, case: (col.case as RuCase | undefined) ?? null });
+  } else if (spec.kind === 'date') {
+    const fmt = col.format && LN_SUB_DATE_FORMATS.has(col.format) ? col.format : 'dotted';
+    v = formatLnDate(raw, fmt);
+  } else if ((spec.kind === 'address_full' || spec.kind === 'address_part') && col.case && isCaseModifier(col.case)) {
+    const inf = inflectRu(v, col.case as RuCase);
+    if (inf.applied) v = inf.value;
+  }
+  return { value: v };
+}
+
+function readAssignmentCustomKey(
+  assignment: { metadata: unknown },
+  key: string,
+): { value: string; code?: string } {
+  const meta = (assignment.metadata && typeof assignment.metadata === 'object')
+    ? (assignment.metadata as Record<string, unknown>)
+    : {};
+  const custom = (meta['custom'] && typeof meta['custom'] === 'object')
+    ? (meta['custom'] as Record<string, unknown>)
+    : {};
+  const raw = custom[key];
+  if (raw == null || raw === '') return { value: '', code: 'ln_custom_value_empty' };
+  return { value: String(raw) };
+}
+
+function readAssignmentMetadataPath(
+  assignment: { metadata: unknown },
+  key: string,
+): { value: string; code?: string } {
+  const meta = (assignment.metadata && typeof assignment.metadata === 'object')
+    ? (assignment.metadata as Record<string, unknown>)
+    : {};
+  // По контракту amendment #13: НЕ возвращаем `custom` через эту ветку.
+  if (key === 'custom' || key.startsWith('custom.')) {
+    return { value: '', code: 'tr_metadata_custom_not_allowed_via_metadata_source' };
+  }
+  // shallow path supporting dot notation
+  let cur: unknown = meta;
+  for (const seg of key.split('.')) {
+    if (cur == null || typeof cur !== 'object') return { value: '', code: 'tr_metadata_path_missing' };
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  if (cur == null || cur === '') return { value: '', code: 'tr_metadata_value_empty' };
+  if (typeof cur === 'object') return { value: JSON.stringify(cur), code: undefined };
+  return { value: String(cur) };
+}
+
+export async function resolveTableRepeatTokenCore(
+  input: TableRepeatResolveInput,
+): Promise<TableRepeatResolveResult> {
+  const { trId } = input;
+
+  if (!input.packageTemplateItemId) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_no_template_item',
+      warning: 'tr_token_requires_package_template_item_id',
+    };
+  }
+
+  // 1. item.metadata.table_repeats[] + package_template_id
+  const { data: itemRow, error: itemErr } = await input.supabase
+    .from('document_package_template_items')
+    .select('id, package_template_id, metadata')
+    .eq('id', input.packageTemplateItemId)
+    .maybeSingle();
+  if (itemErr || !itemRow) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_id_not_found',
+      warning: `package_template_item_not_found:${input.packageTemplateItemId}`,
+    };
+  }
+  const item = itemRow as { id: string; package_template_id: string; metadata: unknown };
+  const configs = readTableRepeats(item.metadata);
+  const cfg = configs.find((c) => c.id === trId);
+  if (!cfg) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_id_not_found',
+      warning: `tr_id_not_found_in_item_metadata:${trId}`,
+    };
+  }
+
+  // 2. Validate config (errors block; warnings/orphan-keys пропускаем).
+  const cfgIssues = validateTableRepeatConfig(cfg);
+  const cfgErrors = cfgIssues.filter((i) => i.severity === 'error');
+  if (cfgErrors.length > 0) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_config_invalid',
+      warning: `tr_config_invalid:n=${cfgErrors.length}`,
+      issues: cfgIssues,
+    };
+  }
+
+  // 3. role catalog row (для role_key + проверка package match)
+  const { data: roleRow } = await input.supabase
+    .from('document_package_role_catalog')
+    .select('id, package_template_id, role_key, metadata')
+    .eq('id', cfg.role_catalog_id)
+    .maybeSingle();
+  if (!roleRow) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_config_invalid',
+      warning: `role_catalog_not_found:${cfg.role_catalog_id}`,
+    };
+  }
+  const role = roleRow as { id: string; package_template_id: string; role_key: string; metadata: unknown };
+  if (role.package_template_id !== item.package_template_id) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_config_invalid',
+      warning: `role_outside_bound_package:${cfg.role_catalog_id}`,
+    };
+  }
+
+  // 4. assignments (session + item + role, active, ordered).
+  const { data: asgs } = await input.supabase
+    .from('document_package_item_role_assignments')
+    .select('person_id, metadata, sort_order, created_at')
+    .eq('package_session_id', input.packageSessionId)
+    .eq('package_template_item_id', input.packageTemplateItemId)
+    .eq('role_catalog_id', role.id)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  const assignments = ((asgs ?? []) as Array<{ person_id: string | null; metadata: unknown }>);
+  if (assignments.length === 0) {
+    return {
+      resolved: false,
+      kind: 'package_table_repeat',
+      tr_id: trId,
+      code: 'tr_role_has_no_assignments',
+      warning: `tr_role_has_no_assignments:${cfg.role_catalog_id}`,
+    };
+  }
+
+  // 5. Persons batch (для role_person)
+  const needPersonRows = cfg.columns.some((c) => c.source_type === 'role_person');
+  const personIds = assignments.map((a) => a.person_id).filter((x): x is string => !!x);
+  const personById = new Map<string, Record<string, unknown>>();
+  if (needPersonRows && personIds.length > 0) {
+    const { data: persons } = await input.supabase
+      .from('legal_details_persons')
+      .select('*')
+      .in('id', personIds);
+    for (const p of (persons ?? []) as Array<Record<string, unknown>>) {
+      personById.set(String((p as { id: string }).id), p);
+    }
+  }
+
+  // 6. package_field pre-resolve (одно значение на все строки).
+  const pfCache = new Map<string, { value: string; code?: string; hint?: string }>();
+  const pfCols = cfg.columns.filter((c) => c.source_type === 'package_field' && c.source_key);
+  for (const c of pfCols) {
+    const pfId = c.source_key!;
+    if (pfCache.has(pfId)) continue;
+    const r = await resolvePfFieldToken(
+      {
+        rawToken: pfId,
+        packageSessionId: input.packageSessionId,
+        packageTemplateItemId: input.packageTemplateItemId,
+        supabase: input.supabase,
+      },
+      pfId,
+      undefined,
+      c.format,
+    );
+    if (r.resolved) {
+      pfCache.set(pfId, { value: r.value, hint: 'package_field_same_for_all_rows' });
+    } else {
+      pfCache.set(pfId, { value: '', code: r.code, hint: 'package_field_same_for_all_rows' });
+    }
+  }
+
+  // 7. Build rows preview (≤5).
+  const rowsCount = assignments.length;
+  const previewCount = Math.min(rowsCount, TABLE_REPEAT_PREVIEW_MAX_ROWS);
+  const rowsPreview: TableRepeatRowPreview[] = [];
+  const codeCounter: Record<string, number> = {};
+
+  for (let i = 0; i < previewCount; i += 1) {
+    const asg = assignments[i];
+    const person = asg.person_id ? personById.get(asg.person_id) : undefined;
+    const cells: TableRepeatCellPreview[] = [];
+    for (const col of cfg.columns) {
+      let raw = '';
+      let code: string | undefined;
+      let hint: string | undefined;
+
+      if (col.source_type === 'role_person') {
+        const r = renderRolePersonCell(col, person);
+        raw = r.value; code = r.code;
+      } else if (col.source_type === 'assignment_custom_field') {
+        if (!col.source_key) { code = 'missing_source_key'; }
+        else {
+          const r = readAssignmentCustomKey(asg, col.source_key);
+          raw = r.value; code = r.code;
+        }
+      } else if (col.source_type === 'package_field') {
+        if (!col.source_key) { code = 'missing_source_key'; }
+        else {
+          const cached = pfCache.get(col.source_key);
+          raw = cached?.value ?? '';
+          code = cached?.code;
+          hint = cached?.hint;
+        }
+      } else if (col.source_type === 'static_text') {
+        raw = col.source_key ?? '';
+      } else if (col.source_type === 'row_number') {
+        raw = String(i + 1);
+      } else if (col.source_type === 'empty') {
+        raw = '';
+      } else if (col.source_type === 'assignment_metadata') {
+        if (!input.isSuperAdmin) {
+          code = 'tr_metadata_source_super_admin_only';
+        } else if (!col.source_key) {
+          code = 'missing_source_key';
+        } else {
+          const r = readAssignmentMetadataPath(asg, col.source_key);
+          raw = r.value; code = r.code;
+        }
+      } else {
+        code = 'tr_column_resolve_failed';
+      }
+
+      if (code) codeCounter[code] = (codeCounter[code] ?? 0) + 1;
+      const truncated = truncateForPreview(raw);
+      cells.push({
+        cell_index: col.cell_index,
+        source_type: col.source_type,
+        source_key: col.source_key,
+        value: code ? null : truncated.value,
+        truncated: truncated.truncated || undefined,
+        hint,
+        code,
+      });
+    }
+    rowsPreview.push({ row_number: i + 1, cells });
+  }
+
+  const columnsSummary: TableRepeatColumnSummary[] = cfg.columns.map((col) => ({
+    cell_index: col.cell_index,
+    source_type: col.source_type,
+    source_key: col.source_key,
+    hint: col.source_type === 'package_field' ? 'package_field_same_for_all_rows' : undefined,
+  }));
+
+  return {
+    resolved: true,
+    kind: 'package_table_repeat',
+    tr_id: trId,
+    role_catalog_id: role.id,
+    role_key: role.role_key,
+    rows_count: rowsCount,
+    rows_preview_limit: TABLE_REPEAT_PREVIEW_MAX_ROWS,
+    rows_preview_truncated: rowsCount > TABLE_REPEAT_PREVIEW_MAX_ROWS,
+    columns: columnsSummary,
+    rows_preview: rowsPreview,
+    cell_codes_summary: codeCounter,
+  };
+}
+
