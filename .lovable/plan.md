@@ -367,3 +367,10 @@ Audit `package_tokens_dry_run` дополняется codes-counter этих н�
 - Proof собран и содержит все пункты выше.
 - Отдельный отчёт `PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3 — PASS / PARTIAL / FAIL`.
 - Возврат к Stage E.4 — только после явного подтверждения PASS пользователем.
+
+---
+
+## Stage E.3 — DONE (PASS pending user)
+
+Proof: `.lovable/proofs/docx_table_repeat_by_role_e3_classifier_dryrun.md`.
+Stage E.4 (real DOCX row expansion) — отдельный план после подтверждения.
