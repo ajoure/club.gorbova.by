@@ -115,6 +115,10 @@ const CASES = new Set<PlaceholderCase>([
 
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3: {{tableRepeat:TR-XXXXXX}}.
+// Без модификаторов в v1 — `tableRepeat:TR-XXXXXX|format=...` regex не матчит и
+// пойдёт в `invalid` (см. evaluatePlaceholderInScope → legacy_placeholder_format_detected).
+const RE_PACKAGE_TABLE_REPEAT = /^tableRepeat:(TR-\d{6,})$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — должен проверяться ДО
 // RE_PACKAGE_ROLE_SUB, чтобы `ln-XXXXXX.custom.<key>` не попадал в sub-field branch.
