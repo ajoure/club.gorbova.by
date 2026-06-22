@@ -1,266 +1,320 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. План можно выполнять как Stage E.1a.
+1. Stage E.2 можно выполнять только как UI/config layer.
   &nbsp;
-  Статус после выполнения должен быть строго:
+  Итоговый статус после выполнения:
   ```text
-  Stage E.1a — PASS: custom fields schema + values UI + dry-run scalar resolver
+  Stage E.2 — PASS: table-repeat UI/config layer
   ```
-  Без заявления, что `{{ln-XXXXXX.custom.<key>}}` уже работает в реальной DOCX-генерации.
-2. Уточнить пути файлов перед началом работ.
+  Без заявлений, что DOCX уже размножает строки или что `{{tableRepeat:TR-XXXXXX}}` уже валидируется генератором.
+2. Перед реализацией сохранения `metadata.table_repeats` нужно подтвердить фактический write-path.
   &nbsp;
-  В плане указаны:
+  В плане написано:
   ```text
-  src/components/admin/documents/PackageRolesManager.tsx
-  src/components/admin/documents/PackageDocumentCard.tsx
-  src/utils/placeholderClassifier.ts
+  через уже существующий atomic-save items
   ```
-  Ранее фактические файлы были в зоне:
-  ```text
-  src/components/ai-documents/packages/...
-  src/lib/documents/placeholderClassifier.ts
-  ```
-  Перед изменениями сделать короткий grep/discovery и править фактические используемые файлы, а не создавать дубли в соседней директории.
-3. Сохранить frontend/edge parity по спецификациям.
+  Но если такого безопасного audited write-path для `document_package_template_items.metadata` нет — STOP.
+  Тогда не делать прямой client-side update, а дать маленький plan на безопасный metadata update path:
+3. Сохранение `document_package_template_items.metadata` должно быть merge-only.
   &nbsp;
-  Если `assignmentCustomFieldsSpec.ts` уже имеет frontend + edge mirror, все изменения типа:
-  ```text
-  keepEmpty
-  readAssignmentCustomFieldDefs
-  readAssignmentCustomValues
-  validateCustomFieldKey
+  Нельзя писать:
+  ```ts
+  metadata = { table_repeats: nextRepeats }
   ```
-  должны быть внесены синхронно в оба mirror-файла, чтобы frontend и edge одинаково трактовали keys/schema/values.
-4. По schema custom fields в v1 принимаю упрощённый формат:
-  &nbsp;
-  ```json
-  {
-    "key": "votes",
-    "label": "Голоса",
-    "kind": "scalar_text",
-    "required": false
+  Нужно:
+  ```ts
+  metadata = {
+    ...freshMetadata,
+    table_repeats: nextRepeats
   }
   ```
-  Но если в уже созданном E.1 spec ранее были поля `type`, `placeholder`, `required`, не ломать существующий тип. Допустимо маппить:
+  Перед save перечитать свежий `metadata`, чтобы не затереть будущие ключи item-level metadata.
+4. В UI показывать номера колонок по-человечески с 1, но хранить `cell_index` как 0-based.
+  &nbsp;
+  Пример:
   ```text
-  kind: scalar_text
+  UI: Колонка 1
+  storage: cell_index = 0
   ```
-  как v1 alias, но не удалять уже созданные типы, если они используются в `tableRepeatSpec` или будущих stages.
-5. В UI можно показывать только key/label для v1, но storage должен быть forward-compatible.
+  Иначе пользователь будет путаться.
+5. Для `assignment_metadata` оставить только advanced fallback.
   &nbsp;
-  Минимально допустимо:
-  ```json
-  {
-    "key": "votes",
-    "label": "Голоса",
-    "kind": "scalar_text",
-    "required": false
-  }
+  В основном UX показывать источники:
+  ```text
+  Физлицо роли
+  Доп. поле роли
+  Поле пакета
+  Статичный текст
+  Номер строки
+  Пусто
   ```
-  Не хардкодить `votes` как системное поле. Это обычное custom field роли.
-6. В `PackageRolesManager` при сохранении role metadata обязательно сохранять оба блока:
-  &nbsp;
-  ```json
-  {
-    "enable_person_subfields": true,
-    "assignment_custom_fields": [...]
-  }
+  `assignment_metadata` — только в раскрытом блоке:
+  ```text
+  Дополнительно / raw metadata key
   ```
-  Proof должен явно показать, что `enable_person_subfields=true` не потерялся.
-7. В values editor не очищать orphan values автоматически.
-  &nbsp;
-  Правильный контракт:
-  - schema field удалили → поле исчезло из UI;
-  - старое значение может остаться в БД;
-  - dry-run по удалённому key даёт:
-  - автоматическую чистку orphan values не делать в E.1a.
-8. Для `custom` сохранить контракт v1:
+  Желательно только для super_admin.
+6. Для `assignment_custom_field` source key выбирать только из schema выбранной роли:
   &nbsp;
   ```text
-  undefined = не менять
-  "" = сохранить пустую строку
-  non-empty = сохранить значение
+  role.metadata.assignment_custom_fields[].key
   ```
-  Это нужно, чтобы пользователь мог явно очистить значение поля, не удаляя сам key.
-9. Для `position` контракт другой:
+  Если роль поменяли — список custom fields и warning по orphan-source должны пересчитаться сразу.
+7. Orphan-ref policy подтверждаю:
+  &nbsp;
+  Если custom field удалили из роли, но TR-конфиг ещё ссылается на старый key:
+  - конфиг не удалять;
+  - save не блокировать;
+  - показать warning:
+  - E.4 потом даст structured warning/resolution.
+8. Для source `role_person` UI должен ограничивать `case` и `format` по типу поля.
+  &nbsp;
+  Минимально:
+  - `case` показывать для:
+  - `format` показывать для:
+  ```text
+  full_name / short_name / signature_short
+  birth_date / passport_issued_date / passport_valid_until
+  ```
+  Для паспорта, email, телефона, bank fields не показывать `case`.
+9. Для source `package_field` добавить подсказку:
   &nbsp;
   ```text
-  undefined = не менять
-  "" / null = удалить metadata.position
-  non-empty = сохранить metadata.position
+  Значение пакетного поля одинаковое для всех строк.
   ```
-  Не смешивать поведение `position` и `custom`.
-10. В `resolveLnCustomToken` не плодить новый код “нет назначений”, если уже есть существующий код в resolver `ln-*`.
-
-Сначала проверить фактический код, который выдаёт `resolveLnSubFieldToken` при 0 assignments, и использовать его же. В proof зафиксировать фактическое имя.
-
-11. `resolveLnCustomToken` должен строго соблюдать item/session scope:
+  Это важно, чтобы не использовать `pf-*` для индивидуальных голосов/долей каждого участника.
+10. Для `static_text` также добавить подсказку:
 
 ```text
-package_template_id
-package_session_id
-package_template_item_id
-role_catalog_id
-is_active = true
-person_id IS NOT NULL
+Статичный текст будет одинаковым во всех строках.
 ```
 
-Нельзя резолвить custom values роли из другого документа, другой сессии или другого пакета.
+11. В preview количества строк не обращаться к генератору.
 
-12. Каталог плейсхолдеров должен показывать custom tokens только если у роли есть schema:
+Preview должен считать только active assignments текущей роли:
 
 ```text
-assignment_custom_fields.length > 0
+package_session_id + package_template_item_id + role_catalog_id + is_active=true + person_id IS NOT NULL
 ```
 
-Не выводить пустые группы для ролей без custom fields.
-
-13. В hint каталога обязательно добавить предупреждение:
+Если session-context нет — показывать:
 
 ```text
-Для обычного scalar-токена роль должна иметь ровно одно активное назначение. Если назначений несколько, используйте table-repeat.
+Строк будет столько, сколько активных назначений выбранной роли в анкете документа.
 ```
 
-14. Proof по dry-run не должен использовать реальную DOCX-генерацию.
+12. `{{tableRepeat:TR-XXXXXX}}` в каталоге плейсхолдеров можно добавить в E.2, но обязательно как служебный marker.
 
-Формулировка в proof:
+В hint указать:
 
 ```text
-Token classified and resolved in package-tokens-dry-run.
-Real DOCX substitution is out of scope until E.4.
+Это служебный маркер строки таблицы. Валидация маркера и генерация строк будут подключены на E.3/E.4.
 ```
 
-15. В proof добавить regression по `enable_person_subfields`.
+Не заявлять, что marker уже полностью валиден для генерации.
 
-До:
+13. Если текущий validator до E.3 будет подсвечивать `{{tableRepeat:TR-XXXXXX}}` как invalid, это ожидаемо.
 
-```json
-{ "enable_person_subfields": true }
+В E.2 proof нужно прямо написать:
+
+```text
+Marker copy/config реализован. Validator support для marker — Stage E.3.
 ```
 
-После добавления custom fields:
+Не закрывать E.2 как validator PASS.
+
+14. Добавить refresh/cache DoD.
+
+После создания TR-конфига:
+
+- сохранить;
+- F5;
+- открыть тот же документ;
+- `table_repeats[]` восстановились 1-в-1 через `readTableRepeats`;
+- marker остался тем же;
+- role/columns/source_key сохранились.
+
+15. `nextTableRepeatId` должен искать максимум среди всех существующих `TR-######` текущего item metadata.
+
+Не начинать каждый раз с `TR-000001`, если уже есть удалённые/старые ID. Нужен монотонный next ID в рамках item.
+
+16. При удалении TR-конфига не чистить DOCX-шаблон.
+
+UI должен предупредить:
+
+```text
+Конфиг будет удалён, но если маркер уже вставлен в DOCX-шаблон, его нужно удалить из файла вручную.
+```
+
+Автоматическое редактирование DOCX out of scope.
+
+17. Валидация перед save:
+
+- duplicate TR id — block save;
+- empty role_catalog_id — block save;
+- duplicate `cell_index` внутри одного TR — warning или block. Рекомендация: block, чтобы одна колонка не получала два значения.
+- negative `cell_index` — block;
+- non-integer `cell_index` — block;
+- missing `source_key` для role_person / assignment_custom_field / package_field / static_text — block, кроме orphan-ref custom field, где warning.
+
+18. В `packagePlaceholderCatalog.ts` не показывать category «Повторяемые строки», если для текущего item нет `table_repeats[]`.
+
+Если каталог не имеет context текущего template_item, не внедрять глобальные TR-маркеры без context. Сначала проверить архитектуру каталога.
+
+19. Если общий верхний каталог «Документы → Плейсхолдеры» не знает конкретный `template_item`, там нельзя корректно показать `{{tableRepeat:TR-...}}`.
+
+В таком случае:
+
+- показывать TR markers только во вкладке плейсхолдеров внутри конкретного пакета/document item;
+- либо добавить явную привязку к выбранному item.
+
+Не показывать чужие TR-маркеры глобально.
+
+20. Proof должен показать, что item-level metadata merge не затронул:
+
+- `document_package_role_catalog.metadata.enable_person_subfields`;
+- `document_package_role_catalog.metadata.assignment_custom_fields`;
+- `document_package_item_role_assignments.metadata.custom`.
+
+Эти сущности в других таблицах, но важно доказать, что E.2 их не трогал.
+
+21. В proof добавить SQL по самому item metadata до/после с искусственным existing key.
+
+Например до:
 
 ```json
 {
-  "enable_person_subfields": true,
-  "assignment_custom_fields": [...]
+  "some_existing_key": "keep"
 }
 ```
 
-16. В proof добавить regression по обычным токенам:
+После:
 
-```text
-{{ln-000015}}
-{{ln-000015.full_name}}
+```json
+{
+  "some_existing_key": "keep",
+  "table_repeats": [...]
+}
 ```
 
-Они должны продолжать работать как раньше.
+Это докажет merge-only storage.
 
-17. В proof отдельно указать, что не трогались:
+22. В proof добавить явно:
 
 ```text
-canonical-document-generate-strict
-ai-generate-document-package
-tableRepeat marker
-DOCX row expansion
-Gotenberg
-billing resolver
-RPC signature / RLS / GRANT / SECURITY DEFINER
+canonical-document-generate-strict — не изменялся
+ai-generate-document-package — не изменялся
+package-tokens-dry-run — не изменялся
+save_session_document_atomic — не изменялся
+migrations — нет
 ```
 
-18. После выполнения дать отдельный отчёт по E.1a и не переходить к E.2 без подтверждения.
+23. Не начинать E.3 после E.2 без отдельного отчёта и подтверждения.
 
-После этих уточнений Stage E.1a можно выполнять.
+После этих уточнений Stage E.2 можно выполнять.
 
 &nbsp;
 
-План: Stage E.1a — Custom assignment fields (schema + values + dry-run scalar resolver)
+Stage E.2 — UI/config слой table-repeat
 
-## Prerequisite (закрыт)
+**Prerequisite:** `Stage E.1a — PASS` (`.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`)
 
-- **PATCH-DPIRA-METADATA-MERGE-V1 — PASS**
-- Proof: `.lovable/proofs/dpira_metadata_merge_v1.md`
-- `save_session_document_atomic` теперь merge-safe для `metadata`; `useDocumentItemRoleAssignments.ts` переведён на `mergeAssignmentMetadataWithCustom`. STOP-condition #1 закрыт.
+### Scope (только UI/config)
 
-## Scope E.1a (только этот слой)
+Реализовать UI редактирования повторяемых строк таблиц поверх **уже существующей** SOT-спеки:
 
-1. **Schema custom fields у роли**
-  `document_package_role_catalog.metadata.assignment_custom_fields[]` (массив `{ key, label, kind: 'scalar_text', required?: false }`).
-  - UI: в `PackageRolesManager.tsx` — секция «Custom fields» внутри роли: добавить/удалить/переименовать (key/label).
-  - Save: re-read `role.metadata` перед merge; **не затирать** `enable_person_subfields` и прочие верхнеуровневые ключи.
-  - Валидация key: `^[a-z][a-z0-9_]{0,49}$`, уникальность внутри роли.
-  - Stale-cache guard: при сохранении сравнить `updated_at` или перечитать строку перед PATCH.
-2. **Values custom fields у конкретного assignment**
-  `document_package_item_role_assignments.metadata.custom.<key>: string`.
-  - UI: в `PackageDocumentCard.tsx` — для каждой строки assignment (после полей person/position) рендер инпутов по schema текущей роли.
-  - Save: через уже отремонтированный `save_session_document_atomic` (RPC) с расширенным input-helper'ом на клиенте — `mergeAssignmentMetadataWithCustom({ keepEmpty: true })`:
-    - `undefined` → ключ не меняется,
-    - `""` → `metadata.custom[key] = ""` (явная очистка, v1-контракт),
-    - non-empty → запись значения.
-  - Orphan-policy: при смене роли старые значения остаются в БД, но **не показываются** в UI и **не очищаются автоматически**. Save отправляет только ключи, описанные в schema текущей роли.
-3. **Frontend classifier**
-  - Новый kind `package_role_custom_field` в `placeholderClassifier.ts`.
-  - Regex: `^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})$`.
-  - Проверяется **до** `RE_PACKAGE_ROLE_SUB`.
-4. **Edge resolver `resolveLnCustomToken**` — только для `package-tokens-dry-run`
-  В `supabase/functions/_shared/resolve-package-tokens.ts`. Состояния:
-  - `ok` — ровно 1 assignment + ключ есть в schema роли + значение присутствует.
-  - `role_no_custom_field_def:<key>` — ключ не объявлен в schema роли.
-  - **то же имя кода**, что уже использует sub-field resolver для «нет assignments» (переиспользовать константу, не плодить новую).
-  - `multiple_persons_for_scalar_role_custom_field` — assignments > 1 (controlled warning, **не ошибка**).
-  - `canonical-document-generate-strict` НЕ трогаем; реальная DOCX-подстановка → E.4.
-5. **Каталог плейсхолдеров**
-  В `src/utils/packagePlaceholderCatalog.ts` — добавлять `ln-XXXXXX.custom.<key>` items **только** для ролей с непустым `assignment_custom_fields[]`.
+- `src/lib/documents/tableRepeatSpec.ts` (frontend)
+- `supabase/functions/_shared/table-repeat-spec.ts` (edge mirror)
 
-## Жёстко out of scope (НЕ трогаем)
+Хранение: `document_package_template_items.metadata.table_repeats[]` (уже определено в spec, схема не меняется).
 
-- `canonical-document-generate-strict`
-- `ai-generate-document-package`
-- Реальная DOCX-подстановка `{{ln-XXX.custom.<key>}}` → **E.4**
-- `{{tableRepeat:TR-XXXXXX}}`, DOCX row expansion, table-repeat UI → **E.2/E.3**
-- Изменения сигнатуры `save_session_document_atomic`, RLS, GRANT, SECURITY DEFINER
+### Что делаем
 
-## Изменяемые файлы
+1. **UI-секция «Повторяемые строки таблиц»** в `PackageDocumentCard.tsx` (зона ai-documents/packages, под существующим блоком ролей/полей).
+  - Список созданных `TableRepeatConfig` для текущего `template_item`.
+  - Кнопка «Добавить повторяемую строку» → создаёт новый `TR-XXXXXX` через `nextTableRepeatId` поверх всех id внутри `metadata.table_repeats`.
+  - Карточка конфига: `label` (UI-only), выбор `role_catalog_id` (Select из ролей пакета), редактор колонок, кнопка удаления.
+2. **Редактор колонок** (внутри карточки конфига):
+  - Список колонок с `cell_index` (0-based, числовой инпут).
+  - `source_type` Select из 7 значений spec'а: `role_person`, `assignment_custom_field`, `package_field`, `static_text`, `row_number`, `empty`, `assignment_metadata`.
+  - Условные подполя в зависимости от `source_type`:
+    - `role_person` → `source_key` (Select sub-field из 25 person sub-fields), опц. `case` (nominative/genitive/dative/accusative/instrumental/prepositional), опц. `format` (short/full/long).
+    - `assignment_custom_field` → `source_key` (**Select только из уже созданных** `assignment_custom_fields[].key` выбранной роли; если у роли нет custom fields → disabled + подсказка «Сначала создайте custom field в роли»).
+    - `package_field` → `source_key` (Select из `pf-XXXXXX` доступных полей пакета).
+    - `static_text` → `source_key` (текстовый инпут — литерал).
+    - `row_number` / `empty` → без подполей.
+    - `assignment_metadata` → `source_key` (свободный текст, advanced fallback, скрыто за «Дополнительно»).
+  - Кнопки «Добавить колонку», «Удалить колонку», drag-reorder опц. (sort через `cell_index`).
+3. **Copy marker**: рядом с каждым TR-конфигом — кнопка «Скопировать маркер» → `{{tableRepeat:TR-XXXXXX}}` (для вставки в первую ячейку шаблонной строки DOCX). Также добавить эти маркеры в `packagePlaceholderCatalog.ts` (категория «Повторяемые строки») для drag&drop из общего каталога плейсхолдеров.
+4. **Preview количества строк**: рядом с выбранной ролью показать `N = assignments по role_catalog_id в текущей сессии` (если есть session-context) или `N = ?` (без сессии — просто подсказка «строк = число назначений роли»). Источник — уже существующий хук на `document_package_item_role_assignments`. Без обращения к генератору.
+5. **Сохранение** через уже существующий atomic-save шаблонных items:
+  - Merge только ключа `table_repeats` в `template_items.metadata` (не затирать другие ключи метадаты item'а).
+  - Перед save — валидация:
+    - все `TR-id` уникальны;
+    - `role_catalog_id` выбран;
+    - все колонки с `source_type` ∈ {role_person, assignment_custom_field, package_field, static_text} имеют непустой `source_key`;
+    - `assignment_custom_field.source_key` существует в `role.assignment_custom_fields[].key` (orphan-ref → warning, не блок: маркер всё равно сохраняется, как и в orphan-policy E.1a).
+  - Использовать `readTableRepeats` для round-trip нормализации.
+6. **Forward-compat** со spec'ом E.1: ничего не удаляем из `TableRepeatColumn` (case, format, assignment_metadata остаются), просто не показываем advanced поля в UI v1 кроме явного раскрытия «Дополнительно».
 
-- `src/components/admin/documents/PackageRolesManager.tsx` — UI schema editor + stale-cache guard
-- `src/components/admin/documents/PackageDocumentCard.tsx` — UI values editor, save с `custom`/`position_gender`
-- `src/hooks/useDocumentItemRoleAssignments.ts` — extended Input с `custom`
-- `src/lib/documents/assignmentCustomFieldsSpec.ts` — `mergeAssignmentMetadataWithCustom({ keepEmpty })`
-- `src/utils/placeholderClassifier.ts` — новый kind `package_role_custom_field`
-- `src/utils/packagePlaceholderCatalog.ts` — items только для ролей со schema
-- `supabase/functions/_shared/resolve-package-tokens.ts` — `resolveLnCustomToken` (dry-run only)
-- `.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md` — proof
-- `.lovable/plan.md` — статус Stage E.1a
+### Out of scope (НЕ делаем в E.2)
 
-## DoD / Proof
+- DOCX row expansion в `canonical-document-generate-strict` → **E.4**.
+- Реальная подстановка значений в строки таблицы → **E.4**.
+- Изменения в `ai-generate-document-package`, `package-tokens-dry-run` (резолвер табличных значений) → **E.3**.
+- RPC `save_session_document_atomic` не меняем (signature/permissions/RLS остаются).
+- Никаких миграций (схема `table_repeats` уже в JSONB metadata).
+- Никаких изменений в `assignmentCustomFieldsSpec.ts` / `placeholderClassifier.ts` / резолвере `{{ln-...custom...}}` — они закрыты в E.1a.
 
-Proof `.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`:
+### Файлы
 
-1. Ссылка на prerequisite: **PATCH-DPIRA-METADATA-MERGE-V1 — PASS** (`.lovable/proofs/dpira_metadata_merge_v1.md`).
-2. SQL до/после на `document_package_role_catalog` (`public_id='ln-000015'`): добавление `assignment_custom_fields=[{key:'votes',label:'Голоса'}]`, `enable_person_subfields` не теряется.
-3. SQL до/после на `document_package_item_role_assignments` (по `role_catalog_id`): `metadata.custom.votes` сохраняется; `position` и `position_gender` не теряются.
-4. Dry-run сценарии для `{{ln-000015.custom.votes}}`:
-  - 1 assignment с value → `ok`
-  - 1 assignment, ключ удалён из schema → `role_no_custom_field_def:votes`
-  - 0 assignments → код, идентичный sub-field resolver'у
-  - 3 assignments → controlled warning `multiple_persons_for_scalar_role_custom_field`
-5. Orphan policy: смена роли — старое значение остаётся в БД, в UI не видно, save не очищает.
-6. Stale-cache guard в schema editor: confirmed.
-7. **Явная оговорка**: реальная DOCX-подстановка `{{ln-XXX.custom.<key>}}` НЕ закрыта в E.1a, идёт в E.4. `canonical-document-generate-strict` не тронут.
-8. Контракт `keepEmpty: true` для v1 (явная очистка через `""`).
-9. RPC signature / RLS / GRANT / SECURITY DEFINER не менялись.
-10. E.2/E.3/E.4 не начинались.
+- `src/components/ai-documents/packages/PackageDocumentCard.tsx` — встроить секцию «Повторяемые строки таблиц».
+- `src/components/ai-documents/packages/TableRepeatsEditor.tsx` *(new)* — основной редактор (список конфигов + редактор колонок).
+- `src/components/ai-documents/packages/TableRepeatColumnRow.tsx` *(new)* — отдельный компонент строки колонки с условным рендером по `source_type`.
+- `src/hooks/useTemplateItemTableRepeats.ts` *(new)* — read/write `metadata.table_repeats` через существующий atomic-save items, без новых RPC.
+- `src/utils/packagePlaceholderCatalog.ts` — добавить категорию «Повторяемые строки» с маркерами `{{tableRepeat:TR-XXXXXX}}` из текущего template_item.
+- `src/lib/documents/tableRepeatSpec.ts` — при необходимости добавить чистый helper `validateTableRepeatConfig` (без изменения типов/SOT); mirror в `supabase/functions/_shared/table-repeat-spec.ts`.
 
-**Финальный статус (ожидаемый):**
-`Stage E.1a — PASS: custom fields schema + values UI + dry-run scalar resolver. Реальная DOCX-подстановка перенесена в E.4.`
+### Proof
 
-После E.1a — отдельный отчёт. К E.2 не переходить без подтверждения.
----
+`.lovable/proofs/docx_table_repeat_by_role_e2_ui_config.md` со следующим:
 
-## Stage E.1a — EXECUTED (2026-06-21)
+1. Ссылка на закрытый prerequisite `Stage E.1a — PASS`.
+2. Скриншоты/описание UI:
+  - создание TR-конфига, выбор роли, добавление 3 колонок (role_person sub-field, assignment_custom_field из E.1a, static_text);
+  - copy маркера `{{tableRepeat:TR-000001}}`;
+  - preview «строк = N» по роли;
+  - попытка выбрать `assignment_custom_field` для роли без custom fields → disabled + подсказка.
+3. SQL до/после на тестовом `template_item`:
+  ```sql
+   SELECT id, metadata->'table_repeats'
+   FROM document_package_template_items
+   WHERE id = '<item_id>';
+  ```
+   Показать, что другие ключи `metadata` (`enable_person_subfields` на роли, `assignment_custom_fields`, любые existing item-level ключи) **не затронуты**.
+4. Orphan-ref сценарий: удалили `assignment_custom_field` из роли → в TR-конфиге `source_key` остаётся, UI помечает warning, save проходит. dry-run по `{{tableRepeat:TR-...}}` пока не реализован (это E.3).
+5. Явное disclaimer'ом в Proof:
+  - `canonical-document-generate-strict` НЕ тронут;
+  - реальное row expansion в DOCX НЕ реализовано (E.4);
+  - резолвер табличных значений в `package-tokens-dry-run` НЕ реализован (E.3);
+  - RPC `save_session_document_atomic` signature/permissions не менялись;
+  - security linter: новых SECURITY DEFINER не добавлено;
+  - миграций нет.
+6. Frontend/edge spec parity подтверждён (diff helpers, если добавляли).
 
-**Статус: PASS — custom fields schema + values UI + dry-run scalar resolver.**
-**Реальная DOCX-подстановка `{{ln-XXXXXX.custom.<key>}}` перенесена в Stage E.4.**
+### DoD
 
-Proof: `.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`.
-Миграция: `..._e1a_custom_fields_extend_rpc.sql` (тело RPC, сигнатура / RLS / GRANT не менялись).
+- UI секции «Повторяемые строки таблиц» работает на странице пакета.
+- Можно создать TR-XXXXXX, выбрать роль, сконфигурировать колонки, сохранить, перезагрузить — конфиг возвращается из БД 1-в-1 через `readTableRepeats`.
+- `assignment_custom_field` source выбирается только из реально определённых custom fields роли (E.1a).
+- Маркер `{{tableRepeat:TR-XXXXXX}}` копируется и доступен в каталоге плейсхолдеров.
+- Preview числа строк отображается, когда есть session-context.
+- Никаких изменений в генераторе / DOCX-резолвере / RPC / миграциях.
+- Proof создан и явно фиксирует, что E.3/E.4 ещё не закрыты.
+
+### Финальный статус
+
+```
+Stage E.2 — PASS: table-repeat UI/config layer (no DOCX expansion, no token resolver)
+```
+
+После E.2 — отдельный отчёт. Не начинать E.3 до подтверждения.
