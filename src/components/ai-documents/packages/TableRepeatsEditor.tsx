@@ -25,10 +25,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertCircle, AlertTriangle, ClipboardCopy, Loader2, Plus, Save, Trash2,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertCircle, AlertTriangle, ClipboardCopy, FlaskConical, Loader2, Plus, Save, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 import { useTemplateItemTableRepeats } from "@/hooks/useTemplateItemTableRepeats";
 import { usePackageFieldCatalog } from "@/hooks/usePackageFieldCatalog";
