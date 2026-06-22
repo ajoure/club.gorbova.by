@@ -38,6 +38,7 @@ import {
   LN_SUB_NAME_FORMATS,
   extractLnSubFieldRaw,
   formatLnDate,
+} from './ln-subfield-spec.ts';
 import {
   readTableRepeats,
   validateTableRepeatConfig,
@@ -45,6 +46,7 @@ import {
   type TableRepeatConfig,
   type TableRepeatIssue,
 } from './table-repeat-spec.ts';
+
 
 
 /** Жёсткий выключатель: production-вызов всегда возвращает FEATURE_DISABLED. */
