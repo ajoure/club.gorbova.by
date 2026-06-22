@@ -1002,6 +1002,7 @@ export function PackageDocumentCard({
           <TableRepeatsEditor
             itemId={item.id}
             packageTemplateId={packageTemplateId}
+            packageSessionId={sessionId}
             activeRoles={activeRoles}
             assignmentsCountByRole={(() => {
               const m = new Map<string, number>();
