@@ -556,15 +556,54 @@ export function TableRepeatsEditor({
               </div>
 
               <div className="text-[10px] text-muted-foreground leading-snug border-t border-border/40 pt-2">
-                Это служебный маркер строки таблицы. Валидация маркера в общем
-                валидаторе шаблона и резолвер табличных значений будут
-                подключены на Stage E.3, а реальное размножение строк DOCX — на
-                Stage E.4.
+                Это служебный маркер строки таблицы. Реальное размножение строк
+                DOCX подключится на Stage E.4. Stage E.3 даёт только
+                structured dry-run preview (super_admin) — значения в preview
+                ограничены 200 символами и 5 строками.
               </div>
             </>
           )}
         </>
       )}
+
+      <Dialog
+        open={dryRunTrId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDryRunTrId(null);
+            setDryRunResult(null);
+            setDryRunError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Dry-run preview {dryRunTrId ? `{{tableRepeat:${dryRunTrId}}}` : ""}
+            </DialogTitle>
+            <DialogDescription className="text-[11px]">
+              Stage E.3 — резолв через `package-tokens-dry-run`. Не пишет в
+              snapshot/storage, не запускает генерацию DOCX. Значения в preview
+              усечены до 200 символов; показано не более 5 строк.
+            </DialogDescription>
+          </DialogHeader>
+          {dryRunLoading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Резолвим…
+            </div>
+          )}
+          {dryRunError && (
+            <div className="text-[11px] text-rose-700 dark:text-rose-400 border border-rose-500/30 bg-rose-500/5 rounded p-2">
+              {dryRunError}
+            </div>
+          )}
+          {dryRunResult !== null && (
+            <pre className="text-[11px] font-mono overflow-auto max-h-[60vh] bg-muted/40 border border-border/40 rounded p-2 whitespace-pre-wrap break-words">
+              {JSON.stringify(dryRunResult, null, 2)}
+            </pre>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
