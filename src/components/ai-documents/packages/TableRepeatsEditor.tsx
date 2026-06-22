@@ -53,10 +53,12 @@ import {
 export interface TableRepeatsEditorProps {
   itemId: string;
   packageTemplateId: string;
+  /** Stage E.3: session UUID нужен для dry-run preview через `package-tokens-dry-run`. */
+  packageSessionId: string;
   activeRoles: PackageDocumentCardRole[];
   /** Map role_catalog_id → число активных назначений в текущей сессии. */
   assignmentsCountByRole: Map<string, number>;
-  /** false — текущий пользователь не super_admin (скрыть assignment_metadata source). */
+  /** false — текущий пользователь не super_admin (скрыть assignment_metadata source + dry-run). */
   isSuperAdmin: boolean;
   /** Карточка свёрнута, если у item ещё нет TR-конфигов и пользователь не открыл редактор. */
   defaultExpanded?: boolean;
