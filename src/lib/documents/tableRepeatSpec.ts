@@ -225,3 +225,103 @@ export function validateTableRepeatConfig(
 
   return issues;
 }
+
+// ============================================================================
+// Stage E.3 — validateTableRepeatMarkersInTemplate (pure helper).
+// ----------------------------------------------------------------------------
+// Сверяет TR-маркеры в тексте шаблона со списком конфигов текущего item:
+//   • `unknown_tr_id` (error)               — marker ссылается на TR-id,
+//                                              отсутствующий в configs;
+//   • `duplicate_tr_marker_in_template` (warn) — один TR-id встречается >1 раза
+//                                              (в Stage E.4 каждое вхождение
+//                                              развернётся одинаково);
+//   • `tr_config_has_errors` (error)        — TR-id есть, но
+//                                              validateTableRepeatConfig
+//                                              вернул хотя бы один error.
+//
+// Чистый helper без I/O. Если `templateText` пуст/недоступен — возвращает [] (
+// neutral state: вызывающий рендерит «требуется загрузка шаблона»).
+// ============================================================================
+
+export type TableRepeatMarkerIssueCode =
+  | "unknown_tr_id"
+  | "duplicate_tr_marker_in_template"
+  | "tr_config_has_errors";
+
+export interface TableRepeatMarkerIssue {
+  code: TableRepeatMarkerIssueCode;
+  severity: "error" | "warn";
+  tr_id: string;
+  occurrences?: number;
+  cfg_errors?: TableRepeatIssue[];
+  message: string;
+}
+
+export function validateTableRepeatMarkersInTemplate(
+  templateText: string,
+  configs: TableRepeatConfig[],
+  ctx?: {
+    knownCustomKeysByRoleId?: ReadonlyMap<string, ReadonlySet<string>>;
+  },
+): TableRepeatMarkerIssue[] {
+  const issues: TableRepeatMarkerIssue[] = [];
+  if (!templateText) return issues;
+
+  const occByTr = new Map<string, number>();
+  TABLE_REPEAT_MARKER_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TABLE_REPEAT_MARKER_REGEX.exec(templateText)) !== null) {
+    const trId = m[1];
+    occByTr.set(trId, (occByTr.get(trId) ?? 0) + 1);
+  }
+
+  const cfgById = new Map<string, TableRepeatConfig>();
+  for (const c of configs) cfgById.set(c.id, c);
+
+  for (const [trId, count] of occByTr.entries()) {
+    const cfg = cfgById.get(trId);
+    if (!cfg) {
+      issues.push({
+        code: "unknown_tr_id",
+        severity: "error",
+        tr_id: trId,
+        occurrences: count,
+        message:
+          `Маркер {{tableRepeat:${trId}}} есть в шаблоне, но конфиг с таким ` +
+          `TR-id не найден в metadata.table_repeats этого документа.`,
+      });
+      continue;
+    }
+    if (count > 1) {
+      issues.push({
+        code: "duplicate_tr_marker_in_template",
+        severity: "warn",
+        tr_id: trId,
+        occurrences: count,
+        message:
+          `Маркер {{tableRepeat:${trId}}} встречается в шаблоне ${count}× ` +
+          `— в Stage E.4 каждое вхождение раскроется одинаково.`,
+      });
+    }
+    const knownKeys = ctx?.knownCustomKeysByRoleId?.get(cfg.role_catalog_id);
+    const cfgIssues = validateTableRepeatConfig(cfg, {
+      knownCustomKeysForRole: knownKeys,
+    });
+    const errs = cfgIssues.filter((i) => i.severity === "error");
+    if (errs.length > 0) {
+      issues.push({
+        code: "tr_config_has_errors",
+        severity: "error",
+        tr_id: trId,
+        cfg_errors: errs,
+        message:
+          `Маркер {{tableRepeat:${trId}}} есть в шаблоне, но конфиг ` +
+          `содержит ошибки (${errs.length}). Исправьте, иначе Stage E.4 не ` +
+          `сможет развернуть строку.`,
+      });
+    }
+  }
+
+  return issues;
+}
+

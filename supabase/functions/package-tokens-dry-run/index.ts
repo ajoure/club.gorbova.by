@@ -1,19 +1,26 @@
 // ============================================================================
-// package-tokens-dry-run — Sprint 3C, isolated debug endpoint.
+// package-tokens-dry-run — Sprint 3C + Stage E.3 (table-repeat structured branch)
 // ----------------------------------------------------------------------------
 // СТАТУС: dev/debug-only. Super_admin gated.
 //   • Принимает (package_session_id, alias_tokens[]) и возвращает «что вернул
 //     бы resolver», вызывая resolvePackageTokenCore (без feature-flag guard).
+//   • Stage E.3: токены {{tableRepeat:TR-XXXXXX}} распознаются классификатором
+//     и резолвятся через resolveTableRepeatTokenCore — возвращают structured
+//     preview (rows_count, columns, rows_preview ≤5, cell.value ≤200 символов).
 //   • НЕ пишет в snapshot, ai_generated_documents, storage, Gotenberg.
 //   • НЕ затрагивает canonical-document-generate-strict.
-//   • Пишет одну строку аудита `package_tokens_dry_run` без значений токенов
-//     (только summary by code).
+//   • Пишет одну строку аудита `package_tokens_dry_run` БЕЗ значений токенов
+//     (только summary by code + tr_id + rows_count для TR).
 //   • Rate-limit: не чаще 1 запроса в 5 секунд от одного актёра, max 20
 //     токенов за вызов.
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
-import { resolvePackageTokenCore } from '../_shared/resolve-package-tokens.ts';
+import {
+  resolvePackageTokenCore,
+  resolveTableRepeatTokenCore,
+} from '../_shared/resolve-package-tokens.ts';
+import { classifyPlaceholder } from '../_shared/placeholderClassifier.ts';
 
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -28,9 +35,9 @@ interface Body {
   package_session_id?: unknown;
   alias_tokens?: unknown;
   /**
-   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
-   *   Опционально. Нужен для ln-XXXXXX, ln-XXXXXX.<sub_field> и
-   *   ln-XXXXXX.custom.<key> резолверов (document-level SOT).
+   * Опционально. Обязателен для:
+   *   • ln-XXXXXX / ln-XXXXXX.<sub_field> / ln-XXXXXX.custom.<key>
+   *   • {{tableRepeat:TR-XXXXXX}}  (Stage E.3 — иначе tr_no_template_item).
    */
   package_template_item_id?: unknown;
 }
@@ -40,6 +47,12 @@ function bad(status: number, error: string, extra?: Record<string, unknown>) {
     JSON.stringify({ error, ...(extra ?? {}) }),
     { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );
+}
+
+/** Извлекает `inside` из обёртки {{...}} или возвращает исходную строку. */
+function unwrapInside(raw: string): string {
+  const m = raw.match(/^\{\{\s*([^{}]+?)\s*\}\}$/);
+  return m ? m[1].trim() : raw.trim();
 }
 
 Deno.serve(async (req) => {
@@ -62,7 +75,7 @@ Deno.serve(async (req) => {
   if (claimsErr || !claims?.claims?.sub) return bad(401, 'unauthorized');
   const actorId = claims.claims.sub as string;
 
-  // 2. Super_admin check (RBAC SOT через has_role_v2)
+  // 2. Super_admin check (RBAC SOT через has_role_v2) — не ослаблено E.3.
   const service = createClient(SUPABASE_URL, SERVICE_KEY);
   const { data: isSuperAdmin, error: roleErr } = await service.rpc('has_role_v2', {
     _user_id: actorId,
@@ -99,12 +112,73 @@ Deno.serve(async (req) => {
       ? body.package_template_item_id
       : null;
 
-  // 5. Resolve каждый токен через CORE (минуя HARDCODED_ENABLED).
-  const results = [];
+  // 5. Resolve каждый токен.
+  //    Stage E.3: классифицируем сначала; для package_table_repeat — отдельный
+  //    structured-резолвер (не идёт через resolvePackageTokenCore).
+  const results: unknown[] = [];
   const codeCounts: Record<string, number> = {};
+  const trAuditSummaries: Array<{ tr_id: string; rows_count: number | null; codes: Record<string, number>; resolved: boolean; code?: string }> = [];
+
   for (const raw of aliasTokens) {
+    const inside = unwrapInside(raw);
+    const cls = classifyPlaceholder(inside);
+
+    if (cls.kind === 'package_table_repeat') {
+      const tr = await resolveTableRepeatTokenCore({
+        trId: cls.public_id,
+        packageSessionId: sessionId,
+        packageTemplateItemId,
+        supabase: service,
+        isSuperAdmin: true,  // dry-run gated на super_admin (см. шаг 2).
+      });
+      if (tr.resolved) {
+        codeCounts['resolved_table_repeat'] = (codeCounts['resolved_table_repeat'] ?? 0) + 1;
+        results.push({
+          alias_token: raw,
+          kind: 'package_table_repeat',
+          resolved: true,
+          value: null,
+          preview: {
+            tr_id: tr.tr_id,
+            role_catalog_id: tr.role_catalog_id,
+            role_key: tr.role_key,
+            rows_count: tr.rows_count,
+            rows_preview_limit: tr.rows_preview_limit,
+            rows_preview_truncated: tr.rows_preview_truncated,
+            columns: tr.columns,
+            rows_preview: tr.rows_preview,
+          },
+        });
+        trAuditSummaries.push({
+          tr_id: tr.tr_id,
+          rows_count: tr.rows_count,
+          codes: tr.cell_codes_summary,
+          resolved: true,
+        });
+      } else {
+        codeCounts[tr.code] = (codeCounts[tr.code] ?? 0) + 1;
+        results.push({
+          alias_token: raw,
+          kind: 'package_table_repeat',
+          resolved: false,
+          code: tr.code,
+          warning: tr.warning,
+          issues: tr.issues,
+        });
+        trAuditSummaries.push({
+          tr_id: tr.tr_id,
+          rows_count: null,
+          codes: {},
+          resolved: false,
+          code: tr.code,
+        });
+      }
+      continue;
+    }
+
+    // Default: scalar token branch (field/pf/ln/ln.sub/ln.custom/package.*/alias).
     const r = await resolvePackageTokenCore({
-      rawToken: raw,
+      rawToken: inside,
       packageSessionId: sessionId,
       packageTemplateItemId,
       supabase: service,
@@ -113,6 +187,7 @@ Deno.serve(async (req) => {
       codeCounts['resolved'] = (codeCounts['resolved'] ?? 0) + 1;
       results.push({
         alias_token: raw,
+        kind: 'scalar',
         resolved: true,
         value: r.value,
         alias_id: r.aliasId,
@@ -124,6 +199,7 @@ Deno.serve(async (req) => {
       codeCounts[r.code] = (codeCounts[r.code] ?? 0) + 1;
       results.push({
         alias_token: raw,
+        kind: 'scalar',
         resolved: false,
         code: r.code,
         warning: r.warning,
@@ -133,7 +209,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 6. Audit (без значений)
+  // 6. Audit (без значений). Для TR — только tr_id + rows_count + cell-codes counter.
   await service.from('audit_logs').insert({
     action: 'package_tokens_dry_run',
     actor_user_id: actorId,
@@ -145,6 +221,7 @@ Deno.serve(async (req) => {
       alias_tokens: aliasTokens,
       package_template_item_id: packageTemplateItemId,
       codes: codeCounts,
+      table_repeats: trAuditSummaries,
     },
   });
 

@@ -25,10 +25,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertCircle, AlertTriangle, ClipboardCopy, Loader2, Plus, Save, Trash2,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertCircle, AlertTriangle, ClipboardCopy, FlaskConical, Loader2, Plus, Save, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 import { useTemplateItemTableRepeats } from "@/hooks/useTemplateItemTableRepeats";
 import { usePackageFieldCatalog } from "@/hooks/usePackageFieldCatalog";
@@ -49,10 +53,12 @@ import {
 export interface TableRepeatsEditorProps {
   itemId: string;
   packageTemplateId: string;
+  /** Stage E.3: session UUID нужен для dry-run preview через `package-tokens-dry-run`. */
+  packageSessionId: string;
   activeRoles: PackageDocumentCardRole[];
   /** Map role_catalog_id → число активных назначений в текущей сессии. */
   assignmentsCountByRole: Map<string, number>;
-  /** false — текущий пользователь не super_admin (скрыть assignment_metadata source). */
+  /** false — текущий пользователь не super_admin (скрыть assignment_metadata source + dry-run). */
   isSuperAdmin: boolean;
   /** Карточка свёрнута, если у item ещё нет TR-конфигов и пользователь не открыл редактор. */
   defaultExpanded?: boolean;
@@ -76,6 +82,7 @@ function ensureRoleCustomDefs(
 export function TableRepeatsEditor({
   itemId,
   packageTemplateId,
+  packageSessionId,
   activeRoles,
   assignmentsCountByRole,
   isSuperAdmin,
@@ -91,6 +98,39 @@ export function TableRepeatsEditor({
 
   const [draft, setDraft] = useState<TableRepeatConfig[] | null>(null);
   const [expanded, setExpanded] = useState<boolean>(defaultExpanded);
+
+  // Stage E.3 — dry-run dialog state.
+  const [dryRunTrId, setDryRunTrId] = useState<string | null>(null);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<unknown>(null);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
+
+  const runDryRun = async (trId: string) => {
+    setDryRunTrId(trId);
+    setDryRunLoading(true);
+    setDryRunError(null);
+    setDryRunResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("package-tokens-dry-run", {
+        body: {
+          package_session_id: packageSessionId,
+          package_template_item_id: itemId,
+          alias_tokens: [`{{tableRepeat:${trId}}}`],
+        },
+      });
+      if (error) {
+        setDryRunError(error.message ?? "Не удалось выполнить dry-run");
+      } else {
+        setDryRunResult(data);
+      }
+    } catch (e) {
+      setDryRunError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDryRunLoading(false);
+    }
+  };
+
+
 
   // Гидратируем draft из БД ровно один раз / при изменении set'а из БД.
   useEffect(() => {
@@ -325,6 +365,18 @@ export function TableRepeatsEditor({
                           >
                             <ClipboardCopy className="h-3 w-3 mr-1" /> Скопировать маркер
                           </Button>
+                          {isSuperAdmin && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              onClick={() => runDryRun(cfg.id)}
+                              title="Stage E.3 — резолвит preview из package-tokens-dry-run (super_admin only)."
+                            >
+                              <FlaskConical className="h-3 w-3 mr-1" /> Dry-run preview
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             variant="ghost"
@@ -504,15 +556,54 @@ export function TableRepeatsEditor({
               </div>
 
               <div className="text-[10px] text-muted-foreground leading-snug border-t border-border/40 pt-2">
-                Это служебный маркер строки таблицы. Валидация маркера в общем
-                валидаторе шаблона и резолвер табличных значений будут
-                подключены на Stage E.3, а реальное размножение строк DOCX — на
-                Stage E.4.
+                Это служебный маркер строки таблицы. Реальное размножение строк
+                DOCX подключится на Stage E.4. Stage E.3 даёт только
+                structured dry-run preview (super_admin) — значения в preview
+                ограничены 200 символами и 5 строками.
               </div>
             </>
           )}
         </>
       )}
+
+      <Dialog
+        open={dryRunTrId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDryRunTrId(null);
+            setDryRunResult(null);
+            setDryRunError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Dry-run preview {dryRunTrId ? `{{tableRepeat:${dryRunTrId}}}` : ""}
+            </DialogTitle>
+            <DialogDescription className="text-[11px]">
+              Stage E.3 — резолв через `package-tokens-dry-run`. Не пишет в
+              snapshot/storage, не запускает генерацию DOCX. Значения в preview
+              усечены до 200 символов; показано не более 5 строк.
+            </DialogDescription>
+          </DialogHeader>
+          {dryRunLoading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Резолвим…
+            </div>
+          )}
+          {dryRunError && (
+            <div className="text-[11px] text-rose-700 dark:text-rose-400 border border-rose-500/30 bg-rose-500/5 rounded p-2">
+              {dryRunError}
+            </div>
+          )}
+          {dryRunResult !== null && (
+            <pre className="text-[11px] font-mono overflow-auto max-h-[60vh] bg-muted/40 border border-border/40 rounded p-2 whitespace-pre-wrap break-words">
+              {JSON.stringify(dryRunResult, null, 2)}
+            </pre>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

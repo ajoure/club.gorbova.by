@@ -80,6 +80,14 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3:
+      //   {{tableRepeat:TR-XXXXXX}} — service marker, помечающий строку DOCX-таблицы,
+      //   которая в Stage E.4 будет размножена по числу активных назначений роли.
+      //   Без модификаторов в v1: любые `|format=...` дадут `invalid`.
+      kind: 'package_table_repeat';
+      public_id: string;  // TR-XXXXXX
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
@@ -106,6 +114,10 @@ const CASES = new Set<PlaceholderCase>([
 
 const RE_FIELD          = /^field:(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3: {{tableRepeat:TR-XXXXXX}}.
+// Без модификаторов в v1 — `tableRepeat:TR-XXXXXX|format=...` regex не матчит и
+// пойдёт в `invalid` (см. evaluatePlaceholderInScope → legacy_placeholder_format_detected).
+const RE_PACKAGE_TABLE_REPEAT = /^tableRepeat:(TR-\d{6,})$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — проверять ДО RE_PACKAGE_ROLE_SUB.
 const RE_PACKAGE_ROLE_CUSTOM = /^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})((?:\|[a-z_]+=[a-z_]+)*)$/;
@@ -185,6 +197,14 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
       case_modifier: mods.case_modifier,
     };
   }
+
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3: {{tableRepeat:TR-XXXXXX}}.
+  // Никаких модификаторов: с `|...` regex не матчит, проваливается в `invalid`.
+  const mTr = raw.match(RE_PACKAGE_TABLE_REPEAT);
+  if (mTr) {
+    return { kind: 'package_table_repeat', public_id: mTr[1] };
+  }
+
 
   // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: {{ln-XXXXXX.custom.<key>}}.
   const mRoleCustom = raw.match(RE_PACKAGE_ROLE_CUSTOM);
