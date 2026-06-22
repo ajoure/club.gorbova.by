@@ -69,6 +69,7 @@ import {
   readAssignmentCustomValues,
   type AssignmentCustomFieldDef,
 } from "@/lib/documents/assignmentCustomFieldsSpec";
+import { TableRepeatsEditor } from "./TableRepeatsEditor";
 
 export interface PackageDocumentCardItem {
   id: string;
