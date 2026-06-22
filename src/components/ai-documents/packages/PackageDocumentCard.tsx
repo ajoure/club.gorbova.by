@@ -997,6 +997,24 @@ export function PackageDocumentCard({
           )}
         </section>
 
+        {/* ---------- Stage E.2: повторяемые строки таблиц (admin) ---------- */}
+        {isAdmin && (
+          <TableRepeatsEditor
+            itemId={item.id}
+            packageTemplateId={packageTemplateId}
+            activeRoles={activeRoles}
+            assignmentsCountByRole={(() => {
+              const m = new Map<string, number>();
+              for (const a of assignments) {
+                if (!a.role_catalog_id || !a.person_id) continue;
+                m.set(a.role_catalog_id, (m.get(a.role_catalog_id) ?? 0) + 1);
+              }
+              return m;
+            })()}
+            isSuperAdmin={isSuperAdmin}
+          />
+        )}
+
         {/* ---------- Footer: atomic save ---------- */}
         <footer
           className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-border/40"
