@@ -329,6 +329,7 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
                 persons={aiPersons.allPersons}
                 personsLoading={aiPersons.isLoading}
                 isAdmin={isAdmin}
+                isSuperAdmin={rbac.isSuperAdmin}
               />
             ))}
           </Accordion>
