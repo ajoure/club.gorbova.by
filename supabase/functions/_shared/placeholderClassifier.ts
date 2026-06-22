@@ -198,6 +198,14 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
     };
   }
 
+  // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3: {{tableRepeat:TR-XXXXXX}}.
+  // Никаких модификаторов: с `|...` regex не матчит, проваливается в `invalid`.
+  const mTr = raw.match(RE_PACKAGE_TABLE_REPEAT);
+  if (mTr) {
+    return { kind: 'package_table_repeat', public_id: mTr[1] };
+  }
+
+
   // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: {{ln-XXXXXX.custom.<key>}}.
   const mRoleCustom = raw.match(RE_PACKAGE_ROLE_CUSTOM);
   if (mRoleCustom) {
