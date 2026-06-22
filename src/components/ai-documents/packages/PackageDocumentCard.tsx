@@ -166,6 +166,7 @@ export function PackageDocumentCard({
   persons,
   personsLoading,
   isAdmin,
+  isSuperAdmin = false,
 }: PackageDocumentCardProps) {
   const { assignments, isLoading: rolesLoading } = useDocumentItemRoleAssignments(sessionId, item.id);
   const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
