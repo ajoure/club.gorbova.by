@@ -81,6 +81,14 @@ export type PlaceholderClassification =
       case_modifier: PlaceholderCase | null;
     }
   | {
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3:
+      //   {{tableRepeat:TR-XXXXXX}} — service marker, помечающий строку DOCX-таблицы,
+      //   которая в Stage E.4 будет размножена по числу активных назначений роли.
+      //   Без модификаторов в v1: любые `|format=...` дадут `invalid`.
+      kind: 'package_table_repeat';
+      public_id: string;  // TR-XXXXXX
+    }
+  | {
       kind: 'package_requisite';  // package.ul|ip|fl.FLD-XXXXXX
       entity: 'ul' | 'ip' | 'fl';
       public_id: string;
