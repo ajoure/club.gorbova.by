@@ -69,6 +69,7 @@ import {
   readAssignmentCustomValues,
   type AssignmentCustomFieldDef,
 } from "@/lib/documents/assignmentCustomFieldsSpec";
+import { TableRepeatsEditor } from "./TableRepeatsEditor";
 
 export interface PackageDocumentCardItem {
   id: string;
@@ -78,6 +79,14 @@ export interface PackageDocumentCardItem {
   active_version_id: string | null;
   generation_mode?: "single" | "per_role_person" | null;
   repeat_role_catalog_id?: string | null;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.2:
+   *   Сырой `document_package_template_items.metadata`. Stage E.2 читает
+   *   `table_repeats[]` через отдельный хук (с merge-only save), но
+   *   карточка прокидывает item целиком для удобства будущих расширений.
+   *   Опционально — на ранних карточках поле может отсутствовать.
+   */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface PackageDocumentCardRole {
@@ -105,6 +114,12 @@ export interface PackageDocumentCardProps {
   persons: { id: string; full_name: string | null; is_active: boolean }[];
   personsLoading: boolean;
   isAdmin: boolean;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.2:
+   *   Раскрывает в редакторе TR-конфигов advanced source `assignment_metadata`
+   *   (произвольный ключ metadata.custom без проверки schema).
+   */
+  isSuperAdmin?: boolean;
 }
 
 interface DraftRow {
@@ -152,6 +167,7 @@ export function PackageDocumentCard({
   persons,
   personsLoading,
   isAdmin,
+  isSuperAdmin = false,
 }: PackageDocumentCardProps) {
   const { assignments, isLoading: rolesLoading } = useDocumentItemRoleAssignments(sessionId, item.id);
   const fieldsRef = useRef<PackageFieldsSubmitHandle>(null);
@@ -980,6 +996,24 @@ export function PackageDocumentCard({
             </div>
           )}
         </section>
+
+        {/* ---------- Stage E.2: повторяемые строки таблиц (admin) ---------- */}
+        {isAdmin && (
+          <TableRepeatsEditor
+            itemId={item.id}
+            packageTemplateId={packageTemplateId}
+            activeRoles={activeRoles}
+            assignmentsCountByRole={(() => {
+              const m = new Map<string, number>();
+              for (const a of assignments) {
+                if (!a.role_catalog_id || !a.person_id) continue;
+                m.set(a.role_catalog_id, (m.get(a.role_catalog_id) ?? 0) + 1);
+              }
+              return m;
+            })()}
+            isSuperAdmin={isSuperAdmin}
+          />
+        )}
 
         {/* ---------- Footer: atomic save ---------- */}
         <footer

@@ -1,0 +1,518 @@
+/**
+ * TableRepeatsEditor — Stage E.2 UI/config редактор повторяемых строк таблиц
+ * (PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1).
+ *
+ * Scope (UI/config only):
+ *  • CRUD конфигов `metadata.table_repeats[]` для текущего template_item.
+ *  • Выбор роли-источника, маппинг колонок (через `TableRepeatColumnRow`).
+ *  • Copy marker `{{tableRepeat:TR-XXXXXX}}` — служебный.
+ *  • Preview числа строк = число активных назначений роли в текущей сессии
+ *    (без обращения к генератору).
+ *
+ * НЕ в scope (это E.3 / E.4):
+ *  • Валидация маркера `{{tableRepeat:TR-XXXXXX}}` в genеральном валидаторе.
+ *  • Резолвер табличных значений в `package-tokens-dry-run`.
+ *  • Реальное DOCX row expansion в `canonical-document-generate-strict`.
+ *
+ * Save:
+ *  • merge-only через `useTemplateItemTableRepeats` (свежий read + merge).
+ *  • Никаких прямых INSERT/DELETE, никаких новых RPC, никаких миграций.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  AlertCircle, AlertTriangle, ClipboardCopy, Loader2, Plus, Save, Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+import { useTemplateItemTableRepeats } from "@/hooks/useTemplateItemTableRepeats";
+import { usePackageFieldCatalog } from "@/hooks/usePackageFieldCatalog";
+import {
+  nextTableRepeatId,
+  validateTableRepeatConfig,
+  type TableRepeatColumn,
+  type TableRepeatConfig,
+  type TableRepeatIssue,
+} from "@/lib/documents/tableRepeatSpec";
+import { readAssignmentCustomFieldDefs } from "@/lib/documents/assignmentCustomFieldsSpec";
+import type { PackageDocumentCardRole } from "./PackageDocumentCard";
+import {
+  TableRepeatColumnRow,
+  type PackageFieldChoice,
+} from "./TableRepeatColumnRow";
+
+export interface TableRepeatsEditorProps {
+  itemId: string;
+  packageTemplateId: string;
+  activeRoles: PackageDocumentCardRole[];
+  /** Map role_catalog_id → число активных назначений в текущей сессии. */
+  assignmentsCountByRole: Map<string, number>;
+  /** false — текущий пользователь не super_admin (скрыть assignment_metadata source). */
+  isSuperAdmin: boolean;
+  /** Карточка свёрнута, если у item ещё нет TR-конфигов и пользователь не открыл редактор. */
+  defaultExpanded?: boolean;
+}
+
+function configsEqual(a: TableRepeatConfig[], b: TableRepeatConfig[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function blankColumn(cellIndex: number): TableRepeatColumn {
+  return { cell_index: cellIndex, source_type: "role_person" };
+}
+
+function ensureRoleCustomDefs(
+  role: PackageDocumentCardRole | undefined,
+) {
+  if (!role) return [];
+  return readAssignmentCustomFieldDefs(role.metadata);
+}
+
+export function TableRepeatsEditor({
+  itemId,
+  packageTemplateId,
+  activeRoles,
+  assignmentsCountByRole,
+  isSuperAdmin,
+  defaultExpanded = false,
+}: TableRepeatsEditorProps) {
+  const repeatsState = useTemplateItemTableRepeats(itemId, packageTemplateId);
+  const fieldCatalog = usePackageFieldCatalog(packageTemplateId);
+
+  const packageFields = useMemo<PackageFieldChoice[]>(() => {
+    const rows = (fieldCatalog.fields ?? []) as Array<{ public_id: string; label: string }>;
+    return rows.map((r) => ({ public_id: r.public_id, label: r.label }));
+  }, [fieldCatalog.fields]);
+
+  const [draft, setDraft] = useState<TableRepeatConfig[] | null>(null);
+  const [expanded, setExpanded] = useState<boolean>(defaultExpanded);
+
+  // Гидратируем draft из БД ровно один раз / при изменении set'а из БД.
+  useEffect(() => {
+    if (repeatsState.isLoading) return;
+    if (draft === null) {
+      setDraft(repeatsState.repeats);
+    }
+  }, [repeatsState.isLoading, repeatsState.repeats, draft]);
+
+  // Если БД-набор сменился извне (refetch после save) — синхронизируем.
+  useEffect(() => {
+    if (repeatsState.isLoading || draft === null) return;
+    if (configsEqual(draft, repeatsState.repeats)) return;
+    // Если у нас нет несохранённых отличий от прошлой базы — подтягиваем новое.
+    // Простая эвристика: dirty только если draft != repeats И мы редактировали.
+    // Здесь не трогаем draft, если он dirty (пользователь не должен потерять правки).
+  }, [repeatsState.repeats, draft, repeatsState.isLoading]);
+
+  const dirty = useMemo(
+    () => draft !== null && !configsEqual(draft, repeatsState.repeats),
+    [draft, repeatsState.repeats],
+  );
+
+  // Авто-раскрыть если уже есть конфиги.
+  useEffect(() => {
+    if (!expanded && (repeatsState.repeats.length > 0)) {
+      setExpanded(true);
+    }
+    // Только при первом приходе данных.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repeatsState.repeats.length]);
+
+  const roleById = useMemo(() => {
+    const m = new Map<string, PackageDocumentCardRole>();
+    for (const r of activeRoles) m.set(r.id, r);
+    return m;
+  }, [activeRoles]);
+
+  // Валидируем каждый конфиг для UI-индикаторов.
+  const issuesByCfg = useMemo(() => {
+    const m = new Map<string, TableRepeatIssue[]>();
+    for (const cfg of draft ?? []) {
+      const role = roleById.get(cfg.role_catalog_id);
+      const knownKeys = new Set(ensureRoleCustomDefs(role).map((d) => d.key));
+      m.set(cfg.id, validateTableRepeatConfig(cfg, { knownCustomKeysForRole: knownKeys }));
+    }
+    return m;
+  }, [draft, roleById]);
+
+  // Глобальные блокеры save: duplicate TR id + per-config errors.
+  const trIds = (draft ?? []).map((c) => c.id);
+  const duplicateTrIds = new Set(
+    trIds.filter((id, idx) => trIds.indexOf(id) !== idx),
+  );
+
+  const hasBlockingErrors = useMemo(() => {
+    if (duplicateTrIds.size > 0) return true;
+    for (const issues of issuesByCfg.values()) {
+      if (issues.some((i) => i.severity === "error")) return true;
+    }
+    return false;
+  }, [duplicateTrIds, issuesByCfg]);
+
+  // ---------- mutations ----------
+  const addRepeat = () => {
+    setDraft((prev) => {
+      const cur = prev ?? [];
+      const id = nextTableRepeatId(cur.map((c) => c.id));
+      const next: TableRepeatConfig = {
+        id,
+        role_catalog_id: "",
+        label: "",
+        columns: [],
+      };
+      return [...cur, next];
+    });
+    setExpanded(true);
+  };
+  const removeRepeat = (id: string) => {
+    setDraft((prev) => (prev ?? []).filter((c) => c.id !== id));
+  };
+  const updateRepeat = (id: string, patch: Partial<TableRepeatConfig>) => {
+    setDraft((prev) =>
+      (prev ?? []).map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    );
+  };
+  const addColumn = (cfgId: string) => {
+    setDraft((prev) =>
+      (prev ?? []).map((c) => {
+        if (c.id !== cfgId) return c;
+        const usedIdxs = new Set(c.columns.map((col) => col.cell_index));
+        let next = 0;
+        while (usedIdxs.has(next)) next += 1;
+        return { ...c, columns: [...c.columns, blankColumn(next)] };
+      }),
+    );
+  };
+  const updateColumn = (cfgId: string, colIdx: number, patch: Partial<TableRepeatColumn>) => {
+    setDraft((prev) =>
+      (prev ?? []).map((c) => {
+        if (c.id !== cfgId) return c;
+        const nextCols = c.columns.map((col, i) => (i === colIdx ? { ...col, ...patch } : col));
+        return { ...c, columns: nextCols };
+      }),
+    );
+  };
+  const removeColumn = (cfgId: string, colIdx: number) => {
+    setDraft((prev) =>
+      (prev ?? []).map((c) => {
+        if (c.id !== cfgId) return c;
+        return { ...c, columns: c.columns.filter((_, i) => i !== colIdx) };
+      }),
+    );
+  };
+
+  const copyMarker = async (id: string) => {
+    const marker = `{{tableRepeat:${id}}}`;
+    try {
+      await navigator.clipboard.writeText(marker);
+      toast.success(`Маркер ${marker} скопирован`);
+    } catch {
+      toast.error("Не удалось скопировать в буфер обмена");
+    }
+  };
+
+  const onSave = async () => {
+    if (!draft) return;
+    if (hasBlockingErrors) {
+      toast.error("Сохранение заблокировано: исправьте ошибки конфигурации.");
+      return;
+    }
+    try {
+      await repeatsState.save(draft);
+    } catch {
+      // toast уже показан хуком
+    }
+  };
+
+  const onRevert = () => {
+    setDraft(repeatsState.repeats);
+  };
+
+  // ---------- render ----------
+  const headerCount = (draft ?? repeatsState.repeats).length;
+
+  return (
+    <section className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-3">
+      <header className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-foreground">
+            Повторяемые строки таблиц
+          </div>
+          <div className="text-[10px] text-muted-foreground leading-snug">
+            Конфиг для DOCX-таблиц, где одна строка-шаблон размножается по числу
+            назначений выбранной роли. UI/config-слой — реальное размножение
+            строк подключится в Stage E.4.
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {headerCount} конфиг.
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px]"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? "Свернуть" : "Развернуть"}
+          </Button>
+        </div>
+      </header>
+
+      {expanded && (
+        <>
+          {repeatsState.isLoading || draft === null ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загружаем конфиги…
+            </div>
+          ) : (
+            <>
+              {duplicateTrIds.size > 0 && (
+                <div className="text-[11px] text-rose-700 dark:text-rose-400 border border-rose-500/30 bg-rose-500/5 rounded-md p-2 flex items-start gap-1.5">
+                  <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>Найдены дубликаты TR-id — сохранение заблокировано.</span>
+                </div>
+              )}
+
+              {draft.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground border border-dashed border-border/60 rounded-md p-3 text-center">
+                  Конфигов пока нет. Добавьте первый, чтобы начать.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {draft.map((cfg) => {
+                    const role = roleById.get(cfg.role_catalog_id);
+                    const customDefs = ensureRoleCustomDefs(role);
+                    const knownCustomKeys = new Set(customDefs.map((d) => d.key));
+                    const issues = issuesByCfg.get(cfg.id) ?? [];
+                    const cellCount = new Map<number, number>();
+                    for (const col of cfg.columns) {
+                      cellCount.set(col.cell_index, (cellCount.get(col.cell_index) ?? 0) + 1);
+                    }
+                    const previewN = role
+                      ? assignmentsCountByRole.get(role.id) ?? 0
+                      : null;
+                    return (
+                      <div
+                        key={cfg.id}
+                        className={cn(
+                          "rounded-md border border-border/60 bg-background/50 p-3 space-y-2",
+                          duplicateTrIds.has(cfg.id) && "border-rose-500/40",
+                        )}
+                      >
+                        <div className="flex items-start gap-1.5 flex-wrap">
+                          <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-muted text-foreground">
+                            {cfg.id}
+                          </code>
+                          <Input
+                            value={cfg.label ?? ""}
+                            onChange={(e) => updateRepeat(cfg.id, { label: e.target.value })}
+                            placeholder="Название (опционально, только для UI)"
+                            className="h-7 text-[11px] flex-1 min-w-[160px]"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => copyMarker(cfg.id)}
+                          >
+                            <ClipboardCopy className="h-3 w-3 mr-1" /> Скопировать маркер
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Удалить конфиг ${cfg.id}?\n\n` +
+                                    `Если маркер {{tableRepeat:${cfg.id}}} уже вставлен в DOCX-шаблон, ` +
+                                    `его нужно удалить из файла вручную. Автоматическое редактирование DOCX не выполняется.`,
+                                )
+                              ) {
+                                removeRepeat(cfg.id);
+                              }
+                            }}
+                            aria-label="Удалить конфиг"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-muted-foreground font-medium">
+                              Роль-источник
+                            </div>
+                            <Select
+                              value={cfg.role_catalog_id}
+                              onValueChange={(v) => updateRepeat(cfg.id, { role_catalog_id: v })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]">
+                                <SelectValue placeholder="Выберите роль…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {activeRoles.map((r) => (
+                                  <SelectItem key={r.id} value={r.id} className="text-[11px]">
+                                    {r.label}{" "}
+                                    <span className="text-muted-foreground font-mono">
+                                      {r.public_id}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-muted-foreground font-medium">
+                              Предпросмотр количества строк
+                            </div>
+                            <div className="text-[11px] text-foreground border border-border/40 rounded h-7 px-2 flex items-center bg-muted/40">
+                              {previewN === null ? (
+                                <span className="text-muted-foreground">
+                                  Сначала выберите роль
+                                </span>
+                              ) : (
+                                <span>
+                                  <span className="font-semibold tabular-nums">{previewN}</span>{" "}
+                                  активных назначений роли в этой анкете.
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                              Колонки
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              onClick={() => addColumn(cfg.id)}
+                            >
+                              <Plus className="h-3 w-3 mr-1" /> Колонка
+                            </Button>
+                          </div>
+                          {cfg.columns.length === 0 ? (
+                            <div className="text-[11px] text-muted-foreground border border-dashed border-border/60 rounded-md p-2 text-center">
+                              Колонок ещё нет. Добавьте хотя бы одну.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {cfg.columns.map((col, i) => (
+                                <TableRepeatColumnRow
+                                  key={i}
+                                  column={col}
+                                  index={i}
+                                  isSuperAdmin={isSuperAdmin}
+                                  roleCustomDefs={customDefs}
+                                  packageFields={packageFields}
+                                  duplicateCellIndex={(cellCount.get(col.cell_index) ?? 0) > 1}
+                                  onChange={(patch) => updateColumn(cfg.id, i, patch)}
+                                  onRemove={() => removeColumn(cfg.id, i)}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {issues.length > 0 && (
+                          <ul className="space-y-1">
+                            {issues.map((iss, idx) => (
+                              <li
+                                key={`${iss.code}-${idx}`}
+                                className={cn(
+                                  "text-[11px] flex items-start gap-1",
+                                  iss.severity === "error"
+                                    ? "text-rose-700 dark:text-rose-400"
+                                    : "text-amber-700 dark:text-amber-400",
+                                )}
+                              >
+                                {iss.severity === "error" ? (
+                                  <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                                )}
+                                <span>{iss.message}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {role && knownCustomKeys.size === 0 && (
+                          <div className="text-[10px] text-muted-foreground leading-snug">
+                            У роли «{role.label}» пока нет custom assignment
+                            fields — источник «Доп. поле роли» будет недоступен.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  onClick={addRepeat}
+                >
+                  <Plus className="h-3 w-3 mr-1" /> Добавить повторяемую строку
+                </Button>
+                <div className="flex items-center gap-1.5">
+                  {dirty && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={onRevert}
+                      disabled={repeatsState.isSaving}
+                    >
+                      Отменить
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 text-[11px]"
+                    onClick={onSave}
+                    disabled={!dirty || hasBlockingErrors || repeatsState.isSaving}
+                  >
+                    {repeatsState.isSaving ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <Save className="h-3 w-3 mr-1" />
+                    )}
+                    Сохранить конфиги
+                  </Button>
+                </div>
+              </div>
+
+              <div className="text-[10px] text-muted-foreground leading-snug border-t border-border/40 pt-2">
+                Это служебный маркер строки таблицы. Валидация маркера в общем
+                валидаторе шаблона и резолвер табличных значений будут
+                подключены на Stage E.3, а реальное размножение строк DOCX — на
+                Stage E.4.
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}

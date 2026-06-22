@@ -89,3 +89,113 @@ export function readTableRepeats(
   }
   return out;
 }
+
+// Stage E.2 — validateTableRepeatConfig (edge mirror).
+export type TableRepeatIssueCode =
+  | "missing_role"
+  | "duplicate_cell_index"
+  | "negative_cell_index"
+  | "non_integer_cell_index"
+  | "missing_source_key"
+  | "orphan_custom_key";
+
+export interface TableRepeatIssue {
+  code: TableRepeatIssueCode;
+  severity: "error" | "warn";
+  cell_index?: number;
+  source_key?: string;
+  message: string;
+}
+
+export function validateTableRepeatConfig(
+  cfg: TableRepeatConfig,
+  ctx?: {
+    knownCustomKeysForRole?: ReadonlySet<string>;
+  },
+): TableRepeatIssue[] {
+  const issues: TableRepeatIssue[] = [];
+
+  if (!cfg.role_catalog_id) {
+    issues.push({
+      code: "missing_role",
+      severity: "error",
+      message: "Не выбрана роль-источник для повторяемой строки.",
+    });
+  }
+
+  const seenCells = new Map<number, number>();
+  for (const col of cfg.columns) {
+    if (!Number.isFinite(col.cell_index)) {
+      issues.push({
+        code: "non_integer_cell_index",
+        severity: "error",
+        cell_index: col.cell_index,
+        message: "Номер колонки должен быть целым числом.",
+      });
+      continue;
+    }
+    if (!Number.isInteger(col.cell_index)) {
+      issues.push({
+        code: "non_integer_cell_index",
+        severity: "error",
+        cell_index: col.cell_index,
+        message: "Номер колонки должен быть целым числом.",
+      });
+    }
+    if (col.cell_index < 0) {
+      issues.push({
+        code: "negative_cell_index",
+        severity: "error",
+        cell_index: col.cell_index,
+        message: "Номер колонки не может быть отрицательным.",
+      });
+    }
+    seenCells.set(col.cell_index, (seenCells.get(col.cell_index) ?? 0) + 1);
+  }
+  for (const [idx, count] of seenCells.entries()) {
+    if (count > 1) {
+      issues.push({
+        code: "duplicate_cell_index",
+        severity: "error",
+        cell_index: idx,
+        message: `Колонка ${idx + 1} используется более одного раза.`,
+      });
+    }
+  }
+
+  for (const col of cfg.columns) {
+    if (
+      col.source_type === "role_person" ||
+      col.source_type === "assignment_custom_field" ||
+      col.source_type === "package_field" ||
+      col.source_type === "static_text"
+    ) {
+      if (!col.source_key || col.source_key === "") {
+        issues.push({
+          code: "missing_source_key",
+          severity: "error",
+          cell_index: col.cell_index,
+          message: `Колонка ${col.cell_index + 1}: не задан источник.`,
+        });
+      }
+    }
+    if (
+      col.source_type === "assignment_custom_field" &&
+      col.source_key &&
+      ctx?.knownCustomKeysForRole &&
+      !ctx.knownCustomKeysForRole.has(col.source_key)
+    ) {
+      issues.push({
+        code: "orphan_custom_key",
+        severity: "warn",
+        cell_index: col.cell_index,
+        source_key: col.source_key,
+        message:
+          `Колонка ${col.cell_index + 1}: доп. поле «${col.source_key}» ` +
+          `больше не определено в schema роли. Конфиг сохранится как orphan-ref.`,
+      });
+    }
+  }
+
+  return issues;
+}
