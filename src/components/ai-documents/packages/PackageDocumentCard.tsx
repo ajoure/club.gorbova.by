@@ -78,6 +78,14 @@ export interface PackageDocumentCardItem {
   active_version_id: string | null;
   generation_mode?: "single" | "per_role_person" | null;
   repeat_role_catalog_id?: string | null;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.2:
+   *   Сырой `document_package_template_items.metadata`. Stage E.2 читает
+   *   `table_repeats[]` через отдельный хук (с merge-only save), но
+   *   карточка прокидывает item целиком для удобства будущих расширений.
+   *   Опционально — на ранних карточках поле может отсутствовать.
+   */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface PackageDocumentCardRole {
@@ -105,6 +113,12 @@ export interface PackageDocumentCardProps {
   persons: { id: string; full_name: string | null; is_active: boolean }[];
   personsLoading: boolean;
   isAdmin: boolean;
+  /**
+   * PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.2:
+   *   Раскрывает в редакторе TR-конфигов advanced source `assignment_metadata`
+   *   (произвольный ключ metadata.custom без проверки schema).
+   */
+  isSuperAdmin?: boolean;
 }
 
 interface DraftRow {
