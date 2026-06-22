@@ -82,6 +82,7 @@ function ensureRoleCustomDefs(
 export function TableRepeatsEditor({
   itemId,
   packageTemplateId,
+  packageSessionId,
   activeRoles,
   assignmentsCountByRole,
   isSuperAdmin,
@@ -97,6 +98,39 @@ export function TableRepeatsEditor({
 
   const [draft, setDraft] = useState<TableRepeatConfig[] | null>(null);
   const [expanded, setExpanded] = useState<boolean>(defaultExpanded);
+
+  // Stage E.3 — dry-run dialog state.
+  const [dryRunTrId, setDryRunTrId] = useState<string | null>(null);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<unknown>(null);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
+
+  const runDryRun = async (trId: string) => {
+    setDryRunTrId(trId);
+    setDryRunLoading(true);
+    setDryRunError(null);
+    setDryRunResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("package-tokens-dry-run", {
+        body: {
+          package_session_id: packageSessionId,
+          package_template_item_id: itemId,
+          alias_tokens: [`{{tableRepeat:${trId}}}`],
+        },
+      });
+      if (error) {
+        setDryRunError(error.message ?? "Не удалось выполнить dry-run");
+      } else {
+        setDryRunResult(data);
+      }
+    } catch (e) {
+      setDryRunError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDryRunLoading(false);
+    }
+  };
+
+
 
   // Гидратируем draft из БД ровно один раз / при изменении set'а из БД.
   useEffect(() => {
