@@ -16978,6 +16978,18 @@ export type Database = {
         Args: { p_account_id: string }
         Returns: Json
       }
+      get_kb_questions_public: {
+        Args: never
+        Returns: {
+          answer_date: string
+          episode_number: number
+          full_question: string
+          id: string
+          question_number: number
+          tags: string[]
+          title: string
+        }[]
+      }
       get_last_broadcast_audit_proof: {
         Args: never
         Returns: {
