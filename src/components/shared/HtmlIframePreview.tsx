@@ -311,6 +311,27 @@ export function HtmlIframePreview({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(minHeight);
 
+  const postParentViewport = () => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    try {
+      const rect = iframe.getBoundingClientRect();
+      const headerOffset = resolveHeaderOffset();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+      const visibleTop = Math.max(0, headerOffset - rect.top);
+      const visibleBottom = Math.min(rect.height, viewportHeight - rect.top);
+      const visibleHeight = Math.max(320, visibleBottom - visibleTop);
+      iframe.contentWindow.postMessage(
+        {
+          type: 'iframe-parent-viewport',
+          top: visibleTop,
+          height: visibleHeight,
+        },
+        '*',
+      );
+    } catch {}
+  };
+
   useEffect(() => {
     if (!html.trim()) setHeight(minHeight);
   }, [html, minHeight]);
@@ -333,6 +354,7 @@ export function HtmlIframePreview({
         if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return;
         const clamped = Math.max(minHeight, Math.min(Math.ceil(raw), MAX_IFRAME_HEIGHT));
         setHeight((prev) => (prev === clamped ? prev : clamped));
+        postParentViewport();
         return;
       }
 
@@ -360,6 +382,17 @@ export function HtmlIframePreview({
     return () => window.removeEventListener('message', handleMessage);
   }, [minHeight]);
 
+  useEffect(() => {
+    postParentViewport();
+    const onViewportChange = () => postParentViewport();
+    window.addEventListener('scroll', onViewportChange, { passive: true });
+    window.addEventListener('resize', onViewportChange);
+    return () => {
+      window.removeEventListener('scroll', onViewportChange);
+      window.removeEventListener('resize', onViewportChange);
+    };
+  }, [height, html]);
+
   if (!html.trim()) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -375,6 +408,7 @@ export function HtmlIframePreview({
       srcDoc={buildSrcdoc(html)}
       sandbox={SANDBOX_POLICY}
       scrolling="no"
+      onLoad={postParentViewport}
       style={{ width: "100%", height: `${height}px`, border: "none", overflow: "hidden" }}
       title="HTML Preview"
     />
