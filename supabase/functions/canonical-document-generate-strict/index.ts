@@ -1814,6 +1814,110 @@ Deno.serve(async (req) => {
       }, 400);
     }
 
+    // ── PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a ──────────────
+    // Запускаем ДО Docxtemplater render:
+    //   • E.4a: ln-custom scalar bag → injected в `resolved` map.
+    //   • E.4 main: applyTableRepeatExpansion мутирует word/document.xml
+    //     (размножает <w:tr> для каждого {{tableRepeat:TR-XXXXXX}}).
+    //
+    // Fail-soft: ошибки/warnings уходят в generation_report.* + audit;
+    // HTTP 500 не отдаём, генерация продолжается.
+    const generationReport: {
+      table_repeat_expansion?: TableRepeatExpansionReport;
+      ln_custom_scalar?: LnCustomPrepareReport & { codes_summary: Record<string, number> };
+    } = {};
+
+    if (generationContext === 'package_session') {
+      // Load item metadata once (для table_repeats[] и для ln_custom).
+      let itemMetadata: unknown = null;
+      try {
+        const { data: itemRow } = await supabase
+          .from('document_package_template_items')
+          .select('metadata')
+          .eq('id', packageContext!.package_template_item_id)
+          .maybeSingle();
+        itemMetadata = itemRow?.metadata ?? null;
+      } catch (_e) {
+        itemMetadata = null;
+      }
+
+      // E.4a: ln-custom scalar bag
+      if (parsedLnCustomTokens.length > 0) {
+        try {
+          const lc = await prepareLnCustomScalarBag({
+            supabase,
+            packageSessionId: packageContext!.package_session_id,
+            packageTemplateItemId: packageContext!.package_template_item_id,
+            packageTemplateId: packageContext!.package_template_id,
+            tokens: parsedLnCustomTokens,
+          });
+          for (const tok of parsedLnCustomTokens) {
+            const entry = lc.bag[tok.raw_inside];
+            resolved[tok.raw_inside] = entry?.value ?? '';
+            sourceTrace[tok.raw_inside] = {
+              status: entry?.value ? 'resolved' : 'empty',
+              source: 'package_ln_custom',
+              kind: 'ln_custom',
+              ln_public_id: tok.ln_public_id,
+              custom_key: tok.custom_key,
+              value: entry?.value ?? '',
+              code: entry?.code ?? 'ok',
+            };
+          }
+          generationReport.ln_custom_scalar = {
+            tokens_count: lc.report.tokens_count,
+            codes_summary: lc.report.codes_summary,
+          };
+        } catch (e: any) {
+          console.warn('[strict] ln_custom_scalar_prepare failed:', e?.message || e);
+          for (const tok of parsedLnCustomTokens) {
+            if (!(tok.raw_inside in resolved)) resolved[tok.raw_inside] = '';
+          }
+          generationReport.ln_custom_scalar = {
+            tokens_count: parsedLnCustomTokens.length,
+            codes_summary: { ln_custom_prepare_failed: parsedLnCustomTokens.length },
+          };
+        }
+      }
+
+      // E.4 main: real DOCX row expansion
+      try {
+        const trReport = await applyTableRepeatExpansion({
+          zip,
+          supabase,
+          packageSessionId: packageContext!.package_session_id,
+          packageTemplateItemId: packageContext!.package_template_item_id,
+          packageTemplateId: packageContext!.package_template_id,
+          itemMetadata,
+          isSuperAdmin,
+          preresolvedPfFields: (packageContext!.preresolved_pf_fields || {}) as Record<
+            string,
+            { rendered_value?: string; raw_value?: unknown }
+          >,
+        });
+        generationReport.table_repeat_expansion = trReport;
+      } catch (e: any) {
+        console.warn('[strict] applyTableRepeatExpansion failed:', e?.message || e);
+        generationReport.table_repeat_expansion = {
+          applied: false,
+          super_admin: !!isSuperAdmin,
+          markers: [{
+            tr_id: '*',
+            rows_count: 0,
+            columns_count: 0,
+            occurrence_count: 0,
+            ok_occurrences: 0,
+            failed_occurrences: 0,
+            cell_codes_summary: {},
+            source_types_count: {},
+            severity: 'error',
+            code: 'tr_expansion_runtime_failure',
+          }],
+        };
+      }
+    }
+
+
     const docx = new Docxtemplater(zip, {
       delimiters: { start: '{{', end: '}}' },
       paragraphLoop: true,
