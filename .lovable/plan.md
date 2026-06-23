@@ -1,171 +1,187 @@
 да, согласен, с учетом правок:
 
-1. **Не использовать глобальный** `<base target="_blank">` **вообще.**  
-Его нужно полностью убрать из `srcdoc`, иначе он продолжит ломать якоря и `href="#"`.
-2. **Для внешних ссылок не просто выставлять** `target/rel`**, а открывать безопасно.**  
-В обработчике клика для внешних ссылок лучше делать:
+1. **Сохрани add-only относительно предыдущего фикса.**  
+Новый план не должен заменить уже согласованные требования по:
+  - удалению глобального `<base target="_blank">`;
+  - перехвату `href="#..."`;
+  - безопасному открытию внешних ссылок через `_blank + noopener/noreferrer`;
+  - `scrolling="no"` / `overflow:hidden`;
+  - строгой проверке `event.source === iframeRef.current?.contentWindow`.
+2. `syncFixedOverlays()` **не должен трогать все** `position: fixed` **подряд.**  
+Нужно ограничить обработку только fullscreen overlay-кандидатами, например:
   &nbsp;
-  ```ts
-  window.open(url, '_blank', 'noopener,noreferrer')
-  ```
-  и затем `preventDefault()`, чтобы поведение было полностью контролируемым внутри sandbox-iframe.
-3. **Для** `href="#id"` **обязательно передавать в родителя не только** `id`**, но и** `targetOffsetTop`**.**  
-Сообщение должно быть примерно таким:
   &nbsp;
-  ```ts
-  {
-    type: 'iframe-anchor',
-    id,
-    targetOffsetTop
-  }
-  ```
-  Иначе родитель не сможет корректно вычислить позицию внутри iframe.
-4. **В родителе скроллить только сообщения от текущего iframe.**  
-Проверка должна остаться строгой:
-  &nbsp;
-  ```ts
-  if (event.source !== iframeRef.current?.contentWindow) return
-  ```
-  Никакой проверки `origin` для `srcdoc` как обязательной не добавлять, потому что у sandbox/srcdoc может быть opaque origin.
-5. **Для** `scrollIntoView` **не ломать нативное поведение полностью.**  
-Подмена `Element.prototype.scrollIntoView` внутри iframe допустима, но с fallback: если элемент не найден / postMessage невозможен / родитель не обработал сообщение, должен сработать оригинальный `scrollIntoView`.
-6. **Добавить защиту от повторной инъекции скрипта.**  
-Новый marker `data-lovable-resize-v2` корректен, но он должен покрывать весь общий injected script: resize + anchor intercept + scroll intercept. Не должно быть двух независимых injected scripts.
-7. **Не менять контракт компонента и вызывающие места.**  
-Согласен: `HtmlSection.tsx`, `HtmlRawBlock.tsx`, `HtmlBlockEditor.tsx` не трогать. Фикс должен примениться через общий `HtmlIframePreview`.
-8. **Для** `href="#"` **и пустых ссылок поведение должно быть нейтральным.**  
-Обязательно:
-  &nbsp;
-  ```ts
-  preventDefault()
-  stopPropagation()
-  ```
-  Новая вкладка не открывается, скролл наверх не происходит.
-9. **Header offset сделать безопаснее.**  
-Не только `document.querySelector('header')?.offsetHeight ?? 80`, а лучше:
-  &nbsp;
-  ```ts
-  const headerOffset =
-    document.querySelector('[data-site-header]')?.getBoundingClientRect().height
-    ?? document.querySelector('header')?.getBoundingClientRect().height
-    ?? 80
-  ```
-  Это уменьшит риск неверного offset в админке.
-10. **Добавить clamp для итогового scroll target.**  
-Чтобы не получить отрицательную позицию:
+  - `position: fixed`;
+  - `inset: 0` или близкий fullscreen-паттерн;
+  - элемент видим;
+  - `z-index`/классы/размеры указывают на modal overlay.  
+  Обычные sticky/fixed элементы внутри HTML не ломать.
+3. **При закрытии модалки обязательно возвращать исходные inline-стили.**  
+Если bridge временно переводит overlay в `position:absolute`, нужно сохранять previous inline values и восстанавливать их после скрытия, чтобы не мутировать пользовательский HTML навсегда.
+4. `window.scrollTo/scrollBy` **перехватывать с fallback.**  
+Если родительский bridge недоступен или сообщение не обработано, нативное поведение внутри iframe должно сохраниться. Нельзя полностью убивать пользовательский JS.
+5. **Root-scroll detection оформить отдельным helper и покрыть админку.**  
+Нужно явно различать:
+  - публичную страницу с `window/document` scroll;
+  - admin preview внутри scroll-container;
+  - lesson editor preview.  
+  Для каждого режима должны быть разные расчёты `viewportTop`, `viewportHeight`, `scrollTop`.
+6. **Mobile-фикс не должен быть глобальным CSS-обнулением.**  
+Не добавлять агрессивные правила типа `* { max-width: 100vw }`, которые могут сломать авторский дизайн. Только точечная стабилизация iframe/overlay.
+7. **В DoD добавить проверку закрытия модалки.**  
+Нужно проверить:
+  - открыть модалку;
+  - закрыть;
+  - открыть повторно;
+  - форма снова появляется в видимой области;
+  - затемнение не остаётся висеть.
+8. **В DoD добавить проверку второго типа модалки.**  
+Проверить обе кнопки:
+  - `openModal('setup')`;
+  - `openModal('access')`.
+9. **В отчёте обязательно указать статус custom domain.**  
+Если localhost/preview исправлен, а `gorbova.by` ещё показывает старый bundle, это не считать провалом кода. В отчёте отдельно написать:  
+`Код исправлен, для публичного домена требуется Publish`.
+10. **Отчет Lovable должен быть строго на русском языке.**
 
-```ts
-top: Math.max(0, calculatedTop)
-```
-
-11. **ResizeObserver должен остаться основным механизмом высоты.**  
-Новый первичный `post()` и `requestAnimationFrame(post)` добавляются только как ускорение первого resize, но не заменяют текущий observer/load/font/image handling.
-12. **В DoD добавить проверку внешней ссылки.**  
-Нужно явно проверить, что обычная внешняя ссылка из HTML-блока:
-
-- открывается в новой вкладке;
-- не ломает sandbox;
-- получает `noopener/noreferrer`;
-- не пытается навигировать текущую страницу.
-
-13. **В DoD добавить regression-check для lesson HTML-блока.**  
-Так как компонент используется в `lesson-editor/blocks/HtmlRawBlock.tsx`, нужно проверить не только site-builder, но и lesson HTML preview/render.
-14. **В отчете о выполненной работе обязательно указать:**
-
-- изменён только `src/components/shared/HtmlIframePreview.tsx`;
-- БД / RLS / edge functions / HTML-контент страницы не трогались;
-- sandbox policy не расширялась;
-- `allow-same-origin` не добавлялся;
-- приложены screenshots до/после и результат wheel-test.
-
-15. **Добавить обязательное требование по языку для [Lovable.dev](http://Lovable.dev).**
+&nbsp;
 
 ```text
 План должен быть составлен на русском языке.
 Отчет о выполненной работе должен быть составлен на русском языке.
 Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
 
-План: исправить рендер HTML-блока (site-builder/lesson) — внутристраничные ссылки, открытие в новой вкладке и "залипание" скролла
+План:
 ```
 
-## Диагноз
+## 1. Проблема
 
-HTML-страница "Идеологическая работа" (`site_pages.id=7e672fed…011`, единственный блок `type=html`) сама по себе валидна. Все проблемы вызваны рендерером `src/components/shared/HtmlIframePreview.tsx`, через который контент монтируется в sandbox-iframe (используется и в админ-превью, и в публичном `site-renderer/blocks/HtmlSection.tsx`, и в `lesson-editor/blocks/HtmlRawBlock.tsx`).
+На опубликованной странице `gorbova.by/ideologicheskaya-rabota` кнопки внутри HTML-блока визуально «зависают»: после клика появляется затемнение/blur, но форма оказывается не в видимой области. Якоря и скролл работают нестабильно, хотя в редакторе/предпросмотре поведение выглядит лучше.
 
-Три корневые причины:
+## 2. Диагностика
 
-1. **«Ссылки/кнопки не работают»** — в `buildSrcdoc` принудительно инжектится `<base target="_blank">`. В результате:
-  - Все `<a href="#paths">`, `<a href="#benefits">` и т.п. открываются в новой вкладке как `about:srcdoc#paths` (пустая страница) вместо скролла родителя.
-  - Логотип-ссылка `<a href="#">` тоже открывает новую вкладку.
-2. **«Якоря и `scrollToSection(...)` ничего не делают»** — iframe сэндбоксирован и его высота подгоняется под `scrollHeight` контента. Внутренний `window.scrollTo({behavior:'smooth'})` скроллит документ iframe, который не имеет собственного скролла (всё видно), поэтому визуально не происходит ничего. Родительская страница не получает команды скроллить к нужному `id`.
-3. **«Скролл колесом срабатывает только со второго раза»** — пока не пришёл первый `iframe-resize` postMessage, iframe держит `minHeight=100px` и имеет внутренний скролл. Первое прокручивание колесом «съедается» внутренним скроллом маленького iframe, и только после ресайза (или второго тика) колесо передаётся родителю. Дополнительно `style="overflow: auto"` на iframe оставляет внутренний скролл как фоллбэк.
+Факты, уже проверенные:
 
-Контент пользователя править не нужно — фикс на уровне общего рендерера.
+- Страница `site_pages.id = 7e672fed-13f1-4ff1-8786-71a228a0c011`, slug `ideologicheskaya-rabota`, status `published`, один блок `type=html`.
+- Публичный рендер идёт через `src/components/site-renderer/blocks/HtmlSection.tsx` → `src/components/shared/HtmlIframePreview.tsx`.
+- HTML содержит модалку:
+  - `#leadModal` с `class="fixed inset-0 ... hidden ..."`;
+  - кнопки вызывают `openModal('setup')` / `openModal('access')`;
+  - форма вызывает `handleFormSubmit(event)` и показывает `#successState`.
+- Playwright на опубликованном сайте воспроизвёл дефект:
+  - desktop: iframe height `9868`, modal overlay height `9868`, modal card top около `4659`;
+  - tablet: iframe height `13869`, modal card top около `6659`;
+  - mobile: iframe height `15000`, modal card top около `7203`, card частично уходит влево.
+- Корневая причина: sandbox iframe растянут на всю высоту HTML-документа, поэтому `position: fixed` внутри iframe фиксируется не относительно реального окна браузера, а относительно огромного iframe. Текущий bridge ошибочно считает `document.scrollingElement` обычным scroll-container и передаёт высоту всего документа как viewport.
 
-## Скоуп изменений
+## 3. Предлагаемое решение
 
-Только `src/components/shared/HtmlIframePreview.tsx`. Никаких изменений в самой HTML-странице, в edge-функциях, в БД, в RLS/GRANT, в скоупах E.1–E.4. Контракт `HtmlIframePreview({ html, emptyText, minHeight })` остаётся прежним.
+Исправить общий iframe-адаптер, не трогая сам HTML страницы и не меняя БД:
 
-## Что меняется в `HtmlIframePreview.tsx`
+### A. Правильная геометрия viewport родителя
 
-### A. Умный `<base target=…>` + intercept якорей (фикс bug #1 и #2)
+В `HtmlIframePreview.tsx` добавить корректное различение:
 
-Вместо `<base target="_blank">` инжектится небольшой скрипт, который при `click` на `<a>`:
+- root-scroll (`document.scrollingElement`, `html`, `body`) → использовать `window.innerHeight`, `window.scrollY`, `iframe.getBoundingClientRect()`;
+- вложенный scroll-container в админке → использовать его `clientHeight`, `scrollTop`, `getBoundingClientRect()`.
 
-- `href` начинается с `#` и не пустой → `preventDefault`, `postMessage({type:'iframe-anchor', id})` родителю;
-- `href` пустой / `#` → `preventDefault` (не открывать новую вкладку);
-- иначе (внешняя ссылка) → принудительно `target="_blank" rel="noopener noreferrer"`.
+Результат: iframe будет получать реальную видимую область браузера, а не высоту всего HTML-документа.
 
-То же самое перехватывается на уровне делегирования (`document.addEventListener('click', …, true)`), чтобы работало и для `<a>` внутри admin-авторских кнопок. Существующий пользовательский `scrollToSection(id)` оставляем как есть — он `return false` и не помешает, но дополнительно патчим: если `el = getElementById(id)` найден, скрипт сам шлёт `iframe-scroll-to-element` родителю с координатой относительно iframe (см. ниже), плюс возвращает `false`, чтобы не было дефолтного перехода. Существующий `scrollIntoView` в `setSearchFilter` обворачивается перехватом: подменяем `Element.prototype.scrollIntoView` на вариант, который сначала пытается postMessage родителю.
+### B. Починить fixed-модалки внутри iframe
 
-### B. Родительский listener скроллит окно (фикс bug #2)
+В bridge-скрипте для полноэкранных fixed-overlay:
 
-В компоненте уже есть `handleMessage`. Добавляем ветки:
+- переводить overlay в `position:absolute` только на время показа;
+- выставлять `top = parentViewport.top`, `height = parentViewport.height`, `bottom:auto`, `left:0`, `right:0`;
+- синхронизировать сразу после клика, после DOM mutation, resize, scroll и получения viewport-сообщения.
 
-- `type === 'iframe-anchor'`: вычисляем абсолютный Y = `iframeRect.top + window.scrollY + targetOffsetTop − headerOffset`, где `targetOffsetTop` приходит из iframe в том же сообщении (iframe знает позицию якоря у себя через `getBoundingClientRect().top + iframeScroll`). Скроллим `window.scrollTo({top, behavior:'smooth'})`. `headerOffset` берётся как `document.querySelector('header')?.offsetHeight ?? 80` — мягкий фоллбэк.
-- `type === 'iframe-scroll-to-element'`: то же самое, но с готовой относительной координатой.
+Результат: `#leadModal` и карточка формы будут появляться в текущей видимой области, а не в середине 10–15 тыс. px iframe.
 
-Сам iframe считает Y якоря у себя (`el.getBoundingClientRect().top` относительно своего документа) и кладёт это в сообщение — родитель добавляет смещение iframe и собственный header.
+### C. Починить авторские scroll-функции HTML
 
-### C. Отключить внутренний скролл iframe + быстрый первичный ресайз (фикс bug #3)
+Сейчас HTML вызывает `window.scrollTo(...)` внутри iframe (`scrollToSection`). Это не скроллит родительскую страницу. Нужно в bridge:
 
-- На iframe-элементе ставим `scrolling="no"`, `style.overflow="hidden"` (вместо `auto`). Поскольку высота всегда подгоняется под контент, внутренний скролл не нужен; колесо сразу уходит родителю.
-- Внутри `RESIZE_SCRIPT`: добавляем инжект CSS `html,body{overflow:visible !important;height:auto !important;}` через `<style>`-блок в `<head>` сразу при выполнении (DOMContentLoaded не дожидаемся, т.к. скрипт ставится в самом конце `<body>`).
-- Первичный `post()` вызываем синхронно сразу при выполнении (не только на `load`), плюс `requestAnimationFrame(post)` — чтобы первый ресайз доехал до родителя за один-два кадра, до того как пользователь успеет прокрутить.
-- На стороне родителя: пока `height === minHeight` (т.е. ресайз ещё не пришёл), оставляем `pointer-events: none`? — нет, это сломает первый клик. Вместо этого ставим начальный `minHeight={1}` для site-renderer-кейса не трогаем (контракт), но изменим дефолт: в публичном `HtmlSection` уже сейчас вызывает без аргументов; оставляем `minHeight=100`, но добавляем CSS-флаг: до прихода ресайза iframe растягиваем на `min-height: 100vh` через стилизацию — нет, это не нужно. Достаточно `scrolling=no`+`overflow:hidden` — короткий iframe без своего скролла не «съест» колесо.
+- перехватить `window.scrollTo` / `window.scrollBy` внутри iframe и делегировать scroll родителю;
+- сохранить существующий перехват `scrollIntoView`;
+- для `href="#..."` отправлять родителю точный target offset с учётом header внутри HTML-страницы.
 
-### D. Идемпотентность
+Результат: верхние якоря, `Посмотреть 600+ готовых ответов`, `scrollToSection('db')`, `setSearchFilter()` не будут «самолистать» в iframe и сбрасываться.
 
-Маркер `RESIZE_MARKER` теперь покрывает и новый интерсептор (всё в одном `<script>`). Версионируем маркер: `data-lovable-resize-v2`, чтобы старые закэшированные srcdoc-ы регенерировались.
+### D. Стабилизировать mobile/tablet
 
-## Технические замечания
+Минимально в injected CSS:
 
-- Sandbox-политика остаётся прежней (`allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation`). `allow-same-origin` по-прежнему НЕ выдаётся — `postMessage` работает без него.
-- Внешние ссылки получают `target="_blank" rel="noopener noreferrer"` — это улучшение безопасности по сравнению с текущим глобальным `<base target="_blank">` без `rel`.
-- Origin родительского сообщения проверяется как раньше через `e.source === iframe.contentWindow`.
-- Никакой пользовательский JS из HTML-блока не ломается: `scrollToSection`, `switchTab`, `openModal`, `calculateSavings`, `filterDatabase` продолжают работать; перехватываем только дефолтное поведение `<a>` и `scrollIntoView`.
+- убрать горизонтальный сдвиг overlay на мобильных;
+- не ломать произвольный HTML-контент;
+- оставить auto-height iframe без внутреннего scroll.
 
-## Проверка (DoD)
+## 4. Изменяемые компоненты
 
-1. В админ-превью страницы `/ideologicheskaya-rabota`:
-  - клик по «3 пути», «Выгоды», «Что делаем», «Для кого», «База знаний», «Как начать», «Оплата» → плавный скролл родителя к соответствующей секции, новая вкладка НЕ открывается;
-  - клик по логотипу `<a href="#">` → ничего не открывается, новой вкладки нет;
-  - клик по «Настроить идеологическую работу» → открывает модалку (внутри iframe, как сейчас);
-  - клик по «Открыть демо-доступ» / «Участвовать» → открывает модалку;
-  - футерные ссылки `#paths`, `#benefits`, `#what-we-do`, `#db` → скролл родителя;
-  - чипы фильтра базы знаний → фильтруют карточки и iframe сам шлёт scroll-to-element родителю (родитель плавно скроллит к области поиска).
-2. Скролл колесом сразу после загрузки страницы прокручивает родителя с первого тика (Chrome desktop, Safari iOS, Firefox).
-3. Превью корректно перерасчитывает высоту при `switchTab('accountant')` (ResizeObserver) — отсутствует обрезка контента.
-4. Mobile (375), tablet (768), desktop (1280, 1440) — iframe растягивается на ширину контейнера, контент рендерится без горизонтального скролла родителя (на странице есть `overflow-x-hidden` у `body`).
-5. Smoke-проверка через Playwright на `localhost:8080/admin/sites/7e672fed-13f1-4ff1-8786-71a228a0c011` (preview tab) — скриншоты до/после клика по якорю, скриншот после ручного wheel-теста через `page.mouse.wheel(0, 600)`.
+Только:
 
-## Не входит в этот патч
+- `src/components/shared/HtmlIframePreview.tsx`
 
-- Правки самого HTML-кода страницы — не нужны.
-- Изменения схемы блоков, миграции, RLS, edge functions, audit.
-- Изменения в `HtmlBlockEditor.tsx`, `HtmlSection.tsx`, `HtmlRawBlock.tsx` (используют тот же `HtmlIframePreview`, фикс применится автоматически).
-- Открытые ранее этапы E.1–E.4 (document packages) — не трогаются.
+Будут затронуты UI-пути, которые уже используют этот компонент:
 
-## Файлы
+- публичный site-builder HTML block;
+- preview в админке конструктора сайтов;
+- preview HTML-блоков в lesson editor.
 
-- edit `src/components/shared/HtmlIframePreview.tsx`
+## 5. Что не будет изменено
+
+- Не менять HTML-код страницы в `site_pages.blocks`.
+- Не менять `site_pages`, `site_domain_bindings`, формы, RLS, edge functions, миграции.
+- Не добавлять новую систему форм/лидов.
+- Не менять `HtmlSection.tsx`, `SitePageRenderer.tsx`, `SitePageBySlug.tsx`, если после фикса bridge это не потребуется.
+- Не публиковать приложение автоматически без отдельной команды на публикацию.
+
+## 6. Dry-run
+
+Перед изменением:
+
+- использовать текущий Playwright reproduction как baseline;
+- подтвердить, что проблема именно в iframe viewport/fixed overlay, а не в данных страницы.
+
+После изменения, до финального отчёта:
+
+- проверить локальный preview/localhost на том же route;
+- проверить desktop/tablet/mobile сценарии;
+- если опубликованный домен ещё отдаёт старый bundle, отдельно указать, что нужен Publish приложения.
+
+## 7. Execute
+
+Внести точечный патч в `HtmlIframePreview.tsx`:
+
+1. Добавить helper для root-scroll-container detection.
+2. Переписать `postParentViewport()` так, чтобы root document не давал высоту всего документа вместо viewport.
+3. Уточнить `syncFixedOverlays()` для fixed fullscreen overlay.
+4. Добавить safe relay для `window.scrollTo/scrollBy` из iframe в parent.
+5. Уточнить anchor offset с учётом header внутри iframe и parent header только там, где он реально есть.
+6. Добавить scroll listener для найденного scroll-container и cleanup.
+
+## 8. STOP-guards
+
+Остановиться и не патчить вслепую, если:
+
+- окажется, что HTML больше не рендерится через `HtmlIframePreview`;
+- обнаружится второй публичный renderer для этой страницы;
+- Playwright покажет, что клики ломаются не из-за iframe geometry, а из-за JS runtime error в HTML;
+- фикс начнёт ломать админский preview или lesson HTML preview.
+
+## 9. DoD
+
+Задача считается закрытой, когда Playwright подтверждает и в отчёте приложены скриншоты:
+
+- desktop: клик `Настроить идеологическую работу` открывает видимую форму, не тёмный пустой экран;
+- tablet: форма открывается в видимой области;
+- mobile: форма не уезжает влево/вниз и доступна для заполнения;
+- `Отправить данные эксперту` показывает `Заявка принята!`;
+- `Посмотреть 600+ готовых ответов` и верхний якорь `База знаний` скроллят к секции `#db` без новой вкладки и без сброса;
+- первый wheel-scroll не «залипает»;
+- в консоли нет новых критичных ошибок.
+
+## 10. Риски и зависимости
+
+- Публичный custom domain может продолжать показывать старый bundle до публикации приложения. В таком случае код будет исправлен в preview, но для `gorbova.by` потребуется отдельное действие Publish.
+- Компонент общий: изменение должно быть совместимо с админским preview и lesson HTML preview.
+- HTML использует CDN Tailwind в production; это даёт warning, но не является причиной текущего зависания и не входит в scope.

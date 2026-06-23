@@ -52,8 +52,9 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   var timers = [];
   var observer = null;
-  var parentViewport = { top: 0, height: 800 };
+  var parentViewport = { top: 0, left: 0, height: 800, width: 1024 };
   var fixedSyncPending = false;
+  var parentBridgeReady = false;
 
   function post() {
     var h = Math.max(
@@ -111,14 +112,49 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var rect = el.getBoundingClientRect();
     var docWidth = document.documentElement.clientWidth || window.innerWidth || 0;
     var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
-    return rect.width >= docWidth * 0.9 && rect.height >= docHeight * 0.7 && Math.abs(rect.left) <= 2 && Math.abs(rect.top) <= 2;
+    var z = parseInt(cs.zIndex || '0', 10);
+    var marker = String(el.id || '') + ' ' + String(el.className || '');
+    var looksLikeModal = /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
+    var insetLike = Math.abs(rect.left) <= 3 && Math.abs(rect.top) <= 3 && Math.abs(docWidth - rect.right) <= Math.max(3, docWidth * 0.08);
+    var fullscreenSize = rect.width >= docWidth * 0.85 && rect.height >= Math.min(docHeight, Math.max(parentViewport.height || 800, 320)) * 0.7;
+    return looksLikeModal && insetLike && fullscreenSize;
+  }
+
+  function saveFixedOverlayStyle(el) {
+    if (el.getAttribute('data-lovable-fixed-overlay-style')) return;
+    var props = ['position', 'top', 'right', 'bottom', 'left', 'height', 'min-height', 'max-height', 'width', 'overflow-y'];
+    var snapshot = {};
+    for (var i = 0; i < props.length; i++) {
+      snapshot[props[i]] = {
+        value: el.style.getPropertyValue(props[i]) || '',
+        priority: el.style.getPropertyPriority(props[i]) || ''
+      };
+    }
+    try { el.setAttribute('data-lovable-fixed-overlay-style', JSON.stringify(snapshot)); } catch (e) {}
   }
 
   function restoreFixedOverlay(el) {
     if (!el || el.getAttribute('data-lovable-fixed-overlay') !== '1') return;
-    var props = ['position', 'top', 'right', 'bottom', 'left', 'height', 'min-height', 'width'];
-    for (var i = 0; i < props.length; i++) el.style.removeProperty(props[i]);
+    var props = ['position', 'top', 'right', 'bottom', 'left', 'height', 'min-height', 'max-height', 'width', 'overflow-y'];
+    var raw = el.getAttribute('data-lovable-fixed-overlay-style');
+    var restored = false;
+    if (raw) {
+      try {
+        var snapshot = JSON.parse(raw);
+        for (var i = 0; i < props.length; i++) {
+          var prop = props[i];
+          var item = snapshot[prop];
+          if (item && item.value) el.style.setProperty(prop, item.value, item.priority || '');
+          else el.style.removeProperty(prop);
+        }
+        restored = true;
+      } catch (e) {}
+    }
+    if (!restored) {
+      for (var j = 0; j < props.length; j++) el.style.removeProperty(props[j]);
+    }
     el.removeAttribute('data-lovable-fixed-overlay');
+    el.removeAttribute('data-lovable-fixed-overlay-style');
   }
 
   function syncFixedOverlays() {
@@ -134,15 +170,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
           restoreFixedOverlay(el);
           continue;
         }
+        saveFixedOverlayStyle(el);
         el.setAttribute('data-lovable-fixed-overlay', '1');
         el.style.setProperty('position', 'absolute', 'important');
         el.style.setProperty('top', visibleTop + 'px', 'important');
-        el.style.setProperty('left', '0', 'important');
-        el.style.setProperty('right', '0', 'important');
+        el.style.setProperty('left', Math.max(0, parentViewport.left || 0) + 'px', 'important');
+        el.style.setProperty('right', 'auto', 'important');
         el.style.setProperty('bottom', 'auto', 'important');
-        el.style.setProperty('width', '100%', 'important');
+        el.style.setProperty('width', Math.max(320, parentViewport.width || document.documentElement.clientWidth || window.innerWidth || 320) + 'px', 'important');
         el.style.setProperty('height', visibleHeight + 'px', 'important');
         el.style.setProperty('min-height', visibleHeight + 'px', 'important');
+        el.style.setProperty('max-height', visibleHeight + 'px', 'important');
+        el.style.setProperty('overflow-y', 'auto', 'important');
       }
     }
   }
@@ -157,10 +196,52 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   window.addEventListener('message', function(ev) {
     var data = ev.data;
     if (!data || typeof data !== 'object' || data.type !== 'iframe-parent-viewport') return;
+    parentBridgeReady = true;
     if (typeof data.top === 'number' && Number.isFinite(data.top)) parentViewport.top = data.top;
+    if (typeof data.left === 'number' && Number.isFinite(data.left)) parentViewport.left = data.left;
     if (typeof data.height === 'number' && Number.isFinite(data.height)) parentViewport.height = data.height;
+    if (typeof data.width === 'number' && Number.isFinite(data.width)) parentViewport.width = data.width;
     scheduleFixedOverlaySync();
   });
+
+  // Delegate author-authored window scroll calls to the parent page when this
+  // document is inside the managed iframe. Fallback to native iframe scrolling
+  // if the parent bridge has not announced itself.
+  try {
+    var nativeScrollTo = window.scrollTo.bind(window);
+    var nativeScrollBy = window.scrollBy.bind(window);
+    function parseScrollArgs(args, mode) {
+      var currentX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+      var currentY = window.pageYOffset || document.documentElement.scrollTop || 0;
+      var x = 0;
+      var y = 0;
+      var behavior = 'auto';
+      if (args.length === 1 && args[0] && typeof args[0] === 'object') {
+        var opts = args[0];
+        x = typeof opts.left === 'number' ? opts.left : (mode === 'by' ? 0 : currentX);
+        y = typeof opts.top === 'number' ? opts.top : (mode === 'by' ? 0 : currentY);
+        behavior = typeof opts.behavior === 'string' ? opts.behavior : 'auto';
+      } else {
+        x = typeof args[0] === 'number' ? args[0] : (mode === 'by' ? 0 : currentX);
+        y = typeof args[1] === 'number' ? args[1] : (mode === 'by' ? 0 : currentY);
+      }
+      return { type: 'iframe-scroll-command', mode: mode, left: x, top: y, behavior: behavior };
+    }
+    function relayParentScroll(payload) {
+      if (!parentBridgeReady || parent === window) return false;
+      try { parent.postMessage(payload, '*'); return true; } catch (e) { return false; }
+    }
+    window.scrollTo = function() {
+      var payload = parseScrollArgs(arguments, 'to');
+      if (relayParentScroll(payload)) return;
+      return nativeScrollTo.apply(window, arguments);
+    };
+    window.scrollBy = function() {
+      var payload = parseScrollArgs(arguments, 'by');
+      if (relayParentScroll(payload)) return;
+      return nativeScrollBy.apply(window, arguments);
+    };
+  } catch (e) {}
 
   window.addEventListener('wheel', function(ev) {
     try {
