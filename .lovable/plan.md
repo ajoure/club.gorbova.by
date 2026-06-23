@@ -1,65 +1,174 @@
-## План: уплотнить hero страницы «Идеологическая работа» (SITE-000018)
+## да, согласен, с учетом правок:
 
-**Цель.** На десктопе ~900–1000 px по высоте первый экран должен включать одновременно блок «Решение под ключ за 1 день» и полосу «Гарантия безопасности». Фото Катерины показать как в оригинальном HTML-макете (видны плечо и рука), убрать ощущение размытия за счёт уменьшения upscale-зума.
+1. **Не удалять CSS-классы вслепую.**  
+Не удалять `.ir-hero-v2__card`, `.ir-hero-v2__features`, `.ir-hero-v2__feature*`, `.ir-hero-v2__stats` глобально, пока не доказано, что они используются только в hero.  
+Безопаснее:
+  - убрать карточку из DOM hero;
+  - новые guarantees сделать на новых классах;
+  - старые CSS-правила оставить, если нет риска визуального конфликта.
+2. **Не заменять hero по простому** `</section>` **без точного boundary.**  
+Внутри hero могут быть вложенные секции/дивы/скрипты. Замена должна идти по устойчивым маркерам:
+  &nbsp;
+  ```html
+  <!-- HERO SECTION / FIRST SCREEN UPDATED -->
+  ...
+  <!-- /HERO SECTION / FIRST SCREEN UPDATED -->
+  ```
+  Если закрывающего маркера нет — STOP, не резать HTML регекспом вслепую.
+3. **Сначала сохранить полный rollback.**  
+До любых изменений обязательно:
+4. **Фото эксперта не должно растягиваться с искажением.**  
+Обязательно:
+  &nbsp;
+  ```css
+  object-fit: cover;
+  object-position: center top;
+  ```
+  И проверить, что лицо/верхняя часть фото не обрезаются на desktop и mobile.
+5. **Высота правой колонки должна равняться hero, а не viewport.**  
+Не ставить жёстко `height: 100vh`, если это ломает контент. Правильно: `align-items: stretch` у wrap + `height: 100%` у visual/img.
+6. **Гарантии вынести сразу после hero, но до следующей секции.**  
+Новая секция должна идти непосредственно после первого экрана, чтобы визуально читалась как продолжение hero, а не уезжала ниже других блоков.
+7. **Статистику “400+ проверок” не потерять.**  
+Если она была внутри старой карточки, перенести её в новую секцию гарантий. Не удалять как “декор”.
+8. **CTA не менять.**  
+Кнопка «Настроить идеологическую работу» должна вызывать фактический существующий обработчик. Перед правкой проверить имя функции:
+  &nbsp;
+  ```text
+  openModal('setup')
+  ```
+  Не использовать новое имя функции и не менять сценарий открытия модалки.
+9. **Проверить, что** `#db` **после предыдущего патча не ломается.**  
+В verify правильно добавить:
+  - RPC `get_kb_questions_public` возвращает данные;
+  - карточки базы знаний рендерятся;
+  - поиск работает;
+  - «Участвовать» из карточки открывает `openModal('access')`.
+10. **Mobile-порядок зафиксировать явно.**  
+На mobile должно быть:
+
+```text
+текст hero
+фото
+гарантии
+следующая секция
+```
+
+Не допускать, чтобы гарантии оказались между текстом и фото.
+
+11. **Не трогать header/footer.**  
+В отчёте отдельно подтвердить, что inline header/footer «Буква закона» остались внутри того же HTML-блока и не были изменены.
+12. **Минифицированный CSS править только append/override-подходом.**  
+Из-за строки 318 КБ безопаснее добавить новые override-правила в конец `<style>`, а не пытаться глубоко переписывать минифицированные старые правила.  
+Исключение — если старые правила явно конфликтуют и их нужно точечно заменить.
+13. **Добавить DOM-проверку после патча.**
+
+```text
+.ir-hero-v2__visual содержит img и не содержит .ir-hero-v2__card
+.ir-hero-v2__guarantees существует сразу после hero
+.ir-hero-v2__guarantees-grid содержит 3 блока
+```
+
+14. **Добавить visual regression по первому экрану.**  
+Скриншоты нужны:
+
+- desktop 1280×900;
+- desktop 1440×1000;
+- mobile 390×844;
+- tablet 768×1024.
+
+15. **Отчет должен содержать Publish-status.**
+
+```text
+Изменения внесены в данные/preview. Для появления на gorbova.by требуется Lovable Publish.
+```
+
+16. **Обязательное требование для [Lovable.dev](http://Lovable.dev):**
+
+```text
+План должен быть составлен на русском языке.
+Отчет о выполненной работе должен быть составлен на русском языке.
+Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
+```
+
+&nbsp;
+
+## План: переработать первый экран `/ideologicheskaya-rabota` (SITE-000018)
+
+### Цель
+
+Привести hero к виду из присланного HTML-макета:
+
+1. Фото эксперта Катерины — на всю высоту правой колонки слайда (без перекрытия карточкой «Гарантия безопасности»).
+2. Блок «Гарантия безопасности» вынести **под hero** отдельной плоской секцией: 3 фичи в одну строку (desktop) слева направо.
+3. Ничего другого на странице не трогать. Все кнопки, ссылки, обработчики (`openModal('setup')`, `#db`, шапка/футер, поиск по базе знаний) остаются рабочими.
 
 ### Diagnose (уже выполнено)
-- `site_pages` id `7e672fed-13f1-4ff1-8786-71a228a0c011`, `blocks[0].content.code` — единственный html-блок (~425 КБ).
-- Текущие правила (после прошлого патча):
-  - `.ir-hero-v2`, `.ir-hero-v2__wrap`, `.ir-hero-v2__visual` → `min-height: 715px`.
-  - `.ir-hero-v2__person` принудительно растянут `inset:0; width/height:100%; object-fit:cover; object-position:center top` — отсюда сильный zoom на лицо и видимое размытие base64-PNG.
-  - `.ir-hero-v2__title` `clamp(44px,5.2vw,70px)`, `margin: 44px 0 24px`.
-  - `.ir-hero-v2__content` `padding: 18px 38px 32px 30px`.
-  - `.ir-hero-v2__features` `gap: 23px`.
-  - `.ir-guarantees-strip` `padding: 2.5rem 1.25rem 3rem`; `__wrap` `padding: 2rem 2.25rem`; `__grid` `gap: 2rem`; `__stats` `margin-top: 1.75rem; padding-top: 1.25rem`.
-- Изображение — встроенный base64 PNG фиксированного разрешения; реальное «улучшение качества» возможно только через уменьшение upscale-фактора (меньше растягивать).
 
-### Изменения (только CSS-оверрайды внутри `<style id="hero-fullbleed-override">` уже существующего блока)
+- `site_pages.id = 7e672fed-13f1-4ff1-8786-71a228a0c011` — **1 блок** типа `html` (header/footer ранее объединены — патчить `blocks[0]`).
+- Hero — секция `<section class="ir-hero-v2">` (строки 573–668 артефакта `site018-db-after.html`).
+- CSS hero лежит в минифицированной `<style>`-строке (строка 624, ~318 КБ) — нужно править оттуда только селекторы `ir-hero-v2__*`.
+- Карточка «Гарантия безопасности» сейчас вложена в `.ir-hero-v2__visual` (поверх фото). Её нужно вынести из `.ir-hero-v2__wrap` в новую `<section class="ir-hero-v2__guarantees">` сразу после `</section>` hero.
 
-1. **Уменьшить высоту hero**
-   - `.ir-hero-v2, .ir-hero-v2__wrap, .ir-hero-v2__visual { min-height: 560px; }` на десктопе ≥1025px.
-   - На промежуточных (≤1280px) — 520px; на планшете (≤900px) — auto.
+### Изменения в hero-разметке (без правки бизнес-логики)
 
-2. **Уплотнить текстовый блок**
-   - `.ir-hero-v2__title { font-size: clamp(36px, 4.2vw, 56px); margin: 18px 0 14px; }`.
-   - `.ir-hero-v2__content { padding: 12px 30px 18px 24px; }`.
-   - `.ir-hero-v2__lead { margin: 0 0 14px; font-size: 15px; line-height: 1.45; }`.
-   - `.ir-hero-v2__features { gap: 12px; margin-bottom: 18px; }`.
-   - `.ir-hero-v2__cta { margin-top: 14px; }`.
+1. В `.ir-hero-v2__visual` оставить **только** `<img>` фото эксперта (тот же URL) + опциональный градиент-маска снизу для плавного перехода. Высота = высоте `.ir-hero-v2__wrap` (`height:100%`, `object-fit:cover`, `object-position: center top`).
+2. Удалить из `.ir-hero-v2__visual` всю карточку `.ir-hero-v2__card` (label + 3 `.ir-hero-v2__feature` + `.ir-hero-v2__stats`).
+3. Сразу после `</section>` hero вставить:
+  ```html
+   <section class="ir-hero-v2__guarantees">
+     <div class="ir-hero-v2__guarantees-inner">
+       <div class="ir-hero-v2__guarantees-label">Гарантия безопасности</div>
+       <div class="ir-hero-v2__guarantees-grid">
+         <div class="ir-hero-v2__guarantee">… Защита от проверок …</div>
+         <div class="ir-hero-v2__guarantee">… Законная экономия …</div>
+         <div class="ir-hero-v2__guarantee">… Высвобождение времени …</div>
+       </div>
+       <div class="ir-hero-v2__stats">Опыт лидера проекта: 400+ проверок</div>
+     </div>
+   </section>
+  ```
+   Иконки и тексты — копия текущих (`fa-user-shield`, `fa-file-invoice-dollar`, `fa-clock-rotate-left`).
 
-3. **Фото Катерины — показать шире, как в оригинале**
-   - Оставить `position:absolute; inset:0; width:100%; height:100%; display:block;`.
-   - Поменять `object-fit: cover; object-position: center top` → **`object-fit: contain; object-position: right bottom;`** + фон контейнера `background: linear-gradient(180deg,#0f1722 0%, #121d28 100%)` (чтобы не было «обрезанной» полосы сверху).
-   - Добавить `image-rendering: auto; -webkit-backface-visibility: hidden; transform: translateZ(0);` для устранения субпиксельного размытия.
-   - На десктопе photo выровнено по правому-нижнему углу — видно плечо, руку, подбородок (как в оригинальном `сайт Экран 1 КП.html`).
-   - Лёгкий градиентный fade снизу `.ir-hero-v2__visual::after { height: 14%; }` (уменьшить с 28%).
+### Изменения в CSS (внутри минифицированной style-строки)
 
-4. **Полоса «Гарантия безопасности» — компактнее**
-   - `.ir-guarantees-strip { padding: 1rem 1.25rem 1.25rem; }`.
-   - `.ir-guarantees-strip__wrap { padding: 1.1rem 1.5rem; border-radius: 18px; }`.
-   - `.ir-guarantees-strip__label { margin-bottom: 0.75rem; }`.
-   - `.ir-guarantees-strip__grid { gap: 1.25rem; }`.
-   - `.ir-guarantees-strip__body h3 { font-size: 0.98rem; margin-bottom: 0.2rem; }`.
-   - `.ir-guarantees-strip__body p { font-size: 0.8rem; line-height: 1.4; }`.
-   - `.ir-guarantees-strip__stats { margin-top: 0.9rem; padding-top: 0.75rem; }`.
+- `.ir-hero-v2__visual` → убрать абсолютное позиционирование/маскирование карточки; задать `position:relative; height:100%; min-height: <как у content>`.
+- `.ir-hero-v2__visual img` → `width:100%; height:100%; object-fit:cover; object-position: center top;` (фото полностью заполняет колонку).
+- `.ir-hero-v2__wrap` — гарантировать `align-items: stretch`, чтобы фото тянулось на всю высоту контента.
+- Добавить новые правила:
+  - `.ir-hero-v2__guarantees` — фон-под-hero (тот же `#0f172a/50` blur), max-width контейнер, `padding`.
+  - `.ir-hero-v2__guarantees-grid` — `display:grid; grid-template-columns: repeat(3, 1fr); gap: 2rem;` (desktop). На `@media (max-width: 768px)` → `grid-template-columns: 1fr;`.
+  - `.ir-hero-v2__guarantee` — плоский flex-блок: иконка слева в круге + заголовок + описание.
+  - Mobile (≤1024): фото — отдельной секцией ниже текста (как уже было), карточка гарантий уходит в `1fr`.
 
-5. **Ничего другого не менять**: разметка `<section>`, картинка (тот же base64), кнопки, `openModal('setup')`, навигация, поиск, `#db`, `#timeline`, `#payment`, React, edge-functions, RPC, миграции — без изменений. SITE-000017 не трогаем.
+### Процесс применения (build mode)
 
-### Технический процесс
-1. Прочитать текущий `blocks[0].content.code` из БД целиком (через временную таблицу/edge-стейджинг, как делали ранее).
-2. Локальный python-скрипт `.lovable/artifacts/patch_site018_hero_compact.py` хирургически заменяет содержимое блока `<style id="hero-fullbleed-override">…</style>` на новую версию с правилами выше. Все остальные стили и HTML — байт-в-байт без изменений.
-3. Залить обратно через временную таблицу + base64-чанки (точно тот же приём, что в прошлый раз) и удалить временные артефакты после `UPDATE`.
-4. Сохранить before/after: `site018-hero-compact-before.html`, `site018-hero-compact-after.html`.
+1. Скачать текущий `blocks[0].content.code` через `supabase--read_query` (короткий SELECT с `length`) + чанками Base64 как в `patch_site018_db.py`.
+2. Python-скрипт `.lovable/artifacts/patch_site018_hero.py`:
+  - находит `<!-- HERO SECTION / FIRST SCREEN UPDATED -->` … `</section>` hero — заменяет на новую разметку;
+  - в минифицированной style-строке регекспом подменяет только правила `.ir-hero-v2__visual`, `.ir-hero-v2__visual img`, `.ir-hero-v2__wrap`, и **добавляет** новые правила `.ir-hero-v2__guarantees*`;
+  - удаляет старый `.ir-hero-v2__card`, `.ir-hero-v2__features`, `.ir-hero-v2__feature*`, `.ir-hero-v2__stats` (если используются только в hero).
+3. Залить обратно через временную таблицу `_html_staging_site018_hero` (Base64-чанки) → `UPDATE site_pages SET blocks = jsonb_set(...)` → `DROP TABLE`.
+4. Сохранить артефакты `.lovable/artifacts/site018-hero-before.html` и `site018-hero-after.html`.
 
-### Verify (Playwright, headless)
-- Десктоп 1280×900: скриншот первого экрана — видны заголовок, lead, чек-листы, обе CTA-кнопки **и** полоса «Гарантия безопасности» с 3 пунктами и «400+ проверок». Скриншот в `.lovable/artifacts/site018-hero-compact-desktop-900.png`.
-- Десктоп 1440×1000 — то же.
-- Мобильный 390×844 — стек: контент → фото (видно плечо/рука) → гарантии в 1 колонку.
-- Клик по «Настроить идеологическую работу» — открывается модал `setup`.
-- DOM-проверка: блок `#db` (поиск по 600+ ответов) не затронут, кнопка «Участвовать» работает.
+### Verify (Playwright)
+
+- Desktop 1280×900: скриншот первого экрана — фото занимает всю правую половину до низа hero; под hero — горизонтальная панель с тремя блоками гарантий слева направо; заголовок «Гарантия безопасности» сверху панели.
+- Mobile 390×844: hero контент → фото → панель гарантий в один столбец.
+- Клик «Настроить идеологическую работу» открывает модалку (`openModal('setup')`).
+- Клик «Посмотреть 600+ готовых ответов» скроллит к `#db`.
+- Поиск по базе знаний (предыдущая задача) продолжает работать — рендер ≥1 карточки, кнопка «Участвовать» открывает модалку.
+
+### Что НЕ трогаем
+
+- Header/footer, навигация, все остальные секции (`#timeline`, `#payment`, `#db`, отзывы и т.д.).
+- React-код, edge functions, DB-схема, RPC `get_kb_questions_public`.
+- SITE-000017 и другие страницы.
 
 ### DoD
-- [ ] На 1280×900 hero + гарантии помещаются в один экран без скролла.
-- [ ] Фото Катерины показано шире (плечо, рука, как в оригинале), без видимого размытия.
-- [ ] Никаких регрессий: модалы, поиск по базе знаний, навигация, мобильная вёрстка, остальные секции работают как раньше.
-- [ ] Скриншоты desktop/mobile приложены в артефактах.
-- [ ] Изменений в коде React/edge/DB schema/RPC нет — только обновление html-блока в `site_pages`.
+
+- Скриншоты desktop+mobile в `.lovable/artifacts/` подтверждают новую раскладку.
+- DOM hero не содержит `.ir-hero-v2__card` поверх фото.
+- Network/console без новых ошибок.
+- Все CTA-кнопки кликабельны и ведут туда же, куда раньше.
+- Изменения требуют Publish для выхода на gorbova.by.
