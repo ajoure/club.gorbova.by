@@ -2392,6 +2392,14 @@ Deno.serve(async (req) => {
         document_seq: allocatedSeq,
         file_mime: 'application/pdf',
         ...gotenbergMeta,
+        // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a: structured
+        // expansion report (БЕЗ значений ячеек, ФИО, паспортов, custom values).
+        ...(generationReport.table_repeat_expansion
+          ? { table_repeat_expansion: generationReport.table_repeat_expansion }
+          : {}),
+        ...(generationReport.ln_custom_scalar
+          ? { ln_custom_scalar_render: generationReport.ln_custom_scalar }
+          : {}),
       },
     });
 
@@ -2405,6 +2413,9 @@ Deno.serve(async (req) => {
       resolver_version: RESOLVER_VERSION,
       document_number: allocatedNumber,
       document_date: allocatedDate,
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1: warnings/errors expansion и
+      // ln-custom доступны клиенту (UI/админка/ai-generate-document-package).
+      generation_report: generationReport,
     });
   } catch (e: any) {
     console.error('canonical-document-generate-strict error:', e);
