@@ -92,6 +92,21 @@ export type Database = {
         }
         Relationships: []
       }
+      _html_staging_site018_kb: {
+        Row: {
+          chunk_b64: string
+          idx: number
+        }
+        Insert: {
+          chunk_b64: string
+          idx: number
+        }
+        Update: {
+          chunk_b64?: string
+          idx?: number
+        }
+        Relationships: []
+      }
       _inv22_overshoot_snapshot: {
         Row: {
           cohort: string
@@ -16977,6 +16992,18 @@ export type Database = {
       get_instagram_dialogs_v1: {
         Args: { p_account_id: string }
         Returns: Json
+      }
+      get_kb_questions_public: {
+        Args: never
+        Returns: {
+          answer_date: string
+          episode_number: number
+          full_question: string
+          id: string
+          question_number: number
+          tags: string[]
+          title: string
+        }[]
       }
       get_last_broadcast_audit_proof: {
         Args: never
