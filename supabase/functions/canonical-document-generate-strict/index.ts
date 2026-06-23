@@ -282,6 +282,14 @@ const ALLOWED_RECIPIENT_FIELDS: ReadonlySet<string> = new Set([
 // Legacy package-role syntaxes — explicitly forbidden (Sprint 3H-fix canon).
 const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a token regexes.
+// {{tableRepeat:TR-XXXXXX}} — БЕЗ модификаторов, package_session only.
+const TABLE_REPEAT_TOKEN_RE = /^tableRepeat:(TR-\d{6,})$/;
+const TABLE_REPEAT_PREFIX_RE = /^tableRepeat:/;
+// {{ln-XXXXXX.custom.<key>}} — БЕЗ модификаторов в v1, package_session only.
+const LN_CUSTOM_TOKEN_RE = /^(ln-\d+)\.custom\.([A-Za-z0-9_]+)$/;
+const LN_CUSTOM_PREFIX_RE = /^ln-\d+\.custom\./;
+
 interface ParsedToken {
   raw_inside: string;            // 'field:FLD-1|format=words|case=genitive'
   field_public_id: string;
