@@ -92,21 +92,6 @@ export type Database = {
         }
         Relationships: []
       }
-      _html_staging_site018: {
-        Row: {
-          chunk: string
-          ord: number
-        }
-        Insert: {
-          chunk: string
-          ord: number
-        }
-        Update: {
-          chunk?: string
-          ord?: number
-        }
-        Relationships: []
-      }
       _inv22_overshoot_snapshot: {
         Row: {
           cohort: string
