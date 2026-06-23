@@ -550,12 +550,12 @@ def main() -> None:
         raise SystemExit(f"STOP: required markers missing before patch: {missing}")
 
     style_pattern = re.compile(r'<style\s+id=["\']hero-fullbleed-override["\'][^>]*>.*?</style>', re.S | re.I)
+    style_count_before = len(style_pattern.findall(code))
+    if style_count_before != 1:
+        raise SystemExit(f"STOP: expected one hero-fullbleed-override style, got {style_count_before}")
     code2, style_count = style_pattern.subn(FINAL_STYLE, code, count=1)
     if style_count != 1:
-        raise SystemExit(f"STOP: expected one hero-fullbleed-override style, got {style_count}")
-    if style_pattern.search(code2):
-        # subn with count=1 should leave none only if there was exactly one.
-        raise SystemExit("STOP: multiple hero-fullbleed-override blocks detected")
+        raise SystemExit(f"STOP: style replacement failed, replaced {style_count}")
 
     code2 = move_glass_after_hero(code2)
 
