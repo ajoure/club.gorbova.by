@@ -50,6 +50,9 @@ import {
   LN_SUB_NAME_FORMATS,
   formatLnDate,
 } from '../_shared/ln-subfield-spec.ts';
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a
+import { applyTableRepeatExpansion, type TableRepeatExpansionReport } from '../_shared/docx-table-repeat-expand.ts';
+import { prepareLnCustomScalarBag, type LnCustomTokenRequest, type LnCustomPrepareReport } from '../_shared/ln-custom-scalar-prepare.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
