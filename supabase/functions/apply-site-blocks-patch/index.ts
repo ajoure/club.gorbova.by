@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { decode as b64decode } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+import { decodeBase64 as b64decode } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 Deno.serve(async (req) => {
   const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Content-Type": "application/json" };
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
