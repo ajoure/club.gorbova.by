@@ -24,7 +24,7 @@ import { useState, useRef, useEffect } from "react";
 import { Code } from "lucide-react";
 
 const SANDBOX_POLICY =
-  "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
+  "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
 /** Maximum iframe height in px to prevent runaway content */
 const MAX_IFRAME_HEIGHT = 15000;
@@ -160,6 +160,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     if (typeof data.height === 'number' && Number.isFinite(data.height)) parentViewport.height = data.height;
     scheduleFixedOverlaySync();
   });
+
+  window.addEventListener('wheel', function(ev) {
+    try {
+      parent.postMessage({ type: 'iframe-wheel', deltaX: ev.deltaX || 0, deltaY: ev.deltaY || 0 }, '*');
+    } catch (e) {}
+  }, { passive: true });
 
   if (typeof MutationObserver !== 'undefined' && document.body) {
     var mutationObserver = new MutationObserver(function() {
