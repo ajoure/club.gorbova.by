@@ -1136,6 +1136,28 @@ Deno.serve(async (req) => {
         tokens: Array.from(new Set(lnSubFieldCaseNotSupported)),
       }, 400);
     }
+    // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a guards
+    if (tableRepeatTokensOutsideContext.length > 0) {
+      return json({
+        error: 'package_token_outside_package_context',
+        code: 'table_repeat_outside_package_context',
+        tokens: Array.from(new Set(tableRepeatTokensOutsideContext)),
+      }, 400);
+    }
+    if (lnCustomTokensOutsideContext.length > 0) {
+      return json({
+        error: 'package_token_outside_package_context',
+        code: 'ln_custom_outside_package_context',
+        tokens: Array.from(new Set(lnCustomTokensOutsideContext)),
+      }, 400);
+    }
+    if (lnCustomTokensInvalidModifier.length > 0) {
+      return json({
+        error: 'unknown_modifier_in_active_version',
+        code: 'ln_custom_modifier_not_allowed',
+        tokens: Array.from(new Set(lnCustomTokensInvalidModifier)),
+      }, 400);
+    }
 
     // Sprint 3I-A-1.B: hard-fail if package/ln token has no preresolved value.
     // Sprint 3I-A-1.B: hard-fail if field:FLD-* in package-mode is not
