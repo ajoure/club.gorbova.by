@@ -1193,66 +1193,15 @@ function truncateForPreview(raw: string): { value: string; truncated: boolean } 
   };
 }
 
-function renderRolePersonCell(
-  col: TableRepeatColumn,
-  person: Record<string, unknown> | undefined,
-): { value: string; code?: string } {
-  if (!person) return { value: '', code: 'no_person' };
-  const subKey = col.source_key ?? 'full_name';
-  const spec = LN_SUB_FIELD_BY_KEY.get(subKey);
-  if (!spec) return { value: '', code: 'ln_subfield_unknown' };
-  const raw = extractLnSubFieldRaw(person, spec);
-  if (!raw) return { value: '', code: 'ln_subfield_value_empty' };
-  let v = raw;
-  if (spec.kind === 'name') {
-    const fmt = col.format && LN_SUB_NAME_FORMATS.has(col.format) ? col.format : 'full';
-    v = formatPersonName(raw, { format: fmt as PersonNameFormat, case: (col.case as RuCase | undefined) ?? null });
-  } else if (spec.kind === 'date') {
-    const fmt = col.format && LN_SUB_DATE_FORMATS.has(col.format) ? col.format : 'dotted';
-    v = formatLnDate(raw, fmt);
-  } else if ((spec.kind === 'address_full' || spec.kind === 'address_part') && col.case && isCaseModifier(col.case)) {
-    const inf = inflectRu(v, col.case as RuCase);
-    if (inf.applied) v = inf.value;
-  }
-  return { value: v };
-}
-
-function readAssignmentCustomKey(
-  assignment: { metadata: unknown },
-  key: string,
-): { value: string; code?: string } {
-  const meta = (assignment.metadata && typeof assignment.metadata === 'object')
-    ? (assignment.metadata as Record<string, unknown>)
-    : {};
-  const custom = (meta['custom'] && typeof meta['custom'] === 'object')
-    ? (meta['custom'] as Record<string, unknown>)
-    : {};
-  const raw = custom[key];
-  if (raw == null || raw === '') return { value: '', code: 'ln_custom_value_empty' };
-  return { value: String(raw) };
-}
-
-function readAssignmentMetadataPath(
-  assignment: { metadata: unknown },
-  key: string,
-): { value: string; code?: string } {
-  const meta = (assignment.metadata && typeof assignment.metadata === 'object')
-    ? (assignment.metadata as Record<string, unknown>)
-    : {};
-  // По контракту amendment #13: НЕ возвращаем `custom` через эту ветку.
-  if (key === 'custom' || key.startsWith('custom.')) {
-    return { value: '', code: 'tr_metadata_custom_not_allowed_via_metadata_source' };
-  }
-  // shallow path supporting dot notation
-  let cur: unknown = meta;
-  for (const seg of key.split('.')) {
-    if (cur == null || typeof cur !== 'object') return { value: '', code: 'tr_metadata_path_missing' };
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  if (cur == null || cur === '') return { value: '', code: 'tr_metadata_value_empty' };
-  if (typeof cur === 'object') return { value: JSON.stringify(cur), code: undefined };
-  return { value: String(cur) };
-}
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 parity DoD:
+// Cell renderer helpers перенесены в `_shared/table-repeat-cell-render.ts`
+// и реюзаются как dry-run preview (E.3), так и real DOCX expansion (E.4).
+// Импорт ниже сохраняет внешний контракт `resolveTableRepeatTokenCore`.
+import {
+  renderRolePersonCell,
+  readAssignmentCustomKey,
+  readAssignmentMetadataPath,
+} from './table-repeat-cell-render.ts';
 
 export async function resolveTableRepeatTokenCore(
   input: TableRepeatResolveInput,

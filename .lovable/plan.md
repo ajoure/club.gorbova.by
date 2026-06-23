@@ -1,376 +1,471 @@
-## да, согласен, с учетом правок:
+# Stage E.4 + E.4a — PASS (см. .lovable/proofs/docx_table_repeat_by_role_e4_row_expansion.md)
 
-1. Stage E.3 можно выполнять как отдельный syntax + validator + dry-run слой.
+# да, согласен, с учетом правок:
+
+1. План E.4 + E.4a можно выполнять.
   &nbsp;
-  Итоговый статус после выполнения должен быть строго:
+  Финальный статус после выполнения:
   ```text
-  Stage E.3 — PASS: classifier / validator / dry-run support для tableRepeat marker
+  Stage E.4 — PASS: DOCX row expansion + scalar custom DOCX support
   ```
-  Без заявлений, что строки DOCX уже реально размножаются.
-2. В scope E.3 не включать `canonical-document-generate-strict`.
+  PASS возможен только если закрыты оба блока:
+  - `{{tableRepeat:TR-XXXXXX}}` реально размножает строки DOCX;
+  - `{{ln-XXXXXX.custom.<key>}}` реально подставляется в обычном DOCX.
+2. Pre-flight payload audit обязателен до любых правок.
   &nbsp;
-  Это правильно. Реальное применение `{{tableRepeat:TR-XXXXXX}}` к `word/document.xml` остаётся только на E.4.
-3. В scope E.3 не включать `ai-generate-document-package`.
-  &nbsp;
-  Если для dry-run достаточно `package-tokens-dry-run` + read из `document_package_template_items.metadata.table_repeats`, не трогать orchestrator генерации документов.
-4. В `package-tokens-dry-run` TR-preview должен быть super_admin/admin-only так же строго, как текущий dry-run.
-  &nbsp;
-  Не ослаблять:
-  - JWT check;
-  - RBAC;
-  - rate-limit 5s;
-  - audit.
-5. В audit `package_tokens_dry_run` запрещено писать значения из таблицы preview.
-  &nbsp;
-  Писать только summary:
+  Если strict не получает:
   ```text
-  token kind
-  tr_id
-  rows_count
-  codes counter
-  error/warning codes
+  package_session_id
+  package_template_item_id
+  document_package_template_items.metadata.table_repeats
+  данные для ln custom scalar
+  bag/resolver для pf fields
   ```
-  Не писать ФИО, паспорта, custom values, голоса, адреса.
-6. Уточнить, как dry-run возвращает `package_table_repeat`.
+  — не делать workaround внутри strict “вслепую”. Сначала минимальный payload patch в `ai-generate-document-package`, только для передачи недостающего контекста.
+3. Допускаю минимальную правку `ai-generate-document-package` только если pre-flight докажет необходимость.
   &nbsp;
-  Поскольку обычные token resolvers возвращают строку/value, а TR возвращает структуру, response schema `package-tokens-dry-run` должна явно поддерживать structured result:
-  ```json
-  {
-    "token": "{{tableRepeat:TR-000001}}",
-    "kind": "package_table_repeat",
-    "resolved": true,
-    "value": null,
-    "preview": {
-      "tr_id": "TR-000001",
-      "rows_count": 3,
-      "columns": [],
-      "rows_preview": []
-    }
-  }
-  ```
-  Не пытаться запихнуть table preview в строковое `value`.
-7. Если текущий UI dry-run ожидает только строковый `value`, не ломать его.
-  &nbsp;
-  Добавить отдельную ветку рендера:
-8. Для `rows_preview` ограничение ≤5 строк подтверждаю.
-  &nbsp;
-  Также добавить ограничение по длине значения в ячейке, например:
+  Scope такой правки:
   ```text
-  max 200 символов на cell.value
+  передать itemMetadata/table_repeats/preresolved_ln_custom_tokens в canonical-document-generate-strict
   ```
-  Чтобы dry-run preview не тащил огромные тексты/адреса/паспортные блоки в UI.
-9. Для `rows_preview` не показывать чувствительные данные в audit, но в UI super_admin preview показывать можно.
+  Без изменения бизнес-логики оркестратора.
+4. В E.4a обязательно закрыть реальную DOCX-подстановку:
   &nbsp;
-  В proof явно разделить:
-10. В `resolveTableRepeatTokenCore` нельзя переиспользовать `resolveLnCustomToken` как готовую функцию, если она применяет scalar multi-policy.
+  ```text
+  {{ln-000015.custom.votes}}
+  ```
+  В proof показать обычный абзац DOCX:
+  ```text
+  Голосов: {{ln-000015.custom.votes}}
+  ```
+  И результат:
+5. Для scalar custom multi-policy подтверждаю:
+  - 1 active assignment → value;
+  - 2+ active assignments → `ln_custom_multi_assignment_ambiguous`, value `""`;
+  - key вне schema → `role_no_custom_field_def:<key>`;
+  - пустое значение → `ln_custom_value_empty`;
+  - modifier → `ln_custom_modifier_not_allowed`.
+6. Для table-repeat business proof обязательно использовать реальный сценарий:
+  &nbsp;
+  ```text
+  Список зарегистрированных лиц
+  ```
+  Mapping:
+  ```text
+  row_number
+  role_person.full_name
+  role_person.passport_number_full
+  role_person.personal_number
+  assignment_custom_field.votes
+  assignment_custom_field.share_percent
+  ```
+  Ожидаемый результат:
+7. Split marker across Word runs — обязательный PASS-критерий.
+  &nbsp;
+  Unit test и proof должны показать, что маркер, разрезанный на несколько `<w:t>/<w:r>`, находится и раскрывается.
+8. V1-ограничения по таблицам принимаю:
+  - без merged cells;
+  - без nested tables;
+  - без complex multi-paragraph cells.
+  Для сложных случаев — structured warning:
+  ```text
+  tr_cell_complex_structure_unsupported
+  ```
+  Не silent no-op.
+9. Fail-soft должен быть видимым.
+  &nbsp;
+  Все warning/error по expansion и scalar custom должны попадать в:
+  ```text
+  generation_report
+  ```
+  а не только в audit.
+10. Audit не должен содержать values.
 
-Для table-repeat по каждой строке нужен per-assignment context:
+Не писать:
 
-```text
-текущий assignment → metadata.custom[key]
-```
+- ФИО;
+- паспорт;
+- адрес;
+- custom values;
+- значения ячеек;
+- person snapshot;
+- raw `metadata.custom`.
 
-А не scalar resolver роли, который при 3 assignments даст `multiple_persons_for_scalar_role_custom_field`.
-
-Поэтому правильно:
-
-- использовать общие helper/spec для чтения custom values;
-- не вызывать scalar `resolveLnCustomToken` напрямую для `assignment_custom_field`;
-- иначе table preview сломается на нормальном сценарии 3 участников.
-
-11. То же для `role_person`.
-
-Не вызывать scalar `ln-000015.passport_number_full`, если он применяет multi-policy. Нужно рендерить sub-field по конкретному `person` текущей строки.
-
-Допустимо переиспользовать низкоуровневый helper `renderLnSubField(person, subField, format/case)`, если он не зависит от scalar multi-policy.
-
-12. Для `package_field` можно использовать существующий pf resolver/value bag, но помнить: значение одинаковое для всех строк.
-
-В preview можно показывать одно и то же значение в каждой строке, но в columns добавить hint:
-
-```text
-package_field_same_for_all_rows
-```
-
-13. Для `assignment_metadata` в dry-run:
-
-- если request user не super_admin → `tr_metadata_source_super_admin_only`;
-- если super_admin → читать только `assignment.metadata[source_key]`, но не `metadata.custom`, потому что для custom есть отдельный source_type.
-
-14. `assignment_metadata` должен оставаться advanced fallback.
-
-В proof показать, что обычный admin не видит/не использует этот source в UI, если это уже реализовано на E.2.
-
-15. В classifier `tableRepeat:TR-000001|format=text` лучше фиксировать как invalid / unknown modifier.
-
-Рекомендация:
-
-```text
-invalid_table_repeat_modifier
-```
-
-Но если текущая система не имеет таких granular codes, допустимо `invalid`. Главное — не считать valid.
-
-16. В `evaluatePlaceholderInScope` для `scope='unknown'` можно считать marker syntactically valid, но в UI всё равно показывать, что он требует package item context для dry-run.
-
-То есть:
-
-```text
-syntax ok
-dry-run needs package_template_item_id
-```
-
-17. `validateTableRepeatMarkersInTemplate` должен быть pure helper без I/O — подтверждаю.
-
-Но уточнить источник `templateText`:
-
-- если это extracted text из DOCX, ок;
-- если это plain template body, ок;
-- если template file не загружен/недоступен, validator должен возвращать neutral state, а не error.
-
-18. Код `unknown_tr_id` должен относиться только к marker в template, которого нет в current item metadata.table_repeats.
-
-Не искать TR-id глобально по другим items.
-
-19. `duplicate_tr_marker_in_template` как warning подтверждаю.
-
-Но в proof указать поведение будущего E.4:
+11. В proof обязательно добавить grep/check итогового `word/document.xml`:
 
 ```text
-каждое вхождение одного TR будет разворачиваться одинаково
+нет {{tableRepeat:
+нет {{ln-000015.custom.
 ```
 
-Если это ещё не утверждено для E.4, оставить как warning без final runtime promise.
-
-20. `tr_config_has_errors` должен агрегировать только errors из `validateTableRepeatConfig`.
-
-Warnings типа orphan custom key не должны блокировать marker validation, но должны быть видны как warning.
-
-21. В UI `TableRepeatsEditor` бейдж «не найден в шаблоне» требует доступа к template text.
-
-Если в текущей карточке документа нет template text / extracted tokens, не делать новый тяжёлый fetch. Тогда показать бейдж только если template text уже доступен. Иначе:
+12. PDF-smoke обязателен:
 
 ```text
-Проверка наличия маркера будет доступна после загрузки/валидации шаблона
+DOCX after содержит 3 строки
+Gotenberg вернул ok
+PDF generation status=ok
 ```
 
-22. Dry-run кнопка должна быть super_admin only.
+13. Не требовать byte-for-byte diff для обычного DOCX без marker.
 
-Если пользователь admin, но не super_admin, кнопка скрыта или disabled с tooltip. Не расширять права.
-
-23. В proof добавить проверку, что `package_template_item_id` обязателен.
-
-Вызов dry-run с TR token без `package_template_item_id` должен вернуть:
+Достаточно:
 
 ```text
-tr_no_template_item
+table_repeat_expansion.applied=false
+generation ok
+no TR codes
+ordinary tokens rendered
 ```
 
-24. В proof добавить проверку `tr_id_not_found`.
+14. После выноса `table-repeat-cell-render.ts` обязательно сохранить E.3 dry-run parity.
 
-Вызов:
+Proof должен показать:
 
 ```text
-{{tableRepeat:TR-999999}}
+dry-run preview values == expansion values в DOCX rows
 ```
 
-в контексте item, где такого config нет, должен вернуть:
+для первых строк.
+
+15. Не трогать в E.4:
 
 ```text
-tr_id_not_found
+save_session_document_atomic
+миграции
+RLS / GRANT
+SECURITY DEFINER
+packagePlaceholderCatalog
+UI TableRepeatsEditor / PackageDocumentCard
+classifier / validator
+package-tokens-dry-run external contract
 ```
 
-25. В proof добавить проверку `tr_role_has_no_assignments`.
+Допустим только внутренний refactor shared renderer, если внешний контракт E.3 не меняется.
 
-Создать/использовать TR-config с ролью без активных assignments или временно проверить на такой роли.
-
-26. В proof по regression обязательно проверить, что E.1a custom scalar dry-run не сломан:
+16. Все 22 unit-теста должны быть зелёные.
+17. Proof должен быть один общий или два файла, но с явным разделением:
 
 ```text
-{{ln-000015.custom.votes}}
+E.4 — table-repeat row expansion
+E.4a — scalar custom DOCX support
 ```
 
-Должен вести себя как после E.1a.
+18. После выполнения дать отдельный отчёт. Никаких новых стадий до подтверждения PASS.
+19. &nbsp;
+20. План: Stage E.4 + E.4a — DOCX row expansion + реальная подстановка scalar custom tokens
 
-27. Не расширять глобальный `packagePlaceholderCatalog` TR-токенами без item context.
+PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 (+E.4a).
 
-План правильно фиксирует, что глобальный каталог не расширяется. Сохранить это.
-
-28. Если TR markers добавлены в локальный UI E.2, не называть это global placeholder catalog.
-
-Это item-level config marker, а не универсальный placeholder.
-
-29. В proof `HARDCODED_ENABLED=false` можно проверить только если этот флаг реально существует в файле и уже контролируется проектом.
-
-Если его нет или название другое — не добавлять новый флаг, а указать фактический guard, который есть.
-
-30. После E.3 дать отдельный отчёт и не переходить к E.4 без подтверждения.
-
-После этих правок Stage E.3 можно выполнять.
-
-План: Stage E.3 — classifier / validator / dry-run support для `{{tableRepeat:TR-XXXXXX}}`
-
-### Prerequisites (зафиксировать в proof)
+## Prerequisites (должны быть PASS)
 
 - PATCH-DPIRA-METADATA-MERGE-V1 — PASS
-- Stage E.1 — PASS
-- Stage E.1a — PASS (`.lovable/proofs/docx_table_repeat_by_role_e1a_custom_fields.md`)
-- Stage E.2 — PASS (`.lovable/proofs/docx_table_repeat_by_role_e2_ui_config.md`)
+- Stage E.1 — PASS (schema custom fields в `document_package_role_catalog.metadata.assignment_custom_fields[]`)
+- Stage E.1a — PASS (values в `document_package_item_role_assignments.metadata.custom.<key>`, **scalar dry-run only**; реальная DOCX-подстановка `{{ln-XXXXXX.custom.<key>}}` отложена сюда, в E.4a)
+- Stage E.2 — PASS (UI/config `document_package_template_items.metadata.table_repeats[]`)
+- Stage E.3 — PASS (classifier `package_table_repeat`, item-level validator, structured dry-run)
 
-### Scope (что входит)
+Proof E.4 обязан явно сослаться на эти 5 пунктов и явно отметить, что E.1a-обещание про реальный DOCX закрывается именно здесь (E.4a).
 
-Чистый «syntax + dry-run» слой для `{{tableRepeat:TR-XXXXXX}}`. Никакой DOCX row-expansion, никакой записи в snapshot/ai_generated_documents/storage, никакого касания `canonical-document-generate-strict` и `save_session_document_atomic`.
+## Scope
 
-#### 1. Classifier — новый kind `package_table_repeat`
+Стадия E.4 теперь состоит из ДВУХ обязательных блоков. PASS возможен только если оба закрыты proof'ом:
 
-Файлы (frontend + edge mirror, parity сохраняется):
+- **E.4 (main)** — реальное row expansion для `{{tableRepeat:TR-XXXXXX}}` в `word/document.xml`.
+- **E.4a** — реальная DOCX-подстановка scalar `{{ln-XXXXXX.custom.<key>}}` в обычных абзацах (не только dry-run).
 
-- `src/lib/documents/placeholderClassifier.ts`
-- `supabase/functions/_shared/placeholderClassifier.ts`
+## НЕ-цель (общая)
 
-Изменения:
+- Не менять контракт `metadata.table_repeats[]`, `assignment_custom_fields[]`, classifier, validator, dry-run.
+- Не трогать `save_session_document_atomic`, миграции, RLS/GRANT, SECURITY DEFINER, `packagePlaceholderCatalog`, `package-tokens-dry-run`, UI (`TableRepeatsEditor`, `PackageDocumentCard`).
+- Не добавлять новые источники колонок (используется ровно набор E.1/E.2/E.3).
+- Не поддерживать merged cells / nested tables / multi-paragraph cells (см. v1-ограничения ниже).
+- Не трогать `order`-режим: TR-маркеры и `{{ln-…custom…}}` остаются `package_token_outside_package_context`.
 
-- Добавить тип:
-  ```ts
-  | { kind: 'package_table_repeat'; public_id: string /* TR-XXXXXX */ }
-  ```
-- Regex `RE_PACKAGE_TABLE_REPEAT = /^tableRepeat:(TR-\d{6,})$/` (без модификаторов в v1).
-- Проверять ДО `RE_PACKAGE_ROLE_SUB` / `RE_PACKAGE_FIELD`.
-- В `evaluatePlaceholderInScope`:
-  - `scope='billing'` → `package_token_outside_package_context`;
-  - `scope='package'|'unknown'` → синтаксически валиден (`ok`).
-- Реальный gate «TR-id существует в `metadata.table_repeats[]`» делается отдельным валидатором (см. §2) — НЕ внутри classifier.
+## Pre-flight check (обязательный, до любых правок)
 
-#### 2. Template-level validator `validateTableRepeatMarkersInTemplate`
+Перед реализацией прочитать фактический payload, который оркестратор `ai-generate-document-package` отдаёт в `canonical-document-generate-strict` (через `packageContext`). Проверить наличие:
 
-Файлы:
+1. `package_session_id`
+2. `package_template_item_id`
+3. `document_package_template_items.metadata` (или возможность загрузить её внутри strict по `package_template_item_id`)
+4. данных для `preresolved_ln_custom_tokens` (значения `assignment.metadata.custom.<key>` per `ln-XXXXXX`)
+5. bag/resolver для `package_field` (`pf-XXXXXX`) — `packageContext.preresolved_pf_fields`
 
-- `src/lib/documents/tableRepeatSpec.ts` (+ edge mirror `supabase/functions/_shared/table-repeat-spec.ts`)
+**Решение по `ai-generate-document-package`:**
 
-Pure helper, без I/O. Вход:
+> `ai-generate-document-package` не трогаем, **если** canonical-document-generate-strict уже получает все 5 пунктов выше.  
+> Если каких-то данных нет — допускается **минимальный add-only payload patch** в оркестраторе исключительно для передачи недостающего контекста в strict. Никаких других изменений в оркестраторе.
 
-- `templateText: string`
-- `configs: TableRepeatConfig[]` (из `document_package_template_items.metadata.table_repeats`)
+Если pre-flight выявит, что отсутствует и `itemMetadata.table_repeats`, и данные для `{{ln-XXXXXX.custom.<key>}}` — **STOP**: сначала отдельный короткий payload-patch (как самостоятельный proof-row), и только потом E.4/E.4a.
 
-Выход — массив `TableRepeatMarkerIssue` с кодами:
-
-- `unknown_tr_id` (error) — marker ссылается на TR-XXX, которого нет в configs текущего item;
-- `duplicate_tr_marker_in_template` (warn) — один TR-id встречается в шаблоне >1 раза (v1 — predictable: каждое вхождение раскроется одинаково; warn, не блокер);
-- `tr_config_has_errors` (error) — TR-id есть, но `validateTableRepeatConfig` возвращает severity='error' (агрегируем).
-
-Используется в admin UI `TableRepeatsEditor` / preview panel `PackageDocumentCard.tsx` (только UI-индикация, без правок логики save).
-
-#### 3. Dry-run resolver через `package-tokens-dry-run`
-
-Файлы:
-
-- `supabase/functions/package-tokens-dry-run/index.ts`
-- `supabase/functions/_shared/resolve-package-tokens.ts` (добавить `resolveTableRepeatTokenCore` рядом с `resolveLnCustomToken`)
-
-Контракт:
-
-- Input — те же `alias_tokens[]`. Если token классифицируется как `package_table_repeat`, маршрутизация в новый `resolveTableRepeatTokenCore({ trId, packageSessionId, packageTemplateItemId, supabase })`.
-- `packageTemplateItemId` обязателен для TR-токенов (как и для `ln-*.custom.*`). Без него — `code: 'tr_no_template_item'`.
-- Resolver читает `document_package_template_items.metadata.table_repeats[]`, находит конфиг по `trId`.
-- Source-of-rows: активные `document_package_item_role_assignments` для пары `(packageTemplateItemId, role_catalog_id)` — те же правила, что в E.2 preview.
-- Возвращает **превью-структуру** (НЕ строку):
-  ```ts
-  {
-    resolved: true,
-    kind: 'table_repeat',
-    tr_id: 'TR-000001',
-    role_catalog_id: '...',
-    rows_count: N,
-    columns: [{ cell_index, source_type, source_key, sample_value, sample_code }],
-    rows_preview: [ /* до 5 строк, каждая колонка с resolved-значением или кодом */ ]
-  }
-  ```
-  `sample_value`/`rows_preview` ограничены первыми 5 назначениями, длина каждой строки — N колонок конфига.
-- Колоночные source_type'ы переиспользуют существующих сабрезолверов:
-  - `role_person` → существующий ln-резолвер (person по `assignment.person_id`);
-  - `assignment_custom_field` → существующий `resolveLnCustomToken` (logic only, без выпуска отдельного токена);
-  - `package_field` → существующий pf-резолвер;
-  - `static_text` → литерал;
-  - `row_number` → 1..N;
-  - `empty` → пустая строка;
-  - `assignment_metadata` → защитный код `tr_metadata_source_super_admin_only` если кто-то поднимет конфиг без super_admin контекста (dry-run super_admin — пропускается).
-
-Новые коды в `PackageTokenResolveCode`:
-
-- `tr_no_template_item`
-- `tr_id_not_found`
-- `tr_role_has_no_assignments`
-- `tr_config_invalid` (агрегат validateTableRepeatConfig errors)
-- `tr_column_resolve_failed` (внутри одной ячейки — фиксируется в `rows_preview[].cells[i].code`, верхний уровень остаётся resolved=true)
-
-Audit `package_tokens_dry_run` дополняется codes-counter этих новых кодов. Значения колонок (`sample_value`/`rows_preview.cells[].value`) **не** пишутся в audit — только summary by code.
-
-#### 4. UI: индикация TR-маркеров в admin
-
-Файл `src/components/ai-documents/packages/TableRepeatsEditor.tsx` (расширение, без изменения контракта save):
-
-- Бейдж «не найден в шаблоне» (если TR-id не встречается в template text) — warning;
-- Бейдж «есть в шаблоне Nx» — info;
-- Кнопка «Dry-run preview» (super_admin only) на конфиге — открывает диалог с результатом `package-tokens-dry-run` для `{{tableRepeat:TR-...}}` в контексте выбранной session (тот же `packageSessionId` UI-флоу, что в E.1a custom preview).
-
-### Что **не** входит в E.3 (зафиксировать в proof)
-
-- DOCX row expansion / реальная подстановка в `.docx` → Stage E.4;
-- Любые изменения `canonical-document-generate-strict`, `save_session_document_atomic`, `ai-generate-document-package`;
-- Любые миграции БД;
-- Любые SECURITY DEFINER функции;
-- Глобальный `packagePlaceholderCatalog` не расширяется TR-токенами (catalog v1 — только tokens, раскрывающиеся в строку);
-- Контракт хранения `metadata.table_repeats[]` не меняется;
-- RLS/GRANT не меняются.
-
-### Файлы (план изменений)
-
-Изменяются:
-
-- `src/lib/documents/placeholderClassifier.ts`
-- `supabase/functions/_shared/placeholderClassifier.ts`
-- `src/lib/documents/tableRepeatSpec.ts`
-- `supabase/functions/_shared/table-repeat-spec.ts`
-- `supabase/functions/_shared/resolve-package-tokens.ts` (+ новый `resolveTableRepeatTokenCore`)
-- `supabase/functions/package-tokens-dry-run/index.ts` (routing + поддержка TR-результата в response)
-- `src/components/ai-documents/packages/TableRepeatsEditor.tsx` (бейджи + dry-run кнопка, super_admin)
-- `.lovable/plan.md` (прогресс)
-
-Создаётся:
-
-- `.lovable/proofs/docx_table_repeat_by_role_e3_classifier_dryrun.md`
-
-### Proof (что обязательно показать)
-
-- Ссылки на закрытые prerequisites (E.1 / E.1a / E.2 / metadata-merge).
-- Classifier parity: одинаковый вывод frontend и edge для набора входов: `tableRepeat:TR-000001`, `tableRepeat:TR-XYZ`, `tableRepeat:TR-000001|format=text` (последний — `invalid` или `unknown_modifier`, фиксируем выбор), `tableRepeat:TR-000001` в `billing` scope → `package_token_outside_package_context`.
-- Template validator: пример с unknown TR-id, duplicate marker, валидным конфигом.
-- Dry-run end-to-end: вызов `package-tokens-dry-run` с TR-токеном на реальной сессии:
-  - rows_count совпадает с UI preview из E.2;
-  - rows_preview содержит ≤5 строк, длиной = number of columns;
-  - audit-row `package_tokens_dry_run` создан, значения не утекли (только codes counter).
-- Регресс: `field:FLD-…`, `package.ul.FLD-…`, `ln-…`, `pf-…`, `ln-….custom.…` продолжают резолвиться идентично E.1a.
-- Подтверждения:
-  - `save_session_document_atomic` сигнатура и тело не изменены;
-  - `canonical-document-generate-strict` не изменён;
-  - миграций нет;
-  - `HARDCODED_ENABLED=false` в `resolve-package-tokens.ts` без изменений;
-  - новых SECURITY DEFINER функций нет;
-  - RLS/GRANT не менялись;
-  - super_admin gate в `package-tokens-dry-run` не ослаблен;
-  - rate-limit 5s сохраняется;
-  - E.4 (DOCX expansion) НЕ начинался.
-
-### DoD
-
-- Все 4 пачки изменений (classifier / template validator / dry-run resolver / UI бейдж+кнопка) реализованы и parity-совместимы.
-- Proof собран и содержит все пункты выше.
-- Отдельный отчёт `PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3 — PASS / PARTIAL / FAIL`.
-- Возврат к Stage E.4 — только после явного подтверждения PASS пользователем.
+Pre-flight результат фиксируется в proof отдельной секцией "Pre-flight payload audit".
 
 ---
 
-## Stage E.3 — DONE (PASS pending user)
+## E.4 (main) — DOCX row expansion для `{{tableRepeat:TR-XXXXXX}}`
 
-Proof: `.lovable/proofs/docx_table_repeat_by_role_e3_classifier_dryrun.md`.
-Stage E.4 (real DOCX row expansion) — отдельный план после подтверждения.
+### Точка вызова
+
+В `supabase/functions/canonical-document-generate-strict/index.ts`, **после** загрузки `zip` и **до** `new Docxtemplater(zip, ...)` (район 1741):
+
+```text
+if (generationContext === 'package_session' && packageContext) {
+  const trReport = await applyTableRepeatExpansion({
+    zip, supabase,
+    packageSessionId: packageContext.package_session_id,
+    packageTemplateItemId: packageContext.package_template_item_id,
+    itemMetadata, isSuperAdmin, preresolvedPfFields,
+  });
+  generationReport.table_repeat_expansion = trReport;
+}
+```
+
+`order`-режим и `package_session` без TR-маркеров — no-op.
+
+### Новый shared helper
+
+`supabase/functions/_shared/docx-table-repeat-expand.ts`:
+
+1. `documentXml = zip.file('word/document.xml').asText()`.
+2. Если нет `{{tableRepeat:` — return `{ applied: false, markers: [] }` сразу.
+3. Прочитать `metadata.table_repeats[]` через `readTableRepeats(itemMetadata)`.
+4. Для каждого уникального `tr_id`:
+  - Найти конфиг. Нет → `severity='error'`, `code='tr_id_not_found'`, marker → `''`, **report.markers[] += запись + warning попадает в generation report (не только audit)**.
+  - Выгрузить assignments через единый helper `loadTableRepeatAssignments(session, item, role)` с `is_active=true`, ORDER **идентичным dry-run E.3** (`sort_order NULLS LAST, id`).
+  - `validateTableRepeatConfig(cfg, { knownCustomKeysForRole })`. При `severity='error'` → marker `''`, `code='tr_config_invalid'`, **severity=error в generation report**.
+5. Для каждой OCCURRENCE маркера:
+  - **Нормализация split runs (обязательно).** Сшить соседние `<w:r><w:t>` внутри предполагаемой template row, чтобы маркер, разрезанный Word'ом на несколько runs, распознавался единым regex. Покрывается unit-тестом (см. ниже).
+  - Найти ближайшую родительскую `<w:tr>...</w:tr>` индексным сканированием (top-level, не nested) — `<w:tr>` не вкладывается в `<w:tr>` напрямую, но внутри `<w:tc>` может быть nested table; брать ТОЛЬКО ближайшую внешнюю.
+  - Не найдена → `code='tr_marker_not_inside_tr'`, marker `''`, severity=warn в report.
+  - Сгенерировать N клонов template row. В каждом:
+    - удалить маркер из всех его runs;
+    - для каждого `column.cell_index` найти top-level `<w:tc>` по физическому индексу (**уточнение:** `cell_index` индексирует физические `<w:tc>`, а **НЕ** визуальные колонки с учётом `gridSpan`/merged cells; merged cells в v1 не поддерживаются — см. ограничения);
+    - заменить контент ячейки одной `<w:r>` с `<w:rPr>` исходной первой ячейки и `<w:t xml:space="preserve">VALUE</w:t>`; `<w:pPr>` сохранить;
+    - выход cell_index за число `<w:tc>` → ячейку пропустить, `cell_codes_summary['cell_index_out_of_range']++`, severity=warn.
+  - Заменить оригинальный template row на конкатенацию клонов. 0 assignments → ноль клонов (row удаляется), `code='tr_role_has_no_assignments'`, severity=warn.
+6. `zip.file('word/document.xml', newXml)`.
+
+### Per-row рендер ячеек
+
+- Вынести из `resolve-package-tokens.ts` ячейные функции (`renderRolePersonCell`, `readAssignmentCustomKey`, `readAssignmentMetadataPath`, `package_field`/`static_text`/`row_number`/`empty`) в `supabase/functions/_shared/table-repeat-cell-render.ts`.
+- **Parity DoD:** dry-run E.3 переключается на этот же модуль; `dry-run.rows_preview[i].cells[j].value === expansion.rows[i].cells[j].value` для одинаковых входных данных (в пределах 200-char preview-cap). Покрывается отдельным тестом.
+- В expansion лимит 200 символов **не применяется** (только preview).
+- XML-escape значений обязателен.
+- `assignment_metadata` ветка в expansion разрешена только при `isSuperAdmin === true`; иначе value `''` + `code='assignment_metadata_forbidden'`.
+- `package_field` (`pf-XXXXXX`) — одно значение для всех строк; читается один раз из `packageContext.preresolved_pf_fields`.
+
+### `assignment_custom_field` — schema check в expansion
+
+Зеркало E.1a:
+
+- key есть в `assignment_custom_fields` роли **и** в `assignment.metadata.custom[key]` есть значение → value, `code='ok'`.
+- key есть в schema, значение пустое/отсутствует → value `''`, `code='ln_custom_value_empty'` (синоним `'ok_empty'` — в зависимости от обязательности; в v1 фиксируем `'ln_custom_value_empty'`).
+- key **отсутствует** в schema роли → value `''`, `code='role_no_custom_field_def:<key>'`, severity=warn в generation report.
+
+### Идемпотентность и fail-soft (исправлено)
+
+- Expansion вызывается ровно один раз перед Docxtemplater.
+- Ошибка по одному TR-id не обрушает рендер других TR.
+- **Любая ошибка/warning expansion'а попадает не только в audit, но и в `generation_report.table_repeat_expansion**` (полный список markers/severity/code/cell_codes_summary). Если в результате не вышло раскрыть таблицу, документ ВИЗУАЛЬНО будет без таблицы — но потребитель API (UI/админка) должен видеть severity=warn|error в ответе и/или в `ai_generated_documents.meta.table_repeat_expansion`.
+- HTTP 500 не отдаём; общая генерация продолжается.
+
+### Audit (без значений)
+
+`meta.table_repeat_expansion` пишет ТОЛЬКО:
+
+```text
+{
+  applied, super_admin,
+  markers: [{
+    tr_id, role_catalog_id,
+    rows_count, columns_count,
+    source_types_count: { role_person: N, assignment_custom_field: N, ... },
+    cell_codes_summary: { ok: N, ln_custom_value_empty: N, role_no_custom_field_def: N, ... },
+    occurrence_count, ok_occurrences, failed_occurrences,
+    severity?: 'warn'|'error', code?: '...'
+  }]
+}
+```
+
+**Категорически НЕ писать в audit:** ФИО, паспорт, адрес, custom values, значения ячеек, person snapshot, raw `metadata.custom.*`.
+
+### v1-ограничения (явно)
+
+> v1 поддерживает только простые таблицы:
+>
+> - без merged cells (`gridSpan`/`vMerge`);
+> - без nested tables внутри template row;
+> - без multi-paragraph ячеек.
+>
+> Для сложных ячеек — НЕ молчаливый no-op: писать `code='tr_cell_complex_structure_unsupported'`, severity=warn, в report и audit. v2 — отдельная стадия.
+
+---
+
+## E.4a — реальная DOCX-подстановка `{{ln-XXXXXX.custom.<key>}}`
+
+Минимальный контракт (обычный абзац DOCX, не таблица):
+
+1. `{{ln-000015.custom.votes}}` в обычном `<w:p>` реально подставляется при генерации DOCX (Docxtemplater render).
+2. **1 active assignment** для роли `ln-000015` → подставляется значение `assignment.metadata.custom.votes`.
+3. **2+ active assignments** для той же роли → controlled warning, **value=`''**` (НЕ конкатенация, НЕ первое значение); код `code='ln_custom_multi_assignment_ambiguous'`. Пишется в generation_report.
+4. **key не объявлен** в `assignment_custom_fields` роли → value `''`, `code='role_no_custom_field_def:<key>'`, severity=warn.
+5. **значение пустое** → value `''`, `code='ln_custom_value_empty'` (или `'ok_empty'`, выбираем `'ln_custom_value_empty'` для parity с E.4 main).
+6. classifier и dry-run остаются без изменений (kind для этого токена уже зафиксирован в E.1a).
+
+### Реализация E.4a
+
+- Доукомплектовать `preresolved_ln_custom_tokens` в payload strict (если pre-flight показал, что их там нет — через минимальный add-only patch в `ai-generate-document-package`).
+- В strict, в подготовке `resolved` (тот же bag, что и для `{{field:...}}` / `{{package.ul.…}}` / `{{ln-…}}`), добавить ключи формата `ln-XXXXXX.custom.<key>` (raw_inside, без `{{}}`) с уже подставленными значениями.
+- Модификаторы в v1 запрещены: `{{ln-XXXXXX.custom.<key>|format=...}}` → `code='ln_custom_modifier_not_allowed'`, value `''`.
+- Никаких изменений в Docxtemplater parser — текущий "raw key" parser уже работает (строки 1747-1753).
+
+### Audit E.4a (без значений)
+
+`meta.ln_custom_scalar_render`:
+
+```text
+{ tokens_count, codes_summary: { ok: N, ln_custom_value_empty: N, role_no_custom_field_def: N, ln_custom_multi_assignment_ambiguous: N } }
+```
+
+Не писать значения.
+
+---
+
+## Файлы
+
+### Создать
+
+- `supabase/functions/_shared/docx-table-repeat-expand.ts` — expansion core (E.4).
+- `supabase/functions/_shared/table-repeat-cell-render.ts` — общий per-row cell renderer (E.4 + E.3 dry-run parity).
+- `supabase/functions/_shared/ln-custom-scalar-prepare.ts` — подготовка `ln-XXXXXX.custom.<key>` ключей в `resolved` (E.4a).
+- `.lovable/proofs/docx_table_repeat_by_role_e4_row_expansion.md`
+- `.lovable/proofs/docx_ln_custom_scalar_docx_render_e4a.md` (или один общий — но обе секции явно разделены).
+
+### Редактировать
+
+- `supabase/functions/canonical-document-generate-strict/index.ts` — вызов `applyTableRepeatExpansion` + интеграция `ln-custom-scalar-prepare`; никаких изменений в Docxtemplater config.
+- `supabase/functions/_shared/resolve-package-tokens.ts` — заменить inline cell-helpers импортом из `table-repeat-cell-render.ts`, контракт `resolveTableRepeatTokenCore` не меняется.
+- `supabase/functions/ai-generate-document-package/index.ts` — **только если pre-flight показал отсутствие данных**; add-only payload patch, ничего другого.
+- `.lovable/plan.md` — отметить E.4/E.4a.
+
+### НЕ трогать
+
+- `save_session_document_atomic`, миграции, RLS/GRANT, SECURITY DEFINER, `packagePlaceholderCatalog`, `package-tokens-dry-run`, classifier, validator, UI (`TableRepeatsEditor`, `PackageDocumentCard`).
+
+---
+
+## Тесты (`supabase/functions/canonical-document-generate-strict/__tests__/`)
+
+`table-repeat-expand.test.ts`:
+
+1. **split marker across `<w:t>` runs** — `{{tableRepeat:TR-...}}` физически разрезан Word'ом на 3 runs → нормализация склеивает, marker распознан. **Обязательный DoD.**
+2. 0 assignments → row удаляется целиком; шапка таблицы остаётся.
+3. 3 assignments × 6 columns → 3 строки, ячейки заполнены ожидаемо.
+4. `cell_index_out_of_range` → строка остаётся, ячейка не тронута, audit code инкрементится.
+5. marker вне `<w:tr>` → fail-soft, marker `''`, `code='tr_marker_not_inside_tr'` в generation report.
+6. 2 разных TR-id в одном документе → оба раскрываются независимо.
+7. Один TR-id в 2 разных таблицах → обе template-row раскрываются.
+8. `assignment_metadata` без super_admin → `''` + `code='assignment_metadata_forbidden'`.
+9. `assignment_metadata` с super_admin → значение есть.
+10. `unknown TR id` → severity=error в report, marker `''`.
+11. `tr_config_invalid` → severity=error в report, marker `''`.
+12. `package_field` одинаков во всех строках.
+13. `assignment_custom_field` различается per row.
+14. **Schema check:** `assignment_custom_field` с key вне `assignment_custom_fields` → `code='role_no_custom_field_def:<key>'`.
+15. Документ без TR-маркера → `applied=false`, никакого парсинга XML, generation ok.
+16. **Cell-render parity:** dry-run E.3 и expansion E.4 для одинаковых входов дают одинаковые value (в пределах 200-char preview cap).
+17. **Сложная ячейка** (`vMerge`/`gridSpan`/nested table в одной из target cells) → `code='tr_cell_complex_structure_unsupported'`, severity=warn.
+
+`ln-custom-scalar-render.test.ts`:
+
+18. 1 active assignment, key есть, значение есть → подставлено.
+19. 2+ active assignments → `''` + `code='ln_custom_multi_assignment_ambiguous'`.
+20. key вне schema роли → `''` + `code='role_no_custom_field_def:<key>'`.
+21. значение пустое → `''` + `code='ln_custom_value_empty'`.
+22. модификатор → `''` + `code='ln_custom_modifier_not_allowed'`.
+
+---
+
+## Proof (`.lovable/proofs/docx_table_repeat_by_role_e4_row_expansion.md` + E.4a)
+
+Обязательные секции:
+
+1. **Prerequisites** — ссылки на 5 PASS proof'ов.
+2. **Pre-flight payload audit** — что фактически приходит в strict; нужен ли add-only patch.
+3. **Что НЕ тронуто** — explicit list (save_session_document_atomic, миграции, RLS/GRANT, SECURITY DEFINER, packagePlaceholderCatalog, dry-run, classifier, validator, UI).
+4. **v1-ограничения** — merged cells / nested / multi-paragraph: не поддержано, fail с structured warning.
+5. **Business scenario "Список зарегистрированных лиц"**:
+  - Mapping:
+  1. row_number
+  2. role_person.full_name
+  3. role_person.passport_number_full
+  4. role_person.personal_number
+  5. assignment_custom_field.votes
+  6. assignment_custom_field.share_percent
+    `идаемый итог (значения для proof — синтетика, не реальные ПДн):`text
+    тров — 20%
+    анов — 30%
+    дорчук — 50%
+    `
+6. **SQL assignments до генерации:**
+  ```sql
+   SELECT person_id, metadata->'custom'
+   FROM document_package_item_role_assignments
+   WHERE package_session_id = '<session_id>'
+     AND package_template_item_id = '<item_id>'
+     AND role_catalog_id = '<role_id>'
+     AND is_active = true
+   ORDER BY sort_order NULLS LAST, id;
+  ```
+7. **Excerpt `word/document.xml` до/после:**
+  - до: одна `<w:tr>` с маркером;
+  - после: три `<w:tr>` без маркера, со значениями;
+  - значения в строках различаются;
+  - явная grep-проверка: в финальном XML НЕТ строк `{{tableRepeat:` и `{{ln-000015.custom.`.
+8. **Audit excerpt (без values):**
+  ```text
+   {
+     "applied": true,
+     "markers": [
+       { "tr_id": "TR-000001", "rows_count": 3, "columns_count": 6,
+         "cell_codes_summary": { "ok": 18 } }
+     ]
+   }
+  ```
+9. **Generation report excerpt** с severity/codes (для случая warnings).
+10. **PDF smoke:** DOCX after содержит 3 строки; Gotenberg вернул 200; PDF generation status=ok.
+11. **E.4a реальная DOCX-подстановка:** показать абзац `«Голосов: {{ln-000015.custom.votes}}»` → в реальном итоговом DOCX/PDF подставлено число; повторить для 2+ assignments / unknown key / empty value / modifier — с кодами в report.
+12. **Cell-render parity proof:** dry-run preview values первых строк == expansion values в DOCX.
+13. Для документа без маркера: достаточно зафиксировать `no table_repeat_expansion.applied`, `generation ok`, `no TR codes`, `ordinary tokens rendered` (byte-for-byte diff НЕ требуется).
+
+---
+
+## DoD
+
+1. Все 5 prerequisites закрыты и явно упомянуты.
+2. **Pre-flight payload audit** выполнен и зафиксирован в proof.
+3. В `package_session` режиме `{{tableRepeat:TR-XXXXXX}}` реально размножает строки в `word/document.xml`, доходит до выгружаемого DOCX и PDF.
+4. **E.4a:** `{{ln-XXXXXX.custom.<key>}}` в обычном абзаце реально подставлен в DOCX/PDF; все 5 контрактных пунктов (1 / 2+ / no schema / empty / modifier) покрыты.
+5. **Split marker across `<w:t>` runs** — поддержано и покрыто unit-тестом.
+6. Сложные ячейки (merged / nested / multi-paragraph) — out of scope, но с structured warning, а не silent no-op.
+7. `cell_index` индексирует физические `<w:tc>` (документировано).
+8. `assignment_custom_field` schema-check (`role_no_custom_field_def:<key>`) в expansion есть.
+9. Все warnings/errors expansion и `ln-custom-scalar` доступны в **generation report**, не только в audit.
+10. Audit не содержит ФИО, паспортов, адресов, custom values, значений ячеек, person snapshot.
+11. `assignment_metadata` остаётся super_admin-only.
+12. `order`-режим без изменений.
+13. Все остальные токены (`{{field:...}}`, `{{package.*}}`, `{{ln-XXXXXX...}}` без `.custom`) продолжают рендериться как раньше.
+14. **Cell-render parity:** dry-run E.3 и expansion E.4 используют единый `table-repeat-cell-render.ts`; parity покрыта тестом.
+15. Все 22 unit-теста зелёные.
+16. Proof содержит все 13 секций выше, включая бизнес-сценарий "Список зарегистрированных лиц", SQL, XML-excerpt до/после, grep-проверку отсутствия сырых токенов, PDF-smoke и E.4a-фрагмент.
+
+## Финальный статус
+
+> **Stage E.4 — PASS: DOCX row expansion + scalar custom DOCX support**
+
+PASS возможен ТОЛЬКО если proof закрывает оба блока:
+
+- table-repeat реально размножает строки в DOCX;
+- `{{ln-XXXXXX.custom.<key>}}` реально подставляется в обычном DOCX.
+
+После E.4 — отдельный отчёт + proof. Никаких новых стадий до подтверждения PASS.
