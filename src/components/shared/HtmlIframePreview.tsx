@@ -51,6 +51,8 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   var timers = [];
   var observer = null;
+  var parentViewport = { top: 0, height: 800 };
+  var fixedSyncPending = false;
 
   function post() {
     var h = Math.max(
@@ -62,6 +64,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   function scheduleStagedSync() {
     post();
+    scheduleFixedOverlaySync();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(post);
     }
@@ -87,8 +90,84 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   } catch (e) {}
 
   if (typeof ResizeObserver !== 'undefined' && document.body) {
-    observer = new ResizeObserver(post);
+    observer = new ResizeObserver(function() {
+      post();
+      scheduleFixedOverlaySync();
+    });
     observer.observe(document.body);
+  }
+
+  function isHidden(el) {
+    if (!el || !el.getBoundingClientRect) return true;
+    var cs = window.getComputedStyle(el);
+    return cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0;
+  }
+
+  function isFullscreenFixedOverlay(el) {
+    if (isHidden(el)) return false;
+    var cs = window.getComputedStyle(el);
+    if (cs.position !== 'fixed') return false;
+    var rect = el.getBoundingClientRect();
+    var docWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+    var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+    return rect.width >= docWidth * 0.9 && rect.height >= docHeight * 0.7 && Math.abs(rect.left) <= 2 && Math.abs(rect.top) <= 2;
+  }
+
+  function restoreFixedOverlay(el) {
+    if (!el || el.getAttribute('data-lovable-fixed-overlay') !== '1') return;
+    var props = ['position', 'top', 'right', 'bottom', 'left', 'height', 'min-height', 'width'];
+    for (var i = 0; i < props.length; i++) el.style.removeProperty(props[i]);
+    el.removeAttribute('data-lovable-fixed-overlay');
+  }
+
+  function syncFixedOverlays() {
+    fixedSyncPending = false;
+    var candidates = document.querySelectorAll('.fixed, [style*="position: fixed"], [style*="position:fixed"], [data-lovable-fixed-overlay="1"]');
+    var docHeight = document.documentElement.scrollHeight || document.body.scrollHeight || parentViewport.height;
+    var visibleHeight = Math.max(320, Math.min(parentViewport.height || 800, docHeight));
+    var visibleTop = Math.max(0, Math.min(parentViewport.top || 0, Math.max(0, docHeight - visibleHeight)));
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (isFullscreenFixedOverlay(el) || el.getAttribute('data-lovable-fixed-overlay') === '1') {
+        if (isHidden(el)) {
+          restoreFixedOverlay(el);
+          continue;
+        }
+        el.setAttribute('data-lovable-fixed-overlay', '1');
+        el.style.setProperty('position', 'absolute', 'important');
+        el.style.setProperty('top', visibleTop + 'px', 'important');
+        el.style.setProperty('left', '0', 'important');
+        el.style.setProperty('right', '0', 'important');
+        el.style.setProperty('bottom', 'auto', 'important');
+        el.style.setProperty('width', '100%', 'important');
+        el.style.setProperty('height', visibleHeight + 'px', 'important');
+        el.style.setProperty('min-height', visibleHeight + 'px', 'important');
+      }
+    }
+  }
+
+  function scheduleFixedOverlaySync() {
+    if (fixedSyncPending) return;
+    fixedSyncPending = true;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncFixedOverlays);
+    else setTimeout(syncFixedOverlays, 0);
+  }
+
+  window.addEventListener('message', function(ev) {
+    var data = ev.data;
+    if (!data || typeof data !== 'object' || data.type !== 'iframe-parent-viewport') return;
+    if (typeof data.top === 'number' && Number.isFinite(data.top)) parentViewport.top = data.top;
+    if (typeof data.height === 'number' && Number.isFinite(data.height)) parentViewport.height = data.height;
+    scheduleFixedOverlaySync();
+  });
+
+  if (typeof MutationObserver !== 'undefined' && document.body) {
+    var mutationObserver = new MutationObserver(function() {
+      post();
+      scheduleFixedOverlaySync();
+    });
+    mutationObserver.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class', 'style', 'hidden'] });
+    window.addEventListener('beforeunload', function() { mutationObserver.disconnect(); });
   }
 
   window.addEventListener('beforeunload', function() {
