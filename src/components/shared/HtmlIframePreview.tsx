@@ -9,8 +9,9 @@
  *   a separate sanitization policy.
  *
  * SECURITY BOUNDARY:
- *   sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+ *   sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
  *   - allow-scripts: required for internal resize/anchor postMessage bridge.
+ *   - allow-forms: required for admin-authored lead/demo forms inside HTML pages.
  *   - allow-same-origin: NOT granted. The iframe remains opaque-origin; the parent
  *     identifies messages by `e.source === iframe.contentWindow` (origin check is
  *     not reliable for srcdoc).
