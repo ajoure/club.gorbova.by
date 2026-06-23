@@ -547,9 +547,16 @@ export function HtmlIframePreview({
   useEffect(() => {
     postParentViewport();
     const onViewportChange = () => postParentViewport();
+    const scrollContainer = findScrollContainer(iframeRef.current);
+    if (scrollContainer && !isRootScrollContainer(scrollContainer)) {
+      scrollContainer.addEventListener('scroll', onViewportChange, { passive: true });
+    }
     window.addEventListener('scroll', onViewportChange, { passive: true });
     window.addEventListener('resize', onViewportChange);
     return () => {
+      if (scrollContainer && !isRootScrollContainer(scrollContainer)) {
+        scrollContainer.removeEventListener('scroll', onViewportChange);
+      }
       window.removeEventListener('scroll', onViewportChange);
       window.removeEventListener('resize', onViewportChange);
     };
