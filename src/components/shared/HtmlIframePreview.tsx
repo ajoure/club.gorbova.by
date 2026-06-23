@@ -334,10 +334,12 @@ export function HtmlIframePreview({
     if (!iframe?.contentWindow) return;
     try {
       const rect = iframe.getBoundingClientRect();
-      const headerOffset = resolveHeaderOffset();
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
-      const visibleTop = Math.max(0, headerOffset - rect.top);
-      const visibleBottom = Math.min(rect.height, viewportHeight - rect.top);
+      const scrollContainer = findScrollContainer(iframe);
+      const containerRect = scrollContainer?.getBoundingClientRect();
+      const viewportTop = containerRect?.top ?? resolveHeaderOffset();
+      const viewportBottom = containerRect?.bottom ?? (window.innerHeight || document.documentElement.clientHeight || 800);
+      const visibleTop = Math.max(0, viewportTop - rect.top);
+      const visibleBottom = Math.min(rect.height, viewportBottom - rect.top);
       const visibleHeight = Math.max(320, visibleBottom - visibleTop);
       iframe.contentWindow.postMessage(
         {
