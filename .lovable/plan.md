@@ -1,3 +1,5 @@
+# Stage E.4 + E.4a — PASS (см. .lovable/proofs/docx_table_repeat_by_role_e4_row_expansion.md)
+
 # да, согласен, с учетом правок:
 
 1. План E.4 + E.4a можно выполнять.
