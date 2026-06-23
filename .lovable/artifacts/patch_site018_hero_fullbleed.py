@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SITE-000018 hero -> full viewport, frameless left column, photo raised."""
+"""SITE-000018 hero: fixed pixel height (iframe srcdoc -> 100vh broken)."""
 import json, base64, re, urllib.request
 
 PAGE_ID = "7e672fed-13f1-4ff1-8786-71a228a0c011"
@@ -8,17 +8,22 @@ ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh
 
 req = urllib.request.Request(f"{URL}/functions/v1/read-site-blocks",
     data=json.dumps({"id": PAGE_ID}).encode(),
-    headers={"Content-Type": "application/json", "Authorization": f"Bearer {ANON}"})
+    headers={"Content-Type":"application/json","Authorization":f"Bearer {ANON}"})
 data = json.loads(urllib.request.urlopen(req).read())
 blocks = data["blocks"]
 code = blocks[0]["content"]["code"]
-open(".lovable/artifacts/site018-hero-fullbleed-before.html","w").write(code)
+
+# Remove the previous FULL-BLEED block we appended (if present) and re-add corrected
+code = re.sub(
+    r'\n\s*/\* === FULL-BLEED HERO OVERRIDE === \*/.*?(?=\n\s*</style>|\Z)',
+    '\n',
+    code, count=1, flags=re.S)
 
 EXTRA = """
-    /* === FULL-BLEED HERO OVERRIDE === */
+    /* === FULL-BLEED HERO OVERRIDE v2 (iframe-safe, pixel height) === */
     .ir-hero-v2 {
-        min-height: calc(100vh - 72px) !important;
-        height: calc(100vh - 72px) !important;
+        min-height: 720px !important;
+        height: 720px !important;
         padding: 0 !important;
         margin: 0 !important;
         display: flex !important;
@@ -32,7 +37,6 @@ EXTRA = """
         padding: 1.25rem 1.5rem !important;
         gap: 1.5rem !important;
     }
-    /* Frameless left column */
     .ir-hero-v2 .ir-hero-v2__content {
         background: transparent !important;
         background-color: transparent !important;
@@ -46,23 +50,20 @@ EXTRA = """
     }
     .ir-hero-v2 .ir-hero-v2__content::before,
     .ir-hero-v2 .ir-hero-v2__content::after { display: none !important; }
-    /* Raise Katerina */
+    .ir-hero-v2 .ir-hero-v2__visual {
+        min-height: 720px !important;
+        height: 720px !important;
+    }
     .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person {
         object-position: right top !important;
     }
-    /* Glass aligns to bottom of visual column = bottom of CTA buttons */
     .ir-hero-v2 .ir-hero-glass {
         left: 0.5rem !important; right: 0.5rem !important; bottom: 0 !important;
     }
-    @media (min-width: 1025px) {
-        .ir-hero-v2, .ir-hero-v2 .ir-hero-v2__wrap, .ir-hero-v2 .ir-hero-v2__visual {
-            min-height: calc(100vh - 72px) !important;
-        }
-    }
     @media (max-width: 1024px) {
         .ir-hero-v2 { height: auto !important; min-height: auto !important; }
+        .ir-hero-v2 .ir-hero-v2__visual { min-height: 420px !important; height: 420px !important; }
         .ir-hero-v2 .ir-hero-v2__wrap { padding: 1rem !important; }
-        .ir-hero-v2 .ir-hero-v2__visual { min-height: 420px !important; }
         .ir-hero-glass { position: static !important; margin: 1rem 0 0 !important; }
     }
 """
@@ -71,7 +72,7 @@ code2, n = re.subn(
     r'(<style id="hero-fullbleed-override">)(.*?)(</style>)',
     lambda m: m.group(1) + m.group(2) + EXTRA + m.group(3),
     code, count=1, flags=re.S)
-assert n == 1, "style append failed"
+assert n == 1
 code = code2
 
 open(".lovable/artifacts/site018-hero-fullbleed-after.html","w").write(code)
@@ -79,7 +80,6 @@ blocks[0]["content"]["code"] = code
 
 payload = json.dumps(blocks).encode()
 b64 = base64.b64encode(payload).decode()
-print("payload:", len(payload))
 req = urllib.request.Request(f"{URL}/functions/v1/apply-site-blocks-patch",
     data=json.dumps({"id": PAGE_ID, "blocks_b64": b64}).encode(),
     headers={"Content-Type":"application/json","Authorization":f"Bearer {ANON}"})
