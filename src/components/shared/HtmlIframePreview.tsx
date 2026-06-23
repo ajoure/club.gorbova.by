@@ -388,7 +388,12 @@ function resolveHeaderOffset(): number {
     const hdr = document.querySelector('header') as HTMLElement | null;
     if (hdr) return hdr.getBoundingClientRect().height;
   } catch {}
-  return 80;
+  return 0;
+}
+
+function isRootScrollContainer(element: Element | null): boolean {
+  if (!element) return true;
+  return element === document.scrollingElement || element === document.documentElement || element === document.body;
 }
 
 function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -417,17 +422,30 @@ export function HtmlIframePreview({
     try {
       const rect = iframe.getBoundingClientRect();
       const scrollContainer = findScrollContainer(iframe);
-      const containerRect = scrollContainer?.getBoundingClientRect();
-      const viewportTop = containerRect?.top ?? resolveHeaderOffset();
-      const viewportBottom = containerRect?.bottom ?? (window.innerHeight || document.documentElement.clientHeight || 800);
+      const rootScroll = isRootScrollContainer(scrollContainer);
+      const containerRect = rootScroll ? null : scrollContainer?.getBoundingClientRect();
+      const parentHeaderOffset = rootScroll ? resolveHeaderOffset() : 0;
+      const viewportTop = rootScroll ? parentHeaderOffset : (containerRect?.top ?? 0);
+      const viewportLeft = rootScroll ? 0 : (containerRect?.left ?? 0);
+      const viewportBottom = rootScroll
+        ? (window.innerHeight || document.documentElement.clientHeight || 800)
+        : (containerRect?.bottom ?? (window.innerHeight || document.documentElement.clientHeight || 800));
+      const viewportRight = rootScroll
+        ? (window.innerWidth || document.documentElement.clientWidth || 1024)
+        : (containerRect?.right ?? (window.innerWidth || document.documentElement.clientWidth || 1024));
       const visibleTop = Math.max(0, viewportTop - rect.top);
       const visibleBottom = Math.min(rect.height, viewportBottom - rect.top);
+      const visibleLeft = Math.max(0, viewportLeft - rect.left);
+      const visibleRight = Math.min(rect.width, viewportRight - rect.left);
       const visibleHeight = Math.max(320, visibleBottom - visibleTop);
+      const visibleWidth = Math.max(320, visibleRight - visibleLeft);
       iframe.contentWindow.postMessage(
         {
           type: 'iframe-parent-viewport',
           top: visibleTop,
+          left: visibleLeft,
           height: visibleHeight,
+          width: visibleWidth,
         },
         '*',
       );
@@ -468,9 +486,10 @@ export function HtmlIframePreview({
           const iframe = iframeRef.current;
           const rect = iframe.getBoundingClientRect();
           const scrollContainer = findScrollContainer(iframe);
-          const containerRect = scrollContainer?.getBoundingClientRect();
-          const containerScrollTop = scrollContainer?.scrollTop ?? (window.pageYOffset || document.documentElement.scrollTop || 0);
-          const headerOffset = resolveHeaderOffset();
+          const rootScroll = isRootScrollContainer(scrollContainer);
+          const containerRect = rootScroll ? null : scrollContainer?.getBoundingClientRect();
+          const containerScrollTop = rootScroll ? (window.pageYOffset || document.documentElement.scrollTop || 0) : (scrollContainer?.scrollTop ?? 0);
+          const headerOffset = rootScroll ? resolveHeaderOffset() : 0;
           const top = Math.max(
             0,
             rect.top - (containerRect?.top ?? 0) + containerScrollTop
@@ -484,12 +503,37 @@ export function HtmlIframePreview({
         return;
       }
 
+      if (data.type === 'iframe-scroll-command') {
+        const iframe = iframeRef.current;
+        const scrollContainer = findScrollContainer(iframe);
+        const rootScroll = isRootScrollContainer(scrollContainer);
+        const rawTop = typeof data.top === 'number' && Number.isFinite(data.top) ? data.top : 0;
+        const rawLeft = typeof data.left === 'number' && Number.isFinite(data.left) ? data.left : 0;
+        const behavior = data.behavior === 'smooth' ? 'smooth' : 'auto';
+        if (data.mode === 'by') {
+          if (rootScroll) window.scrollBy({ top: rawTop, left: rawLeft, behavior });
+          else scrollContainer?.scrollBy({ top: rawTop, left: rawLeft, behavior });
+        } else {
+          const rect = iframe.getBoundingClientRect();
+          const containerRect = rootScroll ? null : scrollContainer?.getBoundingClientRect();
+          const currentTop = rootScroll ? (window.pageYOffset || document.documentElement.scrollTop || 0) : (scrollContainer?.scrollTop ?? 0);
+          const currentLeft = rootScroll ? (window.pageXOffset || document.documentElement.scrollLeft || 0) : (scrollContainer?.scrollLeft ?? 0);
+          const targetTop = Math.max(0, rect.top - (containerRect?.top ?? 0) + currentTop + rawTop - (rootScroll ? resolveHeaderOffset() : 0));
+          const targetLeft = Math.max(0, rect.left - (containerRect?.left ?? 0) + currentLeft + rawLeft);
+          if (rootScroll) window.scrollTo({ top: targetTop, left: targetLeft, behavior });
+          else scrollContainer?.scrollTo({ top: targetTop, left: targetLeft, behavior });
+        }
+        requestAnimationFrame(postParentViewport);
+        return;
+      }
+
       if (data.type === 'iframe-wheel') {
         const deltaY = typeof data.deltaY === 'number' && Number.isFinite(data.deltaY) ? data.deltaY : 0;
         const deltaX = typeof data.deltaX === 'number' && Number.isFinite(data.deltaX) ? data.deltaX : 0;
         const scrollContainer = findScrollContainer(iframeRef.current);
         if (scrollContainer && (deltaY || deltaX)) {
-          scrollContainer.scrollBy({ top: deltaY, left: deltaX, behavior: 'auto' });
+          if (isRootScrollContainer(scrollContainer)) window.scrollBy({ top: deltaY, left: deltaX, behavior: 'auto' });
+          else scrollContainer.scrollBy({ top: deltaY, left: deltaX, behavior: 'auto' });
           postParentViewport();
         }
         return;
