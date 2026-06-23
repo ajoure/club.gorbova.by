@@ -1,0 +1,2038 @@
+<!DOCTYPE html>
+<html lang="ru" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Идеологическая работа с выгодой для бизнеса</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        burgundy: {
+                            50: '#FDF2F4',
+                            100: '#FBE5E9',
+                            500: '#9E2A43',
+                            600: '#831F33',
+                            700: '#6B1D2F', // Primary burgundy
+                            800: '#521321',
+                            900: '#3B0A15',
+                        },
+                        coolgray: {
+                            50: '#F1F5F9',  // Solid light gray base
+                            100: '#E2E8F0', // Slightly darker solid gray
+                            200: '#CBD5E1', // Medium solid gray
+                            300: '#94A3B8',
+                            400: '#64748B',
+                            700: '#475569',
+                            800: '#1E293B', // Dark solid gray
+                            900: '#0F172A', // Deepest solid gray
+                        },
+                        skyaccent: {
+                            400: '#38BDF8',
+                            500: '#0EA5E9', // Sky blue accent
+                            600: '#0284C7',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Flat UI Shadows without gradients */
+        .custom-glow {
+            box-shadow: 0 4px 20px 0 rgba(15, 23, 42, 0.1);
+        }
+        .burgundy-glow {
+            box-shadow: 0 4px 15px 0 rgba(107, 29, 47, 0.25);
+        }
+
+        /* --- HERO v2: first screen like the reference image --- */
+                .ir-hero-v2 {
+                    --ir-bg: #121d28;
+                    --ir-panel: rgba(18, 29, 40, .78);
+                    --ir-border: rgba(255, 255, 255, .13);
+                    --ir-border-strong: rgba(134, 178, 195, .34);
+                    --ir-blue: #12c8ff;
+                    --ir-red: #a82b3a;
+                    position: relative;
+                    min-height: 715px;
+                    overflow: hidden;
+                    background: var(--ir-bg);
+                    color: #fff;
+                    isolation: isolate;
+                }
+        
+                .ir-hero-v2::before {
+                    content: "";
+                    position: absolute;
+                    inset: 0;
+                    background:
+                        radial-gradient(circle at 18% 16%, rgba(255,255,255,.08) 0 1px, transparent 1.5px),
+                        radial-gradient(circle at 46% 37%, rgba(255,255,255,.05) 0 1px, transparent 1.5px),
+                        radial-gradient(circle at 74% 20%, rgba(255,255,255,.05) 0 1px, transparent 1.5px),
+                        radial-gradient(circle at 31% 68%, rgba(255,255,255,.04) 0 1px, transparent 1.5px),
+                        linear-gradient(90deg, rgba(7, 13, 22, .25), rgba(18, 29, 40, .02) 52%, rgba(18, 29, 40, .18));
+                    background-size: 88px 88px, 123px 123px, 140px 140px, 105px 105px, 100% 100%;
+                    pointer-events: none;
+                    opacity: .85;
+                    z-index: -2;
+                }
+        
+                .ir-hero-v2::after {
+                    content: "";
+                    position: absolute;
+                    left: -18%;
+                    top: -28%;
+                    width: 78%;
+                    height: 142%;
+                    background:
+                        radial-gradient(circle at 45% 42%, rgba(255,255,255,.12), transparent 18%),
+                        radial-gradient(circle at 50% 54%, rgba(40, 53, 64, .65), transparent 32%),
+                        radial-gradient(circle at 70% 40%, rgba(158,42,67,.22), transparent 29%);
+                    filter: blur(14px);
+                    opacity: .35;
+                    pointer-events: none;
+                    z-index: -2;
+                }
+        
+                .ir-hero-v2__wrap {
+                    width: min(1280px, 100%);
+                    min-height: 715px;
+                    margin: 0 auto;
+                    position: relative;
+                    display: grid;
+                    grid-template-columns: 54% 46%;
+                    align-items: stretch;
+                }
+        
+                .ir-hero-v2__content {
+                    position: relative;
+                    z-index: 3;
+                    margin: 16px 0 16px 4px;
+                    padding: 18px 38px 32px 30px;
+                    border: 1px solid rgba(255,255,255,.08);
+                    background:
+                        linear-gradient(90deg, rgba(12, 18, 28, .92) 0%, rgba(17, 26, 38, .76) 70%, rgba(17, 26, 38, .26) 100%);
+                    box-shadow: 0 24px 70px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.07);
+                    backdrop-filter: blur(6px);
+                }
+        
+                .ir-hero-v2__badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 14px;
+                    border-radius: 999px;
+                    background: rgba(120, 35, 49, .72);
+                    color: #fff;
+                    font-size: 12px;
+                    line-height: 1;
+                    font-weight: 900;
+                    text-transform: uppercase;
+                    letter-spacing: .02em;
+                    box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+                }
+        
+                .ir-hero-v2__badge-dot {
+                    width: 8px;
+                    height: 8px;
+                    flex: 0 0 8px;
+                    border-radius: 50%;
+                    background: var(--ir-blue);
+                    box-shadow: 0 0 18px rgba(18, 200, 255, .8);
+                }
+        
+                .ir-hero-v2__title {
+                    max-width: 640px;
+                    margin: 44px 0 24px;
+                    font-size: clamp(44px, 5.2vw, 70px);
+                    line-height: .95;
+                    letter-spacing: -.055em;
+                    font-weight: 950;
+                    text-wrap: balance;
+                }
+        
+                .ir-hero-v2__accent {
+                    color: var(--ir-blue);
+                }
+        
+                .ir-hero-v2__text {
+                    max-width: 620px;
+                    margin: 0;
+                    color: rgba(255,255,255,.82);
+                    font-size: 18px;
+                    line-height: 1.42;
+                    font-weight: 500;
+                }
+        
+                .ir-hero-v2__checks {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 16px 42px;
+                    max-width: 575px;
+                    margin: 34px 0 0;
+                }
+        
+                .ir-hero-v2__check {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    color: rgba(255,255,255,.91);
+                    font-size: 14px;
+                    font-weight: 800;
+                    white-space: nowrap;
+                }
+        
+                .ir-hero-v2__check-icon {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 50%;
+                    display: inline-grid;
+                    place-items: center;
+                    flex: 0 0 22px;
+                    color: var(--ir-blue);
+                    background: var(--ir-red);
+                    font-size: 12px;
+                    box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 8px 22px rgba(168,43,58,.25);
+                }
+        
+                .ir-hero-v2__actions {
+                    display: flex;
+                    gap: 14px;
+                    max-width: 575px;
+                    margin-top: 36px;
+                }
+        
+                .ir-hero-v2__btn {
+                    min-height: 64px;
+                    border-radius: 10px;
+                    border: 1px solid rgba(255,255,255,.13);
+                    padding: 0 26px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    font-size: 14px;
+                    line-height: 1.18;
+                    font-weight: 900;
+                    cursor: pointer;
+                    transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+                }
+        
+                .ir-hero-v2__btn:hover {
+                    transform: translateY(-2px);
+                }
+        
+                .ir-hero-v2__btn--primary {
+                    width: 275px;
+                    background: linear-gradient(180deg, #b73446, #8d2231);
+                    color: #fff;
+                    box-shadow: 0 18px 35px rgba(141,34,49,.35);
+                }
+        
+                .ir-hero-v2__btn--primary:hover {
+                    background: linear-gradient(180deg, #c93e51, #9e2a43);
+                    box-shadow: 0 22px 42px rgba(141,34,49,.42);
+                }
+        
+                .ir-hero-v2__btn--ghost {
+                    width: 270px;
+                    background: rgba(24, 38, 52, .72);
+                    color: var(--ir-blue);
+                    box-shadow: inset 0 0 0 1px rgba(104, 152, 171, .22);
+                }
+        
+                .ir-hero-v2__btn--ghost:hover {
+                    border-color: rgba(18,200,255,.4);
+                    background: rgba(24, 48, 66, .82);
+                }
+        
+                .ir-hero-v2__visual {
+                    position: relative;
+                    z-index: 2;
+                    min-height: 715px;
+                }
+        
+                .ir-hero-v2__person {
+                    position: absolute;
+                    z-index: 2;
+                    top: auto;
+                    bottom: 298px;
+                    right: 86px;
+                    width: min(430px, 74%);
+                    max-height: none;
+                    object-fit: contain;
+                    object-position: top center;
+                    filter: drop-shadow(0 28px 35px rgba(0,0,0,.24));
+                    display: block;
+                    user-select: none;
+                    pointer-events: none;
+                }
+        
+                .ir-hero-v2__card {
+                    position: absolute;
+                    z-index: 4;
+                    left: 0;
+                    right: 46px;
+                    top: auto;
+                    bottom: 0;
+                    min-height: 310px;
+                    padding: 50px 30px 22px 42px;
+                    border-radius: 0 0 0 0;
+                    background: rgba(28, 48, 62, .70);
+                    border: 1px solid var(--ir-border-strong);
+                    box-shadow: 0 18px 52px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.10);
+                    backdrop-filter: blur(8px);
+                }
+        
+                .ir-hero-v2__card::before {
+                    content: "";
+                    position: absolute;
+                    inset: 16px 10px 18px 12px;
+                    border: 1px solid rgba(185, 221, 234, .25);
+                    border-radius: 12px;
+                    pointer-events: none;
+                }
+        
+                .ir-hero-v2__card-label {
+                    position: absolute;
+                    top: 11px;
+                    left: 6px;
+                    z-index: 3;
+                    padding: 8px 13px;
+                    border-radius: 7px;
+                    background: var(--ir-blue);
+                    color: #fff;
+                    font-size: 11px;
+                    line-height: 1;
+                    text-transform: uppercase;
+                    letter-spacing: .02em;
+                    font-weight: 950;
+                    box-shadow: 0 8px 18px rgba(18,200,255,.2);
+                }
+        
+                .ir-hero-v2__features {
+                    position: relative;
+                    z-index: 2;
+                    display: grid;
+                    gap: 23px;
+                }
+        
+                .ir-hero-v2__feature {
+                    display: grid;
+                    grid-template-columns: 46px 1fr;
+                    gap: 16px;
+                    align-items: start;
+                }
+        
+                .ir-hero-v2__feature-icon {
+                    width: 37px;
+                    height: 37px;
+                    border-radius: 12px;
+                    display: grid;
+                    place-items: center;
+                    background: rgba(11, 26, 38, .82);
+                    color: var(--ir-blue);
+                    border: 1px solid rgba(18,200,255,.35);
+                    box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+                    font-size: 18px;
+                }
+        
+                .ir-hero-v2__feature h3 {
+                    margin: 0 0 4px;
+                    color: #fff;
+                    font-size: 16px;
+                    line-height: 1.05;
+                    font-weight: 950;
+                    letter-spacing: -.01em;
+                }
+        
+                .ir-hero-v2__feature p {
+                    margin: 0;
+                    color: rgba(255,255,255,.78);
+                    font-size: 12px;
+                    line-height: 1.18;
+                    font-weight: 600;
+                    max-width: 340px;
+                }
+        
+                .ir-hero-v2__stats {
+                    position: relative;
+                    z-index: 2;
+                    margin-top: 27px;
+                    padding-top: 21px;
+                    border-top: 1px solid rgba(255,255,255,.28);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                    color: rgba(255,255,255,.74);
+                    font-size: 13px;
+                    font-weight: 700;
+                }
+        
+                .ir-hero-v2__stats b {
+                    color: var(--ir-blue);
+                    font-weight: 950;
+                }
+        
+                @media (max-width: 1180px) {
+                    .ir-hero-v2__wrap {
+                        grid-template-columns: 56% 44%;
+                    }
+                    .ir-hero-v2__content {
+                        padding-left: 24px;
+                        padding-right: 26px;
+                    }
+                    .ir-hero-v2__title {
+                        font-size: clamp(40px, 5vw, 58px);
+                    }
+                    .ir-hero-v2__person {
+                        right: 34px;
+                        width: min(430px, 85%);
+                    
+                        top: auto;
+                        bottom: 298px;
+                    }
+                    .ir-hero-v2__card {
+                    
+                        right: 14px;
+                        padding-left: 34px;
+                    
+                        
+                        
+                    
+                        top: auto;
+                        bottom: 0;
+                    }
+                }
+        
+                @media (max-width: 920px) {
+                    .ir-hero-v2,
+                    .ir-hero-v2__wrap,
+                    .ir-hero-v2__visual {
+                        min-height: auto;
+                    }
+                    .ir-hero-v2__wrap {
+                        display: block;
+                        padding: 14px 14px 28px;
+                    }
+                    .ir-hero-v2__content {
+                        margin: 0;
+                        padding: 18px 18px 24px;
+                        border-radius: 18px;
+                        background: rgba(13, 21, 32, .88);
+                    }
+                    .ir-hero-v2__title {
+                        margin-top: 30px;
+                        font-size: clamp(36px, 10vw, 54px);
+                    }
+                    .ir-hero-v2__text {
+                        font-size: 16px;
+                    }
+                    .ir-hero-v2__checks {
+                        grid-template-columns: 1fr;
+                        gap: 13px;
+                    }
+                    .ir-hero-v2__check {
+                        white-space: normal;
+                    }
+                    .ir-hero-v2__actions {
+                        flex-direction: column;
+                    }
+                    .ir-hero-v2__btn {
+                        width: 100%;
+                    }
+                    .ir-hero-v2__visual {
+                        margin-top: 18px;
+                        display: grid;
+                        gap: 0;
+                    }
+                    .ir-hero-v2__person {
+                        position: relative;
+                        inset: auto;
+                        width: min(390px, 100%);
+                        justify-self: center;
+                        margin-
+                    
+                        
+                        
+                    
+                        top: auto;
+                        bottom: auto;
+                    }
+                    .ir-hero-v2__card {
+                    
+                        position: relative;
+                        inset: auto;
+                        border-radius: 18px;
+                        min-height: auto;
+                        padding: 55px 22px 24px;
+                    
+                        
+                    
+                        top: auto;
+                        bottom: auto;
+                    }
+                    .ir-hero-v2__card-label {
+                        left: 18px;
+                    }
+                    .ir-hero-v2__stats {
+                        flex-direction: column;
+                        align-items: flex-start;
+                    }
+                }
+    
+        /* Header fixes for builder/page width */
+        #paths, #benefits, #what-we-do, #roles, #db, #timeline, #payment {
+            scroll-margin-top: 105px;
+        }
+        @media (max-width: 1600px) {
+            .ir-header-call-btn {
+                display: none !important;
+            }
+        }
+        @media (max-width: 1320px) {
+            .ir-header-nav {
+                display: none !important;
+            }
+        }
+
+    </style>
+
+    <style id="hero-fullbleed-override">
+    /* === Compact hero v3 (2026-06-23): tighter, photo zoomed-out (shoulder/hand), guarantees fit on first screen === */
+    .ir-hero-v2 .ir-hero-v2__wrap { align-items: stretch !important; }
+    .ir-hero-v2, .ir-hero-v2__wrap, .ir-hero-v2 .ir-hero-v2__visual { min-height: 560px !important; }
+
+    /* Visual column */
+    .ir-hero-v2 .ir-hero-v2__visual {
+        position: relative !important;
+        height: 100% !important;
+        min-height: 560px;
+        padding: 0 !important;
+        background: linear-gradient(180deg, #0f1722 0%, #121d28 100%) !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        overflow: hidden;
+    }
+    .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        object-fit: cover !important;
+        object-position: right top !important;
+        display: block !important;
+        filter: none !important;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        image-rendering: auto;
+    }
+    .ir-hero-v2 .ir-hero-v2__visual::after {
+        content: "";
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        height: 14%;
+        background: linear-gradient(to top, #121d28 0%, rgba(18,29,40,0) 100%);
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    /* Tighten text column */
+    .ir-hero-v2 .ir-hero-v2__title { font-size: clamp(34px, 4.2vw, 56px) !important; margin: 18px 0 14px !important; line-height: .98 !important; }
+    .ir-hero-v2 .ir-hero-v2__content { padding: 14px 30px 20px 24px !important; }
+    .ir-hero-v2 .ir-hero-v2__text { margin: 0 0 14px !important; font-size: 15px !important; line-height: 1.45 !important; }
+    .ir-hero-v2 .ir-hero-v2__checks { gap: 10px !important; margin-bottom: 16px !important; }
+    .ir-hero-v2 .ir-hero-v2__actions { margin-top: 12px !important; }
+    .ir-hero-v2 .ir-hero-v2__badge { margin-bottom: 10px !important; }
+
+    /* Guarantees strip — BASE styles (must stay here, this <style> is SOT for the strip) */
+    .ir-guarantees-strip {
+        background: #0f172a;
+        padding: 1rem 1.25rem 1.25rem;
+    }
+    .ir-guarantees-strip__wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: rgba(15,23,42,0.6);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 18px;
+        padding: 1rem 1.5rem;
+    }
+    .ir-guarantees-strip__label {
+        color: #38BDF8;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 0.7rem;
+    }
+    .ir-guarantees-strip__grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.1rem;
+    }
+    .ir-guarantees-strip__item { display: flex; align-items: flex-start; gap: 0.85rem; }
+    .ir-guarantees-strip__icon {
+        flex-shrink: 0;
+        width: 38px; height: 38px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(56,189,248,0.12);
+        color: #38BDF8;
+        border-radius: 10px;
+        font-size: 1rem;
+    }
+    .ir-guarantees-strip__body h3 { color: #fff; font-weight: 700; font-size: 0.98rem; margin: 0 0 0.2rem; }
+    .ir-guarantees-strip__body p { color: #94A3B8; font-size: 0.8rem; line-height: 1.4; margin: 0; }
+    .ir-guarantees-strip__stats {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-top: 0.85rem; padding-top: 0.7rem;
+        border-top: 1px solid rgba(255,255,255,0.06);
+        font-size: 0.85rem; color: #94A3B8;
+    }
+    .ir-guarantees-strip__stats b { color: #38BDF8; font-weight: 700; }
+    .ir-guarantees-strip__stats b i { margin-right: 0.4rem; }
+
+    @media (max-width: 1024px) {
+        .ir-hero-v2, .ir-hero-v2__wrap, .ir-hero-v2 .ir-hero-v2__visual { min-height: auto !important; }
+        .ir-hero-v2 .ir-hero-v2__visual { min-height: 380px !important; }
+        .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person {
+            object-position: center 18% !important;
+        }
+        .ir-guarantees-strip__grid { grid-template-columns: 1fr; gap: 1rem; }
+        .ir-guarantees-strip__wrap { padding: 1rem 1.1rem; border-radius: 16px; }
+        .ir-guarantees-strip__stats { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+    }
+    
+    /* === GLASS HERO OVERRIDE === */
+    .ir-hero-v2 .ir-hero-v2__visual { position: relative !important; overflow: hidden !important; background: transparent !important; }
+    .ir-hero-v2 .ir-hero-v2__visual::after { display: none !important; }
+    .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person {
+        position: absolute !important; inset: 0 !important;
+        width: 100% !important; height: 100% !important;
+        object-fit: contain !important; object-position: right bottom !important;
+        background: transparent !important;
+        image-rendering: auto;
+        transform: translateZ(0);
+        -webkit-backface-visibility: hidden; backface-visibility: hidden;
+    }
+    .ir-hero-glass {
+        position: absolute; left: 1.25rem; right: 1.25rem; bottom: 1.25rem;
+        z-index: 3;
+        background: rgba(15, 23, 34, 0.42);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        backdrop-filter: blur(18px) saturate(140%);
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: 20px;
+        box-shadow: 0 18px 48px -20px rgba(0,0,0,0.55);
+        padding: 1.05rem 1.2rem 1.1rem;
+        display: flex; flex-direction: column; gap: 0.85rem;
+    }
+    .ir-hero-glass__label {
+        align-self: flex-start;
+        background: linear-gradient(135deg, #38BDF8, #0EA5E9);
+        color: #0f172a; font-weight: 700; font-size: 0.7rem;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        padding: 0.35rem 0.7rem; border-radius: 999px;
+    }
+    .ir-hero-glass__grid {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;
+    }
+    .ir-hero-glass__item { display: flex; align-items: flex-start; gap: 0.7rem; }
+    .ir-hero-glass__icon {
+        width: 36px; height: 36px; flex: 0 0 36px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 10px; color: #38BDF8; font-size: 0.95rem;
+    }
+    .ir-hero-glass__body h3 { color: #fff; font-weight: 700; font-size: 0.92rem; margin: 0 0 0.18rem; line-height: 1.2; }
+    .ir-hero-glass__body p { color: rgba(226,232,240,0.78); font-size: 0.74rem; line-height: 1.35; margin: 0; }
+    .ir-hero-glass__stats {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 1rem; padding-top: 0.7rem;
+        border-top: 1px solid rgba(255,255,255,0.1);
+        color: rgba(148,163,184,0.9); font-size: 0.78rem;
+    }
+    .ir-hero-glass__stats b { color: #38BDF8; font-weight: 700; }
+    .ir-hero-glass__stats b i { margin-right: 0.35rem; }
+
+    /* Symmetric hero height: glass bottom aligns with CTA buttons bottom */
+    @media (min-width: 1025px) {
+        .ir-hero-v2 .ir-hero-v2__wrap { align-items: stretch !important; }
+        .ir-hero-v2, .ir-hero-v2__wrap, .ir-hero-v2 .ir-hero-v2__visual { min-height: 640px !important; }
+    }
+    @media (max-width: 1024px) {
+        .ir-hero-v2 .ir-hero-v2__visual { min-height: 420px !important; }
+        .ir-hero-glass { position: static !important; margin: 1rem; }
+        .ir-hero-glass__grid { grid-template-columns: 1fr; gap: 0.85rem; }
+        .ir-hero-glass__stats { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+    }
+
+
+    /* === FULL-BLEED HERO OVERRIDE v4 (distribute + bottom-align) === */
+    .ir-hero-v2 {
+        min-height: 860px !important;
+        height: 860px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: stretch !important;
+        overflow: hidden !important;
+        position: relative !important;
+    }
+    .ir-hero-v2 .ir-hero-v2__wrap {
+        min-height: 100% !important;
+        height: 100% !important;
+        align-items: stretch !important;
+        padding: 1.5rem 1.5rem !important;
+        gap: 1.5rem !important;
+    }
+    .ir-hero-v2 .ir-hero-v2__content {
+        background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+        min-height: 100% !important;
+    }
+    .ir-hero-v2 .ir-hero-v2__content::before,
+    .ir-hero-v2 .ir-hero-v2__content::after { display: none !important; }
+    /* push the LAST element (CTA group) to the bottom of the left column */
+    .ir-hero-v2 .ir-hero-v2__content > *:last-child {
+        margin-top: auto !important;
+        padding-top: 1.25rem !important;
+    }
+    /* breathing room between paragraph and checklist */
+    .ir-hero-v2 .ir-hero-v2__content > p,
+    .ir-hero-v2 .ir-hero-v2__content > .ir-hero-v2__lead {
+        margin-top: clamp(14px, 2.2vh, 24px) !important;
+    }
+    .ir-hero-v2 .ir-hero-v2__visual {
+        min-height: 860px !important;
+        height: 860px !important;
+        position: relative !important;
+        overflow: hidden !important;
+    }
+    .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person {
+        object-fit: contain !important;
+        object-position: right top !important;
+        height: 100% !important;
+        width: 100% !important;
+        transform: translateY(-2%) scale(1.02) !important;
+        transform-origin: right top !important;
+    }
+    .ir-hero-v2 .ir-hero-glass {
+        position: absolute !important;
+        left: 0.5rem !important;
+        right: 0.5rem !important;
+        top: auto !important;
+        bottom: 1.5rem !important;
+    }
+    @media (max-width: 1024px) {
+        .ir-hero-v2 { height: auto !important; min-height: auto !important; }
+        .ir-hero-v2 .ir-hero-v2__content { height: auto !important; min-height: 0 !important; display: block !important; }
+        .ir-hero-v2 .ir-hero-v2__content > *:last-child { margin-top: 1rem !important; padding-top: 0 !important; }
+        .ir-hero-v2 .ir-hero-v2__visual { min-height: 460px !important; height: 460px !important; }
+        .ir-hero-v2 .ir-hero-v2__visual .ir-hero-v2__person { transform: none !important; object-position: right top !important; }
+        .ir-hero-v2 .ir-hero-v2__wrap { padding: 1rem !important; }
+        .ir-hero-glass { position: static !important; margin: 1rem 0 0 !important; top: auto !important; bottom: auto !important; }
+    }
+
+
+
+/* lovable-hero-final-bottom-v1 */
+@media (min-width: 1025px) {
+  .ir-hero-v2 {
+    min-height: 660px !important;
+    height: auto !important;
+    max-height: 700px !important;
+    margin: 0 !important;
+    border-bottom: 0 !important;
+    background: #0f172a !important;
+    overflow: hidden !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__wrap {
+    min-height: 660px !important;
+    height: 100% !important;
+    padding: 1.25rem 1.5rem !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__visual {
+    min-height: 660px !important;
+    height: auto !important;
+    max-height: 700px !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__content {
+    display: flex !important;
+    flex-direction: column !important;
+    padding-bottom: 8px !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__content > *:last-child {
+    margin-top: auto !important;
+    padding-top: 1rem !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__actions {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    margin-top: 18px !important;
+    margin-bottom: 24px !important;
+    width: 100% !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__actions .ir-hero-v2__btn {
+    flex: 1 1 0 !important;
+    min-height: 56px !important;
+    height: 56px !important;
+    padding: 0 18px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: normal !important;
+    line-height: 1.2 !important;
+    text-align: center !important;
+    box-sizing: border-box !important;
+    font-size: 14px !important;
+  }
+  .ir-hero-v2 .ir-hero-glass {
+    bottom: 72px !important;
+    top: auto !important;
+  }
+}
+/* Remove white gap below hero */
+.ir-hero-v2 { margin-bottom: 0 !important; }
+.ir-hero-v2 + * { margin-top: 0 !important; }
+html, body { background: #0f172a; }
+/* Mobile safety */
+@media (max-width: 1024px) {
+  .ir-hero-v2 {
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__visual {
+    height: auto !important;
+    min-height: 420px !important;
+    max-height: none !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__actions {
+    flex-direction: column !important;
+  }
+  .ir-hero-v2 .ir-hero-v2__actions .ir-hero-v2__btn {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 52px !important;
+  }
+  .ir-hero-v2 .ir-hero-glass {
+    position: static !important;
+    bottom: auto !important;
+    margin: 1rem 0 0 !important;
+  }
+}
+/* /lovable-hero-final-bottom-v1 */
+
+</style>
+</head>
+<body class="bg-coolgray-50 text-coolgray-800 font-sans antialiased overflow-x-hidden">
+
+    <!-- HEADER -->
+    <!-- lovable-bz-header-v1 -->
+    <header class="sticky top-0 z-40 bz-header transition-all duration-300">
+      <style>
+        .bz-header{background:#1a0a0e;border-bottom:1px solid rgba(255,255,255,0.08);color:#f4ecec;}
+        .bz-brand{display:flex;align-items:center;gap:12px;user-select:none;cursor:default;}
+        .bz-brand-mark{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}.bz-brand-mark img{width:100%;height:100%;object-fit:contain;display:block;}
+        .bz-brand-text{display:flex;flex-direction:column;line-height:1.15;}
+        .bz-brand-title{font-size:16px;font-weight:800;letter-spacing:.04em;color:#f4ecec;white-space:nowrap;}
+        .bz-brand-sub{font-size:12px;color:#b8a3a8;}
+        .bz-nav{display:flex;flex-wrap:nowrap;align-items:center;gap:2px;}
+        .bz-nav-link{padding:6px 8px;border-radius:8px;color:#cdb9bd;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap;transition:background .15s,color .15s;}
+        .bz-nav-link:hover{background:rgba(255,255,255,0.06);color:#fff;}
+        .bz-cta-primary{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;border-radius:8px;background:#7a1f2b;color:#fff;font-weight:700;font-size:13px;text-decoration:none;border:none;cursor:pointer;box-shadow:0 4px 10px rgba(122,31,43,.3);transition:background .15s,transform .15s;line-height:1.2;white-space:nowrap;}
+        .bz-cta-primary:hover{background:#9a2a3a;}
+        .bz-cta-secondary{display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;border-radius:8px;background:transparent;color:#f4ecec;font-weight:600;font-size:13px;text-decoration:none;border:1px solid rgba(255,255,255,0.18);transition:background .15s,border-color .15s;line-height:1.2;white-space:nowrap;}
+        .bz-cta-secondary:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.3);}
+        .bz-header-row{display:flex;align-items:center;gap:14px;padding:12px 0;}.bz-brand{flex-shrink:0;}.bz-nav{flex:1 1 auto;justify-content:center;min-width:0;}.bz-actions{flex-shrink:0;margin-left:auto;display:flex;gap:8px;}
+        .bz-actions{display:flex;align-items:center;gap:8px;}@media (max-width:1200px){.bz-brand-sub{display:none;}.bz-nav-link{padding:6px 6px;font-size:12.5px;}.bz-cta-primary{font-size:12px;padding:8px 12px;}.bz-cta-secondary{font-size:12px;padding:8px 10px;}}
+        @media (max-width:900px){.bz-header-row{flex-wrap:wrap;}.bz-nav{order:3;width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;-webkit-overflow-scrolling:touch;justify-content:flex-start;}.bz-nav::-webkit-scrollbar{display:none;}.bz-nav{scrollbar-width:none;}.bz-actions{margin-left:0;order:2;flex-wrap:wrap;}.bz-brand{order:1;}.bz-cta-primary{flex:1 1 100%;}.bz-cta-secondary{flex:1 1 100%;}}
+        @media (max-width:640px){
+          .bz-brand-mark{width:38px;height:38px;font-size:14px;}
+          .bz-brand-title{font-size:15px;}
+          .bz-brand-sub{font-size:11px;}
+          .bz-cta-primary{padding:9px 12px;font-size:12px;}
+          .bz-cta-secondary{padding:8px 10px;font-size:12px;}
+        }
+      </style>
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="bz-header-row">
+          <div class="bz-brand" aria-label="Буква закона — Клуб по законодательству">
+            <div class="bz-brand-mark"><img src="https://gorbova.by/favicon.png" alt="Буква закона" /></div>
+            <div class="bz-brand-text">
+              <span class="bz-brand-title">БУКВА ЗАКОНА</span>
+              <span class="bz-brand-sub">Клуб по законодательству</span>
+            </div>
+          </div>
+          <nav class="bz-nav" aria-label="Навигация по разделам">
+<a href="#paths" onclick="return scrollToSection('paths');" class="bz-nav-link ">3 пути</a>
+<a href="#benefits" onclick="return scrollToSection('benefits');" class="bz-nav-link ">Выгоды</a>
+<a href="#what-we-do" onclick="return scrollToSection('what-we-do');" class="bz-nav-link ">Что делаем</a>
+<a href="#roles" onclick="return scrollToSection('roles');" class="bz-nav-link ">Для кого</a>
+<a href="#db" onclick="return scrollToSection('db');" class="bz-nav-link ">База знаний</a>
+<a href="#timeline" onclick="return scrollToSection('timeline');" class="bz-nav-link ">Как начать</a>
+<a href="#payment" onclick="return scrollToSection('payment');" class="bz-nav-link ">Оплата</a>
+          </nav>
+          <div class="bz-actions">
+            <button type="button" onclick="openModal('setup')" class="bz-cta-primary">Настроить идеологическую работу</button>
+            <a href="https://gorbova.by/auth" class="bz-cta-secondary">Войти в личный кабинет</a>
+          </div>
+        </div>
+      </div>
+    </header>
+    <!-- /lovable-bz-header-v1 -->
+
+    <!-- HERO SECTION / FIRST SCREEN UPDATED -->
+    <section class="ir-hero-v2">
+        <div class="ir-hero-v2__wrap">
+            <!-- Left text panel -->
+            <div class="ir-hero-v2__content">
+                <div class="ir-hero-v2__badge">
+                    <span class="ir-hero-v2__badge-dot"></span>
+                    <span>Решение под ключ за 1 день</span>
+                </div>
+
+                <h1 class="ir-hero-v2__title">
+                    Обязательная идеологическая работа может приносить
+                    <span class="ir-hero-v2__accent">бизнесу выгоду.</span>
+                    Смотрите как.
+                </h1>
+
+                <p class="ir-hero-v2__text">
+                    Настроим идеологическую работу за 1 день, автоматически будем её сопровождать и поможем использовать все предусмотренные законодательством возможности для защиты бизнеса и снижения налоговой нагрузки.
+                </p>
+
+                <div class="ir-hero-v2__checks">
+                    <div class="ir-hero-v2__check">
+                        <span class="ir-hero-v2__check-icon">✓</span>
+                        <span>Полный комплект документов</span>
+                    </div>
+                    <div class="ir-hero-v2__check">
+                        <span class="ir-hero-v2__check-icon">✓</span>
+                        <span>Ежемесячные планы и отчёты</span>
+                    </div>
+                    <div class="ir-hero-v2__check">
+                        <span class="ir-hero-v2__check-icon">✓</span>
+                        <span>Поддержка по законодательству</span>
+                    </div>
+                    <div class="ir-hero-v2__check">
+                        <span class="ir-hero-v2__check-icon">✓</span>
+                        <span>База из 600+ видеоответов</span>
+                    </div>
+                </div>
+
+                <div class="ir-hero-v2__actions">
+                    <button onclick="openModal('setup')" class="ir-hero-v2__btn ir-hero-v2__btn--primary">
+                        Настроить идеологическую работу
+                    </button>
+                    <a href="#db" class="ir-hero-v2__btn ir-hero-v2__btn--ghost">
+                        Посмотреть 600+ готовых ответов
+                    </a>
+                </div>
+            </div>
+
+            <!-- Right visual block -->
+            <div class="ir-hero-v2__visual" aria-hidden="false">
+                <img class="ir-hero-v2__person" src="/__l5e/assets-v1/978443c5-9bf4-469c-af9e-450b86757e3c/katerina-hero-v2.png" alt="Эксперт Екатерина Горбова" loading="eager">
+
+            
+                <div class="ir-hero-glass">
+                    <div class="ir-hero-glass__label">Гарантия безопасности</div>
+                    <div class="ir-hero-glass__grid">
+                        <div class="ir-hero-glass__item">
+                            <div class="ir-hero-glass__icon"><i class="fa-solid fa-user-shield"></i></div>
+                            <div class="ir-hero-glass__body">
+                                <h3>Защита от проверок</h3>
+                                <p>Эксперт с опытом 400+ проверок закроет все вопросы со стороны контролирующих органов.</p>
+                            </div>
+                        </div>
+                        <div class="ir-hero-glass__item">
+                            <div class="ir-hero-glass__icon"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                            <div class="ir-hero-glass__body">
+                                <h3>Законная экономия</h3>
+                                <p>Перевод личных расходов в законные расходы компании без уплаты НДС и подоходного налога.</p>
+                            </div>
+                        </div>
+                        <div class="ir-hero-glass__item">
+                            <div class="ir-hero-glass__icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                            <div class="ir-hero-glass__body">
+                                <h3>Высвобождение времени</h3>
+                                <p>Система сама рассылает обязательные материалы и собирает подтверждения сотрудников.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ir-hero-glass__stats">
+                        <span>Опыт лидера проекта:</span>
+                        <b><i class="fa-solid fa-circle-check"></i> 400+ проверок</b>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+<!-- THREE PATHS SECTION -->
+    <section id="paths" class="py-24 bg-coolgray-50 border-b border-coolgray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-16 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Стратегия выживания бизнеса</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900 leading-tight">
+                    Большинство компаний теряют деньги на идеологической работе
+                </h2>
+                <p class="text-lg text-coolgray-700">
+                    Мы помогаем зарабатывать на ней, гарантируя безопасность и налоговые преимущества. Есть ровно три пути. Выберите ваш.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- Path 1 -->
+                <div class="bg-coolgray-100 border border-coolgray-200 p-8 rounded-2xl flex flex-col justify-between hover:shadow-md transition duration-300">
+                    <div>
+                        <div class="flex items-center justify-between mb-6">
+                            <span class="text-xs font-extrabold uppercase tracking-wider px-3 py-1 bg-coolgray-200 text-coolgray-700 rounded-full">Путь №1</span>
+                            <i class="fa-solid fa-circle-exclamation text-red-500 text-2xl"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-coolgray-900 mb-4">Игнорировать требования</h3>
+                        <p class="text-coolgray-700 text-sm leading-relaxed">
+                            Многие компании до сих пор считают, что идеологическая работа касается только крупных организаций, а небольшому бизнесу можно не уделять ей внимания. Обычно это продолжается ровно до того момента, пока не появляется первый запрос, первый вопрос со стороны проверяющих или первое повышенное внимание контролирующих органов.
+                        </p>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-coolgray-200">
+                        <p class="text-xs font-semibold text-red-600">Риск: внезапные запросы, штрафы, повышенное внимание органов.</p>
+                    </div>
+                </div>
+
+                <!-- Path 2 -->
+                <div class="bg-coolgray-100 border border-coolgray-200 p-8 rounded-2xl flex flex-col justify-between hover:shadow-md transition duration-300">
+                    <div>
+                        <div class="flex items-center justify-between mb-6">
+                            <span class="text-xs font-extrabold uppercase tracking-wider px-3 py-1 bg-coolgray-200 text-coolgray-700 rounded-full">Путь №2</span>
+                            <i class="fa-solid fa-clipboard-check text-orange-500 text-2xl"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-coolgray-900 mb-4">Делать для галочки</h3>
+                        <p class="text-coolgray-700 text-sm leading-relaxed">
+                            Некоторые компании назначают ответственного сотрудника, который получает планы в исполкоме, периодически публикует новости, делает рассылки и готовит отчёты. Со стороны может казаться, что работа ведётся, однако формальное выполнение отдельных действий ещё не означает, что она организована в соответствии с требованиями законодательства.
+                        </p>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-coolgray-200">
+                        <p class="text-xs font-semibold text-orange-600">Риск: трата бюджетов без реальной безопасности и налоговых выгод.</p>
+                    </div>
+                </div>
+
+                <!-- Path 3 (Solid Burgundy card, no gradients) -->
+                <div class="bg-burgundy-900 text-white p-8 rounded-2xl flex flex-col justify-between relative shadow-xl transform hover:-translate-y-1 transition duration-300 border-2 border-skyaccent-500">
+                    <div class="absolute -top-4 right-6 bg-skyaccent-500 text-white font-extrabold text-xs py-1 px-4 rounded-full uppercase tracking-widest shadow-md">
+                        Рекомендуем
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between mb-6">
+                            <span class="text-xs font-extrabold uppercase tracking-wider px-3 py-1 bg-burgundy-800 text-skyaccent-400 rounded-full">Путь №3</span>
+                            <i class="fa-solid fa-gem text-skyaccent-400 text-2xl"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-4">Использовать закон в своих интересах</h3>
+                        <p class="text-coolgray-50 text-sm leading-relaxed">
+                            Самый разумный подход — не бороться с требованиями и не воспринимать их как очередную обязанность, а использовать предусмотренные законом возможности в интересах компании. Правильно организованная система даёт вам уровень безопасности, инструмент укрепления корпоративной культуры и огромные налоговые преимущества. Именно этому посвящён наш клуб.
+                        </p>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-burgundy-800">
+                        <p class="text-xs font-semibold text-skyaccent-400">Результат: налоговая выгода, вовлечённость команды и 100% защита.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- QUOTE SECTION -->
+    <section class="py-16 bg-coolgray-100 border-b border-coolgray-200">
+        <div class="max-w-4xl mx-auto px-4 text-center">
+            <span class="text-burgundy-700 text-4xl block mb-6"><i class="fa-solid fa-quote-left"></i></span>
+            <blockquote class="text-xl sm:text-2xl font-semibold italic text-coolgray-900 leading-relaxed mb-6">
+                “Я нашла способ превратить обязательную идеологическую работу в инструмент безопасности бизнеса, развития сотрудников и налоговой выгоды. В видео ниже я покажу идею решения и его функционал простыми словами.”
+            </blockquote>
+            <div class="h-1 w-20 bg-burgundy-700 mx-auto rounded-full"></div>
+            <!-- Временный блок видео скрыт до добавления готовой презентации -->
+        </div>
+    </section>
+
+    <!-- TAX OPTIMIZATION BENEFITS SECTION WITH ROI CALCULATOR -->
+    <section id="benefits" class="py-24 bg-coolgray-50 relative border-b border-coolgray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
+                <!-- Info Section -->
+                <div class="lg:col-span-6 space-y-6">
+                    <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Финансовые привилегии</span>
+                    <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900 leading-tight">
+                        Что получает бизнес кроме абсолютной безопасности?
+                    </h2>
+                    <p class="text-lg text-coolgray-700">
+                        Когда идеологическая работа организована правильно, компания получает возможность использовать предусмотренные законодательством механизмы налоговой оптимизации.
+                    </p>
+
+                    <div class="space-y-4 pt-4">
+                        <div class="flex items-start space-x-3">
+                            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-burgundy-100 flex items-center justify-center text-burgundy-700 text-xs mt-1">✔</span>
+                            <div>
+                                <h4 class="font-bold text-coolgray-900">Без подоходного налога 26%</h4>
+                                <p class="text-sm text-coolgray-700">Учитывайте расходы в пользу физических лиц без уплаты подоходного налога (для РБ это актуальная ставка взносов/налогов).</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-3">
+                            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-burgundy-100 flex items-center justify-center text-burgundy-700 text-xs mt-1">✔</span>
+                            <div>
+                                <h4 class="font-bold text-coolgray-900">Уменьшение налога на прибыль</h4>
+                                <p class="text-sm text-coolgray-700">Списывайте затраты, связанные с идеологической работой, напрямую на расходы, уменьшающие налогооблагаемую прибыль.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-3">
+                            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-burgundy-100 flex items-center justify-center text-burgundy-700 text-xs mt-1">✔</span>
+                            <div>
+                                <h4 class="font-bold text-coolgray-900">Вычет НДС в полном объёме</h4>
+                                <p class="text-sm text-coolgray-700">Принимайте к вычету входящий налог на добавленную стоимость по закупкам на цели ИР.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-3">
+                            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-burgundy-100 flex items-center justify-center text-burgundy-700 text-xs mt-1">✔</span>
+                            <div>
+                                <h4 class="font-bold text-coolgray-900">Легализация «неудобных» расходов</h4>
+                                <p class="text-sm text-coolgray-700">Больше не нужно оплачивать корпоративные активности, печатную продукцию, поездки или обучение из чистой прибыли или с личной карты.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-coolgray-100 border-l-4 border-burgundy-700 rounded-r-lg mt-6">
+                        <p class="text-sm text-coolgray-800 font-medium">
+                            <i class="fa-solid fa-triangle-exclamation text-burgundy-700 mr-2"></i>Идеологическая работа — это не вопрос выбора, она уже предусмотрена законодательством. Вопрос только в том, будете ли вы тратить на неё деньги ради формального отчёта или обратите её в свою выгоду.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Calculator Section -->
+                <div class="lg:col-span-6">
+                    <div class="bg-coolgray-800 text-white rounded-3xl p-8 shadow-xl border border-coolgray-700 relative overflow-hidden">
+                        <div class="relative z-10 space-y-6">
+                            <div class="text-center pb-4 border-b border-coolgray-700">
+                                <span class="text-xs uppercase tracking-widest text-skyaccent-400 font-bold">Интерактивный симулятор</span>
+                                <h3 class="text-2xl font-bold mt-1">Калькулятор налоговой оптимизации</h3>
+                                <p class="text-xs text-coolgray-300 mt-1">Рассчитайте выгоду перевода расходов под формат идеологической работы</p>
+                            </div>
+
+                            <!-- Input 1 -->
+                            <div class="space-y-2">
+                                <label class="block text-sm font-medium text-coolgray-200">
+                                    Планируемый бюджет на сотрудника/мероприятия:
+                                </label>
+                                <div class="relative rounded-xl shadow-sm">
+                                    <input type="number" id="budgetInput" value="5000" class="w-full bg-coolgray-900 border border-coolgray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-skyaccent-500 font-bold text-lg" oninput="calculateSavings()">
+                                </div>
+                            </div>
+
+                            <!-- Calculations Outputs -->
+                            <div class="bg-coolgray-900 p-5 rounded-2xl border border-coolgray-700 space-y-4">
+                                <div class="flex justify-between items-center text-sm">
+                                    <span class="text-coolgray-300">Сбережения на подоходном налоге (26%):</span>
+                                    <span class="font-bold text-skyaccent-400" id="incTaxSaved">+1,300.00</span>
+                                </div>
+                                <div class="flex justify-between items-center text-sm">
+                                    <span class="text-coolgray-300">Снижение налога на прибыль (20%):</span>
+                                    <span class="font-bold text-skyaccent-400" id="profitTaxSaved">+1,000.00</span>
+                                </div>
+                                <div class="flex justify-between items-center text-sm">
+                                    <span class="text-coolgray-300">Вычет по НДС (20%):</span>
+                                    <span class="font-bold text-skyaccent-400" id="vatSaved">+1,000.00</span>
+                                </div>
+                                <div class="h-[1px] bg-coolgray-700 my-2"></div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-base font-bold text-white">Общая чистая выгода:</span>
+                                    <span class="text-2xl font-black text-emerald-400" id="totalSaved">+3,300.00</span>
+                                </div>
+                            </div>
+
+                            <p class="text-[10px] text-coolgray-300 leading-relaxed text-center italic">
+                                *Расчёты носят информационный характер. Точные параметры зависят от структуры расходов и системы налогообложения компании.
+                            </p>
+
+                            <button onclick="openModal('setup')" class="w-full py-4 bg-burgundy-700 hover:bg-burgundy-600 text-white font-bold rounded-xl transition shadow-lg hover:scale-[1.01] transform duration-200">
+                                Внедрить решение в компанию
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHAT WE DO SECTION -->
+    <section id="what-we-do" class="py-24 bg-coolgray-100 border-b border-coolgray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-16 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Наш функционал</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900 leading-tight">
+                    Идеологическая работа, которая работает на прибыль компании, а не для галочки
+                </h2>
+                <p class="text-lg text-coolgray-700">
+                    Формируем корпоративную культуру, защищаем бизнес и создаем основания для законной налоговой оптимизации.
+                </p>
+            </div>
+
+            <!-- List of activities -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Box 1 -->
+                <div class="bg-coolgray-50 p-8 rounded-2xl border border-coolgray-200 shadow-sm hover:shadow-md transition">
+                    <div class="w-12 h-12 bg-burgundy-50 rounded-xl flex items-center justify-center text-burgundy-700 text-xl font-bold mb-6">1</div>
+                    <h3 class="text-lg font-bold text-coolgray-900 mb-2">Настраиваем идеологию за 1 день</h3>
+                    <p class="text-sm text-coolgray-700">Сегодня оплатили подписку — завтра система запущена и полноценно работает под ключ.</p>
+                </div>
+
+                <!-- Box 2 -->
+                <div class="bg-coolgray-50 p-8 rounded-2xl border border-coolgray-200 shadow-sm hover:shadow-md transition">
+                    <div class="w-12 h-12 bg-burgundy-50 rounded-xl flex items-center justify-center text-burgundy-700 text-xl font-bold mb-6">2</div>
+                    <h3 class="text-lg font-bold text-coolgray-900 mb-2">Готовим документы</h3>
+                    <p class="text-sm text-coolgray-700">Вы получаете: положение, приказы, назначение ответственного, годовой план, ежемесячные планы и отчёты.</p>
+                </div>
+
+                <!-- Box 3 -->
+                <div class="bg-coolgray-50 p-8 rounded-2xl border border-coolgray-200 shadow-sm hover:shadow-md transition">
+                    <div class="w-12 h-12 bg-burgundy-50 rounded-xl flex items-center justify-center text-burgundy-700 text-xl font-bold mb-6">3</div>
+                    <h3 class="text-lg font-bold text-coolgray-900 mb-2">Автоматизируем процесс</h3>
+                    <p class="text-sm text-coolgray-700">Главный бухгалтер один раз вносит данные компании и сотрудников. Дальше система сама рассылает материалы.</p>
+                </div>
+
+                <!-- Box 4 -->
+                <div class="bg-coolgray-50 p-8 rounded-2xl border border-coolgray-200 shadow-sm hover:shadow-md transition col-span-1 md:col-span-2 lg:col-span-3">
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                        <div class="lg:col-span-4">
+                            <div class="w-12 h-12 bg-burgundy-50 rounded-xl flex items-center justify-center text-burgundy-700 text-xl font-bold mb-6">4</div>
+                            <h3 class="text-lg font-bold text-coolgray-900 mb-2">Проводим реальные мероприятия</h3>
+                            <p class="text-sm text-coolgray-700">
+                                Не скучные статьи ради «галочки» по указанию исполкома. А действительно полезные материалы, эфиры, гайды и сообщения, которые развивают сотрудников, страхуют их безопасность и вовлекают в рост бизнеса.
+                            </p>
+                        </div>
+                        <div class="lg:col-span-8">
+                            <h4 id="what-we-do-events-title" class="text-lg font-extrabold text-coolgray-900 mb-4">Не пропустите ближайшие эфиры:</h4>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="bg-coolgray-100 p-4 rounded-xl border border-coolgray-200 text-xs">
+                                <span class="font-bold text-burgundy-700 block mb-1">🛡️ Безопасность при обыске</span>
+                                Протокол безопасного поведения для сотрудников, чтобы уберечь компанию от лишних рисков.
+                            </div>
+                            <div class="bg-coolgray-100 p-4 rounded-xl border border-coolgray-200 text-xs">
+                                <span class="font-bold text-burgundy-700 block mb-1">🤝 Проверка подрядчика</span>
+                                Свод обязательных действий и audit контрагента до заключения договора.
+                            </div>
+                            <div class="bg-coolgray-100 p-4 rounded-xl border border-coolgray-200 text-xs">
+                                <span class="font-bold text-burgundy-700 block mb-1">💼 Авансовые отчеты</span>
+                                Правильное оформление, исключающее трактовку возмещения как незаконной выплаты.
+                            </div>
+                            <div class="bg-coolgray-100 p-4 rounded-xl border border-coolgray-200 text-xs">
+                                <span class="font-bold text-burgundy-700 block mb-1">📈 Ценность зарплаты</span>
+                                Разъяснение сотрудникам реальной налоговой нагрузки, которую платит наниматель.
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Box 5 -->
+                <div class="bg-coolgray-50 p-8 rounded-2xl border border-coolgray-200 shadow-sm hover:shadow-md transition lg:col-span-3 md:col-span-2">
+                    <div class="w-12 h-12 bg-burgundy-50 rounded-xl flex items-center justify-center text-burgundy-700 text-xl font-bold mb-6">5</div>
+                    <h3 class="text-lg font-bold text-coolgray-900 mb-2">Формируем отчётность</h3>
+                    <p class="text-sm text-coolgray-700">В конце каждого месяца вы держите в руках железное подтверждение проделанной работы. Не фантазии, а реальные факты с логами отправки материалов.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+<!-- TARGET AUDIENCES - INTERACTIVE TABS -->
+    <section id="roles" class="py-24 bg-coolgray-50 border-b border-coolgray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-12 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Для кого создано решение</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900">Зачем это нужно именно вам?</h2>
+                <p class="text-lg text-coolgray-700">Изучите детально, как автоматизация решает конкретно ваши задачи.</p>
+            </div>
+
+            <!-- Tab Buttons -->
+            <div class="flex justify-center mb-12">
+                <div class="inline-flex p-1 bg-coolgray-200 rounded-xl border border-coolgray-300">
+                    <button onclick="switchTab('director')" id="btn-director" class="px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 bg-burgundy-700 text-white shadow-sm">
+                        <i class="fa-solid fa-user-tie mr-2"></i>Для Директора (CEO)
+                    </button>
+                    <button onclick="switchTab('accountant')" id="btn-accountant" class="px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 text-coolgray-700 hover:text-coolgray-900">
+                        <i class="fa-solid fa-calculator mr-2"></i>Для Главного Бухгалтера
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab Contents -->
+            <div class="max-w-5xl mx-auto">
+                <!-- Director Tab Content -->
+                <div id="tab-content-director" class="space-y-12 transition-all duration-300">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <!-- Direct Benefit 1 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-burgundy-700 uppercase tracking-widest">Цель 01</span>
+                            <h4 class="font-bold text-coolgray-900">Не привлекать лишнее внимание</h4>
+                            <p class="text-xs text-coolgray-700">Отсутствие внимания контролирующих органов из-за полного соблюдения законов по организации идеологической работы.</p>
+                        </div>
+                        <!-- Direct Benefit 2 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-burgundy-700 uppercase tracking-widest">Цель 02</span>
+                            <h4 class="font-bold text-coolgray-900">Спокойствие при проверках</h4>
+                            <p class="text-xs text-coolgray-700">Все документы, планы и отчеты в наличии и в образцовом порядке — проверяющим будет не за что зацепиться.</p>
+                        </div>
+                        <!-- Direct Benefit 3 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-burgundy-700 uppercase tracking-widest">Цель 03</span>
+                            <h4 class="font-bold text-coolgray-900">Избежание штрафов</h4>
+                            <p class="text-xs text-coolgray-700">Фактическое отсутствие или формальная идеологическая работа трактуется как грубое нарушение законодательства, ведущее к санкциям и вниманию правоохранительных органов.</p>
+                        </div>
+                    </div>
+
+                    <!-- WHY THEY STAY WITH US - DIRECTOR -->
+                    <div class="bg-coolgray-100 rounded-2xl p-8 border border-coolgray-200">
+                        <h4 class="text-lg font-bold text-coolgray-900 mb-6 flex items-center">
+                            <i class="fa-solid fa-star text-burgundy-700 mr-2"></i> Почему директора остаются с нами годами:
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="space-y-4">
+                                <h5 class="font-bold text-sm text-coolgray-800">Больше безопасности. Меньше расходов:</h5>
+                                <ul class="space-y-2 text-xs text-coolgray-700">
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Настроено в строгом соответствии с требованиями государства.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Компания на 100% готова к любым проверкам со стороны исполкома.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Не нужно держать отдельного сотрудника или тратить время команды.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Все документы и отчеты формируются системно и вовремя.</li>
+                                </ul>
+                            </div>
+                            <div class="space-y-4">
+                                <h5 class="font-bold text-sm text-coolgray-800">Финансовая выгода:</h5>
+                                <ul class="space-y-2 text-xs text-coolgray-700">
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Снижение налоговой нагрузки по НДС, подоходному и налогу на прибыль.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Снижается риск санкций и штрафов, которые всегда стоят дорого.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Одна предотвращённая ошибка окупает участие в клубе на годы вперёд.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> На запрос исполкома ответит эксперт по налоговой безопасности Катерина Горбова, грамотно и без доплат.</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-6 border-t border-coolgray-200 flex flex-col sm:flex-row sm:justify-between sm:items-center text-sm font-semibold gap-2">
+                            <span>Ваш итоговый результат как директора:</span>
+                            <span class="text-burgundy-700 text-left sm:text-right">Вопрос находится под полным контролем без вашего личного вмешательства.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Accountant Tab Content (Hidden by default) -->
+                <div id="tab-content-accountant" class="hidden space-y-12 transition-all duration-300">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Accountant Benefit 1 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-skyaccent-500 uppercase tracking-widest">Задача 01</span>
+                            <h4 class="font-bold text-coolgray-900">Больше никогда не оставаться один на один со сложным вопросом</h4>
+                            <p class="text-xs text-coolgray-700">Есть опытный эксперт, профильное сообщество и возможность получить разъяснение по любой вашей специфической ситуации.</p>
+                        </div>
+                        <!-- Accountant Benefit 2 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-skyaccent-500 uppercase tracking-widest">Задача 02</span>
+                            <h4 class="font-bold text-coolgray-900">Мгновенные аргументированные ответы налоговой</h4>
+                            <p class="text-xs text-coolgray-700">Вам не нужно тратить дни на поиск нормативных актов. Получайте готовые формулировки для переписки и экспертную защиту вашей правовой позиции.</p>
+                        </div>
+                        <!-- Accountant Benefit 3 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-skyaccent-500 uppercase tracking-widest">Задача 03</span>
+                            <h4 class="font-bold text-coolgray-900">Постоянное повышение квалификации без усилий</h4>
+                            <p class="text-xs text-coolgray-700">У вас будет упорядоченная база знаний, регулярные закрытые вебинары, эфиры и оперативные разборы изменений в законах Беларуси.</p>
+                        </div>
+                        <!-- Accountant Benefit 4 -->
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-6 rounded-xl space-y-3 hover:shadow-md transition">
+                            <span class="text-xs font-extrabold text-skyaccent-500 uppercase tracking-widest">Задача 04</span>
+                            <h4 class="font-bold text-coolgray-900">Уверенность и профессиональная защищённость</h4>
+                            <p class="text-xs text-coolgray-700">Вам помогает признанный эксперт по налоговой безопасности с опытом прохождения более 400 сложнейших проверок в разных секторах и победы в более 100 уголовных делах.</p>
+                        </div>
+                    </div>
+
+                    <!-- WHY THEY STAY WITH US - ACCOUNTANT -->
+                    <div class="bg-coolgray-100 rounded-2xl p-8 border border-coolgray-200">
+                        <h4 class="text-lg font-bold text-coolgray-900 mb-6 flex items-center">
+                            <i class="fa-solid fa-star text-burgundy-700 mr-2"></i> Почему главные бухгалтеры остаются с нами годами:
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="space-y-4">
+                                <h5 class="font-bold text-sm text-coolgray-800">Больше уверенности. Меньше одиночества:</h5>
+                                <ul class="space-y-2 text-xs text-coolgray-700">
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Постоянный прямой доступ к эксперту в сложных ситуациях.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Огромная база из 600+ готовых кейсов по налогам, зарплате, кадрам.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Ежедневный лаконичный дайджест законодательства Беларуси и России.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Профессиональный круг бухгалтеров-единомышленников в закрытом чате.</li>
+                                </ul>
+                            </div>
+                            <div class="space-y-4">
+                                <h5 class="font-bold text-sm text-coolgray-800">Профессиональный рост:</h5>
+                                <ul class="space-y-2 text-xs text-coolgray-700">
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Сложные кейсы и запросы проверяющих решаются в 3 раза быстрее.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Появляется непоколебимая уверенность при общении с госорганами.</li>
+                                    <li class="flex items-center"><span class="text-skyaccent-500 mr-2">✔</span> Руководство видит в вас незаменимого финансового советника.</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-6 border-t border-coolgray-200 flex flex-col sm:flex-row sm:justify-between sm:items-center text-sm font-semibold gap-2">
+                            <span>Ваш итоговый результат как бухгалтера:</span>
+                            <span class="text-burgundy-700 text-left sm:text-right">Вместо постоянной тревоги вы получаете мощную защиту и пошаговые инструкции в любой кризис.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INTERACTIVE 600+ KNOWLEDGE BASE EXPLORER -->
+    <section id="db" class="py-24 bg-coolgray-900 text-white relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="max-w-3xl mx-auto text-center mb-12 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-skyaccent-400">Цифровой архив клуба</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-white">Поиск по базе из 600+ готовых ответов</h2>
+                <p class="text-lg text-coolgray-300">
+                    Наш экспертный центр круглосуточно отвечает на самые «острые» вопросы бухгалтеров и собственников. Попробуйте найти интересующую вас тему.
+                </p>
+            </div>
+
+            <!-- Search input bar -->
+            <div class="max-w-2xl mx-auto mb-12">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-coolgray-400">
+                        <i class="fa-solid fa-magnifying-glass text-lg"></i>
+                    </span>
+                    <input type="text" id="dbSearch" placeholder="Введите ключевое слово (например: налог, проверка, НДС, обыск, кары, подрядчик...)" class="w-full pl-12 pr-4 py-4 bg-coolgray-800 border-2 border-coolgray-700 rounded-2xl text-white focus:outline-none focus:border-skyaccent-500 focus:ring-1 focus:ring-skyaccent-500 font-medium transition" oninput="filterDatabase()">
+                </div>
+                <!-- Categories Quick Badges -->
+                <div class="flex flex-wrap justify-center gap-2 mt-4">
+                    <button onclick="setSearchFilter('')" class="text-xs px-3 py-1 bg-coolgray-800 hover:bg-coolgray-700 text-coolgray-200 rounded-full border border-coolgray-700 font-semibold transition">Все темы</button>
+                    <button onclick="setSearchFilter('налоги')" class="text-xs px-3 py-1 bg-coolgray-800 hover:bg-coolgray-700 text-skyaccent-400 rounded-full border border-coolgray-700 font-semibold transition">Налоги и НДС</button>
+                    <button onclick="setSearchFilter('проверки')" class="text-xs px-3 py-1 bg-coolgray-800 hover:bg-coolgray-700 text-skyaccent-400 rounded-full border border-coolgray-700 font-semibold transition">Проверки регуляторов</button>
+                    <button onclick="setSearchFilter('безопасность')" class="text-xs px-3 py-1 bg-coolgray-800 hover:bg-coolgray-700 text-skyaccent-400 rounded-full border border-coolgray-700 font-semibold transition">Обыски & Безопасность</button>
+                    <button onclick="setSearchFilter('персонал')" class="text-xs px-3 py-1 bg-coolgray-800 hover:bg-coolgray-700 text-skyaccent-400 rounded-full border border-coolgray-700 font-semibold transition">Зарплаты и Кадры</button>
+                </div>
+            </div>
+
+            <div id="dbAccessButtonMoved" class="text-center mb-12">
+                <button onclick="openModal('access')" class="px-8 py-4 bg-burgundy-700 hover:bg-burgundy-600 rounded-xl font-bold transition shadow-lg inline-flex items-center space-x-2">
+                    <i class="fa-solid fa-key text-skyaccent-400 mr-2"></i>
+                    <span>Разблокировать участие</span>
+                </button>
+            </div>
+
+            <h3 class="text-2xl sm:text-3xl font-extrabold text-white mb-8 text-center">Ответы экспертов клуба</h3>
+
+            <div id="dbStatus" class="text-center text-coolgray-300 mb-6">Загружаем вопросы...</div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="dbResults"></div>
+
+            <div id="dbFallback" class="hidden text-center mt-8">
+                <p class="text-coolgray-300 mb-4">Не удалось загрузить базу вопросов. Попробуйте обновить страницу или оставьте заявку.</p>
+                <button onclick="openModal('access')" class="px-6 py-3 bg-burgundy-700 hover:bg-burgundy-600 rounded-xl font-bold transition shadow-lg">Участвовать</button>
+            </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW WE WORK / TIMELINE SECTION -->
+    <section id="timeline" class="py-24 bg-coolgray-50 relative border-b border-coolgray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-16 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Быстрый старт</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900">Как будет проходить работа после подключения</h2>
+                <p class="text-lg text-coolgray-700">Все процессы автоматизированы — ваше личное присутствие сведено к абсолютному минимуму.</p>
+            </div>
+
+            <!-- Timeline Line Grid -->
+            <div class="relative max-w-4xl mx-auto">
+                <!-- Vertical Line Decorator -->
+                <div class="hidden md:block absolute left-1/2 transform -translate-x-1/2 top-4 bottom-4 w-1 bg-coolgray-200"></div>
+
+                <!-- Step 1 -->
+                <div class="relative grid grid-cols-1 md:grid-cols-2 gap-8 mb-12 items-center">
+                    <div class="md:text-right md:pr-12">
+                        <span class="inline-flex items-center justify-center px-4 py-1 bg-burgundy-100 text-burgundy-700 font-extrabold rounded-full text-xs mb-3">День 1</span>
+                        <h3 class="text-lg font-bold text-coolgray-900">Регистрация и Оплата подписки</h3>
+                        <p class="text-sm text-coolgray-700 mt-2">Вы оплачиваете доступ к сервису по выставленному счету или копрокартой и моментально регистрируете учетную запись вашей компании в защищенном личном кабинете.</p>
+                    </div>
+                    <div class="hidden md:flex absolute left-1/2 transform -translate-x-1/2 justify-center items-center w-10 h-10 rounded-full bg-burgundy-700 text-white font-bold border-4 border-coolgray-50 shadow-md">
+                        1
+                    </div>
+                    <div class="md:pl-12">
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-5 rounded-xl text-center md:text-left">
+                            <i class="fa-solid fa-credit-card text-burgundy-700 text-3xl mb-2 block md:inline"></i>
+                            <span class="block text-xs font-semibold text-coolgray-400">Доступно по безналу с актом выполненных работ</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="relative grid grid-cols-1 md:grid-cols-2 gap-8 mb-12 items-center">
+                    <div class="md:order-2 md:pl-12">
+                        <span class="inline-flex items-center justify-center px-4 py-1 bg-burgundy-100 text-burgundy-700 font-extrabold rounded-full text-xs mb-3">День 1-2</span>
+                        <h3 class="text-lg font-bold text-coolgray-900">Настройка и Ввод данных</h3>
+                        <p class="text-sm text-coolgray-700 mt-2">Бухгалтер в удобной веб-форме вводит минимальные реквизиты компании и загружает список сотрудников.</p>
+                    </div>
+                    <div class="hidden md:flex absolute left-1/2 transform -translate-x-1/2 justify-center items-center w-10 h-10 rounded-full bg-burgundy-700 text-white font-bold border-4 border-coolgray-50 shadow-md">
+                        2
+                    </div>
+                    <div class="md:order-1 md:text-right md:pr-12">
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-5 rounded-xl text-center md:text-right">
+                            <i class="fa-solid fa-database text-burgundy-700 text-3xl mb-2 block md:inline"></i>
+                            <span class="block text-xs font-semibold text-coolgray-400">Конфиденциальность 100% защищена сквозным шифрованием</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="relative grid grid-cols-1 md:grid-cols-2 gap-8 mb-12 items-center">
+                    <div class="md:text-right md:pr-12">
+                        <span class="inline-flex items-center justify-center px-4 py-1 bg-skyaccent-400/20 text-skyaccent-600 font-extrabold rounded-full text-xs mb-3">Далее на регулярной основе</span>
+                        <h3 class="text-lg font-bold text-coolgray-900">Автоматический запуск идеологической работы</h3>
+                        <p class="text-sm text-coolgray-700 mt-2">Наша умная платформа берет на себя рутину: высылает материалы, организует опросы, подтверждает участие сотрудников и ведет цифровой журнал присутствия.</p>
+                    </div>
+                    <div class="hidden md:flex absolute left-1/2 transform -translate-x-1/2 justify-center items-center w-10 h-10 rounded-full bg-skyaccent-500 text-white font-bold border-4 border-coolgray-50 shadow-md">
+                        3
+                    </div>
+                    <div class="md:pl-12">
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-5 rounded-xl text-center md:text-left">
+                            <i class="fa-solid fa-gears text-skyaccent-500 text-3xl mb-2 block md:inline"></i>
+                            <span class="block text-xs font-semibold text-coolgray-400">Система формирует ежемесячные планы под кураторством эксперта</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4 -->
+                <div class="relative grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                    <div class="md:order-2 md:pl-12">
+                        <span class="inline-flex items-center justify-center px-4 py-1 bg-skyaccent-400/20 text-skyaccent-600 font-extrabold rounded-full text-xs mb-3">Каждый месяц</span>
+                        <h3 class="text-lg font-bold text-coolgray-900">Выгрузка готовой отчётности и Поддержка</h3>
+                        <p class="text-sm text-coolgray-700 mt-2">Система сама выдает готовый для печати или загрузки отчет по проделанной идеологической работе. Консультант сопровождает при проверках.</p>
+                    </div>
+                    <div class="hidden md:flex absolute left-1/2 transform -translate-x-1/2 justify-center items-center w-10 h-10 rounded-full bg-skyaccent-500 text-white font-bold border-4 border-coolgray-50 shadow-md">
+                        4
+                    </div>
+                    <div class="md:order-1 md:text-right md:pr-12">
+                        <div class="bg-coolgray-100 border border-coolgray-200 p-5 rounded-xl text-center md:text-right">
+                            <i class="fa-solid fa-file-pdf text-skyaccent-500 text-3xl mb-2 block md:inline"></i>
+                            <span class="block text-xs font-semibold text-coolgray-400">Архивы хранятся в облаке, вы можете скачать их в 1 клик</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- PAYMENT OPTIONS SECTION -->
+    <section id="payment" class="py-24 bg-coolgray-100 border-b border-coolgray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-3xl mx-auto text-center mb-16 space-y-4">
+                <span class="text-xs font-bold uppercase tracking-widest text-burgundy-700">Способы оплаты</span>
+                <h2 class="text-3xl sm:text-4xl font-extrabold text-coolgray-900 leading-tight">
+                    Выберите удобный формат подключения
+                </h2>
+                <p class="text-lg text-coolgray-700">
+                    Можно оплачивать корпоративной картой, по счёту или подключить индивидуальные условия сопровождения.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="bg-coolgray-50 rounded-2xl border border-coolgray-200 p-8 shadow-sm hover:shadow-md transition flex flex-col">
+                    <div class="w-14 h-14 rounded-xl bg-burgundy-50 text-burgundy-700 flex items-center justify-center text-2xl mb-6">
+                        <i class="fa-solid fa-credit-card"></i>
+                    </div>
+                    <h3 class="text-2xl font-extrabold text-coolgray-900 mb-4">Корпоративной картой</h3>
+                    <div class="space-y-4 flex-1">
+                        <p class="text-xs font-extrabold uppercase tracking-widest text-skyaccent-600 mb-3">Плюсы:</p>
+                        <ul class="space-y-3 text-sm text-coolgray-700 leading-relaxed">
+                            <li class="flex items-start"><span class="text-skyaccent-500 mr-2">✔</span> Автоматическое списание без страха потерять функционал.</li>
+                            <li class="flex items-start"><span class="text-skyaccent-500 mr-2">✔</span> Полный пакет закрывающих документов в личном кабинете для прозрачной бухгалтерии и лёгкого налогового учёта.</li>
+                        </ul>
+                    </div>
+                    <button onclick="openModal('setup')" class="mt-8 w-full py-4 bg-burgundy-700 hover:bg-burgundy-600 text-white font-bold rounded-xl transition shadow-lg">
+                        Оплатить картой
+                    </button>
+                </div>
+
+                <div class="bg-coolgray-50 rounded-2xl border border-coolgray-200 p-8 shadow-sm hover:shadow-md transition flex flex-col">
+                    <div class="w-14 h-14 rounded-xl bg-skyaccent-400/20 text-skyaccent-600 flex items-center justify-center text-2xl mb-6">
+                        <i class="fa-solid fa-file-invoice"></i>
+                    </div>
+                    <h3 class="text-2xl font-extrabold text-coolgray-900 mb-4">По счёту</h3>
+                    <div class="space-y-6 flex-1">
+                        <div>
+                            <p class="text-xs font-extrabold uppercase tracking-widest text-skyaccent-600 mb-3">Плюсы:</p>
+                            <ul class="space-y-3 text-sm text-coolgray-700 leading-relaxed">
+                                <li class="flex items-start"><span class="text-skyaccent-500 mr-2">✔</span> Автоматическая генерация генерального счёта на оплату по публичному договору.</li>
+                                <li class="flex items-start"><span class="text-skyaccent-500 mr-2">✔</span> Оплата до 10 числа ежемесячно путём копирования платёжного поручения.</li>
+                                <li class="flex items-start"><span class="text-skyaccent-500 mr-2">✔</span> Полный пакет закрывающих документов в личном кабинете для прозрачной бухгалтерии и лёгкого налогового учёта.</li>
+                            </ul>
+                        </div>
+                        <div class="rounded-xl bg-burgundy-50 border border-burgundy-100 p-4">
+                            <p class="text-xs font-extrabold uppercase tracking-widest text-burgundy-700 mb-2">Минусы:</p>
+                            <p class="text-sm text-coolgray-800 leading-relaxed">Потеря функционала при просрочке платежа.</p>
+                        </div>
+                    </div>
+                    <button onclick="openModal('setup')" class="mt-8 w-full py-4 bg-coolgray-900 hover:bg-coolgray-800 text-white font-bold rounded-xl transition shadow-lg">
+                        Сгенерировать счёт
+                    </button>
+                </div>
+
+                <div class="bg-burgundy-900 text-white rounded-2xl border-2 border-skyaccent-500 p-8 shadow-xl hover:shadow-2xl transition flex flex-col relative">
+                    <div class="absolute -top-4 right-6 bg-skyaccent-500 text-white font-extrabold text-xs py-1 px-4 rounded-full uppercase tracking-widest shadow-md">
+                        Премиум
+                    </div>
+                    <div class="w-14 h-14 rounded-xl bg-burgundy-800 text-skyaccent-400 flex items-center justify-center text-2xl mb-6">
+                        <i class="fa-solid fa-gem"></i>
+                    </div>
+                    <h3 class="text-2xl font-extrabold text-white mb-4">Индивидуальный договор</h3>
+                    <div class="space-y-4 flex-1">
+                        <p class="text-xs font-extrabold uppercase tracking-widest text-skyaccent-400 mb-3">Плюсы:</p>
+                        <ul class="space-y-3 text-sm text-coolgray-50 leading-relaxed">
+                            <li class="flex items-start"><span class="text-skyaccent-400 mr-2">✔</span> Индивидуальный график оплаты.</li>
+                            <li class="flex items-start"><span class="text-skyaccent-400 mr-2">✔</span> Расширенный функционал обслуживания.</li>
+                            <li class="flex items-start"><span class="text-skyaccent-400 mr-2">✔</span> Уникальные темы мероприятий.</li>
+                            <li class="flex items-start"><span class="text-skyaccent-400 mr-2">✔</span> Помощь эксперта с налоговым учётом.</li>
+                            <li class="flex items-start"><span class="text-skyaccent-400 mr-2">✔</span> Сопровождение камеральных и выездных проверок и многое другое.</li>
+                        </ul>
+                    </div>
+                    <button onclick="openModal('setup')" class="mt-8 w-full py-4 bg-white text-burgundy-900 font-extrabold rounded-xl transition shadow-lg hover:bg-coolgray-50">
+                        Хочу премиальные условия
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- FINAL CTA SECTION -->
+    <section class="py-20 bg-burgundy-900 text-white relative overflow-hidden">
+        <div class="max-w-4xl mx-auto px-4 text-center space-y-8 relative z-10">
+            <h2 class="text-3xl sm:text-5xl font-black tracking-tight text-white leading-tight">
+                Начните превращать обязательства перед законом в чистую выгоду уже вчера
+            </h2>
+            <p class="text-lg text-coolgray-100 max-w-2xl mx-auto font-light">
+                Оставьте заявку сегодня. Наш эксперт проведёт бесплатный аудит вашей текущей готовности к проверкам в течение 15 минут.
+            </p>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <button onclick="openModal('setup')" class="px-8 py-4 bg-white text-burgundy-900 font-extrabold rounded-xl shadow-lg hover:bg-coolgray-50 transition duration-300">
+                    Настроить идеологическую работу
+                </button>
+                <button onclick="openModal('access')" class="px-8 py-4 bg-burgundy-700 hover:bg-burgundy-600 border border-burgundy-600 text-white font-extrabold rounded-xl transition duration-300">
+                    Получить доступ к 600+ ответам
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <!-- lovable-bz-footer-v1 -->
+    <footer class="bz-footer">
+      <style>
+        .bz-footer{background:#0e0608;color:#cdb9bd;padding:48px 0 24px;border-top:1px solid rgba(255,255,255,0.06);font-size:14px;}
+        .bz-footer a{color:#cdb9bd;text-decoration:none;transition:color .15s;}
+        .bz-footer a:hover{color:#fff;text-decoration:underline;}
+        .bz-foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px;}
+        @media (max-width:900px){.bz-foot-grid{grid-template-columns:1fr;gap:28px;}}
+        .bz-foot-h{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#f4ecec;margin-bottom:14px;}
+        .bz-foot-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;font-size:14px;}
+        .bz-req{font-size:13px;line-height:1.6;color:#a89094;}
+        .bz-req strong{color:#f4ecec;font-weight:700;}
+        .bz-pay{display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-top:28px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.06);opacity:.85;}
+        .bz-pay img{height:22px;width:auto;display:block;}
+        .bz-copy{margin-top:24px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:12px;color:#8a7479;}
+        .bz-foot-brand{display:flex;align-items:center;gap:10px;margin-bottom:18px;user-select:none;cursor:default;}
+        .bz-foot-brand .bz-brand-mark{width:34px;height:34px;}
+        .bz-foot-brand .bz-brand-title{font-size:15px;}
+        .bz-foot-brand .bz-brand-sub{font-size:11px;}
+      </style>
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="bz-foot-grid">
+          <div>
+            <div class="bz-foot-brand" aria-label="Буква закона — Клуб по законодательству">
+              <div class="bz-brand-mark"><img src="https://gorbova.by/favicon.png" alt="Буква закона" /></div>
+              <div class="bz-brand-text">
+                <span class="bz-brand-title">БУКВА ЗАКОНА</span>
+                <span class="bz-brand-sub">Клуб по законодательству</span>
+              </div>
+            </div>
+            <div class="bz-req">
+              <strong>ЗАО «АЖУР инкам»</strong><br>
+              УНП: 193405000<br>
+              Юр. адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л<br>
+              Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63<br>
+              Телефон: +375 29 171-43-21<br>
+              E-mail: info@ajoure.by<br>
+              Режим работы: Пн–Пт 9:00–18:00 (Минск)
+            </div>
+          </div>
+          <div>
+            <div class="bz-foot-h">Навигация</div>
+            <ul class="bz-foot-list">
+              <li><a href="#paths" onclick="return scrollToSection('paths');">3 пути</a></li>
+              <li><a href="#benefits" onclick="return scrollToSection('benefits');">Выгоды</a></li>
+              <li><a href="#what-we-do" onclick="return scrollToSection('what-we-do');">Что делаем</a></li>
+              <li><a href="#roles" onclick="return scrollToSection('roles');">Для кого</a></li>
+              <li><a href="#db" onclick="return scrollToSection('db');">База знаний</a></li>
+              <li><a href="#timeline" onclick="return scrollToSection('timeline');">Как начать</a></li>
+              <li><a href="#payment" onclick="return scrollToSection('payment');">Оплата</a></li>
+            </ul>
+          </div>
+          <div>
+            <div class="bz-foot-h">Документы</div>
+            <ul class="bz-foot-list">
+              <li><a href="https://gorbova.by/oferta" target="_blank" rel="noopener">Публичная оферта</a></li>
+              <li><a href="https://gorbova.by/order-payment" target="_blank" rel="noopener">Заказ и оплата услуг</a></li>
+              <li><a href="https://gorbova.by/privacy" target="_blank" rel="noopener">Политика конфиденциальности</a></li>
+              <li><a href="https://gorbova.by/consent" target="_blank" rel="noopener">Согласие на обработку данных</a></li>
+              <li><a href="https://gorbova.by/expense-instruction" target="_blank" rel="noopener">Инструкция по оформлению расходов</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="bz-pay" aria-label="Способы оплаты">
+          <img src="https://gorbova.by/assets/pay/visa.svg" alt="Visa" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/mastercard.svg" alt="Mastercard" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/belkart.svg" alt="Белкарт" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/bepaid.svg" alt="bePaid" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/samsungpay.svg" alt="Samsung Pay" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/gpay.svg" alt="Google Pay" onerror="this.style.display='none'">
+          <img src="https://gorbova.by/assets/pay/erip.svg" alt="ЕРИП" onerror="this.style.display='none'">
+        </div>
+        <div class="bz-copy">© 2026 ЗАО «АЖУР инкам». Все права защищены.</div>
+      </div>
+    </footer>
+    <!-- /lovable-bz-footer-v1 -->
+
+    <!-- LEAD MODAL SYSTEM -->
+    <div id="leadModal" class="fixed inset-0 z-50 hidden bg-coolgray-900/80 flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
+        <div class="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl relative border border-coolgray-200 transform scale-95 transition-transform duration-300" id="modalCard">
+            <!-- Close Button -->
+            <button onclick="closeModal()" class="absolute top-4 right-4 text-coolgray-400 hover:text-coolgray-600 transition">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+
+            <!-- Dynamic Header -->
+            <div class="text-center space-y-2 mb-6">
+                <div class="w-12 h-12 bg-burgundy-100 rounded-full flex items-center justify-center text-burgundy-700 text-xl mx-auto mb-2" id="modalIcon">
+                    <i class="fa-solid fa-briefcase"></i>
+                </div>
+                <h3 class="text-xl font-bold text-coolgray-900" id="modalTitle">Заявка на настройку работы</h3>
+                <p class="text-xs text-coolgray-500" id="modalSubtitle">Настроим безопасный бизнес-процесс за 1 рабочий день.</p>
+            </div>
+
+            <!-- Real Lead Form -->
+            <form id="leadForm" onsubmit="handleFormSubmit(event)" class="space-y-4">
+                <input type="hidden" id="modalSource" value="General">
+                <div class="space-y-1">
+                    <label class="block text-xs font-semibold text-coolgray-700">Ваше имя *</label>
+                    <input type="text" required placeholder="Константин" class="w-full px-4 py-2.5 bg-coolgray-50 border border-coolgray-300 rounded-xl text-coolgray-900 text-sm focus:outline-none focus:ring-2 focus:ring-burgundy-700 focus:border-transparent">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-semibold text-coolgray-700">Номер телефона *</label>
+                    <input type="tel" required placeholder="+375 (29) 123-45-67" class="w-full px-4 py-2.5 bg-coolgray-50 border border-coolgray-300 rounded-xl text-coolgray-900 text-sm focus:outline-none focus:ring-2 focus:ring-burgundy-700 focus:border-transparent">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-semibold text-coolgray-700">Email вашей компании</label>
+                    <input type="email" placeholder="ceo@company.by" class="w-full px-4 py-2.5 bg-coolgray-50 border border-coolgray-300 rounded-xl text-coolgray-900 text-sm focus:outline-none focus:ring-2 focus:ring-burgundy-700 focus:border-transparent">
+                </div>
+                
+                <div class="pt-2">
+                    <button type="submit" class="w-full py-3 bg-burgundy-700 hover:bg-burgundy-600 text-white font-bold rounded-xl transition shadow-md">
+                        Отправить данные эксперту
+                    </button>
+                </div>
+                
+                <p class="text-[10px] text-center text-coolgray-500">
+                    Нажимая кнопку, вы соглашаетесь с обработкой персональных данных для связи с консультантом. Без спама.
+                </p>
+            </form>
+
+            <!-- Success Message placeholder -->
+            <div id="successState" class="hidden text-center space-y-4 py-8">
+                <div class="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 text-3xl mx-auto">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <h4 class="text-xl font-bold text-coolgray-900">Заявка принята!</h4>
+                <p class="text-sm text-coolgray-700 max-w-xs mx-auto">
+                    Специалист свяжется с вами в течение 15 минут для подтверждения демо-доступа или отправки счета. Хорошего дня!
+                </p>
+                <button onclick="closeModal()" class="px-6 py-2 bg-coolgray-200 text-coolgray-800 font-bold rounded-lg hover:bg-coolgray-300 transition text-xs">
+                    Закрыть окно
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+
+        // Smooth in-page menu navigation without opening a new window
+        function scrollToSection(sectionId) {
+            const el = document.getElementById(sectionId);
+            if (!el) return false;
+            const header = document.querySelector('header');
+            const offset = header ? header.offsetHeight + 12 : 90;
+            const top = el.getBoundingClientRect().top + window.pageYOffset - offset;
+            window.scrollTo({ top: top, behavior: 'smooth' });
+            return false;
+        }
+
+        // Tab switching logic (Director vs Chief Accountant)
+        function switchTab(role) {
+            const btnDirector = document.getElementById('btn-director');
+            const btnAccountant = document.getElementById('btn-accountant');
+            const contentDirector = document.getElementById('tab-content-director');
+            const contentAccountant = document.getElementById('tab-content-accountant');
+
+            if (role === 'director') {
+                btnDirector.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 bg-burgundy-700 text-white shadow-sm';
+                btnAccountant.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 text-coolgray-700 hover:text-coolgray-900';
+                
+                contentDirector.classList.remove('hidden');
+                contentAccountant.classList.add('hidden');
+            } else {
+                btnAccountant.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 bg-burgundy-700 text-white shadow-sm';
+                btnDirector.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition duration-200 text-coolgray-700 hover:text-coolgray-900';
+
+                contentAccountant.classList.remove('hidden');
+                contentDirector.classList.add('hidden');
+            }
+        }
+
+        // Live ROI tax calculations (solid percentages)
+        function calculateSavings() {
+            const budgetInput = document.getElementById('budgetInput');
+            let budget = parseFloat(budgetInput.value) || 0;
+
+            if (budget < 0) {
+                budget = 0;
+                budgetInput.value = 0;
+            }
+
+            // Calculations based on local corporate laws
+            const incTaxValue = budget * 0.26;
+            const profitTaxValue = (budget * 20) / 120;
+            const vatValue = (budget * 20) / 120;
+            const totalValue = incTaxValue + profitTaxValue + vatValue;
+
+            // Update UI with clean format
+            document.getElementById('incTaxSaved').textContent = '+' + incTaxValue.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            document.getElementById('profitTaxSaved').textContent = '+' + profitTaxValue.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            document.getElementById('vatSaved').textContent = '+' + vatValue.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            document.getElementById('totalSaved').textContent = '+' + totalValue.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // =========== KB DATABASE (public RPC, escaped render) ===========
+        const KB_SUPA_URL = 'https://hdjgkjceownmmnrqqtuz.supabase.co';
+        const KB_SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkamdramNlb3dubW1ucnFxdHV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NTczNjMsImV4cCI6MjA4MjIzMzM2M30.bg4ALwTFZ57YYDLgB4IwLqIDrt0XcQGIlDEGllNBX0E';
+        const KB_DEFAULT_LIMIT = 12;
+        const KB_SEARCH_LIMIT = 30;
+        const KB_SYNONYMS = {
+            'налоги': ['налог','ндс','прибыл','усн','подоходн','упрощ','доначисл'],
+            'проверки': ['проверк','камераль','аудит','налогов','контрол','инспекц'],
+            'безопасность': ['обыск','безопас','изъят','допрос','экстрем','правоохран','следств'],
+            'персонал': ['зарплат','оплата труда','работник','сотрудник','кадр','персонал','пенси','отпуск','трудов']
+        };
+        let KB_DATA = [];
+        let KB_CURRENT_QUERY = '';
+
+        function kbEscape(s) {
+            if (s == null) return '';
+            return String(s)
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+        function kbExpandQuery(q) {
+            const norm = (q || '').toLowerCase().trim();
+            if (!norm) return [];
+            const syn = KB_SYNONYMS[norm];
+            return syn ? syn : [norm];
+        }
+        function kbMatch(item, terms) {
+            if (!terms.length) return true;
+            const hay = (
+                (item.title || '') + ' ' +
+                (item.full_question || '') + ' ' +
+                ((item.tags || []).join(' '))
+            ).toLowerCase();
+            return terms.some(t => hay.includes(t));
+        }
+        function kbFormatDate(d) {
+            if (!d) return '';
+            try {
+                const dt = new Date(d);
+                return dt.toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric' });
+            } catch(e){ return ''; }
+        }
+        function kbRender() {
+            const container = document.getElementById('dbResults');
+            const status = document.getElementById('dbStatus');
+            if (!container) return;
+            const terms = kbExpandQuery(KB_CURRENT_QUERY);
+            const filtered = KB_DATA.filter(it => kbMatch(it, terms));
+            const limit = KB_CURRENT_QUERY ? KB_SEARCH_LIMIT : KB_DEFAULT_LIMIT;
+            const shown = filtered.slice(0, limit);
+            if (!filtered.length) {
+                container.innerHTML = '';
+                status.innerHTML = '<span class="text-coolgray-300">Ничего не нашли по запросу «'+kbEscape(KB_CURRENT_QUERY)+'». Попробуйте другое ключевое слово или <button onclick="openModal(\'access\')" class="underline text-skyaccent-400 font-bold">оставьте заявку</button>.</span>';
+                return;
+            }
+            if (filtered.length > limit) {
+                status.innerHTML = 'Показано '+shown.length+' из '+filtered.length+'. Уточните запрос, чтобы сузить результат.';
+            } else {
+                status.innerHTML = (KB_CURRENT_QUERY ? 'Найдено ' : 'Доступно ')+filtered.length+' '+
+                    (KB_CURRENT_QUERY ? 'ответ(ов).' : 'ответов в базе клуба.');
+            }
+            container.innerHTML = shown.map(item => {
+                const title = kbEscape(item.title || 'Без заголовка');
+                const full = kbEscape(item.full_question || '');
+                const ep = item.episode_number ? ('Выпуск '+kbEscape(item.episode_number)) : '';
+                const qn = item.question_number ? ('Вопрос '+kbEscape(item.question_number)) : '';
+                const date = kbFormatDate(item.answer_date);
+                const meta = [ep, qn, date].filter(Boolean).join(' · ');
+                const tagsArr = (item.tags || []).slice(0,3).map(t => '<span class="text-xxs font-bold uppercase tracking-widest text-skyaccent-400 bg-skyaccent-900/40 px-2 py-1 rounded mr-1">'+kbEscape(t)+'</span>').join('');
+                const fullBlock = full ? '<div class="kb-full hidden mt-3 text-xs text-coolgray-300 whitespace-pre-line border-l-2 border-skyaccent-500 pl-3">'+full+'</div>' : '';
+                const toggleBtn = full ? '<button type="button" onclick="kbToggle(this)" class="text-xs font-bold text-coolgray-300 hover:text-skyaccent-400 transition">Показать полный вопрос <i class="fa-solid fa-chevron-down ml-1"></i></button>' : '<span></span>';
+                return '<div class="db-card bg-coolgray-800 border border-coolgray-700 rounded-2xl p-6 hover:border-skyaccent-500 transition-all duration-300 relative group overflow-hidden">'+
+                    (tagsArr || '')+
+                    '<h4 class="text-base font-bold mt-3 text-white">'+title+'</h4>'+
+                    (meta ? '<p class="text-xs text-coolgray-400 mt-2">'+kbEscape(meta)+'</p>' : '')+
+                    fullBlock+
+                    '<div class="mt-4 pt-4 border-t border-coolgray-700 flex justify-between items-center gap-3">'+
+                        toggleBtn+
+                        '<button onclick="openModal(\'access\')" class="text-xs font-bold text-skyaccent-400 group-hover:text-white transition whitespace-nowrap">Участвовать <i class="fa-solid fa-chevron-right ml-1"></i></button>'+
+                    '</div>'+
+                '</div>';
+            }).join('');
+        }
+        function kbToggle(btn) {
+            const block = btn.closest('.db-card').querySelector('.kb-full');
+            if (!block) return;
+            const hidden = block.classList.toggle('hidden');
+            btn.innerHTML = (hidden ? 'Показать полный вопрос <i class="fa-solid fa-chevron-down ml-1"></i>' : 'Свернуть <i class="fa-solid fa-chevron-up ml-1"></i>');
+        }
+        async function kbLoad() {
+            const status = document.getElementById('dbStatus');
+            const fallback = document.getElementById('dbFallback');
+            try {
+                const res = await fetch(KB_SUPA_URL+'/rest/v1/rpc/get_kb_questions_public', {
+                    method:'POST',
+                    headers: {
+                        'apikey': KB_SUPA_ANON,
+                        'Authorization':'Bearer '+KB_SUPA_ANON,
+                        'Content-Type':'application/json'
+                    },
+                    body: '{}'
+                });
+                if (!res.ok) throw new Error('HTTP '+res.status);
+                KB_DATA = await res.json();
+                kbRender();
+            } catch (e) {
+                if (status) status.textContent = '';
+                if (fallback) fallback.classList.remove('hidden');
+                console.error('KB load failed', e);
+            }
+        }
+        function filterDatabase() {
+            const input = document.getElementById('dbSearch');
+            KB_CURRENT_QUERY = (input ? input.value : '').trim();
+            kbRender();
+        }
+        function setSearchFilter(tag) {
+            const searchBar = document.getElementById('dbSearch');
+            if (!searchBar) return;
+            searchBar.value = tag;
+            filterDatabase();
+            searchBar.scrollIntoView({ behavior:'smooth', block:'center' });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', kbLoad);
+        } else { kbLoad(); }
+
+        // Modal triggers
+        function openModal(mode) {
+            const modal = document.getElementById('leadModal');
+            const icon = document.getElementById('modalIcon');
+            const title = document.getElementById('modalTitle');
+            const subtitle = document.getElementById('modalSubtitle');
+            const source = document.getElementById('modalSource');
+
+            // Reset modal layout
+            document.getElementById('leadForm').classList.remove('hidden');
+            document.getElementById('successState').classList.add('hidden');
+
+            if (mode === 'setup') {
+                icon.innerHTML = '<i class="fa-solid fa-briefcase text-burgundy-700"></i>';
+                title.textContent = 'Настроить идеологическую работу';
+                subtitle.textContent = 'Оставьте контакты. Эксперт перезвонит за 15 минут для согласования старта.';
+                source.value = 'Setup ideological work';
+            } else if (mode === 'access') {
+                icon.innerHTML = '<i class="fa-solid fa-key text-skyaccent-500"></i>';
+                title.textContent = 'Открыть демо-доступ';
+                subtitle.textContent = 'Получите логин и пароль ко всей базе из 600+ готовых вебинаров и ответов бесплатно на 3 дня.';
+                source.value = '600+ Answers DB access';
+            }
+
+            modal.classList.remove('hidden');
+            document.getElementById('modalCard').classList.remove('scale-95');
+            document.getElementById('modalCard').classList.add('scale-100');
+        }
+
+        // Close modal actions
+        function closeModal() {
+            const modal = document.getElementById('leadModal');
+            document.getElementById('modalCard').classList.remove('scale-100');
+            document.getElementById('modalCard').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 100);
+        }
+
+        // Handle simple simulated form submit inside iframe environment
+        function handleFormSubmit(event) {
+            event.preventDefault();
+            // Perform simulated transition
+            document.getElementById('leadForm').classList.add('hidden');
+            document.getElementById('successState').classList.remove('hidden');
+        }
+
+        // Initialize calculation values once loaded
+        window.onload = function() {
+            calculateSavings();
+        };
+    </script>
+</body>
+</html>
