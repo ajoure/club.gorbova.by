@@ -1,65 +1,68 @@
-## План: уплотнить hero страницы «Идеологическая работа» (SITE-000018)
+## План: Glassmorphism-плашка «Гарантия безопасности» + фото Катерины во всю высоту
 
-**Цель.** На десктопе ~900–1000 px по высоте первый экран должен включать одновременно блок «Решение под ключ за 1 день» и полосу «Гарантия безопасности». Фото Катерины показать как в оригинальном HTML-макете (видны плечо и рука), убрать ощущение размытия за счёт уменьшения upscale-зума.
+### Цель
+На главной странице SITE-000018 («Идеологическая работа», `site_pages.id = 7e672fed-13f1-4ff1-8786-71a228a0c011`) в hero-секции:
+1. Заменить плашку `.ir-guarantees-strip` (сейчас вынесена под hero) на **полупрозрачную glassmorphism-карточку**, размещённую внутри правой колонки hero поверх фото.
+2. Фото Катерины (новый файл `telegram-cloud-photo-size-2-5321268384882171138-y.jpg`, **фон удалить**) поставить за карточкой во всю высоту правой колонки — от верха hero до низа hero (уровень нижнего края кнопок «Настроить идеологическую работу» / «Посмотреть 600+ готовых ответов»).
+3. Glass-карточка прижата к низу правой колонки, её нижний край выровнен по нижнему краю CTA-кнопок левой колонки (одна горизонтальная линия).
+4. Цвета, тексты, кнопки, иконки, модалки, поиск по БЗ — **не трогать**.
 
-### Diagnose (уже выполнено)
-- `site_pages` id `7e672fed-13f1-4ff1-8786-71a228a0c011`, `blocks[0].content.code` — единственный html-блок (~425 КБ).
-- Текущие правила (после прошлого патча):
-  - `.ir-hero-v2`, `.ir-hero-v2__wrap`, `.ir-hero-v2__visual` → `min-height: 715px`.
-  - `.ir-hero-v2__person` принудительно растянут `inset:0; width/height:100%; object-fit:cover; object-position:center top` — отсюда сильный zoom на лицо и видимое размытие base64-PNG.
-  - `.ir-hero-v2__title` `clamp(44px,5.2vw,70px)`, `margin: 44px 0 24px`.
-  - `.ir-hero-v2__content` `padding: 18px 38px 32px 30px`.
-  - `.ir-hero-v2__features` `gap: 23px`.
-  - `.ir-guarantees-strip` `padding: 2.5rem 1.25rem 3rem`; `__wrap` `padding: 2rem 2.25rem`; `__grid` `gap: 2rem`; `__stats` `margin-top: 1.75rem; padding-top: 1.25rem`.
-- Изображение — встроенный base64 PNG фиксированного разрешения; реальное «улучшение качества» возможно только через уменьшение upscale-фактора (меньше растягивать).
+### Шаги
 
-### Изменения (только CSS-оверрайды внутри `<style id="hero-fullbleed-override">` уже существующего блока)
+**1. Подготовка фото (без фона)**
+- Источник: `user-uploads://telegram-cloud-photo-size-2-5321268384882171138-y.jpg`.
+- Через `imagegen--edit_image` с `transparent_background=true` сгенерировать PNG с прозрачным фоном → сохранить как Lovable Asset (через `lovable-assets create`, бинарь в репо не кладём). Получаем публичный CDN-URL.
+- Качество: исходник 853×1280 — достаточно для hero, размер на странице не меняем (`object-fit: contain`, выравнивание `right bottom`).
 
-1. **Уменьшить высоту hero**
-   - `.ir-hero-v2, .ir-hero-v2__wrap, .ir-hero-v2__visual { min-height: 560px; }` на десктопе ≥1025px.
-   - На промежуточных (≤1280px) — 520px; на планшете (≤900px) — auto.
+**2. Обновление hero-блока (`blocks[0].content.code`)**
+Только CSS-оверрайды и точечная разметка внутри уже существующего `<style id="hero-fullbleed-override">` + `.ir-hero-v2__person img` src на новый CDN-URL:
 
-2. **Уплотнить текстовый блок**
-   - `.ir-hero-v2__title { font-size: clamp(36px, 4.2vw, 56px); margin: 18px 0 14px; }`.
-   - `.ir-hero-v2__content { padding: 12px 30px 18px 24px; }`.
-   - `.ir-hero-v2__lead { margin: 0 0 14px; font-size: 15px; line-height: 1.45; }`.
-   - `.ir-hero-v2__features { gap: 12px; margin-bottom: 18px; }`.
-   - `.ir-hero-v2__cta { margin-top: 14px; }`.
+- `.ir-hero-v2__person img` — `src` заменить на CDN-URL прозрачного PNG; `object-fit: contain; object-position: right bottom; height: 100%; width: 100%;` без градиентного fade (фон уже прозрачный, hero-фон секции виден сквозь).
+- Удалить из DOM отдельную секцию `.ir-guarantees-strip` (которая сейчас под hero) и вернуть карточку гарантий **внутрь** правой колонки hero как абсолютно позиционированный блок: `position: absolute; left: 1.5rem; right: 1.5rem; bottom: <calc выровнен по низу CTA-кнопок>`.
+- Glassmorphism-стили для этой карточки (без изменения цветовых токенов):
+  ```css
+  background: rgba(15, 23, 34, 0.45);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px;
+  box-shadow: 0 18px 48px -20px rgba(0,0,0,0.55);
+  ```
+  Внутренние карточки пунктов — `background: rgba(255,255,255,0.04)` с лёгкой границей; цвета текста/иконок/бейджа «ГАРАНТИЯ БЕЗОПАСНОСТИ» / «400+ проверок» — **без изменений**.
+- Высота правой колонки = высота левой колонки (`align-items: stretch`), hero `min-height` подобрать так, чтобы нижний край glass-карточки совпадал с нижним краем кнопок (тонкая настройка `bottom` через CSS).
+- Адаптив:
+  - ≥1025px: фото full-bleed правой колонки, glass абсолютно поверх по низу.
+  - ≤1024px: glass становится `position: static`, идёт под фото в обычном потоке (как сейчас), фото `aspect-ratio: 3/4`, высота ограничена.
 
-3. **Фото Катерины — показать шире, как в оригинале**
-   - Оставить `position:absolute; inset:0; width:100%; height:100%; display:block;`.
-   - Поменять `object-fit: cover; object-position: center top` → **`object-fit: contain; object-position: right bottom;`** + фон контейнера `background: linear-gradient(180deg,#0f1722 0%, #121d28 100%)` (чтобы не было «обрезанной» полосы сверху).
-   - Добавить `image-rendering: auto; -webkit-backface-visibility: hidden; transform: translateZ(0);` для устранения субпиксельного размытия.
-   - На десктопе photo выровнено по правому-нижнему углу — видно плечо, руку, подбородок (как в оригинальном `сайт Экран 1 КП.html`).
-   - Лёгкий градиентный fade снизу `.ir-hero-v2__visual::after { height: 14%; }` (уменьшить с 28%).
+**3. Метод записи в БД**
+- Прочитать актуальный `blocks` через временную edge-функцию `read-site-blocks` (как в прошлых итерациях; если уже удалена — задеплоить заново).
+- Локальный python-скрипт `.lovable/artifacts/patch_site018_hero_glass.py`: парсит blocks JSON → точечно меняет `<style id="hero-fullbleed-override">…</style>`, src фото и DOM-фрагмент карточки гарантий → base64-чанки → временная функция `apply-site-blocks-patch` (re-deploy, super_admin only) → `UPDATE site_pages`.
+- Обе временные функции **удалить** сразу после успешного апдейта.
+- Сохранить before/after HTML в `.lovable/artifacts/site018-hero-glass-{before,after}.html`.
 
-4. **Полоса «Гарантия безопасности» — компактнее**
-   - `.ir-guarantees-strip { padding: 1rem 1.25rem 1.25rem; }`.
-   - `.ir-guarantees-strip__wrap { padding: 1.1rem 1.5rem; border-radius: 18px; }`.
-   - `.ir-guarantees-strip__label { margin-bottom: 0.75rem; }`.
-   - `.ir-guarantees-strip__grid { gap: 1.25rem; }`.
-   - `.ir-guarantees-strip__body h3 { font-size: 0.98rem; margin-bottom: 0.2rem; }`.
-   - `.ir-guarantees-strip__body p { font-size: 0.8rem; line-height: 1.4; }`.
-   - `.ir-guarantees-strip__stats { margin-top: 0.9rem; padding-top: 0.75rem; }`.
-
-5. **Ничего другого не менять**: разметка `<section>`, картинка (тот же base64), кнопки, `openModal('setup')`, навигация, поиск, `#db`, `#timeline`, `#payment`, React, edge-functions, RPC, миграции — без изменений. SITE-000017 не трогаем.
-
-### Технический процесс
-1. Прочитать текущий `blocks[0].content.code` из БД целиком (через временную таблицу/edge-стейджинг, как делали ранее).
-2. Локальный python-скрипт `.lovable/artifacts/patch_site018_hero_compact.py` хирургически заменяет содержимое блока `<style id="hero-fullbleed-override">…</style>` на новую версию с правилами выше. Все остальные стили и HTML — байт-в-байт без изменений.
-3. Залить обратно через временную таблицу + base64-чанки (точно тот же приём, что в прошлый раз) и удалить временные артефакты после `UPDATE`.
-4. Сохранить before/after: `site018-hero-compact-before.html`, `site018-hero-compact-after.html`.
-
-### Verify (Playwright, headless)
-- Десктоп 1280×900: скриншот первого экрана — видны заголовок, lead, чек-листы, обе CTA-кнопки **и** полоса «Гарантия безопасности» с 3 пунктами и «400+ проверок». Скриншот в `.lovable/artifacts/site018-hero-compact-desktop-900.png`.
-- Десктоп 1440×1000 — то же.
-- Мобильный 390×844 — стек: контент → фото (видно плечо/рука) → гарантии в 1 колонку.
-- Клик по «Настроить идеологическую работу» — открывается модал `setup`.
-- DOM-проверка: блок `#db` (поиск по 600+ ответов) не затронут, кнопка «Участвовать» работает.
+**4. Верификация (Playwright, headless)**
+- Логин dev-паролем `123456`, navigate `/admin/sites/64684f09-…` → preview главной (`https://gorbova.lovable.app/` или preview URL).
+- Скриншоты: 1280×900, 1440×1000, 1920×1080, 390×844.
+- Проверить:
+  - glass-карточка визуально полупрозрачная, виден силуэт за ней (backdrop-blur работает);
+  - нижний край glass = нижний край CTA-кнопок (±2px);
+  - фото Катерины без фонового пятна, выровнено `right bottom`, не обрезано по верхней линии;
+  - на мобильном glass под фото, layout не ломается;
+  - кнопки `openModal('setup')`, `openModal('answers')`, поиск БЗ, навигация — кликаются, network OK;
+  - SITE-000017 и другие страницы не затронуты (diff только по `id=7e672fed…`).
 
 ### DoD
-- [ ] На 1280×900 hero + гарантии помещаются в один экран без скролла.
-- [ ] Фото Катерины показано шире (плечо, рука, как в оригинале), без видимого размытия.
-- [ ] Никаких регрессий: модалы, поиск по базе знаний, навигация, мобильная вёрстка, остальные секции работают как раньше.
-- [ ] Скриншоты desktop/mobile приложены в артефактах.
-- [ ] Изменений в коде React/edge/DB schema/RPC нет — только обновление html-блока в `site_pages`.
+- [ ] Фото Катерины без фона залито через Lovable Assets, URL стабильный.
+- [ ] glass-карточка с `backdrop-filter`, нижний край выровнен с CTA.
+- [ ] Старая `.ir-guarantees-strip` под hero удалена.
+- [ ] Скриншоты desktop/mobile в `.lovable/artifacts/`.
+- [ ] Временные edge-функции удалены, миграций на public-схему **нет**.
+- [ ] Все кнопки/поиск/модалки рабочие.
+- [ ] Цветовые токены не менялись.
+- [ ] Для публикации — пользователь жмёт **Publish** сам.
+
+### Что НЕ трогаем
+- Левая колонка hero (заголовок, чек-листы, CTA-кнопки) — без изменений.
+- Header, footer, секции «3 Пути», «Выгоды», «Что мы делаем», «Для кого», «База знаний», «Как начать» — без изменений.
+- Backend: RPC, edge-функции продакшна, RLS, миграции таблиц — без изменений (только временные ephemeral функции для патча контента).
+- SITE-000017 и любые другие site_pages — не затрагиваются.
