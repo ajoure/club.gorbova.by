@@ -9,8 +9,9 @@
  *   a separate sanitization policy.
  *
  * SECURITY BOUNDARY:
- *   sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+ *   sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
  *   - allow-scripts: required for internal resize/anchor postMessage bridge.
+ *   - allow-forms: required for admin-authored lead/demo forms inside HTML pages.
  *   - allow-same-origin: NOT granted. The iframe remains opaque-origin; the parent
  *     identifies messages by `e.source === iframe.contentWindow` (origin check is
  *     not reliable for srcdoc).
@@ -24,7 +25,7 @@ import { useState, useRef, useEffect } from "react";
 import { Code } from "lucide-react";
 
 const SANDBOX_POLICY =
-  "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
+  "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
 /** Maximum iframe height in px to prevent runaway content */
 const MAX_IFRAME_HEIGHT = 15000;
@@ -51,6 +52,8 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   var timers = [];
   var observer = null;
+  var parentViewport = { top: 0, height: 800 };
+  var fixedSyncPending = false;
 
   function post() {
     var h = Math.max(
@@ -62,6 +65,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   function scheduleStagedSync() {
     post();
+    scheduleFixedOverlaySync();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(post);
     }
@@ -87,8 +91,90 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   } catch (e) {}
 
   if (typeof ResizeObserver !== 'undefined' && document.body) {
-    observer = new ResizeObserver(post);
+    observer = new ResizeObserver(function() {
+      post();
+      scheduleFixedOverlaySync();
+    });
     observer.observe(document.body);
+  }
+
+  function isHidden(el) {
+    if (!el || !el.getBoundingClientRect) return true;
+    var cs = window.getComputedStyle(el);
+    return cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0;
+  }
+
+  function isFullscreenFixedOverlay(el) {
+    if (isHidden(el)) return false;
+    var cs = window.getComputedStyle(el);
+    if (cs.position !== 'fixed') return false;
+    var rect = el.getBoundingClientRect();
+    var docWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+    var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+    return rect.width >= docWidth * 0.9 && rect.height >= docHeight * 0.7 && Math.abs(rect.left) <= 2 && Math.abs(rect.top) <= 2;
+  }
+
+  function restoreFixedOverlay(el) {
+    if (!el || el.getAttribute('data-lovable-fixed-overlay') !== '1') return;
+    var props = ['position', 'top', 'right', 'bottom', 'left', 'height', 'min-height', 'width'];
+    for (var i = 0; i < props.length; i++) el.style.removeProperty(props[i]);
+    el.removeAttribute('data-lovable-fixed-overlay');
+  }
+
+  function syncFixedOverlays() {
+    fixedSyncPending = false;
+    var candidates = document.querySelectorAll('.fixed, [style*="position: fixed"], [style*="position:fixed"], [data-lovable-fixed-overlay="1"]');
+    var docHeight = document.documentElement.scrollHeight || document.body.scrollHeight || parentViewport.height;
+    var visibleHeight = Math.max(320, Math.min(parentViewport.height || 800, docHeight));
+    var visibleTop = Math.max(0, Math.min(parentViewport.top || 0, Math.max(0, docHeight - visibleHeight)));
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (isFullscreenFixedOverlay(el) || el.getAttribute('data-lovable-fixed-overlay') === '1') {
+        if (isHidden(el)) {
+          restoreFixedOverlay(el);
+          continue;
+        }
+        el.setAttribute('data-lovable-fixed-overlay', '1');
+        el.style.setProperty('position', 'absolute', 'important');
+        el.style.setProperty('top', visibleTop + 'px', 'important');
+        el.style.setProperty('left', '0', 'important');
+        el.style.setProperty('right', '0', 'important');
+        el.style.setProperty('bottom', 'auto', 'important');
+        el.style.setProperty('width', '100%', 'important');
+        el.style.setProperty('height', visibleHeight + 'px', 'important');
+        el.style.setProperty('min-height', visibleHeight + 'px', 'important');
+      }
+    }
+  }
+
+  function scheduleFixedOverlaySync() {
+    if (fixedSyncPending) return;
+    fixedSyncPending = true;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncFixedOverlays);
+    else setTimeout(syncFixedOverlays, 0);
+  }
+
+  window.addEventListener('message', function(ev) {
+    var data = ev.data;
+    if (!data || typeof data !== 'object' || data.type !== 'iframe-parent-viewport') return;
+    if (typeof data.top === 'number' && Number.isFinite(data.top)) parentViewport.top = data.top;
+    if (typeof data.height === 'number' && Number.isFinite(data.height)) parentViewport.height = data.height;
+    scheduleFixedOverlaySync();
+  });
+
+  window.addEventListener('wheel', function(ev) {
+    try {
+      parent.postMessage({ type: 'iframe-wheel', deltaX: ev.deltaX || 0, deltaY: ev.deltaY || 0 }, '*');
+    } catch (e) {}
+  }, { passive: true });
+
+  if (typeof MutationObserver !== 'undefined' && document.body) {
+    var mutationObserver = new MutationObserver(function() {
+      post();
+      scheduleFixedOverlaySync();
+    });
+    mutationObserver.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class', 'style', 'hidden'] });
+    window.addEventListener('beforeunload', function() { mutationObserver.disconnect(); });
   }
 
   window.addEventListener('beforeunload', function() {
@@ -224,6 +310,18 @@ function resolveHeaderOffset(): number {
   return 80;
 }
 
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  let node = element?.parentElement ?? null;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+    if (canScrollY) return node;
+    node = node.parentElement;
+  }
+  const doc = document.scrollingElement as HTMLElement | null;
+  return doc && doc.scrollHeight > doc.clientHeight + 1 ? doc : null;
+}
+
 export function HtmlIframePreview({
   html,
   emptyText = "Вставьте HTML-код",
@@ -231,6 +329,29 @@ export function HtmlIframePreview({
 }: HtmlIframePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(minHeight);
+
+  const postParentViewport = () => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    try {
+      const rect = iframe.getBoundingClientRect();
+      const scrollContainer = findScrollContainer(iframe);
+      const containerRect = scrollContainer?.getBoundingClientRect();
+      const viewportTop = containerRect?.top ?? resolveHeaderOffset();
+      const viewportBottom = containerRect?.bottom ?? (window.innerHeight || document.documentElement.clientHeight || 800);
+      const visibleTop = Math.max(0, viewportTop - rect.top);
+      const visibleBottom = Math.min(rect.height, viewportBottom - rect.top);
+      const visibleHeight = Math.max(320, visibleBottom - visibleTop);
+      iframe.contentWindow.postMessage(
+        {
+          type: 'iframe-parent-viewport',
+          top: visibleTop,
+          height: visibleHeight,
+        },
+        '*',
+      );
+    } catch {}
+  };
 
   useEffect(() => {
     if (!html.trim()) setHeight(minHeight);
@@ -254,6 +375,7 @@ export function HtmlIframePreview({
         if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return;
         const clamped = Math.max(minHeight, Math.min(Math.ceil(raw), MAX_IFRAME_HEIGHT));
         setHeight((prev) => (prev === clamped ? prev : clamped));
+        postParentViewport();
         return;
       }
 
@@ -262,17 +384,33 @@ export function HtmlIframePreview({
           ? data.targetOffsetTop
           : 0;
         try {
-          const rect = iframeRef.current.getBoundingClientRect();
+          const iframe = iframeRef.current;
+          const rect = iframe.getBoundingClientRect();
+          const scrollContainer = findScrollContainer(iframe);
+          const containerRect = scrollContainer?.getBoundingClientRect();
+          const containerScrollTop = scrollContainer?.scrollTop ?? (window.pageYOffset || document.documentElement.scrollTop || 0);
           const headerOffset = resolveHeaderOffset();
           const top = Math.max(
             0,
-            rect.top + (window.pageYOffset || document.documentElement.scrollTop || 0)
+            rect.top - (containerRect?.top ?? 0) + containerScrollTop
               + targetOffsetTop
               - headerOffset
               - 12
           );
-          window.scrollTo({ top, behavior: 'smooth' });
+          if (scrollContainer) scrollContainer.scrollTo({ top, behavior: 'smooth' });
+          else window.scrollTo({ top, behavior: 'smooth' });
         } catch {}
+        return;
+      }
+
+      if (data.type === 'iframe-wheel') {
+        const deltaY = typeof data.deltaY === 'number' && Number.isFinite(data.deltaY) ? data.deltaY : 0;
+        const deltaX = typeof data.deltaX === 'number' && Number.isFinite(data.deltaX) ? data.deltaX : 0;
+        const scrollContainer = findScrollContainer(iframeRef.current);
+        if (scrollContainer && (deltaY || deltaX)) {
+          scrollContainer.scrollBy({ top: deltaY, left: deltaX, behavior: 'auto' });
+          postParentViewport();
+        }
         return;
       }
     }
@@ -280,6 +418,17 @@ export function HtmlIframePreview({
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [minHeight]);
+
+  useEffect(() => {
+    postParentViewport();
+    const onViewportChange = () => postParentViewport();
+    window.addEventListener('scroll', onViewportChange, { passive: true });
+    window.addEventListener('resize', onViewportChange);
+    return () => {
+      window.removeEventListener('scroll', onViewportChange);
+      window.removeEventListener('resize', onViewportChange);
+    };
+  }, [height, html]);
 
   if (!html.trim()) {
     return (
@@ -296,6 +445,7 @@ export function HtmlIframePreview({
       srcDoc={buildSrcdoc(html)}
       sandbox={SANDBOX_POLICY}
       scrolling="no"
+      onLoad={postParentViewport}
       style={{ width: "100%", height: `${height}px`, border: "none", overflow: "hidden" }}
       title="HTML Preview"
     />
