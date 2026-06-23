@@ -309,6 +309,18 @@ function resolveHeaderOffset(): number {
   return 80;
 }
 
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  let node = element?.parentElement ?? null;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+    if (canScrollY) return node;
+    node = node.parentElement;
+  }
+  const doc = document.scrollingElement as HTMLElement | null;
+  return doc && doc.scrollHeight > doc.clientHeight + 1 ? doc : null;
+}
+
 export function HtmlIframePreview({
   html,
   emptyText = "Вставьте HTML-код",
@@ -369,17 +381,33 @@ export function HtmlIframePreview({
           ? data.targetOffsetTop
           : 0;
         try {
-          const rect = iframeRef.current.getBoundingClientRect();
+          const iframe = iframeRef.current;
+          const rect = iframe.getBoundingClientRect();
+          const scrollContainer = findScrollContainer(iframe);
+          const containerRect = scrollContainer?.getBoundingClientRect();
+          const containerScrollTop = scrollContainer?.scrollTop ?? (window.pageYOffset || document.documentElement.scrollTop || 0);
           const headerOffset = resolveHeaderOffset();
           const top = Math.max(
             0,
-            rect.top + (window.pageYOffset || document.documentElement.scrollTop || 0)
+            rect.top - (containerRect?.top ?? 0) + containerScrollTop
               + targetOffsetTop
               - headerOffset
               - 12
           );
-          window.scrollTo({ top, behavior: 'smooth' });
+          if (scrollContainer) scrollContainer.scrollTo({ top, behavior: 'smooth' });
+          else window.scrollTo({ top, behavior: 'smooth' });
         } catch {}
+        return;
+      }
+
+      if (data.type === 'iframe-wheel') {
+        const deltaY = typeof data.deltaY === 'number' && Number.isFinite(data.deltaY) ? data.deltaY : 0;
+        const deltaX = typeof data.deltaX === 'number' && Number.isFinite(data.deltaX) ? data.deltaX : 0;
+        const scrollContainer = findScrollContainer(iframeRef.current);
+        if (scrollContainer && (deltaY || deltaX)) {
+          scrollContainer.scrollBy({ top: deltaY, left: deltaX, behavior: 'auto' });
+          postParentViewport();
+        }
         return;
       }
     }
