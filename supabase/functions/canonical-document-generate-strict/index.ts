@@ -829,8 +829,51 @@ Deno.serve(async (req) => {
     const recipientTokensOutsideContext: string[] = [];
     const recipientTokensWithoutContext: string[] = [];
     const unknownRecipientFields: string[] = [];
+    // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a
+    const parsedTableRepeatTokens: Array<{ raw_inside: string; tr_id: string }> = [];
+    const tableRepeatTokensOutsideContext: string[] = [];
+    const parsedLnCustomTokens: LnCustomTokenRequest[] = [];
+    const lnCustomTokensOutsideContext: string[] = [];
+    const lnCustomTokensInvalidModifier: string[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
+
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4: {{tableRepeat:TR-XXXXXX}}
+      if (TABLE_REPEAT_PREFIX_RE.test(inside)) {
+        const trMatch = inside.match(TABLE_REPEAT_TOKEN_RE);
+        if (!trMatch) {
+          // Префикс правильный, но с модификаторами/мусором → unknown_modifier.
+          unknownModifierTokens.push(`{{${inside}}}`);
+          continue;
+        }
+        if (generationContext !== 'package_session') {
+          tableRepeatTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        parsedTableRepeatTokens.push({ raw_inside: inside, tr_id: trMatch[1] });
+        continue;
+      }
+
+      // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4a: {{ln-XXXXXX.custom.<key>}}
+      if (LN_CUSTOM_PREFIX_RE.test(inside)) {
+        const lcMatch = inside.match(LN_CUSTOM_TOKEN_RE);
+        if (!lcMatch) {
+          // ln-X.custom.<key>|<mod> → v1 запрещает модификаторы.
+          lnCustomTokensInvalidModifier.push(`{{${inside}}}`);
+          continue;
+        }
+        if (generationContext !== 'package_session') {
+          lnCustomTokensOutsideContext.push(`{{${inside}}}`);
+          continue;
+        }
+        parsedLnCustomTokens.push({
+          raw_inside: inside,
+          ln_public_id: lcMatch[1],
+          custom_key: lcMatch[2],
+        });
+        continue;
+      }
+
 
       // 1) Legacy package-role syntaxes ({{package.role.PKR-…}}, {{package.roles.<key>.*}})
       //    are forbidden everywhere — canonical роль теперь {{ln-XXXXXX}}.
