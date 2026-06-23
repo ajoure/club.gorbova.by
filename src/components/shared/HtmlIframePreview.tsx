@@ -174,7 +174,9 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
         el.setAttribute('data-lovable-fixed-overlay', '1');
         el.style.setProperty('position', 'absolute', 'important');
         el.style.setProperty('top', visibleTop + 'px', 'important');
-        el.style.setProperty('left', Math.max(0, parentViewport.left || 0) + 'px', 'important');
+        var htmlRect = document.documentElement.getBoundingClientRect ? document.documentElement.getBoundingClientRect() : { left: 0 };
+        var localLeft = Math.max(0, (parentViewport.left || 0) - (htmlRect.left || 0));
+        el.style.setProperty('left', localLeft + 'px', 'important');
         el.style.setProperty('right', 'auto', 'important');
         el.style.setProperty('bottom', 'auto', 'important');
         el.style.setProperty('width', Math.max(320, parentViewport.width || document.documentElement.clientWidth || window.innerWidth || 320) + 'px', 'important');
