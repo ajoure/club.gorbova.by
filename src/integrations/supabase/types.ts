@@ -1350,6 +1350,119 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_resource: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          label: string
+          metadata: Json
+          public_id: string
+          route: string
+          section_id: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          label: string
+          metadata?: Json
+          public_id?: string
+          route: string
+          section_id: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          metadata?: Json
+          public_id?: string
+          route?: string
+          section_id?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_resource_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "admin_section"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      admin_section: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          group_code: string | null
+          icon: string | null
+          id: string
+          is_active: boolean
+          label: string
+          metadata: Json
+          public_id: string
+          route_prefix: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          group_code?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          label: string
+          metadata?: Json
+          public_id?: string
+          route_prefix: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          group_code?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          metadata?: Json
+          public_id?: string
+          route_prefix?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
       ai_admin_notifications: {
         Row: {
           bot_id: string | null
@@ -16807,6 +16920,10 @@ export type Database = {
           profile_id: string
           user_id: string
         }[]
+      }
+      generate_admin_catalog_public_id: {
+        Args: { _prefix: string }
+        Returns: string
       }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
