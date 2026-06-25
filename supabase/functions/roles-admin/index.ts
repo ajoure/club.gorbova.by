@@ -16,6 +16,13 @@ interface ResourceAccessInput {
   accessLevel: "manage" | "edit" | "view" | "none";
 }
 
+interface PreviewChange {
+  kind: "section" | "resource";
+  sectionCode: string;
+  resourceCode?: string;
+  accessLevel: "manage" | "edit" | "view" | "none";
+}
+
 interface RolesAdminRequest {
   action:
     | "assign_role"
@@ -27,7 +34,10 @@ interface RolesAdminRequest {
     | "set_section_access"
     | "set_resource_access"
     | "bulk_set_section_access"
-    | "sync_menu_registry";
+    | "sync_menu_registry"
+    | "list_catalog"
+    | "get_role_access"
+    | "preview_access_change";
   userId?: string;
   roleCode?: string;
   roleId?: string;
@@ -42,9 +52,12 @@ interface RolesAdminRequest {
   accessLevel?: "manage" | "edit" | "view" | "none";
   sectionAccess?: SectionAccessInput[];
   resourceAccess?: ResourceAccessInput[];
+  // preview_access_change:
+  changes?: PreviewChange[];
   // sync_menu_registry:
   menuPayload?: unknown;
 }
+
 
 async function sendRoleChangeEmail(
   supabaseUrl: string,
