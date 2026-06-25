@@ -55,6 +55,7 @@ import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { AddEmployeeDialog } from "@/components/admin/AddEmployeeDialog";
 import { RoleCard } from "@/components/admin/RoleCard";
 import { RolePermissionEditor } from "@/components/admin/RolePermissionEditor";
+import { RoleAccessEditor } from "@/components/admin/roles/RoleAccessEditor";
 import { RoleTemplateSelector } from "@/components/admin/RoleTemplateSelector";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
