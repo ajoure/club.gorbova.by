@@ -8,6 +8,8 @@ import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
 import { useUnmappedProductsCount } from "@/hooks/useUnmappedProductsCount";
 import { useAdminMenuSettings, MENU_ICONS, MenuItem, MenuGroup } from "@/hooks/useAdminMenuSettings";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
+import { resolveAdminSectionForPath } from "@/lib/adminMenuRegistry";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sidebar,
@@ -53,7 +55,8 @@ export function AdminSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { hasPermission, hasAnyPermission, isSuperAdmin } = useRbac();
+  const { isSuperAdmin } = useRbac();
+  const adminAccess = useAdminAccess();
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
   const { data: unmappedProductsCount = 0 } = useUnmappedProductsCount();
@@ -140,19 +143,20 @@ export function AdminSidebar() {
 
   const { firstName, lastName } = getNameParts();
 
-  // Permission mappings for menu items
-  const permissionMap: Record<string, boolean> = {
-    "users.view": hasAnyPermission(["users.view", "users.update", "users.block", "users.delete"]),
-    "roles.view": hasAnyPermission(["roles.view", "roles.manage", "admins.manage"]),
-    "entitlements.view": hasAnyPermission(["entitlements.view", "entitlements.manage"]),
-    "content.view": hasAnyPermission(["content.view", "content.edit", "content.publish"]),
-    "audit.view": hasPermission("audit.view"),
-  };
-
-  // Check if user has permission for a menu item
+  // RBAC v3: проверка через каталог секций (admin_section) + get_admin_access.
+  // permissionMap полностью удалён. Единственный bypass — kill-switch
+  // app_settings.admin_section_gating_enabled или роли super_admin/admin
+  // (обрабатывается внутри useAdminAccess).
   const hasMenuItemPermission = (item: MenuItem): boolean => {
-    if (!item.permission) return true;
-    return permissionMap[item.permission] ?? true;
+    // Резолвим секцию по пути пункта меню (надёжнее, чем item.id, т.к.
+    // item.id в DEFAULT_MENU совпадает с section.code, но могут быть кастомные пункты).
+    const resolved = resolveAdminSectionForPath(item.path);
+    if (resolved.kind === "open") return true;
+    if (resolved.kind === "unknown") {
+      // Незнакомый путь в кастомном меню — закрываем для не-админов.
+      return adminAccess.isSuperAdmin || adminAccess.isAdmin;
+    }
+    return adminAccess.canAccessSection(resolved.sectionCode!);
   };
 
   // Check if path is active
