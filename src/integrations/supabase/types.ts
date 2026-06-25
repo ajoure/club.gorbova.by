@@ -1350,6 +1350,119 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_resource: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          label: string
+          metadata: Json
+          public_id: string
+          route: string
+          section_id: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          label: string
+          metadata?: Json
+          public_id?: string
+          route: string
+          section_id: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          metadata?: Json
+          public_id?: string
+          route?: string
+          section_id?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_resource_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "admin_section"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      admin_section: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          group_code: string | null
+          icon: string | null
+          id: string
+          is_active: boolean
+          label: string
+          metadata: Json
+          public_id: string
+          route_prefix: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          group_code?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          label: string
+          metadata?: Json
+          public_id?: string
+          route_prefix: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          group_code?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          metadata?: Json
+          public_id?: string
+          route_prefix?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
       ai_admin_notifications: {
         Row: {
           bot_id: string | null
@@ -12175,6 +12288,120 @@ export type Database = {
         }
         Relationships: []
       }
+      role_admin_resource_access: {
+        Row: {
+          access_level: string
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json
+          public_id: string
+          resource_id: string
+          role_id: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          access_level: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          resource_id: string
+          role_id: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          access_level?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          resource_id?: string
+          role_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_admin_resource_access_resource_id_fkey"
+            columns: ["resource_id"]
+            isOneToOne: false
+            referencedRelation: "admin_resource"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_admin_resource_access_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      role_admin_section_access: {
+        Row: {
+          access_level: string
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json
+          public_id: string
+          role_id: string
+          section_id: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          access_level: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          role_id: string
+          section_id: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          access_level?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          role_id?: string
+          section_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_admin_section_access_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_admin_section_access_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "admin_section"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       role_permissions: {
         Row: {
           created_at: string
@@ -16477,6 +16704,15 @@ export type Database = {
         Args: { _template_id: string }
         Returns: Json
       }
+      assert_admin_self_role_lock: {
+        Args: {
+          _access_level: string
+          _actor: string
+          _role_id: string
+          _section_code: string
+        }
+        Returns: undefined
+      }
       backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
         Args: {
@@ -16808,12 +17044,25 @@ export type Database = {
           user_id: string
         }[]
       }
+      generate_admin_catalog_public_id: {
+        Args: { _prefix: string }
+        Returns: string
+      }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
       get_acquiring_secret: {
         Args: { p_account_code: string; p_kind: string; p_provider: string }
         Returns: string
+      }
+      get_admin_access: {
+        Args: { _user_id: string }
+        Returns: {
+          access_level: string
+          resource_code: string
+          section_code: string
+          source: string
+        }[]
       }
       get_admin_payment_links_v1: {
         Args: { p_limit?: number; p_since?: string }
@@ -17647,6 +17896,17 @@ export type Database = {
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
         Returns: boolean
+      }
+      sync_admin_menu_registry: {
+        Args: { _payload: Json }
+        Returns: {
+          resources_added: number
+          resources_disabled: number
+          resources_updated: number
+          sections_added: number
+          sections_disabled: number
+          sections_updated: number
+        }[]
       }
       tariff_archive: { Args: { p_tariff_id: string }; Returns: Json }
       tariff_delete_safety_check: {
