@@ -12288,6 +12288,120 @@ export type Database = {
         }
         Relationships: []
       }
+      role_admin_resource_access: {
+        Row: {
+          access_level: string
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json
+          public_id: string
+          resource_id: string
+          role_id: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          access_level: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          resource_id: string
+          role_id: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          access_level?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          resource_id?: string
+          role_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_admin_resource_access_resource_id_fkey"
+            columns: ["resource_id"]
+            isOneToOne: false
+            referencedRelation: "admin_resource"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_admin_resource_access_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      role_admin_section_access: {
+        Row: {
+          access_level: string
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json
+          public_id: string
+          role_id: string
+          section_id: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          access_level: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          role_id: string
+          section_id: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          access_level?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          public_id?: string
+          role_id?: string
+          section_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_admin_section_access_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_admin_section_access_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "admin_section"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       role_permissions: {
         Row: {
           created_at: string
