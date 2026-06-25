@@ -55,6 +55,7 @@ import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { AddEmployeeDialog } from "@/components/admin/AddEmployeeDialog";
 import { RoleCard } from "@/components/admin/RoleCard";
 import { RolePermissionEditor } from "@/components/admin/RolePermissionEditor";
+import { RoleAccessEditor } from "@/components/admin/roles/RoleAccessEditor";
 import { RoleTemplateSelector } from "@/components/admin/RoleTemplateSelector";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
@@ -380,6 +381,12 @@ export default function AdminRoles() {
             >
               Роли и права
             </TabsTrigger>
+            <TabsTrigger
+              value="access"
+              className="data-[state=active]:bg-primary/15 data-[state=active]:text-primary rounded-lg px-4 py-2 text-sm transition-all"
+            >
+              Доступ к разделам
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -683,6 +690,10 @@ export default function AdminRoles() {
               </Table>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="access" className="mt-4">
+          <RoleAccessEditor />
         </TabsContent>
       </Tabs>
 
