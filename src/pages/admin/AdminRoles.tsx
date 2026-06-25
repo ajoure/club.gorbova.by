@@ -380,6 +380,12 @@ export default function AdminRoles() {
             >
               Роли и права
             </TabsTrigger>
+            <TabsTrigger
+              value="access"
+              className="data-[state=active]:bg-primary/15 data-[state=active]:text-primary rounded-lg px-4 py-2 text-sm transition-all"
+            >
+              Доступ к разделам
+            </TabsTrigger>
           </TabsList>
         </div>
 
