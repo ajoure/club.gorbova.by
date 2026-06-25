@@ -118,9 +118,12 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
  * Маршруты, открытые любому залогиненному админу/супер-админу
  * (системные утилиты, не закреплённые ни за одной секцией).
  * Эти пути НЕ участвуют в section-gating.
+ *
+ * ВАЖНО: "/admin" умышленно НЕ входит сюда — иначе любой /admin/* путь
+ * матчился бы как open и обходил RBAC v3 (frontend gating bug 2026-06-25).
+ * Root /admin резолвится отдельной веткой ниже (exact match).
  */
 const ADMIN_OPEN_PATHS: readonly string[] = [
-  "/admin",                            // root redirect
   "/admin/audit",
   "/admin/system",                     // /admin/system/audit и т.д.
   "/admin/system-health",
@@ -151,12 +154,18 @@ export function resolveAdminSectionForPath(pathname: string): ResolvedAdminRoute
     return { kind: "unknown" };
   }
 
+  // Root /admin — open (редирект на первую доступную секцию делает AdminRouteGuard).
+  if (pathname === "/admin" || pathname === "/admin/") {
+    return { kind: "open" };
+  }
+
   // Точные совпадения / системные открытые пути
   for (const p of ADMIN_OPEN_PATHS) {
     if (pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?")) {
       return { kind: "open" };
     }
   }
+
 
   // longest-prefix match по секциям (учитывая altPrefixes)
   let best: { section: AdminSectionDef; prefix: string } | null = null;
