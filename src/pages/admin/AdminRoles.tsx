@@ -690,6 +690,10 @@ export default function AdminRoles() {
             </div>
           )}
         </TabsContent>
+
+        <TabsContent value="access" className="mt-4">
+          <RoleAccessEditor />
+        </TabsContent>
       </Tabs>
 
       {/* Add Employee Dialog */}
