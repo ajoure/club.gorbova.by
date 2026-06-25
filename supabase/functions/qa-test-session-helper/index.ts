@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
     const callerId = claims.claims.sub as string;
 
     // 2. Caller must be super_admin
-    const { data: isSuper } = await admin.rpc("has_role_v2", { _user_id: callerId, _role: "super_admin" });
+    const { data: isSuper } = await admin.rpc("has_role_v2", { _user_id: callerId, _role_code: "super_admin" });
     if (!isSuper) return json({ error: "forbidden_not_super_admin" }, 403);
 
     const body = req.method === "GET" ? {} : await req.json().catch(() => ({}));
