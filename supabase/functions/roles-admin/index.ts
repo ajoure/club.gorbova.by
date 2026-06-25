@@ -1005,6 +1005,171 @@ serve(async (req: Request): Promise<Response> => {
         });
       }
 
+      // ─────────────────────────────────────────────────────────
+      // RBAC v3: read-only endpoints для UI-редактора
+      // ─────────────────────────────────────────────────────────
+      case "list_catalog": {
+        if (!(await hasPermission("roles.manage")) && !(await isActorSuperAdmin())) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: sections, error: sErr } = await supabaseAdmin
+          .from("admin_section")
+          .select("id, code, label, group_code, route_prefix, sort_order")
+          .eq("is_active", true)
+          .order("sort_order");
+        if (sErr) {
+          return new Response(JSON.stringify({ error: sErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: resources, error: rErr } = await supabaseAdmin
+          .from("admin_resource")
+          .select("id, section_id, code, label, route, sort_order")
+          .eq("is_active", true)
+          .order("sort_order");
+        if (rErr) {
+          return new Response(JSON.stringify({ error: rErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: roles, error: rolesErr } = await supabaseAdmin
+          .from("roles")
+          .select("id, code, name, description")
+          .order("code");
+        if (rolesErr) {
+          return new Response(JSON.stringify({ error: rolesErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const SYSTEM_ROLE_CODES = new Set(["super_admin", "admin", "user", "support", "editor"]);
+        const rolesWithFlags = (roles ?? []).map((r) => ({
+          ...r,
+          is_system: SYSTEM_ROLE_CODES.has(r.code),
+          // super_admin абсолютно неприкосновенен; admin изменяет только super_admin
+          is_editable: r.code !== "super_admin",
+        }));
+        return new Response(JSON.stringify({
+          success: true,
+          sections: sections ?? [],
+          resources: resources ?? [],
+          roles: rolesWithFlags,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      case "get_role_access": {
+        if (!roleId) {
+          return new Response(JSON.stringify({ error: "roleId required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (!(await hasPermission("roles.manage")) && !(await isActorSuperAdmin())) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: secRows, error: secErr } = await supabaseAdmin
+          .from("role_admin_section_access")
+          .select("section_id, access_level, admin_section!inner(code)")
+          .eq("role_id", roleId);
+        if (secErr) {
+          return new Response(JSON.stringify({ error: secErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: resRows, error: resErr } = await supabaseAdmin
+          .from("role_admin_resource_access")
+          .select("resource_id, access_level, admin_resource!inner(code, admin_section!inner(code))")
+          .eq("role_id", roleId);
+        if (resErr) {
+          return new Response(JSON.stringify({ error: resErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const sections = (secRows ?? []).map((r: any) => ({
+          section_code: r.admin_section.code,
+          access_level: r.access_level,
+        }));
+        const resources = (resRows ?? []).map((r: any) => ({
+          section_code: r.admin_resource.admin_section.code,
+          resource_code: r.admin_resource.code,
+          access_level: r.access_level,
+        }));
+        return new Response(JSON.stringify({ success: true, sections, resources }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "preview_access_change": {
+        if (!roleId || !Array.isArray(body.changes)) {
+          return new Response(JSON.stringify({ error: "roleId and changes[] required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (!(await hasPermission("roles.manage")) && !(await isActorSuperAdmin())) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: roleRow } = await supabaseAdmin
+          .from("roles").select("code").eq("id", roleId).single();
+        if (!roleRow) {
+          return new Response(JSON.stringify({ error: "Role not found" }), {
+            status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const violations: Array<{ kind: string; sectionCode: string; resourceCode?: string; reason: string }> = [];
+        if (roleRow.code === "super_admin") {
+          violations.push({ kind: "system_role_protected", sectionCode: "*", reason: "SUPER_ADMIN_PROTECTED" });
+        }
+        const actorIsSuper = await isActorSuperAdmin();
+        if (roleRow.code === "admin" && !actorIsSuper) {
+          violations.push({ kind: "system_role_protected", sectionCode: "*", reason: "Only super_admin can modify admin role" });
+        }
+        // Self-lock проверка через ту же RPC, но без записи
+        for (const ch of body.changes) {
+          if (ch.kind === "section") {
+            const { error: lockErr } = await supabaseAdmin.rpc("assert_admin_self_role_lock", {
+              _actor: actorUserId, _role_id: roleId,
+              _section_code: ch.sectionCode, _access_level: ch.accessLevel,
+            });
+            if (lockErr) {
+              violations.push({
+                kind: "self_lock",
+                sectionCode: ch.sectionCode,
+                reason: lockErr.message,
+              });
+            }
+          }
+        }
+        // Текущее состояние (before)
+        const { data: secRows } = await supabaseAdmin
+          .from("role_admin_section_access")
+          .select("access_level, admin_section!inner(code)")
+          .eq("role_id", roleId);
+        const { data: resRows } = await supabaseAdmin
+          .from("role_admin_resource_access")
+          .select("access_level, admin_resource!inner(code, admin_section!inner(code))")
+          .eq("role_id", roleId);
+        const before = {
+          sections: (secRows ?? []).map((r: any) => ({ section_code: r.admin_section.code, access_level: r.access_level })),
+          resources: (resRows ?? []).map((r: any) => ({
+            section_code: r.admin_resource.admin_section.code,
+            resource_code: r.admin_resource.code,
+            access_level: r.access_level,
+          })),
+        };
+        return new Response(JSON.stringify({
+          success: true,
+          roleCode: roleRow.code,
+          canApply: violations.length === 0,
+          violations,
+          changesCount: body.changes.length,
+          before,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       default:
         return new Response(JSON.stringify({ error: "Unknown action" }), {
           status: 400,
