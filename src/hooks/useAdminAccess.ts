@@ -160,6 +160,16 @@ export function useAdminAccess(): AdminAccessApi {
         gatingEnabled,
         sectionEntries: Array.from(sections.entries()),
         resourceEntries: Array.from(resources.entries()).map(([s, m]) => [s, Array.from(m.entries())]),
+        probe: {
+          documents: canAccessSection("documents"),
+          products: canAccessSection("products"),
+          roles: canAccessSection("roles"),
+          communication: canAccessSection("communication"),
+          pathProducts: canAccessPath("/admin/products-v2"),
+          pathRoles: canAccessPath("/admin/roles"),
+          pathDocuments: canAccessPath("/admin/documents"),
+          pathCommunication: canAccessPath("/admin/communication"),
+        },
       };
     }
     return api;
