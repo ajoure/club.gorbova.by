@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { Loader2 } from "lucide-react";
 import { saveLastRoute } from "@/hooks/useLastRoute";
+import { AdminRouteGuard } from "./AdminRouteGuard";
 
 /**
  * ProtectedRoute — deterministic state matrix:
@@ -81,6 +82,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Banned check from canonical bootstrap profile — no separate profiles query
   if (bootstrapReady && profile?.status === "banned") {
     return <Navigate to="/banned" replace />;
+  }
+
+  // RBAC v3: deny-by-default для всех /admin/* маршрутов.
+  if (location.pathname.startsWith("/admin")) {
+    return <AdminRouteGuard>{children}</AdminRouteGuard>;
   }
 
   return <>{children}</>;
