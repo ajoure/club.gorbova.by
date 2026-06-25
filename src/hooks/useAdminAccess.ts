@@ -136,7 +136,7 @@ export function useAdminAccess(): AdminAccessApi {
       return canAccessSection(r.sectionCode!, min);
     };
 
-    return {
+    const api = {
       isLoading: !!user?.id && isLoading,
       isSuperAdmin,
       isAdmin,
@@ -149,5 +149,19 @@ export function useAdminAccess(): AdminAccessApi {
       canAccessResource,
       canAccessPath,
     };
+    // TEMP DEBUG (RBAC v3 frontend gating proof) — pushes flat state to window
+    if (typeof window !== "undefined") {
+      (window as any).__ADMIN_ACCESS_DEBUG__ = {
+        userId: user?.id ?? null,
+        isLoading: api.isLoading,
+        isSuperAdmin,
+        isAdmin,
+        bypass,
+        gatingEnabled,
+        sectionEntries: Array.from(sections.entries()),
+        resourceEntries: Array.from(resources.entries()).map(([s, m]) => [s, Array.from(m.entries())]),
+      };
+    }
+    return api;
   }, [data, isLoading, user?.id, isSuperAdmin, isAdmin]);
 }
