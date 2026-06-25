@@ -16704,6 +16704,15 @@ export type Database = {
         Args: { _template_id: string }
         Returns: Json
       }
+      assert_admin_self_role_lock: {
+        Args: {
+          _access_level: string
+          _actor: string
+          _role_id: string
+          _section_code: string
+        }
+        Returns: undefined
+      }
       backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
         Args: {
@@ -17045,6 +17054,15 @@ export type Database = {
       get_acquiring_secret: {
         Args: { p_account_code: string; p_kind: string; p_provider: string }
         Returns: string
+      }
+      get_admin_access: {
+        Args: { _user_id: string }
+        Returns: {
+          access_level: string
+          resource_code: string
+          section_code: string
+          source: string
+        }[]
       }
       get_admin_payment_links_v1: {
         Args: { p_limit?: number; p_since?: string }
@@ -17878,6 +17896,17 @@ export type Database = {
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
         Returns: boolean
+      }
+      sync_admin_menu_registry: {
+        Args: { _payload: Json }
+        Returns: {
+          resources_added: number
+          resources_disabled: number
+          resources_updated: number
+          sections_added: number
+          sections_disabled: number
+          sections_updated: number
+        }[]
       }
       tariff_archive: { Args: { p_tariff_id: string }; Returns: Json }
       tariff_delete_safety_check: {
