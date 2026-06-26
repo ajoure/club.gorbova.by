@@ -67,6 +67,22 @@ export function useAdminRoles() {
     fetchRoles();
   }, [fetchRoles]);
 
+  // Sync: когда RoleAccessEditor создаёт/удаляет роль через roles-admin,
+  // он инвалидирует ["roles-admin","catalog"]. Подхватываем это и обновляем локальный список ролей
+  // без перезагрузки страницы.
+  const qc = useQueryClient();
+  useEffect(() => {
+    const unsub = qc.getQueryCache().subscribe((event: any) => {
+      const key = event?.query?.queryKey;
+      if (Array.isArray(key) && key[0] === "roles-admin" && key[1] === "catalog") {
+        if (event.type === "updated" || event.type === "added") {
+          fetchRoles();
+        }
+      }
+    });
+    return () => { unsub(); };
+  }, [qc, fetchRoles]);
+
   const assignRole = async (userId: string, roleCode: string): Promise<boolean> => {
     try {
       const response = await supabase.functions.invoke("roles-admin", {
