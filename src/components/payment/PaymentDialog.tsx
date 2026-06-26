@@ -1399,8 +1399,9 @@ export function PaymentDialog({
               </div>
             )}
 
-            {/* PAY-I: subscription-info — 2 короткие строки + штатное упоминание bePaid */}
-            {(isSubscription || isTrial) && (
+            {/* PAY-I: subscription-info — показываем ТОЛЬКО для реальных подписок, не для trial.
+                Для trial рендерится отдельный «Демо-доступ» блок выше с динамикой из настроек оффера. */}
+            {isSubscription && !isTrial && (
               <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
                 <p className="font-medium text-foreground">
                   {subscriptionMessage?.title || (isClubProduct ? "Подписка на Клуб" : "Ежемесячная подписка")}
@@ -1415,11 +1416,9 @@ export function PaymentDialog({
                 <p className="text-muted-foreground">
                   Далее автосписание раз в месяц. Управление в личном кабинете.
                 </p>
-                {isSubscription && !isTrial && (
-                  <p className="text-xs text-muted-foreground/80 pt-1">
-                    bePaid может показать экран «привязка карты для автоплатежей» — это штатный экран оформления подписки.
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground/80 pt-1">
+                  bePaid может показать экран «привязка карты для автоплатежей» — это штатный экран оформления подписки.
+                </p>
               </div>
             )}
 
