@@ -1465,7 +1465,7 @@ export function PaymentDialog({
             )}
 
             {/* PAY-I: сохранённые карты при subscription/trial — disabled, info-only */}
-            {savedCards.length > 0 && !isOneTimeFlow && (
+            {savedCards.length > 0 && !isOneTimeFlow && isSubscription && !isTrial && (
               <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Сохранённые карты</p>
                 <div className="space-y-1.5 opacity-60 pointer-events-none select-none" aria-disabled="true">
