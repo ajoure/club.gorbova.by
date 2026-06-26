@@ -213,7 +213,7 @@ export function TariffCard({
         </ul>
       )}
 
-      {showButtons && hasActivePayOffers && (
+      {showButtons && hasAnyActionableOffer && (
         <div className="space-y-2 mt-auto">
           {trialOffers.map((offer) => (
             <Button
