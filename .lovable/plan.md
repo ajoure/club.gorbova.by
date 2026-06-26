@@ -1,178 +1,260 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Добавить в начало корректный заголовок**
-  &nbsp;
-  Сейчас план начинается правильно по смыслу, но нужно оставить строго:
-2. **Не выполнять реальную отправку сообщения реальному клиенту без отдельного подтверждения**
-  &nbsp;
-  В `send_message` proof сначала использовать:
-  - dry-run/validation branch, если есть;
-  - либо тестовый Telegram-контакт;
-  - либо только runtime-вызов до Telegram API, если можно доказать RBAC и bot readiness без фактической отправки.
-  Если тест всё же отправляет сообщение реальному контакту, текст должен быть нейтральным, например:
-3. **Обязательно проверить stale deploy как первый вариант**
-  До правки кода:
-  - сравнить deployed edge version / timestamp;
-  - проверить, есть ли в runtime-логах новые поля `hasCommView/hasCommManage`;
-  - если runtime всё ещё старый — сначала redeploy `telegram-admin-chat`, затем повторный proof.
-4. **Разделить две проблемы в отчёте**
-  &nbsp;
-  В финальном отчёте отдельно:
-  - `get_messages`: почему не отображалась история;
-  - `send_message`: почему был generic toast.
-  Не смешивать системные события из `telegram_logs` с реальными сообщениями из `telegram_messages`.
-5. **Для истории сообщений проверить не только edge, но и frontend merge/render**
-  Даже если `get_messages` возвращает 29 строк, нужно проверить:
-  - приходят ли они в `ContactTelegramChat.tsx`;
-  - не отбрасываются ли при merge с `telegram_logs`;
-  - не скрываются ли из-за `message_type`, `direction`, `created_at`, `is_admin_message`;
-  - не ломается ли сортировка.
-6. **RBAC actor при impersonation — критично**
-  &nbsp;
-  В `telegram-admin-chat` нужно явно доказать:
-  - кто является `auth.uid()` в edge;
-  - это admin actor или impersonated user;
-  - RBAC-проверка должна применяться к правильному субъекту.
-  Если action выполняется из impersonation-сессии пользователя `1@ajoure.by`, у него есть `communication=manage`, это допустимо. Если action должен выполняться от имени администратора — нужно зафиксировать текущую модель.
-7. **View-only proof не делать “по матрице” вместо runtime**
-  Для security-fix нужен реальный runtime proof:
-  - view-only роль вызывает `get_messages` → 200;
-  - view-only роль вызывает `send_message` → 403 `communication:manage required`.
-  Если нет готовой view-only роли, создать временную `qa.*@gorbova.test` роль через уже существующий helper и удалить/очистить после теста.
-8. **Generic toast нужно чинить даже если Telegram API реально вернул ошибку**
-  Требование: пользователь должен видеть конкретную причину:
-  - `communication:manage required`;
-  - `bot was blocked`;
-  - `chat not found`;
-  - `Forbidden`;
-  - `Telegram API unavailable`.
-  Не оставлять «Функция временно недоступна» для известных edge/API ошибок.
-9. **Не писать секреты в** `telegram_logs`
-  При логировании ошибок Telegram:
-  - не писать bot token;
-  - не писать Authorization headers;
-  - не писать service role key/JWT;
-  - можно писать `bot_id`, `action`, `telegram_error_code`, `telegram_description`, `user_id`.
-10. **Если меняется edge response contract — проверить frontend callers**
+1. **Расширить scope по card tokenization глобально**
 
-Если `telegram-admin-chat` начнёт возвращать `{ ok:false, error_code, description }`, проверить все вызовы:
-
-- `send_message`;
-- `edit_message`;
-- `delete_message`;
-- `get_messages`;
-- media actions.
-
-Чтобы не сломать существующие success-path.
-
-11. **DoD дополнить network proof**
-
-В отчёте показать для `get_messages` и `send_message`:
-
-- request action;
-- HTTP status;
-- response body без секретов;
-- frontend toast/result.
-
-12. **После ремонта вернуться к общему треку**
-
-В финальном отчёте явно указать:
+Не ограничиваться только оффером:
 
 ```text
-telegram-admin-chat runtime: PASS
-AdminContacts noAccount runtime: pending/pass
-Club membership runtime: pending/pass
-PATCH-RBAC-V3-DATA-RUNTIME-FIX: продолжить / закрыть
+offer_id = 891c7fe0-eb9d-4853-a1d5-bb69d688c801
 ```
+
+Нужно добавить отдельный блок:
+
+```text
+PATCH: disable card tokenization / saved-card requirement globally
+```
+
+Цель: убрать обязательную привязку карты из всех новых и текущих флоу оплаты, если она не является реально используемым платежным механизмом.
+
+2. **Проверить фактическую модель card binding / MIT**
+
+Перед изменениями обязательно сделать read-only discovery:
+
+- где используется `requires_card_tokenization`;
+- есть ли поля типа:
+  - `requires_card_tokenization`
+  - `save_card`
+  - `card_token_required`
+  - `tokenization_required`
+  - `recurring_token`
+  - `mit`
+  - `customer_payment_method`
+- какие edge-функции читают эти поля:
+  - bePaid checkout;
+  - Stripe checkout;
+  - public payment links;
+  - PaymentDialog;
+  - ProductLanding;
+  - offer/tariff admin editor.
+
+3. **Зафиксировать новое правило**
+
+Добавить в план:
+
+```text
+Привязка карты не является обязательным условием покупки, trial-доступа, создания заказа или активации доступа.
+
+Если сохранённая карта когда-либо используется, это только optional convenience feature для уже авторизованного клиента, но не обязательный checkout step.
+
+MIT / auto-charge / tokenized card flow не используется как обязательный бизнес-флоу и должен быть выключен по умолчанию.
+```
+
+4. **Отключить обязательную токенизацию не только в одном оффере**
+
+Миграция должна сделать минимум:
+
+```sql
+update tariff_offers
+set requires_card_tokenization = false
+where coalesce(requires_card_tokenization, false) = true;
+```
+
+И дополнительно, если есть поля автосписания trial:
+
+```sql
+update tariff_offers
+set auto_charge_after_trial = false
+where coalesce(auto_charge_after_trial, false) = true;
+```
+
+Но только после проверки реальных колонок.
+
+5. **Запретить включение токенизации в UI создания/редактирования оффера**
+
+В админке офферов/кнопок оплаты:
+
+- убрать переключатель «обязательная привязка карты», если он есть;
+- либо оставить только как disabled/hidden deprecated;
+- при сохранении оффера всегда отправлять:
+  - `requires_card_tokenization=false`
+  - `auto_charge_after_trial=false`, если поле есть и относится к автосписанию.
+
+6. **Запретить backend принимать обязательную токенизацию из payload**
+
+Даже если frontend случайно отправит `requires_card_tokenization=true`, backend должен нормализовать:
+
+```text
+requires_card_tokenization=false
+```
+
+Иначе старые UI/скрипты смогут снова включить обязательную привязку.
+
+7. **PaymentDialog должен идти обычным checkout-флоу**
+
+Для trial-оффера:
+
+- не запрашивать карту;
+- не открывать tokenization/MIT flow;
+- создавать обычный order/trial activation;
+- grant-access-for-order выдаёт доступ по `access_rules`;
+- после 24 часов доступ истекает;
+- автоматического списания нет.
+
+8. **Уточнить формулировку про “MID”**
+
+В плане заменить:
+
+```text
+MIT-флоу с токенизацией карты
+```
+
+на более точное:
+
+```text
+обязательная токенизация / привязка карты для будущих списаний
+```
+
+Потому что по текущему бизнес-правилу нет отдельного обязательного MIT-платежного сценария; оплата должна идти через обычный bePaid или Stripe checkout.
+
+9. **Добавить DoD по глобальному отключению**
+
+В DoD добавить:
+
+- новый оффер создаётся с `requires_card_tokenization=false`;
+- существующие офферы после миграции имеют `requires_card_tokenization=false`;
+- trial-оффер открывается без запроса карты;
+- PaymentDialog не показывает обязательную привязку карты;
+- bePaid/Stripe обычные оплаты не сломаны;
+- сохранённая карта, если где-то отображается, не блокирует оплату и не является обязательной;
+- `auto_charge_after_trial=false` для trial, если такое поле есть.
+
+10. **Бридж iframe → PaymentDialog оставить**
+
+Сам bridge-план корректный:
+
+- iframe остаётся sandbox без `allow-same-origin`;
+- из HTML передаются только UUID;
+- host валидирует action и UUID;
+- открывается существующий `PaymentDialog`;
+- HTML snapshot перед миграцией обязателен.
+
+11. **Runtime smoke расширить**
+
+Добавить проверки:
+
+- trial guest flow без карты;
+- existing user flow без карты;
+- logged-in flow без карты;
+- обычная платная покупка через bePaid/Stripe не требует обязательной привязки карты;
+- trial не создаёт автосписание после 24 часов;
+- доступ выдан только к «База знаний», без вебинаров/эфиров.
 
 После этих правок план можно выполнять.
 
-&nbsp;
+дополни, что окно активации демо доступа должно быть в цветах и стиле существующего сайта по идеологии
 
-План: PATCH-RBAC-V3-TELEGRAM-RUNTIME-REPAIR
+Контекст и root cause
 
-1. **Проблема**
+На странице `ideologicheskaya-rabota` (SITE-000018, продукт PRD-000037 «Gorbova Club — идеология») три CTA-кнопки:
 
-- В `/admin/communication` под impersonation-пользователем `1@ajoure.by` отображаются системные Telegram-события, но не полноценная история переписки.
-- `send_message` сейчас даёт generic toast: «Функция временно недоступна…», вместо конкретной причины.
-- Scope фиксированный: только runtime коммуникаций Telegram; оставшиеся RPC не трогать.
+- «Разблокировать участие» (hero / блок поиска)
+- «Получить доступ к 600+ ответам» (нижний CTA)
+- «Участвовать» (карточки ответов экспертов)
 
-2. **Диагностика — факты на текущий момент**
+Сейчас они — статичный HTML внутри одного html-блока (block.type = `html`), который рендерится в **песочнице iframe без allow-same-origin** (`HtmlIframePreview`). Поэтому никакие прямые вызовы PaymentDialog/Supabase из HTML невозможны. Нужен мост: iframe → parent → открыть существующий `PaymentDialog` в режиме trial-оффера.
 
-- Frontend истории: `src/components/admin/ContactTelegramChat.tsx` вызывает `telegram-admin-chat` с body `{ action: "get_messages", user_id, limit: 50 }`.
-- Frontend событий: тот же компонент отдельно читает `telegram_logs` по `.eq("user_id", userId)`; поэтому системные события могут быть видны даже при проблемах `get_messages`.
-- Отправка: `ContactTelegramChat.tsx` вызывает `telegram-admin-chat` с body `{ action: "send_message", user_id, message, file, bot_id, reply_to_message_id }`.
-- Edge: `supabase/functions/telegram-admin-chat/index.ts` содержит read-set `get_messages/fetch_profile_photo/get_user_info/get_media_urls`; `send_message` не в read-set и обязан требовать `communication:manage`.
-- RBAC proof для `37e91f59-e4db-4840-b9c9-e760e634ddd1`: `get_admin_access(...)` возвращает `communication = manage`, а также `contacts/deals = manage`.
-- Данные proof: у профиля `1@ajoure.by` есть `telegram_user_id=7766693832`, `telegram_link_bot_id=1a560e98-574e-4fd9-82ab-4b7bbdc300b4`; в `telegram_messages` есть 29 записей, в `telegram_logs` 32 записи.
-- Бот proof: `gorbova support` активен, primary, token present.
-- Логи edge показывают старые runtime-deny строки `Access denied ... admin=false, superadmin=false` без поля `communication`; это указывает на риск, что deployed/runtime версия функции ещё не совпадает с локальным RBAC v3-кодом или логирование недостаточно различает ветки отказа.
+Целевой оффер уже существует:
 
-3. **Предлагаемое решение**
+- `tariff_id = 85863b4b-c5e4-4f43-884d-2bdbe48d3914` («Доступ к +600 ответов»)
+- `offer_id = 891c7fe0-eb9d-4853-a1d5-bb69d688c801` (trial, amount=0, trial_days=1, payment_method=full_payment)
+- CRM routing на оффере → воронка «Gorbova Club» (success-стадия `40325a3a…`)
+- `access_rules`: tariff даёт `section_access → База знаний`. Других доступов (тренинг/club/эфиры) у тарифа нет → требование «только база знаний, без вебинаров» выполняется автоматически через grant-access-for-order.
 
-- Сначала воспроизвести `get_messages` и `send_message` через edge-function runtime с реальным JWT/preview-сессией или через безопасный impersonation runtime-flow, чтобы получить фактические HTTP status и body.
-- В `telegram-admin-chat` сделать точечный repair:
-  - оставить `send_message` mutation-only и `communication:manage` gate;
-  - добавить явное структурированное логирование RBAC-ветки: actor id, action, hasAdmin, hasSuperAdmin, hasCommView, hasCommManage;
-  - для `send_message` возвращать конкретные ошибки Telegram API/body, а не позволять frontend сваливаться в generic `FunctionsHttpError`;
-  - обернуть `telegramRequest` так, чтобы сетевые/HTTP/JSON ошибки Telegram возвращали нормализованный объект `{ ok:false, error_code, description }` и писались в `telegram_logs`;
-  - не логировать и не возвращать bot token или секреты.
-- Во frontend `ContactTelegramChat.tsx` заменить sync-normalizer на async-normalizer для edge errors в отправке, чтобы body non-2xx не терялся и toast показывал конкретную причину (`communication:manage required`, `chat not found`, `bot was blocked`, `Forbidden`, etc.).
-- Для истории проверить, не отсекаются ли сообщения из-за `limit=50`, сортировки, join `profiles!telegram_messages_sent_by_admin_fkey`, RLS или несовпадения `user_id`; если root cause в edge fallback/join/RLS — исправить только эту ветку.
+Проблемная настройка оффера: `requires_card_tokenization = true`. Это включает MIT-флоу с токенизацией карты, что противоречит требованию «просто получает доступ на 24 часа без карты, как обычный заказ trial». Нужно выставить `false`.
 
-4. **Изменяемые компоненты**
+## План
 
-- `supabase/functions/telegram-admin-chat/index.ts` — точечная runtime-обработка ошибок, RBAC-логирование, конкретизация ответа `send_message`, проверка `get_messages`.
-- `src/components/admin/ContactTelegramChat.tsx` — точечная обработка async edge-error body для отправки/редактирования/удаления при необходимости.
-- Возможная migration только если диагностика докажет проблему в RLS/GRANT/policy для `telegram_messages`/`telegram_logs`; новые таблицы/RPC не создавать.
+### 1. Бридж iframe ↔ parent для site-action (инфраструктура)
 
-5. **Что не будет изменено**
+`src/components/shared/HtmlIframePreview.tsx`:
 
-- Не сканировать и не чинить «оставшиеся RPC».
-- Не менять Club membership patch.
-- Не менять AdminContacts noAccount patch.
-- Не менять роли, назначения ролей и общий RBAC registry.
-- Не создавать новые Telegram-таблицы, новые edge-functions или параллельный источник истории.
-- Не делать массовые UPDATE/DELETE.
+- Расширить `BRIDGE_SCRIPT`: в capture-обработчике клика, перед anchor-логикой, проверять элемент (и его предков до `A`/`BUTTON`) на атрибут `data-lovable-action`. Если найден:
+  - `ev.preventDefault(); ev.stopPropagation();`
+  - `parent.postMessage({ type: 'site-action', action: el.dataset.lovableAction, payload: { offer_id: el.dataset.offerId, product_id: el.dataset.productId, tariff_id: el.dataset.tariffId } }, '*')`.
+- В обработчике `handleMessage` родителя НЕ перехватывать `site-action` — пробросить через CustomEvent на `window` (`window.dispatchEvent(new CustomEvent('lovable:site-action', { detail }))`), чтобы host-страница могла подписаться без переписывания инфраструктуры.
 
-6. **Dry-run**
+Поддерживаемые действия (на этом этапе только одно): `open-offer` — открыть PaymentDialog для конкретного offer_id.
 
-- Прочитать текущие deployed logs `telegram-admin-chat` по `send_message/get_messages`.
-- Выполнить read-only SQL:
-  - `get_admin_access('37e91f59-e4db-4840-b9c9-e760e634ddd1')`;
-  - counts и последние строки `telegram_messages`, `telegram_logs` по этому user_id;
-  - active bot row для `gorbova support` без раскрытия token.
-- Вызвать `get_messages` безопасно и проверить, возвращает ли функция 29 сообщений или падает.
-- Для `send_message` сначала проверить RBAC/gate и bot/profile readiness; фактическую отправку выполнять только коротким тестовым сообщением, если runtime-тест допустим, иначе ограничиться функцией с dry-run/validation branch при наличии такой ветки.
+### 2. Host-обвязка: PaymentDialog на странице сайта
 
-7. **Execute**
+В компоненте, который рендерит публичные страницы (`SitePageView` / страница `/:slug` — найду в `src/pages/`, точка монтирования `SitePageRenderer`), добавить:
 
-- Внести минимальный patch в edge/frontend по доказанной причине.
-- Задеплоить только `telegram-admin-chat` после изменения edge-кода.
-- Не запускать миграцию без доказанного RLS/root cause.
+- `useState` для `pendingOffer: { offerId, productId } | null`.
+- `useEffect` с подпиской `window.addEventListener('lovable:site-action', ...)`:
+  - если `action === 'open-offer'` → загрузить product+tariff+offer (через существующий `usePublicProduct` по `productId`, найти оффер по `offerId`) и открыть PaymentDialog с пропсами `isTrial=true`, `trialDays=offer.trial_days`, `isSubscription=false`, `isClubProduct=true` (т.к. у продукта `telegram_club_id`).
+- Условный рендер `<PaymentDialog />` с теми же контрактами, что в `ProductLanding.tsx` (id-first, без эвристик).
 
-8. **STOP-guards**
+Для производительности: подгружать `public-product` лениво по первому клику, кэшировать в queryCache (`public-product-by-id`).
 
-- Остановиться без patch, если runtime уже работает после деплоя текущей версии и проблема была только stale deploy.
-- Остановиться перед любой миграцией, если rowcount/policy diff показывает неожиданные таблицы вне `telegram_messages`, `telegram_logs`, `telegram_bots`.
-- Остановиться перед фактическим `send_message`, если нет безопасной сессии manage-роли или тест может отправить сообщение реальному клиенту без подтверждённого тестового контакта.
-- Не выводить bot token, service key, JWT, полные секретные headers.
+### 3. Правка HTML-блока страницы
 
-9. **DoD**
+Через миграцию обновить `site_pages.blocks` для `id = 7e672fed-13f1-4ff1-8786-71a228a0c011`:
 
-- Отчёт строго с заголовком: `Отчет о выполненной работе: PATCH-RBAC-V3-TELEGRAM-RUNTIME-REPAIR`.
-- В отчёте есть root cause по истории сообщений.
-- В отчёте есть root cause по generic «Функция временно недоступна».
-- Указаны изменённые файлы.
-- Proof под `1@ajoure.by / Менеджер`:
-  - `communication = manage` подтверждён;
-  - история сообщений видна или edge `get_messages` возвращает ожидаемые строки;
-  - `send_message` работает или возвращает точную Telegram API ошибку без generic toast;
-  - view-only роль читает, но не отправляет;
-  - manage роль читает и отправляет/получает конкретную Telegram API ошибку.
+- Заменить три CTA на `<button type="button" data-lovable-action="open-offer" data-product-id="3ea08f79-afe8-4361-81fe-4c0f318f9a2b" data-offer-id="891c7fe0-eb9d-4853-a1d5-bb69d688c801" class="…">…</button>`:
+  - «Разблокировать участие» (hero)
+  - «Получить доступ к 600+ ответам» (нижний CTA)
+  - «Участвовать» в каждой карточке вопроса (текущая разметка их фиксирует — генерация карточек идёт скриптом, обновим шаблон карточки)
+- Перед PATCH-ом — снять снапшот текущего HTML в `.lovable/artifacts/site018_pre_demo_cta.html` (dry-run).
 
-10. **Риски и зависимости**
+### 4. Нормализация оффера
 
-- Если Telegram API реально запрещает отправку конкретному пользователю (`bot blocked`, `chat not found`, `Forbidden`), это не чинится кодом; нужно показать точный ответ API пользователю.
-- Если проблема в stale deployed edge-function, основной fix может быть redeploy + runtime proof.
-- Если нет доступной view-only тестовой роли/пользователя, proof view-only нужно сделать через существующую роль с временным безопасным чтением access matrix, без изменения данных.
+Миграция: `UPDATE tariff_offers SET requires_card_tokenization = false WHERE id = '891c7fe0-eb9d-4853-a1d5-bb69d688c801'` — без карты, чистый trial с auto-grant на 1 день. Проверить, что `auto_charge_after_trial = false` (если true — снять, иначе после 24ч пойдёт списание).
+
+### 5. Verify (runtime smoke)
+
+Под двумя ролями через Playwright против localhost:
+
+- **Гость**: клик на «Получить доступ к 600+ ответам» → PaymentDialog → ввод нового email → guest-signup flow → активация → entitlement создан, `orders_v2.status='paid'`, в воронке Gorbova Club создана сделка на success-стадии, доступ к `/cabinet` к разделу «База знаний» открыт ровно на 24 часа.
+- **Существующий клиент** ([1@ajoure.by](mailto:1@ajoure.by)): тот же клик → PaymentDialog → email распознан → запрос пароля → логин → активация trial → entitlement, сделка, доступ.
+- **Уже залогинен**: клик → PaymentDialog сразу с активацией без формы.
+- Verify, что разделы «Эфиры/Вебинары» видны со замком (продукт не покупался) — поведение `useAccessValidation` без правок.
+
+### Технические детали
+
+```text
+iframe HTML button
+  └─ data-lovable-action="open-offer"
+     data-product-id="<uuid>"
+     data-offer-id="<uuid>"
+        │
+        ▼ (BRIDGE_SCRIPT click capture)
+postMessage { type: 'site-action', action, payload }
+        │
+        ▼ (HtmlIframePreview source-check)
+window.dispatchEvent(CustomEvent 'lovable:site-action', { detail })
+        │
+        ▼ (host page useEffect)
+usePublicProduct(productId) → find offer by id → <PaymentDialog isTrial trialDays …/>
+```
+
+Изоляция:
+
+- iframe остаётся без `allow-same-origin` — нет утечки токенов.
+- В сообщении передаются только UUIDы (никаких произвольных строк в URL/sql).
+- В host-обработчике строгая валидация: `typeof action === 'string'`, UUID-regex для `productId/offerId`, allow-list `action ∈ {'open-offer'}`.
+- Source-check `e.source === iframe.contentWindow` уже есть в HtmlIframePreview — расширим whitelist типов.
+
+Файлы изменений:
+
+- `src/components/shared/HtmlIframePreview.tsx` — BRIDGE_SCRIPT + handleMessage (`site-action`).
+- `src/pages/<SitePageView>.tsx` (точное имя установлю при build) — подписка + PaymentDialog.
+- Миграция: UPDATE `tariff_offers` (requires_card_tokenization) + UPDATE `site_pages.blocks` (HTML с data-* атрибутами).
+
+### DoD
+
+- Клик по любой из трёх CTA на `gorbova.by/ideologicheskaya-rabota` открывает диалог покупки trial-оффера.
+- Гость / существующий / залогиненый — все три ветки заканчиваются активацией trial, созданием `orders_v2`, сделкой в воронке Gorbova Club, entitlement на 24ч, доступом к «База знаний» в кабинете.
+- Карта не запрашивается (offer.requires_card_tokenization=false).
+- Изоляция iframe сохранена (sandbox без allow-same-origin, UUID-валидация в host).
+- Snapshot HTML до правки сохранён.
+- Runtime smoke под Playwright задокументирован в отчёте.
