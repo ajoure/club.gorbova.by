@@ -2082,20 +2082,29 @@ export default function AdminProductDetailV2() {
                       <div>
                         <div className="flex items-center space-x-2">
                           <Switch
-                            checked={offerForm.requires_card_tokenization}
-                            onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                            checked={Boolean((offerForm.meta as any)?.recurring?.is_recurring)}
+                            onCheckedChange={(checked) => setOfferForm({
+                              ...offerForm,
+                              meta: {
+                                ...(offerForm.meta as any),
+                                recurring: {
+                                  ...((offerForm.meta as any)?.recurring || {}),
+                                  is_recurring: checked,
+                                },
+                              },
+                            })}
                           />
                           <Label>Подписка (автопродление)</Label>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {offerForm.requires_card_tokenization 
-                            ? "Продукт продлеваемый: карта сохраняется, авто-списания и напоминания о продлении включены." 
+                          {(offerForm.meta as any)?.recurring?.is_recurring
+                            ? "Продукт продлеваемый: recurring управляется провайдером (bePaid/Stripe). Внутренняя обязательная привязка карты отключена платформенно."
                             : "Разовый продукт: оплата без сохранения карты, напоминания о продлении не отправляются."}
                         </p>
                       </div>
                       
                       {/* Auto-renewal settings - ONLY for subscriptions */}
-                      {offerForm.requires_card_tokenization && (
+                      {Boolean((offerForm.meta as any)?.recurring?.is_recurring) && (
                         <Collapsible 
                           open={showAdvancedSettings}
                           onOpenChange={setShowAdvancedSettings}
