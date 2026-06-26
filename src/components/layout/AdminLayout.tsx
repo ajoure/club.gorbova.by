@@ -155,7 +155,7 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
     return { kind: "help" as const, href: "/help#admin", label: "Помощь по текущему разделу" };
   }, [location.pathname]);
 
-  if (loading) {
+  if (loading || access.isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -163,9 +163,8 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
     );
   }
 
-  if (!hasAdminAccess) {
-    navigate("/");
-    return null;
+  if (!canEnterAdmin) {
+    return <Navigate to="/" replace />;
   }
 
   return (
