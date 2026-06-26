@@ -380,6 +380,32 @@ Deno.serve(async (req) => {
     const payload: ChatAction = await req.json();
     const { action } = payload;
 
+    // RBAC v3: explicit MANAGE gate for mutation actions.
+    // Service role bypasses RLS, so DB policies are NOT a defense here — we must check in code.
+    const READ_ACTIONS = new Set<string>([
+      "get_messages",
+      "fetch_profile_photo",
+      "get_user_info",
+      "get_media_urls",
+    ]);
+    const isMutation = !READ_ACTIONS.has(action);
+    if (isMutation && !hasAdmin && !hasSuperAdmin) {
+      const { data: hasCommManage } = await supabase.rpc("has_admin_section_access", {
+        _user_id: user.id,
+        _section_code: "communication",
+        _min_level: "manage",
+      });
+      if (!hasCommManage) {
+        console.error(`[telegram-admin-chat] Mutation '${action}' denied for user ${user.id}: communication:manage required`);
+        return new Response(JSON.stringify({ error: "communication:manage required for this action" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+
+
     switch (action) {
       case "send_message": {
         const { user_id, message, file, bot_id } = payload;
