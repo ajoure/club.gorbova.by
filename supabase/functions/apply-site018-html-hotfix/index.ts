@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   );
 
   const { data: fileData, error: dlErr } = await supabase.storage
-    .from("prompt-attachments")
+    .from("documents-templates")
     .download("hotfix/site018-hotfix.html");
   if (dlErr || !fileData) {
     return new Response(JSON.stringify({ ok: false, step: "download", error: dlErr?.message }), {
