@@ -334,7 +334,7 @@ export function AddEmployeeDialog({
                         <SelectContent>
                           {availableRolesForAssign.map((role) => (
                             <SelectItem key={role.code} value={role.code}>
-                              {getRoleDisplayName(role.code)}
+                              {getRoleDisplayName(role)}
                             </SelectItem>
                           ))}
                         </SelectContent>
