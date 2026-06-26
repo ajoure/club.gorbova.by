@@ -21,7 +21,7 @@ export const FORMS_DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "status", label: "Статус", visible: true, width: 130, order: 7 },
   { key: "created_at", label: "Дата", visible: true, width: 110, order: 8 },
   { key: "has_deal", label: "Сделка", visible: true, width: 70, order: 9 },
-  { key: "has_account", label: "Аккаунт", visible: true, width: 70, order: 10 },
+  { key: "has_account", label: "Контакт", visible: true, width: 80, order: 10 },
 ];
 
 const STORAGE_KEY = "admin_forms_columns_v1";
@@ -33,7 +33,8 @@ function loadColumns(): ColumnConfig[] {
     const parsed = JSON.parse(saved);
     return FORMS_DEFAULT_COLUMNS.map((dc) => {
       const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
-      return savedCol ? { ...dc, ...savedCol } : dc;
+      // Always force label from defaults so renames apply instantly even with saved layout.
+      return savedCol ? { ...dc, ...savedCol, label: dc.label } : dc;
     });
   } catch {
     return FORMS_DEFAULT_COLUMNS;
