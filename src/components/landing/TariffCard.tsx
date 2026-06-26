@@ -99,6 +99,7 @@ export function TariffCard({
   // Price resolution: primaryOffer.amount > card_config.price_display > tariff.current_price > null
   const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
+  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0;
 
   // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
   const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
@@ -212,7 +213,7 @@ export function TariffCard({
         </ul>
       )}
 
-      {showButtons && hasActivePayOffers && (
+      {showButtons && hasAnyActionableOffer && (
         <div className="space-y-2 mt-auto">
           {trialOffers.map((offer) => (
             <Button
