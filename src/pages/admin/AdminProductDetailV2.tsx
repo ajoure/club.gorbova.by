@@ -671,11 +671,13 @@ export default function AdminProductDetailV2() {
       amount: offerForm.amount,
       reentry_amount: offerForm.reentry_amount || null, // Price for re-entry
       trial_days: offerForm.offer_type === "trial" ? offerForm.trial_days : null,
-      auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
+      // PATCH-DISABLE-MANDATORY-INTERNAL-MIT: обязательная внутренняя MIT-привязка карты выключена системно (DB-триггер).
+      // auto_charge_after_trial и requires_card_tokenization всегда false; провайдер-сайд recurring (bePaid/Stripe) этим флагом не управляется.
+      auto_charge_after_trial: false,
       auto_charge_amount: null, // Deprecated, use auto_charge_offer_id instead
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
-      auto_charge_offer_id: offerForm.offer_type === "trial" && offerForm.auto_charge_after_trial ? (offerForm.auto_charge_offer_id || null) : null,
-      requires_card_tokenization: offerForm.offer_type === "trial" || isPreregistration ? true : (isInstallment || offerForm.requires_card_tokenization),
+      auto_charge_offer_id: null,
+      requires_card_tokenization: false,
       is_active: offerForm.is_active,
       is_primary: offerForm.offer_type === "pay_now" ? offerForm.is_primary : false,
       visible_from: null,
