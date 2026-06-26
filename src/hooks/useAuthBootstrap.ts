@@ -21,6 +21,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface BootstrapProfile {
   id: string;
+  email: string | null;
   full_name: string | null;
   avatar_url: string | null;
   status: string | null;
@@ -45,7 +46,7 @@ export function useAuthBootstrap() {
       if (!user?.id) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, full_name, avatar_url, status, consent_version, consent_given_at, marketing_consent, onboarding_dismissed_at, onboarding_completed_at")
+        .select("id, email, full_name, avatar_url, status, consent_version, consent_given_at, marketing_consent, onboarding_dismissed_at, onboarding_completed_at")
         .eq("user_id", user.id)
         .single();
       if (error) {
