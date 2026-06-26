@@ -95,6 +95,24 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasAdminAccess, loading } = useRbac();
+  const access = useAdminAccess();
+
+  // RBAC v3 — канонический гейт входа в админку.
+  // Доступ дают:
+  //   1) super_admin / admin (bypass внутри useAdminAccess);
+  //   2) любая роль с хотя бы одной секцией access_level >= view в admin_section_access;
+  //   3) если kill-switch admin_section_gating_enabled = false — поведение fallback:
+  //      пускаем только тех, у кого есть legacy hasAdminAccess (не открываем админку всем).
+  const hasAnySectionAccess = useMemo(() => {
+    for (const level of access.sections.values()) {
+      if (level === "view" || level === "edit" || level === "manage") return true;
+    }
+    return false;
+  }, [access.sections]);
+
+  const canEnterAdmin = access.gatingEnabled
+    ? access.isSuperAdmin || access.isAdmin || hasAnySectionAccess
+    : hasAdminAccess; // kill-switch off → strictly legacy gate, never allow-all
   
   // Global sound alert for incoming messages on any admin page
   useIncomingMessageAlert();
