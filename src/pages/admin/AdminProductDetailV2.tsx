@@ -2061,7 +2061,6 @@ export default function AdminProductDetailV2() {
                 offerForm.payment_method !== "internal_installment" && (
                   offerForm.offer_type === "trial" ||
                   offerForm.offer_type === "preregistration" ||
-                  offerForm.requires_card_tokenization ||
                   Boolean((offerForm.meta as any)?.recurring?.is_recurring)
                 )
               }
