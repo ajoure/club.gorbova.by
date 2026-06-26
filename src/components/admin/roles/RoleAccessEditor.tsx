@@ -18,6 +18,7 @@ import {
 import { Loader2, Lock, ShieldAlert, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { notifyRolesChanged } from "@/hooks/useAdminRoles";
 
 const TRANSLIT: Record<string, string> = {
   а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",
@@ -360,6 +361,8 @@ export function RoleAccessEditor() {
         await qc.invalidateQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
       }
       await qc.invalidateQueries({ queryKey: ["admin-access"] });
+      notifyRolesChanged();
+
 
       setCreateOpen(false);
       setNewRoleName("");
@@ -384,6 +387,7 @@ export function RoleAccessEditor() {
       await callRolesAdmin("delete_role", { roleId: deleteTarget.id });
       toast.success("Роль удалена");
       await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      notifyRolesChanged();
       if (selectedRoleId === deleteTarget.id) setSelectedRoleId(null);
       setDeleteTarget(null);
     } catch (e: any) {
