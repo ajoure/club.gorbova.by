@@ -607,6 +607,78 @@ export function RoleAccessEditor() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Создание роли */}
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setNewRoleName(""); setNewRoleDesc(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Новая роль</DialogTitle>
+            <DialogDescription>
+              После создания назначьте доступы к разделам/ресурсам ниже.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-name" className="text-sm">Название</Label>
+              <Input
+                id="new-role-name"
+                placeholder="например: Модератор"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                autoFocus
+              />
+              {newRoleName.trim() && generatedCode && (
+                <p className="text-xs text-muted-foreground">Код: <span className="font-mono">{generatedCode}</span></p>
+              )}
+              {newRoleName.trim() && !generatedCode && (
+                <p className="text-xs text-destructive">Некорректное название — используйте буквы/цифры (RU/EN).</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-desc" className="text-sm">
+                Описание <span className="text-muted-foreground/60 font-normal">(опционально)</span>
+              </Label>
+              <Input
+                id="new-role-desc"
+                placeholder="Краткое описание роли"
+                value={newRoleDesc}
+                onChange={(e) => setNewRoleDesc(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>Отмена</Button>
+            <Button onClick={handleCreateRole} disabled={creating || !newRoleName.trim() || !generatedCode}>
+              {creating && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+              Создать
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Удаление роли */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить роль «{deleteTarget?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие необратимо. Все настройки доступов этой роли будут удалены.
+              Если роль назначена пользователям — сначала снимите её со всех.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteRole}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
