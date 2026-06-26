@@ -73,21 +73,17 @@ export function useAdminRoles() {
     fetchRoles();
   }, [fetchRoles]);
 
-  // Sync: когда RoleAccessEditor создаёт/удаляет роль через roles-admin,
-  // он инвалидирует ["roles-admin","catalog"]. Подхватываем это и обновляем локальный список ролей
-  // без перезагрузки страницы.
-  const qc = useQueryClient();
+  // Sync: when RoleAccessEditor creates/deletes role, it dispatches `rbac:roles-changed`.
+  // We re-fetch the local roles list without a full page reload.
   useEffect(() => {
-    const unsub = qc.getQueryCache().subscribe((event: any) => {
-      const key = event?.query?.queryKey;
-      if (Array.isArray(key) && key[0] === "roles-admin" && key[1] === "catalog") {
-        if (event.type === "updated" || event.type === "added") {
-          fetchRoles();
-        }
-      }
-    });
-    return () => { unsub(); };
-  }, [qc, fetchRoles]);
+    const handler = () => { fetchRoles(); };
+    if (typeof window !== "undefined") {
+      window.addEventListener(ROLES_CHANGED_EVENT, handler);
+      return () => window.removeEventListener(ROLES_CHANGED_EVENT, handler);
+    }
+    return undefined;
+  }, [fetchRoles]);
+
 
   const assignRole = async (userId: string, roleCode: string): Promise<boolean> => {
     try {
