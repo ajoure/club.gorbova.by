@@ -161,32 +161,33 @@ export function usePermissions() {
   }, [userRoles]);
 
   const canWrite = useCallback((category: string): boolean => {
-    if (hasRole("super_admin")) return true;
+    if (hasRole("super_admin") || hasRole("admin")) return true;
     if (isViewOnlyRole()) return false;
-    return hasPermission(`${category}.edit`) || 
-           hasPermission(`${category}.manage`) ||
-           hasPermission(`${category}.delete`) ||
-           hasPermission(`${category}.create`);
-  }, [hasRole, isViewOnlyRole, hasPermission]);
+    // Legacy permission codes
+    if (
+      hasPermission(`${category}.edit`) ||
+      hasPermission(`${category}.manage`) ||
+      hasPermission(`${category}.delete`) ||
+      hasPermission(`${category}.create`)
+    ) return true;
+    // RBAC v3 fallback: category → section, require edit or higher
+    const section = CATEGORY_TO_SECTION[category];
+    if (section && sectionMeets(section, "edit")) return true;
+    return false;
+  }, [hasRole, isViewOnlyRole, hasPermission, adminAccess]);
 
   const hasAdminAccess = useCallback((): boolean => {
+    if (hasRole("super_admin") || hasRole("admin")) return true;
     const adminPermissions = [
-      "users.view",
-      "users.update",
-      "users.block",
-      "users.delete",
-      "roles.view",
-      "roles.manage",
-      "admins.manage",
-      "content.edit",
-      "entitlements.view",
-      "entitlements.manage",
-      "audit.view",
-      "news.view",
-      "news.edit",
+      "users.view", "users.update", "users.block", "users.delete",
+      "roles.view", "roles.manage", "admins.manage", "content.edit",
+      "entitlements.view", "entitlements.manage", "audit.view",
+      "news.view", "news.edit",
     ];
-    return hasAnyPermission(adminPermissions);
-  }, [hasAnyPermission]);
+    if (hasAnyPermission(adminPermissions)) return true;
+    // RBAC v3: any section access at view+ grants admin shell
+    return sectionLevels.size > 0;
+  }, [hasRole, hasAnyPermission, adminAccess]);
 
   // refetch by invalidating the query
   const refetch = useCallback(() => {
