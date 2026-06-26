@@ -370,8 +370,12 @@ Deno.serve(async (req) => {
     ]);
 
     if (!hasAdmin && !hasSuperAdmin && !hasCommView) {
-      console.error(`[telegram-admin-chat] Access denied for user ${user.id}: admin=${hasAdmin}, superadmin=${hasSuperAdmin}, communication=${hasCommView}`);
-      return new Response(JSON.stringify({ error: "Admin access required" }), {
+      console.error(`[telegram-admin-chat][rbac] deny actor=${user.id} branch=section_view admin=${hasAdmin} superadmin=${hasSuperAdmin} communication_view=${hasCommView}`);
+      return new Response(JSON.stringify({
+        error: "communication:view required",
+        error_code: "rbac_section_view_denied",
+        actor: user.id,
+      }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -389,20 +393,28 @@ Deno.serve(async (req) => {
       "get_media_urls",
     ]);
     const isMutation = !READ_ACTIONS.has(action);
+    let hasCommManage: boolean | null = null;
     if (isMutation && !hasAdmin && !hasSuperAdmin) {
-      const { data: hasCommManage } = await supabase.rpc("has_admin_section_access", {
+      const { data: hcm } = await supabase.rpc("has_admin_section_access", {
         _user_id: user.id,
         _section_code: "communication",
         _min_level: "manage",
       });
+      hasCommManage = hcm ?? false;
       if (!hasCommManage) {
-        console.error(`[telegram-admin-chat] Mutation '${action}' denied for user ${user.id}: communication:manage required`);
-        return new Response(JSON.stringify({ error: "communication:manage required for this action" }), {
+        console.error(`[telegram-admin-chat][rbac] deny actor=${user.id} branch=section_manage action=${action} admin=${hasAdmin} superadmin=${hasSuperAdmin} communication_manage=${hasCommManage}`);
+        return new Response(JSON.stringify({
+          error: "communication:manage required for this action",
+          error_code: "rbac_section_manage_denied",
+          action,
+          actor: user.id,
+        }), {
           status: 403,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
+    console.log(`[telegram-admin-chat][rbac] allow actor=${user.id} action=${action} admin=${hasAdmin} superadmin=${hasSuperAdmin} communication_view=${hasCommView} communication_manage=${hasCommManage}`);
 
 
 
