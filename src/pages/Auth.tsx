@@ -131,6 +131,43 @@ export default function Auth() {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [existingEmail, setExistingEmail] = useState(""); // For account_exists mode
+  // «Email не подтверждён» состояние + resend cooldown
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendingConfirm, setResendingConfirm] = useState(false);
+
+  // Cooldown тикер для кнопки повторной отправки письма
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const handleResendConfirmation = async () => {
+    if (!unconfirmedEmail || resendingConfirm || resendCooldown > 0) return;
+    setResendingConfirm(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: unconfirmedEmail,
+        options: { emailRedirectTo: `${window.location.origin}/` },
+      });
+      if (error) throw error;
+      toast({
+        title: "Письмо отправлено повторно",
+        description: "Проверьте почту, в том числе папку «Спам».",
+      });
+      setResendCooldown(60);
+    } catch (err: any) {
+      toast({
+        title: "Не удалось отправить письмо",
+        description: err?.message || "Попробуйте позже.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingConfirm(false);
+    }
+  };
 
   // Get redirectTo from URL params
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
@@ -379,7 +416,19 @@ export default function Auth() {
 
         const { error } = await signIn(email, password);
         if (error) {
-          if (error.message === "Invalid login credentials") {
+          const code = (error as any)?.code || (error as any)?.error_code || "";
+          const msg = error.message || "";
+          const isUnconfirmed =
+            code === "email_not_confirmed" || /email not confirmed/i.test(msg);
+
+          if (isUnconfirmed) {
+            setUnconfirmedEmail(email.toLowerCase().trim());
+            toast({
+              title: "Email не подтверждён",
+              description: "Проверьте почту — мы отправили письмо со ссылкой. Если письма нет, нажмите «Отправить ещё раз».",
+              variant: "destructive",
+            });
+          } else if (msg === "Invalid login credentials") {
             setFieldErrors([{ field: "password", message: "Неверный email или пароль" }]);
           } else {
             toast({
@@ -887,6 +936,28 @@ export default function Auth() {
                     <p className="text-sm text-destructive">{getFieldError('email')}</p>
                   )}
                 </div>
+
+                {mode === "login" && unconfirmedEmail && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium mb-1">Email не подтверждён</p>
+                    <p className="text-amber-800 mb-2">
+                      На <span className="font-medium">{unconfirmedEmail}</span> отправлено письмо со ссылкой подтверждения.
+                      Если письма нет — проверьте папку «Спам» или отправьте ещё раз.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleResendConfirmation}
+                      disabled={resendingConfirm || resendCooldown > 0}
+                      className="text-sm font-medium text-amber-900 underline disabled:no-underline disabled:opacity-60"
+                    >
+                      {resendingConfirm
+                        ? "Отправляем…"
+                        : resendCooldown > 0
+                          ? `Отправить ещё раз (${resendCooldown} с)`
+                          : "Отправить ещё раз"}
+                    </button>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
