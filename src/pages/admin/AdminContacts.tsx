@@ -610,7 +610,21 @@ export default function AdminContacts() {
     },
   });
 
-  // Fetch user purchases (paid orders) grouped by user_id
+  // PATCH-RBAC-V3-DATA-RUNTIME-FIX (AdminContacts perf):
+  // purchaseMap / subscriptionMap делали ПОЛНЫЙ скан orders_v2 / subscriptions_v2
+  // на каждом маунте страницы, без зависимости от preset/filter. На «Без аккаунта»
+  // (11 618 профилей) это блокировало рендер. Поднимаем эти запросы ТОЛЬКО когда
+  // реально активирован соответствующий фильтр.
+  const needsPurchaseMap = useMemo(
+    () => activeFilters.some(f => f.field === "purchased_product" || f.field === "purchased_tariff"),
+    [activeFilters]
+  );
+  const needsSubscriptionMap = useMemo(
+    () => activeFilters.some(f => f.field === "active_subscription"),
+    [activeFilters]
+  );
+
+  // Fetch user purchases (paid orders) grouped by user_id — lazy, по фильтру
   const { data: purchaseMap } = useQuery({
     queryKey: ["contact-purchases"],
     queryFn: async () => {
@@ -618,7 +632,7 @@ export default function AdminContacts() {
         .from("orders_v2")
         .select("user_id, product_id, tariff_id")
         .eq("status", "paid");
-      
+
       const map = new Map<string, { productIds: Set<string>; tariffIds: Set<string> }>();
       data?.forEach(o => {
         if (!o.user_id) return;
@@ -629,9 +643,11 @@ export default function AdminContacts() {
       });
       return map;
     },
+    enabled: needsPurchaseMap,
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch active subscriptions grouped by user_id
+  // Fetch active subscriptions grouped by user_id — lazy, по фильтру
   const { data: subscriptionMap } = useQuery({
     queryKey: ["contact-subscriptions"],
     queryFn: async () => {
@@ -639,7 +655,7 @@ export default function AdminContacts() {
         .from("subscriptions_v2")
         .select("user_id, tariff_id, tariffs(product_id)")
         .in("status", ["active", "trial"]);
-      
+
       const map = new Map<string, { tariffIds: Set<string>; productIds: Set<string> }>();
       data?.forEach(s => {
         if (!s.user_id) return;
@@ -650,6 +666,8 @@ export default function AdminContacts() {
       });
       return map;
     },
+    enabled: needsSubscriptionMap,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Build filter fields dynamically with products/tariffs
