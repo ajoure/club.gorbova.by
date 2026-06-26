@@ -106,6 +106,22 @@ export function usePermissions() {
 
   const permissions = data?.permissions ?? [];
   const userRoles = data?.userRoles ?? [];
+  const adminAccess = data?.adminAccess ?? [];
+
+  // Section access map (highest level wins, resource overrides ignored here — section gate is enough for canWrite)
+  const sectionLevels = new Map<string, AccessLevel>();
+  for (const row of adminAccess) {
+    if (row.resource_code) continue;
+    const prev = sectionLevels.get(row.section_code) ?? "none";
+    if (LEVEL_RANK[row.access_level] > LEVEL_RANK[prev]) {
+      sectionLevels.set(row.section_code, row.access_level);
+    }
+  }
+
+  const sectionMeets = (sectionCode: string, min: AccessLevel): boolean => {
+    const have = sectionLevels.get(sectionCode) ?? "none";
+    return LEVEL_RANK[have] >= LEVEL_RANK[min];
+  };
 
   const hasPermission = useCallback(
     (permissionCode: string): boolean => {
