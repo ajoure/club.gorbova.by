@@ -60,13 +60,12 @@ const CATEGORY_TO_SECTION: Record<string, string> = {
 export function usePermissions() {
   const { user } = useAuth();
 
-  const { data, isLoading: loading } = useQuery<PermissionsData>({
+  const { data, isLoading: loading } = useQuery<PermissionsData & { adminAccess: AdminAccessRow[] }>({
     queryKey: ["user-permissions-and-roles", user?.id],
-    queryFn: async (): Promise<PermissionsData> => {
-      if (!user?.id) return { permissions: [], userRoles: [] };
+    queryFn: async () => {
+      if (!user?.id) return { permissions: [], userRoles: [], adminAccess: [] };
 
-      // Single parallel flight for both queries
-      const [permsResult, rolesResult] = await Promise.all([
+      const [permsResult, rolesResult, adminAccessResult] = await Promise.all([
         supabase.rpc("get_user_permissions", { _user_id: user.id }),
         supabase
           .from("user_roles_v2")
@@ -80,6 +79,7 @@ export function usePermissions() {
             )
           `)
           .eq("user_id", user.id),
+        supabase.rpc("get_admin_access", { _user_id: user.id }),
       ]);
 
       const permissions = permsResult.error
@@ -92,7 +92,11 @@ export function usePermissions() {
             ?.map((r) => r.roles as unknown as Role)
             .filter(Boolean) || []);
 
-      return { permissions, userRoles };
+      const adminAccess = adminAccessResult.error
+        ? (console.error("Error fetching admin access:", adminAccessResult.error), [])
+        : ((adminAccessResult.data as AdminAccessRow[]) || []);
+
+      return { permissions, userRoles, adminAccess };
     },
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
