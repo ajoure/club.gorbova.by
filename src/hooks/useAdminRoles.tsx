@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+
+const ROLES_CHANGED_EVENT = "rbac:roles-changed";
+export function notifyRolesChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(ROLES_CHANGED_EVENT));
+  }
+}
 import { toast } from "sonner";
 
 /**
