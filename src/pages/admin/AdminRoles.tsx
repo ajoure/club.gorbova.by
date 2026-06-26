@@ -71,13 +71,17 @@ export default function AdminRoles() {
   const [addEmployeeDialogOpen, setAddEmployeeDialogOpen] = useState(false);
 
   const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
+    // Приоритетный список системных ролей
     const priority = ["super_admin", "admin", "admin_gost", "editor", "support", "staff"];
     for (const code of priority) {
       const role = userRoles.find(r => r.code === code);
       if (role) return role;
     }
-    return null;
+    // Кастомные роли (созданные в редакторе «Доступ») — берём первую не-`user`
+    const custom = userRoles.find(r => r.code !== "user");
+    return custom ?? null;
   };
+
 
   const staffUsers = useMemo(() => {
     return users.filter((u) => {
