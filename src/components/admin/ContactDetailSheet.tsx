@@ -1037,7 +1037,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           access_token: session.access_token,
           refresh_token: session.refresh_token,
         }));
-        localStorage.setItem("admin_return_url", window.location.pathname);
+        const adminReturnUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        localStorage.setItem("admin_return_url", adminReturnUrl);
         localStorage.setItem("impersonation_start_time", Date.now().toString());
         // Critical: ensure impersonation can never be “silent”
         localStorage.setItem("is_impersonating", "true");
@@ -1058,7 +1059,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         
         toast.success(`Вход от имени ${formatContactName(contact) || contact.email}`);
         onOpenChange(false);
-        window.location.href = "/?impersonating=true";
+        const nextUrl = new URL(localStorage.getItem("admin_return_url") || "/admin", window.location.origin);
+        nextUrl.searchParams.set("impersonating", "true");
+        window.location.href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
       }
     } catch (error) {
       console.error("Impersonation error:", error);

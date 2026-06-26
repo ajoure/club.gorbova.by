@@ -1,9 +1,12 @@
-import { ReactNode, useMemo } from "react";
-import { Navigate, useNavigate, Link, useLocation } from "react-router-dom";
+import { ReactNode, useEffect, useMemo } from "react";
+import { Navigate, Link, useLocation } from "react-router-dom";
 import { useRbac } from "@/hooks/useRbac";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
+import { useAuth } from "@/contexts/AuthContext";
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
+import { ImpersonationBar } from "./ImpersonationBar";
 import { PullToRefresh } from "./PullToRefresh";
 import { Loader2, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -92,8 +95,9 @@ const routeToHelpAnchor: Record<string, string> = {
 };
 
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
-  const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const { profile } = useAuthBootstrap();
   const { hasAdminAccess, loading } = useRbac();
   const access = useAdminAccess();
 
@@ -113,6 +117,60 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   const canEnterAdmin = access.gatingEnabled
     ? access.isSuperAdmin || access.isAdmin || hasAnySectionAccess
     : hasAdminAccess; // kill-switch off → strictly legacy gate, never allow-all
+
+  const accessRows = useMemo(() => {
+    const sectionRows = Array.from(access.sections.entries()).map(([sectionCode, level]) => ({
+      section_code: sectionCode,
+      resource_code: null,
+      access_level: level,
+    }));
+    const resourceRows = Array.from(access.resources.entries()).flatMap(([sectionCode, resources]) =>
+      Array.from(resources.entries()).map(([resourceCode, level]) => ({
+        section_code: sectionCode,
+        resource_code: resourceCode,
+        access_level: level,
+      }))
+    );
+    return [...sectionRows, ...resourceRows];
+  }, [access.sections, access.resources]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.info("[AdminLayout RBAC]", {
+      pathname: location.pathname,
+      userId: user?.id ?? null,
+      email: user?.email ?? null,
+      profileEmail: profile?.email ?? null,
+      profileName: profile?.full_name ?? null,
+      isImpersonating: (() => {
+        try { return localStorage.getItem("is_impersonating") === "true"; } catch { return false; }
+      })(),
+      isLoadingRbac: loading,
+      isLoadingAdminAccess: access.isLoading,
+      isSuperAdmin: access.isSuperAdmin,
+      isAdmin: access.isAdmin,
+      gatingEnabled: access.gatingEnabled,
+      legacyHasAdminAccess: hasAdminAccess,
+      hasAnyAdminSectionAccess: hasAnySectionAccess,
+      canEnterAdmin,
+      accessRows,
+    });
+  }, [
+    location.pathname,
+    user?.id,
+    user?.email,
+    profile?.email,
+    profile?.full_name,
+    loading,
+    access.isLoading,
+    access.isSuperAdmin,
+    access.isAdmin,
+    access.gatingEnabled,
+    hasAdminAccess,
+    hasAnySectionAccess,
+    canEnterAdmin,
+    accessRows,
+  ]);
   
   // Global sound alert for incoming messages on any admin page
   useIncomingMessageAlert();
@@ -168,70 +226,73 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   }
 
   return (
-    <SidebarProvider>
-      <div className="flex w-full overflow-hidden" style={{ height: 'var(--app-height)' }}>
-        <AdminSidebar />
-        <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
-          <header 
-            className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
-            style={{ 
-              paddingTop: 'env(safe-area-inset-top, 0px)',
-              minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
-            }}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <SidebarTrigger className="shrink-0" />
-              {pageTitle && (
-                <h1 className="text-xs font-medium text-foreground/80 truncate">
-                  {pageTitle}
-                </h1>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <PushNotificationToggle />
-              {/* Контекстный «вопросик»: для /admin/sites ведёт сразу в /docs#site-builder */}
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    {helpTarget.kind === "docs" ? (
-                      <a
-                        href={helpTarget.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                        aria-label={helpTarget.label}
-                      >
-                        <HelpCircle className="h-4 w-4" />
-                      </a>
-                    ) : (
-                      <Link
-                        to={helpTarget.href}
-                        className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                        aria-label={helpTarget.label}
-                      >
-                        <HelpCircle className="h-4 w-4" />
-                      </Link>
-                    )}
-                  </TooltipTrigger>
-                  <TooltipContent>{helpTarget.label}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </header>
-          <PullToRefresh>
-            <div 
-              className={`flex-1 min-h-0 flex flex-col ${fullHeight ? "overflow-hidden" : ""}`}
-              style={{
-                paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
-                paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-                ...(fullHeight ? {} : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' })
+    <>
+      <ImpersonationBar />
+      <SidebarProvider>
+        <div className="flex w-full overflow-hidden" style={{ height: 'var(--app-height)' }}>
+          <AdminSidebar />
+          <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
+            <header 
+              className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
+              style={{ 
+                paddingTop: 'env(safe-area-inset-top, 0px)',
+                minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
               }}
             >
-              {children}
-            </div>
-          </PullToRefresh>
-        </main>
-      </div>
-    </SidebarProvider>
+              <div className="flex items-center gap-2 min-w-0">
+                <SidebarTrigger className="shrink-0" />
+                {pageTitle && (
+                  <h1 className="text-xs font-medium text-foreground/80 truncate">
+                    {pageTitle}
+                  </h1>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <PushNotificationToggle />
+                {/* Контекстный «вопросик»: для /admin/sites ведёт сразу в /docs#site-builder */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      {helpTarget.kind === "docs" ? (
+                        <a
+                          href={helpTarget.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          aria-label={helpTarget.label}
+                        >
+                          <HelpCircle className="h-4 w-4" />
+                        </a>
+                      ) : (
+                        <Link
+                          to={helpTarget.href}
+                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          aria-label={helpTarget.label}
+                        >
+                          <HelpCircle className="h-4 w-4" />
+                        </Link>
+                      )}
+                    </TooltipTrigger>
+                    <TooltipContent>{helpTarget.label}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            </header>
+            <PullToRefresh>
+              <div 
+                className={`flex-1 min-h-0 flex flex-col ${fullHeight ? "overflow-hidden" : ""}`}
+                style={{
+                  paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+                  paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+                  ...(fullHeight ? {} : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' })
+                }}
+              >
+                {children}
+              </div>
+            </PullToRefresh>
+          </main>
+        </div>
+      </SidebarProvider>
+    </>
   );
 }
