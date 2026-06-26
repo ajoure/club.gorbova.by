@@ -387,6 +387,7 @@ export function RoleAccessEditor() {
       await callRolesAdmin("delete_role", { roleId: deleteTarget.id });
       toast.success("Роль удалена");
       await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      notifyRolesChanged();
       if (selectedRoleId === deleteTarget.id) setSelectedRoleId(null);
       setDeleteTarget(null);
     } catch (e: any) {
