@@ -2,16 +2,44 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRbac } from "@/hooks/useRbac";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
-import { Loader2, Lock, ShieldAlert } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Loader2, Lock, ShieldAlert, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+
+const TRANSLIT: Record<string, string> = {
+  а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",
+  н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"kh",ц:"ts",ч:"ch",ш:"sh",щ:"shch",
+  ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya",
+};
+const RESERVED = new Set([
+  "super_admin","admin","user","support","editor",
+  "admin_gost","news_editor","staff",
+  "roles","permissions","admins","system","root",
+]);
+function slugifyRoleCode(name: string, existing: string[]): string {
+  const slug = name.toLowerCase().split("").map(ch => TRANSLIT[ch] ?? ch).join("")
+    .replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_").replace(/^_|_$/g, "");
+  if (!slug) return "";
+  const all = [...RESERVED, ...existing.map(c => c.toLowerCase())];
+  if (!all.includes(slug)) return slug;
+  let i = 2;
+  while (all.includes(`${slug}_${i}`)) i++;
+  return `${slug}_${i}`;
+}
 
 /**
  * RBAC v3 — UI-редактор Section/Resource access.
