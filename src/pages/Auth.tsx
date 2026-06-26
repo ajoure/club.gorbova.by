@@ -131,6 +131,43 @@ export default function Auth() {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [existingEmail, setExistingEmail] = useState(""); // For account_exists mode
+  // «Email не подтверждён» состояние + resend cooldown
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendingConfirm, setResendingConfirm] = useState(false);
+
+  // Cooldown тикер для кнопки повторной отправки письма
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const handleResendConfirmation = async () => {
+    if (!unconfirmedEmail || resendingConfirm || resendCooldown > 0) return;
+    setResendingConfirm(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: unconfirmedEmail,
+        options: { emailRedirectTo: `${window.location.origin}/` },
+      });
+      if (error) throw error;
+      toast({
+        title: "Письмо отправлено повторно",
+        description: "Проверьте почту, в том числе папку «Спам».",
+      });
+      setResendCooldown(60);
+    } catch (err: any) {
+      toast({
+        title: "Не удалось отправить письмо",
+        description: err?.message || "Попробуйте позже.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingConfirm(false);
+    }
+  };
 
   // Get redirectTo from URL params
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
