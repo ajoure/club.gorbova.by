@@ -1,6 +1,7 @@
 import { ReactNode, useMemo } from "react";
-import { useNavigate, Link, useLocation } from "react-router-dom";
+import { Navigate, useNavigate, Link, useLocation } from "react-router-dom";
 import { useRbac } from "@/hooks/useRbac";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
 import { PullToRefresh } from "./PullToRefresh";
