@@ -45,11 +45,6 @@ verify_jwt = false
 [functions.public-webhook-deploy-probe]
 verify_jwt = false
 
-# One-shot migration: patches SITE-000018 hero block code & normalizes the
-# Gorbova Club ideology trial offer (no card / no auto-charge). Guarded by
-# INTERNAL_PATCH_SECRET; no public traffic accepted.
-[functions.oneshot-site018-cta]
-verify_jwt = false
 
 
 # ============================================================
