@@ -1,4 +1,1 @@
 project_id = "hdjgkjceownmmnrqqtuz"
-
-[functions.apply-site018-html-hotfix]
-verify_jwt = false
