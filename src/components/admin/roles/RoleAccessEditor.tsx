@@ -116,7 +116,19 @@ async function callRolesAdmin<T = any>(action: string, payload: Record<string, u
 export function RoleAccessEditor() {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const { hasPermission } = useRbac();
+  const canManageRoles = hasPermission("roles.manage");
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+
+  // Создание роли
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleDesc, setNewRoleDesc] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  // Удаление роли
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; code: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const catalogQ = useQuery({
     queryKey: ["roles-admin", "catalog"],
