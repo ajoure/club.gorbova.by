@@ -324,12 +324,52 @@ export function RoleAccessEditor() {
         roleName: newRoleName.trim(),
         roleDescription: newRoleDesc.trim() || undefined,
       });
-      toast.success("Роль создана");
+      const newRoleId = data?.role?.id;
+
+      // Apply access preset (поверх RBAC v3 — никаких legacy permissions/role_permissions)
+      let presetApplied: { applied: number; failed: number; error?: string } | null = null;
+      if (newRoleId && (newRolePreset === "view" || newRolePreset === "manage")) {
+        const sections = catalogQ.data?.sections ?? [];
+        const sectionAccess = sections.map((s) => ({
+          sectionCode: s.code,
+          accessLevel: newRolePreset,
+        }));
+        if (sectionAccess.length > 0) {
+          try {
+            const resp = await callRolesAdmin<{ success: true; applied: number }>(
+              "bulk_set_section_access",
+              { roleId: newRoleId, sectionAccess },
+            );
+            presetApplied = { applied: resp?.applied ?? sectionAccess.length, failed: 0 };
+          } catch (e: any) {
+            presetApplied = { applied: 0, failed: sectionAccess.length, error: e?.message ?? String(e) };
+          }
+        }
+      }
+
+      if (presetApplied?.error) {
+        toast.error(`Роль создана, но preset не применён: ${presetApplied.error}`);
+      } else if (presetApplied && presetApplied.applied > 0) {
+        toast.success(`Роль создана, доступы применены (${presetApplied.applied})`);
+      } else {
+        toast.success("Роль создана");
+      }
+
       await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      if (newRoleId) {
+        await qc.invalidateQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
+      }
+      await qc.invalidateQueries({ queryKey: ["admin-access"] });
+
       setCreateOpen(false);
       setNewRoleName("");
       setNewRoleDesc("");
-      if (data?.role?.id) setSelectedRoleId(data.role.id);
+      setNewRolePreset("custom");
+      if (newRoleId) {
+        setSelectedRoleId(newRoleId);
+        // Гарантируем свежие данные редактора, а не пустой кэш
+        await qc.refetchQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
+      }
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось создать роль");
     } finally {
