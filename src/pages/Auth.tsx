@@ -937,6 +937,28 @@ export default function Auth() {
                   )}
                 </div>
 
+                {mode === "login" && unconfirmedEmail && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium mb-1">Email не подтверждён</p>
+                    <p className="text-amber-800 mb-2">
+                      На <span className="font-medium">{unconfirmedEmail}</span> отправлено письмо со ссылкой подтверждения.
+                      Если письма нет — проверьте папку «Спам» или отправьте ещё раз.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleResendConfirmation}
+                      disabled={resendingConfirm || resendCooldown > 0}
+                      className="text-sm font-medium text-amber-900 underline disabled:no-underline disabled:opacity-60"
+                    >
+                      {resendingConfirm
+                        ? "Отправляем…"
+                        : resendCooldown > 0
+                          ? `Отправить ещё раз (${resendCooldown} с)`
+                          : "Отправить ещё раз"}
+                    </button>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <Label htmlFor="password" className="text-foreground">
