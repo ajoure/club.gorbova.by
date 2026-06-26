@@ -307,7 +307,7 @@ export function AddEmployeeDialog({
                         )}
                       </div>
                       <Badge variant={user.role_code === "user" ? "outline" : "secondary"}>
-                        {getRoleDisplayName(user.role_code)}
+                        {getRoleDisplayName(roles.find(r => r.code === user.role_code) ?? user.role_code)}
                       </Badge>
                     </div>
 
