@@ -136,7 +136,7 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    console.info("[AdminLayout RBAC]", {
+    console.info("[AdminLayout RBAC]", JSON.stringify({
       pathname: location.pathname,
       userId: user?.id ?? null,
       email: user?.email ?? null,
@@ -154,7 +154,7 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
       hasAnyAdminSectionAccess: hasAnySectionAccess,
       canEnterAdmin,
       accessRows,
-    });
+    }, null, 2));
   }, [
     location.pathname,
     user?.id,
