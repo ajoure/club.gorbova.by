@@ -1489,7 +1489,7 @@ export function PaymentDialog({
 
             {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -1501,7 +1501,7 @@ export function PaymentDialog({
                   }
                 }}
                 disabled={isLoading || isTestPaymentLoading}
-                className="flex-1 min-w-0"
+                className="w-full sm:flex-1 sm:min-w-0"
               >
                 <span className="truncate">{user && session ? "Отмена" : "Назад"}</span>
               </Button>
@@ -1514,16 +1514,19 @@ export function PaymentDialog({
                   // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
                   (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
                 }
-                className="flex-1 min-w-0"
+                className="w-full sm:flex-1 sm:min-w-0 h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center"
               >
                 {isLoadingCard ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
                 ) : (
                   <CreditCard className="mr-2 h-4 w-4 shrink-0" />
                 )}
-                <span className="truncate">{isTrial ? "Активировать триал" : `Оплатить ${price}`}</span>
+                <span className="whitespace-normal leading-tight">
+                  {isTrial ? "Активировать демо-доступ" : `Оплатить ${price}`}
+                </span>
               </Button>
             </div>
+
 
             <p className="text-[11px] text-muted-foreground/80 flex items-center gap-1 justify-center">
               <ShieldCheck className="h-3 w-3" />
