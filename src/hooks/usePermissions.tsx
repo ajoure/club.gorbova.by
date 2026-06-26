@@ -15,6 +15,38 @@ interface PermissionsData {
   userRoles: Role[];
 }
 
+type AccessLevel = "none" | "view" | "edit" | "manage";
+
+interface AdminAccessRow {
+  section_code: string;
+  resource_code: string | null;
+  access_level: AccessLevel;
+  source: string;
+}
+
+const LEVEL_RANK: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2, manage: 3 };
+
+/**
+ * canWrite category → admin section mapping (RBAC v3).
+ * Used so legacy callers like canWrite('deals') resolve via section access
+ * for custom roles that don't carry legacy permission codes.
+ */
+const CATEGORY_TO_SECTION: Record<string, string> = {
+  deals: "deals",
+  users: "contacts",
+  contacts: "contacts",
+  payments: "payments",
+  entitlements: "payments",
+  support: "support",
+  telegram: "communication",
+  communication: "communication",
+  news: "editorial",
+  editorial: "editorial",
+  content: "editorial",
+  roles: "roles",
+  admins: "roles",
+};
+
 /**
  * usePermissions — canonical permissions hook.
  *
@@ -28,13 +60,12 @@ interface PermissionsData {
 export function usePermissions() {
   const { user } = useAuth();
 
-  const { data, isLoading: loading } = useQuery<PermissionsData>({
+  const { data, isLoading: loading } = useQuery<PermissionsData & { adminAccess: AdminAccessRow[] }>({
     queryKey: ["user-permissions-and-roles", user?.id],
-    queryFn: async (): Promise<PermissionsData> => {
-      if (!user?.id) return { permissions: [], userRoles: [] };
+    queryFn: async () => {
+      if (!user?.id) return { permissions: [], userRoles: [], adminAccess: [] };
 
-      // Single parallel flight for both queries
-      const [permsResult, rolesResult] = await Promise.all([
+      const [permsResult, rolesResult, adminAccessResult] = await Promise.all([
         supabase.rpc("get_user_permissions", { _user_id: user.id }),
         supabase
           .from("user_roles_v2")
@@ -48,6 +79,7 @@ export function usePermissions() {
             )
           `)
           .eq("user_id", user.id),
+        supabase.rpc("get_admin_access", { _user_id: user.id }),
       ]);
 
       const permissions = permsResult.error
@@ -60,7 +92,11 @@ export function usePermissions() {
             ?.map((r) => r.roles as unknown as Role)
             .filter(Boolean) || []);
 
-      return { permissions, userRoles };
+      const adminAccess = adminAccessResult.error
+        ? (console.error("Error fetching admin access:", adminAccessResult.error), [])
+        : ((adminAccessResult.data as AdminAccessRow[]) || []);
+
+      return { permissions, userRoles, adminAccess };
     },
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
@@ -70,6 +106,22 @@ export function usePermissions() {
 
   const permissions = data?.permissions ?? [];
   const userRoles = data?.userRoles ?? [];
+  const adminAccess = data?.adminAccess ?? [];
+
+  // Section access map (highest level wins, resource overrides ignored here — section gate is enough for canWrite)
+  const sectionLevels = new Map<string, AccessLevel>();
+  for (const row of adminAccess) {
+    if (row.resource_code) continue;
+    const prev = sectionLevels.get(row.section_code) ?? "none";
+    if (LEVEL_RANK[row.access_level] > LEVEL_RANK[prev]) {
+      sectionLevels.set(row.section_code, row.access_level);
+    }
+  }
+
+  const sectionMeets = (sectionCode: string, min: AccessLevel): boolean => {
+    const have = sectionLevels.get(sectionCode) ?? "none";
+    return LEVEL_RANK[have] >= LEVEL_RANK[min];
+  };
 
   const hasPermission = useCallback(
     (permissionCode: string): boolean => {
@@ -109,32 +161,33 @@ export function usePermissions() {
   }, [userRoles]);
 
   const canWrite = useCallback((category: string): boolean => {
-    if (hasRole("super_admin")) return true;
+    if (hasRole("super_admin") || hasRole("admin")) return true;
     if (isViewOnlyRole()) return false;
-    return hasPermission(`${category}.edit`) || 
-           hasPermission(`${category}.manage`) ||
-           hasPermission(`${category}.delete`) ||
-           hasPermission(`${category}.create`);
-  }, [hasRole, isViewOnlyRole, hasPermission]);
+    // Legacy permission codes
+    if (
+      hasPermission(`${category}.edit`) ||
+      hasPermission(`${category}.manage`) ||
+      hasPermission(`${category}.delete`) ||
+      hasPermission(`${category}.create`)
+    ) return true;
+    // RBAC v3 fallback: category → section, require edit or higher
+    const section = CATEGORY_TO_SECTION[category];
+    if (section && sectionMeets(section, "edit")) return true;
+    return false;
+  }, [hasRole, isViewOnlyRole, hasPermission, adminAccess]);
 
   const hasAdminAccess = useCallback((): boolean => {
+    if (hasRole("super_admin") || hasRole("admin")) return true;
     const adminPermissions = [
-      "users.view",
-      "users.update",
-      "users.block",
-      "users.delete",
-      "roles.view",
-      "roles.manage",
-      "admins.manage",
-      "content.edit",
-      "entitlements.view",
-      "entitlements.manage",
-      "audit.view",
-      "news.view",
-      "news.edit",
+      "users.view", "users.update", "users.block", "users.delete",
+      "roles.view", "roles.manage", "admins.manage", "content.edit",
+      "entitlements.view", "entitlements.manage", "audit.view",
+      "news.view", "news.edit",
     ];
-    return hasAnyPermission(adminPermissions);
-  }, [hasAnyPermission]);
+    if (hasAnyPermission(adminPermissions)) return true;
+    // RBAC v3: any section access at view+ grants admin shell
+    return sectionLevels.size > 0;
+  }, [hasRole, hasAnyPermission, adminAccess]);
 
   // refetch by invalidating the query
   const refetch = useCallback(() => {
