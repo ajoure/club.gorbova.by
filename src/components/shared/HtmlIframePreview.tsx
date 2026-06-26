@@ -323,6 +323,38 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
   }, true);
 
+  // ---- Site-action bridge (data-lovable-action) ----
+  // Allows admin-authored HTML to trigger host-side actions (e.g. open PaymentDialog)
+  // without breaking iframe isolation. Only UUIDs flow across the boundary; the host
+  // validates the action and payload before acting on it.
+  function findActionEl(node) {
+    while (node && node !== document) {
+      if (node.getAttribute && node.getAttribute('data-lovable-action')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  document.addEventListener('click', function(ev) {
+    if (ev.defaultPrevented) return;
+    if (ev.button !== 0) return;
+    var el = findActionEl(ev.target);
+    if (!el) return;
+    var action = el.getAttribute('data-lovable-action');
+    if (!action) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var payload = {};
+    var attrs = el.attributes;
+    for (var i = 0; i < attrs.length; i++) {
+      var name = attrs[i].name;
+      if (name.indexOf('data-') === 0 && name !== 'data-lovable-action') {
+        payload[name.slice(5).replace(/-/g, '_')] = attrs[i].value;
+      }
+    }
+    try { parent.postMessage({ type: 'site-action', action: action, payload: payload }, '*'); } catch (e) {}
+  }, true);
+
+
   // ---- Element.prototype.scrollIntoView intercept with fallback ----
   try {
     var nativeScrollIntoView = Element.prototype.scrollIntoView;
@@ -540,7 +572,19 @@ export function HtmlIframePreview({
         }
         return;
       }
+
+      if (data.type === 'site-action') {
+        // Forward to host via CustomEvent. Host validates action/payload before acting.
+        const action = typeof data.action === 'string' ? data.action : '';
+        const payload = data.payload && typeof data.payload === 'object' ? data.payload : {};
+        if (!action) return;
+        try {
+          window.dispatchEvent(new CustomEvent('lovable:site-action', { detail: { action, payload } }));
+        } catch {}
+        return;
+      }
     }
+
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
