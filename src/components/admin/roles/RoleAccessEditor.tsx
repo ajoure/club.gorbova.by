@@ -124,6 +124,7 @@ export function RoleAccessEditor() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDesc, setNewRoleDesc] = useState("");
+  const [newRolePreset, setNewRolePreset] = useState<"view" | "manage" | "custom">("custom");
   const [creating, setCreating] = useState(false);
 
   // Удаление роли
@@ -323,12 +324,52 @@ export function RoleAccessEditor() {
         roleName: newRoleName.trim(),
         roleDescription: newRoleDesc.trim() || undefined,
       });
-      toast.success("Роль создана");
+      const newRoleId = data?.role?.id;
+
+      // Apply access preset (поверх RBAC v3 — никаких legacy permissions/role_permissions)
+      let presetApplied: { applied: number; failed: number; error?: string } | null = null;
+      if (newRoleId && (newRolePreset === "view" || newRolePreset === "manage")) {
+        const sections = catalogQ.data?.sections ?? [];
+        const sectionAccess = sections.map((s) => ({
+          sectionCode: s.code,
+          accessLevel: newRolePreset,
+        }));
+        if (sectionAccess.length > 0) {
+          try {
+            const resp = await callRolesAdmin<{ success: true; applied: number }>(
+              "bulk_set_section_access",
+              { roleId: newRoleId, sectionAccess },
+            );
+            presetApplied = { applied: resp?.applied ?? sectionAccess.length, failed: 0 };
+          } catch (e: any) {
+            presetApplied = { applied: 0, failed: sectionAccess.length, error: e?.message ?? String(e) };
+          }
+        }
+      }
+
+      if (presetApplied?.error) {
+        toast.error(`Роль создана, но preset не применён: ${presetApplied.error}`);
+      } else if (presetApplied && presetApplied.applied > 0) {
+        toast.success(`Роль создана, доступы применены (${presetApplied.applied})`);
+      } else {
+        toast.success("Роль создана");
+      }
+
       await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      if (newRoleId) {
+        await qc.invalidateQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
+      }
+      await qc.invalidateQueries({ queryKey: ["admin-access"] });
+
       setCreateOpen(false);
       setNewRoleName("");
       setNewRoleDesc("");
-      if (data?.role?.id) setSelectedRoleId(data.role.id);
+      setNewRolePreset("custom");
+      if (newRoleId) {
+        setSelectedRoleId(newRoleId);
+        // Гарантируем свежие данные редактора, а не пустой кэш
+        await qc.refetchQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
+      }
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось создать роль");
     } finally {
@@ -609,12 +650,12 @@ export function RoleAccessEditor() {
       </Dialog>
 
       {/* Создание роли */}
-      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setNewRoleName(""); setNewRoleDesc(""); } }}>
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setNewRoleName(""); setNewRoleDesc(""); setNewRolePreset("custom"); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Новая роль</DialogTitle>
             <DialogDescription>
-              После создания назначьте доступы к разделам/ресурсам ниже.
+              Выберите шаблон доступа — его можно будет уточнить ниже после создания.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -644,6 +685,45 @@ export function RoleAccessEditor() {
                 value={newRoleDesc}
                 onChange={(e) => setNewRoleDesc(e.target.value)}
               />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm">Тип доступа</Label>
+              <RadioGroup
+                value={newRolePreset}
+                onValueChange={(v) => setNewRolePreset(v as "view" | "manage" | "custom")}
+                className="gap-2"
+              >
+                <label
+                  htmlFor="preset-custom"
+                  className="flex items-start gap-2 rounded-md border border-input p-2.5 cursor-pointer hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-accent/30"
+                >
+                  <RadioGroupItem id="preset-custom" value="custom" className="mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">Индивидуальная настройка</div>
+                    <div className="text-xs text-muted-foreground">Роль создаётся пустой — настройте доступы вручную в редакторе.</div>
+                  </div>
+                </label>
+                <label
+                  htmlFor="preset-view"
+                  className="flex items-start gap-2 rounded-md border border-input p-2.5 cursor-pointer hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-accent/30"
+                >
+                  <RadioGroupItem id="preset-view" value="view" className="mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">Только просмотр</div>
+                    <div className="text-xs text-muted-foreground">Доступ «Просмотр» ко всем активным секциям. Ресурсы наследуют.</div>
+                  </div>
+                </label>
+                <label
+                  htmlFor="preset-manage"
+                  className="flex items-start gap-2 rounded-md border border-input p-2.5 cursor-pointer hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-accent/30"
+                >
+                  <RadioGroupItem id="preset-manage" value="manage" className="mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">Полный доступ</div>
+                    <div className="text-xs text-muted-foreground">Управление всеми активными секциями. Ресурсы наследуют.</div>
+                  </div>
+                </label>
+              </RadioGroup>
             </div>
           </div>
           <DialogFooter>
