@@ -671,11 +671,13 @@ export default function AdminProductDetailV2() {
       amount: offerForm.amount,
       reentry_amount: offerForm.reentry_amount || null, // Price for re-entry
       trial_days: offerForm.offer_type === "trial" ? offerForm.trial_days : null,
-      auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
+      // PATCH-DISABLE-MANDATORY-INTERNAL-MIT: обязательная внутренняя MIT-привязка карты выключена системно (DB-триггер).
+      // auto_charge_after_trial и requires_card_tokenization всегда false; провайдер-сайд recurring (bePaid/Stripe) этим флагом не управляется.
+      auto_charge_after_trial: false,
       auto_charge_amount: null, // Deprecated, use auto_charge_offer_id instead
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
-      auto_charge_offer_id: offerForm.offer_type === "trial" && offerForm.auto_charge_after_trial ? (offerForm.auto_charge_offer_id || null) : null,
-      requires_card_tokenization: offerForm.offer_type === "trial" || isPreregistration ? true : (isInstallment || offerForm.requires_card_tokenization),
+      auto_charge_offer_id: null,
+      requires_card_tokenization: false,
       is_active: offerForm.is_active,
       is_primary: offerForm.offer_type === "pay_now" ? offerForm.is_primary : false,
       visible_from: null,
@@ -2059,7 +2061,6 @@ export default function AdminProductDetailV2() {
                 offerForm.payment_method !== "internal_installment" && (
                   offerForm.offer_type === "trial" ||
                   offerForm.offer_type === "preregistration" ||
-                  offerForm.requires_card_tokenization ||
                   Boolean((offerForm.meta as any)?.recurring?.is_recurring)
                 )
               }
@@ -2081,20 +2082,29 @@ export default function AdminProductDetailV2() {
                       <div>
                         <div className="flex items-center space-x-2">
                           <Switch
-                            checked={offerForm.requires_card_tokenization}
-                            onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                            checked={Boolean((offerForm.meta as any)?.recurring?.is_recurring)}
+                            onCheckedChange={(checked) => setOfferForm({
+                              ...offerForm,
+                              meta: {
+                                ...(offerForm.meta as any),
+                                recurring: {
+                                  ...((offerForm.meta as any)?.recurring || {}),
+                                  is_recurring: checked,
+                                },
+                              },
+                            })}
                           />
                           <Label>Подписка (автопродление)</Label>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {offerForm.requires_card_tokenization 
-                            ? "Продукт продлеваемый: карта сохраняется, авто-списания и напоминания о продлении включены." 
+                          {(offerForm.meta as any)?.recurring?.is_recurring
+                            ? "Продукт продлеваемый: recurring управляется провайдером (bePaid/Stripe). Внутренняя обязательная привязка карты отключена платформенно."
                             : "Разовый продукт: оплата без сохранения карты, напоминания о продлении не отправляются."}
                         </p>
                       </div>
                       
                       {/* Auto-renewal settings - ONLY for subscriptions */}
-                      {offerForm.requires_card_tokenization && (
+                      {Boolean((offerForm.meta as any)?.recurring?.is_recurring) && (
                         <Collapsible 
                           open={showAdvancedSettings}
                           onOpenChange={setShowAdvancedSettings}
@@ -2383,15 +2393,14 @@ export default function AdminProductDetailV2() {
 
                   <Separator />
 
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={offerForm.auto_charge_after_trial}
-                      onCheckedChange={(checked) => setOfferForm({ ...offerForm, auto_charge_after_trial: checked })}
-                    />
+                  <div className="flex items-center space-x-2 opacity-60">
+                    <Switch checked={false} disabled />
                     <Label>Автосписание после trial</Label>
                   </div>
-
-                  {offerForm.auto_charge_after_trial && (
+                  <p className="text-xs text-muted-foreground -mt-2">
+                    Внутреннее MIT-автосписание отключено платформенно (PATCH-DISABLE-MANDATORY-INTERNAL-MIT). Демо-доступ выдаётся через access_rules на срок trial без привязки карты. Provider-side recurring (bePaid/Stripe) настраивается через отдельный продукт-подписку.
+                  </p>
+                  {false && (
                     <div className="space-y-2">
                       <Label>Кнопка для автосписания *</Label>
                       <Select
