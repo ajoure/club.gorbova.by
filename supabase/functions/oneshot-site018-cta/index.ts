@@ -7,6 +7,8 @@
 // project's INTERNAL_PATCH_SECRET. Public traffic is rejected.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+import { SITE018_HTML_B64 } from "./site018_html.ts";
+
 
 const PAGE_ID = "7e672fed-13f1-4ff1-8786-71a228a0c011";
 const TRIAL_OFFER_ID = "891c7fe0-eb9d-4853-a1d5-bb69d688c801";
