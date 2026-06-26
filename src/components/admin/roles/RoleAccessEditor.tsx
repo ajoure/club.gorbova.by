@@ -361,6 +361,8 @@ export function RoleAccessEditor() {
         await qc.invalidateQueries({ queryKey: ["roles-admin", "role-access", newRoleId] });
       }
       await qc.invalidateQueries({ queryKey: ["admin-access"] });
+      notifyRolesChanged();
+
 
       setCreateOpen(false);
       setNewRoleName("");
