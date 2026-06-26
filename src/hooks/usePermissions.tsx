@@ -15,6 +15,38 @@ interface PermissionsData {
   userRoles: Role[];
 }
 
+type AccessLevel = "none" | "view" | "edit" | "manage";
+
+interface AdminAccessRow {
+  section_code: string;
+  resource_code: string | null;
+  access_level: AccessLevel;
+  source: string;
+}
+
+const LEVEL_RANK: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2, manage: 3 };
+
+/**
+ * canWrite category → admin section mapping (RBAC v3).
+ * Used so legacy callers like canWrite('deals') resolve via section access
+ * for custom roles that don't carry legacy permission codes.
+ */
+const CATEGORY_TO_SECTION: Record<string, string> = {
+  deals: "deals",
+  users: "contacts",
+  contacts: "contacts",
+  payments: "payments",
+  entitlements: "payments",
+  support: "support",
+  telegram: "communication",
+  communication: "communication",
+  news: "editorial",
+  editorial: "editorial",
+  content: "editorial",
+  roles: "roles",
+  admins: "roles",
+};
+
 /**
  * usePermissions — canonical permissions hook.
  *
