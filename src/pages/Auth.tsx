@@ -416,7 +416,19 @@ export default function Auth() {
 
         const { error } = await signIn(email, password);
         if (error) {
-          if (error.message === "Invalid login credentials") {
+          const code = (error as any)?.code || (error as any)?.error_code || "";
+          const msg = error.message || "";
+          const isUnconfirmed =
+            code === "email_not_confirmed" || /email not confirmed/i.test(msg);
+
+          if (isUnconfirmed) {
+            setUnconfirmedEmail(email.toLowerCase().trim());
+            toast({
+              title: "Email не подтверждён",
+              description: "Проверьте почту — мы отправили письмо со ссылкой. Если письма нет, нажмите «Отправить ещё раз».",
+              variant: "destructive",
+            });
+          } else if (msg === "Invalid login credentials") {
             setFieldErrors([{ field: "password", message: "Неверный email или пароль" }]);
           } else {
             toast({
