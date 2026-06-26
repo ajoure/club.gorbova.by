@@ -1,324 +1,127 @@
-да, согласен, с учетом правок:
-
-1. **Переименовать patch точнее**
-
-Лучше не `DISABLE-INTERNAL-MIT`, а:
-
-```text
-PATCH-DISABLE-MANDATORY-INTERNAL-MIT
-```
-
-Потому что мы не удаляем технический MIT-код и не запрещаем сохранённую карту как добровольную функцию. Мы запрещаем **обязательную внутреннюю привязку карты как условие покупки/trial/подписки**.
-
-2. **Не смешивать provider-side recurring и** `auto_charge_after_trial`
-
-Перед глобальным `auto_charge_after_trial=false` нужно доказать, что это поле относится именно к **внутреннему MIT/autopay нашей платформы**, а не к bePaid/Stripe provider-side recurring.
-
-В план добавить preflight:
-
-```sql
-select id, name, offer_type, payment_method, requires_card_tokenization, auto_charge_after_trial, meta
-from tariff_offers
-where coalesce(auto_charge_after_trial,false)=true
-   or coalesce(requires_card_tokenization,false)=true;
-```
-
-И grep по коду:
-
-```text
-auto_charge_after_trial
-requires_card_tokenization
-```
-
-Если `auto_charge_after_trial` где-то запускает внутренний MIT-charge — отключать глобально.  
-Если поле неожиданно участвует в provider-side subscription flow — не трогать без отдельного плана.
-
-3. **Формулировку в контексте поправить**
-
-Текущий текст:
-
-```text
-requires_card_tokenization больше НЕ классификатор — это биллинг-сигнал bePaid
-```
-
-опасный. Он может быть понят неправильно.
-
-Нужно заменить на:
-
-```text
-requires_card_tokenization не должен использоваться как классификатор подписки и не должен быть условием покупки. Канон подписки — tariff_offers.meta.recurring.is_recurring. Provider-side recurring выполняется через bePaid/Stripe и не требует внутренней MIT-привязки карты.
-```
-
-4. **Триггер — правильно, но только для обязательной внутренней MIT-токенизации**
-
-Триггер допустим, если его смысл такой:
-
-```text
-Никакой frontend/backend/service_role больше не может включить обязательную внутреннюю привязку карты в tariff_offers.
-```
-
-Но в названии функции лучше явно указать `mandatory_internal_mit`, например:
-
-```sql
-public.tariff_offers_force_disable_mandatory_internal_mit()
-```
-
-А не просто `force_disable_mit`, чтобы не выглядело как удаление всего MIT.
-
-5. **Admin UI: не писать “автосписания подписок выполняются на стороне bePaid/Stripe” для всех офферов**
-
-Для read-only info лучше так:
-
-```text
-Обязательная внутренняя привязка карты отключена на уровне платформы. Покупка и подписки проходят через стандартный checkout bePaid/Stripe. Если у оффера есть рекуррент, дальнейшие списания выполняет платёжный провайдер, а не внутренняя MIT-токенизация платформы.
-```
-
-6. **PaymentDialog: не завязывать блок recurring на** `requires_card_tokenization`
-
-После патча `requires_card_tokenization` всегда false, поэтому он не должен участвовать в логике отображения recurring.
-
-Правильно:
-
-```ts
-const isRealRecurring = offer?.meta?.recurring?.is_recurring === true;
-```
-
-И блок «Ежемесячная подписка» показывать по:
-
-```ts
-isRealRecurring
-```
-
-а не по:
-
-```ts
-isSubscription || isTrial
-```
-
-и не по `requires_card_tokenization`.
-
-7. **Trial copy**
-
-Для trial на 0 BYN текст должен быть предельно ясный:
-
-```text
-Демо-доступ
-Стоимость: 0 BYN. Срок: 1 день. Карта не требуется. По истечении срока доступ автоматически закончится.
-```
-
-Для платного trial/подписки через провайдера:
-
-```text
-Оплата проходит через bePaid/Stripe. Если у тарифа есть автопродление, дальнейшие списания выполняет платёжный провайдер.
-```
-
-8. **Backend guard через DB-триггер принят, но добавить proof create/update**
-
-В runtime proof добавить не только `UPDATE true → false`, но и создание тестового оффера:
-
-```text
-INSERT tariff_offer с requires_card_tokenization=true → в БД сохранено false
-UPDATE tariff_offer requires_card_tokenization=true → в БД осталось false
-```
-
-После теста запись удалить.
-
-9. **Не трогать активные рекурренты**
-
-В STOP-guards добавить:
-
-```text
-Не менять provider-side recurring/subscription records, payment profiles, Stripe Prices, bePaid subscription ids, orders_v2, payments_v2, subscriptions_v2.
-```
-
-Нормализация касается только обязательности внутренней card-tokenization в `tariff_offers`.
-
-10. **DoD добавить по текущей странице**
-
-Кроме общих проверок:
-
-```text
-SITE-000018: все CTA открывают PaymentDialog trial-оффера, карта не запрашивается, после активации доступ только к «База знаний» на 24 часа.
-```
-
-11. **Финальный отчёт**
-
-Отчёт должен быть:
-
-```text
-Отчет о выполненной работе: PATCH-DISABLE-MANDATORY-INTERNAL-MIT
-```
-
-С отдельными строками:
-
-```text
-DB normalization: PASS
-DB trigger guard: PASS
-Admin UI mandatory MIT disabled: PASS
-PaymentDialog copy: PASS
-SITE-000018 trial without card: PASS
-bePaid/Stripe recurring unaffected: PASS
-```
-
-После этих правок план можно выполнять.
-
 &nbsp;
 
-План: PATCH-DISABLE-INTERNAL-MIT + PaymentDialog copy fix
+да, согласен, с учетом правок:
 
-## Контекст и границы
+1. **PATCH-AUTH-VERIFY-INTERSTITIAL сделать отдельным и обязательным.**  
+Это выглядит как основное исправление. PATCH-AUTH-UX-ERRORS можно делать в том же PR, но логически разделить на два независимых коммита/этапа, чтобы при необходимости можно было быстро откатить только UX.
+2. **Не полагаться полностью на предположение о префетчерах.**  
+Диагноз выглядит правдоподобным, но в отчёте нужно подтвердить эффект цифрами:
+  - количество One-time token not found до патча;
+  - количество после патча (за одинаковый интервал наблюдения);
+  - примеры успешных recovery/signup после interstitial.
+3. **Interstitial не должен выполнять никаких автоматических действий.**  
+Проверить, что:
+  - нет useEffect(...location.replace...);
+  - нет <meta http-equiv="refresh">;
+  - нет автоматического submit формы;
+  - переход выполняется **только** по пользовательскому клику.
+4. **Сохранить все query-параметры без изменений.**  
+При переходе на Supabase необходимо передавать исходный search полностью, без ручной сборки отдельных параметров. Это исключит регрессии для разных type и redirect_to.
+5. **Добавить защиту от двойного клика.**  
+После нажатия кнопки:
+  - заблокировать кнопку;
+  - показать состояние «Переходим…»;
+  - не позволять отправить второй запрос.
+6. **Проверить все поддерживаемые типы.**  
+В Verify явно проверить:
+  - signup;
+  - recovery;
+  - magiclink;
+  - invite;
+  - если используется — email_change.
+7. **UX ошибок сделать через единый обработчик.**  
+Не дублировать сообщения между Auth.tsx и PaymentDialog. Логику определения ошибок лучше централизовать в useInlineAuth или общем helper.
+8. **Resend ограничить защитой от спама.**  
+После отправки повторного письма:
+  - временно отключить кнопку (например, 30–60 секунд);
+  - показать понятное сообщение об успешной отправке;
+  - не позволять бесконечно нажимать resend.
+9. **422 обрабатывать по кодам, а не по тексту.**  
+Если SDK возвращает структурированные поля (status, code, error_code), использовать их. Не завязываться только на текст ошибки, который может измениться.
+10. **PATCH-AUTH-EMAIL-RESEND оставить строго вне scope.**  
+Согласен не внедрять OTP сейчас. Сначала оценить эффективность interstitial.
+11. **Добавить метрики в отчёт.**  
+Помимо функциональных проверок приложить:
 
-Пользователь подтвердил: задача — не «отключить автосписания», а **отключить обязательную внутреннюю MIT/card-tokenization** (привязка карты в нашей платформе с сохранением токена для последующих MIT-списаний с нашей стороны) как условие любой покупки/trial/подписки/рассрочки.
+- число успешных /verify;
+- число 403 One-time token not found;
+- число повторных resend;
+- подтверждение, что не появилось новых ошибок авторизации.
 
-bePaid и Stripe provider-side recurring/subscription/checkout НЕ ломаем — рекуррент там идёт на стороне провайдера, наш флаг `requires_card_tokenization` к нему отношения не имеет (это подтверждено комментарием в `grant-access-for-order:1656` и `direct-charge:371`: «requires_card_tokenization больше НЕ классификатор — это биллинг-сигнал bePaid»).
+12. **Добавить проверку производительности.**  
+Interstitial должен открываться практически мгновенно и не зависеть от внешних API до нажатия кнопки.
+13. **Отдельно проверить мобильный сценарий.**  
+Пользователь должен иметь возможность открыть письмо на телефоне, нажать ссылку, увидеть interstitial и успешно завершить восстановление пароля.
+14. **Текст interstitial сделать универсальным.**  
+Не писать только «Подтвердите вход». Лучше нейтральный вариант, подходящий для всех типов действий:
 
-Канон классификатора подписки — `tariff_offers.meta.recurring.is_recurring` (memory Product Type SOT). Его НЕ трогаем.
+«Для продолжения нажмите кнопку ниже.»
 
-## Текущее состояние (audit)
+Тогда один экран подходит для регистрации, восстановления пароля, magic link и приглашений.
 
-DB по активным офферам:
+15. **Обязательное требование для [Lovable.dev](http://Lovable.dev):**
 
-```
-offer_type      | req_card_tok | auto_charge | count
-pay_now         | f            | f           | 24
-pay_now         | t            | f           |  9   ← подлежат нормализации
-preregistration | t            | f           |  1   ← подлежит нормализации
-trial           | f            | f           |  1
-trial           | t            | f           |  1   ← подлежит нормализации
-```
+План должен быть составлен на русском языке.
 
-Запись флага в UI: `src/pages/admin/AdminProductDetailV2.tsx`
+Отчет о выполненной работе должен быть составлен на русском языке.
 
-- L678: `requires_card_tokenization: offerForm.offer_type === "trial" || isPreregistration ? true : ...` — принудительный TRUE для trial/preregistration
-- L1868, L1881: при смене типа на trial/preregistration ставится TRUE
-- L2084-2097: чекбокс «обязательная привязка карты» в форме оффера
-- L2388-2394: чекбокс `auto_charge_after_trial`
+Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
 
-PaymentDialog: `src/components/payment/PaymentDialog.tsx`
+## План: фикс регистрации и сброса пароля на gorbova.by
 
-- L1305-1319: блок «Важное о пробном периоде» — рендерится по `isTrial`, без учёта реального наличия токенизации/автосписания
-- L1407-1428: блок «Ежемесячная подписка / Подписка на Клуб» — по `(isSubscription || isTrial)`, без учёта реальных настроек
+### Diagnose (что реально происходит)
 
----
+Прочитал auth-логи (последние ~30 мин) и код (`AuthVerifyProxy.tsx`, `auth-email-hook/index.ts`, `Auth.tsx`, `useInlineAuth.ts`). Картина:
 
-## Scope патча
+1. `**403 One-time token not found` на `/verify**` — массово, у `mail.ru`, `inbox.ru`, корпоративных почт. Ссылка из письма (`gorbova.by/auth/v1/verify?token=...&redirect_to=...`) уходит на `AuthVerifyProxy`, тот делает `location.replace` на Supabase `/auth/v1/verify`. Supabase отдаёт `303` → `redirect_to` (`/auth?mode=reset` и т.п.).
+  **Причина:** одноразовый `token` сжигается ДО клика пользователя — почтовые провайдеры (mail.ru, inbox.ru), антивирусы и Outlook Safe Links **префетчат ссылки** для проверки. Когда пользователь нажимает — токен уже использован → 403.
+   Подтверждение: в логах видно `/verify 303` → пользователь жмёт → ещё один `/verify 403`. Это классическая Supabase magic-link проблема.
+2. `**400: Email not confirmed**` — `liza-gajduk@inbox.ru` пыталась логиниться до подтверждения email (ссылка не сработала по причине №1, поэтому пробует пароль).
+3. `**422` на `/signup**` — два подряд перед успешным сигнапом у `kuzmina.laguna@mail.ru`. Это либо «User already registered» (повтор), либо weak password — UI не показывает понятную ошибку.
 
-### 1. DB normalization (миграция через supabase--migration)
+### Что нужно сделать (3 патча, разнесены)
 
-Один skript, идемпотентный:
+#### PATCH-AUTH-VERIFY-INTERSTITIAL (главный, чинит 90% жалоб)
 
-```sql
--- 1.1 Нормализация существующих офферов
-UPDATE public.tariff_offers
-SET requires_card_tokenization = false
-WHERE COALESCE(requires_card_tokenization, false) = true;
+Заменить «прозрачный» `AuthVerifyProxy` на **interstitial-страницу с явной кнопкой** «Подтвердить вход». Префетч-боты не нажимают кнопки → токен не сгорает.
 
-UPDATE public.tariff_offers
-SET auto_charge_after_trial = false
-WHERE COALESCE(auto_charge_after_trial, false) = true;
+- `src/pages/AuthVerifyProxy.tsx`:
+  - Убрать автоматический `location.replace`.
+  - Показать экран: «Подтвердите действие» + кнопка «Продолжить» (только пользователь её нажмёт).
+  - Кнопка делает тот же `location.replace` на `${SUPABASE_URL}/auth/v1/verify${search}`.
+  - Добавить `<meta name="robots" content="noindex,nofollow">` и заголовок без auto-redirect для предотвращения сканеров.
+- Текст и стиль — в брендовой палитре (`#65728A` уже используется).
+- Recovery/signup/magiclink/invite — все идут через тот же `/auth/v1/verify`, фикс покрывает все четыре кейса.
 
--- 1.2 Дефолты на уровне колонок — false
-ALTER TABLE public.tariff_offers
-  ALTER COLUMN requires_card_tokenization SET DEFAULT false,
-  ALTER COLUMN auto_charge_after_trial    SET DEFAULT false;
+#### PATCH-AUTH-UX-ERRORS (UX, мелкие правки)
 
--- 1.3 BEFORE INSERT/UPDATE триггер-guard:
---     всегда нормализует requires_card_tokenization=false и auto_charge_after_trial=false,
---     даже если frontend/edge прислал true. Это закрывает «backend принимает true из payload».
-CREATE OR REPLACE FUNCTION public.tariff_offers_force_disable_mit()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-BEGIN
-  IF NEW.requires_card_tokenization IS DISTINCT FROM false THEN
-    NEW.requires_card_tokenization := false;
-  END IF;
-  IF NEW.auto_charge_after_trial IS DISTINCT FROM false THEN
-    NEW.auto_charge_after_trial := false;
-  END IF;
-  RETURN NEW;
-END $$;
+- `src/pages/Auth.tsx` + `useInlineAuth.ts`:
+  - При `error_code=email_not_confirmed` на `signInWithPassword` показать понятный текст «Email не подтверждён. Проверьте почту или отправьте письмо повторно» + кнопку «Отправить ещё раз» (вызов `auth-actions { action: 'resend_confirmation' }`, если есть; иначе `supabase.auth.resend({ type: 'signup', email })`).
+  - При `422` на signup отличать «User already registered» (предложить «Войти» / «Сбросить пароль») от «weak_password» (показать требования).
+- В `PaymentDialog` (inline-auth) — то же самое через общий `useInlineAuth`.
 
-DROP TRIGGER IF EXISTS trg_tariff_offers_force_disable_mit ON public.tariff_offers;
-CREATE TRIGGER trg_tariff_offers_force_disable_mit
-BEFORE INSERT OR UPDATE OF requires_card_tokenization, auto_charge_after_trial
-ON public.tariff_offers
-FOR EACH ROW EXECUTE FUNCTION public.tariff_offers_force_disable_mit();
+#### PATCH-AUTH-EMAIL-RESEND (опционально, follow-up)
 
--- 1.4 Audit-запись о применённом patch
-INSERT INTO public.audit_logs (action, entity_type, entity_id, metadata)
-VALUES ('patch_applied','tariff_offers', gen_random_uuid(),
-        jsonb_build_object('patch','PATCH-DISABLE-INTERNAL-MIT-V1','at',now()));
-```
+В письме `recovery`/`signup` добавить пояснение «Если ссылка не работает — нажмите эту кнопку», но кнопка ведёт на тот же interstitial. Дополнительно вывести 6-значный код (Supabase `token` уже есть в payload — `templateProps.token`), чтобы пользователь мог ввести вручную на `/auth?mode=verify-code`. Это hard-фолбэк против префетчеров. **Реализуется только после первого патча и подтверждения, что interstitial не решил всё.**
 
-Триггер делает «backend guard» декларативным — никакой edge-функции править не нужно, любое INSERT/UPDATE (через service_role, RLS, RPC, миграцию) гарантированно вернёт false.
+### Технические детали
 
-### 2. Admin UI guard (`src/pages/admin/AdminProductDetailV2.tsx`)
+- `AuthVerifyProxy` сейчас не SSR, чисто React — interstitial безопасно добавить.
+- Префетч-боты исполняют JS редко, кнопка `<button onClick>` гарантированно не нажимается. Дополнительная защита — не ставить редирект в `useEffect`.
+- Никаких изменений в БД, edge-функциях `auth-email-hook` и шаблонах писем на этом этапе (host уже переписан на `gorbova.by`, это правильно).
+- Не трогаем правила безопасности (no-supabase-url-leakage сохраняется).
 
-- L678: убрать форс TRUE для trial/preregistration → всегда `false`.
-- L335, L502, L529, L796, L1868, L1881: занулить начальные/текущие значения в форме до `false`.
-- L2080-2100: чекбокс «обязательная привязка карты» — заменить на read-only Info-блок «Внутренняя привязка карты отключена на уровне платформы (PATCH-DISABLE-INTERNAL-MIT). Автосписания подписок выполняются на стороне bePaid/Stripe.» с отсылкой к memory.
-- L2380-2400: чекбокс `auto_charge_after_trial` — аналогично read-only off с пояснением «после trial доступ заканчивается; для подписки с автопродлением создайте отдельный recurring-оффер».
-- Условные ветки (L578, L614, L2062, L2561, L2795), завязанные на `offerForm.requires_card_tokenization`, продолжат корректно ветвиться по `false` без дополнительных правок.
+### Verify (DoD)
 
-### 3. PaymentDialog копия (`src/components/payment/PaymentDialog.tsx`)
+1. Браузер: открыть письмо-восстановление (recovery), пройти flow с interstitial → пароль успешно меняется.
+2. Эмуляция префетча: `curl -L "https://gorbova.by/auth/v1/verify?token=...&type=recovery&redirect_to=..."` → должна вернуться HTML interstitial, **без** запроса к Supabase `/verify` (грепнуть `auth-logs` за окном).
+3. Mail.ru-сценарий: рекавери-email → ссылка отрабатывает после клика, в логах исчезают `One-time token not found`.
+4. UX: signInWithPassword под неподтверждённым email показывает «Письмо не подтверждено» + ресенд.
+5. Регресс: магик-линк/инвайт/смена email — все четыре `action_type` идут через interstitial и работают.
 
-Перейти от рендера по `isTrial`/`isSubscription` к рендеру по фактическим настройкам оффера.
+### Out of scope
 
-- L1305-1319 — блок «Важное о пробном периоде» удалить. Если когда-то понадобится — заменить на адаптивный summary, см. ниже.
-- L1407-1428 — блок «Ежемесячная подписка / Подписка на Клуб»: показывать ТОЛЬКО когда `isSubscription && requires_card_tokenization === false` И при этом оффер реально recurring (`meta.recurring.is_recurring=true`). После patch №1 `requires_card_tokenization` всегда false, поэтому фактически условие сводится к «recurring-оффер». Текст оставляем для recurring (Клуб, рекурренты), потому что там автосписание делает bePaid.
-- Новый универсальный мини-summary для trial без карты (рендерим вместо удалённого alert):
+- Перевод на 6-значные OTP-коды (отдельный PATCH-AUTH-EMAIL-RESEND, после оценки эффекта interstitial).
+- Любые изменения схемы БД и логики выдачи доступов.
 
-```tsx
-{isTrial && !requiresCardTokenization && (
-  <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
-    <p className="font-medium text-foreground">Демо-доступ</p>
-    <p className="text-muted-foreground">
-      Стоимость: {price}. Срок: {trialDays ?? "—"} {pluralizeDays(trialDays)}.
-      Карта не требуется. По истечении срока доступ автоматически закончится.
-    </p>
-  </div>
-)}
-```
-
-Пропсы `requiresCardTokenization` и (если нужно) `isRecurring` пробросить из вызывающих компонентов (`SitePageBySlug`, `TariffCard`, `UniversalPricingSection`, `ProductLanding`, `LiveEventProductCta`, `Pay.tsx`). Источник — `tariff_offers.requires_card_tokenization` + `tariff_offers.meta.recurring.is_recurring`, оба уже отдаются `usePublicProduct`/`usePublicTariff`/`useTariffOffers`.
-
-### 4. Runtime proof (после миграции)
-
-```bash
-# 4.1 Все офферы нормализованы
-psql -c "select count(*) filter (where requires_card_tokenization) tok,
-                  count(*) filter (where auto_charge_after_trial) auto
-         from tariff_offers where is_active"
-# ожидание: 0 / 0
-
-# 4.2 Триггер блокирует попытку записать true
-psql -c "update tariff_offers set requires_card_tokenization=true where id='891c7fe0-eb9d-4853-a1d5-bb69d688c801' returning requires_card_tokenization"
-# ожидание: f
-
-# 4.3 SITE-000018 trial CTA → диалог без блоков «Важное о пробном периоде» и «Ежемесячная подписка», только «Демо-доступ»
-# 4.4 Клуб /pay по recurring-офферу → блок «Ежемесячная подписка» остался, bePaid-redirect работает
-# 4.5 Любой pay_now-оффер (бывший req_card_tok=true) → checkout проходит, никаких «привязать карту» в UI
-```
-
-### 5. DoD
-
-- DB: 0 активных офферов с `requires_card_tokenization=true` или `auto_charge_after_trial=true`
-- Триггер `trg_tariff_offers_force_disable_mit` присутствует, smoke-test проходит
-- Admin UI: чекбокс «обязательная привязка карты» больше нельзя включить (read-only info)
-- PaymentDialog: блок «Важное о пробном периоде» удалён; «Ежемесячная подписка» рендерится только для реальных recurring-офферов; для trial без карты — короткий «Демо-доступ»-блок
-- Smoke: SITE-000018 demo CTA проходит без блоков и без запроса карты
-- Smoke: оплата Клуба (recurring) и одного pay_now-оффера не сломана (bePaid-redirect)
-- Audit-запись `PATCH-DISABLE-INTERNAL-MIT-V1` в `audit_logs`
-
-## Файлы, которые будут затронуты
-
-- supabase/migrations/* (новая миграция — нормализация + триггер)
-- src/pages/admin/AdminProductDetailV2.tsx
-- src/components/payment/PaymentDialog.tsx
-- src/pages/SitePageBySlug.tsx (проброс `requiresCardTokenization`/`isRecurring` в PaymentDialog)
-- по необходимости: src/components/landing/TariffCard.tsx, UniversalPricingSection.tsx, ProductLanding.tsx, src/components/live/LiveEventProductCta.tsx, src/pages/Pay.tsx (проброс тех же пропсов, если они открывают PaymentDialog)
-
-## Что НЕ трогаем
-
-- `tariff_offers.meta.recurring.is_recurring` и Recurring Snapshot Resolver — канон классификации
-- bePaid `/subscriptions` flow, installment finite-subscription, webhook-обработка, `grant-access-for-order` логику extend/new sub
-- Колонку `requires_card_tokenization` физически не удаляем (риск каскадов на edge-функции, ретро-аудиты); фактическую обязательность убираем триггером
+Подтвердите — переключусь в build и применю PATCH-AUTH-VERIFY-INTERSTITIAL + PATCH-AUTH-UX-ERRORS одним заходом.
