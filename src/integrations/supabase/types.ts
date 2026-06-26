@@ -17480,6 +17480,10 @@ export type Database = {
           section_route: string
         }[]
       }
+      has_admin_section_access: {
+        Args: { _min_level?: string; _section_code: string; _user_id: string }
+        Returns: boolean
+      }
       has_any_role: {
         Args: {
           p_roles: Database["public"]["Enums"]["app_role"][]
