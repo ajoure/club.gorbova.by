@@ -78,7 +78,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { AdminVoiceRecorder } from "./chat/AdminVoiceRecorder";
@@ -970,6 +970,13 @@ export function ContactTelegramChat({
     const normalized = normalizeEdgeFunctionError(error);
     return translateTelegramError(normalized);
   };
+  // Async-вариант: читает body non-2xx ответа edge-функции (важно для 403
+  // `rbac_section_manage_denied`, 400 `selected_bot_inactive`, и т.п.),
+  // чтобы пользователь видел точную причину, а не generic «Функция временно недоступна».
+  const formatChatErrorAsync = async (error: unknown): Promise<string> => {
+    const normalized = await normalizeEdgeFunctionErrorAsync(error);
+    return translateTelegramError(normalized);
+  };
 
   // Fetch profile photo from Telegram
   const fetchPhotoMutation = useMutation({
@@ -1109,10 +1116,11 @@ export function ContactTelegramChat({
       pendingBoundaryRef.current = null;
       onMessageSent?.(b);
     },
-    onError: (error) => {
+    onError: async (error) => {
       setIsUploading(false);
       pendingBoundaryRef.current = null;
-      toast.error("Ошибка отправки: " + formatChatError(error));
+      const msg = await formatChatErrorAsync(error);
+      toast.error("Ошибка отправки: " + msg);
     },
   });
 
