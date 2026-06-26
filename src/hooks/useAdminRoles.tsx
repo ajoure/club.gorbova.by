@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+/**
+ * RBAC v3 canonical hook.
+ * Источник правды для UI ролей/сотрудников.
+ * Legacy таблицы permissions / role_permissions больше НЕ читаются и НЕ пишутся.
+ * Доступы (section / resource access) управляются через RoleAccessEditor → roles-admin edge-функции.
+ */
+
 interface Role {
   id: string;
   code: string;
@@ -10,6 +17,8 @@ interface Role {
   created_at: string;
 }
 
+// Permissions массив сохранён как пустой для обратной совместимости с местами,
+// где роль ещё типизирована как RoleWithPermissions. Реальный источник прав — RBAC v3.
 interface Permission {
   id: string;
   code: string;
@@ -23,13 +32,11 @@ interface RoleWithPermissions extends Role {
 
 export function useAdminRoles() {
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
-  const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchRoles = useCallback(async () => {
     setLoading(true);
     try {
-      // Get all roles
       const { data: rolesData, error: rolesError } = await supabase
         .from("roles")
         .select("*")
@@ -41,50 +48,9 @@ export function useAdminRoles() {
         return;
       }
 
-      // Get all permissions
-      const { data: permissionsData, error: permsError } = await supabase
-        .from("permissions")
-        .select("*")
-        .order("category", { ascending: true });
-
-      if (permsError) {
-        console.error("Error fetching permissions:", permsError);
-      } else {
-        setAllPermissions(permissionsData || []);
-      }
-
-      // Get role_permissions
-      const { data: rolePerms, error: rolePermsError } = await supabase
-        .from("role_permissions")
-        .select(`
-          role_id,
-          permission_id,
-          permissions:permission_id (
-            id,
-            code,
-            name,
-            category
-          )
-        `);
-
-      if (rolePermsError) {
-        console.error("Error fetching role permissions:", rolePermsError);
-      }
-
-      // Map permissions to roles
-      const permsMap = new Map<string, Permission[]>();
-      rolePerms?.forEach((rp) => {
-        const perm = rp.permissions as unknown as Permission;
-        if (perm) {
-          const existing = permsMap.get(rp.role_id) || [];
-          existing.push(perm);
-          permsMap.set(rp.role_id, existing);
-        }
-      });
-
-      const rolesWithPerms: RoleWithPermissions[] = rolesData.map((r) => ({
+      const rolesWithPerms: RoleWithPermissions[] = (rolesData || []).map((r) => ({
         ...r,
-        permissions: permsMap.get(r.id) || [],
+        permissions: [],
       }));
 
       setRoles(rolesWithPerms);
@@ -108,14 +74,11 @@ export function useAdminRoles() {
 
       if (response.error) {
         console.error("Assign role error:", response.error);
-        const errorMessage = response.error.message || "Ошибка назначения роли";
-        toast.error(errorMessage);
+        toast.error(response.error.message || "Ошибка назначения роли");
         return false;
       }
 
-      // Check for application-level errors in the response data
       if (response.data?.error) {
-        console.error("Assign role error:", response.data.error);
         const errorMap: Record<string, string> = {
           "Permission denied": "Нет прав для назначения роли",
           "Role not found": "Роль не найдена",
@@ -146,14 +109,11 @@ export function useAdminRoles() {
 
       if (response.error) {
         console.error("Remove role error:", response.error);
-        const errorMessage = response.error.message || "Ошибка удаления роли";
-        toast.error(errorMessage);
+        toast.error(response.error.message || "Ошибка удаления роли");
         return false;
       }
 
-      // Check for application-level errors
       if (response.data?.error) {
-        console.error("Remove role error:", response.data.error);
         const errorMap: Record<string, string> = {
           "Permission denied": "Нет прав для удаления роли",
           "Role not found": "Роль не найдена",
@@ -192,17 +152,12 @@ export function useAdminRoles() {
       }
 
       if (response.data?.error) {
-        console.error("Create role app error:", response.data.error);
         toast.error(response.data.error);
         return null;
       }
 
       toast.success("Роль создана");
-      // Edge function returns { success, role: { id, code, name, ... } }
       const roleId = response.data?.role?.id ?? null;
-      if (!roleId) {
-        console.warn("create_role response missing roleId, refetching...");
-      }
       await fetchRoles();
       return roleId;
     } catch (error) {
@@ -212,39 +167,47 @@ export function useAdminRoles() {
     }
   };
 
-  const setRolePermissions = async (
-    roleId: string,
-    permissionCodes: string[]
-  ): Promise<boolean> => {
+  const deleteRole = async (roleId: string): Promise<boolean> => {
     try {
       const response = await supabase.functions.invoke("roles-admin", {
-        body: { action: "set_role_permissions", roleId, permissionCodes },
+        body: { action: "delete_role", roleId },
       });
 
       if (response.error) {
-        console.error("Set role permissions error:", response.error);
-        toast.error("Ошибка обновления прав");
+        console.error("Delete role error:", response.error);
+        toast.error("Ошибка удаления роли");
         return false;
       }
 
-      toast.success("Права обновлены");
+      if (response.data?.error) {
+        const errorMap: Record<string, string> = {
+          "Cannot delete system role": "Нельзя удалить системную роль",
+          "Role is assigned to users. Remove role from all users first.":
+            "Роль назначена пользователям. Сначала снимите роль со всех.",
+          "Role not found": "Роль не найдена",
+          "Permission denied": "Нет прав для удаления роли",
+        };
+        toast.error(errorMap[response.data.error] || response.data.error);
+        return false;
+      }
+
+      toast.success("Роль удалена");
       await fetchRoles();
       return true;
     } catch (error) {
-      console.error("Set role permissions error:", error);
-      toast.error("Ошибка обновления прав");
+      console.error("Delete role error:", error);
+      toast.error("Ошибка удаления роли");
       return false;
     }
   };
 
   return {
     roles,
-    allPermissions,
     loading,
     refetch: fetchRoles,
     assignRole,
     removeRole,
     createRole,
-    setRolePermissions,
+    deleteRole,
   };
 }

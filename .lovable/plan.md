@@ -1,159 +1,165 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Не менять модель терминов**  
-В backend уже зафиксировано `access_level: none | view | manage`.  
-В плане нельзя вводить новый маппинг `effect='deny/allow'`, `scope='read/full'`, если таких колонок нет.  
-Исправить везде:
-  - «Нет» → `access_level='none'`
-  - «Только просмотр» → `access_level='view'`
-  - «Полный доступ» → `access_level='manage'`
-2. **Не использовать** `section_key`**, если в БД** `section_code/code`  
-В SQL-proof указано:
-  &nbsp;
-  ```sql
-  select role_id, section_key, effect ...
-  ```
-  Нужно заменить на реальные поля текущей схемы:
-3. **Dry-run должен идти через backend, не только локальный diff**  
-Локальный preview можно оставить для UI, но перед execute нужен backend dry-run через `roles-admin`, чтобы проверить:
-  - system-role guard;
-  - self-lock;
-  - реальные before/after из БД;
-  - audit-ready diff.
-4. **Уточнить actions**  
-В предыдущем отчёте были добавлены:
-  - `set_section_access`
-  - `set_resource_access`
-  - `bulk_set_section_access`
-  - `sync_menu_registry`
-  В этом плане нельзя внезапно ссылаться на `set_role_access`, если такого action уже нет. Либо использовать существующие 3 access-actions, либо явно добавить один unified `set_role_access`, но без дублирования логики.
-5. `list_admin_catalog` **/** `get_role_access` **лучше делать через** `roles-admin`**, а не RPC, если actions уже заявлены**  
-Чтобы не плодить два API-контура.  
-Допустимо:
-  &nbsp;
-  - RPC оставить как read-only backend helper;
-  - UI вызывать только `roles-admin` actions.  
-  Главное — один публичный фронтовый контракт.
-6. **Системные роли**  
-В плане указаны read-only только `super_admin`, `admin`.  
-Нужно синхронизировать с backend guard:
-  - если `support` редактируемая роль — она не должна считаться системной;
-  - если `user/editor/support` заблокированы через `lock_system_roles=true`, это должно быть явно отражено в UI;
-  - UI не должен показывать возможность редактирования роли, которую backend всё равно отклонит.
-7. **Self-lock не должен быть только “если actor редактирует свою собственную роль”**  
-У пользователя может быть несколько ролей. UI-проверка может быть только предварительной.  
-Источник истины — backend `assert_admin_self_role_lock`. В UI писать: “предварительно блокируем очевидный случай, но окончательное решение за backend”.
-8. **Фраза “Email появляется в сайдбаре” некорректна**  
-`Email` — это ресурс/таб внутри `communication`, а не отдельный пункт сайдбара, если в текущем UI он не вынесен отдельно.  
-Исправить proof:
-  - после allow у `communication.email` появляется таб `Email` внутри `/admin/communication`;
-  - после deny таб скрывается / прямой `?tab=email` редиректится.
-9. **Не использовать** `/admin/support` **как гарантированно доступный URL без проверки route map**  
-В текущей модели доступная секция может быть `/admin/communication`, а `support` — ресурс/таб.  
-В Playwright использовать URL из `adminMenuRegistry.ts`, а не вручную придуманную ссылку.
-10. **Создание QA Admin не делать “supabase–insert” без уточнения**  
-Если пользователь уже есть — только проверить роль.  
-Если нет — нужен безопасный сценарий через существующий seed/test helper. Прямой insert в auth/users/profile-таблицы может сломать связки.
-11. **Добавить проверку** `AdminRouteGuard` **на неизвестный URL**  
-В Playwright обязательно:
+1. **Не удалять записи из** `admin_section` **/** `admin_resource` **в этом патче**
+  - Шаг 4 должен быть только read-only audit.
+  - Если найдутся мусорные секции/ресурсы — вывести дамп в отчёт.
+  - Удаление или `is_active=false` — только отдельным планом после явного подтверждения.
+2. **Не использовать** `admins.manage`**, если такого permission-кода нет**
+  - Проверить реальный gate в `roles-admin`.
+  - Если сейчас используется `roles.manage` / `super_admin`, UI должен повторять именно его.
+  - Не вводить новый permission-код ради кнопок «Создать роль» / «Удалить роль».
+3. `create_role` **/** `delete_role` **не считать существующими без proof**
+  - Сначала проверить реальные actions в `roles-admin`.
+  - Если их нет — добавить аддитивно в этот patch:
+    - `create_role`
+    - `delete_role`
+    - `preview_delete_role` желательно
+    - audit `rbac_v3.role.create/delete`
+    - запрет удаления системных ролей
+    - запрет удаления роли, если она назначена пользователям, либо явный безопасный сценарий с подтверждением.
+4. **Удаление legacy-компонентов — только после grep-proof**
+  - Перед удалением:
+    - `RolePermissionEditor.tsx`
+    - `RoleTemplateSelector.tsx`
+  - Нужно доказать, что они больше нигде не импортируются.
+  - Если есть импорты вне `/admin/roles`, не удалять, а оставить deprecated.
+5. `useAdminRoles.tsx` **чистить осторожно**
+  - Не ломать вкладку «Сотрудники».
+  - Оставить только реально используемые методы.
+  - Если `createRole` нужен теперь в `RoleAccessEditor`, лучше перенести вызовы на `roles-admin`, а не оставлять две модели создания ролей.
+6. **Создание новой роли должно сразу иметь безопасный baseline**
+  - Новая роль не должна случайно получить доступ.
+  - После создания:
+    - либо нет access rows → deny-all;
+    - либо явно создаются `none` по всем активным секциям.
+  - В UI показать статус: «Доступ не настроен / всё закрыто».
+7. **Системные роли синхронизировать с backend**
+  - В плане указаны `super_admin/admin/user/support/editor`.
+  - Нужно не хардкодить только во фронте.
+  - Источник: `roles.is_system` + backend guard.
+  - Если `support` сейчас должна быть редактируемой для настройки доступа — не помечать её как полностью locked, если backend это разрешает.
+8. **Вкладку legacy “Роли и права” можно убрать, но низкоуровневые операции не должны исчезнуть навсегда без замены**
+  - Сейчас `permissions/role_permissions` остаются deprecated.
+  - Если в будущем нужны `users.block`, `users.delete`, `payments.refund`, их нужно будет вынести в отдельный блок «Особые операции».
+  - В этом патче допустимо убрать legacy UI, но в отчёте явно написать: “операционные permissions больше не редактируются через UI”.
+9. **Read-only проверку кнопок не раздувать**
+  - Шаг 6 потенциально большой.
+  - В этом патче проверить только топ-страницы:
+    - contacts
+    - deals
+    - payments
+    - communication/support
+    - products/sites/editorial
+  - Все найденные массовые проблемы — в deferred, если они не блокируют консолидацию редактора.
+10. **Playwright по ролям не должен требовать реальных production-логинов**
 
-&nbsp;
+- Только `qa.*@gorbova.test`.
+- Helper должен быть включён только на время теста.
+- После теста:
+  - пароли ротированы;
+  - helper выключен;
+  - роли/override кастомной тестовой роли очищены или оставлены с явной пометкой test-only.
 
-- `/admin/__unknown-rbac-test` → deny/redirect;
-- это доказывает deny-by-default.
+11. **Для** `editor` **сначала подтвердить baseline**
 
-12. **Audit proof**  
-В отчёте проверять не только `action like 'rbac.%'`, а фактические action names:
+- Если в RBAC v3 для `editor` ещё нет корректных section/resource rows, не придумывать ожидаемое поведение.
+- В таком случае:
+  - либо сначала создать baseline для `editor` в отдельном seed/fix;
+  - либо вынести `editor` runtime-proof в deferred.
 
-- `rbac_v3.*` или реальные значения из edge.  
-Сейчас в плане есть расхождение с предыдущим отчётом (`rbac_v3.seed_catalog...`).
+12. **Route/section коды брать только из** `adminMenuRegistry.ts`
 
-13. **DoD расширить**  
-Добавить обязательные проверки:
+- Не писать руками `support-tickets`, `products-v2`, `forms-hub`, если код/route отличается.
+- В отчёте дать таблицу: `role → allowed section codes → tested URLs`.
 
-- после изменения прав React Query cache инвалидируется;
-- после logout/login новые права применяются;
-- при ошибке edge-action UI показывает нормализованную ошибку;
-- bulk update не оставляет частично применённые изменения без audit.
+13. **DoD добавить по** `/admin/roles`
 
-14. **Не менять backend RBAC вне нужных read endpoints**  
-Формулировку оставить, но добавить: любые найденные backend-баги — только fix-to-patch с отдельным описанием, без скрытого рефакторинга уже закрытой RBAC v3 backend-модели.
+- На странице после патча:
+  - ровно 2 вкладки;
+  - legacy tab отсутствует;
+  - сеть не делает запросы к `permissions` / `role_permissions` при открытии `/admin/roles`;
+  - создание роли происходит через RBAC v3 API;
+  - удаление кастомной роли пишет audit.
 
-После этих правок план можно выполнять.
+14. **Отчёт оформить строго**
 
-&nbsp;
+- Заголовок:
+- В отчёте обязательно:
+  - удалённые файлы;
+  - изменённые файлы;
+  - grep-proof отсутствия legacy imports;
+  - proof, что `/admin/roles` не читает `permissions/role_permissions`;
+  - Playwright screenshots;
+  - baseline по ролям;
+  - deferred list.
+  - &nbsp;
+  - Контекст и проблемы
 
-План: PATCH-RBAC-V3-UI-EDITOR-AND-PROOF
+Текущая страница `/admin/roles` (`src/pages/admin/AdminRoles.tsx`) содержит 3 вкладки:
 
-## Цель
+1. **Сотрудники** — назначение роли пользователю (оставить).
+2. **Роли и права** — legacy редактор поверх `permissions` / `role_permissions` (через `useAdminRoles` + `RolePermissionEditor` + `RoleTemplateSelector`). Это та самая «другая модель доступа» (admins, executors, news 0/4 и т.д.), которая **не совпадает** с реальным RBAC v3 (sections/resources). Создание и удаление ролей сейчас живёт здесь.
+3. **Доступ к разделам** — канонический RBAC v3 (`RoleAccessEditor` поверх `roles-admin`: `list_catalog`, `get_role_access`, `set_section_access`, `set_resource_access`). Это и есть SOT, который реально гейтит UI и роуты после `PATCH-RBAC-V3-FRONTEND-GATING-FIX`.
 
-Закрыть оставшиеся два блока спринта RBAC v3: UI-редактор Section/Resource Access в `/admin/roles` и Playwright/UI-proof реального сценария.
+Цель: оставить только канонический доступ и убрать дубль-модель.
 
-## Скоуп
+## План: PATCH-RBAC-V3-SINGLE-EDITOR-CONSOLIDATION
 
-### 1. UI-редактор доступа (`/admin/roles`)
+### Шаг 1. UI-консолидация в `AdminRoles.tsx`
 
-- Файл: `src/pages/admin/AdminRoles.tsx` — добавить вторую вкладку `Tabs`: «Пользователи и роли» (текущее) и «Доступ к разделам».
-- Новый компонент `src/components/admin/roles/RoleAccessEditor.tsx`:
-  - левая колонка — список ролей (read-only badge для системных: `super_admin`, `admin`);
-  - правая колонка — каталог секций (группировка по `group_key`), внутри каждой секции — её ресурсы;
-  - на каждой строке radio из трёх состояний: **Нет** / **Только просмотр** / **Полный доступ** (маппинг → `effect`/`scope` в `role_admin_section_access` / `role_admin_resource_access`);
-  - на уровне секции — кнопка «Применить ко всем ресурсам» (bulk).
-- Источники данных:
-  - каталог: `supabase.rpc('list_admin_catalog')` (если нет — добавим тонкую RPC; смотрим ниже);
-  - текущие права роли: `supabase.rpc('get_role_access', { p_role_id })`;
-  - сохранение: edge-action'ы `set_section_access` / `set_resource_access` / `bulk_set_section_access` (уже есть в `roles-admin/index.ts`).
-- Dry-run preview:
-  - перед записью собрать локальный diff (было → станет) по секциям и ресурсам и показать в `Dialog` со списком изменений и итоговой матрицей видимости (resolved через тот же резолвер, что использует `useAdminAccess`);
-  - кнопка «Применить» вызывает actions по списку diff'а, по одному запросу на изменение.
-- Guards:
-  - системные роли (`is_system=true`) — редактор в read-only, кнопка «Сохранить» скрыта, поверх — badge «Системная роль, изменения запрещены»;
-  - self-lock: если actor редактирует свою собственную роль и снимает доступ к `admin.roles`, показать toast/блок и не отправлять — это уже защищает backend (`assert_admin_self_role_lock`), но дублируем в UI;
-  - все ошибки edge-функции пропускаем через `normalizeEdgeFunctionError`.
+- Удалить вкладку `roles` («Роли и права») целиком: разметку, view-toggle cards/table, обработчики `handleEditPermissions`, `handleSavePermissions`, `handleTemplateSelect`, dialog'и `RolePermissionEditor` и `RoleTemplateSelector`, состояние `editingRoleForEditor`, `templateSelectorOpen`, `rolesViewMode`, `newRolePermissions`, `createRoleDialog`.
+- Переименовать вкладку `access` → **«Доступ»** (вместо «Доступ к разделам»). Заголовок секции «Сотрудники и роли» оставить.
+- В табах остаются только: **Сотрудники** (default) и **Доступ**.
 
-### 2. RPC `list_admin_catalog` и `get_role_access`
+### Шаг 2. Перенос «Создать роль» и «Удалить роль» в `RoleAccessEditor.tsx`
 
-- Если их ещё нет — добавить как `SECURITY DEFINER` read-only функции, доступные `authenticated` с проверкой `has_role_v2(auth.uid(),'admin') OR has_role_v2(...,'super_admin')`.
-- `list_admin_catalog()` → массив `{ section: {key,label,group_key,route,…}, resources: [{key,label,route,...}] }`.
-- `get_role_access(p_role_id uuid)` → `{ sections: [...], resources: [...] }` с текущими `effect`/`scope`.
+- Добавить в заголовок панели редактора (справа от списка ролей):
+  - кнопку **«+ Создать роль»** → диалог с полями «Название» и «Описание», авто-генерация `code` (translit, как сейчас в `AdminRoles`). Бэкенд: `roles-admin` action `create_role` (уже есть, проверю). Без выбора permissions — новая роль создаётся пустой и сразу настраивается через section/resource-уровни в этом же редакторе.
+  - кнопку **«Удалить роль»** (иконка корзины) рядом с каждой кастомной ролью в левом списке (системные `super_admin/admin/user/support/editor` — disabled с tooltip "Системная роль"). Бэкенд: `roles-admin` action `delete_role` (уже есть). Подтверждение через `AlertDialog`. После удаления — invalidate `["roles-admin","catalog"]`.
+- Кнопка должна быть скрыта/disabled если у текущего пользователя нет `admins.manage` или роль системная.
 
-### 3. Playwright / UI-proof
+### Шаг 3. Чистка legacy permission-модели
 
-- Тестовый пользователь: `qa.admin@gorbova.test` уже создан (упоминался ранее); если нет — создать через `supabase--insert` + назначить роль `support`.
-- Сценарии под Playwright (sandbox, headless), результаты — скриншоты в `/tmp/browser/rbac-v3/screenshots/`:
-  1. Логин как `qa.admin@gorbova.test` → проверить, что в сайдбаре нет пунктов, закрытых для `support` (минимум 3 пункта из baseline deny).
-  2. Прямой переход на закрытый `/admin/...` URL → редирект на `/admin` + toast «Нет доступа».
-  3. Доступный пункт (например `/admin/support`) открывается без редиректа.
-  4. Логин как `super_admin` → в `/admin/roles` → вкладка «Доступ к разделам» → роль `support` → переключить `communication.email` с deny на allow → сохранить → перелогин под `qa.admin` → пункт «Email» появляется в сайдбаре. Затем откатить и убедиться, что снова скрыт.
-- Дополнительно проверить SQL: `select role_id, section_key, effect from role_admin_section_access where role_id = <support>` до и после.
+- Удалить файлы, на которые больше нет ссылок:
+  - `src/components/admin/RolePermissionEditor.tsx`
+  - `src/components/admin/RoleTemplateSelector.tsx`
+- В `src/hooks/useAdminRoles.tsx` оставить только то, что реально нужно для `AddEmployeeDialog`, `RemoveRoleDialog` и вкладки «Сотрудники» (`roles`, `assignRole`, `removeRole`, `createRole`?, `refetch`). Убрать `allPermissions`, `setRolePermissions`, чтение `role_permissions`/`permissions`.
+- На бэкенде НЕ трогать таблицы `permissions`, `role_permissions`, `roles` и actions `set_role_permissions` в `roles-admin` (другие места читают; держим как deprecated). Только перестаём дёргать с фронта.
+- `useRbac`/`hasPermission` оставить как есть — он используется по 30+ компонентам и не относится к редактору ролей.
 
-### 4. Финальный отчёт
+### Шаг 4. Проверка каталога RBAC v3 на «мусор»
 
-- Список изменённых/созданных файлов.
-- SQL-proof: select по `role_admin_section_access` / `role_admin_resource_access` до/после, плюс audit-записи (`action like 'rbac.%'`).
-- Playwright-proof: пути к скриншотам + краткое описание каждого шага.
-- Diff-summary по компонентам.
-- Deferred (отдельным блоком): любые мелочи, выходящие за scope патча (например, тонкая настройка scope='own' — на будущее).
+SQL-аудит (через read_query):
 
-## DoD
+- Сравнить `admin_section.code` и `adminMenuRegistry.ts` — все пункты сайдбара должны иметь секцию; «висячих» секций без route_prefix быть не должно.
+- Список ролей в `roles` vs `role_admin_section_access` / `role_admin_resource_access` — для каждой роли должен быть baseline. Если у кастомной роли вообще нет ни одной allow-записи → она по умолчанию deny-all (это ок, но в UI отразить "пусто" в списке).
+- Удалить из `admin_section` / `admin_resource` явно неиспользуемые коды, если найдутся (только после явного дамповского отчёта в выводе — не вслепую).
 
-- Вкладка «Доступ к разделам» работает: каталог рендерится, текущие права видны, переключение и bulk сохраняются, dry-run показывает diff.
-- Системные роли защищены в UI; self-lock не даёт сохранить.
-- Playwright-сценарии 1–4 пройдены, скриншоты приложены.
-- В отчёте перечислены файлы, SQL-, UI-proof и deferred.
-- Никаких изменений в backend RBAC за пределами добавления `list_admin_catalog` / `get_role_access` (если их ещё нет) — остальные actions уже выкатаны.
+### Шаг 5. Runtime-proof по каждой роли (Playwright)
 
-## Технические детали
+По кругу логинимся под тестовыми пользователями (создаём через `qa-test-session-helper`, allowlist `qa.*@gorbova.test`) с ролями и проверяем:
 
-- `RoleAccessEditor` использует `@tanstack/react-query` для кеша каталога и прав; инвалидация после save.
-- Маппинг radio → запись:
-  - «Нет» → `effect='deny'`, `scope=null`;
-  - «Только просмотр» → `effect='allow'`, `scope='read'`;
-  - «Полный доступ» → `effect='allow'`, `scope='full'`.
-- Если для строки нет явной записи — отображается унаследованное значение с подсказкой «(наследуется от секции)» для ресурсов и «(baseline)» для секций без override.
-- Системные роли определяются по `roles.is_system = true` (поле уже есть в схеме).
 
-## Rollback
+| Роль                                                    | Ожидание sidebar                                                          | Ожидание deny path              | Ожидание read-only                                                                                             |
+| ------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `super_admin`                                           | все секции                                                                | нет deny                        | все действия доступны                                                                                          |
+| `admin`                                                 | все секции (минус super-only)                                             | нет deny                        | все действия                                                                                                   |
+| `support`                                               | baseline 6 (communication, deals, contacts, payments, support, forms-hub) | `/admin/products-v2` → redirect | manage                                                                                                         |
+| `editor`                                                | только контент-секции                                                     | `/admin/payments` → redirect    | manage в content                                                                                               |
+| `user` (нет admin-роли)                                 | **админка вообще не открывается** (редирект на `/`)                       | любой `/admin/*` → redirect     | —                                                                                                              |
+| любая новая кастомная роль с уровнем `view` на 1 секции | видит только эту секцию                                                   | остальное deny                  | кнопки "создать/редактировать/удалить" не работают (UI должен использовать `canAccessResource(..., "manage")`) |
 
-- UI-вкладка чисто аддитивная — отключается удалением `<TabsTrigger>` и компонента.
-- Новые RPC drop-нуть отдельной миграцией при необходимости.
+
+Скриншоты складываем в `/tmp/browser/rbac-v3-consolidation/screenshots/`. После прогона — cleanup: ротация паролей, выключение helper'а.
+
+### Шаг 6. Read-only проверка кнопок действий
+
+Просмотреть критичные `/admin/*` страницы и убедиться, что кнопки create/edit/delete уже гейтятся через `useAdminAccess.canAccessSection/Resource(..., "manage")` (а не только видимость секции). Если где-то висит `hasPermission(...)` против legacy permission-кода — добавить дополнительный `canAccessSection(..., "manage")` гард, чтобы `view` действительно был read-only. Без массовой переделки — точечно по топ-страницам (communication, deals, payments, support, forms-hub, products, news/content, sites).
+
+### DoD
+
+- На `/admin/roles` остались ровно 2 вкладки: **Сотрудники** и **Доступ**.
+- В вкладке «Доступ» можно создать роль, настроить уровни по секциям/ресурсам, удалить кастомную роль. Системные роли не удаляются.
+- Legacy редактор прав и шаблоны удалены из фронта; `permissions` / `role_permissions` со страницы ролей не читаются.
+- Playwright-прогон по 5 базовым ролям + 1 кастомной даёт PASS по sidebar + route deny + read-only кнопкам.
+- В отчёте: список удалённых файлов, baseline по каждой роли (числа allow/deny), пути скриншотов, явное подтверждение что `useRbac`/legacy permissions таблицы оставлены нетронутыми на бэкенде.

@@ -2,16 +2,44 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRbac } from "@/hooks/useRbac";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
-import { Loader2, Lock, ShieldAlert } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Loader2, Lock, ShieldAlert, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+
+const TRANSLIT: Record<string, string> = {
+  а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",
+  н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"kh",ц:"ts",ч:"ch",ш:"sh",щ:"shch",
+  ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya",
+};
+const RESERVED = new Set([
+  "super_admin","admin","user","support","editor",
+  "admin_gost","news_editor","staff",
+  "roles","permissions","admins","system","root",
+]);
+function slugifyRoleCode(name: string, existing: string[]): string {
+  const slug = name.toLowerCase().split("").map(ch => TRANSLIT[ch] ?? ch).join("")
+    .replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_").replace(/^_|_$/g, "");
+  if (!slug) return "";
+  const all = [...RESERVED, ...existing.map(c => c.toLowerCase())];
+  if (!all.includes(slug)) return slug;
+  let i = 2;
+  while (all.includes(`${slug}_${i}`)) i++;
+  return `${slug}_${i}`;
+}
 
 /**
  * RBAC v3 — UI-редактор Section/Resource access.
@@ -88,7 +116,19 @@ async function callRolesAdmin<T = any>(action: string, payload: Record<string, u
 export function RoleAccessEditor() {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const { hasPermission } = useRbac();
+  const canManageRoles = hasPermission("roles.manage");
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+
+  // Создание роли
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleDesc, setNewRoleDesc] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  // Удаление роли
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; code: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const catalogQ = useQuery({
     queryKey: ["roles-admin", "catalog"],
@@ -269,6 +309,57 @@ export function RoleAccessEditor() {
     }
   };
 
+  const generatedCode = useMemo(
+    () => slugifyRoleCode(newRoleName, (catalogQ.data?.roles ?? []).map(r => r.code)),
+    [newRoleName, catalogQ.data],
+  );
+
+  const handleCreateRole = async () => {
+    if (!newRoleName.trim() || !generatedCode) return;
+    setCreating(true);
+    try {
+      const data = await callRolesAdmin<{ success: true; role: { id: string } }>("create_role", {
+        roleCode: generatedCode,
+        roleName: newRoleName.trim(),
+        roleDescription: newRoleDesc.trim() || undefined,
+      });
+      toast.success("Роль создана");
+      await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      setCreateOpen(false);
+      setNewRoleName("");
+      setNewRoleDesc("");
+      if (data?.role?.id) setSelectedRoleId(data.role.id);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось создать роль");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteRole = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await callRolesAdmin("delete_role", { roleId: deleteTarget.id });
+      toast.success("Роль удалена");
+      await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      if (selectedRoleId === deleteTarget.id) setSelectedRoleId(null);
+      setDeleteTarget(null);
+    } catch (e: any) {
+      const msg = e?.message ?? "";
+      const friendly: Record<string, string> = {
+        "Cannot delete system role": "Нельзя удалить системную роль",
+        "Role is assigned to users. Remove role from all users first.":
+          "Роль назначена пользователям. Сначала снимите роль со всех.",
+        "Role not found": "Роль не найдена",
+        "Permission denied": "Нет прав для удаления роли",
+      };
+      toast.error(friendly[msg] || msg || "Не удалось удалить роль");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (catalogQ.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground p-6">
@@ -291,25 +382,60 @@ export function RoleAccessEditor() {
     <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4">
       {/* Роли */}
       <div className="border rounded-md p-2 h-fit md:sticky md:top-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground px-2 py-1">Роль</div>
+        <div className="flex items-center justify-between px-2 py-1">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Роль</div>
+          {canManageRoles && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="h-3 w-3" /> Новая
+            </Button>
+          )}
+        </div>
         <div className="flex flex-col gap-1">
           {catalog.roles.map((r) => {
             const isActive = r.id === selectedRoleId;
+            const canDelete = canManageRoles && !r.is_system;
             return (
-              <button
+              <div
                 key={r.id}
-                type="button"
-                onClick={() => setSelectedRoleId(r.id)}
-                className={`text-left px-2 py-2 rounded-md text-sm flex items-center justify-between gap-2 ${
-                  isActive ? "bg-muted font-medium" : "hover:bg-muted/50"
+                className={`group flex items-center gap-1 rounded-md ${
+                  isActive ? "bg-muted" : "hover:bg-muted/50"
                 }`}
               >
-                <span>{r.name ?? r.code}</span>
-                {!r.is_editable && <Lock className="h-3 w-3 text-muted-foreground" />}
-                {r.is_system && r.is_editable && (
-                  <Badge variant="outline" className="text-[10px]">sys</Badge>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRoleId(r.id)}
+                  className={`flex-1 text-left px-2 py-2 text-sm flex items-center justify-between gap-2 ${
+                    isActive ? "font-medium" : ""
+                  }`}
+                >
+                  <span className="truncate">{r.name ?? r.code}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {!r.is_editable && <Lock className="h-3 w-3 text-muted-foreground" />}
+                    {r.is_system && r.is_editable && (
+                      <Badge variant="outline" className="text-[10px]">sys</Badge>
+                    )}
+                  </span>
+                </button>
+                {canDelete && (
+                  <button
+                    type="button"
+                    title="Удалить роль"
+                    aria-label={`Удалить роль ${r.name ?? r.code}`}
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 mr-1 rounded text-muted-foreground hover:text-destructive transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget({ id: r.id, name: r.name ?? r.code, code: r.code });
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -481,6 +607,78 @@ export function RoleAccessEditor() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Создание роли */}
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setNewRoleName(""); setNewRoleDesc(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Новая роль</DialogTitle>
+            <DialogDescription>
+              После создания назначьте доступы к разделам/ресурсам ниже.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-name" className="text-sm">Название</Label>
+              <Input
+                id="new-role-name"
+                placeholder="например: Модератор"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                autoFocus
+              />
+              {newRoleName.trim() && generatedCode && (
+                <p className="text-xs text-muted-foreground">Код: <span className="font-mono">{generatedCode}</span></p>
+              )}
+              {newRoleName.trim() && !generatedCode && (
+                <p className="text-xs text-destructive">Некорректное название — используйте буквы/цифры (RU/EN).</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-desc" className="text-sm">
+                Описание <span className="text-muted-foreground/60 font-normal">(опционально)</span>
+              </Label>
+              <Input
+                id="new-role-desc"
+                placeholder="Краткое описание роли"
+                value={newRoleDesc}
+                onChange={(e) => setNewRoleDesc(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>Отмена</Button>
+            <Button onClick={handleCreateRole} disabled={creating || !newRoleName.trim() || !generatedCode}>
+              {creating && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+              Создать
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Удаление роли */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить роль «{deleteTarget?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие необратимо. Все настройки доступов этой роли будут удалены.
+              Если роль назначена пользователям — сначала снимите её со всех.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteRole}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
