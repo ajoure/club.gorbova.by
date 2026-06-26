@@ -124,6 +124,7 @@ export function RoleAccessEditor() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDesc, setNewRoleDesc] = useState("");
+  const [newRolePreset, setNewRolePreset] = useState<"view" | "manage" | "custom">("custom");
   const [creating, setCreating] = useState(false);
 
   // Удаление роли
