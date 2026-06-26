@@ -309,6 +309,57 @@ export function RoleAccessEditor() {
     }
   };
 
+  const generatedCode = useMemo(
+    () => slugifyRoleCode(newRoleName, (catalogQ.data?.roles ?? []).map(r => r.code)),
+    [newRoleName, catalogQ.data],
+  );
+
+  const handleCreateRole = async () => {
+    if (!newRoleName.trim() || !generatedCode) return;
+    setCreating(true);
+    try {
+      const data = await callRolesAdmin<{ success: true; role: { id: string } }>("create_role", {
+        roleCode: generatedCode,
+        roleName: newRoleName.trim(),
+        roleDescription: newRoleDesc.trim() || undefined,
+      });
+      toast.success("Роль создана");
+      await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      setCreateOpen(false);
+      setNewRoleName("");
+      setNewRoleDesc("");
+      if (data?.role?.id) setSelectedRoleId(data.role.id);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось создать роль");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteRole = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await callRolesAdmin("delete_role", { roleId: deleteTarget.id });
+      toast.success("Роль удалена");
+      await qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      if (selectedRoleId === deleteTarget.id) setSelectedRoleId(null);
+      setDeleteTarget(null);
+    } catch (e: any) {
+      const msg = e?.message ?? "";
+      const friendly: Record<string, string> = {
+        "Cannot delete system role": "Нельзя удалить системную роль",
+        "Role is assigned to users. Remove role from all users first.":
+          "Роль назначена пользователям. Сначала снимите роль со всех.",
+        "Role not found": "Роль не найдена",
+        "Permission denied": "Нет прав для удаления роли",
+      };
+      toast.error(friendly[msg] || msg || "Не удалось удалить роль");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (catalogQ.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground p-6">
