@@ -38,8 +38,11 @@ Deno.serve(async (req) => {
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(url, key);
 
-  // 1) Load patched HTML shipped with the function.
-  const html = await Deno.readTextFile(new URL("./site018.html", import.meta.url));
+  // 1) Patched HTML is base64-embedded at build time (edge runtime has no static files).
+  const html = new TextDecoder().decode(
+    Uint8Array.from(atob(SITE018_HTML_B64.replace(/\s+/g, "")), (c) => c.charCodeAt(0)),
+  );
+
 
   // 2) Fetch current page, find block[0].
   const { data: page, error: fetchErr } = await supabase
