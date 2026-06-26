@@ -2393,15 +2393,14 @@ export default function AdminProductDetailV2() {
 
                   <Separator />
 
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={offerForm.auto_charge_after_trial}
-                      onCheckedChange={(checked) => setOfferForm({ ...offerForm, auto_charge_after_trial: checked })}
-                    />
+                  <div className="flex items-center space-x-2 opacity-60">
+                    <Switch checked={false} disabled />
                     <Label>Автосписание после trial</Label>
                   </div>
-
-                  {offerForm.auto_charge_after_trial && (
+                  <p className="text-xs text-muted-foreground -mt-2">
+                    Внутреннее MIT-автосписание отключено платформенно (PATCH-DISABLE-MANDATORY-INTERNAL-MIT). Демо-доступ выдаётся через access_rules на срок trial без привязки карты. Provider-side recurring (bePaid/Stripe) настраивается через отдельный продукт-подписку.
+                  </p>
+                  {false && (
                     <div className="space-y-2">
                       <Label>Кнопка для автосписания *</Label>
                       <Select
