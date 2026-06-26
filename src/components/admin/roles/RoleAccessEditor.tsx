@@ -382,25 +382,60 @@ export function RoleAccessEditor() {
     <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4">
       {/* Роли */}
       <div className="border rounded-md p-2 h-fit md:sticky md:top-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground px-2 py-1">Роль</div>
+        <div className="flex items-center justify-between px-2 py-1">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Роль</div>
+          {canManageRoles && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="h-3 w-3" /> Новая
+            </Button>
+          )}
+        </div>
         <div className="flex flex-col gap-1">
           {catalog.roles.map((r) => {
             const isActive = r.id === selectedRoleId;
+            const canDelete = canManageRoles && !r.is_system;
             return (
-              <button
+              <div
                 key={r.id}
-                type="button"
-                onClick={() => setSelectedRoleId(r.id)}
-                className={`text-left px-2 py-2 rounded-md text-sm flex items-center justify-between gap-2 ${
-                  isActive ? "bg-muted font-medium" : "hover:bg-muted/50"
+                className={`group flex items-center gap-1 rounded-md ${
+                  isActive ? "bg-muted" : "hover:bg-muted/50"
                 }`}
               >
-                <span>{r.name ?? r.code}</span>
-                {!r.is_editable && <Lock className="h-3 w-3 text-muted-foreground" />}
-                {r.is_system && r.is_editable && (
-                  <Badge variant="outline" className="text-[10px]">sys</Badge>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRoleId(r.id)}
+                  className={`flex-1 text-left px-2 py-2 text-sm flex items-center justify-between gap-2 ${
+                    isActive ? "font-medium" : ""
+                  }`}
+                >
+                  <span className="truncate">{r.name ?? r.code}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {!r.is_editable && <Lock className="h-3 w-3 text-muted-foreground" />}
+                    {r.is_system && r.is_editable && (
+                      <Badge variant="outline" className="text-[10px]">sys</Badge>
+                    )}
+                  </span>
+                </button>
+                {canDelete && (
+                  <button
+                    type="button"
+                    title="Удалить роль"
+                    aria-label={`Удалить роль ${r.name ?? r.code}`}
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 mr-1 rounded text-muted-foreground hover:text-destructive transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget({ id: r.id, name: r.name ?? r.code, code: r.code });
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
