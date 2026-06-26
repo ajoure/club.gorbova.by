@@ -1303,19 +1303,15 @@ export function PaymentDialog({
         return (
           <div className="space-y-4">
             {isTrial && (
-              <Alert className="bg-card/60 backdrop-blur-sm border-border/40">
-                <Info className="h-4 w-4" />
-                <AlertTitle>Важное о пробном периоде</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc pl-4 space-y-1">
-                    <li>Пробный доступ стоит 1 BYN и действует 5 дней</li>
-                    <li>Карта понадобится только для автоматического продления после окончания триала. Сохранять её — добровольно: при желании вы можете оплатить полную стоимость подписки сразу без сохранения карты.</li>
-                    <li>По завершении пробного периода оплата будет автоматически списана по выбранному тарифу</li>
-                    <li>Вы можете в любой момент отменить подписку в личном кабинете</li>
-                    <li>В случае отмены доступ сохраняется до окончания уже оплаченного периода</li>
-                  </ul>
-                </AlertDescription>
-              </Alert>
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
+                <p className="font-medium text-foreground">Демо-доступ</p>
+                <p className="text-muted-foreground">
+                  Стоимость: {price}. Срок доступа: {trialDays ?? 1} {(trialDays ?? 1) === 1 ? "день" : ((trialDays ?? 1) < 5 ? "дня" : "дней")}.
+                </p>
+                <p className="text-xs text-muted-foreground/80">
+                  Привязка карты не требуется. Доступ выдаётся автоматически по настройкам тарифа.
+                </p>
+              </div>
             )}
 
             {paymentError && (
