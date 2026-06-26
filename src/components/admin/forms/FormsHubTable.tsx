@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -95,6 +96,7 @@ export function FormsHubTable({
   selectionResetKey,
 }: Props) {
   const { sortedColumns, visibleColumns, handleColumnResize, handleDragEnd } = useFormsColumns();
+  const navigate = useNavigate();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -239,26 +241,50 @@ export function FormsHubTable({
             </span>
           </TableCell>
         );
-      case "has_deal":
+      case "has_deal": {
+        const orderId = row.raw?.order_id;
         return (
-          <TableCell key={col.key} style={{ width: col.width }} className="text-center">
-            {row.has_deal ? (
-              <Handshake className="h-4 w-4 text-emerald-500 mx-auto" />
+          <TableCell key={col.key} style={{ width: col.width }} className="text-center" onClick={(e) => e.stopPropagation()}>
+            {row.has_deal && orderId ? (
+              <button
+                type="button"
+                title="Открыть сделку"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/admin/deals?order=${orderId}&from=forms`);
+                }}
+                className="inline-flex items-center justify-center hover:text-emerald-700 transition-colors"
+              >
+                <Handshake className="h-4 w-4 text-emerald-500" />
+              </button>
             ) : (
               <span className="text-muted-foreground/30">—</span>
             )}
           </TableCell>
         );
-      case "has_account":
+      }
+      case "has_account": {
+        const contactId = row.user_id || row.profile_id;
         return (
-          <TableCell key={col.key} style={{ width: col.width }} className="text-center">
-            {row.has_account ? (
-              <User className="h-4 w-4 text-blue-500 mx-auto" />
+          <TableCell key={col.key} style={{ width: col.width }} className="text-center" onClick={(e) => e.stopPropagation()}>
+            {row.has_account && contactId ? (
+              <button
+                type="button"
+                title="Открыть контакт"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/admin/contacts?contact=${contactId}&from=forms`);
+                }}
+                className="inline-flex items-center justify-center hover:text-blue-700 transition-colors"
+              >
+                <User className="h-4 w-4 text-blue-500" />
+              </button>
             ) : (
               <span className="text-muted-foreground/30">—</span>
             )}
           </TableCell>
         );
+      }
       default:
         return null;
     }

@@ -75,6 +75,31 @@ export const DEFAULT_PAGINATION: FormsHubPagination = {
 
 // ── Source-specific fetchers ────────────────────────────────────────────
 
+// Case-insensitive lookup over JSONB keys (site forms use russian labels like "Имя и Фамилия").
+const NAME_KEYS = ["Имя и Фамилия", "Имя", "ФИО", "name", "full_name", "fullName", "client_name"];
+const EMAIL_KEYS = ["Email", "email", "E-mail", "e-mail", "mail", "client_email"];
+const PHONE_KEYS = ["Телефон", "phone", "Phone", "tel", "Tel", "client_phone", "phone_number"];
+
+function pickField(obj: any, keys: string[]): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  // direct match
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  // case-insensitive fallback
+  const lowerMap: Record<string, string> = {};
+  for (const k of Object.keys(obj)) lowerMap[k.toLowerCase()] = k;
+  for (const k of keys) {
+    const realKey = lowerMap[k.toLowerCase()];
+    if (realKey) {
+      const v = obj[realKey];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
 async function fetchSiteForms(
   filters: FormsHubFilters,
   pagination?: FormsHubPagination
@@ -82,7 +107,7 @@ async function fetchSiteForms(
   let query = supabase
     .from("site_form_submissions")
     .select(
-      "id, form_data, metadata, status, created_at, profile_id, order_id, page_id, site_pages!site_form_submissions_page_id_fkey(title)",
+      "id, form_data, metadata, status, created_at, profile_id, order_id, page_id, site_pages!site_form_submissions_page_id_fkey(title, product_id)",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })
@@ -128,24 +153,47 @@ async function fetchSiteForms(
     }
   }
 
+  // Resolve product names from site_pages.product_id ∪ meta.product_id
+  const productIdsToResolve = new Set<string>();
+  for (const f of forms || []) {
+    const meta = (f.metadata || {}) as any;
+    const pageProductId = (f as any).site_pages?.product_id;
+    if (pageProductId) productIdsToResolve.add(pageProductId);
+    if (meta.product_id) productIdsToResolve.add(meta.product_id);
+  }
+
+  let productMap: Record<string, { id: string; name: string }> = {};
+  if (productIdsToResolve.size > 0) {
+    const { data: products } = await supabase
+      .from("products_v2")
+      .select("id, name")
+      .in("id", [...productIdsToResolve]);
+    if (products) {
+      for (const p of products) productMap[p.id] = { id: p.id, name: p.name };
+    }
+  }
+
   const rows: FormsHubRow[] = [];
   for (const f of forms || []) {
     const meta = (f.metadata || {}) as any;
     const formData = (f.form_data || {}) as any;
-    const pageTitle = (f as any).site_pages?.title || "Без страницы";
+    const page = (f as any).site_pages;
+    const pageTitle = page?.title || "Без страницы";
     const metaUserId = meta.user_id || null;
     const resolvedUserId = metaUserId || (f.profile_id ? profileUserIdMap[f.profile_id] : null);
+    const resolvedProductId = page?.product_id || meta.product_id || null;
+    const resolvedProductTitle = (resolvedProductId && productMap[resolvedProductId]?.name) || meta.product_title || "";
 
     rows.push({
       id: f.id,
       source_type: "site_form",
-      client_name: formData.name || formData.full_name || meta.full_name || "—",
-      client_email: formData.email || meta.email || null,
-      client_phone: formData.phone || meta.phone || null,
+      client_name: pickField(formData, NAME_KEYS) || meta.full_name || "—",
+      client_email: pickField(formData, EMAIL_KEYS) || meta.email || null,
+      client_phone: pickField(formData, PHONE_KEYS) || meta.phone || null,
       profile_id: f.profile_id,
       user_id: resolvedUserId,
-      product_id: meta.product_id || null,
-      product_title: meta.product_title || "",
+      product_id: resolvedProductId,
+      product_title: resolvedProductTitle,
       source_entity: pageTitle,
       created_at: f.created_at,
       status: f.status || "new",
