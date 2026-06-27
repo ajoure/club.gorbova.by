@@ -22,7 +22,11 @@ export interface DealsExtraFilters {
   provider?: string | null;           // meta->>payment_provider
   reconcileSource?: string | null;    // reconcile_source column
   includeSynthetic: boolean;          // default false → exclude rule_engine
+  // PATCH-PREORDER-DEAL-FLOW Phase B: default false → hide converted preorders
+  // (rows with meta.converted_to_order_id set). User can opt-in to see them.
+  includeConvertedPreorders: boolean;
 }
+
 
 const KEYS = {
   statuses: "statuses",
