@@ -332,7 +332,7 @@ export default function AdminProductDetailV2() {
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
     trial_days: 5,
-    auto_charge_after_trial: true,
+    auto_charge_after_trial: false,
     auto_charge_offer_id: "" as string, // Reference to pay_now offer for auto-charge
     auto_charge_delay_days: 5,
     requires_card_tokenization: false,
@@ -496,7 +496,7 @@ export default function AdminProductDetailV2() {
         amount: offer.amount,
         reentry_amount: offer.reentry_amount ?? null,
         trial_days: offer.trial_days || 5,
-        auto_charge_after_trial: offer.auto_charge_after_trial ?? true,
+        auto_charge_after_trial: false,
         auto_charge_offer_id: offer.auto_charge_offer_id || "",
         auto_charge_delay_days: offer.auto_charge_delay_days || 5,
         requires_card_tokenization: offer.requires_card_tokenization ?? false,
@@ -526,7 +526,7 @@ export default function AdminProductDetailV2() {
         amount: 0,
         reentry_amount: null,
         trial_days: 5,
-        auto_charge_after_trial: true,
+        auto_charge_after_trial: false,
         auto_charge_offer_id: "",
         auto_charge_delay_days: 5,
         requires_card_tokenization: false,
@@ -572,12 +572,8 @@ export default function AdminProductDetailV2() {
     const isPreregistration = offerForm.offer_type === "preregistration";
 
     // Phase 5-B + PATCH 5-B.2 — acquiring validation (UI mirrors DB trigger)
-    const isSubscriptionForAcq = !isInstallment && (
-      offerForm.offer_type === "trial" ||
-      isPreregistration ||
-      offerForm.requires_card_tokenization ||
-      Boolean((offerForm.meta as any)?.recurring?.is_recurring)
-    );
+    // Канон классификации подписки — meta.recurring.is_recurring. requires_card_tokenization больше не используется.
+    const isSubscriptionForAcq = !isInstallment && Boolean((offerForm.meta as any)?.recurring?.is_recurring);
     const acqError = validateOfferAcquiring(
       (offerForm.meta as any)?.acquiring as OfferAcquiring | undefined,
       isInstallment,
@@ -606,13 +602,9 @@ export default function AdminProductDetailV2() {
       delete metaToSave.preregistration;
     }
     
-    // Preserve/clear recurring settings based on subscription toggle
-    // Installment НЕ recurring: meta.recurring очищается для installment-кнопок (взаимоисключение типов).
-    const isSubscription = !isInstallment && (
-      offerForm.offer_type === "trial" ||
-      isPreregistration ||
-      offerForm.requires_card_tokenization
-    );
+    // Канон recurring — meta.recurring.is_recurring (UI-чекбокс «Подписка»).
+    // requires_card_tokenization (внутренняя MIT) больше не классифицирует подписку.
+    const isSubscription = !isInstallment && Boolean((metaToSave as any)?.recurring?.is_recurring);
     
     if (isSubscription) {
       // PATCH: Normalize recurring config with all required defaults
@@ -1867,7 +1859,7 @@ export default function AdminProductDetailV2() {
                           offer_type: "pay_now",
                           payment_method: "internal_installment",
                           button_label: "Оплатить в рассрочку",
-                          requires_card_tokenization: true,
+                          requires_card_tokenization: false,
                           installment_count: Math.max(2, Math.min(12, offerForm.installment_count || 6)),
                           installment_interval_days: 30,
                           first_payment_delay_days: 0,
@@ -1880,7 +1872,7 @@ export default function AdminProductDetailV2() {
                           // При выходе из «Рассрочки» возвращаем full_payment.
                           payment_method: offerForm.payment_method === "internal_installment" ? "full_payment" : offerForm.payment_method,
                           button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
-                          requires_card_tokenization: v === "trial" || v === "preregistration",
+                          requires_card_tokenization: false,
                         });
                       }
                     }}
@@ -2566,8 +2558,16 @@ export default function AdminProductDetailV2() {
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-4 pt-4">
-                {/* Virtual card blocking */}
-                {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial" || offerForm.payment_method === "internal_installment") && (
+                {/* Info: обязательная внутренняя MIT-привязка карты отключена на уровне платформы */}
+                <div className="p-3 rounded-lg border bg-muted/30 text-xs text-muted-foreground">
+                  Обязательная внутренняя привязка карты отключена на уровне платформы.
+                  Покупка и подписки проходят через стандартный checkout bePaid/Stripe.
+                  Если у оффера есть рекуррент, дальнейшие списания выполняет платёжный
+                  провайдер, а не внутренняя MIT-токенизация платформы.
+                </div>
+
+                {/* Virtual card blocking — только для installment (физический эквайринг) */}
+                {offerForm.payment_method === "internal_installment" && (
                   <div className="flex items-center space-x-2 p-3 rounded-lg border">
                     <Switch
                       checked={offerForm.reject_virtual_cards}
@@ -2801,7 +2801,7 @@ export default function AdminProductDetailV2() {
           trialDays={selectedOfferForPayment.offer.trial_days}
           isClubProduct={!!(product as any).telegram_club_id}
           isSubscription={
-            !!selectedOfferForPayment.offer.requires_card_tokenization &&
+            Boolean((selectedOfferForPayment.offer.meta as any)?.recurring?.is_recurring) &&
             selectedOfferForPayment.offer.payment_method !== "internal_installment"
           }
           paymentMethod={selectedOfferForPayment.offer.payment_method}
