@@ -16896,6 +16896,10 @@ export type Database = {
         Args: { from_ts: string; rule: Json }
         Returns: string
       }
+      convert_preorder_on_pay_atomic: {
+        Args: { p_paid_order_id: string }
+        Returns: Json
+      }
       create_feedback_ticket: {
         Args: {
           p_block_id?: string
