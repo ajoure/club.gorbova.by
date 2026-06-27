@@ -24,6 +24,10 @@ interface PreregistrationDialogProps {
   onOpenChange: (open: boolean) => void;
   tariffName?: string;
   productCode?: string;
+  /** New ID-first path. When set, submission goes through `preorder-create-deal` edge
+   *  function which atomically creates course_preregistrations + draft orders_v2 (CRM-visible).
+   *  When omitted, legacy direct-insert path is used for backward compatibility. */
+  offerId?: string;
 }
 
 type Step = "auth_check" | "register" | "confirm" | "success" | "telegram_prompt";
@@ -32,7 +36,8 @@ export function PreregistrationDialog({
   open, 
   onOpenChange, 
   tariffName,
-  productCode = "cb20_predzapis"
+  productCode = "cb20_predzapis",
+  offerId,
 }: PreregistrationDialogProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
