@@ -98,7 +98,12 @@ export function useDealsFilters() {
             if (patch.includeSynthetic) next.set(KEYS.includeSynthetic, "1");
             else next.delete(KEYS.includeSynthetic);
           }
+          if ("includeConvertedPreorders" in patch) {
+            if (patch.includeConvertedPreorders) next.set(KEYS.includeConvertedPreorders, "1");
+            else next.delete(KEYS.includeConvertedPreorders);
+          }
           return next;
+
         },
         { replace: true }
       );
