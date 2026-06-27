@@ -334,6 +334,199 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
+    // Pre-bePaid early branch: free (amount=0) trial offers that explicitly do
+    // NOT require card tokenization must skip the entire bePaid path
+    // (no creds load, no subscription API, no MIT) and instead instantly
+    // create a paid orders_v2 + call grant-access-for-order.
+    // Eligibility (strict, all required):
+    //   1. isTrial === true
+    //   2. resolved trial offer row exists
+    //   3. amount === 0
+    //   4. requires_card_tokenization === false
+    // ────────────────────────────────────────────────────────────────────────
+    if (isTrial && productInfo.isV2) {
+      let trialOfferRow: {
+        id: string;
+        amount: number;
+        trial_days: number | null;
+        auto_charge_amount: number | null;
+        requires_card_tokenization: boolean | null;
+        tariff_id: string;
+      } | null = null;
+
+      if (offerId) {
+        const { data } = await supabase
+          .from('tariff_offers')
+          .select('id, amount, trial_days, auto_charge_amount, requires_card_tokenization, tariff_id')
+          .eq('id', offerId)
+          .eq('is_active', true)
+          .maybeSingle();
+        trialOfferRow = (data as any) ?? null;
+      }
+      if (!trialOfferRow && tariffCode) {
+        const { data: tariffRow } = await supabase
+          .from('tariffs')
+          .select('id')
+          .eq('code', tariffCode)
+          .eq('product_id', productId)
+          .maybeSingle();
+        if (tariffRow?.id) {
+          const { data } = await supabase
+            .from('tariff_offers')
+            .select('id, amount, trial_days, auto_charge_amount, requires_card_tokenization, tariff_id')
+            .eq('tariff_id', tariffRow.id)
+            .eq('offer_type', 'trial')
+            .eq('is_active', true)
+            .maybeSingle();
+          trialOfferRow = (data as any) ?? null;
+        }
+      }
+
+      const noCardEligible =
+        !!trialOfferRow &&
+        Number(trialOfferRow.amount) === 0 &&
+        trialOfferRow.requires_card_tokenization === false;
+
+      if (noCardEligible && trialOfferRow) {
+        console.log('[bepaid-create-token] DEMO-TRIAL-NO-CARD: eligible', {
+          offer_id: trialOfferRow.id,
+          tariff_id: trialOfferRow.tariff_id,
+          trial_days: trialOfferRow.trial_days,
+          user_id: userId,
+        });
+
+        const trialDaysEff = trialOfferRow.trial_days || trialDays || 1;
+        const trialEndAt = new Date(Date.now() + trialDaysEff * 24 * 60 * 60 * 1000).toISOString();
+        const origin = req.headers.get('origin') || 'https://lovable.app';
+        const orderNumber = `ORD-TRIAL-${Date.now().toString(36).toUpperCase()}`;
+
+        // CRM routing snapshot (Layer A invariant — always materialize)
+        const ncRouting = await resolveOfferRoutingWithFallback(supabase, {
+          offer_id: trialOfferRow.id,
+          tariff_id: trialOfferRow.tariff_id,
+        });
+        const ncSnapshot = ncRouting.ok && ncRouting.snapshot
+          ? ncRouting.snapshot
+          : buildNegativeSnapshot({
+              reason: ncRouting.reason || 'unknown',
+              offer_id: trialOfferRow.id,
+              tariff_id: trialOfferRow.tariff_id,
+              resolved_via: ncRouting.resolved_via ?? 'none',
+              candidates_count: ncRouting.candidates_count ?? 0,
+            });
+
+        const ncMeta: Record<string, unknown> = {
+          source: 'trial_no_card',
+          flow: 'demo_trial_no_card_activation',
+          tariff_code: tariffCode || null,
+          offer_id: trialOfferRow.id,
+          customer_first_name: customerFirstName || null,
+          customer_last_name: customerLastName || null,
+          customer_phone: customerPhone || null,
+          new_user_created: newUserCreated,
+          new_user_password: newUserCreated ? newUserPassword : null,
+          requires_card_tokenization: false,
+          auto_charge_after_trial: false,
+          crm_routing_snapshot: ncSnapshot,
+        };
+
+        const { data: ncOrder, error: ncOrderErr } = await supabase
+          .from('orders_v2')
+          .insert({
+            order_number: orderNumber,
+            user_id: userId,
+            product_id: productId,
+            tariff_id: trialOfferRow.tariff_id,
+            base_price: 0,
+            final_price: 0,
+            currency: productInfo.currency,
+            is_trial: true,
+            trial_end_at: trialEndAt,
+            status: 'paid',
+            paid_at: new Date().toISOString(),
+            customer_email: emailLower,
+            deal_date: new Date().toISOString(),
+            meta: ncMeta,
+            pipeline_id: ncRouting.ok && ncRouting.snapshot ? ncRouting.snapshot.pipeline_id : null,
+            pipeline_stage_id: ncRouting.ok && ncRouting.snapshot ? ncRouting.snapshot.stage_on_success : null,
+          })
+          .select('id')
+          .single();
+
+        if (ncOrderErr || !ncOrder?.id) {
+          console.error('[bepaid-create-token] DEMO-TRIAL-NO-CARD: orders_v2 insert failed', ncOrderErr);
+          return paymentFallbackResponse('Не удалось активировать демо-доступ. Попробуйте ещё раз.', {
+            flow: 'demo_trial_no_card_activation',
+            stage: 'orders_v2_insert',
+          });
+        }
+
+        // Audit negative snapshot if applicable
+        if (!ncRouting.ok) {
+          await auditNegativeSnapshot(supabase, {
+            order_id: ncOrder.id,
+            offer_id: trialOfferRow.id,
+            tariff_id: trialOfferRow.tariff_id,
+            reason: ncRouting.reason || 'unknown',
+            resolved_via: ncRouting.resolved_via ?? 'none',
+            candidates_count: ncRouting.candidates_count ?? 0,
+          });
+        }
+
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-create-token',
+          action: 'trial.no_card.activate',
+          target_user_id: userId,
+          meta: {
+            order_id: ncOrder.id,
+            product_id: productId,
+            tariff_code: tariffCode || null,
+            offer_id: trialOfferRow.id,
+            trial_days: trialDaysEff,
+            new_user_created: newUserCreated,
+          },
+        });
+
+        // Grant access (best-effort with error surfacing)
+        const grantRes = await supabase.functions.invoke('grant-access-for-order', {
+          body: { order_id: ncOrder.id },
+        });
+        if (grantRes.error) {
+          console.error('[bepaid-create-token] DEMO-TRIAL-NO-CARD: grant-access failed', grantRes.error);
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'bepaid-create-token',
+            action: 'trial.no_card.grant_failed',
+            target_user_id: userId,
+            meta: {
+              order_id: ncOrder.id,
+              error: String(grantRes.error?.message || grantRes.error),
+            },
+          });
+          // Do not fail the activation hard — order is paid, grant can be re-run by support.
+        }
+
+        const redirectUrl = `${origin}/purchases?payment=success&order=${ncOrder.id}&trial=activated`;
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            orderId: ncOrder.id,
+            redirectUrl,
+            isTrialNoCard: true,
+            newUserCreated,
+            newUserPassword: newUserCreated ? newUserPassword : null,
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // Provider-aware one-time payment (e.g. consultations). This branch runs before any bePaid
     // credentials/order/bootstrap work, so Stripe-only offers never try bePaid and never fallback to bePaid.
     if (isOneTime) {
