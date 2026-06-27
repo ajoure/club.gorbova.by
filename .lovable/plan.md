@@ -1,345 +1,339 @@
 ## да, согласен, с учетом правок:
 
-1. **В плане есть противоречие по** `grant-access-for-order`
+1. **Разделить P0 и hygiene в отчётах**
 
-В Scope написано:
-
-```text
-без вмешательства в core write-path grant-access-for-order
-```
-
-Но в шаге 3 предлагается вставка внутрь `grant-access-for-order`.
-
-Нужно зафиксировать один вариант.
-
-Допустимый вариант для Execute:
+Выполнять можно в указанном порядке, но отчёты должны быть отдельные:
 
 ```text
-Вставка допускается только как post-success tail-hook после полного успешного grant lifecycle, без изменения grant-логики, без влияния на return/status основного grant, с try/catch и best-effort semantics.
+Отчет о выполненной работе: PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
 ```
 
-То есть:
-
-- не менять существующие grant-ветки;
-- не менять access logic;
-- не менять error handling основного grant;
-- не вызывать convert до завершения grant;
-- convert failure не меняет результат grant.
-
-Если это невозможно технически гарантировать — не трогать `grant-access-for-order`, а вызывать convert из writer/caller после успешного ответа grant.
-
-2. **Edge function** `preorder-convert-on-pay` **не делать в этом патче без необходимости**
-
-Сейчас для Phase B достаточно:
+и затем:
 
 ```text
-RPC convert_preorder_on_pay_atomic
-+
-post-success best-effort вызов RPC
+Отчет о выполненной работе: PATCH-PREORDER-CONVERT-AUDIT-FIX
 ```
 
-Edge-функция для manual repair/reconcile — отдельный follow-up, если понадобится.
+Не смешивать P0 trial-активацию и audit-fix в один отчёт.
 
-Иначе появится лишний surface:
+---
 
-- registry;
-- verify_jwt;
-- service-role invocation;
-- отдельная auth-модель;
-- отдельные логи.
+2. **В** `bepaid-create-token` **ветка no-card trial должна быть до любых bePaid/subscription/tokenization веток**
 
-В этом Execute лучше убрать шаг 2 или пометить как out of scope.
-
-3. `GRANT EXECUTE только service_role` **— проверить реальную роль**
-
-В Supabase/Postgres не всегда корректно полагаться на `GRANT EXECUTE TO service_role` без проверки.
-
-В миграции сделать явно:
-
-```sql
-REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM anon;
-REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM authenticated;
-```
-
-И только если роль доступна:
-
-```sql
-GRANT EXECUTE ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) TO service_role;
-```
-
-Если `service_role` не grantable в окружении — функция должна вызываться через service-role SQL/API, но публичный execute для `anon/authenticated` не давать.
-
-4. `p_user_id` **в Phase B RPC не нужен**
-
-`convert_preorder_on_pay_atomic(p_paid_order_id uuid)` не должен принимать `p_user_id`.
-
-Матчинг делается по уже сохранённому paid order:
+Критично:
 
 ```text
-paid_order.user_id
-paid_order.customer_email
-paid_order.product_id
+trial amount=0 + requires_card_tokenization=false
 ```
 
-Никаких identity-полей из payload.
+должен завершаться **без обращения к bePaid**.
 
-5. **course_preregistrations update не должен быть “ошибка не валит транзакцию” внутри атомарной RPC без audit**
+То есть ветка должна срабатывать до:
 
-Если `course_preregistrations` update падает, а `orders_v2` linkage уже записан, это допустимо, но нужно логировать warning.
+- legacy subscription guard;
+- bePaid token creation;
+- subscription payload;
+- MIT/tokenization;
+- provider redirect.
+
+Иначе снова получим:
+
+```text
+BLOCKED: legacy subscription path attempted without explicit choice
+```
+
+---
+
+3. **Уточнить** `order` **/** `orders_v2`**: не создать два заказа**
+
+В плане есть формулировка:
+
+```text
+1) пометить order как paid
+2) если productInfo.isV2 — создать orders_v2
+```
+
+Нужно проверить текущую архитектуру `bepaid-create-token`: где именно уже создаётся order до этой ветки.
+
+Правило:
+
+```text
+Не создавать дубликат orders_v2, если order уже создан выше.
+```
+
+Если текущий flow уже создал `orders_v2` до trial-ветки — нужно только обновить его:
+
+```text
+status='paid'
+is_trial=true
+paid_at=now()
+trial_end_at=now()+trial_days
+meta.source='trial_no_card'
+```
+
+Если order ещё не создан — создать один канонический `orders_v2`.
+
+В отчёте показать:
+
+```text
+orders_v2: создана/обновлена ровно 1 строка
+```
+
+---
+
+4. `grant-access-for-order` **вызывать только после paid-status фиксации**
+
+Правильно:
+
+```text
+orders_v2.status='paid'
+paid_at set
+trial_end_at set
+meta.source='trial_no_card'
+→ grant-access-for-order
+```
+
+Не вызывать grant до фиксации paid/trial статуса, иначе downstream может не найти корректный order state.
+
+---
+
+5. **Trial no-card должен использовать canonical write path**
+
+Подтверждаю:
+
+```text
+НЕ писать entitlements/access_grant_ledger руками
+```
+
+Только:
+
+```text
+grant-access-for-order
+```
+
+Это обязательно сохранить.
+
+---
+
+6. **CRM routing snapshot для trial no-card**
+
+Добавить в proof:
+
+```text
+orders_v2.meta.crm_routing_snapshot присутствует / stage выставлена так же, как в обычном successful flow
+```
+
+Если у trial-оффера есть `meta.crm_routing`, оно должно попасть в order так же, как у других успешных order.
+
+---
+
+7. **Повторный trial guard проверить до создания нового order**
+
+Проверка `alreadyUsedTrial` должна срабатывать до создания нового paid trial order.
+
+В proof показать:
+
+```text
+повторная попытка тем же email не создаёт второй orders_v2
+не создаёт второй grant
+возвращает alreadyUsedTrial=true
+```
+
+---
+
+8. **Frontend: не только redirect, но и корректный UX при уже использованном trial**
+
+В `PaymentDialog` добавить/подтвердить обработку:
+
+```text
+alreadyUsedTrial=true
+```
+
+Чтобы пользователь не видел generic «Функция временно недоступна».
+
+---
+
+9. **Regression smoke по платным офферам**
+
+Минимально проверить:
+
+- pay_now bePaid redirect создаётся;
+- Stripe provider choice не сломан, если доступен для продукта;
+- recurring provider-side flow не попал в no-card ветку.
+
+No-card ветка должна иметь строгий guard:
+
+```ts
+isTrial && paymentAmount === 0 && requiresCardTokenization === false
+```
+
+---
+
+10. **Audit в** `bepaid-create-token`
+
+Для P0 достаточно:
+
+```text
+trial.no_card.activated
+```
+
+Но не глушить ошибку audit так, чтобы она ломала активацию. Audit failure может быть warning-only, но в отчёте нужно показать хотя бы одну успешную audit-запись.
+
+---
+
+11. **PATCH-PREORDER-CONVERT-AUDIT-FIX — не менять бизнес-логику RPC**
+
+Согласен:
+
+- только audit-block;
+- `actor_id → actor_user_id`;
+- `actor_type='system'`;
+- `actor_label='convert_preorder_on_pay_atomic'`;
+- не менять matching;
+- не менять idempotency;
+- не менять CRM hide;
+- не менять post-grant hook.
+
+---
+
+12. **Audit exception handling**
+
+Формулировку поправить:
+
+```text
+EXCEPTION WHEN undefined_column OR insufficient_privilege THEN RAISE WARNING
+```
+
+недостаточно, потому что schema mismatch может быть не единственной ожидаемой ошибкой.
 
 Лучше:
 
-- linkage `orders_v2` — основной atomic effect;
-- `course_preregistrations.status='converted'` — best-effort внутри exception block;
-- exception пишет `audit_logs` или `domain_executions` warning;
-- return содержит:
+- audit insert внутри отдельного helper/block;
+- если audit insert падает — `RAISE WARNING` с SQLSTATE/message;
+- конверсия не валится;
+- но не делать `WHEN OTHERS THEN NULL`.
 
-```json
-{
-  "preregistration_update": "ok|failed|not_found"
-}
-```
+То есть ошибка не должна быть молча скрыта.
 
-6. **Идемпотентность: audit не должен дублироваться**
+---
 
-В DoD написано:
+13. **Safari 404 backlog — правильно вынести**
 
-```text
-повторный вызов RPC → noop, никаких новых audit_logs
-```
+Не включать в P0 и hygiene.
 
-Это правильно. В RPC явно сделать:
-
-- audit только при первой успешной конверсии;
-- no-op без новой audit-записи;
-- no-match без audit или только debug/domain execution, если нужно.
-
-7. **Поиск preorder: добавить временное окно**
-
-Сейчас поиск берёт все draft preorder по email/product.
-
-Добавить ограничение:
+Backlog item можно зафиксировать отдельно:
 
 ```text
-preorder.created_at <= paid_order.created_at
-preorder.created_at >= paid_order.created_at - interval '90 days'
+PATCH-SAFARI-SPA-404-DISCOVERY
 ```
 
-Если 90 дней не подходит — вынести в константу, но окно должно быть. Иначе можно связать слишком старую заявку.
+Scope только discovery:
 
-8. **Множественные preorder**
+- CDN/cache;
+- SPA fallback;
+- Safari cache;
+- headers;
+- service worker, если есть.
 
-План говорит earliest-wins, но не описывает остальные.
+---
 
-Для Phase B Execute минимально:
+14. **Финальные статусы**
 
-- конвертировать только один earliest preorder;
-- остальные не трогать;
-- в return добавить `other_matching_preorders_count`.
-
-Не помечать остальные как superseded в этом патче, чтобы не расширять side effects.
-
-9. **CRM UI hide: лучше server-side + fallback**
-
-Default-фильтр должен исключать:
+После P0 отчёт должен завершиться:
 
 ```text
-status='draft'
-AND meta.is_preorder=true
-AND meta.converted_to_order_id IS NOT NULL
+trial no-card backend branch: PASS
+PaymentDialog trial no-card handling: PASS
+grant-access-for-order canonical path: PASS
+already-used trial guard: PASS
+paid bePaid/Stripe regression: PASS
+PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: PASS
 ```
 
-Если PostgREST-синтаксис сложный, допустим временный client-side fallback, но в отчёте нужно явно указать, где именно фильтр стоит.
-
-Важно: фильтр не должен скрывать обычные draft-заказы, только converted preorder.
-
-10. **Не добавлять** `preorder-convert-on-pay` **в registry, если edge не создаётся**
-
-Пункт:
+После hygiene:
 
 ```text
-Registry: добавить preorder-convert-on-pay
-```
-
-убрать, если Edge function не реализуется в Phase B.
-
-11. **Failure isolation proof уточнить**
-
-Не надо симулировать ошибку через отзыв `GRANT EXECUTE` в production/staging, если это рискованно.
-
-Достаточно безопасного способа:
-
-- временно вызвать RPC с невалидным paid_order_id → no-op/error не ломает grant;
-- или замокать/отключить convert call локально;
-- или проверить try/catch path unit/runtime log.
-
-Не ломать реальные GRANT/permissions ради proof.
-
-12. **Proof по** `access_grants`
-
-В таблицах proof использовать реальные названия проекта. Ранее фигурировали:
-
-```text
-access_grant_ledger
-entitlements
-telegram_access_grants
-telegram_access_queue
-```
-
-В отчёте показать count до/после именно по существующим таблицам. Не писать абстрактно `access_grants`, если такой таблицы нет.
-
-13. **Memory update не делать через код**
-
-Пункт:
-
-```text
-Memory update после PASS
-```
-
-оставить как текстовую фиксацию в отчёте, не как техническую задачу подрядчика. Он не должен пытаться писать в `mem://`.
-
-14. **Финальный отчёт**
-
-Заголовок:
-
-```text
-Отчет о выполненной работе: PATCH-PREORDER-DEAL-FLOW Phase B
-```
-
-Статусные строки:
-
-```text
-RPC convert_preorder_on_pay_atomic: PASS
-Post-grant best-effort hook: PASS
-Idempotency: PASS
-No payments/subscriptions/access grants: PASS
-CRM hide converted preorder: PASS
-Grant lifecycle unaffected: PASS
-PATCH-PREORDER-DEAL-FLOW Phase B: PASS/PARTIAL/FAIL
+audit schema fix: PASS
+audit row written: PASS
+idempotency preserved: PASS
+preorder convert logic unchanged: PASS
+PATCH-PREORDER-CONVERT-AUDIT-FIX: PASS
 ```
 
 После этих правок план можно выполнять.
 
 &nbsp;
 
-План: PATCH-PREORDER-DEAL-FLOW Phase B — Execute
+Контекст
 
-### Scope
+Два независимых блока работы:
 
-Связать paid order с ранее созданным preorder-deal после успешной выдачи доступа, без триггеров и без вмешательства в core write-path `grant-access-for-order`. Конверсия — best-effort, идемпотентная, не влияет на оплату/grant/подписки/доступы.
+1. **Hot-fix (P0):** «Активировать демо-доступ» на `gorbova.by/ideologicheskaya-rabota` падает с «Функция временно недоступна». В логах `bepaid-create-token` — `BLOCKED: legacy subscription path attempted without explicit choice` (audit `bepaid.subscription.create_blocked`). Триал с `amount=0` и без привязки карты не имеет своей ветки в `bepaid-create-token` и проваливается в legacy-guard (HTTP 403). Анкета (`requires_card_tokenization=false`, `auto_charge_after_trial=false`) подтверждает: оплата на bePaid вообще не нужна — нужно выдавать доступ напрямую.
+2. **Hygiene-fix (обязательный follow-up Phase B):** `convert_preorder_on_pay_atomic` пишет в `audit_logs` через несуществующую колонку `actor_id` и глушит ошибку через `EXCEPTION WHEN OTHERS THEN NULL` — observability сломана.
 
-### Принятые ограничения (из ревью discovery)
-
-- Variant A: linkage через `meta.converted_to_order_id` / `meta.converted_from_preorder_id`. Preorder остаётся `status='draft'`.
-- Match по `product_id` (не по `tariff_id`).
-- `AFTER UPDATE OF status` trigger — НЕ используется.
-- Конверсия вызывается ТОЛЬКО после успешного `grant-access-for-order`.
-- Любая ошибка конверсии не откатывает оплату и не откатывает grant.
-- Повторный вызов — no-op.
-- `payments_v2`, `subscriptions_v2`, `access_grants`, `entitlements`, `access_rules` — не трогаются ни прямо, ни косвенно.
-- `grant-access-for-order` не пере-вызывается.
-- Variant C запрещён, новый enum/status не вводится.
+Сообщение Safari «404» при работающем Chrome — кэш/edge; отдельно как backlog (ниже).
 
 ---
 
-### Шаг 1. Миграция: RPC `convert_preorder_on_pay_atomic`
+## Что делаем
 
-`public.convert_preorder_on_pay_atomic(p_paid_order_id uuid) returns jsonb`
+### PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION (P0)
 
-- `LANGUAGE plpgsql`, `SECURITY DEFINER`, `SET search_path = public`.
-- `GRANT EXECUTE` только `service_role` (вызывается из edge function под service-role клиентом). Никаких grant для `anon`/`authenticated`.
+**Backend (`supabase/functions/bepaid-create-token/index.ts`)**
 
-Поведение (строгий порядок, всё в одной транзакции):
+Новая ветка ДО guard'а легаси-подписки и ДО subscription-payload (после блока создания `order` и резолва `paymentAmount`/`trialConfig`):
 
-1. **Загрузить paid order** `FOR UPDATE`:
-  - не найден → `{ok:false, reason:'paid_order_not_found'}`.
-  - `status <> 'paid'` → `{ok:false, reason:'paid_order_not_paid'}`.
-  - `meta->>'is_preorder' = 'true'` → `{ok:false, reason:'paid_order_is_preorder'}`.
-  - `product_id IS NULL` → `{ok:false, reason:'paid_order_no_product'}`.
-  - `customer_email IS NULL AND user_id IS NULL` → `{ok:false, reason:'paid_order_no_identity'}`.
-2. **Идемпотентность (early exit)**:
-  - если `meta ? 'converted_from_preorder_id'` — вернуть `{ok:true, noop:true, preorder_order_id: <existing>}`.
-3. **Поиск preorder** (earliest-wins, только активные draft preorders):
-  - базовый фильтр: `status='draft' AND product_id = paid.product_id AND meta->>'is_preorder'='true' AND (meta ? 'converted_to_order_id') = false`.
-  - сначала по `user_id` (если у paid order есть user_id);
-  - если не найдено — по `lower(email_normalized) = lower(paid.customer_email)`;
-  - `ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`.
-  - не найдено → `{ok:true, noop:true, reason:'no_matching_preorder'}` (это валидный кейс: купил без предзаписи).
-4. **Race-guard**: повторная проверка `(preorder.meta ? 'converted_to_order_id') = false` после lock. Иначе `noop:true, reason:'preorder_already_converted'`.
-5. **Атомарная запись**:
-  - `UPDATE orders_v2 SET meta = meta || jsonb_build_object('converted_to_order_id', p_paid_order_id, 'converted_at', now()) WHERE id = preorder.id;`
-  - `UPDATE orders_v2 SET meta = meta || jsonb_build_object('converted_from_preorder_id', preorder.id, 'converted_at', now()) WHERE id = p_paid_order_id;`
-  - `UPDATE course_preregistrations SET status='converted', updated_at=now() WHERE id = preorder.meta->>'preregistration_id' AND status <> 'converted';` (best-effort, ошибка не валит транзакцию — wrap в `BEGIN/EXCEPTION`).
-6. Запись в `audit_logs` (action `preorder.convert_on_pay`, actor='system', meta содержит оба order_id, matched_by ∈ {user_id,email}).
-7. Return `{ok:true, preorder_order_id, paid_order_id, matched_by}`.
-
-### Шаг 2. Edge function `preorder-convert-on-pay`
-
-Новая функция (registry-only до approval execute):
-
-- `verify_jwt = true`, вызывается ВНУТРЕННЕ из `grant-access-for-order` через service-role invoke (или прямой `supabase.rpc` тем же service клиентом — предпочтительно, без сетевого hop).
-- Принимает `{ paid_order_id: uuid }`, Zod валидация.
-- Вызывает RPC, любую ошибку логирует в `domain_executions` (kind=`preorder_convert_on_pay`) и НЕ пробрасывает наверх.
-
-Решение по транспорту будет финализировано в начале execute: предпочтение — прямой вызов RPC из `grant-access-for-order` (меньше surface, меньше latency), edge function оставляем для ручных reconcile/repair.
-
-### Шаг 3. Интеграция в `grant-access-for-order`
-
-Минимальная точечная вставка в самый конец успешной ветки, после фиксации всех grant-side эффектов:
-
-```ts
-// best-effort, isolated, never throws
-try {
-  await supabaseService.rpc('convert_preorder_on_pay_atomic', { p_paid_order_id: orderId });
-} catch (e) {
-  await recordExecution('preorder_convert_on_pay', 'error', { order_id: orderId, error: String(e) });
+```
+if (isTrial && paymentAmount === 0 && !requiresCardTokenization) {
+   // 1) пометить order как paid (status='paid', paid_at=now)
+   // 2) если productInfo.isV2 — создать orders_v2 (status='paid', is_trial=true,
+   //    trial_end_at=now+trial_days, meta.source='trial_no_card',
+   //    + crm_routing_snapshot по аналогии с skipRedirect-веткой)
+   // 3) вызвать supabase.functions.invoke('grant-access-for-order', { order_id })
+   //    как канонический write-path (НЕ insert в entitlements руками)
+   // 4) audit_logs: action='trial.no_card.activated', actor_type='system'
+   // 5) ответить { success:true, isTrialNoCard:true, redirectUrl: `${origin}/cabinet?trial=activated&order=<id>` }
 }
 ```
 
-Условия вызова:
+Источник `requiresCardTokenization` — из уже читаемого `tariff_offers.requires_card_tokenization` для trial-оффера (есть в коде на строках 160, 487). Защита от повторной активации уже есть (строки 250–263, `is_trial=true` lookup).
 
-- только если основной grant lifecycle вернул success;
-- только для НЕ-preorder заказов (skip если `order.meta.is_preorder === true`);
-- никакого `await` внутри транзакции grant; вызов после commit.
+**Frontend (`src/components/payment/PaymentDialog.tsx`)**
 
-### Шаг 4. CRM UI: скрыть converted preorders
+В `handleSubmit` (≈800): если `data.success && data.isTrialNoCard && data.redirectUrl` — `window.location.href = data.redirectUrl` (тот же путь, что текущий 836), плюс `toast.success('Демо-доступ активирован')`. Никаких других веток не трогаем.
 
-В `useDealsFilters.ts` / запросе доски `AdminDeals` / `AdminOrdersV2.tsx`:
+**Verify (DoD)**
 
-- default-фильтр исключает строки, где `status='draft' AND meta->>'is_preorder'='true' AND meta ? 'converted_to_order_id'`.
-- Добавить чекбокс «Показать конвертированные предзаписи» (off by default) в `DealsFiltersBar`, по аналогии с `includeSynthetic`.
-- Серверный фильтр (PostgREST `.not('meta->converted_to_order_id', 'is', null)` инверсия) — точная форма проверяется в начале execute, fallback клиентский filter допустим, если PostgREST синтаксис окажется неудобным.
+1. Тестовый клик «Активировать демо-доступ» по trial-офферу `891c7fe0-…` под гость-checkout → редирект в `/cabinet?trial=activated`, в `orders_v2` строка `status='paid', is_trial=true, meta.source='trial_no_card'`, есть запись в `access_grant_ledger` через `grant-access-for-order`.
+2. Повторная попытка тем же email → `alreadyUsedTrial=true` (существующий guard) → модалка «Триал уже использован».
+3. Logs `bepaid-create-token`: `trial.no_card.activated` вместо `bepaid.subscription.create_blocked`.
+4. Платные офферы того же продукта — без изменений (regression smoke).
 
-Никаких изменений в summary metrics: paid order и так единственный revenue, preorder уже исключён из revenue/purchased.
+### PATCH-PREORDER-CONVERT-AUDIT-FIX (hygiene, обязательный)
 
-### Шаг 5. Proof / DoD
+Миграция, заменяющая аудит-блок внутри `public.convert_preorder_on_pay_atomic`:
 
-Dry-run перед execute:
+- `actor_id` → `actor_user_id`;
+- добавить `actor_type='system'`, `actor_label='convert_preorder_on_pay_atomic'`;
+- убрать `EXCEPTION WHEN OTHERS THEN NULL`; вместо этого `EXCEPTION WHEN undefined_column OR insufficient_privilege THEN ...RAISE WARNING...` (warning-only, конверсия не валится). Любая другая ошибка пробрасывается уже на уровне вызывающего best-effort hook (он сам подавляет — см. `grant-access-for-order` lines 2249–2270).
+- Body RPC и сам контракт (поиск/идемпотентность/обновление meta/preregistration) НЕ трогаем.
 
-- ручной вызов RPC в `(paid_order_id, preorder_order_id)` фикстуре staging-данных через `supabase--read_query` (read-only verification после insert через миграцию-фикстуру в test-окружении не делаем — только проверка результата RPC на реальном последнем тестовом paid order, если такой найдётся).
+**Verify**
 
-После execute проверить:
+1. Создать synthetic paid order для существующего фикстурного preorder → `select rpc convert_preorder_on_pay_atomic` → в `audit_logs` появилась запись `action='preorder.convert_on_pay'` с `actor_type='system'`.
+2. Повторный вызов — `noop=true`, без второй audit-строки.
+3. `\d audit_logs` подтверждает `actor_user_id` (без `actor_id`).
 
-1. **Linkage**: paid order имеет `meta.converted_from_preorder_id`, preorder — `meta.converted_to_order_id`. SQL select подтверждает.
-2. **Идемпотентность**: повторный вызов RPC на тот же `paid_order_id` → `{ok:true, noop:true}`. Никаких новых записей в `audit_logs`.
-3. **Изоляция grant**: `payments_v2`, `subscriptions_v2`, `access_grants`, `entitlements`, `access_rules`, `provider_subscriptions` — count до/после конверсии идентичен.
-4. **Grant не повторяется**: `domain_executions` для `grant_access_for_order` по этому order_id — ровно одна успешная запись.
-5. **CRM hide**: converted preorder отсутствует в default Kanban и default списке `/admin/crm/deals`; появляется при включённом «Показать конвертированные предзаписи».
-6. **No-match safety**: paid order без матчящегося preorder → `{ok:true, noop:true, reason:'no_matching_preorder'}`, ничего не пишется.
-7. **Failure isolation**: симулировать ошибку конверсии (например, кратковременный отзыв GRANT EXECUTE) → оплата и grant остаются успешными, запись в `domain_executions` со статусом error.
-8. **course_preregistrations**: связанная запись (если есть) переходит в `status='converted'`; отсутствие записи не валит конверсию.
+### Site 404 в Safari (backlog, отдельно — не в этом плане)
 
-### Технические детали
+Создам backlog-item для дискавери: проверить `Cache-Control`/`Vary` на response от Vite/edge, иммютабельность статики, поведение SPA-роутера на cold-load под Safari, и `gorbova.by` CDN-кэш. Не блокер для P0.
 
-- Match priority: `user_id` > `lower(email)`, earliest-wins по `created_at ASC`.
-- `FOR UPDATE SKIP LOCKED` чтобы параллельные оплаты двух разных продуктов не блокировались.
-- Никаких изменений в `tariff_offers`, `crm_routing`, enum `orders_v2.status`.
-- Registry: добавить `preorder-convert-on-pay` в `supabase/functions.registry.txt` (P1 секция) одновременно с миграцией.
-- Memory update после PASS: краткая запись `mem://commercial-logic/orders/preorder-convert-on-pay-v1` с правилами matching и идемпотентности.
+---
 
-### Out of scope (Phase B Execute)
+## Порядок
 
-- Backfill исторических paid orders без preorder linkage — отдельная задача, если понадобится.
-- Reconcile-функция для ручного матчинга по UI — отдельная задача.
-- Любое изменение `grant-access-for-order` сверх одного best-effort вызова в конце.
+1. PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION (backend + frontend + smoke).
+2. PATCH-PREORDER-CONVERT-AUDIT-FIX (миграция + proof).
+3. Завести backlog-item для Safari 404 discovery.
+
+Никакой другой логики (preorder, payments, grants, CRM-hide) не трогаем.
