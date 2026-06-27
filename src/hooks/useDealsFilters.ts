@@ -133,7 +133,9 @@ export function useDealsFilters() {
     if (filters.provider) n++;
     if (filters.reconcileSource) n++;
     if (filters.includeSynthetic) n++;
+    if (filters.includeConvertedPreorders) n++;
     return n;
+
   }, [filters]);
 
   return { filters, updateFilters, resetExtraFilters, activeCount };
