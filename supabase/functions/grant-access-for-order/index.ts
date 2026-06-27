@@ -2246,7 +2246,31 @@ Deno.serve(async (req) => {
       console.warn('[grant-access-for-order] canonical-doc-hook scheduling error (ignored):', hookErr);
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // PATCH-PREORDER-DEAL-FLOW Phase B: post-success best-effort convert hook.
+    // Links a paid order to a pre-existing preorder-deal (status='draft',
+    // meta.is_preorder=true) by product_id + user_id|email, 90-day window.
+    // Idempotent on the RPC side. NEVER throws — failure here MUST NOT
+    // affect the payment/grant outcome.
+    // ──────────────────────────────────────────────────────────────────────
+    if (orderId) {
+      try {
+        const { data: convertRes, error: convertErr } = await supabase.rpc(
+          'convert_preorder_on_pay_atomic',
+          { p_paid_order_id: orderId }
+        );
+        if (convertErr) {
+          console.warn('[grant-access-for-order] preorder_convert_on_pay rpc error (ignored):', convertErr?.message || convertErr);
+        } else if (convertRes && (convertRes as any).ok && !(convertRes as any).noop) {
+          console.log('[grant-access-for-order] preorder_convert_on_pay linked:', convertRes);
+        }
+      } catch (convertEx) {
+        console.warn('[grant-access-for-order] preorder_convert_on_pay unexpected error (ignored):', (convertEx as Error)?.message || convertEx);
+      }
+    }
+
     return new Response(
+
       JSON.stringify({
         success: true,
         message: "Доступы успешно выданы",

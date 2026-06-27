@@ -1,317 +1,345 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Формат отчёта исправить заранее**
+1. **В плане есть противоречие по** `grant-access-for-order`
 
-В deliverables сейчас указано:
-
-```text
-Отчет о выполнении: Phase B discovery
-```
-
-Нужно строго:
+В Scope написано:
 
 ```text
-Отчет о выполненной работе: PATCH-PREORDER-DEAL-FLOW Phase B — discovery
+без вмешательства в core write-path grant-access-for-order
 ```
 
-2. **Discovery-only scope подтверждён**
+Но в шаге 3 предлагается вставка внутрь `grant-access-for-order`.
 
-Правильно:
+Нужно зафиксировать один вариант.
 
-- без миграций;
-- без edge-функций;
-- без фронта;
-- без HTML;
-- без правок `grant-access-for-order`;
-- только SQL/code-read/consumer audit + execute-план.
-
-Этот scope не расширять.
-
-3. **Вариант C сразу считать запрещённым**
-
-В плане можно сразу зафиксировать:
+Допустимый вариант для Execute:
 
 ```text
-C — перенос pay_now order в preorder deal-карточку — запрещён.
-orders_v2 остаётся SOT по сделкам/заказам. paid order не должен перезаписываться в draft preorder и наоборот.
+Вставка допускается только как post-success tail-hook после полного успешного grant lifecycle, без изменения grant-логики, без влияния на return/status основного grant, с try/catch и best-effort semantics.
 ```
 
-Discovery должен выбирать только между:
+То есть:
 
-- **A:** preorder остаётся `draft`, переводится в success-stage + `meta.converted_to_order_id`;
-- **B:** preorder остаётся/становится canceled/superseded + `meta.superseded_by_order_id`.
+- не менять существующие grant-ветки;
+- не менять access logic;
+- не менять error handling основного grant;
+- не вызывать convert до завершения grant;
+- convert failure не меняет результат grant.
 
-4. **С высокой вероятностью безопаснее B, но пусть discovery докажет**
+Если это невозможно технически гарантировать — не трогать `grant-access-for-order`, а вызывать convert из writer/caller после успешного ответа grant.
 
-Предварительно предпочтительный вариант:
+2. **Edge function** `preorder-convert-on-pay` **не делать в этом патче без необходимости**
+
+Сейчас для Phase B достаточно:
 
 ```text
-B: PREORDER-* помечается superseded/canceled и скрывается из активного Kanban, paid order остаётся единственной revenue/won-сделкой.
+RPC convert_preorder_on_pay_atomic
++
+post-success best-effort вызов RPC
 ```
 
-Причина: если draft-preorder перевести в success-stage, в CRM может появиться визуальная «успешная сделка» без выручки рядом с paid order. Это риск для отчётов/канбана.
+Edge-функция для manual repair/reconcile — отдельный follow-up, если понадобится.
 
-Но финальное решение — после проверки consumers `orders_v2`.
+Иначе появится лишний surface:
 
-5. **Q5 усилить: проверять не только revenue, но и CRM counts**
+- registry;
+- verify_jwt;
+- service-role invocation;
+- отдельная auth-модель;
+- отдельные логи.
 
-В consumer audit добавить:
+В этом Execute лучше убрать шаг 2 или пометить как out of scope.
 
-- какие фильтры строят суммы;
-- какие фильтры строят count сделок по стадиям;
-- какие фильтры строят «успешные сделки»;
-- какие фильтры строят funnel conversion;
-- показывает ли `/admin/crm/deals` `status='draft'` в success stage.
+3. `GRANT EXECUTE только service_role` **— проверить реальную роль**
 
-Если CRM считает success-stage независимо от `status/meta.is_revenue`, вариант A опасен.
+В Supabase/Postgres не всегда корректно полагаться на `GRANT EXECUTE TO service_role` без проверки.
 
-6. **Матчинг клиента: добавить приоритеты**
+В миграции сделать явно:
 
-В discovery по Q1 зафиксировать candidate policy:
+```sql
+REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) FROM authenticated;
+```
+
+И только если роль доступна:
+
+```sql
+GRANT EXECUTE ON FUNCTION public.convert_preorder_on_pay_atomic(uuid) TO service_role;
+```
+
+Если `service_role` не grantable в окружении — функция должна вызываться через service-role SQL/API, но публичный execute для `anon/authenticated` не давать.
+
+4. `p_user_id` **в Phase B RPC не нужен**
+
+`convert_preorder_on_pay_atomic(p_paid_order_id uuid)` не должен принимать `p_user_id`.
+
+Матчинг делается по уже сохранённому paid order:
 
 ```text
-1. user_id exact match, если оба order имеют user_id
-2. normalized email exact match
-3. phone только как secondary signal, не единственный ключ
-4. окно: preorder created_at <= paid_order.created_at и не старше N дней
+paid_order.user_id
+paid_order.customer_email
+paid_order.product_id
 ```
 
-Не матчить только по телефону.
+Никаких identity-полей из payload.
 
-7. **Матчинг продукта: product_id — основной ключ**
+5. **course_preregistrations update не должен быть “ошибка не валит транзакцию” внутри атомарной RPC без audit**
 
-Для Phase B предпочтительно:
+Если `course_preregistrations` update падает, а `orders_v2` linkage уже записан, это допустимо, но нужно логировать warning.
+
+Лучше:
+
+- linkage `orders_v2` — основной atomic effect;
+- `course_preregistrations.status='converted'` — best-effort внутри exception block;
+- exception пишет `audit_logs` или `domain_executions` warning;
+- return содержит:
+
+```json
+{
+  "preregistration_update": "ok|failed|not_found"
+}
+```
+
+6. **Идемпотентность: audit не должен дублироваться**
+
+В DoD написано:
 
 ```text
-same product_id
+повторный вызов RPC → noop, никаких новых audit_logs
 ```
 
-а не `same tariff_id`, потому что preorder T-000074 может конвертироваться в разные pay_now офферы того же продукта:
+Это правильно. В RPC явно сделать:
 
-- корпоративная карта;
-- по счёту;
-- будущий pay_now.
+- audit только при первой успешной конверсии;
+- no-op без новой audit-записи;
+- no-match без audit или только debug/domain execution, если нужно.
 
-Но discovery должен проверить, нет ли риска конвертировать preorder одного направления в покупку другого продукта.
+7. **Поиск preorder: добавить временное окно**
 
-8. **Trial → pay_now оставить out of scope**
+Сейчас поиск берёт все draft preorder по email/product.
 
-Уточнить:
+Добавить ограничение:
 
 ```text
-trial offer 891c7fe0… не должен сам конвертировать preorder в Phase B, если не является paid order.
+preorder.created_at <= paid_order.created_at
+preorder.created_at >= paid_order.created_at - interval '90 days'
 ```
 
-Phase B — только paid/pay_now order после фактической оплаты.
+Если 90 дней не подходит — вынести в константу, но окно должно быть. Иначе можно связать слишком старую заявку.
 
-9. **Точка вызова: не внутри grant write-path без необходимости**
+8. **Множественные preorder**
 
-Для Q3 добавить критерий выбора:
+План говорит earliest-wins, но не описывает остальные.
 
-- если можно безопасно вызвать convert **после** успешного `grant-access-for-order` в webhook wrapper — предпочтительно;
-- не добавлять write-логику внутрь core grant, если можно оставить grant canonical path untouched;
-- convert-шаг должен быть best-effort/idempotent: ошибка конверсии не должна откатывать paid/grant.
+Для Phase B Execute минимально:
 
-10. **Convert-step не должен быть hard blocker оплаты**
+- конвертировать только один earliest preorder;
+- остальные не трогать;
+- в return добавить `other_matching_preorders_count`.
 
-В execute-плане потом обязательно:
+Не помечать остальные как superseded в этом патче, чтобы не расширять side effects.
+
+9. **CRM UI hide: лучше server-side + fallback**
+
+Default-фильтр должен исключать:
 
 ```text
-Если preorder-convert failed, paid order и grant остаются успешными. Ошибка конверсии пишется в audit/domain_executions/manual_review, но не ломает оплату.
+status='draft'
+AND meta.is_preorder=true
+AND meta.converted_to_order_id IS NOT NULL
 ```
 
-Discovery должен проверить, где можно это вставить.
+Если PostgREST-синтаксис сложный, допустим временный client-side fallback, но в отчёте нужно явно указать, где именно фильтр стоит.
 
-11. **Audit: предпочтительно domain_executions + audit_logs**
+Важно: фильтр не должен скрывать обычные draft-заказы, только converted preorder.
 
-Не выбирать только одно до discovery.
+10. **Не добавлять** `preorder-convert-on-pay` **в registry, если edge не создаётся**
 
-Проверить, что уже используется для webhook/lifecycle:
-
-- `domain_executions`;
-- `audit_logs`;
-- `provider_events`;
-- `payment_reconcile_queue`.
-
-В execute-плане предложить SOT-аудит по существующему стилю проекта.
-
-12. **SQL-аудит существующих PREORDER надо расширить**
-
-Добавить запросы:
-
-- сколько `orders_v2` с `meta.is_preorder=true`;
-- сколько имеют `meta.converted_to_order_id` / `superseded_by_order_id`;
-- сколько имеют тот же email + product_id и уже paid order после preorder;
-- сколько имеют pipeline success stage при `status='draft'`;
-- сколько потенциальных дублей по email/product за 24 часа/90 дней.
-
-13. **Fulfillment Collision Safety — отдельно проверить**
-
-В Q7 добавить:
+Пункт:
 
 ```text
-convert-on-pay не должен писать в access_grant_ledger, entitlements, telegram_access_queue и не должен вызывать grant-access-for-order повторно для preorder order_id.
+Registry: добавить preorder-convert-on-pay
 ```
 
-Иначе можно попасть в hard 500 по order_id mismatch.
+убрать, если Edge function не реализуется в Phase B.
 
-14. **Broadcast purchased-filter / analytics — обязательный grep**
+11. **Failure isolation proof уточнить**
 
-Поскольку уже был риск с `orders_v2 status='paid'`, в discovery обязательно grep:
+Не надо симулировать ошибку через отзыв `GRANT EXECUTE` в production/staging, если это рискованно.
+
+Достаточно безопасного способа:
+
+- временно вызвать RPC с невалидным paid_order_id → no-op/error не ломает grant;
+- или замокать/отключить convert call локально;
+- или проверить try/catch path unit/runtime log.
+
+Не ломать реальные GRANT/permissions ради proof.
+
+12. **Proof по** `access_grants`
+
+В таблицах proof использовать реальные названия проекта. Ранее фигурировали:
 
 ```text
-orders_v2
-status.eq.paid
-status='paid'
-final_price
-paid_amount
-is_revenue
-is_preorder
+access_grant_ledger
+entitlements
+telegram_access_grants
+telegram_access_queue
 ```
 
-по:
+В отчёте показать count до/после именно по существующим таблицам. Не писать абстрактно `access_grants`, если такой таблицы нет.
+
+13. **Memory update не делать через код**
+
+Пункт:
 
 ```text
-src/
-supabase/functions/
-supabase/migrations/views
+Memory update после PASS
 ```
 
-15. **Execute-план должен быть только после answers Q1–Q8**
+оставить как текстовую фиксацию в отчёте, не как техническую задачу подрядчика. Он не должен пытаться писать в `mem://`.
 
-Не формировать implementation заранее. В конце discovery допустимо дать 1 рекомендованный вариант, но с evidence.
+14. **Финальный отчёт**
 
-Формат финального блока:
+Заголовок:
 
 ```text
-Рекомендованный вариант Phase B: A/B
-Причина:
-Риски:
-Execute-план:
-STOP-guards:
-DoD:
+Отчет о выполненной работе: PATCH-PREORDER-DEAL-FLOW Phase B
 ```
 
-## **Итог**
+Статусные строки:
 
-План можно выполнять как **read-only discovery**. Правки не делать до отдельного approve execute-плана.
+```text
+RPC convert_preorder_on_pay_atomic: PASS
+Post-grant best-effort hook: PASS
+Idempotency: PASS
+No payments/subscriptions/access grants: PASS
+CRM hide converted preorder: PASS
+Grant lifecycle unaffected: PASS
+PATCH-PREORDER-DEAL-FLOW Phase B: PASS/PARTIAL/FAIL
+```
+
+После этих правок план можно выполнять.
 
 &nbsp;
 
-План: PATCH-PREORDER-DEAL-FLOW Phase B — convert-on-pay discovery
+План: PATCH-PREORDER-DEAL-FLOW Phase B — Execute
 
-## Цель
+### Scope
 
-Зафиксировать безопасный механизм «конверсии» preorder-deal (draft `PREORDER-*`) в реальный `paid` order при последующей оплате того же продукта тем же клиентом, **без**:
+Связать paid order с ранее созданным preorder-deal после успешной выдачи доступа, без триггеров и без вмешательства в core write-path `grant-access-for-order`. Конверсия — best-effort, идемпотентная, не влияет на оплату/grant/подписки/доступы.
 
-- двойного выставления стадии воронки,
-- двойного начисления выручки в отчётах,
-- двойного `grant-access-for-order`,
-- модификации канонического write-path `grant-access-for-order`.
+### Принятые ограничения (из ревью discovery)
 
-Phase B — **read-only discovery**. Никаких миграций, edge-функций, фронта, HTML-патчей. Только запросы к БД, чтение кода, сводный отчёт + execute-план на согласование.
+- Variant A: linkage через `meta.converted_to_order_id` / `meta.converted_from_preorder_id`. Preorder остаётся `status='draft'`.
+- Match по `product_id` (не по `tariff_id`).
+- `AFTER UPDATE OF status` trigger — НЕ используется.
+- Конверсия вызывается ТОЛЬКО после успешного `grant-access-for-order`.
+- Любая ошибка конверсии не откатывает оплату и не откатывает grant.
+- Повторный вызов — no-op.
+- `payments_v2`, `subscriptions_v2`, `access_grants`, `entitlements`, `access_rules` — не трогаются ни прямо, ни косвенно.
+- `grant-access-for-order` не пере-вызывается.
+- Variant C запрещён, новый enum/status не вводится.
 
-## Скоуп discovery
+---
 
-Продукт-носитель — Gorbova Club «Идеология» (`product_id=3ea08f79…`). На нём сосуществуют:
+### Шаг 1. Миграция: RPC `convert_preorder_on_pay_atomic`
 
-- preregistration T-000074 (`offer_id=7b939741…`, amount=0) — источник draft-сделок Phase A;
-- trial (`offer_id=891c7fe0…`, amount=0);
-- pay_now «КОРПОРАТИВНОЙ КАРТОЙ» (`339b6d25…`, 350) и «ПО СЧЁТУ» (`6a0fbe9e…`, 375).
+`public.convert_preorder_on_pay_atomic(p_paid_order_id uuid) returns jsonb`
 
-Все четыре оффера ведут в один pipeline `a0000001…` со стадиями pending/success/failed. Это создаёт риск: при оплате pay_now появляется второй deal в той же воронке, рядом с висящим `PREORDER-*` draft.
+- `LANGUAGE plpgsql`, `SECURITY DEFINER`, `SET search_path = public`.
+- `GRANT EXECUTE` только `service_role` (вызывается из edge function под service-role клиентом). Никаких grant для `anon`/`authenticated`.
 
-## Что выяснить (вопросы discovery)
+Поведение (строгий порядок, всё в одной транзакции):
 
-### Q1. Идентичность «того же клиента»
+1. **Загрузить paid order** `FOR UPDATE`:
+  - не найден → `{ok:false, reason:'paid_order_not_found'}`.
+  - `status <> 'paid'` → `{ok:false, reason:'paid_order_not_paid'}`.
+  - `meta->>'is_preorder' = 'true'` → `{ok:false, reason:'paid_order_is_preorder'}`.
+  - `product_id IS NULL` → `{ok:false, reason:'paid_order_no_product'}`.
+  - `customer_email IS NULL AND user_id IS NULL` → `{ok:false, reason:'paid_order_no_identity'}`.
+2. **Идемпотентность (early exit)**:
+  - если `meta ? 'converted_from_preorder_id'` — вернуть `{ok:true, noop:true, preorder_order_id: <existing>}`.
+3. **Поиск preorder** (earliest-wins, только активные draft preorders):
+  - базовый фильтр: `status='draft' AND product_id = paid.product_id AND meta->>'is_preorder'='true' AND (meta ? 'converted_to_order_id') = false`.
+  - сначала по `user_id` (если у paid order есть user_id);
+  - если не найдено — по `lower(email_normalized) = lower(paid.customer_email)`;
+  - `ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`.
+  - не найдено → `{ok:true, noop:true, reason:'no_matching_preorder'}` (это валидный кейс: купил без предзаписи).
+4. **Race-guard**: повторная проверка `(preorder.meta ? 'converted_to_order_id') = false` после lock. Иначе `noop:true, reason:'preorder_already_converted'`.
+5. **Атомарная запись**:
+  - `UPDATE orders_v2 SET meta = meta || jsonb_build_object('converted_to_order_id', p_paid_order_id, 'converted_at', now()) WHERE id = preorder.id;`
+  - `UPDATE orders_v2 SET meta = meta || jsonb_build_object('converted_from_preorder_id', preorder.id, 'converted_at', now()) WHERE id = p_paid_order_id;`
+  - `UPDATE course_preregistrations SET status='converted', updated_at=now() WHERE id = preorder.meta->>'preregistration_id' AND status <> 'converted';` (best-effort, ошибка не валит транзакцию — wrap в `BEGIN/EXCEPTION`).
+6. Запись в `audit_logs` (action `preorder.convert_on_pay`, actor='system', meta содержит оба order_id, matched_by ∈ {user_id,email}).
+7. Return `{ok:true, preorder_order_id, paid_order_id, matched_by}`.
 
-По какому ключу матчим preorder-deal с будущим pay_now order:
+### Шаг 2. Edge function `preorder-convert-on-pay`
 
-- `orders_v2.customer_email` (нормализованный `lower(btrim)`),
-- `orders_v2.user_id` (если был залогинен),
-- `orders_v2.customer_phone` (нормализованный),
-- комбинация + временное окно (например, 90 дней).
-Что делать, если совпадает email, но другой user_id (гость → авторизованный).
+Новая функция (registry-only до approval execute):
 
-### Q2. Идентичность продукта/тарифа
+- `verify_jwt = true`, вызывается ВНУТРЕННЕ из `grant-access-for-order` через service-role invoke (или прямой `supabase.rpc` тем же service клиентом — предпочтительно, без сетевого hop).
+- Принимает `{ paid_order_id: uuid }`, Zod валидация.
+- Вызывает RPC, любую ошибку логирует в `domain_executions` (kind=`preorder_convert_on_pay`) и НЕ пробрасывает наверх.
 
-- Конверсия по `product_id` достаточна, или нужно совпадение `tariff_id`?
-- Корпоративный pay_now (350) и pay_now по счёту (375) — оба конвертируют один preorder, или только определённый тариф (например, прописанный в `meta.intended_tariff_id` preorder-deal)?
-- Что с trial → pay_now (отдельный кейс, не Phase B).
+Решение по транспорту будет финализировано в начале execute: предпочтение — прямой вызов RPC из `grant-access-for-order` (меньше surface, меньше latency), edge function оставляем для ручных reconcile/repair.
 
-### Q3. Кто триггерит конверсию
+### Шаг 3. Интеграция в `grant-access-for-order`
 
-Кандидаты, отсортированные по риску (от низкого к высокому):
+Минимальная точечная вставка в самый конец успешной ветки, после фиксации всех grant-side эффектов:
 
-1. Доп. шаг внутри `grant-access-for-order` после успешного grant — read-only пометка `PREORDER-*` как `superseded_by=<paid_order_id>` без вмешательства в сам grant. **Не** менять статус, не дублировать grant.
-2. Отдельная edge `preorder-convert-on-pay`, вызываемая webhook’ом bePaid **после** того, как `grant-access-for-order` отработал и аудит зафиксирован.
-3. Nightly reconcile job, чисто административный (без realtime UX).
+```ts
+// best-effort, isolated, never throws
+try {
+  await supabaseService.rpc('convert_preorder_on_pay_atomic', { p_paid_order_id: orderId });
+} catch (e) {
+  await recordExecution('preorder_convert_on_pay', 'error', { order_id: orderId, error: String(e) });
+}
+```
 
-Discovery должно решить: где это безопаснее, с учётом существующей идемпотентности `grant-access-for-order` и Fulfillment Collision Safety (hard 500 на order_id mismatch).
+Условия вызова:
 
-### Q4. Что значит «конвертировать» технически
+- только если основной grant lifecycle вернул success;
+- только для НЕ-preorder заказов (skip если `order.meta.is_preorder === true`);
+- никакого `await` внутри транзакции grant; вызов после commit.
 
-Перечислить варианты и зафиксировать выбранный:
+### Шаг 4. CRM UI: скрыть converted preorders
 
-- (A) Перевод `PREORDER-*` deal в стадию `stage_on_success` и пометка `meta.converted_to=<paid_order_id>`, при этом сам draft остаётся в `orders_v2` со `status='draft'`, `is_revenue=false`. Реальный pay_now order живёт отдельно как SOT выручки.
-- (B) `status='canceled'` на `PREORDER-*` + `meta.superseded_by=<paid_order_id>` (не перетекает в Won).
-- (C) Перенос pay_now order в ту же deal-карточку (нет, ломает SOT — orders_v2 = SOT по сделке).
-Discovery должно явно отвергнуть (C) и выбрать между (A) и (B) с обоснованием для Kanban-UX.
+В `useDealsFilters.ts` / запросе доски `AdminDeals` / `AdminOrdersV2.tsx`:
 
-### Q5. Анти-revenue инварианты
+- default-фильтр исключает строки, где `status='draft' AND meta->>'is_preorder'='true' AND meta ? 'converted_to_order_id'`.
+- Добавить чекбокс «Показать конвертированные предзаписи» (off by default) в `DealsFiltersBar`, по аналогии с `includeSynthetic`.
+- Серверный фильтр (PostgREST `.not('meta->converted_to_order_id', 'is', null)` инверсия) — точная форма проверяется в начале execute, fallback клиентский filter допустим, если PostgREST синтаксис окажется неудобным.
 
-Подтвердить SQL-запросом, что текущие отчёты выручки/CRM/аналитики фильтруют `meta->>'is_revenue' = 'false'` ИЛИ `status='draft'`. Список консьюмеров `orders_v2`:
+Никаких изменений в summary metrics: paid order и так единственный revenue, preorder уже исключён из revenue/purchased.
 
-- `/admin/crm/deals` (kanban),
-- отчёты по выручке (revenue dashboards),
-- broadcast purchased-фильтр (по memory: «не rule_engine»),
-- analytics views.
-Если хоть один консьюмер не фильтрует — Phase B не может пометить draft как «success», обязан использовать вариант (B).
+### Шаг 5. Proof / DoD
 
-### Q6. Идемпотентность и порядок событий
+Dry-run перед execute:
 
-- Что если webhook bePaid придёт повторно? `grant-access-for-order` уже идемпотентен — convert-шаг должен быть такой же: повторный вызов не должен «расконвертировать» или дублировать пометку.
-- Что если pay_now пришёл **раньше**, чем preorder (странный race)? Конверсия должна стать no-op.
-- Что если есть несколько `PREORDER-*` deals на один email (рекомендация по дедупликации)?
+- ручной вызов RPC в `(paid_order_id, preorder_order_id)` фикстуре staging-данных через `supabase--read_query` (read-only verification после insert через миграцию-фикстуру в test-окружении не делаем — только проверка результата RPC на реальном последнем тестовом paid order, если такой найдётся).
 
-### Q7. Не сломать `grant-access-for-order`
+После execute проверить:
 
-Подтвердить read-only:
+1. **Linkage**: paid order имеет `meta.converted_from_preorder_id`, preorder — `meta.converted_to_order_id`. SQL select подтверждает.
+2. **Идемпотентность**: повторный вызов RPC на тот же `paid_order_id` → `{ok:true, noop:true}`. Никаких новых записей в `audit_logs`.
+3. **Изоляция grant**: `payments_v2`, `subscriptions_v2`, `access_grants`, `entitlements`, `access_rules`, `provider_subscriptions` — count до/после конверсии идентичен.
+4. **Grant не повторяется**: `domain_executions` для `grant_access_for_order` по этому order_id — ровно одна успешная запись.
+5. **CRM hide**: converted preorder отсутствует в default Kanban и default списке `/admin/crm/deals`; появляется при включённом «Показать конвертированные предзаписи».
+6. **No-match safety**: paid order без матчящегося preorder → `{ok:true, noop:true, reason:'no_matching_preorder'}`, ничего не пишется.
+7. **Failure isolation**: симулировать ошибку конверсии (например, кратковременный отзыв GRANT EXECUTE) → оплата и grant остаются успешными, запись в `domain_executions` со статусом error.
+8. **course_preregistrations**: связанная запись (если есть) переходит в `status='converted'`; отсутствие записи не валит конверсию.
 
-- никаких новых веток внутри grant write-path,
-- никаких изменений в `subscriptions_v2`/`entitlements`/`access_rules`,
-- никаких новых `telegram_access_queue` записей (по memory: автогрант идёт только через canonical path).
+### Технические детали
 
-### Q8. Audit
+- Match priority: `user_id` > `lower(email)`, earliest-wins по `created_at ASC`.
+- `FOR UPDATE SKIP LOCKED` чтобы параллельные оплаты двух разных продуктов не блокировались.
+- Никаких изменений в `tariff_offers`, `crm_routing`, enum `orders_v2.status`.
+- Registry: добавить `preorder-convert-on-pay` в `supabase/functions.registry.txt` (P1 секция) одновременно с миграцией.
+- Memory update после PASS: краткая запись `mem://commercial-logic/orders/preorder-convert-on-pay-v1` с правилами matching и идемпотентности.
 
-- Где writeAudit для конверсии: новый `domain_executions` тип `preorder.converted` ИЛИ `audit_logs`.
-- Какой actor: system (webhook-trigger) vs JWT (если вызов из админки).
+### Out of scope (Phase B Execute)
 
-## Что сделать в Phase B discovery (read-only)
-
-1. **Снимок consumers `orders_v2**`: grep по `src/` + `supabase/functions/` на использование `status`, `final_price`, `paid_amount`, `is_revenue`, `is_preorder`. Зафиксировать, какие фильтруют draft/preorder, какие — нет.
-2. **Снимок текущего `grant-access-for-order**`: какие meta-поля он читает, чтобы понять, можно ли «прицепиться» к нему без модификации.
-3. **SQL-аудит существующих `PREORDER-*` записей**: сколько уже создано, есть ли среди них email-совпадения с уже оплаченными `pay_now` orders (это пилотные данные для Phase B convert-логики).
-4. **Проверка bePaid webhook flow** (`bepaid-webhook`): порядок шагов, момент после которого grant гарантированно завершён, точка возможной вставки convert-вызова без race с `grant-access-for-order`.
-5. **Проверка Kanban UI**: как отрендерится pair (draft `PREORDER-*` + paid pay_now) в одной воронке. Нужен ли визуальный «merge» или достаточно `meta.superseded_by` со скрытием superseded draft.
-6. **Подготовка execute-плана Phase B** на основе ответов Q1–Q8, со списком файлов/функций/миграций — **на отдельное согласование**, не выполнять.
-
-## Out of scope Phase B discovery
-
-- Любые изменения схемы.
-- Любые изменения `grant-access-for-order`, `bepaid-webhook`, `subscriptions_v2`.
-- Изменения фронта/HTML SITE-000018.
-- Конверсия trial → pay_now (отдельный трек).
-- Массовый бэкфилл уже существующих `PREORDER-*` сделок.
-
-## Deliverables Phase B discovery
-
-1. Сводный отчёт «Отчет о выполнении: Phase B discovery» с ответами на Q1–Q8 + ссылками на код/SQL-evidence.
-2. SOT-фиксация выбранного варианта конверсии (A или B) с обоснованием.
-3. Execute-план Phase B — отдельным сообщением, формат «План: …», **не выполнять до approve**.
-
-## DoD discovery
-
-- Все Q1–Q8 закрыты с evidence.
-- Подтверждено, что выбранный вариант конверсии не нарушает: Canonical Write Path, Fulfillment Collision Safety, Auto-Renewals Cohort SOT, Commercial Entity SOT, Synthetic Order Analytics, Default Pipeline Scope.
-- Согласован execute-план Phase B перед началом любых правок.
+- Backfill исторических paid orders без preorder linkage — отдельная задача, если понадобится.
+- Reconcile-функция для ручного матчинга по UI — отдельная задача.
+- Любое изменение `grant-access-for-order` сверх одного best-effort вызова в конце.

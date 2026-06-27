@@ -22,7 +22,11 @@ export interface DealsExtraFilters {
   provider?: string | null;           // meta->>payment_provider
   reconcileSource?: string | null;    // reconcile_source column
   includeSynthetic: boolean;          // default false → exclude rule_engine
+  // PATCH-PREORDER-DEAL-FLOW Phase B: default false → hide converted preorders
+  // (rows with meta.converted_to_order_id set). User can opt-in to see them.
+  includeConvertedPreorders: boolean;
 }
+
 
 const KEYS = {
   statuses: "statuses",
@@ -37,7 +41,9 @@ const KEYS = {
   provider: "provider",
   reconcileSource: "recon_src",
   includeSynthetic: "synthetic",
+  includeConvertedPreorders: "conv_preorders",
 } as const;
+
 
 export function useDealsFilters() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,7 +65,9 @@ export function useDealsFilters() {
       provider: searchParams.get(KEYS.provider) || null,
       reconcileSource: searchParams.get(KEYS.reconcileSource) || null,
       includeSynthetic: searchParams.get(KEYS.includeSynthetic) === "1",
+      includeConvertedPreorders: searchParams.get(KEYS.includeConvertedPreorders) === "1",
     };
+
   }, [searchParams]);
 
   const updateFilters = useCallback(
@@ -90,7 +98,12 @@ export function useDealsFilters() {
             if (patch.includeSynthetic) next.set(KEYS.includeSynthetic, "1");
             else next.delete(KEYS.includeSynthetic);
           }
+          if ("includeConvertedPreorders" in patch) {
+            if (patch.includeConvertedPreorders) next.set(KEYS.includeConvertedPreorders, "1");
+            else next.delete(KEYS.includeConvertedPreorders);
+          }
           return next;
+
         },
         { replace: true }
       );
@@ -120,7 +133,9 @@ export function useDealsFilters() {
     if (filters.provider) n++;
     if (filters.reconcileSource) n++;
     if (filters.includeSynthetic) n++;
+    if (filters.includeConvertedPreorders) n++;
     return n;
+
   }, [filters]);
 
   return { filters, updateFilters, resetExtraFilters, activeCount };

@@ -55,5 +55,16 @@ export function applyExtraDealFilters<T extends any>(query: T, f: DealsExtraFilt
     q = q.or("meta->>source.is.null,meta->>source.neq.rule_engine");
   }
 
+  // PATCH-PREORDER-DEAL-FLOW Phase B: hide preorder-deals that have been
+  // converted (linked) to a paid order. Such rows have
+  // meta.converted_to_order_id set by convert_preorder_on_pay_atomic.
+  // The paid order itself does NOT carry converted_to_order_id (it has
+  // converted_from_preorder_id instead), so this filter targets preorders
+  // only. NULL passes; any value is hidden unless opted in.
+  if (!f.includeConvertedPreorders) {
+    q = q.is("meta->>converted_to_order_id", null);
+  }
+
   return q as T;
+
 }
