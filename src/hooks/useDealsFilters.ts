@@ -41,7 +41,9 @@ const KEYS = {
   provider: "provider",
   reconcileSource: "recon_src",
   includeSynthetic: "synthetic",
+  includeConvertedPreorders: "conv_preorders",
 } as const;
+
 
 export function useDealsFilters() {
   const [searchParams, setSearchParams] = useSearchParams();
