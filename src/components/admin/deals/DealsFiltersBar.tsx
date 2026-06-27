@@ -423,6 +423,8 @@ export function DealsFiltersBar({
                     checked={filters.includeConvertedPreorders}
                     onCheckedChange={(v) => onChange({ includeConvertedPreorders: v })}
                   />
+                </div>
+
 
               </CollapsibleContent>
             </Collapsible>
