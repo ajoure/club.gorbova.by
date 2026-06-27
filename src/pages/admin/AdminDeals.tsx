@@ -509,6 +509,9 @@ export default function AdminDeals() {
         if (extraFilters.provider) filtered = filtered.filter((r: any) => r.meta?.payment_provider === extraFilters.provider);
         if (extraFilters.reconcileSource) filtered = filtered.filter((r: any) => r.reconcile_source === extraFilters.reconcileSource);
         if (!extraFilters.includeSynthetic) filtered = filtered.filter((r: any) => r.meta?.source !== "rule_engine");
+        // PATCH-PREORDER-DEAL-FLOW Phase B: hide converted preorders in RPC-search results
+        if (!extraFilters.includeConvertedPreorders) filtered = filtered.filter((r: any) => !r.meta?.converted_to_order_id);
+
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
