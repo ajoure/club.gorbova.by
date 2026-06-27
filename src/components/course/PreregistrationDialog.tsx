@@ -114,35 +114,53 @@ export function PreregistrationDialog({
     setIsSubmitting(true);
     
     try {
-      const { data: insertedData, error } = await supabase
-        .from("course_preregistrations" as any)
-        .insert({
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone || null,
-          product_code: productCode,
-          tariff_name: tariffName || null,
-          consent: formData.consent,
-          source: "landing",
-          status: "new",
-          user_id: user?.id || null
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Send notification (fire and forget)
-      supabase.functions.invoke("course-prereg-notify", {
-        body: {
-          id: (insertedData as any)?.id,
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          product_code: productCode,
-          tariff_name: tariffName
+      if (offerId) {
+        // ── New ID-first path: atomic preorder + CRM-visible draft deal ──
+        const { data, error } = await supabase.functions.invoke("preorder-create-deal", {
+          body: {
+            offer_id: offerId,
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone || null,
+            consent: formData.consent,
+          },
+        });
+        if (error) throw error;
+        if (data && (data as any).success === false) {
+          throw new Error((data as any).error || "preorder_failed");
         }
-      }).catch(console.error);
+        // Notification is dispatched by the edge function — do NOT re-invoke notify here.
+      } else {
+        // ── Legacy compatibility path (CourseAccountant / CloseYear / BusinessTraining) ──
+        const { data: insertedData, error } = await supabase
+          .from("course_preregistrations" as any)
+          .insert({
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone || null,
+            product_code: productCode,
+            tariff_name: tariffName || null,
+            consent: formData.consent,
+            source: "landing",
+            status: "new",
+            user_id: user?.id || null,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        supabase.functions.invoke("course-prereg-notify", {
+          body: {
+            id: (insertedData as any)?.id,
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            product_code: productCode,
+            tariff_name: tariffName,
+          },
+        }).catch(console.error);
+      }
 
       toast({
         title: "Заявка отправлена!",
@@ -155,11 +173,11 @@ export function PreregistrationDialog({
       } else {
         setStep("telegram_prompt");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error submitting preregistration:", error);
       toast({
         title: "Ошибка",
-        description: "Не удалось отправить заявку. Попробуйте позже.",
+        description: error?.message || "Не удалось отправить заявку. Попробуйте позже.",
         variant: "destructive"
       });
     } finally {
