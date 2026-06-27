@@ -159,6 +159,16 @@ export default function SitePageBySlug() {
           installmentCount={resolved.offer.installment_count ?? null}
         />
       )}
+      {preregOfferId && (
+        <PreregistrationDialog
+          open={preregOpen}
+          onOpenChange={(v) => {
+            setPreregOpen(v);
+            if (!v) setPreregOfferId(null);
+          }}
+          offerId={preregOfferId}
+        />
+      )}
     </div>
   );
 }
