@@ -156,11 +156,6 @@ export function OfferRowCompact({
                 {offer.offer_type === "trial" && (
                   <>
                     {" "}• {offer.trial_days} дней
-                    {offer.auto_charge_after_trial && (
-                      <span className="text-amber-600">
-                        {" "}→ {offer.auto_charge_amount} BYN
-                      </span>
-                    )}
                   </>
                 )}
                 {offer.offer_type === "preregistration" && offer.meta?.preregistration?.first_charge_date && (
