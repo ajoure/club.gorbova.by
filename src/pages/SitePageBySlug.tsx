@@ -16,11 +16,12 @@ import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer"]);
+const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
 
 interface PendingOffer {
   productId: string;
