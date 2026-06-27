@@ -44,6 +44,8 @@ export default function SitePageBySlug() {
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [preregOpen, setPreregOpen] = useState(false);
+  const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
   useEffect(() => {
@@ -51,15 +53,29 @@ export default function SitePageBySlug() {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
       const detail = ce.detail;
       if (!detail || !ALLOWED_ACTIONS.has(detail.action)) return;
-      if (detail.action !== "open-offer") return;
-      const productId = String(detail.payload?.product_id || "");
-      const offerId = String(detail.payload?.offer_id || "");
-      if (!UUID_RE.test(productId) || !UUID_RE.test(offerId)) {
-        console.warn("[site-action] open-offer: invalid UUID payload", detail.payload);
+
+      if (detail.action === "open-offer") {
+        const productId = String(detail.payload?.product_id || "");
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(productId) || !UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-offer: invalid UUID payload", detail.payload);
+          return;
+        }
+        setPending({ productId, offerId });
+        setPaymentOpen(true);
         return;
       }
-      setPending({ productId, offerId });
-      setPaymentOpen(true);
+
+      if (detail.action === "open-preregistration") {
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-preregistration: invalid offer_id", detail.payload);
+          return;
+        }
+        setPreregOfferId(offerId);
+        setPreregOpen(true);
+        return;
+      }
     }
     window.addEventListener("lovable:site-action", onSiteAction as EventListener);
     return () => window.removeEventListener("lovable:site-action", onSiteAction as EventListener);
