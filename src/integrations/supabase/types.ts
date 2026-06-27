@@ -16915,6 +16915,18 @@ export type Database = {
         Args: { p_label: string }
         Returns: string
       }
+      create_preorder_deal_atomic: {
+        Args: {
+          p_consent: boolean
+          p_email: string
+          p_idempotency_key?: string
+          p_name: string
+          p_offer_id: string
+          p_phone: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       create_support_ticket: {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json

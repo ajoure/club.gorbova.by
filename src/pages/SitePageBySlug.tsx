@@ -16,11 +16,12 @@ import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer"]);
+const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
 
 interface PendingOffer {
   productId: string;
@@ -43,6 +44,8 @@ export default function SitePageBySlug() {
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [preregOpen, setPreregOpen] = useState(false);
+  const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
   useEffect(() => {
@@ -50,15 +53,29 @@ export default function SitePageBySlug() {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
       const detail = ce.detail;
       if (!detail || !ALLOWED_ACTIONS.has(detail.action)) return;
-      if (detail.action !== "open-offer") return;
-      const productId = String(detail.payload?.product_id || "");
-      const offerId = String(detail.payload?.offer_id || "");
-      if (!UUID_RE.test(productId) || !UUID_RE.test(offerId)) {
-        console.warn("[site-action] open-offer: invalid UUID payload", detail.payload);
+
+      if (detail.action === "open-offer") {
+        const productId = String(detail.payload?.product_id || "");
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(productId) || !UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-offer: invalid UUID payload", detail.payload);
+          return;
+        }
+        setPending({ productId, offerId });
+        setPaymentOpen(true);
         return;
       }
-      setPending({ productId, offerId });
-      setPaymentOpen(true);
+
+      if (detail.action === "open-preregistration") {
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-preregistration: invalid offer_id", detail.payload);
+          return;
+        }
+        setPreregOfferId(offerId);
+        setPreregOpen(true);
+        return;
+      }
     }
     window.addEventListener("lovable:site-action", onSiteAction as EventListener);
     return () => window.removeEventListener("lovable:site-action", onSiteAction as EventListener);
@@ -140,6 +157,16 @@ export default function SitePageBySlug() {
           }
           paymentMethod={resolved.offer.payment_method}
           installmentCount={resolved.offer.installment_count ?? null}
+        />
+      )}
+      {preregOfferId && (
+        <PreregistrationDialog
+          open={preregOpen}
+          onOpenChange={(v) => {
+            setPreregOpen(v);
+            if (!v) setPreregOfferId(null);
+          }}
+          offerId={preregOfferId}
         />
       )}
     </div>
