@@ -408,6 +408,22 @@ export function DealsFiltersBar({
                     onCheckedChange={(v) => onChange({ includeSynthetic: v })}
                   />
                 </div>
+                {/* PATCH-PREORDER-DEAL-FLOW Phase B: opt-in to see converted preorders */}
+                <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-2 py-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-xs cursor-pointer" htmlFor="conv-preorders-toggle">
+                      Показывать конвертированные предзаписи
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      По умолчанию скрыты PREORDER-драфты, уже связанные с оплаченной сделкой
+                    </p>
+                  </div>
+                  <Switch
+                    id="conv-preorders-toggle"
+                    checked={filters.includeConvertedPreorders}
+                    onCheckedChange={(v) => onChange({ includeConvertedPreorders: v })}
+                  />
+
               </CollapsibleContent>
             </Collapsible>
           </div>
