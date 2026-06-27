@@ -65,7 +65,9 @@ export function useDealsFilters() {
       provider: searchParams.get(KEYS.provider) || null,
       reconcileSource: searchParams.get(KEYS.reconcileSource) || null,
       includeSynthetic: searchParams.get(KEYS.includeSynthetic) === "1",
+      includeConvertedPreorders: searchParams.get(KEYS.includeConvertedPreorders) === "1",
     };
+
   }, [searchParams]);
 
   const updateFilters = useCallback(
