@@ -7812,6 +7812,39 @@ export type Database = {
           },
         ]
       }
+      integrations: {
+        Row: {
+          config: Json
+          created_at: string
+          display_name: string | null
+          id: string
+          is_enabled: boolean
+          provider: string
+          updated_at: string
+          workspace_id: string | null
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          provider: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          provider?: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
       kb_questions: {
         Row: {
           answer_date: string

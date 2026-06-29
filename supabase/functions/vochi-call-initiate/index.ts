@@ -9,7 +9,8 @@
 //   1. JWT валиден (без verify_jwt в config.toml — валидируем здесь).
 //   2. Пользователь имеет роль сотрудника (has_role_v2 staff).
 //   3. У пользователя в profiles.vochi_sip_extension задан внутренний номер.
-//   4. integration_credentials provider='vochi' status='active' и config.enabled=true.
+//   4. integrations.is_enabled=true для provider='vochi'; integration_credentials
+//      хранит только секреты/config подключения (никакого второго enabled-флага).
 //   5. Идемпотентность: тот же (user, phone) в течение IDEMPOTENCY_WINDOW_SEC
 //      возвращает существующий call_id вместо нового запроса.
 //
@@ -103,7 +104,17 @@ Deno.serve(async (req) => {
   const ext = profile?.vochi_sip_extension?.trim();
   if (!ext) return json(412, { error: "sip_extension_missing" });
 
-  // ── 5. Credentials ───────────────────────────────────────────────────────
+  // ── 5a. Integration enabled flag — SOT: public.integrations.is_enabled ───
+  const { data: integ, error: integErr } = await admin
+    .from("integrations")
+    .select("is_enabled")
+    .eq("provider", "vochi")
+    .maybeSingle();
+  if (integErr) return json(500, { error: "integration_lookup_failed" });
+  if (!integ) return json(412, { error: "integration_not_configured" });
+  if (!integ.is_enabled) return json(412, { error: "integration_disabled" });
+
+  // ── 5b. Credentials — только секреты/конфиг подключения ─────────────────
   const { data: cred, error: credErr } = await admin
     .from("integration_credentials")
     .select("config, secrets, status")
@@ -111,9 +122,6 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (credErr) return json(500, { error: "cred_lookup_failed" });
   if (!cred) return json(412, { error: "integration_not_configured" });
-  if (cred.status !== "active" || !cred.config?.enabled) {
-    return json(412, { error: "integration_disabled" });
-  }
   const baseUrl = String(cred.config?.base_url ?? "https://bot.vochi.by").replace(
     /\/+$/,
     "",
@@ -153,7 +161,7 @@ Deno.serve(async (req) => {
     .from("calls")
     .insert({
       direction: "outbound",
-      status: "initiating",
+      status: "queued",
       link_status: contactId ? "manual" : "unresolved",
       phone_to_e164: phone,
       contact_id: contactId,
@@ -202,7 +210,7 @@ Deno.serve(async (req) => {
     return json(200, {
       call_id: callRow.id,
       public_id: callRow.public_id,
-      status: "initiating",
+      status: "queued",
     });
   } catch (e: any) {
     await admin
