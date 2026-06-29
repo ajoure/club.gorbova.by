@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export interface PickedContact {
   id: string;
+  user_id?: string | null;
   full_name: string | null;
   email: string | null;
   phone: string | null;
