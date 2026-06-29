@@ -1491,7 +1491,40 @@ Deno.serve(async (req) => {
 
     const isOrderBasedOnly = productEntMode?.entitlement_mode === 'order_based_only';
 
-    if (isOrderBasedOnly) {
+    if (isNoCardTrial) {
+      // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW: no-card 0 BYN demo trial must never
+      // create or extend subscriptions_v2. Entitlement carries trial expiry directly.
+      console.log(`[grant-access-for-order] SKIP subscription: no-card trial for order ${orderId}`);
+      results.subscription = {
+        action: 'skipped',
+        reason: 'no_card_trial',
+        order_id: orderId,
+        product_id: productId,
+      };
+
+      try {
+        const { error: ncAuditError } = await supabase.from('audit_logs').insert({
+          action: 'grant.skip_subscription_no_card_trial',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            product_id: productId,
+            offer_id: order.offer_id || null,
+            tariff_id: tariffId || null,
+            reason: 'no_card_trial',
+            patch: 'PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW',
+          },
+        });
+        if (ncAuditError) {
+          console.warn('[grant-access-for-order] no-card trial audit insert failed (non-blocking):', ncAuditError);
+        }
+      } catch (auditErr) {
+        console.warn('[grant-access-for-order] no-card trial audit threw (non-blocking):', auditErr);
+      }
+    } else if (isOrderBasedOnly) {
       console.log(`[grant-access-for-order] SKIP subscription: product ${productId} is order_based_only`);
       results.subscription = { action: 'skipped', reason: 'order_based_only' };
 
@@ -1509,6 +1542,7 @@ Deno.serve(async (req) => {
         },
       });
     } else
+
 
     // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
     // If there's already an active subscription for this user+product, EXTEND it instead of creating new
