@@ -60,6 +60,10 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
     useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters });
 
+  const dealIds = useMemo(() => deals.map((d) => d.id), [deals]);
+  const { data: taskSummaryByDeal = {} } = useDealTaskSummary(dealIds);
+
+
   const [activeDeal, setActiveDeal] = useState<BoardDeal | null>(null);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
   const [showNewStage, setShowNewStage] = useState(false);
