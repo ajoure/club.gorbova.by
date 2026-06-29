@@ -245,20 +245,25 @@ export function ApplyTariffRulesToUserDialog({
                 {fixedUserLabel || fixedUserId}
               </div>
             ) : (
-              <Select value={userId} onValueChange={setUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите пользователя" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map((u: any) => (
-                    <SelectItem key={u.user_id} value={u.user_id}>
-                      {u.full_name || u.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 px-3 py-2 rounded-md border bg-muted/30 text-sm min-h-[40px] flex items-center gap-2">
+                  {userId ? (
+                    <>
+                      <UserIcon className="h-4 w-4 text-muted-foreground" />
+                      <span className="truncate">{userLabel || userId}</span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">Пользователь не выбран</span>
+                  )}
+                </div>
+                <Button type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+                  <Search className="h-4 w-4 mr-2" />
+                  {userId ? "Сменить" : "Найти"}
+                </Button>
+              </div>
             )}
           </div>
+
 
           {/* Tariff */}
           <div>
