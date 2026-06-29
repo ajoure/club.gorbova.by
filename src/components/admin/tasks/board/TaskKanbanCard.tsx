@@ -156,11 +156,13 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
 
 
         {/* Due & reminder */}
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "inline-flex items-center gap-1",
-              overdue ? "text-destructive font-medium" : "text-muted-foreground",
+              TASK_CARD_PILL,
+              overdue
+                ? "bg-rose-100/80 text-rose-700 border-rose-200/70 font-medium"
+                : "text-muted-foreground",
             )}
           >
             {overdue ? (
@@ -171,7 +173,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
             {formatDue(task.due_at)}
           </span>
           {task.remind_at ? (
-            <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <span className={cn(TASK_CARD_PILL, "text-muted-foreground")}>
               <Bell className="h-3 w-3" />
               {formatDue(task.remind_at)}
             </span>
@@ -188,7 +190,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
                   e.stopPropagation();
                   if (onOpenDeal) onOpenDeal(deal.id);
                 }}
-                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] font-mono text-foreground hover:bg-muted"
+                className={cn(TASK_CARD_PILL, "font-mono hover:bg-white")}
                 title="Открыть сделку"
               >
                 <Briefcase className="h-3 w-3" />
@@ -196,7 +198,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
               </button>
             ) : null}
             {contact ? (
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-foreground max-w-[160px] truncate">
+              <span className={cn(TASK_CARD_PILL, "max-w-[160px] truncate")}>
                 <UserIcon className="h-3 w-3" />
                 <span className="truncate">
                   {contact.full_name || contact.email || contact.phone || "Контакт"}
@@ -210,7 +212,10 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         <div className="flex items-center justify-between gap-2 pt-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <div
-              className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-foreground/80 shrink-0"
+              className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-semibold text-white shrink-0 shadow-sm"
+              style={{
+                background: `linear-gradient(135deg, ${accent}, ${accent}cc)`,
+              }}
               title={assignee?.label ?? "Не назначен"}
             >
               {initials(assignee?.label)}
@@ -221,11 +226,12 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
           </div>
           <Badge
             variant="outline"
-            className={cn("text-[10px] px-1.5 py-0", STATUS_VARIANTS[task.status])}
+            className={cn("text-[10px] px-1.5 py-0 bg-white/70 backdrop-blur-sm", STATUS_VARIANTS[task.status])}
           >
             {STATUS_LABELS[task.status]}
           </Badge>
         </div>
+
       </div>
     </div>
   );
