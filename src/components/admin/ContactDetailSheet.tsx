@@ -1631,6 +1631,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Задачи
               </TabsTrigger>
+              <TabsTrigger value="calls" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Phone className="w-3 h-3 mr-1" />
+                Звонки
+              </TabsTrigger>
               <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <CreditCard className="w-3 h-3 mr-1" />
                 Платежи
