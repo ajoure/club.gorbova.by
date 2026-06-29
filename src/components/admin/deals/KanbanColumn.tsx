@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { KanbanDealCard } from "./KanbanDealCard";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
+import type { DealTaskSummary } from "@/hooks/useDealTaskSummary";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
