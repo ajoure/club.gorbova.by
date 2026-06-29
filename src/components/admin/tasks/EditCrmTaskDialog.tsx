@@ -98,97 +98,114 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className={cn("max-w-lg", TASK_DIALOG_GLASS)}>
         <DialogHeader>
-          <DialogTitle>
-            Редактировать задачу{task.public_id ? ` · ${task.public_id}` : ""}
-          </DialogTitle>
+          <DialogTitle>Редактировать задачу</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-3">
+          <div className={TASK_DIALOG_SECTION}>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Тип</Label>
+                <Select value={typeId} onValueChange={setTypeId}>
+                  <SelectTrigger className="bg-white/80">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {types.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Статус</Label>
+                <Select value={status} onValueChange={(v) => setStatus(v as CrmTaskStatus)}>
+                  <SelectTrigger className="bg-white/80">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Открыта</SelectItem>
+                    <SelectItem value="in_progress">В работе</SelectItem>
+                    <SelectItem value="done">Готово</SelectItem>
+                    <SelectItem value="canceled">Отменена</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
             <div className="space-y-1">
-              <Label>Тип</Label>
-              <Select value={typeId} onValueChange={setTypeId}>
-                <SelectTrigger>
-                  <SelectValue />
+              <Label>Название</Label>
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="bg-white/80"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Описание</Label>
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className="bg-white/80"
+              />
+            </div>
+          </div>
+
+          <div className={TASK_DIALOG_SECTION}>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Дедлайн</Label>
+                <DateTimePickerField value={dueAt} onChange={setDueAt} />
+              </div>
+              <div className="space-y-1">
+                <Label>Напомнить</Label>
+                <DateTimePickerField value={remindAt} onChange={setRemindAt} />
+              </div>
+            </div>
+          </div>
+
+          <div className={TASK_DIALOG_SECTION}>
+            <div className="space-y-1">
+              <Label>Ответственный</Label>
+              <Select value={assignee} onValueChange={setAssignee}>
+                <SelectTrigger className="bg-white/80 h-auto py-1.5">
+                  <SelectValue placeholder="Не назначен" />
                 </SelectTrigger>
                 <SelectContent>
-                  {types.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.label}
+                  <SelectItem value={UNASSIGNED}>Не назначен</SelectItem>
+                  {staff.map((s) => (
+                    <SelectItem key={s.user_id} value={s.user_id}>
+                      <StaffOptionRow staff={s} />
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {assignee !== UNASSIGNED &&
+              !staff.find((s) => s.user_id === assignee)?.telegram_linked ? (
+                <p className="text-[11px] text-amber-700">
+                  У сотрудника не привязан Telegram — уведомление о задаче не дойдёт.
+                </p>
+              ) : null}
             </div>
+          </div>
+
+          <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">
-              <Label>Статус</Label>
-              <Select value={status} onValueChange={(v) => setStatus(v as CrmTaskStatus)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="open">Открыта</SelectItem>
-                  <SelectItem value="in_progress">В работе</SelectItem>
-                  <SelectItem value="done">Готово</SelectItem>
-                  <SelectItem value="canceled">Отменена</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Результат / комментарий</Label>
+              <Textarea
+                value={result}
+                onChange={(e) => setResult(e.target.value)}
+                rows={2}
+                placeholder="Заполняется при закрытии"
+                className="bg-white/80"
+              />
             </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Название</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
-
-          <div className="space-y-1">
-            <Label>Описание</Label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Дедлайн</Label>
-              <DateTimePickerField value={dueAt} onChange={setDueAt} />
-            </div>
-            <div className="space-y-1">
-              <Label>Напомнить</Label>
-              <DateTimePickerField value={remindAt} onChange={setRemindAt} />
-            </div>
-          </div>
-
-
-          <div className="space-y-1">
-            <Label>Ответственный</Label>
-            <Select value={assignee} onValueChange={setAssignee}>
-              <SelectTrigger>
-                <SelectValue placeholder="Не назначен" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={UNASSIGNED}>Не назначен</SelectItem>
-                {staff.map((s) => (
-                  <SelectItem key={s.user_id} value={s.user_id}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Результат / комментарий</Label>
-            <Textarea
-              value={result}
-              onChange={(e) => setResult(e.target.value)}
-              rows={2}
-              placeholder="Заполняется при закрытии"
-            />
           </div>
         </div>
 
@@ -199,6 +216,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           <Button
             onClick={submit}
             disabled={update.isPending || updateStatus.isPending || !title.trim() || !typeId}
+            className={TASK_DIALOG_SAVE_CTA}
           >
             Сохранить
           </Button>
@@ -207,3 +225,4 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     </Dialog>
   );
 }
+
