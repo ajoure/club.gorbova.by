@@ -104,6 +104,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
   pipelineId,
   taskSummary,
 }: Props) {
+  const navigate = useNavigate();
   const Icon = STATUS_ICONS[deal.status] || AlertTriangle;
   const iconColor = STATUS_COLORS[deal.status] || "text-muted-foreground";
 
