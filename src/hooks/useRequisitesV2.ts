@@ -197,7 +197,7 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
       if (input.is_default !== undefined) patch.is_default = input.is_default;
       const { data, error } = await supabase
         .from("legal_entities_requisites")
-        .update(patch)
+        .update(patch as any)
         .eq("id", input.id)
         .select()
         .single();
@@ -270,7 +270,7 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
       if (input.is_default !== undefined) patch.is_default = input.is_default;
       const { data, error } = await supabase
         .from("individual_requisites")
-        .update(patch)
+        .update(patch as any)
         .eq("id", input.id)
         .select()
         .single();

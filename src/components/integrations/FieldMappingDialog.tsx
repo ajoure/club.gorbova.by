@@ -210,7 +210,7 @@ export function FieldMappingDialog({ instance, open, onOpenChange }: FieldMappin
         if (Object.keys(updateField).length > 0) {
           await supabase
             .from("fields")
-            .update(updateField)
+            .update(updateField as any)
             .eq("id", fieldId);
         }
       }

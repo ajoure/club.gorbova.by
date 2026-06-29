@@ -223,7 +223,7 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
         
         const { error: updateError } = await supabase
           .from('payment_reconcile_queue')
-          .update(updateData)
+          .update(updateData as any)
           .eq('id', payment.id);
         
         if (updateError) {

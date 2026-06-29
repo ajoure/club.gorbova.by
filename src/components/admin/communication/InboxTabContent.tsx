@@ -349,7 +349,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       if (existing) {
         const { error } = await supabase
           .from("chat_preferences")
-          .update({ [field]: value, updated_at: new Date().toISOString() })
+          .update({ [field]: value, updated_at: new Date().toISOString() } as any)
           .eq("id", existing.id);
         if (error) throw error;
       } else {
@@ -359,7 +359,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
             admin_user_id: user.id,
             contact_user_id: contactUserId,
             [field]: value,
-          });
+          } as any);
         if (error) throw error;
       }
     },

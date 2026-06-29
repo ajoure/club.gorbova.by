@@ -125,7 +125,7 @@ export default function AdminSections() {
     }) => {
       const { error } = await supabase
         .from("app_sections")
-        .update({ [field]: value, updated_at: new Date().toISOString() })
+        .update({ [field]: value, updated_at: new Date().toISOString() } as any)
         .eq("id", id);
       if (error) throw error;
     },

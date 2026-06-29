@@ -158,7 +158,7 @@ export function LinkSubscriptionDealDialog({
         
         const { error: subError } = await supabase
           .from("provider_subscriptions")
-          .update(updateData)
+          .update(updateData as any)
           .eq("provider_subscription_id", subscriptionId);
         
         if (subError) {
@@ -258,7 +258,7 @@ export function LinkSubscriptionDealDialog({
         if (Object.keys(finalEnrich).length > 0) {
           await supabase
             .from("provider_subscriptions")
-            .update(finalEnrich)
+            .update(finalEnrich as any)
             .eq("provider_subscription_id", subscriptionId);
         }
       }

@@ -256,7 +256,7 @@ export function useProductDocumentTemplates(productId?: string) {
     mutationFn: async ({ id, ...updates }: Partial<ProductDocumentTemplate> & { id: string }) => {
       const { data, error } = await supabase
         .from("product_document_templates")
-        .update(updates)
+        .update(updates as any)
         .eq("id", id)
         .select()
         .single();

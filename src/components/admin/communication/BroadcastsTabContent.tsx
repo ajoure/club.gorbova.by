@@ -703,7 +703,7 @@ export function BroadcastsTabContent() {
       if (editTemplateId) {
         const { error } = await supabase
           .from("broadcast_templates")
-          .update(payload)
+          .update(payload as any)
           .eq("id", editTemplateId);
         if (error) throw error;
         return { id: editTemplateId, mode: "update" as const };

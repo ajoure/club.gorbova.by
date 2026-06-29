@@ -444,7 +444,7 @@ export function useSendMessage() {
 
       await supabase
         .from("support_tickets")
-        .update(updateData)
+        .update(updateData as any)
         .eq("id", data.ticket_id);
 
       return message;
@@ -486,7 +486,7 @@ export function useUpdateTicket() {
     }) => {
       const { data, error } = await supabase
         .from("support_tickets")
-        .update(updates)
+        .update(updates as any)
         .eq("id", ticketId)
         .select()
         .single();

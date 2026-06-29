@@ -992,7 +992,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       
       const { error } = await supabase
         .from("profiles")
-        .update(updates)
+        .update(updates as any)
         .eq("user_id", contact.user_id);
       
       if (error) throw error;
