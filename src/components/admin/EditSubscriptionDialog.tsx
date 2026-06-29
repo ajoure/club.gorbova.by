@@ -288,7 +288,7 @@ export function EditSubscriptionDialog({
 
       const { error } = await supabase
         .from("subscriptions_v2")
-        .update(changes)
+        .update(changes as any)
         .eq("id", subscription.id);
       
       if (error) throw error;

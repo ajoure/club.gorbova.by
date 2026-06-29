@@ -375,7 +375,7 @@ export function useIntegrationMutations() {
 
       const { data: result, error } = await supabase
         .from("integration_instances")
-        .update(updateData)
+        .update(updateData as any)
         .eq("id", id)
         .select()
         .single();

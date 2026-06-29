@@ -90,7 +90,7 @@ export function BulkEditDealsDialog({
 
       const { error } = await supabase
         .from("orders_v2")
-        .update(updates)
+        .update(updates as any)
         .in("id", selectedIds);
 
       if (error) throw error;
