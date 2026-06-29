@@ -1,167 +1,207 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Разделить P0 и hygiene в отчётах**
+1. **Разделить задачи и приоритет**
 
-Выполнять можно в указанном порядке, но отчёты должны быть отдельные:
-
-```text
-Отчет о выполненной работе: PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
-```
-
-и затем:
+Сейчас есть две разные задачи:
 
 ```text
-Отчет о выполненной работе: PATCH-PREORDER-CONVERT-AUDIT-FIX
+P0: PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
+Hygiene: PATCH-PREORDER-CONVERT-AUDIT-FIX runtime-proof
 ```
 
-Не смешивать P0 trial-активацию и audit-fix в один отчёт.
+Приоритет должен быть такой:
+
+```text
+1. Сначала починить активацию demo/trial без карты.
+2. Потом закрывать audit-proof по preorder convert.
+```
+
+Потому что на скрине видно, что пользовательский flow всё ещё сломан:
+
+```text
+Не удалось продолжить оплату.
+Попробуйте ещё раз или оплатите другой картой.
+```
+
+Для trial 0 BYN это неверное поведение: **никакой карты и никакой оплаты быть не должно**.
 
 ---
 
-2. **В** `bepaid-create-token` **ветка no-card trial должна быть до любых bePaid/subscription/tokenization веток**
+2. **Audit synthetic-proof можно выполнять, но не вместо P0**
 
-Критично:
+План по `PATCH-PREORDER-CONVERT-AUDIT-FIX` в целом допустим:
+
+- synthetic-прогон;
+- rollback;
+- proof audit row;
+- proof idempotency no-duplicate;
+- проверка отсутствия synthetic-остатков.
+
+Но это **не чинит** ошибку «Активировать демо-доступ».
+
+Поэтому подрядчику нужно явно написать:
 
 ```text
-trial amount=0 + requires_card_tokenization=false
+Audit-proof не закрывает P0. Даже если audit PASS, trial no-card activation всё ещё требует отдельного fix.
 ```
 
-должен завершаться **без обращения к bePaid**.
+---
 
-То есть ветка должна срабатывать до:
+3. **По synthetic rollback — осторожно**
 
-- legacy subscription guard;
-- bePaid token creation;
-- subscription payload;
-- MIT/tokenization;
-- provider redirect.
+Идея с `RAISE EXCEPTION` для rollback допустима, но нужно проверить, что внутри DO-блока exception действительно откатывает всю транзакцию, а не ловится так, что изменения остаются.
 
-Иначе снова получим:
+Безопаснее:
+
+```sql
+BEGIN;
+-- synthetic inserts
+-- RPC call #1
+-- RPC call #2
+-- proof SELECT
+ROLLBACK;
+```
+
+Если используется `DO $$ ... RAISE EXCEPTION ... $$`, то после выполнения обязательно proof:
+
+```sql
+select count(*) from course_preregistrations where meta->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
+select count(*) from orders_v2 where meta->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
+select count(*) from audit_logs where metadata->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
+```
+
+Ожидание:
 
 ```text
+0 / 0 / 0
+```
+
+---
+
+4. **Не использовать реального super_admin как actor_user_id без необходимости**
+
+Если audit actor — system, то лучше:
+
+```text
+actor_type='system'
+actor_user_id = null
+actor_label='convert_preorder_on_pay_atomic'
+```
+
+Если схема требует `actor_user_id`, можно использовать service/system actor, но в отчёте не светить персональные данные. Достаточно:
+
+```text
+actor_user_id = <system/test actor uuid>
+```
+
+---
+
+5. **Главный P0: trial 0 BYN должен обходить bePaid полностью**
+
+Подрядчику нужно вернуться к:
+
+```text
+PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
+```
+
+Требуемое поведение:
+
+```text
+isTrial=true
+paymentAmount=0
+requires_card_tokenization=false
+```
+
+→ значит:
+
+- не создавать bePaid token;
+- не открывать оплату;
+- не требовать карту;
+- не попадать в legacy subscription guard;
+- не показывать «оплатите другой картой»;
+- создать/обновить один `orders_v2`;
+- поставить `status='paid'`;
+- `is_trial=true`;
+- `paid_amount=0`;
+- `trial_end_at = now() + trial_days`;
+- `meta.source='trial_no_card'`;
+- вызвать `grant-access-for-order`;
+- вернуть frontend:
+
+```json
+{
+  "success": true,
+  "isTrialNoCard": true,
+  "redirectUrl": "/cabinet?trial=activated&order=<id>"
+}
+```
+
+---
+
+6. **Ошибка на скрине должна быть отдельным root cause**
+
+В отчёте по P0 обязательно показать:
+
+```text
+Root cause: trial 0 BYN попадал в bePaid/subscription/tokenization path вместо no-card activation branch.
+```
+
+И доказать, что после fix больше нет:
+
+```text
+bepaid.subscription.create_blocked
 BLOCKED: legacy subscription path attempted without explicit choice
 ```
 
 ---
 
-3. **Уточнить** `order` **/** `orders_v2`**: не создать два заказа**
+7. **PaymentDialog должен различать “payment error” и “trial activation”**
 
-В плане есть формулировка:
+На скрине сейчас сообщение говорит про оплату картой. Для demo 0 BYN это неверно.
 
-```text
-1) пометить order как paid
-2) если productInfo.isV2 — создать orders_v2
-```
+В `PaymentDialog` нужно:
 
-Нужно проверить текущую архитектуру `bepaid-create-token`: где именно уже создаётся order до этой ветки.
+- если `isTrialNoCard=true` → success toast + redirect;
+- если `alreadyUsedTrial=true` → понятный текст «Демо-доступ уже использован»;
+- если ошибка backend для trial no-card → не писать «оплатите другой картой», а показывать фактическую причину.
 
-Правило:
+---
 
-```text
-Не создавать дубликат orders_v2, если order уже создан выше.
-```
+8. **Проверка после P0**
 
-Если текущий flow уже создал `orders_v2` до trial-ветки — нужно только обновить его:
+DoD для P0:
 
 ```text
-status='paid'
-is_trial=true
-paid_at=now()
-trial_end_at=now()+trial_days
-meta.source='trial_no_card'
-```
-
-Если order ещё не создан — создать один канонический `orders_v2`.
-
-В отчёте показать:
-
-```text
-orders_v2: создана/обновлена ровно 1 строка
+SITE-000018 / «Активировать демо-доступ»:
+- карта не запрашивается;
+- bePaid token не создаётся;
+- orders_v2 создаётся/обновляется ровно 1 строка;
+- status='paid';
+- is_trial=true;
+- paid_amount=0;
+- meta.source='trial_no_card';
+- grant-access-for-order вызван;
+- access_grant_ledger имеет запись;
+- доступ к «База знаний» открыт на 24 часа;
+- вебинары/эфиры не открыты;
+- повторная попытка тем же email не создаёт второй order/grant и возвращает alreadyUsedTrial=true.
 ```
 
 ---
 
-4. `grant-access-for-order` **вызывать только после paid-status фиксации**
+9. **Не трогать платные flow**
 
-Правильно:
+В P0 нельзя ломать:
 
-```text
-orders_v2.status='paid'
-paid_at set
-trial_end_at set
-meta.source='trial_no_card'
-→ grant-access-for-order
-```
+- bePaid pay_now;
+- bePaid recurring;
+- Stripe checkout;
+- provider-side subscriptions;
+- preorder Phase A/B;
+- CRM hide;
+- audit-fix.
 
-Не вызывать grant до фиксации paid/trial статуса, иначе downstream может не найти корректный order state.
-
----
-
-5. **Trial no-card должен использовать canonical write path**
-
-Подтверждаю:
-
-```text
-НЕ писать entitlements/access_grant_ledger руками
-```
-
-Только:
-
-```text
-grant-access-for-order
-```
-
-Это обязательно сохранить.
-
----
-
-6. **CRM routing snapshot для trial no-card**
-
-Добавить в proof:
-
-```text
-orders_v2.meta.crm_routing_snapshot присутствует / stage выставлена так же, как в обычном successful flow
-```
-
-Если у trial-оффера есть `meta.crm_routing`, оно должно попасть в order так же, как у других успешных order.
-
----
-
-7. **Повторный trial guard проверить до создания нового order**
-
-Проверка `alreadyUsedTrial` должна срабатывать до создания нового paid trial order.
-
-В proof показать:
-
-```text
-повторная попытка тем же email не создаёт второй orders_v2
-не создаёт второй grant
-возвращает alreadyUsedTrial=true
-```
-
----
-
-8. **Frontend: не только redirect, но и корректный UX при уже использованном trial**
-
-В `PaymentDialog` добавить/подтвердить обработку:
-
-```text
-alreadyUsedTrial=true
-```
-
-Чтобы пользователь не видел generic «Функция временно недоступна».
-
----
-
-9. **Regression smoke по платным офферам**
-
-Минимально проверить:
-
-- pay_now bePaid redirect создаётся;
-- Stripe provider choice не сломан, если доступен для продукта;
-- recurring provider-side flow не попал в no-card ветку.
-
-No-card ветка должна иметь строгий guard:
+No-card ветка должна быть строго ограничена:
 
 ```ts
 isTrial && paymentAmount === 0 && requiresCardTokenization === false
@@ -169,171 +209,119 @@ isTrial && paymentAmount === 0 && requiresCardTokenization === false
 
 ---
 
-10. **Audit в** `bepaid-create-token`
+10. **Что отправить подрядчику как итог**
 
-Для P0 достаточно:
+Коротко:
 
 ```text
-trial.no_card.activated
+План audit-proof принимается, но он не закрывает главную пользовательскую ошибку. Сначала нужно починить PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: trial 0 BYN без card tokenization должен активироваться напрямую через orders_v2 + grant-access-for-order, без bePaid и без сообщения “оплатите другой картой”. После P0 можно закрывать PATCH-PREORDER-CONVERT-AUDIT-FIX runtime-proof.
 ```
 
-Но не глушить ошибку audit так, чтобы она ломала активацию. Audit failure может быть warning-only, но в отчёте нужно показать хотя бы одну успешную audit-запись.
-
----
-
-11. **PATCH-PREORDER-CONVERT-AUDIT-FIX — не менять бизнес-логику RPC**
-
-Согласен:
-
-- только audit-block;
-- `actor_id → actor_user_id`;
-- `actor_type='system'`;
-- `actor_label='convert_preorder_on_pay_atomic'`;
-- не менять matching;
-- не менять idempotency;
-- не менять CRM hide;
-- не менять post-grant hook.
-
----
-
-12. **Audit exception handling**
-
-Формулировку поправить:
+## **Итоговый статус**
 
 ```text
-EXCEPTION WHEN undefined_column OR insufficient_privilege THEN RAISE WARNING
+PATCH-PREORDER-CONVERT-AUDIT-FIX proof plan: APPROVED with rollback/cleanup cautions
+PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: P0 REQUIRED, NOT DONE
+Current user-facing trial activation: FAIL
+
+План: Runtime-proof PATCH-PREORDER-CONVERT-AUDIT-FIX
 ```
 
-недостаточно, потому что schema mismatch может быть не единственной ожидаемой ошибкой.
+## Контекст
 
-Лучше:
+- Код-фикс уже задеплоен: `convert_preorder_on_pay_atomic` пишет `actor_user_id` + `actor_type='system'` + `actor_label='convert_preorder_on_pay_atomic'`, при ошибке аудита — `RAISE WARNING` (не глушится).
+- В `audit_logs` 0 строк с `action='preorder.convert_on_pay'` — единственная фактическая конверсия (preorder `11b4fd8c…` → order `ea7daf45…`, 2026-06-27) произошла ДО фикса, упала на старом `actor_id` и была молча проглочена прежним `EXCEPTION WHEN OTHERS`.
+- Свежих неконвертированных пар preorder+paid order для естественного триггера сейчас нет.
 
-- audit insert внутри отдельного helper/block;
-- если audit insert падает — `RAISE WARNING` с SQLSTATE/message;
-- конверсия не валится;
-- но не делать `WHEN OTHERS THEN NULL`.
+Нужен прямой runtime-proof обеих веток: «audit row written» и «idempotency no-duplicate».
 
-То есть ошибка не должна быть молча скрыта.
+## Что сделаем
 
----
+### Шаг 1. Контролируемый synthetic-прогон в одной миграции
 
-13. **Safari 404 backlog — правильно вынести**
-
-Не включать в P0 и hygiene.
-
-Backlog item можно зафиксировать отдельно:
+Одна транзакция, всё внутри `DO $$ … $$` с явным `RAISE EXCEPTION` в конце для авто-rollback (никаких остаточных данных в проде):
 
 ```text
-PATCH-SAFARI-SPA-404-DISCOVERY
+BEGIN
+  test_user_id := <реальный super_admin uid>
+  test_preorder_id := gen_random_uuid()
+  test_order_id    := gen_random_uuid()
+
+  INSERT course_preregistrations(id, user_id, product_code, status,
+        meta={'_synthetic_test':'PATCH-PREORDER-CONVERT-AUDIT-FIX', ...})
+  INSERT orders_v2(id, user_id, status='paid', amount=0,
+        meta={'_synthetic_test':'…', preorder_id:test_preorder_id})
+
+  -- 1й вызов: должен записать audit-строку
+  r1 := convert_preorder_on_pay_atomic(test_order_id)
+  ASSERT r1.noop = false
+
+  cnt1 := count(audit_logs where action='preorder.convert_on_pay'
+                and meta->>'paid_order_id' = test_order_id::text)
+  ASSERT cnt1 = 1
+  -- читаем строку и логируем actor_user_id/actor_type/actor_label/meta
+  RAISE NOTICE 'AUDIT_ROW_PROOF: %', <row>
+
+  -- 2й вызов: идемпотентность, новой строки быть не должно
+  r2 := convert_preorder_on_pay_atomic(test_order_id)
+  ASSERT r2.noop = true
+
+  cnt2 := count(audit_logs where action='preorder.convert_on_pay'
+                and meta->>'paid_order_id' = test_order_id::text)
+  ASSERT cnt2 = 1   -- НЕ 2
+
+  RAISE NOTICE 'IDEMPOTENCY_PROOF: noop=true, audit_rows_total=%', cnt2
+
+  -- форс-rollback, чтобы прод-БД осталась чистой
+  RAISE EXCEPTION 'SYNTHETIC_TEST_OK_FORCE_ROLLBACK';
+EXCEPTION WHEN OTHERS THEN
+  IF SQLERRM = 'SYNTHETIC_TEST_OK_FORCE_ROLLBACK' THEN
+    RAISE NOTICE 'TEST PASSED, rolled back as expected';
+  ELSE
+    RAISE;
+  END IF;
+END
 ```
 
-Scope только discovery:
+Это не «миграция» в смысле schema change — это read-only прогон через RPC с гарантированным откатом synthetic-данных. Никаких остатков в `course_preregistrations` / `orders_v2` / `audit_logs` не остаётся.
 
-- CDN/cache;
-- SPA fallback;
-- Safari cache;
-- headers;
-- service worker, если есть.
+### Шаг 2. Captures и отчёт
 
----
+Из логов миграции забираем строки `NOTICE`:
 
-14. **Финальные статусы**
+- `AUDIT_ROW_PROOF: …` (JSON со всеми полями audit-строки) — закрывает `audit row written: PASS`.
+- `IDEMPOTENCY_PROOF: noop=true, audit_rows_total=1` — закрывает `idempotency audit no-duplicate: PASS`.
 
-После P0 отчёт должен завершиться:
+### Шаг 3. Отчёт пользователю
 
-```text
-trial no-card backend branch: PASS
-PaymentDialog trial no-card handling: PASS
-grant-access-for-order canonical path: PASS
-already-used trial guard: PASS
-paid bePaid/Stripe regression: PASS
-PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: PASS
-```
-
-После hygiene:
+Формат строго:
 
 ```text
-audit schema fix: PASS
-audit row written: PASS
-idempotency preserved: PASS
+Отчет о выполненной работе: PATCH-PREORDER-CONVERT-AUDIT-FIX
+
+audit schema fix:                PASS (код)
+audit warning path:              PASS (код)
+audit row written:               PASS (runtime, synthetic-прогон)
+  actor_user_id = <uid super_admin, инициировавшего тест>
+  actor_type    = 'system'
+  actor_label   = 'convert_preorder_on_pay_atomic'
+  meta          = { preorder_id, paid_order_id, … }
+idempotency audit no-duplicate:  PASS (runtime, 2й вызов → noop=true, audit_rows=1)
 preorder convert logic unchanged: PASS
-PATCH-PREORDER-CONVERT-AUDIT-FIX: PASS
+
+PATCH-PREORDER-CONVERT-AUDIT-FIX: PASS (full)
 ```
 
-После этих правок план можно выполнять.
+## Технические детали / safety
 
-&nbsp;
+- Synthetic-данные помечаются `meta->>'_synthetic_test'='PATCH-PREORDER-CONVERT-AUDIT-FIX'` — если по какой-то причине rollback не сработает, эти строки тривиально находятся и удаляются.
+- Триггеры на `orders_v2` (grant-access и т.п.): `amount=0`, `status='paid'` создаётся сразу как итог — `grant-access-for-order` это edge-функция, она НЕ зовётся из DB-триггера, риска побочных выдач прав нет. Если в `orders_v2` обнаружится DB-триггер, который что-то записывает наружу — план корректируется: synthetic-вставка orders_v2 заменяется на pre-existing test-order и зовётся только RPC.
+- Никаких изменений в логике `convert_preorder_on_pay_atomic` — только наблюдение.
+- Никаких изменений UI/frontend.
+- Заголовок отчёта будет `Отчет о выполненной работе:` (формальное замечание учтено).
 
-Контекст
+## DoD
 
-Два независимых блока работы:
-
-1. **Hot-fix (P0):** «Активировать демо-доступ» на `gorbova.by/ideologicheskaya-rabota` падает с «Функция временно недоступна». В логах `bepaid-create-token` — `BLOCKED: legacy subscription path attempted without explicit choice` (audit `bepaid.subscription.create_blocked`). Триал с `amount=0` и без привязки карты не имеет своей ветки в `bepaid-create-token` и проваливается в legacy-guard (HTTP 403). Анкета (`requires_card_tokenization=false`, `auto_charge_after_trial=false`) подтверждает: оплата на bePaid вообще не нужна — нужно выдавать доступ напрямую.
-2. **Hygiene-fix (обязательный follow-up Phase B):** `convert_preorder_on_pay_atomic` пишет в `audit_logs` через несуществующую колонку `actor_id` и глушит ошибку через `EXCEPTION WHEN OTHERS THEN NULL` — observability сломана.
-
-Сообщение Safari «404» при работающем Chrome — кэш/edge; отдельно как backlog (ниже).
-
----
-
-## Что делаем
-
-### PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION (P0)
-
-**Backend (`supabase/functions/bepaid-create-token/index.ts`)**
-
-Новая ветка ДО guard'а легаси-подписки и ДО subscription-payload (после блока создания `order` и резолва `paymentAmount`/`trialConfig`):
-
-```
-if (isTrial && paymentAmount === 0 && !requiresCardTokenization) {
-   // 1) пометить order как paid (status='paid', paid_at=now)
-   // 2) если productInfo.isV2 — создать orders_v2 (status='paid', is_trial=true,
-   //    trial_end_at=now+trial_days, meta.source='trial_no_card',
-   //    + crm_routing_snapshot по аналогии с skipRedirect-веткой)
-   // 3) вызвать supabase.functions.invoke('grant-access-for-order', { order_id })
-   //    как канонический write-path (НЕ insert в entitlements руками)
-   // 4) audit_logs: action='trial.no_card.activated', actor_type='system'
-   // 5) ответить { success:true, isTrialNoCard:true, redirectUrl: `${origin}/cabinet?trial=activated&order=<id>` }
-}
-```
-
-Источник `requiresCardTokenization` — из уже читаемого `tariff_offers.requires_card_tokenization` для trial-оффера (есть в коде на строках 160, 487). Защита от повторной активации уже есть (строки 250–263, `is_trial=true` lookup).
-
-**Frontend (`src/components/payment/PaymentDialog.tsx`)**
-
-В `handleSubmit` (≈800): если `data.success && data.isTrialNoCard && data.redirectUrl` — `window.location.href = data.redirectUrl` (тот же путь, что текущий 836), плюс `toast.success('Демо-доступ активирован')`. Никаких других веток не трогаем.
-
-**Verify (DoD)**
-
-1. Тестовый клик «Активировать демо-доступ» по trial-офферу `891c7fe0-…` под гость-checkout → редирект в `/cabinet?trial=activated`, в `orders_v2` строка `status='paid', is_trial=true, meta.source='trial_no_card'`, есть запись в `access_grant_ledger` через `grant-access-for-order`.
-2. Повторная попытка тем же email → `alreadyUsedTrial=true` (существующий guard) → модалка «Триал уже использован».
-3. Logs `bepaid-create-token`: `trial.no_card.activated` вместо `bepaid.subscription.create_blocked`.
-4. Платные офферы того же продукта — без изменений (regression smoke).
-
-### PATCH-PREORDER-CONVERT-AUDIT-FIX (hygiene, обязательный)
-
-Миграция, заменяющая аудит-блок внутри `public.convert_preorder_on_pay_atomic`:
-
-- `actor_id` → `actor_user_id`;
-- добавить `actor_type='system'`, `actor_label='convert_preorder_on_pay_atomic'`;
-- убрать `EXCEPTION WHEN OTHERS THEN NULL`; вместо этого `EXCEPTION WHEN undefined_column OR insufficient_privilege THEN ...RAISE WARNING...` (warning-only, конверсия не валится). Любая другая ошибка пробрасывается уже на уровне вызывающего best-effort hook (он сам подавляет — см. `grant-access-for-order` lines 2249–2270).
-- Body RPC и сам контракт (поиск/идемпотентность/обновление meta/preregistration) НЕ трогаем.
-
-**Verify**
-
-1. Создать synthetic paid order для существующего фикстурного preorder → `select rpc convert_preorder_on_pay_atomic` → в `audit_logs` появилась запись `action='preorder.convert_on_pay'` с `actor_type='system'`.
-2. Повторный вызов — `noop=true`, без второй audit-строки.
-3. `\d audit_logs` подтверждает `actor_user_id` (без `actor_id`).
-
-### Site 404 в Safari (backlog, отдельно — не в этом плане)
-
-Создам backlog-item для дискавери: проверить `Cache-Control`/`Vary` на response от Vite/edge, иммютабельность статики, поведение SPA-роутера на cold-load под Safari, и `gorbova.by` CDN-кэш. Не блокер для P0.
-
----
-
-## Порядок
-
-1. PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION (backend + frontend + smoke).
-2. PATCH-PREORDER-CONVERT-AUDIT-FIX (миграция + proof).
-3. Завести backlog-item для Safari 404 discovery.
-
-Никакой другой логики (preorder, payments, grants, CRM-hide) не трогаем.
+- В чате присутствуют JSON audit-строки с актуальными `actor_user_id` / `actor_type` / `actor_label`.
+- Подтверждено: повторный вызов по тому же `paid_order_id` → `noop=true`, новая строка в `audit_logs` НЕ создана.
+- Прод-БД без synthetic-остатков (verify `SELECT count(*) FROM course_preregistrations WHERE meta->>'_synthetic_test' IS NOT NULL` = 0; то же для `orders_v2` и `audit_logs`).
