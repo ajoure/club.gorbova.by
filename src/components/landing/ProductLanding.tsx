@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
