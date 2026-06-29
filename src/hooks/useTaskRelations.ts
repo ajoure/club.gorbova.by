@@ -44,7 +44,7 @@ export function useTaskRelations(dealIds: string[], contactIds: string[]) {
     queryFn: async (): Promise<Record<string, TaskContactLite>> => {
       const ids = Array.from(new Set(contactIds));
       const { data, error } = await (supabase as any)
-        .from("contacts")
+        .from("profiles")
         .select("id, full_name, email, phone")
         .in("id", ids);
       if (error) throw error;
