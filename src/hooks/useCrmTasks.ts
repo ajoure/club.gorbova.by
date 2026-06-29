@@ -159,3 +159,36 @@ export function useReassignCrmTask() {
     onError: (err: Error) => toast.error(`Не удалось переназначить: ${err.message}`),
   });
 }
+
+export interface CrmTaskUpdatePatch {
+  title?: string;
+  description?: string | null;
+  task_type_id?: string;
+  due_at?: string | null;
+  remind_at?: string | null;
+  result_comment?: string | null;
+  assignee_user_id?: string | null;
+}
+
+export function useUpdateCrmTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { taskId: string; patch: CrmTaskUpdatePatch }) => {
+      const payload: Record<string, unknown> = { ...args.patch };
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user?.id) payload.updated_by = auth.user.id;
+      const { error } = await (supabase as any)
+        .from("crm_tasks")
+        .update(payload)
+        .eq("id", args.taskId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["crm-tasks"] });
+      qc.invalidateQueries({ queryKey: ["crm-deal-task-summary"] });
+      toast.success("Задача обновлена");
+    },
+    onError: (err: Error) => toast.error(`Не удалось обновить задачу: ${err.message}`),
+  });
+}
+
