@@ -38,7 +38,6 @@ interface UnresolvedCallRow {
 
 const LINK_STATUS_LABEL: Record<string, string> = {
   unresolved: "Не распознан",
-  ambiguous: "Несколько совпадений",
 };
 
 function formatDuration(s: number | null) {
