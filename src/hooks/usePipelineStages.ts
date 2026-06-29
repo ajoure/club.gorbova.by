@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchStages,
@@ -15,6 +15,7 @@ import { toast } from "sonner";
 export function usePipelineStages(pipelineId: string | null) {
   const qc = useQueryClient();
   const queryKey = ["crm-pipeline-stages", pipelineId];
+  const realtimeChannelNonceRef = useRef(Math.random().toString(36).slice(2));
 
   const { data: stages = [], isLoading } = useQuery({
     queryKey,
@@ -29,7 +30,7 @@ export function usePipelineStages(pipelineId: string | null) {
   useEffect(() => {
     if (!pipelineId) return;
     const channel = supabase
-      .channel(`crm-pipeline-stages-rt-${pipelineId}`)
+      .channel(`crm-pipeline-stages-rt-${pipelineId}-${realtimeChannelNonceRef.current}`)
       .on(
         "postgres_changes",
         {

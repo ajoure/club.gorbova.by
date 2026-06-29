@@ -154,7 +154,8 @@ export function useSidebarModules() {
           .from("training_lessons")
           .select("module_id")
           .in("module_id", rootIds)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .abortSignal(typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(1200) : undefined);
         const lessonsByRoot = new Map<string, number>();
         (lessonsAgg || []).forEach(l => {
           lessonsByRoot.set(l.module_id, (lessonsByRoot.get(l.module_id) || 0) + 1);
