@@ -57,6 +57,8 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ApplyTariffRulesToUserDialog } from "@/components/admin/entitlements/ApplyTariffRulesToUserDialog";
+import { Wand2 } from "lucide-react";
 
 interface ResolvedProfile {
   id: string;
@@ -104,6 +106,7 @@ export default function AdminEntitlements() {
   const [search, setSearch] = useState("");
   
   const [grantDialog, setGrantDialog] = useState(false);
+  const [applyRulesDialog, setApplyRulesDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [expiresAt, setExpiresAt] = useState<Date | undefined>();
@@ -388,6 +391,12 @@ export default function AdminEntitlements() {
             />
           </div>
           {hasPermission("entitlements.manage") && (
+            <Button variant="outline" onClick={() => setApplyRulesDialog(true)}>
+              <Wand2 className="w-4 h-4 mr-2" />
+              Применить правила тарифа
+            </Button>
+          )}
+          {hasPermission("entitlements.manage") && (
             <Button onClick={() => setGrantDialog(true)}>
               <Plus className="w-4 h-4 mr-2" />
               Выдать доступ
@@ -395,6 +404,12 @@ export default function AdminEntitlements() {
           )}
         </div>
       </div>
+
+      <ApplyTariffRulesToUserDialog
+        open={applyRulesDialog}
+        onOpenChange={setApplyRulesDialog}
+        onApplied={() => refetch()}
+      />
 
       <GlassCard>
         <Table>
