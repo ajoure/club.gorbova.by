@@ -34,6 +34,13 @@ type ModuleSlugRow = {
   slug: string;
 };
 
+const createAbortSignal = (timeoutMs: number): AbortSignal | undefined => {
+  if (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal) {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  return undefined;
+};
+
 interface UseKbQuestionsOptions {
   searchQuery?: string;
   episodeNumber?: number;
@@ -101,7 +108,8 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
           const { data: lessonsData, error: lessonsError } = await supabase
             .from("training_lessons")
             .select("id, slug, module_id")
-            .in("id", lessonIds);
+            .in("id", lessonIds)
+            .abortSignal(createAbortSignal(1200));
 
           if (lessonsError) {
             console.warn("[useKbQuestions] lesson slug fetch skipped", lessonsError);
@@ -114,7 +122,8 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
               const { data: modulesData, error: modulesError } = await supabase
                 .from("training_modules")
                 .select("id, slug")
-                .in("id", moduleIds);
+                .in("id", moduleIds)
+                .abortSignal(createAbortSignal(1200));
 
               if (modulesError) {
                 console.warn("[useKbQuestions] module slug fetch skipped", modulesError);
