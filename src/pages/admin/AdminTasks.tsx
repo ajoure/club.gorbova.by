@@ -64,6 +64,7 @@ export default function AdminTasks() {
     const f: CrmTaskListFilters = { limit: 500 };
     if (debouncedSearch) f.search = debouncedSearch;
     if (filters.typeId !== "all") f.task_type_id = [filters.typeId];
+    if (dealFilter) f.deal_id = dealFilter;
 
     // Status: quick "overdue/today/tomorrow/no_due" force open scope
     const isQuickDateBucket =
