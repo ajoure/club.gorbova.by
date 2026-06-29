@@ -390,6 +390,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                   onDeselectAllInStage={deselectAllInStage}
                   onEnterSelectionMode={() => setSelectionMode(true)}
                   onExitSelectionMode={clearSelection}
+                  taskSummaryByDeal={taskSummaryByDeal}
                 />
               )}
 
