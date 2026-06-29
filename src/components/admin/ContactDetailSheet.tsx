@@ -3429,6 +3429,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <CrmTasksSection contactId={contact.id} bare />
             </TabsContent>
 
+            {/* Calls Tab — VOCHI Phase 2 */}
+            <TabsContent value="calls" className="m-0 space-y-3">
+              <CallsHistorySection contactId={contact.id} bare />
+            </TabsContent>
+
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">
               {/* Webinar Activity Section */}
