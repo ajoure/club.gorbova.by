@@ -198,10 +198,12 @@ export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal }: Props)
                   assignee={t.assignee_user_id ? staffMap[t.assignee_user_id] ?? null : null}
                   deal={t.deal_id ? deals[t.deal_id] ?? null : null}
                   contact={t.contact_id ? contacts[t.contact_id] ?? null : null}
+                  bucketId="later"
                   onOpen={onOpenTask}
                   onOpenDeal={onOpenDeal}
                 />
               ))}
+
             </div>
           ) : null}
         </div>
