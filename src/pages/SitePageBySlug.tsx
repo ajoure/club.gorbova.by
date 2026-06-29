@@ -129,9 +129,14 @@ export default function SitePageBySlug() {
     );
   }
 
+  if (resolution?.status === "error") {
+    return <PublicPageFetchError onRetry={() => refetch()} details={resolution.error} />;
+  }
+
   if (!page) {
     return <NotFound />;
   }
+
 
   return (
     <div className="site-public-layout">
