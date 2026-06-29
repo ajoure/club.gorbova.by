@@ -391,6 +391,12 @@ export default function AdminEntitlements() {
             />
           </div>
           {hasPermission("entitlements.manage") && (
+            <Button variant="outline" onClick={() => setApplyRulesDialog(true)}>
+              <Wand2 className="w-4 h-4 mr-2" />
+              Применить правила тарифа
+            </Button>
+          )}
+          {hasPermission("entitlements.manage") && (
             <Button onClick={() => setGrantDialog(true)}>
               <Plus className="w-4 h-4 mr-2" />
               Выдать доступ
@@ -398,6 +404,12 @@ export default function AdminEntitlements() {
           )}
         </div>
       </div>
+
+      <ApplyTariffRulesToUserDialog
+        open={applyRulesDialog}
+        onOpenChange={setApplyRulesDialog}
+        onApplied={() => refetch()}
+      />
 
       <GlassCard>
         <Table>
