@@ -21,9 +21,10 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Eye, RefreshCw, AlertTriangle } from "lucide-react";
+import { Loader2, Play, Eye, RefreshCw, AlertTriangle, User as UserIcon, Search } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { ContactPickerDialog, type PickedContact } from "@/components/admin/shared/pickers/ContactPickerDialog";
 
 interface Props {
   open: boolean;
