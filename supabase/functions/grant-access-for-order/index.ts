@@ -309,6 +309,18 @@ Deno.serve(async (req) => {
     const profileId = order.profile_id;
     const productId = order.product_id;
 
+    // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
+    // Demo trial activated by bepaid-create-token's no-card branch must NOT create
+    // (and must NOT extend) any subscriptions_v2 row. Entitlement carries trial
+    // expiry directly from tariff.access_days; subscription is semantically wrong
+    // for a 0 BYN no-card demo and would break repeat-trial detection.
+    const orderMetaForNcGuard = (order.meta || {}) as Record<string, any>;
+    const isNoCardTrial =
+      order.is_trial === true &&
+      Number(order.paid_amount || 0) === 0 &&
+      orderMetaForNcGuard.source === 'trial_no_card';
+
+
     // Admin manual access edit: exact date correction path.
     // This is intentionally before the idempotency replay guard, because editing an
     // already fulfilled order must not become a no-op. It updates only the primary
