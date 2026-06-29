@@ -58,6 +58,7 @@ interface Props {
     attributes: Record<string, any>;
     listeners: Record<string, any> | undefined;
   };
+  taskSummaryByDeal?: Record<string, DealTaskSummary>;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
