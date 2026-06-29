@@ -66,6 +66,7 @@ import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
+import { CallsHistorySection } from "./calls/CallsHistorySection";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -1155,6 +1156,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
             {/* Tasks — задачи по сделке */}
             <CrmTasksSection dealId={deal.id} />
+
+            {/* Calls — звонки по сделке (VOCHI Phase 2) */}
+            <CallsHistorySection dealId={deal.id} />
+
 
             {/* Audit */}
             <Card>

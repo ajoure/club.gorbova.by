@@ -137,6 +137,7 @@ import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
+import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
@@ -1629,6 +1630,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </TabsTrigger>
               <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Задачи
+              </TabsTrigger>
+              <TabsTrigger value="calls" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Phone className="w-3 h-3 mr-1" />
+                Звонки
               </TabsTrigger>
               <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <CreditCard className="w-3 h-3 mr-1" />
@@ -3422,6 +3427,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Tasks Tab */}
             <TabsContent value="tasks" className="m-0 space-y-3">
               <CrmTasksSection contactId={contact.id} bare />
+            </TabsContent>
+
+            {/* Calls Tab — VOCHI Phase 2 */}
+            <TabsContent value="calls" className="m-0 space-y-3">
+              <CallsHistorySection contactId={contact.id} bare />
             </TabsContent>
 
             {/* Communications Tab */}
