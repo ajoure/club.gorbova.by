@@ -773,6 +773,7 @@ Deno.serve(async (req) => {
         meta: {
           pending_provider_managed: true,
           checkout_order_id: order.id,
+          tracking_id: trackingId, // PATCH-PRE-CREATE-LINKAGE
           offer_id: effectiveOfferId,
           bepaid_subscription_id: bepaidSubId,
           bepaid_subscription_created_at: new Date().toISOString(),
