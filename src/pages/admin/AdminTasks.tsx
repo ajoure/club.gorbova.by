@@ -157,7 +157,7 @@ export default function AdminTasks() {
         </div>
       </div>
 
-      <TasksFiltersBar value={filters} onChange={setFilters} types={types} />
+      <TasksFiltersBar value={filters} onChange={setFilters} types={types} onPickTask={setEditTask} />
 
       {dealFilter && (
         <div className="flex items-center gap-2">
