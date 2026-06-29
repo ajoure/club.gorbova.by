@@ -57,6 +57,8 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ApplyTariffRulesToUserDialog } from "@/components/admin/entitlements/ApplyTariffRulesToUserDialog";
+import { Wand2 } from "lucide-react";
 
 interface ResolvedProfile {
   id: string;
