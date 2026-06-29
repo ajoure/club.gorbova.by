@@ -1157,6 +1157,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             {/* Tasks — задачи по сделке */}
             <CrmTasksSection dealId={deal.id} />
 
+            {/* Calls — звонки по сделке (VOCHI Phase 2) */}
+            <CallsHistorySection dealId={deal.id} />
+
+
             {/* Audit */}
             <Card>
               <CardHeader className="pb-2">
