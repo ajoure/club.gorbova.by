@@ -827,7 +827,15 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     <Phone className="w-4 h-4 text-muted-foreground" />
                     <span>{deal.customer_phone || profile?.phone || "—"}</span>
                   </div>
+                  {(deal.customer_phone || profile?.phone) && (
+                    <CallButton
+                      phone={deal.customer_phone || profile?.phone}
+                      dealId={deal.id}
+                      contactId={deal.user_id ?? undefined}
+                    />
+                  )}
                 </div>
+
                 
                 {/* Customer data from bePaid import (from meta) */}
                 {deal.meta && (deal.meta.customer_full_name || deal.meta.customer_email || deal.meta.customer_phone || deal.meta.card_holder) && (
