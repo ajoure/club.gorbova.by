@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
     .from("calls")
     .insert({
       direction: "outbound",
-      status: "initiating",
+      status: "queued",
       link_status: contactId ? "manual" : "unresolved",
       phone_to_e164: phone,
       contact_id: contactId,
