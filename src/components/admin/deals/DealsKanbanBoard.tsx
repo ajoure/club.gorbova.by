@@ -350,6 +350,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       onEnterSelectionMode={() => setSelectionMode(true)}
       onExitSelectionMode={clearSelection}
       dragHandleProps={dragHandleProps}
+      taskSummaryByDeal={taskSummaryByDeal}
     />
   );
 
