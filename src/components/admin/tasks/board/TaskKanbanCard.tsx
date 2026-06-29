@@ -26,6 +26,8 @@ import {
   TASK_BUCKET_THEME,
   TASK_CARD_GLASS,
   TASK_CARD_PILL,
+  TASK_STATUS_BADGE,
+  TASK_STATUS_LABEL,
   type TaskBucketId,
 } from "../taskUiTheme";
 
@@ -38,21 +40,6 @@ const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Database,
   CheckSquare,
   CircleDot,
-};
-
-
-const STATUS_LABELS: Record<CrmTask["status"], string> = {
-  open: "Открыта",
-  in_progress: "В работе",
-  done: "Готово",
-  canceled: "Отменена",
-};
-
-const STATUS_VARIANTS: Record<CrmTask["status"], string> = {
-  open: "bg-sky-100 text-sky-800 border-sky-200",
-  in_progress: "bg-amber-100 text-amber-800 border-amber-200",
-  done: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  canceled: "bg-muted text-muted-foreground border-border",
 };
 
 function formatDue(dt: string | null) {
