@@ -5,7 +5,8 @@
 // Источник: public.calls. RLS гарантирует, что строки видят только staff.
 // ============================================================================
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Play } from "lucide-react";
