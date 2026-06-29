@@ -1,0 +1,2 @@
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS vochi_sip_extension TEXT;
+COMMENT ON COLUMN public.profiles.vochi_sip_extension IS 'VOCHI SIP-extension (внутренний номер) сотрудника; null = click-to-call недоступен';
