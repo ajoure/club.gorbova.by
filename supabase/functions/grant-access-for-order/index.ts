@@ -723,7 +723,7 @@ Deno.serve(async (req) => {
     // provider_subscriptions row for THIS order MUST be extended — not bypassed.
     // Otherwise grant-access creates a parallel active subv2 while the bePaid sbs
     // keeps charging the past_due row (split-brain, Belko 2026-05-20).
-    if (extendFromCurrent) {
+    if (extendFromCurrent && !isNoCardTrial) {
       const providerLinked = await resolveProviderLinkedSubscription(supabase, {
         orderId,
         userId,
