@@ -9,6 +9,7 @@ import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
+import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import type { SitePage } from "@/services/sitePages/types";
 import { Loader2 } from "lucide-react";
 
@@ -35,6 +36,8 @@ export function DomainHomePage() {
   // Existing production logic is NOT modified.
   const [siteBuilderPage, setSiteBuilderPage] = useState<SitePage | null>(null);
   const [siteBuilderChecked, setSiteBuilderChecked] = useState(false);
+  const [siteBuilderError, setSiteBuilderError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const shouldCheckSiteBuilder = !isMainDomain && !isCourseDomain && !isConsultationDomain;
 
@@ -43,17 +46,29 @@ export function DomainHomePage() {
       setSiteBuilderChecked(true);
       return;
     }
-    
+
+    setSiteBuilderChecked(false);
+    setSiteBuilderError(null);
     const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
-    SiteRenderService.resolveByDomainAndPath(hostname, pathname)
-      .then((page) => {
-        setSiteBuilderPage(page);
+    SiteRenderService.resolveByDomainAndPathSafe(hostname, pathname)
+      .then((r) => {
+        if (r.status === "ok") {
+          setSiteBuilderPage(r.page);
+        } else if (r.status === "error") {
+          setSiteBuilderError(r.error);
+        } else {
+          setSiteBuilderPage(null);
+        }
         setSiteBuilderChecked(true);
       })
-      .catch(() => {
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error("[DomainHomePage] unexpected resolver throw", e);
+        setSiteBuilderError(e?.message || String(e));
         setSiteBuilderChecked(true);
       });
-  }, [hostname, shouldCheckSiteBuilder]);
+  }, [hostname, shouldCheckSiteBuilder, retryNonce]);
+
 
   // Course domain → show course landing (legacy, unchanged)
   if (isCourseDomain) {
@@ -79,11 +94,22 @@ export function DomainHomePage() {
     );
   }
 
+  // Site builder fetch error (network/CORS/5xx) — show recoverable state, not a 404
+  if (siteBuilderError) {
+    return (
+      <PublicPageFetchError
+        onRetry={() => setRetryNonce((n) => n + 1)}
+        details={siteBuilderError}
+      />
+    );
+  }
+
   // Site builder page found → render it with pricing data
   if (siteBuilderPage) {
     const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
     return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
   }
+
 
   // ─── Legacy: Product domain resolution ───
   // Fetch product data for the current domain (only for product subdomains)

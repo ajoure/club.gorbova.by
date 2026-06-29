@@ -13,12 +13,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
+import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
+
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
@@ -32,14 +34,17 @@ export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
   const hashScrolled = useRef(false);
 
-  const { data: page, isLoading } = useQuery({
+  const { data: resolution, isLoading, refetch } = useQuery({
     queryKey: ["site-page-public", slug],
-    queryFn: () => SiteRenderService.resolveBySlug(slug!),
+    queryFn: () => SiteRenderService.resolveBySlugSafe(slug!),
     enabled: !!slug,
+    retry: (failureCount, _err) => failureCount < 2,
   });
 
+  const page = resolution?.status === "ok" ? resolution.page : null;
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
+
 
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
@@ -124,9 +129,14 @@ export default function SitePageBySlug() {
     );
   }
 
+  if (resolution?.status === "error") {
+    return <PublicPageFetchError onRetry={() => refetch()} details={resolution.error} />;
+  }
+
   if (!page) {
     return <NotFound />;
   }
+
 
   return (
     <div className="site-public-layout">
