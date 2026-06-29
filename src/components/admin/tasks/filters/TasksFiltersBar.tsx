@@ -27,6 +27,7 @@ interface Props {
   value: TasksFiltersValue;
   onChange: (next: TasksFiltersValue) => void;
   types: CrmTaskType[];
+  onPickTask?: (task: CrmTask) => void;
 }
 
 const QUICK_TABS: { id: QuickTab; label: string }[] = [
