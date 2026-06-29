@@ -47,6 +47,7 @@ import { useDragSelect } from "@/hooks/useDragSelect";
 import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { OfferCrmRoutingSection, validateCrmRoutingForSave } from "@/components/admin/OfferCrmRoutingSection";
+import { OfferAutomationRulesSection } from "@/components/admin/OfferAutomationRulesSection";
 import { OfferDocumentDefaultsCard } from "@/components/admin/product/OfferDocumentDefaultsCard";
 import { OfferDocumentScenariosCard } from "@/components/admin/product/OfferDocumentScenariosCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
@@ -2610,6 +2611,9 @@ export default function AdminProductDetailV2() {
                     meta: { ...offerForm.meta, crm_routing: next },
                   })}
                 />
+
+                {/* Авто-задачи на оплату (crm_task_automation_rules) */}
+                <OfferAutomationRulesSection offerId={offerDialog.editing?.id ?? null} />
               </CollapsibleContent>
             </Collapsible>
 
