@@ -265,6 +265,7 @@ const App = () => {
               <Route path="/admin/deals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDeals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/tasks" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTasks /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/tasks/types" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTaskTypes /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/calls/unresolved" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminUnresolvedCalls /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - Service */}
               <Route path="/admin/roles" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminRoles /></AdminLayout></LazyRoute></ProtectedRoute>} />
