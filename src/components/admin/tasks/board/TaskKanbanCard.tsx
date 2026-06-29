@@ -26,6 +26,8 @@ import {
   TASK_BUCKET_THEME,
   TASK_CARD_GLASS,
   TASK_CARD_PILL,
+  TASK_STATUS_BADGE,
+  TASK_STATUS_LABEL,
   type TaskBucketId,
 } from "../taskUiTheme";
 
@@ -38,21 +40,6 @@ const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Database,
   CheckSquare,
   CircleDot,
-};
-
-
-const STATUS_LABELS: Record<CrmTask["status"], string> = {
-  open: "Открыта",
-  in_progress: "В работе",
-  done: "Готово",
-  canceled: "Отменена",
-};
-
-const STATUS_VARIANTS: Record<CrmTask["status"], string> = {
-  open: "bg-sky-100 text-sky-800 border-sky-200",
-  in_progress: "bg-amber-100 text-amber-800 border-amber-200",
-  done: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  canceled: "bg-muted text-muted-foreground border-border",
 };
 
 function formatDue(dt: string | null) {
@@ -99,10 +86,10 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   onOpen,
   onOpenDeal,
 }: Props) {
-  const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
-  const accent = type?.color || "#6366f1";
-  const overdue = isOverdue(task);
   const theme = TASK_BUCKET_THEME[bucketId];
+  const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
+  const accent = type?.color || theme.accent;
+  const overdue = isOverdue(task);
 
   return (
     <div
@@ -119,8 +106,9 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         TASK_CARD_GLASS,
         theme.cardGradient,
         theme.ring,
+        theme.glow,
         "p-3 mb-2 cursor-pointer",
-        overdue && "ring-2 ring-rose-300/70",
+        overdue && "ring-2 ring-rose-400/70",
       )}
     >
       {/* Left accent stripe by type color */}
@@ -226,9 +214,9 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
           </div>
           <Badge
             variant="outline"
-            className={cn("text-[10px] px-1.5 py-0 bg-white/70 backdrop-blur-sm", STATUS_VARIANTS[task.status])}
+            className={cn("text-[10px] px-1.5 py-0 backdrop-blur-sm", TASK_STATUS_BADGE[task.status])}
           >
-            {STATUS_LABELS[task.status]}
+            {TASK_STATUS_LABEL[task.status]}
           </Badge>
         </div>
 

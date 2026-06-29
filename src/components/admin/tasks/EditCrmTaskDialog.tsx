@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CheckCircle2, PlayCircle, XCircle } from "lucide-react";
 
 import {
   Dialog,
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -33,9 +35,13 @@ import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
   TASK_DIALOG_SAVE_CTA,
+  TASK_DIALOG_DONE_CTA,
+  TASK_DIALOG_CANCEL_CTA,
+  TASK_DIALOG_INPROGRESS_CTA,
+  TASK_STATUS_BADGE,
+  TASK_STATUS_LABEL,
 } from "./taskUiTheme";
 import { cn } from "@/lib/utils";
-
 
 interface Props {
   open: boolean;
@@ -44,7 +50,6 @@ interface Props {
 }
 
 const UNASSIGNED = "__unassigned__";
-
 
 export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
@@ -58,8 +63,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const [dueAt, setDueAt] = useState("");
   const [remindAt, setRemindAt] = useState("");
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
-  const [status, setStatus] = useState<CrmTaskStatus>("open");
   const [result, setResult] = useState("");
+  const [commentError, setCommentError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!task || !open) return;
@@ -69,72 +74,95 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setDueAt(task.due_at ?? "");
     setRemindAt(task.remind_at ?? "");
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
-    setStatus(task.status);
     setResult(task.result_comment ?? "");
+    setCommentError(null);
   }, [task, open]);
 
   if (!task) return null;
 
-  const submit = async () => {
-    const patch = {
-      task_type_id: typeId,
-      title: title.trim(),
-      description: description.trim() || null,
-      due_at: dueAt || null,
-      remind_at: remindAt || null,
-      assignee_user_id: assignee === UNASSIGNED ? null : assignee,
-      result_comment: result.trim() || null,
-    };
-    await update.mutateAsync({ taskId: task.id, patch });
-    if (status !== task.status) {
-      await updateStatus.mutateAsync({
-        taskId: task.id,
-        status,
-        resultComment: result.trim() || undefined,
-      });
-    }
+  const currentStatus = task.status;
+  const isPending = update.isPending || updateStatus.isPending;
+  const canSave = !!title.trim() && !!typeId && !isPending;
+
+  const buildPatch = () => ({
+    task_type_id: typeId,
+    title: title.trim(),
+    description: description.trim() || null,
+    due_at: dueAt || null,
+    remind_at: remindAt || null,
+    assignee_user_id: assignee === UNASSIGNED ? null : assignee,
+    result_comment: result.trim() || null,
+  });
+
+  // Save: persist field edits without changing status.
+  const handleSave = async () => {
+    if (!canSave) return;
+    await update.mutateAsync({ taskId: task.id, patch: buildPatch() });
     onOpenChange(false);
   };
+
+  // Transition to a new status. For done/canceled requires non-empty comment.
+  const handleStatusTransition = async (next: CrmTaskStatus) => {
+    if (!canSave) return;
+    const requiresComment = next === "done" || next === "canceled";
+    if (requiresComment && !result.trim()) {
+      setCommentError(
+        next === "done"
+          ? "Укажите результат — что сделано."
+          : "Укажите причину отмены задачи.",
+      );
+      return;
+    }
+    setCommentError(null);
+    // 1. Persist field edits first
+    await update.mutateAsync({ taskId: task.id, patch: buildPatch() });
+    // 2. Then transition status
+    await updateStatus.mutateAsync({
+      taskId: task.id,
+      status: next,
+      resultComment: result.trim() || undefined,
+    });
+    onOpenChange(false);
+  };
+
+  const showInProgress = currentStatus !== "in_progress" && currentStatus !== "done" && currentStatus !== "canceled";
+  const showDone = currentStatus !== "done";
+  const showCancel = currentStatus !== "canceled";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={cn("max-w-lg", TASK_DIALOG_GLASS)}>
         <DialogHeader>
-          <DialogTitle>Редактировать задачу</DialogTitle>
+          <div className="flex items-center justify-between gap-3 pr-6">
+            <DialogTitle>Редактировать задачу</DialogTitle>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[11px] backdrop-blur-sm",
+                TASK_STATUS_BADGE[currentStatus],
+              )}
+            >
+              {TASK_STATUS_LABEL[currentStatus]}
+            </Badge>
+          </div>
         </DialogHeader>
 
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <div className={TASK_DIALOG_SECTION}>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Тип</Label>
-                <Select value={typeId} onValueChange={setTypeId}>
-                  <SelectTrigger className="bg-white/80">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {types.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Статус</Label>
-                <Select value={status} onValueChange={(v) => setStatus(v as CrmTaskStatus)}>
-                  <SelectTrigger className="bg-white/80">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="open">Открыта</SelectItem>
-                    <SelectItem value="in_progress">В работе</SelectItem>
-                    <SelectItem value="done">Готово</SelectItem>
-                    <SelectItem value="canceled">Отменена</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-1">
+              <Label>Тип</Label>
+              <Select value={typeId} onValueChange={setTypeId}>
+                <SelectTrigger className="bg-white/80">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {types.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1">
@@ -197,32 +225,77 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
 
           <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">
-              <Label>Результат / комментарий</Label>
+              <Label>
+                Результат / комментарий{" "}
+                <span className="text-[11px] text-muted-foreground font-normal">
+                  (обязателен при «Готово» или «Отменить задачу»)
+                </span>
+              </Label>
               <Textarea
                 value={result}
-                onChange={(e) => setResult(e.target.value)}
-                rows={2}
-                placeholder="Заполняется при закрытии"
-                className="bg-white/80"
+                onChange={(e) => {
+                  setResult(e.target.value);
+                  if (commentError && e.target.value.trim()) setCommentError(null);
+                }}
+                rows={3}
+                placeholder="Что сделано / причина отмены…"
+                className={cn(
+                  "bg-white/80",
+                  commentError && "border-rose-400 ring-1 ring-rose-300",
+                )}
               />
+              {commentError ? (
+                <p className="text-[11px] text-rose-600">{commentError}</p>
+              ) : null}
             </div>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
             Отмена
           </Button>
-          <Button
-            onClick={submit}
-            disabled={update.isPending || updateStatus.isPending || !title.trim() || !typeId}
-            className={TASK_DIALOG_SAVE_CTA}
-          >
-            Сохранить
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            {showCancel && (
+              <Button
+                onClick={() => handleStatusTransition("canceled")}
+                disabled={!canSave}
+                className={TASK_DIALOG_CANCEL_CTA}
+              >
+                <XCircle className="h-4 w-4 mr-1" />
+                Отменить задачу
+              </Button>
+            )}
+            {showInProgress && (
+              <Button
+                onClick={() => handleStatusTransition("in_progress")}
+                disabled={!canSave}
+                className={TASK_DIALOG_INPROGRESS_CTA}
+              >
+                <PlayCircle className="h-4 w-4 mr-1" />
+                В работу
+              </Button>
+            )}
+            <Button
+              onClick={handleSave}
+              disabled={!canSave}
+              className={TASK_DIALOG_SAVE_CTA}
+            >
+              Сохранить
+            </Button>
+            {showDone && (
+              <Button
+                onClick={() => handleStatusTransition("done")}
+                disabled={!canSave}
+                className={TASK_DIALOG_DONE_CTA}
+              >
+                <CheckCircle2 className="h-4 w-4 mr-1" />
+                Готово
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
-
