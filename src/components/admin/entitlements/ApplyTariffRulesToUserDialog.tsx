@@ -99,9 +99,8 @@ export function ApplyTariffRulesToUserDialog({
     queryKey: ["apply-rules-tariffs"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("tariffs_v2")
-        .select("id, name, status")
-        .eq("status", "active")
+        .from("tariffs")
+        .select("id, name")
         .order("name");
       if (error) throw error;
       return data || [];
