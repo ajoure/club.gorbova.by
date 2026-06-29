@@ -176,7 +176,7 @@ export default function AdminTasks() {
         </div>
       )}
 
-      <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
+      <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list" | "stats")}>
         <TabsList>
           <TabsTrigger value="board">
             <Columns3 className="h-4 w-4 mr-1" />
@@ -185,6 +185,10 @@ export default function AdminTasks() {
           <TabsTrigger value="list">
             <LayoutList className="h-4 w-4 mr-1" />
             Список
+          </TabsTrigger>
+          <TabsTrigger value="stats">
+            <BarChart3 className="h-4 w-4 mr-1" />
+            Статистика
           </TabsTrigger>
         </TabsList>
 
@@ -207,6 +211,10 @@ export default function AdminTasks() {
           ) : (
             <TasksListView tasks={tasks} types={types} onOpenTask={setEditTask} />
           )}
+        </TabsContent>
+
+        <TabsContent value="stats" className="mt-4">
+          <TasksStaffStatsPanel />
         </TabsContent>
       </Tabs>
 
