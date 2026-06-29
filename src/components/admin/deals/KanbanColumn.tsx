@@ -196,6 +196,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                 stageColor={color}
                 stageType={stageType}
                 pipelineId={pipelineId}
+                taskSummary={taskSummaryByDeal?.[deal.id] ?? null}
               />
             ))
           )}
