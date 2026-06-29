@@ -230,6 +230,14 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
             </div>
           </div>
 
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+          />
+
+
           <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">
               <Label>
