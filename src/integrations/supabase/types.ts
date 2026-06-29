@@ -12046,6 +12046,7 @@ export type Database = {
           timezone: string | null
           updated_at: string
           user_id: string | null
+          vochi_sip_extension: string | null
           was_club_member: boolean | null
         }
         Insert: {
@@ -12109,6 +12110,7 @@ export type Database = {
           timezone?: string | null
           updated_at?: string
           user_id?: string | null
+          vochi_sip_extension?: string | null
           was_club_member?: boolean | null
         }
         Update: {
@@ -12172,6 +12174,7 @@ export type Database = {
           timezone?: string | null
           updated_at?: string
           user_id?: string | null
+          vochi_sip_extension?: string | null
           was_club_member?: boolean | null
         }
         Relationships: [

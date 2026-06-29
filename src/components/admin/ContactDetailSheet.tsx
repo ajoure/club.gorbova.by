@@ -138,6 +138,7 @@ import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
+import { CallButton } from "./calls/CallButton";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
@@ -1859,9 +1860,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       <span>{contact.phone || "—"}</span>
                     </div>
                     {contact.phone && (
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.phone!, "Телефон")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <CallButton phone={contact.phone} contactId={contact.id} />
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.phone!, "Телефон")}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <Separator />
