@@ -103,7 +103,17 @@ Deno.serve(async (req) => {
   const ext = profile?.vochi_sip_extension?.trim();
   if (!ext) return json(412, { error: "sip_extension_missing" });
 
-  // ── 5. Credentials ───────────────────────────────────────────────────────
+  // ── 5a. Integration enabled flag — SOT: public.integrations.is_enabled ───
+  const { data: integ, error: integErr } = await admin
+    .from("integrations")
+    .select("is_enabled")
+    .eq("provider", "vochi")
+    .maybeSingle();
+  if (integErr) return json(500, { error: "integration_lookup_failed" });
+  if (!integ) return json(412, { error: "integration_not_configured" });
+  if (!integ.is_enabled) return json(412, { error: "integration_disabled" });
+
+  // ── 5b. Credentials — только секреты/конфиг подключения ─────────────────
   const { data: cred, error: credErr } = await admin
     .from("integration_credentials")
     .select("config, secrets, status")
@@ -111,9 +121,6 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (credErr) return json(500, { error: "cred_lookup_failed" });
   if (!cred) return json(412, { error: "integration_not_configured" });
-  if (cred.status !== "active" || !cred.config?.enabled) {
-    return json(412, { error: "integration_disabled" });
-  }
   const baseUrl = String(cred.config?.base_url ?? "https://bot.vochi.by").replace(
     /\/+$/,
     "",
