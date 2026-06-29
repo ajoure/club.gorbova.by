@@ -94,11 +94,22 @@ export function DomainHomePage() {
     );
   }
 
+  // Site builder fetch error (network/CORS/5xx) — show recoverable state, not a 404
+  if (siteBuilderError) {
+    return (
+      <PublicPageFetchError
+        onRetry={() => setRetryNonce((n) => n + 1)}
+        details={siteBuilderError}
+      />
+    );
+  }
+
   // Site builder page found → render it with pricing data
   if (siteBuilderPage) {
     const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
     return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
   }
+
 
   // ─── Legacy: Product domain resolution ───
   // Fetch product data for the current domain (only for product subdomains)
