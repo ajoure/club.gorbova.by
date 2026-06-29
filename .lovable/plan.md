@@ -1,258 +1,267 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Заголовок оставить как есть**
+1. **Название отчёта**
 
-Формат корректный:
-
-```text
-План: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
-```
-
-Это именно dry-run, без write-действий.
-
-2. **Добавить safety-правило по heuristic match**
-
-`heuristic_time_match` нельзя смешивать с явными связями как равнозначный кандидат для будущего sweep.
-
-В dry-run таблице нужно разделить:
+В deliverables указано:
 
 ```text
-safe_candidates       = provider_subscriptions / meta.order_id / meta.tracking_id
-review_candidates     = heuristic_time_match only
+Отчет о выполнении: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
 ```
 
-Для будущего удаления автоматически допустимы только `safe_candidates`.  
-`heuristic_time_match only` — только ручная проверка, без auto-delete.
-
-3. **Проверить, что** `product_id` **реально есть в** `subscriptions_v2`
-
-В плане есть:
+Нужно строго:
 
 ```text
-subscriptions_v2.user_id + product_id + tariff_id
+Отчет о выполненной работе: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
 ```
 
-Перед запросом проверить фактические колонки `subscriptions_v2`.
+2. **Не утверждать заранее, что это именно WebKit**
 
-Если `product_id` нет, использовать связку через тариф:
+На скрине Яндекс.Браузер на macOS. Его движок нужно подтвердить фактически.
 
-```sql
-subscriptions_v2.tariff_id → tariffs.product_id
-```
-
-И в отчёте явно указать фактический join.
-
-4. **Provider-linked строки считать risk-сегментом**
-
-Если sub связан с:
+В discovery добавить:
 
 ```text
-provider_subscriptions
-payment_methods
-provider_subscription_id
-bepaid / stripe ids
+browser engine confirmed: Chromium/WebKit/unknown
 ```
 
-то это не кандидат на автоматический sweep без отдельного разбора.
+Потому что Яндекс.Браузер обычно Chromium-based, а не Safari/WebKit. Если это Chromium-based private mode, гипотеза “WebKit-only” может быть ложной.
 
-В dry-run добавить флаг:
+3. **Матрицу браузеров расширить**
+
+Минимальный набор:
 
 ```text
-risk_provider_linked = true/false
+Chrome normal
+Chrome incognito
+Safari normal
+Safari private
+Yandex normal
+Yandex private
+Playwright Chromium clean profile
+Playwright WebKit clean profile
 ```
 
-и правило:
+Если Yandex автоматизировать нельзя — вручную через DevTools, но зафиксировать отдельно.
+
+4. **Главный сигнал: различить stale bundle vs Supabase fetch failure**
+
+В отчёте обязательно разделить:
+
+### **Stale bundle proof**
+
+Проверить:
 
 ```text
-provider-linked rows excluded from auto-sweep proposal
+index.html script src
+JS chunk filenames / hashes
+loaded JS bundle URL
+deployment id / build marker
+whether route /:slug exists in loaded bundle
 ```
 
-5. **Entitlement coverage недостаточно просто “есть active entitlement”**
+Если route `/:slug` отсутствует в загруженном JS — это stale bundle.
 
-Нужно проверить не только наличие entitlement, но и срок:
+### **Supabase/network proof**
+
+Проверить:
 
 ```text
-entitlements.status='active'
-entitlements.expires_at >= subscriptions_v2.access_end_at OR entitlements.expires_at >= now()
+was request to supabase rest/v1/site_pages made?
+status code?
+CORS error?
+blocked by client?
+ERR_BLOCKED_BY_CLIENT?
+storage/localStorage exception?
 ```
 
-И отдельно вывести:
+Если request не ушёл или упал — это network/storage/privacy issue.
+
+5. **Не ограничиваться** `site_pages`
+
+Для реального рендера страницы могут быть дополнительные запросы:
 
 ```text
-entitlement_coverage = none / active_shorter / active_ok / expired
+site_pages
+site_domain_bindings
+site_blocks / page content
+tariff_offers / product blocks
+public config / Supabase auth session
 ```
 
-Чтобы не удалить sub, если он единственный источник видимого срока доступа.
+В network capture смотреть все `supabase.co` запросы, не только `site_pages`.
 
-6. **Добавить проверку ledger**
+6. **Проверить поведение при direct Supabase REST из браузера**
 
-Для каждого кандидата вывести, есть ли grant в `access_grant_ledger` по тому же user/product/order:
+В сломанном браузере открыть/выполнить через console fetch к тому же endpoint, который использует `SiteRenderService`.
+
+Цель:
 
 ```text
-ledger_grant_exists = true/false
-ledger_grant_status
-ledger_source_order_id
+понять, блокируется ли именно Supabase/network или проблема в React resolver/cache
 ```
 
-Цель: доказать, что доступ держится ledger/entitlement, а не sub-row.
+7. **Проверить localStorage гипотезу без домыслов**
 
-7. **Не использовать** `status='paid'` **без** `paid_amount=0`
+В сломанном режиме выполнить:
 
-В контрольном запросе добавить `paid_amount=0`, иначе в список могут попасть trial-заказы, которые по ошибке paid, но не no-card 0 BYN:
-
-```sql
-AND paid_amount = 0
+```js
+localStorage.setItem('__test', '1');
+localStorage.getItem('__test');
+localStorage.removeItem('__test');
 ```
 
-И желательно:
+И отдельно проверить console на ошибки Supabase client init.
 
-```sql
-AND COALESCE(meta->>'source','') = 'trial_no_card'
-```
+Если localStorage доступен — гипотезу 3 снять.
 
-8. **Агрегаты должны разделять “delete-safe” и “manual-review”**
+8. **Проверить service worker / caches**
 
-Второй файл агрегатов должен содержать минимум:
+Даже если не планируется правка, discovery должен проверить:
 
 ```text
-total_no_card_trial_orders
-total_candidate_subs
-safe_explicit_candidates
-heuristic_only_candidates
-provider_linked_candidates
-entitlement_active_ok
-entitlement_missing_or_short
-recommended_for_sweep
-recommended_for_manual_review
+navigator.serviceWorker.controller
+caches.keys()
 ```
 
-9. **CSV не должен содержать лишние персональные данные**
+Если SW есть и отдаёт старый bundle — это отдельный root cause. Если SW нет — указать.
 
-Email/phone в CSV не выводить, если не нужно.
+9. **Проверить headers для HTML и JS**
 
-Достаточно:
+Нужны headers:
 
 ```text
-sub_id
-order_id
-user_id
-product_id
-tariff_id
-status
-dates
-link_source
-risk flags
+cache-control
+etag
+last-modified
+cf-cache-status
+content-type
+x-deployment-id / аналог
 ```
 
-Если нужен email для ручной проверки — маскировать:
+Отдельно для:
 
 ```text
-a***@domain.com
+/
+ /ideologicheskaya-rabota
+ index.html
+ JS chunk
+ CSS chunk
 ```
 
-10. **Финальный отчёт dry-run**
+10. **SiteRenderService error handling — discovery only**
 
-Заголовок:
+Согласен: правки не делать. Но в отчёте показать текущий дефект observability:
 
 ```text
-Отчет о выполненной работе: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
+network/error path visually collapses into NotFound
 ```
 
-В конце:
+Это будет отдельный follow-up, если подтвердится fetch/storage issue.
+
+11. **Нужен user-facing workaround**
+
+Даже в discovery-отчёте нужно дать временный workaround:
 
 ```text
-no-card trial orders inventory: PASS
-subscription candidates identified: PASS
-explicit vs heuristic split: PASS
-provider-linked risk split: PASS
-entitlement/ledger coverage: PASS
-CSV export: PASS
-BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run: PASS/PARTIAL/FAIL
+открыть в Chrome normal
+hard refresh
+очистить site data для gorbova.by
+открыть полный URL с cache-bust ?v=<timestamp>
 ```
 
-После этих правок dry-run можно выполнять. Sweep — только отдельным планом после просмотра списка.
+Но workaround не считать fix.
+
+12. **Follow-up item должен зависеть от root cause**
+
+Не создавать общий “пофиксить Safari 404”. Создать один конкретный follow-up:
+
+- если stale bundle:
+
+```text
+PATCH-SITE-BUNDLE-CACHE-BUSTING
+```
+
+- если Supabase blocked/privacy:
+
+```text
+PATCH-SITE-PUBLIC-RESOLVER-ERROR-STATE
+```
+
+- если localStorage init:
+
+```text
+PATCH-SUPABASE-CLIENT-STORAGE-FALLBACK
+```
+
+- если SW/cache:
+
+```text
+PATCH-SITE-SW-CACHE-INVALIDATION
+```
+
+13. **DoD дополнить**
+
+Финальные строки отчёта:
+
+```text
+browser/engine matrix captured: PASS
+network evidence captured: PASS
+bundle/cache evidence captured: PASS
+storage/service-worker checks captured: PASS
+root cause identified: PASS/PARTIAL/FAIL
+follow-up fix item proposed: PASS
+PATCH-SAFARI-IDEOLOG-404-DISCOVERY: PASS/PARTIAL/FAIL
+```
+
+После этих правок discovery можно выполнять.
 
 &nbsp;
 
-План: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
+План: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
 
-## Цель
+### Контекст
 
-Собрать read-only список subscriptions_v2-строк, которые были созданы старой версией `grant-access-for-order` для no-card trial заказов (до фикса PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW). Никаких UPDATE/DELETE. Результат — таблица для согласования перед sweep.
+- Скриншот: Яндекс.Браузер, режим «Личный» (приватный, WebKit на macOS), URL `gorbova.by/ideologicheskaya-rabota` → рендерится клиентский NotFound («404 Страница не найдена»).
+- HTTP-ответ от Cloudflare/хостинга: **200 OK**, отдаётся валидный `index.html` SPA (4.8 KB, корректный `<title>`). То есть это **не серверный 404 и не SPA-fallback issue** — 404 рисуется внутри React после неуспешной резолюции.
+- В БД страница есть и валидна:
+  - `site_pages.slug='ideologicheskaya-rabota'`, `status='published'`, `id=7e672fed-…`
+  - привязка `site_domain_bindings.domain='gorbova.by'`, `is_home=false`
+- Маршрут `/:slug` → `SitePageBySlug` зарегистрирован (`src/App.tsx:353`); резолвер `SiteRenderService.resolveBySlug` фильтрует только `slug+status='published'`, домен **не** проверяет — то есть для прямого `chromium`-обхода он отдаёт страницу.
+- В обычном Chrome/Firefox у других пользователей страница, по нашим данным, открывается. Значит регрессия привязана к окружению (WebKit / приватный режим / кеш).
 
-## Scope
+### Гипотезы (по приоритету)
 
-- Только `SELECT` через `supabase--read_query` / psql.
-- Никаких миграций, edge-функций, кода.
-- Никаких изменений в `subscriptions_v2`, `entitlements`, `access_grant_ledger`.
+1. **Stale bundle в WebKit-кеше**: Safari/Yandex Личный держит старый JS-бандл, где маршрута `/:slug` ещё нет (страница создана после деплоя последней версии у этого пользователя). Lovable hosting отдаёт свежий `index.html`, но Safari может игнорировать `no-cache` для уже закешированных `*.js` без хеша в URL → старый роутер падает в `*` (NotFound).
+2. **Приватный режим WebKit + ITP блокирует fetch к Supabase**: запрос `site_pages` уходит на `hdjgkjceownmmnrqqtuz.supabase.co`. В Yandex «Личный» / Safari Private возможен block третьеsторонних запросов; fetch падает, `data=null`, рендерится NotFound (нет различения «ошибка сети» vs «нет страницы»).
+3. **localStorage недоступен в приватном режиме** → `createClient` с `storage: localStorage` падает при инициализации до маунта роутов → попадаем в глобальный error boundary, который у некоторых сборок отдаёт NotFound.
+4. **CSP / mixed-content в WebKit** для запроса к Supabase (менее вероятно — на других страницах работает).
 
-## Шаги
+### Шаги диагностики (read-only)
 
-### 1. Идентификация маркера no-card trial
+1. **Воспроизвести точно**: запустить Playwright WebKit (Safari engine) и Chromium, оба в обычном и privacy-режиме (`storage_state=None`, `permissions=[]`, блок third-party cookies):
+  - открыть `https://gorbova.by/ideologicheskaya-rabota`,
+  - собрать console + network (особенно запросы к `*.supabase.co/rest/v1/site_pages*`),
+  - сделать скриншот.
+  - Pass-критерий гипотезы 2/3: WebKit private → 404 + ошибка fetch / localStorage; Chromium normal → страница рендерится.
+2. **Проверить SitePageBySlug на молчаливую ошибку**: подтвердить, что при `error` из supabase резолвер возвращает `null` без логирования (так и есть — `if (error || !data) return null`). Это объясняет, почему сетевая ошибка визуально неотличима от «нет страницы».
+3. **Проверить версию бандла**: сравнить `x-deployment-id` (b4bd1452…) с тем, что должно содержать маршрут `/:slug`. Если у пользователя в Safari закеширован JS со старого deployment — это гипотеза 1.
+4. **Сверить с предыдущим discovery** `PATCH-SAFARI-SPA-404-DISCOVERY` (item c5c7ae38, done) — какой вывод там был зафиксирован, чтобы не дублировать.
 
-Маркер заказа (подтверждён в SOT): `orders_v2.meta->>'source' = 'trial_no_card'` + `is_trial=true` + `paid_amount=0` + `status='paid'`.
+### Deliverables discovery-этапа
 
-### 2. Базовый отчёт по orders_v2 (контрольная цифра)
+- Отчёт `Отчет о выполнении: PATCH-SAFARI-IDEOLOG-404-DISCOVERY` с таблицей: браузер × режим × URL × результат × console/network evidence × screenshot.
+- Подтверждённая корневая причина (одна из гипотез 1–4) и предложение `PATCH-…` для исправления (отдельной задачей, не в этом item):
+  - под гипотезу 1 — версионирование `index.html` через `?v=` и/или вернуть hash в имена чанков (проверить vite config), плюс инструкция cmd+shift+R пользователю как workaround;
+  - под гипотезу 2/3 — обернуть `resolveBySlug` в try/catch с логированием и различать «сетевая ошибка» vs «не найдено»; показывать пользователю «временно недоступно» вместо 404; рассмотреть `storage: undefined` fallback при недоступном localStorage в публичных страницах без auth.
 
-```sql
-SELECT count(*) AS no_card_trial_orders_total,
-       min(created_at) AS first_seen,
-       max(created_at) AS last_seen
-FROM orders_v2
-WHERE meta->>'source' = 'trial_no_card'
-  AND is_trial = true
-  AND status = 'paid';
-```
+### DoD discovery
 
-### 3. Кандидатные subscriptions_v2
+- Воспроизведение в WebKit подтверждено (или опровергнуто — тогда копаем дальше).
+- Зафиксирован конкретный сигнал (network/console/storage), отличающий рабочий и сломанный кейс.
+- Создан follow-up item на сам фикс — без правок кода в рамках этого discovery.
 
-Связь sub → order ищется по нескольким каналам (используем UNION DISTINCT, не пропускаем ни одного):
+### Что НЕ делаем на этом шаге
 
-- `provider_subscriptions.order_id` → `subscriptions_v2.id`
-- `subscriptions_v2.meta->>'order_id'`
-- `subscriptions_v2.meta->>'tracking_id'` вида `subv2:<sub_id>:order:<order_id>`
-- `subscriptions_v2.user_id + product_id + tariff_id` точно совпадает с no-card trial order, созданным в пределах ±10 минут от `subscriptions_v2.created_at` (страховка для старых строк без явной связи)
-
-Для каждой кандидатной строки вывести:
-
-```text
-sub_id, user_id, product_id, tariff_id, status, is_trial,
-auto_renew, access_start_at, access_end_at, created_at,
-linked_order_id, link_source (provider_subscriptions | meta.order_id | meta.tracking_id | heuristic_time_match),
-order.paid_amount, order.is_trial, order.meta->>'source'
-```
-
-### 4. Срезы для согласования
-
-- Всего кандидатных subs.
-- Разбивка по `link_source` (явная связь vs heuristic).
-- Разбивка по `status` (active / canceled / expired / past_due / прочие).
-- Разбивка по `is_trial` в самой sub-строке (true/false — ожидаем преимущественно false, что и есть семантический баг).
-- Сколько из них имеют активный `entitlement` для того же `user_id + product_id` (т.е. удаление sub не повредит entitlement).
-- Сколько подвязаны на `payment_methods` / `provider_subscriptions` с реальным платёжным каналом (флаг риска — такие не трогаем без отдельного разбора).
-
-### 5. Экспорт
-
-CSV в `/mnt/documents/backfill_no_card_trial_subs_dryrun_<date>.csv` с полной таблицей кандидатов + второй файл — агрегаты по срезам.
-
-### 6. Что НЕ делаем
-
-- Не удаляем и не модифицируем ни одной строки.
-- Не трогаем `entitlements` / `access_grant_ledger`.
-- Не пишем audit-логи о sweep (нечего логировать).
-- Не запускаем edge-функции.
-
-## DoD dry-run
-
-- Контрольная цифра no-card trial orders получена.
-- Список subscriptions_v2-кандидатов сформирован с указанием `link_source` для каждой.
-- Срезы по статусу / entitlement-coverage / провайдерскому каналу готовы.
-- CSV выгружен.
-- Отчёт отправлен пользователю на согласование. Sweep — отдельным планом после approve списка.
-
-## Технические детали
-
-- Edge function: нет.
-- Миграции: нет.
-- Изменения кода: нет.
-- Все запросы — через `supabase--read_query` либо psql read-only.
+- Никаких правок в `SitePageBySlug`, `SiteRenderService`, роутере, `client.ts`, sw.js.
+- Никаких миграций.
+- Никаких изменений кеш-заголовков на хостинге (Lovable hosting нами не управляется).
