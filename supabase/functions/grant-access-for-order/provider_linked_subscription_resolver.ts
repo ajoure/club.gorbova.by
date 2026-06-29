@@ -289,5 +289,47 @@ export async function resolveProviderLinkedSubscription(
     };
   }
 
+  // ── PATCH-GAFO-CHECKOUT-FALLBACK (2026-06-29) ────────────────────────
+  // Legacy pre-created subv2 (до patch-pre-create-linkage) могли быть созданы
+  // без записи в provider_subscriptions с order_id/tracking_id. Они помечены
+  // только meta.checkout_order_id на самом subv2. Чтобы grant-access-for-order
+  // не плодил дубль, fallback ищет такой subv2 напрямую.
+  const { data: bySubMeta } = await supabase
+    .from('subscriptions_v2')
+    .select('id, user_id, product_id, tariff_id, status, access_end_at, auto_renew, meta')
+    .eq('user_id', userId)
+    .eq('meta->>checkout_order_id', orderId)
+    .in('status', ['active', 'trial', 'past_due', 'pending'])
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  for (const sub of (bySubMeta || [])) {
+    if (productId && sub.product_id && String(sub.product_id) !== String(productId)) continue;
+    if (tariffId && sub.tariff_id && String(sub.tariff_id) !== String(tariffId)) continue;
+    if (TERMINAL_STATUSES.has(String(sub.status))) continue;
+
+    return {
+      outcome: 'extend',
+      subscription: {
+        id: sub.id,
+        user_id: sub.user_id,
+        product_id: sub.product_id,
+        tariff_id: sub.tariff_id,
+        status: sub.status,
+        access_end_at: sub.access_end_at,
+        auto_renew: !!sub.auto_renew,
+      },
+      provider_subscription: {
+        id: null,
+        subscription_v2_id: sub.id,
+        provider_subscription_id: ((sub.meta || {}) as any).bepaid_subscription_id ?? null,
+        state: 'no_provider_row',
+        tracking_id: ((sub.meta || {}) as any).tracking_id ?? null,
+        order_id: orderId,
+      },
+      reason: 'checkout_order_id_subv2_fallback',
+    };
+  }
+
   return { outcome: 'no_provider_linked' };
 }
