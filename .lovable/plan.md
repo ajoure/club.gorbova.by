@@ -1,125 +1,145 @@
-Отчёт принят **частично**.
+## дополни план следующей информацией:
 
-## **Подтверждено как закрыто**
+1. Добавь корректный заголовок в начало:
 
-- Раздел `/admin/tasks` визуально доработан до CRM-доски.
-- Есть 5 колонок: просроченные / сегодня / завтра / позже / без срока.
-- Добавлены табы Канбан / Список.
-- Добавлены фильтры и поиск.
-- В Create/Edit добавлен ответственный.
-- `<input type="datetime-local">` заменён на канонический `DateTimePicker`.
-- БД / RPC / RLS / миграции не трогались — это правильно для UI-fix.
+```text
+План: UI-polish CRM-задач — скрытие TASK-ID, ответственный с TG-статусом, glassmorphism
+```
 
-## **Не закрыто**
+Без заголовка `План:` сообщение считается оформленным некорректно.  
 
-Кликабельность бейджа задач в карточке сделки не реализована.
+2. Добавь обязательный языковой блок:
 
-Это было в DoD, поэтому текущий спринт нельзя считать полностью закрытым.
+```text
+План должен быть составлен на русском языке.
+Отчет о выполненной работе должен быть составлен на русском языке.
+Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
+```
 
-## **Решение**
+Это обязательное требование для каждого ТЗ/плана Lovable.  
 
-Да, подтверждаю добивку п.7 отдельным мелким патчем.
+3. Добавь `DIAGNOSE` перед правками:
 
-Сделать строго так:
+```text
+Перед изменениями проверить:
+- где ещё отображается task.public_id / public_id / TASK-;
+- какие поля возвращает useStaffOptions и есть ли там telegram_chat_id / telegram_connected;
+- откуда корректно брать признак привязанного Telegram;
+- какие компоненты Avatar/Badge/Select уже используются в CRM;
+- что текущий Telegram worker уже поддерживает assigned/due_soon/overdue.
+```
 
-1. В `KanbanDealCard.tsx` бейдж задач сделать кликабельным через `button`.
-2. `stopPropagation()` обязателен, чтобы не ломать открытие карточки сделки.
-3. Переход:
-4. В `AdminTasks.tsx` читать `deal` из query params и передавать в `crm_task_list` как `deal_id`.
-5. В фильтрах показать чип:
-6. Сброс чипа должен очищать `deal` из URL и фильтра.
-7. Без БД / RPC / RLS / миграций.
+По инженерному стандарту изменение должно проходить стадии DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY.  
 
-## **DoD добивки**
+4. Уточни источник признака «нет TG».
 
-- Клик по бейджу задачи в карточке сделки открывает `/admin/tasks?deal=<uuid>`.
-- Список задач фильтруется по этой сделке.
-- Чип сделки отображается и сбрасывается.
-- Клик по бейджу не открывает саму карточку сделки.
-- Отчёт о выполненной работе — на русском языке.
+Сейчас план говорит “если у сотрудника нет привязанного Telegram”, но не указывает, откуда это берётся. Нужно явно:
 
-После этого UI-fix можно будет закрыть полностью.
+```text
+Источник TG-статуса брать только из существующего поля/хука после DIAGNOSE. Новые RPC, таблицы, миграции и прямые запросы к Telegram не добавлять.
+Если useStaffOptions не отдаёт TG-статус, расширение делать только через существующий backend contract, если он уже есть. Если контракта нет — вынести TG-пометку в follow-up, не ломая UI-polish.
+```
+
+5. Раздели UI-polish и Telegram smoke.
+
+В текущем плане заявлено “БД/RPC/edge/cron не трогаем”, но DoD требует Telegram smoke. Это допустимо только как проверка существующего механизма, не как разработка.
+
+Добавь:
+
+```text
+Telegram smoke — verify-only. Код worker/edge/cron/RPC не менять. Если уведомление не приходит из-за существующей проблемы worker, зафиксировать отдельный bug-report, но не расширять scope UI-polish.
+```
+
+6. Уточни, что glassmorphism не должен ломать читаемость.
+
+Добавь:
+
+```text
+Glass-стиль не должен ухудшать контраст, плотность CRM-интерфейса и читаемость. На mobile/tablet карточки не должны расползаться. Если анимация overdue-пульсации раздражает или перегружает UI, заменить на статичный красный индикатор.
+```
+
+7. Добавь запрет на Tailwind-хаос.
+
+```text
+Не плодить произвольные inline-классы без структуры. Для повторяемых glass-карточек вынести helper/variant либо локальные константы классов в компоненте. Не менять глобальную тему.
+```
+
+8. В DoD добавь техническую проверку:
+
+```text
+- Поиск по проекту подтверждает, что TASK-ID/TASK-XXXXXX не отображается в UI задач.
+- `task.public_id` не удалён из типов и БД, только скрыт в пользовательском UI.
+- `tsgo --noEmit` проходит без ошибок.
+- БД/RPC/RLS/edge/cron не изменялись.
+```
+
+После этих дополнений план можно запускать.
 
 &nbsp;
 
-Отчет о выполненной работе: UI-fix раздела «Задачи» до уровня CRM-доски
+Что меняем
 
-## 1. Канонический DateTimePicker вместо `<input type="datetime-local">`
+### 1. Убрать публичный ID задачи (TASK-XXXXXX) из UI
 
-- `CreateCrmTaskDialog.tsx` — заменено. Поля «Срок» и «Напоминание» используют `DateTimePickerField` (строки 159, 163). Импорт: строка 25.
-- `EditCrmTaskDialog.tsx` — заменено. Поля «Срок» и «Напоминание» используют `DateTimePickerField` (строки 150, 154). Импорт: строка 30.
-- Поиск `datetime-local` по `src/components/admin/tasks/` — только упоминание в комментарии-обосновании внутри `DateTimePickerField.tsx`.
+ID остаётся в БД, но пользователю не показывается.
 
-Подтверждено: ✅ обе формы.
+- `TaskKanbanCard.tsx` — удалить блок public_id в шапке карточки.
+- `EditCrmTaskDialog.tsx` — заголовок «Редактировать задачу» без хвоста  `· TASK-XXXXXX`.
+- `TasksListView.tsx` — убрать строку с public_id под названием.
+- `CrmTasksSection.tsx` — убрать public_id в карточках вкладки «Задачи» внутри сделки/контакта.
+- Бейдж сделки (`deal.public_id`) на карточке задачи остаётся — это связь со сделкой.
 
-## 2. Поле «Ответственный» в создании задачи
+### 2. Ответственный + Telegram-уведомление
 
-- `CreateCrmTaskDialog.tsx`: `useStaffOptions()` (стр. 43), state `assignee`, селект отрисован, в payload передаётся `assignee_user_id` (стр. 90).
-- `EditCrmTaskDialog.tsx`: то же — `assignee` инициализируется из `task.assignee_user_id` (стр. 63), в патч улетает `assignee_user_id` (стр. 77).
+Базовая логика уже работает (поле есть, `crm-task-notify-worker` шлёт `assigned/due_soon/overdue`). Доработка UX:
 
-Подтверждено: ✅ create + edit.
+- В select ответственного (Create/Edit) добавить аватар-инициалы рядом с именем.
+- Если у сотрудника нет привязанного Telegram — мягкая пометка «нет TG» в опции, чтобы постановщик понимал, что уведомление не дойдёт.
+- Smoke: создать тестовую задачу со сроком +5 мин, проверить `assigned` сразу и `due_soon` по тику pg_cron.
 
-## 3. Карточка задачи `TaskKanbanCard.tsx`
+### 3. Визуальный редизайн — glassmorphism в палитре канбана
 
+Палитра берётся из bucket-колонок: overdue=red, today=amber, tomorrow=sky, later=slate, no_due=violet; плюс цвет типа задачи.
 
-| Поле                                                     | Где                                          | Статус |
-| -------------------------------------------------------- | -------------------------------------------- | ------ |
-| Тип (иконка + цвет + label)                              | `TYPE_ICONS`, `accent`, header (стр. 93–126) | ✅      |
-| Дедлайн (`formatDue(task.due_at)`)                       | стр. 161                                     | ✅      |
-| Ответственный (`assignee.label` + инициалы)              | стр. 204–209                                 | ✅      |
-| Контакт (`contact.full_name/email/phone`)                | стр. 188–192                                 | ✅      |
-| Сделка (`deal.public_id`, клик → `onOpenDeal`)           | стр. 174–185                                 | ✅      |
-| Статус (бейдж `STATUS_VARIANTS[task.status]`)            | стр. 214                                     | ✅      |
-| Признак просрочки (`isOverdue`, красный акцент + иконка) | стр. 60–64, 153–156                          | ✅      |
+Карточка задачи (`TaskKanbanCard`):
 
+- Контейнер: матовое стекло — `backdrop-blur-md`, мягкий градиент от цвета bucket'а к белому, тонкий светлый бордер `border-white/60`, мягкая тень.
+- Слева — 2px светящаяся accent-полоса цвета типа задачи.
+- Аватар ответственного: круг 24px с градиентом, инициалы белым.
+- Бейджи срока/напоминания — pill на полупрозрачном `bg-white/70`.
+- Hover: лёгкий lift и усиление тени.
+- Overdue: пульсация красным.
 
-## 4. Фильтры (`TasksFiltersBar` + `AdminTasks.tsx`)
+Диалоги (`Edit/CreateCrmTaskDialog`):
 
-Quick-табы: `all`, `mine` (по `currentUserId`), `overdue`, `today`, `tomorrow`, `no_due` — обрабатываются в `useMemo tasks` (`AdminTasks.tsx:88–127`).
-Отдельные селекты: `assignee` (включая `__unassigned__`), `typeId` (по `crm_task_types`), `status` (`open`/`done`/`canceled`/`all`).
-Поиск — debounced 250мс → RPC `crm_task_list._filters.search`.
+- `DialogContent`: `bg-white/85 backdrop-blur-xl border-white/60 shadow-2xl rounded-2xl`.
+- Шапка с тонкой акцентной линией цвета типа задачи.
+- Форма секционирована: Основное / Сроки / Назначение / Результат — каждая секция в полупрозрачном `bg-slate-50/60 rounded-xl`.
+- CTA «Сохранить» — градиент `from-sky-500 to-indigo-500`.
 
+### 4. Smoke-проверка
 
-| Фильтр        | Статус                            |
-| ------------- | --------------------------------- |
-| мои           | ✅ (quick=mine → assignee_user_id) |
-| все           | ✅ (quick=all + status=all)        |
-| просроченные  | ✅ (quick=overdue)                 |
-| сегодня       | ✅ (quick=today)                   |
-| завтра        | ✅ (quick=tomorrow)                |
-| без срока     | ✅ (quick=no_due)                  |
-| ответственный | ✅ (селект + `__unassigned__`)     |
-| тип           | ✅ (селект по types)               |
-| статус        | ✅ (open / done / canceled / all)  |
+- TASK-ID нигде не виден: канбан, список, диалог Edit/Create, секция «Задачи» в сделке и контакте.
+- Создание/смена ответственного → уведомление приходит в Telegram назначенному (тест-аккаунт с привязкой).
+- Канбан/Список, фильтры, бейдж задач в карточке сделки — работают как раньше.
 
+## Файлы под изменения
 
-## 5. Что изменено в файлах (add-only к фронту)
+- `src/components/admin/tasks/board/TaskKanbanCard.tsx`
+- `src/components/admin/tasks/board/TaskKanbanBoard.tsx` (проброс `accent` bucket'а)
+- `src/components/admin/tasks/EditCrmTaskDialog.tsx`
+- `src/components/admin/tasks/CreateCrmTaskDialog.tsx`
+- `src/components/admin/tasks/TasksListView.tsx`
+- `src/components/admin/tasks/CrmTasksSection.tsx`
 
-- `src/pages/admin/AdminTasks.tsx` — переписан: 5-колоночный канбан + табы Канбан/Список, фильтр-бар, дебаунс поиска, клиентское сужение по quick-бакетам, открытие сделки в новой вкладке.
-- `src/components/admin/tasks/CreateCrmTaskDialog.tsx` — `DateTimePickerField`, поле «Ответственный» с `useStaffOptions`, дефолт-офсеты из типа.
-- `src/components/admin/tasks/EditCrmTaskDialog.tsx` — `DateTimePickerField`, ISO-state, поле «Ответственный».
-- `src/components/admin/tasks/DateTimePickerField.tsx` — новый wrapper над каноническим `DateTimePicker` (ISO ⇄ Date).
-- `src/components/admin/tasks/board/TaskKanbanBoard.tsx` — новый, 5 колонок (Просроченные/Сегодня/Завтра/Позже/Без срока).
-- `src/components/admin/tasks/board/TaskKanbanCard.tsx` — новый, премиум-карточка с цветным акцентом, всеми атрибутами из п.3.
-- `src/components/admin/tasks/filters/TasksFiltersBar.tsx` — новый, quick-табы + 3 селекта + поиск.
-- `src/components/admin/tasks/TasksListView.tsx` — обновлён, плоский список под те же фильтры/типы.
-- `src/hooks/useTaskRelations.ts` — новый batch-loader `orders_v2` + `profiles` для карточек.
-- `src/components/admin/deals/KanbanDealCard.tsx` — **изменений в этом UI-fix не было**, бейдж задач из предыдущего спринта; см. п.7 ниже.
+## Что НЕ трогаем
 
-## 6. БД, RPC, RLS, миграции
+- БД, RPC, edge functions, pg_cron, схему `crm_tasks`.
+- Логику фильтров, колонок канбана, бейджа задач в карточке сделки.
 
-Подтверждено: не трогались. В этом UI-fix чисто фронт + хуки. `crm_tasks`, `crm_task_types`, `crm_task_notifications`, `crm_task_automation_rules`, RPC `crm_task_list/create/update_status/reassign`, RLS, GRANT, view `crm_deal_task_summary_v` — без изменений.
+## DoD
 
-## 7. Что НЕ закрыто этим спринтом и требует отдельного шага
-
-**Кликабельность бейджа задач в карточке сделки** — не реализована. В `src/components/admin/deals/KanbanDealCard.tsx:258–282` бейдж отрисован как `<div>` без `onClick`/ссылки. По задаче ожидался переход в `/admin/tasks?deal=<id>` (или открытие задачи) при клике на бейдж.
-
-Предлагаемая добивка (отдельным мелким патчем, только фронт):
-
-1. В `KanbanDealCard.tsx` обернуть бейдж в `<button type="button">` с `onClick={(e) => { e.stopPropagation(); navigate(\`/admin/tasks?deal=${deal.id}); }}`и`title="Открыть задачи по сделке"`.
-2. В `AdminTasks.tsx` прочитать `?deal=` из `useSearchParams` и подставить в `rpcFilters.deal_id`; в `TasksFiltersBar` показать чип «Сделка: PUB-ID ✕» со сбросом.
-3. Без правок в БД/RPC/RLS — `crm_task_list` уже принимает `deal_id`.
-
-DoD добивки: клик по бейджу в `/admin/deals` → открывается `/admin/tasks?deal=<uuid>`, список отфильтрован, чип сброса работает, повторный клик не ломает stopPropagation карточки сделки.
-
-Жду подтверждения на применение п.7 — после approve выполню одним патчем.
+1. TASK-ID не виден ни в одной точке UI.
+2. Карточки и диалоги в glass-стиле в палитре канбана.
+3. В select ответственного — аватар + пометка отсутствия Telegram.
+4. Smoke-уведомление в Telegram назначенному прошло.
