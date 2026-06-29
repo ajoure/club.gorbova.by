@@ -1,6 +1,3 @@
-import { Search } from "lucide-react";
-
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,7 +10,8 @@ import {
 import { cn } from "@/lib/utils";
 
 import { useStaffOptions } from "@/hooks/useStaffOptions";
-import type { CrmTaskType } from "@/hooks/useCrmTasks";
+import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
+import { TasksGlobalSearchPopover } from "./TasksGlobalSearchPopover";
 
 export type QuickTab = "mine" | "all" | "overdue" | "today" | "tomorrow" | "no_due";
 
