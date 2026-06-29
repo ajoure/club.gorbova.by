@@ -111,20 +111,8 @@ export function ApplyTariffRulesToUserDialog({
     enabled: open,
   });
 
-  // Load users (only when not fixed)
-  const { data: users = [] } = useQuery({
-    queryKey: ["apply-rules-users"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("user_id, email, full_name")
-        .not("user_id", "is", null)
-        .order("full_name");
-      return data || [];
-    },
-    enabled: open && !fixedUserId,
-    staleTime: 2 * 60 * 1000,
-  });
+  // Users no longer pre-loaded — поиск через ContactPickerDialog (admin-search-profiles).
+
 
   // Load access_rules for selected tariff to extract candidate target products
   const { data: rulesForTariff = [] } = useQuery({
