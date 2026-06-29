@@ -63,7 +63,7 @@ interface QuestionsContentProps {
 }
 
 function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs, sortOrder }: QuestionsContentProps) {
-  const { data: questionsRaw, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
+  const { data: questionsRaw, isLoading, isError, error, refetch, isFetching } = useKbQuestions({ searchQuery, limit: 200 });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
 
@@ -108,6 +108,22 @@ function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs, sortOrder
     );
   }
 
+  // Separate error-state from empty-state: do not mask fetch failures as "no data"
+  if (isError) {
+    return (
+      <GlassCard className="text-center py-12">
+        <MessageCircleQuestion className="h-12 w-12 text-destructive/60 mx-auto mb-4" />
+        <p className="text-foreground font-medium mb-2">Не удалось загрузить вопросы</p>
+        <p className="text-sm text-muted-foreground mb-4">
+          {error instanceof Error ? error.message : "Произошла ошибка при загрузке. Попробуйте обновить страницу."}
+        </p>
+        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+          {isFetching ? "Обновляем…" : "Повторить попытку"}
+        </Button>
+      </GlassCard>
+    );
+  }
+
   if (!questions || questions.length === 0) {
     return (
       <GlassCard className="text-center py-12">
@@ -118,6 +134,7 @@ function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs, sortOrder
       </GlassCard>
     );
   }
+
 
   return (
     <div className="space-y-6">

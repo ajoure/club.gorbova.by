@@ -71,7 +71,10 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
       }
 
       const { data, error } = await query;
-      if (error) throw error;
+      if (error) {
+        console.error("[useKbQuestions] fetch error", error);
+        throw error;
+      }
 
       // Client-side search if query provided (FTS would be better but this works for now)
       let filtered = data as unknown as KbQuestion[];

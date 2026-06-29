@@ -1,434 +1,299 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-## **1. Разделить два блока**
+## **1. План принимается, root cause валидный**
 
-План содержит два независимых направления:
+Диагноз выглядит точным:
 
 ```text
-PATCH-DEMO-TRIAL-USER-ID-RESOLUTION / BACKFILL / RESOLVER
-PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE
+PostgREST падает на permission denied for table kb_questions
+UI маскирует ошибку под empty-state
 ```
 
-Их нельзя смешивать в один execute/report.
+Это объясняет все наблюдения:
 
-Приоритет:
+- `/knowledge` доступен;
+- раздел не закрыт;
+- skeleton висит долго;
+- потом появляется «Вопросы ещё не добавлены»;
+- фактически контент есть: `kb_questions = 669`;
+- ошибка не trial-specific, а общая для всех обычных пользователей.
+
+---
+
+## **2. GRANT — approved, но проверить связанные embedded-таблицы**
+
+Хук делает embedded select:
 
 ```text
-1. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
-2. BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH dry-run
-3. Sweep после approve dry-run
-4. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK — только если нужен defense-in-depth
-5. PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE — отдельным мини-патчем
+kb_questions with training_lessons → training_modules
+```
+
+Поэтому одного `GRANT SELECT ON kb_questions TO authenticated` может быть недостаточно.
+
+До execute проверить grants/RLS также на:
+
+```text
+training_lessons
+training_modules
+```
+
+Если PostgREST embedded select требует доступ к этим таблицам, добавить минимальные read grants:
+
+```sql
+GRANT SELECT ON public.training_lessons TO authenticated;
+GRANT SELECT ON public.training_modules TO authenticated;
+GRANT ALL ON public.training_lessons TO service_role;
+GRANT ALL ON public.training_modules TO service_role;
+```
+
+Но только если эти таблицы реально участвуют в публичном `/knowledge` query и у них нет нужных grants.
+
+В отчёте показать:
+
+```text
+kb_questions grant: PASS
+training_lessons grant: PASS / not required
+training_modules grant: PASS / not required
 ```
 
 ---
 
-## **2. Root cause по demo trial принять как P0**
 
-Диагноз выглядит валидным:
 
-```text
-orders_v2.profile_id = реальный профиль
-orders_v2.user_id = фантомный payer/user
-entitlements.profile_id = реальный профиль
-entitlements.user_id = фантомный payer/user
-get_user_section_access фильтрует entitlements.user_id = auth.uid()
-```
 
-Итог:
+
+## **3.**
+
+`anon` **не грантить**
+
+Согласен:
 
 ```text
-оплата/активация есть, entitlement есть, но доступ закрыт из-за user_id mismatch
+anon GRANT не нужен
 ```
 
-Это P0, потому что пользователь видит закрытую «Базу знаний» после успешной демо-активации.
+Раздел требует login + `get_user_section_access`.  
+Открывать `kb_questions` для `anon` нельзя.
 
 ---
 
-## **3. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION — approved, но уточнить SOT**
+## **4. RLS не переписывать без необходимости**
 
-Главное правило:
-
-```text
-для no-card trial залогиненного пользователя SOT user_id = auth.uid()
-```
-
-Но нужно уточнить различие:
-
-- `profile_id` — профиль/CRM-якорь;
-- `user_id` — Supabase auth user;
-- в нормальной модели они могут совпадать, но нельзя это предполагать глобально.
-
-Поэтому DoD формулировать так:
+Согласен:
 
 ```text
-orders_v2.user_id = authenticated auth.uid()
-entitlements.user_id = authenticated auth.uid()
-orders_v2.profile_id = profile.id, соответствующий auth.uid()
-entitlements.profile_id = profile.id, соответствующий auth.uid()
+RLS policies не трогать
 ```
 
-А не просто:
-
-```text
-user_id = profile_id
-```
-
-Если в текущей системе `profiles.id === auth.users.id`, это можно подтвердить в discovery и только тогда использовать как invariant.
+Если `authenticated SELECT USING (true)` уже есть, проблема именно в table grants, не в policy.
 
 ---
 
-## **4. Нельзя ломать public-link recipient semantics**
+## **5. Service role GRANT аккуратно**
 
-В плане правильно упомянуто:
+`GRANT ALL TO service_role` допустим, но в отчёте нужно показать, зачем он нужен.
 
-```text
-Public Link user_id = recipient, not payer
-```
-
-Это критично.
-
-Нужно зафиксировать:
+Если service role уже bypasses RLS, всё равно table privilege может быть нужен PostgREST/SQL-контексту. Достаточно зафиксировать:
 
 ```text
-PATCH-DEMO-TRIAL-USER-ID-RESOLUTION применяется только к SITE demo/no-card trial flow
+service_role grant added for operational/API compatibility
 ```
 
-Не переписать глобально все public-link платежи так, чтобы `user_id` стал payer вместо recipient.
+---
 
-Guard для fix должен быть узким:
+## **6. Frontend error-state обязателен**
+
+Исправление grants решит текущий баг, но UI всё равно надо починить, потому что сейчас любая ошибка превращается в:
+
+```text
+Вопросы ещё не добавлены
+```
+
+Это неверно.
+
+Approved:
+
+- `useKbQuestions` отдаёт `isError`, `error`, `refetch`;
+- `Knowledge.tsx` показывает отдельный error-state;
+- empty-state показывается только при успешном `200` и пустом массиве.
+
+---
+
+
+
+
+
+## **7.**
+
+`onError` **в React Query проверить по версии**
+
+Если используется TanStack Query v5, `onError` в `useQuery` мог быть удалён/изменён.
+
+Не завязываться строго на `onError`. Можно логировать так:
 
 ```ts
-isTrial === true
-paymentAmount === 0
-requiresCardTokenization === false
-order.meta?.source === 'trial_no_card'
+useEffect(() => {
+  if (isError) console.error("[useKbQuestions]", error);
+}, [isError, error]);
 ```
 
-И только для этого flow использовать `auth.uid()` как `user_id`.
+Главное — не сломать hook.
 
 ---
 
-## **5. Анонимный no-card trial уточнить**
+## **8. Error-state smoke не делать через permanent code change**
 
 Фраза:
 
 ```text
-Если покупатель анонимен — оставляем текущий путь (user_id = NULL/гость)
+временно вернуть select=* с несуществующим столбцом
 ```
 
-нуждается в точной реализации.
+Допустимо только локально/в тесте, не в прод-коде.
 
-Для anonymous trial нельзя создавать entitlement на произвольный phantom `user_id`.
+Лучше:
 
-Допустимые варианты:
+- Playwright route mock `kb_questions → 500`;
+- или локальный dev временный mock;
+- или unit/integration test.
 
-```text
-A. no-card trial требует auth/session; anonymous получает требование войти/создать аккаунт
-B. anonymous checkout создаёт нового auth user и затем использует именно его auth.uid
-C. anonymous order создаётся без grant до завершения account-linking
-```
-
-Лучший для текущего продукта вариант: **A или B**, но не `phantom user_id`.
-
-В плане нужно явно выбрать один вариант.
+В отчёте указать, что это не попало в deploy.
 
 ---
 
-## **6. Backfill должен чинить и orders_v2, и entitlements**
+## **9. Verify под Safari/WebKit**
 
-Согласен с задачей 2, но dry-run должен показать обе группы:
-
-```text
-orders_v2 user_id mismatch
-entitlements user_id mismatch
-```
-
-И связь:
+Согласен, но URL лучше проверять на том же домене, где пользователь видит проблему:
 
 ```text
-orders_v2.id → entitlements.source_order_id/order_id/meta.order_id
+https://gorbova.by/knowledge
 ```
 
-Если entitlement не имеет прямого `order_id`, использовать реальные поля:
-
-- `source_event_id`;
-- `source_order_id`;
-- `metadata/meta`;
-- `access_grant_ledger.source_order_id`;
-- `target_key`;
-- `product_id + profile_id + created_at window`.
-
-Не делать sweep, пока join не доказан.
+`gorbova.lovable.app` можно использовать как дополнительный smoke, но primary proof — `gorbova.by`.
 
 ---
 
-## **7. Backfill criteria сузить**
+## **10. Проверить section access перед content query**
 
-Текущий критерий:
-
-```text
-user_id ≠ profile_id AND user_id отсутствует в profiles
-```
-
-недостаточен.
-
-Добавить обязательные признаки no-card demo:
+В runtime proof показать оба шага:
 
 ```text
-orders_v2.meta->>'source' = 'trial_no_card'
-orders_v2.is_trial = true
-orders_v2.paid_amount = 0
-orders_v2.status = 'paid'
-orders_v2.offer_id = 891c7fe0-eb9d-4853-a1d5-bb69d688c801
-orders_v2.tariff_id = 85863b4b-c5e4-4f43-884d-2bdbe48d3914
-orders_v2.product_id = 3ea08f79-afe8-4361-81fe-4c0f318f9a2b
+get_user_section_access('knowledge') = true
+kb_questions query = 200, rows > 0
 ```
 
-Чтобы случайно не исправить легитимные recipient/payer сценарии.
+Иначе можно спутать доступ к разделу и загрузку контента.
 
 ---
 
+## **11. Проверить, что пустое состояние реально осталось для пустого ответа**
 
+После error-state fix добавить smoke:
 
-## **8. Runtime smoke по**
+```text
+successful query with [] → “Вопросы ещё не добавлены”
+failed query → “Не удалось загрузить вопросы”
+successful query with rows → карточки вопросов
+```
 
-`get_user_section_access`
+То есть 3 состояния для контента:
 
-Обязательный proof после fix/backfill:
+```text
+loading / error / empty / content
+```
+
+---
+
+## **12. Финальный отчёт**
+
+Заголовок:
+
+```text
+Отчет о выполненной работе: PATCH-KNOWLEDGE-CONTENT-EMPTY-FOR-TRIAL
+```
+
+Финальные строки:
+
+```text
+kb_questions authenticated grant: PASS
+embedded tables grants checked: PASS
+trial user section access: PASS
+trial user questions_count > 0: PASS
+admin/user query parity: PASS
+network 200 body array: PASS
+error-state separated from empty-state: PASS
+Safari/WebKit private smoke: PASS
+no-card trial subscriptions_v2 unchanged +0: PASS
+PATCH-KNOWLEDGE-CONTENT-EMPTY-FOR-TRIAL: PASS
+```
+
+После этих правок план можно выполнять.
+
+План: PATCH-KNOWLEDGE-CONTENT-EMPTY-FOR-TRIAL
+
+## Diagnose (выполнено)
+
+1. **Источник списка вопросов** на `/knowledge` → хук `src/hooks/useKbQuestions.ts` → прямой select на таблицу `public.kb_questions` с embedded `training_lessons → training_modules`.
+2. **RLS на `kb_questions**`: 2 политики:
+  - `kb_questions_admin_all` — ALL для admin/superadmin
+  - `kb_questions_select_authenticated` — SELECT `USING (true)` для роли `authenticated`
+   Содержимое: 669 строк. Семантически — раздел публичен для всех залогиненных, ограничение пакетом доступа делается через `section_access` (это уже починили предыдущим патчем).
+3. **Root cause найден** — `information_schema.role_table_grants` на `public.kb_questions`:
+  ```
+   grantee       | privilege
+   sandbox_exec  | INSERT
+   sandbox_exec  | SELECT
+  ```
+   **Нет ни одного GRANT'а ни для `anon`, ни для `authenticated`, ни для `service_role`.** PostgREST под ролью `authenticated` возвращает `permission denied for table kb_questions` ещё до проверки RLS. React-query ловит ошибку, `data=undefined`, `isLoading=false` → UI рендерит "Вопросы ещё не добавлены" (см. `Knowledge.tsx:111-120`).
+4. **Почему админ "видит" контент** — админ обычно работает через `/admin/kb-import` (другая страница, тот же запрет, но он там не смотрит список). Реально 0 вопросов сейчас видят ВСЕ пользователи на `/knowledge`, включая админов; пользователь триала просто первым заметил.
+5. **Empty-state vs error-state** — хук игнорирует `isError`; страница смотрит только на `isLoading` и пустоту массива → любая ошибка тихо превращается в "Вопросы ещё не добавлены".
+
+Это **не trial-specific** и не связано с `subscriptions_v2` / entitlements: после правки GRANT кейс закрывается одинаково и для trial, и для платных, и для админа. Никакой подмены модели доступа делать не нужно.
+
+## Fix
+
+### 1. Миграция: GRANT'ы Data API на `public.kb_questions`
 
 ```sql
-select *
-from get_user_section_access('knowledge')
+GRANT SELECT ON public.kb_questions TO authenticated;
+GRANT ALL    ON public.kb_questions TO service_role;
+-- anon НЕ грантим: раздел требует входа (section_access + RLS-policy для authenticated)
 ```
 
-или фактический контракт RPC, но под session/auth тест-пользователя `1@ajoure.by`.
-
-Ожидание:
-
-```text
-section = knowledge
-has_access = true
-matched entitlement/order = 030ecdb7-…
-source product_id = 3ea08f79-…
-tariff_id = 85863b4b-…
-expires_at >= now()
-```
-
----
-
-## **9. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK — не делать до backfill без отдельного approve**
-
-Эта задача потенциально опаснее, чем кажется.
-
-Fallback по `profile_id = auth.uid()` допустим только если доказано:
-
-```text
-profiles.id всегда равен auth.users.id
-```
-
-Иначе можно случайно открыть доступ не тому пользователю.
-
-Пока лучше порядок такой:
-
-```text
-1. Fix write-path
-2. Backfill affected rows
-3. Проверить, что resolver начал работать без fallback
-4. Только потом решать, нужен ли profile fallback как defense-in-depth
-```
-
-То есть задача 3 — **опциональная, не выполнять автоматически**.
-
----
-
-## **10. UI manual section grant — out of scope**
-
-Согласен.
-
-Сейчас не нужно делать кнопку «выдать секцию руками». Правильный fix:
-
-```text
-чинить write-path + backfill
-```
-
-Manual section grant — отдельная фича, не hotfix.
-
----
-
-## **11. Отчёты по demo/access блоку**
-
-Нужны отдельные отчёты:
-
-```text
-Отчет о выполненной работе: PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
-```
-
-Финальные строки:
-
-```text
-authenticated no-card trial user_id resolution: PASS
-orders_v2 user_id/profile_id shape: PASS
-entitlements user_id/profile_id shape: PASS
-no phantom user_id created: PASS
-knowledge section access smoke: PASS
-guest/public-link regression: PASS
-PATCH-DEMO-TRIAL-USER-ID-RESOLUTION: PASS
-```
-
-Для dry-run:
-
-```text
-Отчет о выполненной работе: BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run
-```
-
-Финальные строки:
-
-```text
-affected orders identified: PASS
-affected entitlements identified: PASS
-safe join order→entitlement proven: PASS
-risk rows excluded: PASS
-dry-run candidate list ready: PASS
-BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run: PASS/PARTIAL/FAIL
-```
-
-Sweep — только после отдельного approve.
-
----
-
-## **12. Safari prod-evidence — approved as separate mini-patch**
-
-План `PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE` принимается как отдельный read-only proof.
-
-Но исправить формулировку:
-
-```text
-Yandex = Chromium-based, не WebKit
-```
-
-Не использовать Yandex как доказательство Safari/WebKit.
-
-DoD оставить:
-
-```text
-Chrome normal: OK / NotFound / FetchError
-Chrome incognito: OK / NotFound / FetchError
-WebKit normal: OK / NotFound / FetchError
-WebKit private: OK / NotFound / FetchError
-Yandex UA: OK / NotFound / FetchError
-Network site_pages: status / error
-Console fetch err: present/absent
-Service worker: present/absent
-Bundle hash: ...
-```
-
-Если не воспроизводится:
-
-```text
-PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE: PARTIAL — not reproduced, HAR needed from affected browser
-```
-
----
-
-## **Итог**
-
-```text
-PATCH-DEMO-TRIAL-USER-ID-RESOLUTION: APPROVED with auth.uid/public-link safeguards
-BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run: APPROVED after write-path fix
-PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK: HOLD / separate approve only
-PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE: APPROVED as separate read-only mini-patch
-
-План: «Тест Тестовый» оплатил, но «База знаний» закрыта
-```
-
-### Что обнаружено (Diagnose)
-
-1. **Пользователь:** `1@ajoure.by` / `Тест Тестовый`, `profile.id = 5ec52e5f-424c-4486-82e6-301c3d4af9c8`.
-2. **Оплаченный заказ** (29.06.2026, демо-доступ 24 часа): `orders_v2.id = 030ecdb7-…`
-  - `product_id = 3ea08f79` (Gorbova Club — идеология)
-  - `tariff_id = 85863b4b` («Доступ к +600 ответов»)
-  - `profile_id = 5ec52e5f` ✅ (тест-пользователь)
-  - `user_id = 37e91f59-e4db-4840-b9c9-e760e634ddd1` ❌ (этого `auth.uid` в `profiles` НЕТ — «фантомный» payer)
-3. **Раздел `/knowledge**` (`app_sections.id = 93448ee2`) имеет `access_rules`:
-  - rule `5f19be94`: product `3ea08f79` + tariff `85863b4b` → даёт доступ к секции `knowledge`. ✅ Тариф совпадает с покупкой.
-4. **Создан entitlement** `748c6423`: `product_id = 3ea08f79`, `status = active`, `expires_at = 30.06.2026`, НО:
-  - `profile_id = 5ec52e5f` (правильно)
-  - `user_id = 37e91f59` (привязан к «фантому», а не к тест-пользователю)
-5. **RPC `get_user_section_access**` фильтрует по `entitlements.user_id = auth.uid()` (а `auth.uid()` тест-пользователя = `5ec52e5f`). Поэтому RPC возвращает `has_access = false` и UI рисует `SectionLockedState`.
-
-### Root cause
-
-Демо-трайл-флоу с CTA `SITE-000018` пишет `orders_v2.user_id` и далее `entitlements.user_id` из контекста публичной ссылки/брайджа, а не из `auth.uid()` залогиненного покупателя. В результате entitlement создаётся под чужим (не существующим в `profiles`) `auth.uid`, и резолвер доступа его не находит. `profile_id` проставлен корректно — это единственный «правильный» якорь к тест-пользователю.
-
-Это системный баг: то же самое будет у любого залогиненного покупателя демо-трайла через сайтовый CTA.
-
-### Что сделать
-
-Разбить на 3 отдельных задачи. Все шаги: Diagnose → Plan → Dry run → Execute → Verify, на каждом — DoD.
-
-#### Задача 1. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
-
-Исправить `bepaid-create-token` / `grant-access-for-order` для no-card демо-трайла, чтобы `orders_v2.user_id` и `entitlements.user_id` брались из `auth.uid()` авторизованного покупателя, а не из payer-контекста публичной ссылки. Если покупатель анонимен — оставляем текущий путь (user_id = NULL/гость), но запрещаем привязывать к произвольному «фантому».
-
-DoD:
-
-- Новый демо-трайл, оформленный залогиненным пользователем, создаёт `orders_v2`/`entitlements` с `user_id = auth.uid() = profile_id`.
-- Runtime-smoke под `1@ajoure.by`: `get_user_section_access` отдаёт `has_access = true` для секции `knowledge`.
-- Регрессионный тест на гостевую оплату публичной ссылки (recipient = link.user_id) не сломан.
-
-#### Задача 2. BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH (dry-run + согласование + sweep)
-
-Найти все entitlements/orders_v2 после внедрения no-card демо-трайла, у которых `user_id ≠ profile_id` И `user_id` отсутствует в `profiles`. Привести `user_id` к `profile_id` атомарно, с audit. Сначала dry-run, потом согласование списка, потом sweep.
-
-DoD:
-
-- Dry-run-отчёт по числу и составу строк.
-- После sweep тест-пользователь (и любые другие пострадавшие) видит «База знаний» без 24-часового ожидания нового заказа.
-- `audit_logs` содержит запись `patch=backfill_demo_trial_user_id_v1`.
-
-#### Задача 3. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK (опционально, защита в глубину)
-
-Расширить `get_user_section_access`: помимо `subscriptions_v2.user_id` и `entitlements.user_id` учитывать `profile_id = auth.uid()` (для случаев, когда `user_id` исторически разъехался с `profile_id`). Меняет только SELECT, не write-path.
-
-DoD:
-
-- Тот же smoke даёт `has_access = true` даже без бэкфилла из задачи 2.
-- Регресс: пользователь без своего entitlement не получает чужого доступа (проверить, что профиль ≠ чужой user_id).
-
-### Про UI (ответ на «как это сделать через UI»)
-
-Сейчас «выдать доступ к секции» через админку напрямую нельзя — секция управляется только правилами `access_rules` (product/tariff → section). Доступ конкретному пользователю появляется автоматически после оплаты соответствующего тарифа. Если нужна именно UI-кнопка «выдать секцию вручную конкретному `user_id`» — это отдельная фича (manual section grant в `/admin/users/:id`), оценить отдельно. Сейчас правильный путь — починить флоу выдачи (задачи 1+2), а не выдавать секцию руками.
-
-### Технические детали
-
-- Файлы: `supabase/functions/bepaid-create-token/index.ts`, `supabase/functions/grant-access-for-order/index.ts`, RPC `public.get_user_section_access`.
-- Таблицы: `orders_v2`, `entitlements`, `subscriptions_v2`, `profiles`, `access_rules`, `app_sections`.
-- Memory к перечитыванию перед патчем: `Public Link user_id = recipient, not payer`, `PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION`, `PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW`, `Canonical Access Sources`.
-
----
-
-### Отдельный блок: follow-up для PATCH-SAFARI-IDEOLOG-404-DISCOVERY
-
-Принято: discovery остался PARTIAL — нужен прод-evidence. Предлагаю отдельный мини-патч `PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE`:
-
-1. Поднять headless Chromium и WebKit (Playwright) против `https://gorbova.by/ideologicheskaya-rabota`:
-  - Chrome normal / incognito.
-  - WebKit (proxy для Safari).
-  - В каждом — собрать: финальный URL, статус DOM (OK/NotFound/FetchError-баннер), наличие `[SiteRenderService:resolveBySlug] fetch error` в console, статус сетевого запроса к `site_pages`, наличие service worker, hash загруженного JS-бандла / deployment id.
-2. По Яндекс.Браузеру: проверить через UA-override Chromium (т.к. Yandex = Chromium); явно зафиксировать, что приватный режим Yandex не использует WebKit-движок.
-3. Отчёт строго по формату:
-  ```
-   Chrome normal:      OK / NotFound / FetchError
-   Chrome incognito:   ...
-   WebKit normal:      ...
-   WebKit private:     ...
-   Yandex UA:          ...
-   Network site_pages: status / error
-   Console fetch err:  present/absent
-   Service worker:     present/absent
-   Bundle hash:        ...
-  ```
-4. Зафиксировать root cause или явно сказать «не воспроизводится, нужен HAR от пользователя».
-
-DoD: все 9 строк отчёта заполнены реальными значениями; либо доказан root cause, либо запрошен HAR.
+RLS не трогаем — текущие политики корректно описывают бизнес-правило ("залогинен → видишь раздел; admin → может писать"). Гейтинг по тарифу делает `get_user_section_access` на уровне страницы.
+
+### 2. Frontend: разделить error и empty в `useKbQuestions` + `Knowledge.tsx`
+
+- `useKbQuestions.ts`: пробросить `isError`, `error` дальше (уже доступны из `useQuery`, просто не использовались).
+- `Knowledge.tsx → QuestionsContent`:
+  - принять `isError` от хука;
+  - при `isError` рендерить отдельный блок «Не удалось загрузить вопросы. Попробуйте обновить страницу» + кнопка Retry (вызов `refetch()`);
+  - оставить существующий empty-state только для реально пустого ответа.
+- Логировать `console.error("[useKbQuestions]", error)` в `onError` запроса, чтобы будущие fetch-ошибки были видны в логах, а не маскировались.
+
+### 3. Verify
+
+- SQL после миграции: `psql -c "SET role authenticated; SELECT count(*) FROM public.kb_questions;"` → 669.
+- Playwright под триал-аккаунтом `1@ajoure.by` (auth.uid `37e91f59`): `/knowledge` → таб «Вопросы» → ожидаем >0 карточек, без skeleton-залипания. Скриншот в отчёт.
+- Playwright Safari/WebKit (normal + private) поверх `https://gorbova.lovable.app/knowledge` после деплоя — тот же ассерт, чтобы закрыть пункт "Safari private smoke".
+- Network: запрос `kb_questions?select=...` → 200, тело — массив, не `42501 permission denied`.
+- Error-state smoke: временно вернуть `select=*` с несуществующим столбцом → убедиться, что UI показывает блок «Не удалось загрузить», а не "Вопросы ещё не добавлены".
+
+## Out of scope
+
+- Не выдаём ручной доступ.
+- Не добавляем admin bypass.
+- Не меняем тарифные правила и `get_user_section_access`.
+- Не возвращаем `subscriptions_v2` для no-card trial.
+- Не переписываем RLS на `kb_questions` — текущие политики верны.
+
+## DoD
+
+- `GRANT SELECT TO authenticated` и `GRANT ALL TO service_role` на `public.kb_questions` зафиксированы миграцией: PASS
+- trial user `/knowledge` → questions_count > 0: PASS
+- admin user тот же запрос → questions_count = trial questions_count: PASS
+- no-card trial subscriptions_v2 +0 (не создаём подписку): PASS (не трогаем этот путь)
+- `useKbQuestions` отдаёт `isError`; `Knowledge.tsx` рендерит отдельный error-state с retry: PASS
+- Playwright WebKit normal + private поверх прод-домена: PASS
+- Network 200, тело-массив: PASS
+- PATCH-KNOWLEDGE-CONTENT-EMPTY-FOR-TRIAL: PASS
