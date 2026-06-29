@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { parseISO } from "date-fns";
-import { Columns3, LayoutList, Plus, X } from "lucide-react";
+import { BarChart3, Columns3, LayoutList, Plus, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialo
 import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
 import { TaskKanbanBoard } from "@/components/admin/tasks/board/TaskKanbanBoard";
 import { TasksListView } from "@/components/admin/tasks/TasksListView";
+import { TasksStaffStatsPanel } from "@/components/admin/tasks/stats/TasksStaffStatsPanel";
 import {
   TasksFiltersBar,
   type TasksFiltersValue,
@@ -34,7 +35,7 @@ const DEFAULT_FILTERS: TasksFiltersValue = {
 export default function AdminTasks() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dealFilter = searchParams.get("deal");
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "list" | "stats">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
@@ -175,7 +176,7 @@ export default function AdminTasks() {
         </div>
       )}
 
-      <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
+      <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list" | "stats")}>
         <TabsList>
           <TabsTrigger value="board">
             <Columns3 className="h-4 w-4 mr-1" />
@@ -184,6 +185,10 @@ export default function AdminTasks() {
           <TabsTrigger value="list">
             <LayoutList className="h-4 w-4 mr-1" />
             Список
+          </TabsTrigger>
+          <TabsTrigger value="stats">
+            <BarChart3 className="h-4 w-4 mr-1" />
+            Статистика
           </TabsTrigger>
         </TabsList>
 
@@ -206,6 +211,10 @@ export default function AdminTasks() {
           ) : (
             <TasksListView tasks={tasks} types={types} onOpenTask={setEditTask} />
           )}
+        </TabsContent>
+
+        <TabsContent value="stats" className="mt-4">
+          <TasksStaffStatsPanel />
         </TabsContent>
       </Tabs>
 
