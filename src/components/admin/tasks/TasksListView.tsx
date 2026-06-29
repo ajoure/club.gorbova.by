@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -16,6 +16,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   Table,
@@ -33,6 +34,7 @@ import {
 } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTaskRelations } from "@/hooks/useTaskRelations";
+import { TasksBulkActionsBar } from "./TasksBulkActionsBar";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Phone,
@@ -94,108 +96,165 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
 
   const updateStatus = useUpdateCrmTaskStatus();
 
+  // Selection
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Reset selection that no longer exists in the current task slice.
+  useEffect(() => {
+    setSelected((prev) => {
+      const ids = new Set(tasks.map((t) => t.id));
+      const next = new Set<string>();
+      prev.forEach((id) => ids.has(id) && next.add(id));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [tasks]);
+
+  const allSelected = tasks.length > 0 && selected.size === tasks.length;
+  const someSelected = selected.size > 0 && !allSelected;
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => (prev.size === tasks.length ? new Set() : new Set(tasks.map((t) => t.id))));
+
   if (tasks.length === 0) {
     return <div className="text-sm text-muted-foreground p-6 text-center">Задач не найдено</div>;
   }
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden bg-card">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[140px]">Дата</TableHead>
-            <TableHead>Ответственный</TableHead>
-            <TableHead>Тип</TableHead>
-            <TableHead>Задача</TableHead>
-            <TableHead>Контакт</TableHead>
-            <TableHead>Сделка</TableHead>
-            <TableHead>Статус</TableHead>
-            <TableHead className="text-right">Действия</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {tasks.map((t) => {
-            const tt = typeMap[t.task_type_id];
-            const Icon = TYPE_ICONS[tt?.icon ?? "CircleDot"] ?? CircleDot;
-            const assignee = t.assignee_user_id ? staffMap[t.assignee_user_id] : null;
-            const deal = t.deal_id ? deals[t.deal_id] : null;
-            const contact = t.contact_id ? contacts[t.contact_id] : null;
-            const overdue = isOverdue(t);
-            return (
-              <TableRow
-                key={t.id}
-                className="cursor-pointer hover:bg-muted/40"
-                onClick={() => onOpenTask(t)}
-              >
-                <TableCell className={cn("whitespace-nowrap", overdue && "text-destructive font-medium")}>
-                  {overdue ? (
-                    <span className="inline-flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3" />
-                      {formatDue(t.due_at)}
-                    </span>
-                  ) : (
-                    formatDue(t.due_at)
+    <div className="space-y-2">
+      {selected.size > 0 && (
+        <TasksBulkActionsBar
+          selectedIds={Array.from(selected)}
+          types={types}
+          onClear={() => setSelected(new Set())}
+        />
+      )}
+
+      <div className="rounded-lg border border-border overflow-hidden bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[36px]">
+                <Checkbox
+                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                  onCheckedChange={toggleAll}
+                  aria-label="Выбрать все задачи на странице"
+                />
+              </TableHead>
+              <TableHead className="w-[140px]">Дата</TableHead>
+              <TableHead>Ответственный</TableHead>
+              <TableHead>Тип</TableHead>
+              <TableHead>Задача</TableHead>
+              <TableHead>Контакт</TableHead>
+              <TableHead>Сделка</TableHead>
+              <TableHead>Статус</TableHead>
+              <TableHead className="text-right">Действия</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tasks.map((t) => {
+              const tt = typeMap[t.task_type_id];
+              const Icon = TYPE_ICONS[tt?.icon ?? "CircleDot"] ?? CircleDot;
+              const assignee = t.assignee_user_id ? staffMap[t.assignee_user_id] : null;
+              const deal = t.deal_id ? deals[t.deal_id] : null;
+              const contact = t.contact_id ? contacts[t.contact_id] : null;
+              const overdue = isOverdue(t);
+              const checked = selected.has(t.id);
+              return (
+                <TableRow
+                  key={t.id}
+                  className={cn(
+                    "cursor-pointer hover:bg-muted/40",
+                    checked && "bg-primary/5",
                   )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {assignee?.label ?? <span className="text-muted-foreground">—</span>}
-                </TableCell>
-                <TableCell>
-                  <span className="inline-flex items-center gap-1.5 text-sm">
-                    <Icon className="h-3.5 w-3.5" style={{ color: tt?.color || undefined }} />
-                    {tt?.label ?? "Задача"}
-                  </span>
-                </TableCell>
-                <TableCell className="max-w-[280px]">
-                  <div className="text-sm font-medium truncate">{t.title}</div>
-                </TableCell>
-                <TableCell className="text-sm">
-                  {contact ? (
-                    <span className="inline-flex items-center gap-1">
-                      <UserIcon className="h-3 w-3" />
-                      {contact.full_name || contact.email || contact.phone || "Контакт"}
+                  onClick={() => onOpenTask(t)}
+                >
+                  <TableCell
+                    className="w-[36px]"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => toggleOne(t.id)}
+                      aria-label="Выбрать задачу"
+                    />
+                  </TableCell>
+                  <TableCell className={cn("whitespace-nowrap", overdue && "text-destructive font-medium")}>
+                    {overdue ? (
+                      <span className="inline-flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        {formatDue(t.due_at)}
+                      </span>
+                    ) : (
+                      formatDue(t.due_at)
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {assignee?.label ?? <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <Icon className="h-3.5 w-3.5" style={{ color: tt?.color || undefined }} />
+                      {tt?.label ?? "Задача"}
                     </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {deal ? (
-                    <Badge variant="outline" className="font-mono text-[10px]">
-                      {deal.public_id ?? deal.id.slice(0, 8)}
+                  </TableCell>
+                  <TableCell className="max-w-[280px]">
+                    <div className="text-sm font-medium truncate">{t.title}</div>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {contact ? (
+                      <span className="inline-flex items-center gap-1">
+                        <UserIcon className="h-3 w-3" />
+                        {contact.full_name || contact.email || contact.phone || "Контакт"}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {deal ? (
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {deal.public_id ?? deal.id.slice(0, 8)}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {STATUS_LABELS[t.status]}
                     </Badge>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {STATUS_LABELS[t.status]}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {t.status !== "done" && t.status !== "canceled" ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        updateStatus.mutate({ taskId: t.id, status: "done" });
-                      }}
-                      disabled={updateStatus.isPending}
-                    >
-                      Готово
-                    </Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+                  </TableCell>
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    {t.status !== "done" && t.status !== "canceled" ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() =>
+                          updateStatus.mutate({ taskId: t.id, status: "done" })
+                        }
+                        disabled={updateStatus.isPending}
+                      >
+                        Готово
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
