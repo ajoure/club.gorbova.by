@@ -242,7 +242,6 @@ export default function AdminIntegrations() {
           </div>
         ) : (
         <div className="mt-6 space-y-6">
-          {activeTab === "crm" && <VochiSettingsCard />}
           {/* All instances */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
