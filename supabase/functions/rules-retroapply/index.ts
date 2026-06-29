@@ -188,6 +188,7 @@ Deno.serve(async (req) => {
       };
       const actions = await processRule(
         supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids, reconcileMode,
+        body.duration_days_override,
       );
       allActions.push(...actions);
     }
