@@ -92,6 +92,7 @@ export function TariffCard({
 
   const payNowOffers = resolvedOffers.filter(o => o.offer_type === "pay_now" && o.is_active !== false);
   const trialOffers = resolvedOffers.filter(o => o.offer_type === "trial" && o.is_active !== false);
+  const preregOffers = resolvedOffers.filter(o => o.offer_type === "preregistration" && o.is_active !== false);
 
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
@@ -99,7 +100,7 @@ export function TariffCard({
   // Price resolution: primaryOffer.amount > card_config.price_display > tariff.current_price > null
   const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
-  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0;
+  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0;
 
   // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
   const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
