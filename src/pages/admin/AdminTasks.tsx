@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { parseISO } from "date-fns";
-import { Columns3, LayoutList, Plus } from "lucide-react";
+import { Columns3, LayoutList, Plus, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
@@ -30,6 +32,8 @@ const DEFAULT_FILTERS: TasksFiltersValue = {
 };
 
 export default function AdminTasks() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dealFilter = searchParams.get("deal");
   const [view, setView] = useState<"board" | "list">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
@@ -42,6 +46,13 @@ export default function AdminTasks() {
 
   const { data: types = [] } = useCrmTaskTypes();
 
+  const clearDealFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("deal");
+    setSearchParams(next, { replace: true });
+  };
+
+
   // Debounce search for RPC
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
@@ -53,6 +64,7 @@ export default function AdminTasks() {
     const f: CrmTaskListFilters = { limit: 500 };
     if (debouncedSearch) f.search = debouncedSearch;
     if (filters.typeId !== "all") f.task_type_id = [filters.typeId];
+    if (dealFilter) f.deal_id = dealFilter;
 
     // Status: quick "overdue/today/tomorrow/no_due" force open scope
     const isQuickDateBucket =
@@ -77,7 +89,7 @@ export default function AdminTasks() {
       f.assignee_user_id = filters.assignee;
     }
     return f;
-  }, [debouncedSearch, filters, currentUserId]);
+  }, [debouncedSearch, filters, currentUserId, dealFilter]);
 
   const { data: rawTasks = [], isLoading } = useCrmTasks(rpcFilters);
 
@@ -146,6 +158,22 @@ export default function AdminTasks() {
       </div>
 
       <TasksFiltersBar value={filters} onChange={setFilters} types={types} />
+
+      {dealFilter && (
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1 pr-1">
+            Сделка: {dealFilter.slice(0, 8)}…
+            <button
+              type="button"
+              onClick={clearDealFilter}
+              className="ml-1 rounded hover:bg-background/50 p-0.5"
+              title="Сбросить фильтр по сделке"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        </div>
+      )}
 
       <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
         <TabsList>
