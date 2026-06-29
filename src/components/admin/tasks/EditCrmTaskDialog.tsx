@@ -66,6 +66,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [result, setResult] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [dealId, setDealId] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!task || !open) return;
@@ -77,6 +79,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
     setResult(task.result_comment ?? "");
     setCommentError(null);
+    setDealId(task.deal_id ?? null);
+    setContactId(task.contact_id ?? null);
   }, [task, open]);
 
   if (!task) return null;
@@ -93,6 +97,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     remind_at: remindAt || null,
     assignee_user_id: assignee === UNASSIGNED ? null : assignee,
     result_comment: result.trim() || null,
+    deal_id: dealId,
+    contact_id: contactId,
   });
 
   // Save: persist field edits without changing status.
