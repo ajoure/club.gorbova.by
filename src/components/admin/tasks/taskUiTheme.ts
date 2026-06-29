@@ -78,25 +78,25 @@ export const TASK_DIALOG_SECTION =
   "rounded-xl bg-white/45 backdrop-blur-md border border-white/60 p-3 space-y-3 " +
   "shadow-[0_2px_10px_-6px_rgba(15,23,42,0.08)]";
 
-// CTA Save (gradient — emerald → teal, premium).
+// CTA Save — пастельный emerald glass.
 export const TASK_DIALOG_SAVE_CTA =
-  "bg-gradient-to-r from-emerald-500 to-teal-500 text-white " +
-  "hover:from-emerald-600 hover:to-teal-600 border-0 shadow-md";
+  "bg-emerald-100/70 text-emerald-800 border border-emerald-200/70 " +
+  "hover:bg-emerald-200/70 backdrop-blur-sm shadow-sm";
 
-// CTA для "Готово" (success — emerald).
+// CTA "Готово" — более насыщенный emerald, но всё ещё пастель.
 export const TASK_DIALOG_DONE_CTA =
-  "bg-gradient-to-r from-emerald-500 to-emerald-600 text-white " +
-  "hover:from-emerald-600 hover:to-emerald-700 border-0 shadow-md";
+  "bg-emerald-200/70 text-emerald-900 border border-emerald-300/70 " +
+  "hover:bg-emerald-300/70 backdrop-blur-sm shadow-sm";
 
-// CTA для "Отменить задачу" (destructive-soft — rose).
+// CTA "Отменить задачу" — пастельный rose.
 export const TASK_DIALOG_CANCEL_CTA =
-  "bg-gradient-to-r from-rose-500 to-rose-600 text-white " +
-  "hover:from-rose-600 hover:to-rose-700 border-0 shadow-md";
+  "bg-rose-100/70 text-rose-800 border border-rose-200/70 " +
+  "hover:bg-rose-200/70 backdrop-blur-sm shadow-sm";
 
-// CTA для "В работу" (warm — amber).
+// CTA "В работу" — пастельный amber.
 export const TASK_DIALOG_INPROGRESS_CTA =
-  "bg-gradient-to-r from-amber-500 to-orange-500 text-white " +
-  "hover:from-amber-600 hover:to-orange-600 border-0 shadow-md";
+  "bg-amber-100/70 text-amber-800 border border-amber-200/70 " +
+  "hover:bg-amber-200/70 backdrop-blur-sm shadow-sm";
 
 // Статус-бейджи (для read-only chip и карточек).
 export const TASK_STATUS_BADGE: Record<string, string> = {
