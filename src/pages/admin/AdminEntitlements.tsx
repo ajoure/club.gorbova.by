@@ -106,6 +106,7 @@ export default function AdminEntitlements() {
   const [search, setSearch] = useState("");
   
   const [grantDialog, setGrantDialog] = useState(false);
+  const [applyRulesDialog, setApplyRulesDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [expiresAt, setExpiresAt] = useState<Date | undefined>();
