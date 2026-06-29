@@ -2997,6 +2997,203 @@ export type Database = {
           },
         ]
       }
+      call_events: {
+        Row: {
+          call_id: string | null
+          created_at: string
+          event_type: string
+          external_call_id: string | null
+          id: string
+          payload: Json
+          process_error: string | null
+          processed_at: string | null
+          provider: string
+          received_at: string
+          signature_ok: boolean | null
+          workspace_id: string | null
+        }
+        Insert: {
+          call_id?: string | null
+          created_at?: string
+          event_type: string
+          external_call_id?: string | null
+          id?: string
+          payload?: Json
+          process_error?: string | null
+          processed_at?: string | null
+          provider?: string
+          received_at?: string
+          signature_ok?: boolean | null
+          workspace_id?: string | null
+        }
+        Update: {
+          call_id?: string | null
+          created_at?: string
+          event_type?: string
+          external_call_id?: string | null
+          id?: string
+          payload?: Json
+          process_error?: string | null
+          processed_at?: string | null
+          provider?: string
+          received_at?: string
+          signature_ok?: boolean | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_events_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      call_sync_queue: {
+        Row: {
+          attempts: number
+          created_at: string
+          dedupe_key: string
+          done: boolean
+          done_at: string | null
+          id: string
+          job_type: string
+          last_error: string | null
+          max_attempts: number
+          next_run_at: string
+          payload: Json
+          provider: string
+          updated_at: string
+          workspace_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dedupe_key: string
+          done?: boolean
+          done_at?: string | null
+          id?: string
+          job_type: string
+          last_error?: string | null
+          max_attempts?: number
+          next_run_at?: string
+          payload?: Json
+          provider?: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dedupe_key?: string
+          done?: boolean
+          done_at?: string | null
+          id?: string
+          job_type?: string
+          last_error?: string | null
+          max_attempts?: number
+          next_run_at?: string
+          payload?: Json
+          provider?: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
+      calls: {
+        Row: {
+          answered_at: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          deal_id: string | null
+          direction: Database["public"]["Enums"]["call_direction"]
+          duration_seconds: number | null
+          ended_at: string | null
+          external_call_id: string
+          id: string
+          link_status: Database["public"]["Enums"]["call_link_status"]
+          manager_user_id: string | null
+          metadata: Json
+          phone_from_e164: string | null
+          phone_from_raw: string | null
+          phone_to_e164: string | null
+          phone_to_raw: string | null
+          provider: string
+          public_id: string | null
+          recording_provider: string | null
+          recording_ready_at: string | null
+          recording_stored: boolean
+          recording_url: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["call_status"]
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          answered_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          direction: Database["public"]["Enums"]["call_direction"]
+          duration_seconds?: number | null
+          ended_at?: string | null
+          external_call_id: string
+          id?: string
+          link_status?: Database["public"]["Enums"]["call_link_status"]
+          manager_user_id?: string | null
+          metadata?: Json
+          phone_from_e164?: string | null
+          phone_from_raw?: string | null
+          phone_to_e164?: string | null
+          phone_to_raw?: string | null
+          provider?: string
+          public_id?: string | null
+          recording_provider?: string | null
+          recording_ready_at?: string | null
+          recording_stored?: boolean
+          recording_url?: string | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["call_status"]
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          answered_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          direction?: Database["public"]["Enums"]["call_direction"]
+          duration_seconds?: number | null
+          ended_at?: string | null
+          external_call_id?: string
+          id?: string
+          link_status?: Database["public"]["Enums"]["call_link_status"]
+          manager_user_id?: string | null
+          metadata?: Json
+          phone_from_e164?: string | null
+          phone_from_raw?: string | null
+          phone_to_e164?: string | null
+          phone_to_raw?: string | null
+          provider?: string
+          public_id?: string | null
+          recording_provider?: string | null
+          recording_ready_at?: string | null
+          recording_stored?: boolean
+          recording_url?: string | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["call_status"]
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
       card_profile_links: {
         Row: {
           card_brand: string | null
@@ -7336,6 +7533,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      integration_credentials: {
+        Row: {
+          config: Json
+          created_at: string
+          created_by: string | null
+          display_name: string | null
+          id: string
+          last_checked_at: string | null
+          last_error: string | null
+          provider: string
+          secrets: Json
+          status: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          created_by?: string | null
+          display_name?: string | null
+          id?: string
+          last_checked_at?: string | null
+          last_error?: string | null
+          provider: string
+          secrets?: Json
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          created_by?: string | null
+          display_name?: string | null
+          id?: string
+          last_checked_at?: string | null
+          last_error?: string | null
+          provider?: string
+          secrets?: Json
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: []
       }
       integration_field_mappings: {
         Row: {
@@ -18413,6 +18658,18 @@ export type Database = {
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
+      call_direction: "inbound" | "outbound"
+      call_link_status: "unresolved" | "linked" | "manual" | "rejected"
+      call_status:
+        | "queued"
+        | "ringing"
+        | "answered"
+        | "no_answer"
+        | "busy"
+        | "failed"
+        | "completed"
+        | "voicemail"
+        | "cancelled"
       club_member_final_status:
         | "verified_paid"
         | "verified_staff"
@@ -18609,6 +18866,19 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["user", "admin", "superadmin"],
+      call_direction: ["inbound", "outbound"],
+      call_link_status: ["unresolved", "linked", "manual", "rejected"],
+      call_status: [
+        "queued",
+        "ringing",
+        "answered",
+        "no_answer",
+        "busy",
+        "failed",
+        "completed",
+        "voicemail",
+        "cancelled",
+      ],
       club_member_final_status: [
         "verified_paid",
         "verified_staff",
