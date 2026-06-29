@@ -121,11 +121,45 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // AuthZ: require admin/super_admin (Kinescope proxy can delete production assets)
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!token) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const adminSvc = createClient(supabaseUrl, supabaseKey);
+    const { data: isAdmin } = await adminSvc.rpc("has_role_v2", {
+      _user_id: userData.user.id, _role_code: "admin",
+    });
+    const { data: isSuper } = await adminSvc.rpc("has_role_v2", {
+      _user_id: userData.user.id, _role_code: "super_admin",
+    });
+    if (!isAdmin && !isSuper) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Forbidden" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const request: KinescopeRequest = await req.json();
     const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
-    console.log(`Kinescope API action: ${action}`);
+    console.log(`Kinescope API action: ${action} actor: ${userData.user.id}`);
 
     // Get API token
     let apiToken = directToken || null;
