@@ -4,6 +4,7 @@ import { HosterBySettingsCard } from "@/components/integrations/hosterby/HosterB
 import { GotenbergSettingsCard } from "@/components/integrations/gotenberg/GotenbergSettingsCard";
 import { GoogleMapsSettingsCard } from "@/components/integrations/google-maps/GoogleMapsSettingsCard";
 import { GrpLookupSettingsCard } from "@/components/integrations/grp-lookup/GrpLookupSettingsCard";
+import { VochiSettingsCard } from "@/components/integrations/vochi/VochiSettingsCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function OtherIntegrationsTab() {
@@ -29,7 +30,9 @@ export function OtherIntegrationsTab() {
         <GotenbergSettingsCard />
         <GoogleMapsSettingsCard />
         <GrpLookupSettingsCard />
+        <VochiSettingsCard />
       </div>
     </div>
   );
 }
+
