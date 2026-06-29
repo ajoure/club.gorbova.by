@@ -721,6 +721,12 @@ Deno.serve(async (req) => {
     // Create provider_subscriptions record
     // PATCH-2: Store safe subset only, no PII
     // PATCH-M: Store display_title, display_description for admin visibility
+    // PATCH-PRE-CREATE-LINKAGE (2026-06-29): always persist order_id + meta.tracking_id
+    // on provider_subscriptions so grant-access-for-order (Provider-Linked Extend Priority)
+    // can find this pre-created subv2 by either column. Previously order_id and
+    // meta.tracking_id were NULL → GAFO's resolveProviderLinkedSubscription returned
+    // no_provider_linked → parallel duplicate subv2 was created (iris.fess2020
+    // 2026-05-27 fixture, sbs_74ab05548e94d57f).
     const { error: provSubError } = await supabase
       .from('provider_subscriptions')
       .upsert({
@@ -729,6 +735,7 @@ Deno.serve(async (req) => {
         user_id: userId,
         subscription_v2_id: subscription.id,
         profile_id: profileId,
+        order_id: order.id,
         state: 'pending',
         amount_cents: amountCents,
         currency,
@@ -740,12 +747,14 @@ Deno.serve(async (req) => {
           checkout_url_present: !!redirectUrl,
         },
         meta: {
+          tracking_id: trackingId,
           display_title: planTitle,
           display_description: planDescription,
           product_name: product.name,
           tariff_name: tariff.name || tariff.code,
           billing_mode: billingMode,
           interval_days: intervalDays,
+          patch: 'patch-pre-create-linkage-2026-06-29',
         },
       }, { 
         onConflict: 'provider,provider_subscription_id',
@@ -764,6 +773,7 @@ Deno.serve(async (req) => {
         meta: {
           pending_provider_managed: true,
           checkout_order_id: order.id,
+          tracking_id: trackingId, // PATCH-PRE-CREATE-LINKAGE
           offer_id: effectiveOfferId,
           bepaid_subscription_id: bepaidSubId,
           bepaid_subscription_created_at: new Date().toISOString(),

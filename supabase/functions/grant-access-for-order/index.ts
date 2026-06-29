@@ -1783,6 +1783,91 @@ Deno.serve(async (req) => {
         });
       }
 
+      // ── PATCH-INSERT-OVERLAP-GUARD (2026-06-29) ───────────────────────
+      // Hard-guard: запретить создание новой subv2 при наличии другой active
+      // подписки на (user_id, product_id, tariff_id) с access_end_at > now.
+      // Этот путь срабатывает, когда extend-резолверы (Provider-Linked,
+      // tariff+sbs match, checkout_order_id_subv2_fallback) промахнулись по
+      // какой-либо причине, но в БД уже есть active subv2 этого же тарифа —
+      // INSERT создал бы орфана (кейс iris.fess2020 2026-05-27).
+      if (tariffId) {
+        const { data: overlapSubs } = await supabase
+          .from('subscriptions_v2')
+          .select('id, status, access_end_at, auto_renew, meta')
+          .eq('user_id', userId)
+          .eq('product_id', productId)
+          .eq('tariff_id', tariffId)
+          .eq('status', 'active')
+          .gt('access_end_at', now.toISOString())
+          .limit(5);
+
+        if (overlapSubs && overlapSubs.length > 0) {
+          console.error(
+            `[grant-access-for-order] OVERLAP-GUARD: refusing INSERT — found ${overlapSubs.length} active overlapping subv2 ` +
+            `for user=${userId}, product=${productId}, tariff=${tariffId}. Candidates=${overlapSubs.map((s: any) => s.id).join(',')}`,
+          );
+
+          await supabase.from('audit_logs').insert({
+            action: 'grant-access-for-order.insert_blocked_active_overlap',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'grant-access-for-order',
+            target_user_id: userId,
+            meta: {
+              order_id: orderId,
+              product_id: productId,
+              tariff_id: tariffId,
+              would_be_access_start_at: accessStartAt.toISOString(),
+              would_be_access_end_at: safeAccessEndAt.toISOString(),
+              overlap_candidates: overlapSubs.map((s: any) => ({
+                subscription_v2_id: s.id,
+                status: s.status,
+                access_end_at: s.access_end_at,
+                auto_renew: s.auto_renew,
+                checkout_order_id: (s.meta || {}).checkout_order_id ?? null,
+                bepaid_subscription_id: (s.meta || {}).bepaid_subscription_id ?? null,
+              })),
+              patch: 'patch-insert-overlap-guard-2026-06-29',
+            },
+          });
+
+          try {
+            const prevMeta = ((order as any).meta || {}) as Record<string, unknown>;
+            await supabase
+              .from('orders_v2')
+              .update({
+                meta: {
+                  ...prevMeta,
+                  manual_review: true,
+                  manual_review_reason: 'insert_blocked_active_overlap',
+                  manual_review_details: {
+                    product_id: productId,
+                    tariff_id: tariffId,
+                    overlap_subv2_ids: overlapSubs.map((s: any) => s.id),
+                  },
+                  manual_review_set_by: 'grant-access-for-order',
+                  manual_review_set_at: new Date().toISOString(),
+                  manual_review_patch: 'patch-insert-overlap-guard-2026-06-29',
+                },
+              })
+              .eq('id', orderId);
+          } catch (mrErr) {
+            console.error('[grant-access-for-order] OVERLAP-GUARD manual_review meta-merge failed (non-fatal):', mrErr);
+          }
+
+          return new Response(
+            JSON.stringify({
+              skipped: true,
+              reason: 'insert_blocked_active_overlap',
+              manual_review: true,
+              overlap_subv2_ids: overlapSubs.map((s: any) => s.id),
+              patch: 'patch-insert-overlap-guard-2026-06-29',
+            }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
+      }
+
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
