@@ -39,7 +39,7 @@ const QUICK_TABS: { id: QuickTab; label: string }[] = [
   { id: "no_due", label: "Без срока" },
 ];
 
-export function TasksFiltersBar({ value, onChange, types }: Props) {
+export function TasksFiltersBar({ value, onChange, types, onPickTask }: Props) {
   const { data: staff = [] } = useStaffOptions();
 
   const set = (patch: Partial<TasksFiltersValue>) => onChange({ ...value, ...patch });
@@ -63,15 +63,12 @@ export function TasksFiltersBar({ value, onChange, types }: Props) {
 
       {/* Search + selects */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[240px] max-w-md">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск: задача, TASK-…, клиент, телефон, email, № сделки"
-            className="pl-8 h-9"
-            value={value.search}
-            onChange={(e) => set({ search: e.target.value })}
-          />
-        </div>
+        <TasksGlobalSearchPopover
+          value={value.search}
+          onChange={(next) => set({ search: next })}
+          onPickTask={(task) => onPickTask?.(task)}
+        />
+
 
         <Select value={value.assignee} onValueChange={(v) => set({ assignee: v })}>
           <SelectTrigger className="w-[200px] h-9">
