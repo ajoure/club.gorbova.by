@@ -22,6 +22,12 @@ import { cn } from "@/lib/utils";
 import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
 import type { StaffOption } from "@/hooks/useStaffOptions";
 import type { TaskContactLite, TaskDealLite } from "@/hooks/useTaskRelations";
+import {
+  TASK_BUCKET_THEME,
+  TASK_CARD_GLASS,
+  TASK_CARD_PILL,
+  type TaskBucketId,
+} from "../taskUiTheme";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Phone,
@@ -33,6 +39,7 @@ const TYPE_ICONS: Record<string, typeof CircleDot> = {
   CheckSquare,
   CircleDot,
 };
+
 
 const STATUS_LABELS: Record<CrmTask["status"], string> = {
   open: "Открыта",
