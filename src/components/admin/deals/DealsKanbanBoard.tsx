@@ -16,6 +16,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { useDealsBoard, type BoardDeal } from "@/hooks/useDealsBoard";
+import { useDealTaskSummary } from "@/hooks/useDealTaskSummary";
 import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
