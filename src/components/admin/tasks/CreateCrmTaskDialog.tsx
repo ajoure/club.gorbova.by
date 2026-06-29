@@ -106,12 +106,6 @@ export function CreateCrmTaskDialog({
     );
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Новая задача</DialogTitle>
-        </DialogHeader>
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
