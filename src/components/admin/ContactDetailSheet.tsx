@@ -136,6 +136,7 @@ import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
+import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
