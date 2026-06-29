@@ -355,6 +355,7 @@ async function processRule(
   filterUserIds?: string[],
   filterTargetProductIds?: string[],
   reconcileMode: ReconcileMode = "nightly_safe",
+  durationDaysOverride?: number,
 ): Promise<UserAction[]> {
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
