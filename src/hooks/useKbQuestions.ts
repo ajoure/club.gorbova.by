@@ -21,6 +21,19 @@ export interface KbQuestion {
   } | null;
 }
 
+type KbQuestionRow = Omit<KbQuestion, "lesson">;
+
+type LessonSlugRow = {
+  id: string;
+  slug: string;
+  module_id: string | null;
+};
+
+type ModuleSlugRow = {
+  id: string;
+  slug: string;
+};
+
 interface UseKbQuestionsOptions {
   searchQuery?: string;
   episodeNumber?: number;
@@ -37,6 +50,13 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
   return useQuery({
     queryKey: ["kb-questions", searchQuery, episodeNumber, lessonId, limit],
     queryFn: async () => {
+      // PATCH-KNOWLEDGE-RUNTIME-NO-EMBEDDED-SELECT:
+      // Продовый PostgREST embedded select kb_questions -> training_lessons -> training_modules
+      // под обычным authenticated-пользователем может упираться в тяжелые RLS-политики связанных
+      // таблиц и падать по statement timeout. Сначала грузим сами вопросы плоским SELECT'ом
+      // (это быстрый и достаточный path для отображения карточек), а slug-и для ссылки на видео
+      // догружаем отдельными best-effort запросами. Ошибка во вторичных запросах не должна
+      // превращать базу знаний в пустой экран.
       let query = supabase
         .from("kb_questions")
         .select(`
@@ -50,11 +70,7 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
           kinescope_url,
           timecode_seconds,
           answer_date,
-          created_at,
-          lesson:training_lessons(
-            slug,
-            module:training_modules(slug)
-          )
+          created_at
         `)
         .order("answer_date", { ascending: false })
         .order("question_number", { ascending: true })
@@ -76,8 +92,59 @@ export function useKbQuestions(options: UseKbQuestionsOptions = {}) {
         throw error;
       }
 
+      const rows = (data || []) as KbQuestionRow[];
+      let questionsWithLinks: KbQuestion[] = rows.map((q) => ({ ...q, lesson: null }));
+
+      const lessonIds = Array.from(new Set(rows.map((q) => q.lesson_id).filter(Boolean)));
+      if (lessonIds.length > 0) {
+        try {
+          const { data: lessonsData, error: lessonsError } = await supabase
+            .from("training_lessons")
+            .select("id, slug, module_id")
+            .in("id", lessonIds);
+
+          if (lessonsError) {
+            console.warn("[useKbQuestions] lesson slug fetch skipped", lessonsError);
+          } else {
+            const lessons = (lessonsData || []) as LessonSlugRow[];
+            const moduleIds = Array.from(new Set(lessons.map((l) => l.module_id).filter(Boolean) as string[]));
+            const moduleSlugById = new Map<string, string>();
+
+            if (moduleIds.length > 0) {
+              const { data: modulesData, error: modulesError } = await supabase
+                .from("training_modules")
+                .select("id, slug")
+                .in("id", moduleIds);
+
+              if (modulesError) {
+                console.warn("[useKbQuestions] module slug fetch skipped", modulesError);
+              } else {
+                ((modulesData || []) as ModuleSlugRow[]).forEach((m) => moduleSlugById.set(m.id, m.slug));
+              }
+            }
+
+            const lessonById = new Map<string, KbQuestion["lesson"]>();
+            lessons.forEach((lesson) => {
+              lessonById.set(lesson.id, {
+                slug: lesson.slug,
+                module: lesson.module_id && moduleSlugById.has(lesson.module_id)
+                  ? { slug: moduleSlugById.get(lesson.module_id)! }
+                  : null,
+              });
+            });
+
+            questionsWithLinks = rows.map((q) => ({
+              ...q,
+              lesson: lessonById.get(q.lesson_id) || null,
+            }));
+          }
+        } catch (linkError) {
+          console.warn("[useKbQuestions] video link metadata fetch skipped", linkError);
+        }
+      }
+
       // Client-side search if query provided (FTS would be better but this works for now)
-      let filtered = data as unknown as KbQuestion[];
+      let filtered = questionsWithLinks;
       if (searchQuery && searchQuery.trim()) {
         const lowerQuery = searchQuery.toLowerCase();
         filtered = filtered.filter(
