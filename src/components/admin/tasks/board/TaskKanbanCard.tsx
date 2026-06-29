@@ -87,9 +87,8 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   onOpenDeal,
 }: Props) {
   const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
-  const accent = type?.color || "#6366f1";
+  const accent = type?.color || theme.accent;
   const overdue = isOverdue(task);
-  const theme = TASK_BUCKET_THEME[bucketId];
 
   return (
     <div
@@ -106,8 +105,9 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         TASK_CARD_GLASS,
         theme.cardGradient,
         theme.ring,
+        theme.glow,
         "p-3 mb-2 cursor-pointer",
-        overdue && "ring-2 ring-rose-300/70",
+        overdue && "ring-2 ring-rose-400/70",
       )}
     >
       {/* Left accent stripe by type color */}
