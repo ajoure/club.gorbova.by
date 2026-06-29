@@ -85,7 +85,7 @@ export default function AdminUnresolvedCalls() {
         .from("calls")
         .update({
           contact_id: contact.id,
-          link_status: "resolved",
+          link_status: "manual",
           updated_by: (await supabase.auth.getUser()).data.user?.id ?? null,
         })
         .eq("id", pickerForCallId);
