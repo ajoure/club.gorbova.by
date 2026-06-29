@@ -66,6 +66,8 @@ interface RetroApplyRequest {
   user_ids?: string[];
   /** Optional: limit processing to specific target product UUIDs */
   target_product_ids?: string[];
+  /** Optional: override window resolution — planned = now + N days. Highest priority over rule/sub/tariff. */
+  duration_days_override?: number;
 }
 
 interface UserAction {
@@ -186,6 +188,7 @@ Deno.serve(async (req) => {
       };
       const actions = await processRule(
         supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids, reconcileMode,
+        body.duration_days_override,
       );
       allActions.push(...actions);
     }
@@ -352,6 +355,7 @@ async function processRule(
   filterUserIds?: string[],
   filterTargetProductIds?: string[],
   reconcileMode: ReconcileMode = "nightly_safe",
+  durationDaysOverride?: number,
 ): Promise<UserAction[]> {
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
@@ -528,6 +532,13 @@ async function processRule(
     window_resolved_from: UserAction["window_resolved_from"];
     window_anchor_source: UserAction["window_anchor_source"];
   } => {
+    if (durationDaysOverride && durationDaysOverride > 0) {
+      return {
+        plannedIso: new Date(Date.now() + durationDaysOverride * 86400000).toISOString(),
+        window_resolved_from: "rule_duration",
+        window_anchor_source: "rule_duration_now",
+      };
+    }
     if (rule.duration_days) {
       return {
         plannedIso: new Date(Date.now() + rule.duration_days * 86400000).toISOString(),
