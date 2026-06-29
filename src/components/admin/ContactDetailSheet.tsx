@@ -1859,9 +1859,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       <span>{contact.phone || "—"}</span>
                     </div>
                     {contact.phone && (
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.phone!, "Телефон")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <CallButton phone={contact.phone} contactId={contact.id} />
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.phone!, "Телефон")}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <Separator />
