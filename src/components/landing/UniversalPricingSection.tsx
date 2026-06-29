@@ -3,6 +3,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
