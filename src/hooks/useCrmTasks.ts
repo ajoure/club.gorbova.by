@@ -194,3 +194,70 @@ export function useUpdateCrmTask() {
   });
 }
 
+export interface BulkResult {
+  updated: number;
+  total: number;
+  skipped?: Array<{ id: string; reason: string }>;
+  request_id?: string;
+  patch_keys?: string[];
+}
+
+/** Bulk status change. Comment required when status is 'done' or 'canceled'. */
+export function useBulkUpdateCrmTaskStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      taskIds: string[];
+      status: CrmTaskStatus;
+      resultComment?: string | null;
+      requestId?: string;
+    }): Promise<BulkResult> => {
+      const { data, error } = await (supabase as any).rpc("crm_task_bulk_status", {
+        _task_ids: args.taskIds,
+        _status: args.status,
+        _result_comment: args.resultComment ?? null,
+        _request_id: args.requestId ?? null,
+      });
+      if (error) throw error;
+      return data as BulkResult;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["crm-tasks"] });
+      qc.invalidateQueries({ queryKey: ["crm-deal-task-summary"] });
+      const skipped = res.skipped?.length ?? 0;
+      if (skipped > 0) {
+        toast.warning(`Обновлено ${res.updated} из ${res.total}. Пропущено: ${skipped}`);
+      } else {
+        toast.success(`Обновлено задач: ${res.updated}`);
+      }
+    },
+    onError: (err: Error) => toast.error(`Массовое изменение статуса не удалось: ${err.message}`),
+  });
+}
+
+/** Bulk field update with server-side whitelist. */
+export function useBulkUpdateCrmTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      taskIds: string[];
+      patch: CrmTaskUpdatePatch;
+      requestId?: string;
+    }): Promise<BulkResult> => {
+      const { data, error } = await (supabase as any).rpc("crm_task_bulk_update", {
+        _task_ids: args.taskIds,
+        _patch: args.patch,
+        _request_id: args.requestId ?? null,
+      });
+      if (error) throw error;
+      return data as BulkResult;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["crm-tasks"] });
+      qc.invalidateQueries({ queryKey: ["crm-deal-task-summary"] });
+      toast.success(`Обновлено задач: ${res.updated}`);
+    },
+    onError: (err: Error) => toast.error(`Массовое редактирование не удалось: ${err.message}`),
+  });
+}
+
