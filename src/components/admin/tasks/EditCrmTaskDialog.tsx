@@ -31,6 +31,7 @@ import {
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
+import { TaskRelationsField } from "./TaskRelationsField";
 import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
@@ -65,6 +66,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [result, setResult] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [dealId, setDealId] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!task || !open) return;
@@ -76,6 +79,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
     setResult(task.result_comment ?? "");
     setCommentError(null);
+    setDealId(task.deal_id ?? null);
+    setContactId(task.contact_id ?? null);
   }, [task, open]);
 
   if (!task) return null;
@@ -92,6 +97,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     remind_at: remindAt || null,
     assignee_user_id: assignee === UNASSIGNED ? null : assignee,
     result_comment: result.trim() || null,
+    deal_id: dealId,
+    contact_id: contactId,
   });
 
   // Save: persist field edits without changing status.
@@ -222,6 +229,14 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
               ) : null}
             </div>
           </div>
+
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+          />
+
 
           <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">

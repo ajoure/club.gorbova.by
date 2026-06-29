@@ -24,6 +24,7 @@ import { useCrmTaskTypes, useCreateCrmTask } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
+import { TaskRelationsField } from "./TaskRelationsField";
 import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
@@ -57,6 +58,8 @@ export function CreateCrmTaskDialog({
   const [dueAt, setDueAt] = useState<string>("");
   const [remindAt, setRemindAt] = useState<string>("");
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
+  const [dealId, setDealId] = useState<string | null>(defaultDealId ?? null);
+  const [contactId, setContactId] = useState<string | null>(defaultContactId ?? null);
 
   useEffect(() => {
     if (open && types.length > 0 && !typeId) {
@@ -65,15 +68,20 @@ export function CreateCrmTaskDialog({
   }, [open, types, typeId]);
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setDealId(defaultDealId ?? null);
+      setContactId(defaultContactId ?? null);
+    } else {
       setTitle("");
       setDescription("");
       setDueAt("");
       setRemindAt("");
       setTypeId("");
       setAssignee(UNASSIGNED);
+      setDealId(null);
+      setContactId(null);
     }
-  }, [open]);
+  }, [open, defaultDealId, defaultContactId]);
 
   useEffect(() => {
     const tt = types.find((t) => t.id === typeId);
@@ -96,8 +104,8 @@ export function CreateCrmTaskDialog({
         due_at: dueAt || null,
         remind_at: remindAt || null,
         assignee_user_id: assignee === UNASSIGNED ? null : assignee,
-        contact_id: defaultContactId ?? null,
-        deal_id: defaultDealId ?? null,
+        contact_id: contactId,
+        deal_id: dealId,
         source: "manual",
       },
       {
@@ -189,6 +197,15 @@ export function CreateCrmTaskDialog({
               ) : null}
             </div>
           </div>
+
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+            lockDeal={!!defaultDealId}
+            lockContact={!!defaultContactId}
+          />
         </div>
 
         <DialogFooter>

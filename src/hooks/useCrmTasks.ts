@@ -168,6 +168,8 @@ export interface CrmTaskUpdatePatch {
   remind_at?: string | null;
   result_comment?: string | null;
   assignee_user_id?: string | null;
+  deal_id?: string | null;
+  contact_id?: string | null;
 }
 
 export function useUpdateCrmTask() {
