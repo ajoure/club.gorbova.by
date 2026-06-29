@@ -159,6 +159,22 @@ export default function AdminTasks() {
 
       <TasksFiltersBar value={filters} onChange={setFilters} types={types} />
 
+      {dealFilter && (
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1 pr-1">
+            Сделка: {dealFilter.slice(0, 8)}…
+            <button
+              type="button"
+              onClick={clearDealFilter}
+              className="ml-1 rounded hover:bg-background/50 p-0.5"
+              title="Сбросить фильтр по сделке"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        </div>
+      )}
+
       <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
         <TabsList>
           <TabsTrigger value="board">
