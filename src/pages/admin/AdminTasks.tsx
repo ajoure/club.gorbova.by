@@ -18,6 +18,7 @@ import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialo
 import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
 import { TaskKanbanBoard } from "@/components/admin/tasks/board/TaskKanbanBoard";
 import { TasksListView } from "@/components/admin/tasks/TasksListView";
+import { TasksStaffStatsPanel } from "@/components/admin/tasks/stats/TasksStaffStatsPanel";
 import {
   TasksFiltersBar,
   type TasksFiltersValue,
