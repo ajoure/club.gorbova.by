@@ -3833,6 +3833,330 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_task_automation_rules: {
+        Row: {
+          assignee_strategy: string
+          assignee_user_id: string | null
+          created_at: string
+          created_by: string | null
+          description_template: string | null
+          due_offset_minutes: number
+          id: string
+          is_active: boolean
+          metadata: Json
+          offer_id: string
+          reminder_offset_minutes: number | null
+          task_type_id: string
+          title_template: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          assignee_strategy?: string
+          assignee_user_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description_template?: string | null
+          due_offset_minutes?: number
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          offer_id: string
+          reminder_offset_minutes?: number | null
+          task_type_id: string
+          title_template: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Update: {
+          assignee_strategy?: string
+          assignee_user_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description_template?: string | null
+          due_offset_minutes?: number
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          offer_id?: string
+          reminder_offset_minutes?: number | null
+          task_type_id?: string
+          title_template?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_task_automation_rules_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_task_automation_rules_task_type_id_fkey"
+            columns: ["task_type_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_task_automation_rules_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_task_notifications: {
+        Row: {
+          channel: string
+          created_at: string
+          error: string | null
+          id: string
+          metadata: Json
+          notification_type: string
+          recipient_user_id: string | null
+          scheduled_at: string
+          sent_at: string | null
+          status: string
+          task_id: string
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          metadata?: Json
+          notification_type: string
+          recipient_user_id?: string | null
+          scheduled_at?: string
+          sent_at?: string | null
+          status?: string
+          task_id: string
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          metadata?: Json
+          notification_type?: string
+          recipient_user_id?: string | null
+          scheduled_at?: string
+          sent_at?: string | null
+          status?: string
+          task_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_task_notifications_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "crm_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_task_types: {
+        Row: {
+          color: string | null
+          created_at: string
+          default_due_offset_minutes: number | null
+          default_reminder_offset_minutes: number | null
+          icon: string | null
+          id: string
+          is_active: boolean
+          key: string
+          label: string
+          metadata: Json
+          sort_order: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          default_due_offset_minutes?: number | null
+          default_reminder_offset_minutes?: number | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          key: string
+          label: string
+          metadata?: Json
+          sort_order?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          default_due_offset_minutes?: number | null
+          default_reminder_offset_minutes?: number | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          key?: string
+          label?: string
+          metadata?: Json
+          sort_order?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_task_types_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_tasks: {
+        Row: {
+          assignee_user_id: string | null
+          automation_rule_id: string | null
+          closed_at: string | null
+          closed_by: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          deal_id: string | null
+          description: string | null
+          due_at: string | null
+          id: string
+          meta: Json
+          offer_id: string | null
+          order_id: string | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
+          product_id: string | null
+          public_id: string | null
+          remind_at: string | null
+          result_comment: string | null
+          source: string
+          status: string
+          tariff_id: string | null
+          task_type_id: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          assignee_user_id?: string | null
+          automation_rule_id?: string | null
+          closed_at?: string | null
+          closed_by?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          description?: string | null
+          due_at?: string | null
+          id?: string
+          meta?: Json
+          offer_id?: string | null
+          order_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          product_id?: string | null
+          public_id?: string | null
+          remind_at?: string | null
+          result_comment?: string | null
+          source?: string
+          status?: string
+          tariff_id?: string | null
+          task_type_id: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Update: {
+          assignee_user_id?: string | null
+          automation_rule_id?: string | null
+          closed_at?: string | null
+          closed_by?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          description?: string | null
+          due_at?: string | null
+          id?: string
+          meta?: Json
+          offer_id?: string | null
+          order_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          product_id?: string | null
+          public_id?: string | null
+          remind_at?: string | null
+          result_comment?: string | null
+          source?: string
+          status?: string
+          tariff_id?: string | null
+          task_type_id?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_tasks_automation_rule_fk"
+            columns: ["automation_rule_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_automation_rules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_task_type_id_fkey"
+            columns: ["task_type_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       deploy_logs: {
         Row: {
           commit_sha: string
