@@ -84,6 +84,7 @@ const Banned = lazy(() => import("./pages/Banned"));
 const AdminLayout = lazy(() => import("./components/layout/AdminLayout").then(m => ({ default: m.AdminLayout })));
 const AdminContacts = lazy(() => import("./pages/admin/AdminContacts"));
 const AdminDeals = lazy(() => import("./pages/admin/AdminDeals"));
+const AdminTasks = lazy(() => import("./pages/admin/AdminTasks"));
 const AdminRoles = lazy(() => import("./pages/admin/AdminRoles"));
 const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
 const AdminTenants = lazy(() => import("./pages/admin/AdminTenants"));
