@@ -133,8 +133,15 @@ export function UniversalPricingSection({
         </div>
       </section>
 
-      {/* Payment Dialog */}
-      {selectedOffer && (
+      {/* Payment / Preregistration Dialog */}
+      {selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
+        <PreregistrationDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+        />
+      ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
@@ -153,7 +160,7 @@ export function UniversalPricingSection({
           paymentMethod={selectedOffer.offer.payment_method}
           installmentCount={selectedOffer.offer.installment_count ?? null}
         />
-      )}
+      ) : null}
     </>
   );
 }
