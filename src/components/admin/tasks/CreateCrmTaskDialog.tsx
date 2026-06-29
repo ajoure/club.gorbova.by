@@ -104,8 +104,8 @@ export function CreateCrmTaskDialog({
         due_at: dueAt || null,
         remind_at: remindAt || null,
         assignee_user_id: assignee === UNASSIGNED ? null : assignee,
-        contact_id: defaultContactId ?? null,
-        deal_id: defaultDealId ?? null,
+        contact_id: contactId,
+        deal_id: dealId,
         source: "manual",
       },
       {
