@@ -89,7 +89,7 @@ export default function AdminTasks() {
       f.assignee_user_id = filters.assignee;
     }
     return f;
-  }, [debouncedSearch, filters, currentUserId]);
+  }, [debouncedSearch, filters, currentUserId, dealFilter]);
 
   const { data: rawTasks = [], isLoading } = useCrmTasks(rpcFilters);
 
