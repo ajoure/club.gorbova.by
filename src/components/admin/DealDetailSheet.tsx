@@ -65,6 +65,7 @@ import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
+import { CrmTasksSection } from "./tasks/CrmTasksSection";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -1151,6 +1152,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
             {/* Documents — единая карточка */}
             <DealPayerDocumentsCard orderId={deal.id} />
+
+            {/* Tasks — задачи по сделке */}
+            <CrmTasksSection dealId={deal.id} />
 
             {/* Audit */}
             <Card>

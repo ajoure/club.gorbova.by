@@ -136,6 +136,7 @@ import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
+import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
@@ -1625,6 +1626,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                Задачи
               </TabsTrigger>
               <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <CreditCard className="w-3 h-3 mr-1" />
@@ -3413,6 +3417,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 onEditDeal={(id) => setDealToEditId(id)}
                 onRefund={(id) => setRefundDealId(id)}
               />
+            </TabsContent>
+
+            {/* Tasks Tab */}
+            <TabsContent value="tasks" className="m-0 space-y-3">
+              <CrmTasksSection contactId={contact.id} bare />
             </TabsContent>
 
             {/* Communications Tab */}
