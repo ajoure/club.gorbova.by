@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
@@ -133,8 +134,15 @@ export function ProductLanding({ data, header, footer, customSections }: Product
 
       {footer}
 
-      {/* Payment Dialog */}
-      {selectedOffer && (
+      {/* Payment / Preregistration Dialog */}
+      {selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
+        <PreregistrationDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+        />
+      ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
@@ -153,7 +161,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
           paymentMethod={selectedOffer.offer.payment_method}
           installmentCount={selectedOffer.offer.installment_count ?? null}
         />
-      )}
+      ) : null}
     </div>
   );
 }

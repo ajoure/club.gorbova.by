@@ -3,6 +3,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
@@ -132,8 +133,15 @@ export function UniversalPricingSection({
         </div>
       </section>
 
-      {/* Payment Dialog */}
-      {selectedOffer && (
+      {/* Payment / Preregistration Dialog */}
+      {selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
+        <PreregistrationDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+        />
+      ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
@@ -152,7 +160,7 @@ export function UniversalPricingSection({
           paymentMethod={selectedOffer.offer.payment_method}
           installmentCount={selectedOffer.offer.installment_count ?? null}
         />
-      )}
+      ) : null}
     </>
   );
 }
