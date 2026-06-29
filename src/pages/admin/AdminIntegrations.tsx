@@ -26,7 +26,7 @@ import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { OtherIntegrationsTab } from "@/components/integrations/kinescope/OtherIntegrationsTab";
 import { SocialIntegrationsTab } from "@/components/integrations/socials/SocialIntegrationsTab";
 import { PaymentsIntegrationsPanel } from "@/components/admin/integrations/PaymentsIntegrationsPanel";
-import { VochiSettingsCard } from "@/components/integrations/vochi/VochiSettingsCard";
+
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
