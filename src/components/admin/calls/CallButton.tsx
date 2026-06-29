@@ -54,9 +54,28 @@ export function CallButton({
         },
       );
       if (error) {
-        // Edge function вернула non-2xx; в data.error код причины.
-        const code = (data as any)?.error ?? "vochi_fetch_failed";
-        toast.error(ERROR_LABEL[code] ?? `Ошибка: ${code}`);
+        // Edge function вернула non-2xx; supabase-js обнуляет data, а тело
+        // ответа лежит в error.context (Response). Читаем настоящий код.
+        let code: string | undefined = (data as any)?.error;
+        let detail: string | undefined;
+        const ctx: any = (error as any)?.context;
+        if (!code && ctx && typeof ctx.json === "function") {
+          try {
+            const parsed = await ctx.json();
+            code = parsed?.error;
+            detail = parsed?.detail ?? parsed?.http_status;
+          } catch {
+            try {
+              const txt = await ctx.text();
+              detail = txt?.slice(0, 200);
+            } catch {}
+          }
+        }
+        const label = code ? ERROR_LABEL[code] : undefined;
+        toast.error(
+          label ?? (code ? `Ошибка: ${code}` : "Не удалось связаться с VOCHI"),
+          detail ? { description: String(detail) } : undefined,
+        );
         return;
       }
       if ((data as any)?.idempotent) {
