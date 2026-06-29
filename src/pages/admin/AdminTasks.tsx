@@ -35,7 +35,7 @@ const DEFAULT_FILTERS: TasksFiltersValue = {
 export default function AdminTasks() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dealFilter = searchParams.get("deal");
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "list" | "stats">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
