@@ -825,7 +825,7 @@ Deno.serve(async (req) => {
       // outcome === 'no_provider_linked' → fall through to legacy active-sub lookup below.
     }
 
-    if (extendFromCurrent && !existingProductSub) {
+    if (extendFromCurrent && !existingProductSub && !isNoCardTrial) {
 
       // PATCH: Added auto_renew to select for fallback guard in extend branch
       const { data: activeSub } = await supabase
