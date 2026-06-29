@@ -2,13 +2,12 @@
  * Админ-инструмент ручного обновления entitlements пользователя по тарифу и продуктам.
  *
  * Сценарий: «у клиента BUSINESS Club, но бонусные продукты не выданы / истекли».
- * Админ выбирает пользователя, тариф и опционально продукты-таргеты.
- * Сначала вызывает rules-retroapply в режиме preview, показывает что будет сделано,
- * затем по кнопке выполняет execute (safe categories: missing_access + aligned_update_needed).
+ * Админ выбирает пользователя (inline-поиск), тариф, опционально продукты-таргеты
+ * и опционально срок доступа в днях (override).
  *
  * Под капотом — каноническая Edge-функция `rules-retroapply` (никаких новых RPC/edge).
  */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -16,15 +15,17 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Eye, RefreshCw, AlertTriangle, User as UserIcon, Search } from "lucide-react";
+import {
+  Loader2, Play, Eye, AlertTriangle, User as UserIcon, Search, X, Mail, Phone, Check,
+} from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
-import { ContactPickerDialog, type PickedContact } from "@/components/admin/shared/pickers/ContactPickerDialog";
 
 interface Props {
   open: boolean;
@@ -69,6 +70,14 @@ interface PreviewResult {
   };
 }
 
+interface ProfileHit {
+  id: string;
+  user_id?: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
 const CATEGORY_LABEL: Record<string, string> = {
   missing_access: "Будет выдан доступ",
   aligned_update_needed: "Будет обновлён срок",
@@ -90,12 +99,49 @@ export function ApplyTariffRulesToUserDialog({
 }: Props) {
   const [userId, setUserId] = useState<string>(fixedUserId || "");
   const [userLabel, setUserLabel] = useState<string>(fixedUserLabel || "");
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [userQuery, setUserQuery] = useState("");
+  const [userResults, setUserResults] = useState<ProfileHit[]>([]);
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [tariffId, setTariffId] = useState<string>("");
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [recalculate, setRecalculate] = useState(true);
+  const [durationDays, setDurationDays] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+
+  // Inline user search (debounced) — only when no fixed user
+  useEffect(() => {
+    if (fixedUserId) return;
+    const term = userQuery.trim();
+    if (term.length < 2) {
+      setUserResults([]);
+      return;
+    }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      setUserSearchLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke("admin-search-profiles", {
+          body: { query: term, limit: 20 },
+        });
+        if (error) throw error;
+        if (data?.success) {
+          setUserResults(data.results || []);
+          setShowResults(true);
+        }
+      } catch (e: any) {
+        toast.error("Ошибка поиска: " + (e?.message || String(e)));
+      } finally {
+        setUserSearchLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [userQuery, fixedUserId]);
 
   // Load tariffs
   const { data: tariffs = [] } = useQuery({
@@ -111,26 +157,18 @@ export function ApplyTariffRulesToUserDialog({
     enabled: open,
   });
 
-  // Users no longer pre-loaded — поиск через ContactPickerDialog (admin-search-profiles).
-
-
   // Load access_rules for selected tariff to extract candidate target products
   const { data: rulesForTariff = [] } = useQuery({
     queryKey: ["apply-rules-for-tariff", tariffId],
     queryFn: async () => {
       if (!tariffId) return [];
-      // Rules whose conditions reference this tariff
       const { data, error } = await supabase
         .from("access_rules")
-        .select("id, conditions, is_active")
-        .eq("is_active", true);
+        .select("id, conditions, is_active, target_ref, grant_target_type")
+        .eq("is_active", true)
+        .eq("tariff_id", tariffId);
       if (error) throw error;
-      return (data || []).filter((r: any) => {
-        const c = r.conditions || {};
-        if (c.source_tariff_id === tariffId) return true;
-        if (Array.isArray(c.source_tariff_ids) && c.source_tariff_ids.includes(tariffId)) return true;
-        return false;
-      });
+      return data || [];
     },
     enabled: open && !!tariffId,
   });
@@ -141,6 +179,7 @@ export function ApplyTariffRulesToUserDialog({
       const c = r.conditions || {};
       if (Array.isArray(c.target_product_ids)) c.target_product_ids.forEach((id: string) => set.add(id));
       if (typeof c.target_product_id === "string") set.add(c.target_product_id);
+      if (r.grant_target_type === "product_access" && r.target_ref) set.add(r.target_ref);
     });
     return [...set];
   }, [rulesForTariff]);
@@ -163,7 +202,31 @@ export function ApplyTariffRulesToUserDialog({
   const reset = useCallback(() => {
     setPreview(null);
     setSelectedProducts(new Set());
-  }, []);
+    setDurationDays("");
+    if (!fixedUserId) {
+      setUserQuery("");
+      setUserResults([]);
+    }
+  }, [fixedUserId]);
+
+  const pickUser = (hit: ProfileHit) => {
+    if (!hit.user_id) {
+      toast.error("У контакта нет связанного user_id (профиль не привязан к auth-пользователю).");
+      return;
+    }
+    setUserId(hit.user_id);
+    setUserLabel(hit.full_name || hit.email || hit.user_id);
+    setUserQuery("");
+    setUserResults([]);
+    setShowResults(false);
+    setPreview(null);
+  };
+
+  const clearUser = () => {
+    setUserId("");
+    setUserLabel("");
+    setPreview(null);
+  };
 
   const runRetroApply = useCallback(async (mode: "preview" | "execute") => {
     if (!userId) {
@@ -172,6 +235,11 @@ export function ApplyTariffRulesToUserDialog({
     }
     if (!tariffId) {
       toast.error("Выберите тариф");
+      return;
+    }
+    const overrideDays = durationDays.trim() ? Number(durationDays) : 0;
+    if (durationDays.trim() && (!Number.isFinite(overrideDays) || overrideDays <= 0 || overrideDays > 3650)) {
+      toast.error("Срок доступа: введите число от 1 до 3650 дней");
       return;
     }
     setLoading(true);
@@ -184,6 +252,9 @@ export function ApplyTariffRulesToUserDialog({
       };
       if (selectedProducts.size > 0) {
         body.target_product_ids = [...selectedProducts];
+      }
+      if (overrideDays > 0) {
+        body.duration_days_override = overrideDays;
       }
       if (mode === "execute") {
         body.apply_categories = ["missing_access", "aligned_update_needed"];
@@ -213,7 +284,7 @@ export function ApplyTariffRulesToUserDialog({
     } finally {
       setLoading(false);
     }
-  }, [userId, tariffId, recalculate, selectedProducts, onApplied]);
+  }, [userId, tariffId, recalculate, selectedProducts, durationDays, onApplied]);
 
   const handleClose = (next: boolean) => {
     if (!next) reset();
@@ -224,6 +295,13 @@ export function ApplyTariffRulesToUserDialog({
     (a) => a.category === "missing_access" || a.category === "aligned_update_needed",
   ) || [];
 
+  const allSelected = candidateProducts.length > 0 && selectedProducts.size === candidateProducts.length;
+  const toggleAllProducts = () => {
+    if (allSelected) setSelectedProducts(new Set());
+    else setSelectedProducts(new Set(candidateProducts.map((p: any) => p.id)));
+    setPreview(null);
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -231,39 +309,71 @@ export function ApplyTariffRulesToUserDialog({
           <DialogTitle>Применить правила тарифа к пользователю</DialogTitle>
           <DialogDescription>
             Запускает канонические правила доступа (access_rules) точечно для одного пользователя.
-            Выдаёт недостающие entitlements и выравнивает сроки. Не сокращает сроки и не трогает
-            ручные выдачи.
+            Можно ограничить продуктами и/или задать срок доступа вручную (перебивает rule.duration_days).
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* User */}
+          {/* User — inline search */}
           <div>
             <Label className="mb-2 block">Пользователь</Label>
             {fixedUserId ? (
               <div className="px-3 py-2 rounded-md border bg-muted/30 text-sm">
                 {fixedUserLabel || fixedUserId}
               </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <div className="flex-1 px-3 py-2 rounded-md border bg-muted/30 text-sm min-h-[40px] flex items-center gap-2">
-                  {userId ? (
-                    <>
-                      <UserIcon className="h-4 w-4 text-muted-foreground" />
-                      <span className="truncate">{userLabel || userId}</span>
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">Пользователь не выбран</span>
-                  )}
-                </div>
-                <Button type="button" variant="outline" onClick={() => setPickerOpen(true)}>
-                  <Search className="h-4 w-4 mr-2" />
-                  {userId ? "Сменить" : "Найти"}
+            ) : userId ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/30 text-sm">
+                <UserIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="truncate flex-1">{userLabel || userId}</span>
+                <Button type="button" variant="ghost" size="sm" onClick={clearUser}>
+                  <X className="h-4 w-4" />
                 </Button>
+              </div>
+            ) : (
+              <div className="relative">
+                <div className="flex items-center gap-2 px-3 rounded-md border focus-within:ring-2 focus-within:ring-ring">
+                  <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <Input
+                    value={userQuery}
+                    onChange={(e) => setUserQuery(e.target.value)}
+                    onFocus={() => userResults.length > 0 && setShowResults(true)}
+                    placeholder="ФИО, email или телефон (мин. 2 символа)…"
+                    className="border-0 focus-visible:ring-0 px-0 shadow-none"
+                  />
+                  {userSearchLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                </div>
+                {showResults && userResults.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 border rounded-md bg-popover shadow-md max-h-64 overflow-y-auto">
+                    {userResults.map((hit) => (
+                      <button
+                        key={hit.id}
+                        type="button"
+                        onClick={() => pickUser(hit)}
+                        className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-start gap-2 border-b last:border-0"
+                      >
+                        <UserIcon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{hit.full_name || "Без имени"}</div>
+                          <div className="text-xs text-muted-foreground flex gap-3 flex-wrap">
+                            {hit.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{hit.email}</span>}
+                            {hit.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{hit.phone}</span>}
+                          </div>
+                          {!hit.user_id && (
+                            <div className="text-xs text-amber-600 mt-0.5">⚠ не привязан к auth-пользователю</div>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {showResults && userQuery.trim().length >= 2 && !userSearchLoading && userResults.length === 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 border rounded-md bg-popover shadow-md px-3 py-2 text-sm text-muted-foreground">
+                    Ничего не найдено
+                  </div>
+                )}
               </div>
             )}
           </div>
-
 
           {/* Tariff */}
           <div>
@@ -283,9 +393,13 @@ export function ApplyTariffRulesToUserDialog({
           {/* Target products (optional) */}
           {tariffId && candidateProducts.length > 0 && (
             <div>
-              <Label className="mb-2 block">
-                Продукты (необязательно — по умолчанию все из правил тарифа)
-              </Label>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Продукты ({selectedProducts.size > 0 ? `выбрано ${selectedProducts.size}` : "все из правил"})</Label>
+                <Button type="button" variant="ghost" size="sm" onClick={toggleAllProducts}>
+                  <Check className="h-3 w-3 mr-1" />
+                  {allSelected ? "Снять все" : "Выбрать все"}
+                </Button>
+              </div>
               <div className="max-h-44 overflow-y-auto rounded-md border p-2 space-y-1">
                 {candidateProducts.map((p: any) => {
                   const checked = selectedProducts.has(p.id);
@@ -302,7 +416,7 @@ export function ApplyTariffRulesToUserDialog({
                           setPreview(null);
                         }}
                       />
-                      <span>{p.name}</span>
+                      <span className="flex-1">{p.name}</span>
                       {p.code && <span className="text-muted-foreground text-xs">({p.code})</span>}
                     </label>
                   );
@@ -317,6 +431,22 @@ export function ApplyTariffRulesToUserDialog({
               <span>Активных правил доступа на этом тарифе не найдено. Применять нечего.</span>
             </div>
           )}
+
+          {/* Duration override */}
+          <div>
+            <Label className="mb-2 block">Срок доступа в днях (необязательно)</Label>
+            <Input
+              type="number"
+              min={1}
+              max={3650}
+              value={durationDays}
+              onChange={(e) => { setDurationDays(e.target.value); setPreview(null); }}
+              placeholder="По умолчанию — из правила/подписки"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Если задано — planned_expires = сейчас + N дней, перебивает rule.duration_days и окно подписки.
+            </p>
+          </div>
 
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={recalculate} onCheckedChange={(v) => setRecalculate(!!v)} />
@@ -401,24 +531,6 @@ export function ApplyTariffRulesToUserDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-      <ContactPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        options={{
-          title: "Выбрать пользователя",
-          helperText: "Поиск по ФИО, email или телефону (через admin-search-profiles).",
-        }}
-        onPick={(c: PickedContact) => {
-          if (!c.user_id) {
-            toast.error("У контакта нет связанного user_id (профиль не привязан к auth-пользователю).");
-            return;
-          }
-          setUserId(c.user_id);
-          setUserLabel(c.full_name || c.email || c.user_id);
-          setPreview(null);
-          setPickerOpen(false);
-        }}
-      />
     </Dialog>
   );
 }
