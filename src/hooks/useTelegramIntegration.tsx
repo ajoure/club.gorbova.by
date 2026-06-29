@@ -321,7 +321,7 @@ export function useUpdateTelegramClub() {
     mutationFn: async ({ id, ...updates }: Partial<TelegramClub> & { id: string }) => {
       const { data, error } = await supabase
         .from('telegram_clubs')
-        .update(updates)
+        .update(updates as any)
         .eq('id', id)
         .select()
         .single();

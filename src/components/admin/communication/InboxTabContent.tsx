@@ -359,7 +359,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
             admin_user_id: user.id,
             contact_user_id: contactUserId,
             [field]: value,
-          });
+          } as any);
         if (error) throw error;
       }
     },

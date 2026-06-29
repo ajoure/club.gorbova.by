@@ -822,7 +822,7 @@ const AdminEditorial = () => {
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<NewsItem> }) => {
       const { error } = await supabase
         .from("news_content")
-        .update(updates)
+        .update(updates as any)
         .eq("id", id);
       if (error) throw error;
     },

@@ -76,7 +76,7 @@ export class EmailAccountService {
       }
       const { error } = await supabase
         .from("email_accounts")
-        .update(payload)
+        .update(payload as any)
         .eq("id", account.id);
       if (error) throw error;
     } else {
