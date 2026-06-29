@@ -36,6 +36,8 @@ export function DomainHomePage() {
   // Existing production logic is NOT modified.
   const [siteBuilderPage, setSiteBuilderPage] = useState<SitePage | null>(null);
   const [siteBuilderChecked, setSiteBuilderChecked] = useState(false);
+  const [siteBuilderError, setSiteBuilderError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const shouldCheckSiteBuilder = !isMainDomain && !isCourseDomain && !isConsultationDomain;
 
@@ -44,17 +46,29 @@ export function DomainHomePage() {
       setSiteBuilderChecked(true);
       return;
     }
-    
+
+    setSiteBuilderChecked(false);
+    setSiteBuilderError(null);
     const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
-    SiteRenderService.resolveByDomainAndPath(hostname, pathname)
-      .then((page) => {
-        setSiteBuilderPage(page);
+    SiteRenderService.resolveByDomainAndPathSafe(hostname, pathname)
+      .then((r) => {
+        if (r.status === "ok") {
+          setSiteBuilderPage(r.page);
+        } else if (r.status === "error") {
+          setSiteBuilderError(r.error);
+        } else {
+          setSiteBuilderPage(null);
+        }
         setSiteBuilderChecked(true);
       })
-      .catch(() => {
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error("[DomainHomePage] unexpected resolver throw", e);
+        setSiteBuilderError(e?.message || String(e));
         setSiteBuilderChecked(true);
       });
-  }, [hostname, shouldCheckSiteBuilder]);
+  }, [hostname, shouldCheckSiteBuilder, retryNonce]);
+
 
   // Course domain → show course landing (legacy, unchanged)
   if (isCourseDomain) {
