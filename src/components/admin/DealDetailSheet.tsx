@@ -832,7 +832,6 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     <CallButton
                       phone={deal.customer_phone || profile?.phone}
                       dealId={deal.id}
-                      contactId={deal.user_id ?? undefined}
                     />
                   )}
                 </div>
