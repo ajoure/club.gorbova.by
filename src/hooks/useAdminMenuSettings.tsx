@@ -35,6 +35,7 @@ import {
   PanelTop,
   Bot,
   Video,
+  KeyRound,
   LucideIcon,
 } from "lucide-react";
 
@@ -93,6 +94,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   PanelTop,
   Bot,
   Video,
+  KeyRound,
 };
 
 // Default menu configuration - Reorganized structure
@@ -110,8 +112,9 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
       { id: "tasks", label: "Задачи", path: "/admin/tasks", icon: "ListChecks", order: 3, permission: "users.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 4, permission: "entitlements.view" },
-      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 5, permission: "users.view" },
+      { id: "entitlements", label: "Доступы", path: "/admin/entitlements", icon: "KeyRound", order: 4, permission: "entitlements.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 5, permission: "entitlements.view" },
+      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 6, permission: "users.view" },
     ],
   },
   {

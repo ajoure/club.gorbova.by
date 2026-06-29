@@ -21,9 +21,10 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Eye, RefreshCw, AlertTriangle } from "lucide-react";
+import { Loader2, Play, Eye, RefreshCw, AlertTriangle, User as UserIcon, Search } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { ContactPickerDialog, type PickedContact } from "@/components/admin/shared/pickers/ContactPickerDialog";
 
 interface Props {
   open: boolean;
@@ -88,6 +89,8 @@ export function ApplyTariffRulesToUserDialog({
   open, onOpenChange, fixedUserId, fixedUserLabel, onApplied,
 }: Props) {
   const [userId, setUserId] = useState<string>(fixedUserId || "");
+  const [userLabel, setUserLabel] = useState<string>(fixedUserLabel || "");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [tariffId, setTariffId] = useState<string>("");
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [recalculate, setRecalculate] = useState(true);
@@ -108,20 +111,8 @@ export function ApplyTariffRulesToUserDialog({
     enabled: open,
   });
 
-  // Load users (only when not fixed)
-  const { data: users = [] } = useQuery({
-    queryKey: ["apply-rules-users"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("user_id, email, full_name")
-        .not("user_id", "is", null)
-        .order("full_name");
-      return data || [];
-    },
-    enabled: open && !fixedUserId,
-    staleTime: 2 * 60 * 1000,
-  });
+  // Users no longer pre-loaded — поиск через ContactPickerDialog (admin-search-profiles).
+
 
   // Load access_rules for selected tariff to extract candidate target products
   const { data: rulesForTariff = [] } = useQuery({
@@ -254,20 +245,25 @@ export function ApplyTariffRulesToUserDialog({
                 {fixedUserLabel || fixedUserId}
               </div>
             ) : (
-              <Select value={userId} onValueChange={setUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите пользователя" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map((u: any) => (
-                    <SelectItem key={u.user_id} value={u.user_id}>
-                      {u.full_name || u.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 px-3 py-2 rounded-md border bg-muted/30 text-sm min-h-[40px] flex items-center gap-2">
+                  {userId ? (
+                    <>
+                      <UserIcon className="h-4 w-4 text-muted-foreground" />
+                      <span className="truncate">{userLabel || userId}</span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">Пользователь не выбран</span>
+                  )}
+                </div>
+                <Button type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+                  <Search className="h-4 w-4 mr-2" />
+                  {userId ? "Сменить" : "Найти"}
+                </Button>
+              </div>
             )}
           </div>
+
 
           {/* Tariff */}
           <div>
@@ -405,6 +401,24 @@ export function ApplyTariffRulesToUserDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ContactPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        options={{
+          title: "Выбрать пользователя",
+          helperText: "Поиск по ФИО, email или телефону (через admin-search-profiles).",
+        }}
+        onPick={(c: PickedContact) => {
+          if (!c.user_id) {
+            toast.error("У контакта нет связанного user_id (профиль не привязан к auth-пользователю).");
+            return;
+          }
+          setUserId(c.user_id);
+          setUserLabel(c.full_name || c.email || c.user_id);
+          setPreview(null);
+          setPickerOpen(false);
+        }}
+      />
     </Dialog>
   );
 }
