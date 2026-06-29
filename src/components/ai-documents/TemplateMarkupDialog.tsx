@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
+import DOMPurify from "dompurify";
 import {
   buildAutoSuggestions,
   loadRegistryRefs,
