@@ -138,6 +138,7 @@ import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
+import { CallButton } from "./calls/CallButton";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
