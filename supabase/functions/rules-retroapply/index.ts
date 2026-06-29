@@ -66,6 +66,8 @@ interface RetroApplyRequest {
   user_ids?: string[];
   /** Optional: limit processing to specific target product UUIDs */
   target_product_ids?: string[];
+  /** Optional: override window resolution — planned = now + N days. Highest priority over rule/sub/tariff. */
+  duration_days_override?: number;
 }
 
 interface UserAction {
