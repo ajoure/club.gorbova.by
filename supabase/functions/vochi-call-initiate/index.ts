@@ -202,7 +202,7 @@ Deno.serve(async (req) => {
     return json(200, {
       call_id: callRow.id,
       public_id: callRow.public_id,
-      status: "initiating",
+      status: "queued",
     });
   } catch (e: any) {
     await admin
