@@ -9,6 +9,7 @@ import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
+import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import type { SitePage } from "@/services/sitePages/types";
 import { Loader2 } from "lucide-react";
 
