@@ -85,11 +85,13 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  // ── 3. Роль сотрудника ───────────────────────────────────────────────────
-  const { data: isStaff } = await admin.rpc("has_role_v2", {
-    _user_id: userId,
-    _role: "staff",
-  });
+  // ── 3. Роль сотрудника (staff | admin | super_admin) ─────────────────────
+  const roleChecks = await Promise.all(
+    (["staff", "admin", "super_admin"] as const).map((r) =>
+      admin.rpc("has_role_v2", { _user_id: userId, _role: r }),
+    ),
+  );
+  const isStaff = roleChecks.some((r) => r.data === true);
   if (!isStaff) {
     return json(403, { error: "not_staff" });
   }
