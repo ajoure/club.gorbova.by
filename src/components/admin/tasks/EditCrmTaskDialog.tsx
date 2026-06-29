@@ -31,6 +31,7 @@ import {
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
+import { TaskRelationsField } from "./TaskRelationsField";
 import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
