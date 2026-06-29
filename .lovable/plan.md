@@ -1,267 +1,434 @@
 ## да, согласен, с учетом правок:
 
-1. **Название отчёта**
+## **1. Разделить два блока**
 
-В deliverables указано:
-
-```text
-Отчет о выполнении: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
-```
-
-Нужно строго:
+План содержит два независимых направления:
 
 ```text
-Отчет о выполненной работе: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
+PATCH-DEMO-TRIAL-USER-ID-RESOLUTION / BACKFILL / RESOLVER
+PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE
 ```
 
-2. **Не утверждать заранее, что это именно WebKit**
+Их нельзя смешивать в один execute/report.
 
-На скрине Яндекс.Браузер на macOS. Его движок нужно подтвердить фактически.
-
-В discovery добавить:
+Приоритет:
 
 ```text
-browser engine confirmed: Chromium/WebKit/unknown
+1. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
+2. BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH dry-run
+3. Sweep после approve dry-run
+4. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK — только если нужен defense-in-depth
+5. PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE — отдельным мини-патчем
 ```
 
-Потому что Яндекс.Браузер обычно Chromium-based, а не Safari/WebKit. Если это Chromium-based private mode, гипотеза “WebKit-only” может быть ложной.
+---
 
-3. **Матрицу браузеров расширить**
+## **2. Root cause по demo trial принять как P0**
 
-Минимальный набор:
+Диагноз выглядит валидным:
 
 ```text
-Chrome normal
-Chrome incognito
-Safari normal
-Safari private
-Yandex normal
-Yandex private
-Playwright Chromium clean profile
-Playwright WebKit clean profile
+orders_v2.profile_id = реальный профиль
+orders_v2.user_id = фантомный payer/user
+entitlements.profile_id = реальный профиль
+entitlements.user_id = фантомный payer/user
+get_user_section_access фильтрует entitlements.user_id = auth.uid()
 ```
 
-Если Yandex автоматизировать нельзя — вручную через DevTools, но зафиксировать отдельно.
-
-4. **Главный сигнал: различить stale bundle vs Supabase fetch failure**
-
-В отчёте обязательно разделить:
-
-### **Stale bundle proof**
-
-Проверить:
+Итог:
 
 ```text
-index.html script src
-JS chunk filenames / hashes
-loaded JS bundle URL
-deployment id / build marker
-whether route /:slug exists in loaded bundle
+оплата/активация есть, entitlement есть, но доступ закрыт из-за user_id mismatch
 ```
 
-Если route `/:slug` отсутствует в загруженном JS — это stale bundle.
+Это P0, потому что пользователь видит закрытую «Базу знаний» после успешной демо-активации.
 
-### **Supabase/network proof**
+---
 
-Проверить:
+## **3. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION — approved, но уточнить SOT**
+
+Главное правило:
 
 ```text
-was request to supabase rest/v1/site_pages made?
-status code?
-CORS error?
-blocked by client?
-ERR_BLOCKED_BY_CLIENT?
-storage/localStorage exception?
+для no-card trial залогиненного пользователя SOT user_id = auth.uid()
 ```
 
-Если request не ушёл или упал — это network/storage/privacy issue.
+Но нужно уточнить различие:
 
-5. **Не ограничиваться** `site_pages`
+- `profile_id` — профиль/CRM-якорь;
+- `user_id` — Supabase auth user;
+- в нормальной модели они могут совпадать, но нельзя это предполагать глобально.
 
-Для реального рендера страницы могут быть дополнительные запросы:
+Поэтому DoD формулировать так:
 
 ```text
-site_pages
-site_domain_bindings
-site_blocks / page content
-tariff_offers / product blocks
-public config / Supabase auth session
+orders_v2.user_id = authenticated auth.uid()
+entitlements.user_id = authenticated auth.uid()
+orders_v2.profile_id = profile.id, соответствующий auth.uid()
+entitlements.profile_id = profile.id, соответствующий auth.uid()
 ```
 
-В network capture смотреть все `supabase.co` запросы, не только `site_pages`.
-
-6. **Проверить поведение при direct Supabase REST из браузера**
-
-В сломанном браузере открыть/выполнить через console fetch к тому же endpoint, который использует `SiteRenderService`.
-
-Цель:
+А не просто:
 
 ```text
-понять, блокируется ли именно Supabase/network или проблема в React resolver/cache
+user_id = profile_id
 ```
 
-7. **Проверить localStorage гипотезу без домыслов**
+Если в текущей системе `profiles.id === auth.users.id`, это можно подтвердить в discovery и только тогда использовать как invariant.
 
-В сломанном режиме выполнить:
+---
 
-```js
-localStorage.setItem('__test', '1');
-localStorage.getItem('__test');
-localStorage.removeItem('__test');
-```
+## **4. Нельзя ломать public-link recipient semantics**
 
-И отдельно проверить console на ошибки Supabase client init.
-
-Если localStorage доступен — гипотезу 3 снять.
-
-8. **Проверить service worker / caches**
-
-Даже если не планируется правка, discovery должен проверить:
+В плане правильно упомянуто:
 
 ```text
-navigator.serviceWorker.controller
-caches.keys()
+Public Link user_id = recipient, not payer
 ```
 
-Если SW есть и отдаёт старый bundle — это отдельный root cause. Если SW нет — указать.
+Это критично.
 
-9. **Проверить headers для HTML и JS**
-
-Нужны headers:
+Нужно зафиксировать:
 
 ```text
-cache-control
-etag
-last-modified
-cf-cache-status
-content-type
-x-deployment-id / аналог
+PATCH-DEMO-TRIAL-USER-ID-RESOLUTION применяется только к SITE demo/no-card trial flow
 ```
 
-Отдельно для:
+Не переписать глобально все public-link платежи так, чтобы `user_id` стал payer вместо recipient.
+
+Guard для fix должен быть узким:
+
+```ts
+isTrial === true
+paymentAmount === 0
+requiresCardTokenization === false
+order.meta?.source === 'trial_no_card'
+```
+
+И только для этого flow использовать `auth.uid()` как `user_id`.
+
+---
+
+## **5. Анонимный no-card trial уточнить**
+
+Фраза:
 
 ```text
-/
- /ideologicheskaya-rabota
- index.html
- JS chunk
- CSS chunk
+Если покупатель анонимен — оставляем текущий путь (user_id = NULL/гость)
 ```
 
-10. **SiteRenderService error handling — discovery only**
+нуждается в точной реализации.
 
-Согласен: правки не делать. Но в отчёте показать текущий дефект observability:
+Для anonymous trial нельзя создавать entitlement на произвольный phantom `user_id`.
+
+Допустимые варианты:
 
 ```text
-network/error path visually collapses into NotFound
+A. no-card trial требует auth/session; anonymous получает требование войти/создать аккаунт
+B. anonymous checkout создаёт нового auth user и затем использует именно его auth.uid
+C. anonymous order создаётся без grant до завершения account-linking
 ```
 
-Это будет отдельный follow-up, если подтвердится fetch/storage issue.
+Лучший для текущего продукта вариант: **A или B**, но не `phantom user_id`.
 
-11. **Нужен user-facing workaround**
+В плане нужно явно выбрать один вариант.
 
-Даже в discovery-отчёте нужно дать временный workaround:
+---
+
+## **6. Backfill должен чинить и orders_v2, и entitlements**
+
+Согласен с задачей 2, но dry-run должен показать обе группы:
 
 ```text
-открыть в Chrome normal
-hard refresh
-очистить site data для gorbova.by
-открыть полный URL с cache-bust ?v=<timestamp>
+orders_v2 user_id mismatch
+entitlements user_id mismatch
 ```
 
-Но workaround не считать fix.
-
-12. **Follow-up item должен зависеть от root cause**
-
-Не создавать общий “пофиксить Safari 404”. Создать один конкретный follow-up:
-
-- если stale bundle:
+И связь:
 
 ```text
-PATCH-SITE-BUNDLE-CACHE-BUSTING
+orders_v2.id → entitlements.source_order_id/order_id/meta.order_id
 ```
 
-- если Supabase blocked/privacy:
+Если entitlement не имеет прямого `order_id`, использовать реальные поля:
+
+- `source_event_id`;
+- `source_order_id`;
+- `metadata/meta`;
+- `access_grant_ledger.source_order_id`;
+- `target_key`;
+- `product_id + profile_id + created_at window`.
+
+Не делать sweep, пока join не доказан.
+
+---
+
+## **7. Backfill criteria сузить**
+
+Текущий критерий:
 
 ```text
-PATCH-SITE-PUBLIC-RESOLVER-ERROR-STATE
+user_id ≠ profile_id AND user_id отсутствует в profiles
 ```
 
-- если localStorage init:
+недостаточен.
+
+Добавить обязательные признаки no-card demo:
 
 ```text
-PATCH-SUPABASE-CLIENT-STORAGE-FALLBACK
+orders_v2.meta->>'source' = 'trial_no_card'
+orders_v2.is_trial = true
+orders_v2.paid_amount = 0
+orders_v2.status = 'paid'
+orders_v2.offer_id = 891c7fe0-eb9d-4853-a1d5-bb69d688c801
+orders_v2.tariff_id = 85863b4b-c5e4-4f43-884d-2bdbe48d3914
+orders_v2.product_id = 3ea08f79-afe8-4361-81fe-4c0f318f9a2b
 ```
 
-- если SW/cache:
+Чтобы случайно не исправить легитимные recipient/payer сценарии.
+
+---
+
+
+
+## **8. Runtime smoke по**
+
+`get_user_section_access`
+
+Обязательный proof после fix/backfill:
+
+```sql
+select *
+from get_user_section_access('knowledge')
+```
+
+или фактический контракт RPC, но под session/auth тест-пользователя `1@ajoure.by`.
+
+Ожидание:
 
 ```text
-PATCH-SITE-SW-CACHE-INVALIDATION
+section = knowledge
+has_access = true
+matched entitlement/order = 030ecdb7-…
+source product_id = 3ea08f79-…
+tariff_id = 85863b4b-…
+expires_at >= now()
 ```
 
-13. **DoD дополнить**
+---
 
-Финальные строки отчёта:
+## **9. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK — не делать до backfill без отдельного approve**
+
+Эта задача потенциально опаснее, чем кажется.
+
+Fallback по `profile_id = auth.uid()` допустим только если доказано:
 
 ```text
-browser/engine matrix captured: PASS
-network evidence captured: PASS
-bundle/cache evidence captured: PASS
-storage/service-worker checks captured: PASS
-root cause identified: PASS/PARTIAL/FAIL
-follow-up fix item proposed: PASS
-PATCH-SAFARI-IDEOLOG-404-DISCOVERY: PASS/PARTIAL/FAIL
+profiles.id всегда равен auth.users.id
 ```
 
-После этих правок discovery можно выполнять.
+Иначе можно случайно открыть доступ не тому пользователю.
 
-&nbsp;
+Пока лучше порядок такой:
 
-План: PATCH-SAFARI-IDEOLOG-404-DISCOVERY
+```text
+1. Fix write-path
+2. Backfill affected rows
+3. Проверить, что resolver начал работать без fallback
+4. Только потом решать, нужен ли profile fallback как defense-in-depth
+```
 
-### Контекст
+То есть задача 3 — **опциональная, не выполнять автоматически**.
 
-- Скриншот: Яндекс.Браузер, режим «Личный» (приватный, WebKit на macOS), URL `gorbova.by/ideologicheskaya-rabota` → рендерится клиентский NotFound («404 Страница не найдена»).
-- HTTP-ответ от Cloudflare/хостинга: **200 OK**, отдаётся валидный `index.html` SPA (4.8 KB, корректный `<title>`). То есть это **не серверный 404 и не SPA-fallback issue** — 404 рисуется внутри React после неуспешной резолюции.
-- В БД страница есть и валидна:
-  - `site_pages.slug='ideologicheskaya-rabota'`, `status='published'`, `id=7e672fed-…`
-  - привязка `site_domain_bindings.domain='gorbova.by'`, `is_home=false`
-- Маршрут `/:slug` → `SitePageBySlug` зарегистрирован (`src/App.tsx:353`); резолвер `SiteRenderService.resolveBySlug` фильтрует только `slug+status='published'`, домен **не** проверяет — то есть для прямого `chromium`-обхода он отдаёт страницу.
-- В обычном Chrome/Firefox у других пользователей страница, по нашим данным, открывается. Значит регрессия привязана к окружению (WebKit / приватный режим / кеш).
+---
 
-### Гипотезы (по приоритету)
+## **10. UI manual section grant — out of scope**
 
-1. **Stale bundle в WebKit-кеше**: Safari/Yandex Личный держит старый JS-бандл, где маршрута `/:slug` ещё нет (страница создана после деплоя последней версии у этого пользователя). Lovable hosting отдаёт свежий `index.html`, но Safari может игнорировать `no-cache` для уже закешированных `*.js` без хеша в URL → старый роутер падает в `*` (NotFound).
-2. **Приватный режим WebKit + ITP блокирует fetch к Supabase**: запрос `site_pages` уходит на `hdjgkjceownmmnrqqtuz.supabase.co`. В Yandex «Личный» / Safari Private возможен block третьеsторонних запросов; fetch падает, `data=null`, рендерится NotFound (нет различения «ошибка сети» vs «нет страницы»).
-3. **localStorage недоступен в приватном режиме** → `createClient` с `storage: localStorage` падает при инициализации до маунта роутов → попадаем в глобальный error boundary, который у некоторых сборок отдаёт NotFound.
-4. **CSP / mixed-content в WebKit** для запроса к Supabase (менее вероятно — на других страницах работает).
+Согласен.
 
-### Шаги диагностики (read-only)
+Сейчас не нужно делать кнопку «выдать секцию руками». Правильный fix:
 
-1. **Воспроизвести точно**: запустить Playwright WebKit (Safari engine) и Chromium, оба в обычном и privacy-режиме (`storage_state=None`, `permissions=[]`, блок third-party cookies):
-  - открыть `https://gorbova.by/ideologicheskaya-rabota`,
-  - собрать console + network (особенно запросы к `*.supabase.co/rest/v1/site_pages*`),
-  - сделать скриншот.
-  - Pass-критерий гипотезы 2/3: WebKit private → 404 + ошибка fetch / localStorage; Chromium normal → страница рендерится.
-2. **Проверить SitePageBySlug на молчаливую ошибку**: подтвердить, что при `error` из supabase резолвер возвращает `null` без логирования (так и есть — `if (error || !data) return null`). Это объясняет, почему сетевая ошибка визуально неотличима от «нет страницы».
-3. **Проверить версию бандла**: сравнить `x-deployment-id` (b4bd1452…) с тем, что должно содержать маршрут `/:slug`. Если у пользователя в Safari закеширован JS со старого deployment — это гипотеза 1.
-4. **Сверить с предыдущим discovery** `PATCH-SAFARI-SPA-404-DISCOVERY` (item c5c7ae38, done) — какой вывод там был зафиксирован, чтобы не дублировать.
+```text
+чинить write-path + backfill
+```
 
-### Deliverables discovery-этапа
+Manual section grant — отдельная фича, не hotfix.
 
-- Отчёт `Отчет о выполнении: PATCH-SAFARI-IDEOLOG-404-DISCOVERY` с таблицей: браузер × режим × URL × результат × console/network evidence × screenshot.
-- Подтверждённая корневая причина (одна из гипотез 1–4) и предложение `PATCH-…` для исправления (отдельной задачей, не в этом item):
-  - под гипотезу 1 — версионирование `index.html` через `?v=` и/или вернуть hash в имена чанков (проверить vite config), плюс инструкция cmd+shift+R пользователю как workaround;
-  - под гипотезу 2/3 — обернуть `resolveBySlug` в try/catch с логированием и различать «сетевая ошибка» vs «не найдено»; показывать пользователю «временно недоступно» вместо 404; рассмотреть `storage: undefined` fallback при недоступном localStorage в публичных страницах без auth.
+---
 
-### DoD discovery
+## **11. Отчёты по demo/access блоку**
 
-- Воспроизведение в WebKit подтверждено (или опровергнуто — тогда копаем дальше).
-- Зафиксирован конкретный сигнал (network/console/storage), отличающий рабочий и сломанный кейс.
-- Создан follow-up item на сам фикс — без правок кода в рамках этого discovery.
+Нужны отдельные отчёты:
 
-### Что НЕ делаем на этом шаге
+```text
+Отчет о выполненной работе: PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
+```
 
-- Никаких правок в `SitePageBySlug`, `SiteRenderService`, роутере, `client.ts`, sw.js.
-- Никаких миграций.
-- Никаких изменений кеш-заголовков на хостинге (Lovable hosting нами не управляется).
+Финальные строки:
+
+```text
+authenticated no-card trial user_id resolution: PASS
+orders_v2 user_id/profile_id shape: PASS
+entitlements user_id/profile_id shape: PASS
+no phantom user_id created: PASS
+knowledge section access smoke: PASS
+guest/public-link regression: PASS
+PATCH-DEMO-TRIAL-USER-ID-RESOLUTION: PASS
+```
+
+Для dry-run:
+
+```text
+Отчет о выполненной работе: BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run
+```
+
+Финальные строки:
+
+```text
+affected orders identified: PASS
+affected entitlements identified: PASS
+safe join order→entitlement proven: PASS
+risk rows excluded: PASS
+dry-run candidate list ready: PASS
+BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run: PASS/PARTIAL/FAIL
+```
+
+Sweep — только после отдельного approve.
+
+---
+
+## **12. Safari prod-evidence — approved as separate mini-patch**
+
+План `PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE` принимается как отдельный read-only proof.
+
+Но исправить формулировку:
+
+```text
+Yandex = Chromium-based, не WebKit
+```
+
+Не использовать Yandex как доказательство Safari/WebKit.
+
+DoD оставить:
+
+```text
+Chrome normal: OK / NotFound / FetchError
+Chrome incognito: OK / NotFound / FetchError
+WebKit normal: OK / NotFound / FetchError
+WebKit private: OK / NotFound / FetchError
+Yandex UA: OK / NotFound / FetchError
+Network site_pages: status / error
+Console fetch err: present/absent
+Service worker: present/absent
+Bundle hash: ...
+```
+
+Если не воспроизводится:
+
+```text
+PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE: PARTIAL — not reproduced, HAR needed from affected browser
+```
+
+---
+
+## **Итог**
+
+```text
+PATCH-DEMO-TRIAL-USER-ID-RESOLUTION: APPROVED with auth.uid/public-link safeguards
+BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH — Dry-run: APPROVED after write-path fix
+PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK: HOLD / separate approve only
+PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE: APPROVED as separate read-only mini-patch
+
+План: «Тест Тестовый» оплатил, но «База знаний» закрыта
+```
+
+### Что обнаружено (Diagnose)
+
+1. **Пользователь:** `1@ajoure.by` / `Тест Тестовый`, `profile.id = 5ec52e5f-424c-4486-82e6-301c3d4af9c8`.
+2. **Оплаченный заказ** (29.06.2026, демо-доступ 24 часа): `orders_v2.id = 030ecdb7-…`
+  - `product_id = 3ea08f79` (Gorbova Club — идеология)
+  - `tariff_id = 85863b4b` («Доступ к +600 ответов»)
+  - `profile_id = 5ec52e5f` ✅ (тест-пользователь)
+  - `user_id = 37e91f59-e4db-4840-b9c9-e760e634ddd1` ❌ (этого `auth.uid` в `profiles` НЕТ — «фантомный» payer)
+3. **Раздел `/knowledge**` (`app_sections.id = 93448ee2`) имеет `access_rules`:
+  - rule `5f19be94`: product `3ea08f79` + tariff `85863b4b` → даёт доступ к секции `knowledge`. ✅ Тариф совпадает с покупкой.
+4. **Создан entitlement** `748c6423`: `product_id = 3ea08f79`, `status = active`, `expires_at = 30.06.2026`, НО:
+  - `profile_id = 5ec52e5f` (правильно)
+  - `user_id = 37e91f59` (привязан к «фантому», а не к тест-пользователю)
+5. **RPC `get_user_section_access**` фильтрует по `entitlements.user_id = auth.uid()` (а `auth.uid()` тест-пользователя = `5ec52e5f`). Поэтому RPC возвращает `has_access = false` и UI рисует `SectionLockedState`.
+
+### Root cause
+
+Демо-трайл-флоу с CTA `SITE-000018` пишет `orders_v2.user_id` и далее `entitlements.user_id` из контекста публичной ссылки/брайджа, а не из `auth.uid()` залогиненного покупателя. В результате entitlement создаётся под чужим (не существующим в `profiles`) `auth.uid`, и резолвер доступа его не находит. `profile_id` проставлен корректно — это единственный «правильный» якорь к тест-пользователю.
+
+Это системный баг: то же самое будет у любого залогиненного покупателя демо-трайла через сайтовый CTA.
+
+### Что сделать
+
+Разбить на 3 отдельных задачи. Все шаги: Diagnose → Plan → Dry run → Execute → Verify, на каждом — DoD.
+
+#### Задача 1. PATCH-DEMO-TRIAL-USER-ID-RESOLUTION
+
+Исправить `bepaid-create-token` / `grant-access-for-order` для no-card демо-трайла, чтобы `orders_v2.user_id` и `entitlements.user_id` брались из `auth.uid()` авторизованного покупателя, а не из payer-контекста публичной ссылки. Если покупатель анонимен — оставляем текущий путь (user_id = NULL/гость), но запрещаем привязывать к произвольному «фантому».
+
+DoD:
+
+- Новый демо-трайл, оформленный залогиненным пользователем, создаёт `orders_v2`/`entitlements` с `user_id = auth.uid() = profile_id`.
+- Runtime-smoke под `1@ajoure.by`: `get_user_section_access` отдаёт `has_access = true` для секции `knowledge`.
+- Регрессионный тест на гостевую оплату публичной ссылки (recipient = link.user_id) не сломан.
+
+#### Задача 2. BACKFILL-DEMO-TRIAL-USER-ID-MISMATCH (dry-run + согласование + sweep)
+
+Найти все entitlements/orders_v2 после внедрения no-card демо-трайла, у которых `user_id ≠ profile_id` И `user_id` отсутствует в `profiles`. Привести `user_id` к `profile_id` атомарно, с audit. Сначала dry-run, потом согласование списка, потом sweep.
+
+DoD:
+
+- Dry-run-отчёт по числу и составу строк.
+- После sweep тест-пользователь (и любые другие пострадавшие) видит «База знаний» без 24-часового ожидания нового заказа.
+- `audit_logs` содержит запись `patch=backfill_demo_trial_user_id_v1`.
+
+#### Задача 3. PATCH-SECTION-ACCESS-RESOLVER-PROFILE-FALLBACK (опционально, защита в глубину)
+
+Расширить `get_user_section_access`: помимо `subscriptions_v2.user_id` и `entitlements.user_id` учитывать `profile_id = auth.uid()` (для случаев, когда `user_id` исторически разъехался с `profile_id`). Меняет только SELECT, не write-path.
+
+DoD:
+
+- Тот же smoke даёт `has_access = true` даже без бэкфилла из задачи 2.
+- Регресс: пользователь без своего entitlement не получает чужого доступа (проверить, что профиль ≠ чужой user_id).
+
+### Про UI (ответ на «как это сделать через UI»)
+
+Сейчас «выдать доступ к секции» через админку напрямую нельзя — секция управляется только правилами `access_rules` (product/tariff → section). Доступ конкретному пользователю появляется автоматически после оплаты соответствующего тарифа. Если нужна именно UI-кнопка «выдать секцию вручную конкретному `user_id`» — это отдельная фича (manual section grant в `/admin/users/:id`), оценить отдельно. Сейчас правильный путь — починить флоу выдачи (задачи 1+2), а не выдавать секцию руками.
+
+### Технические детали
+
+- Файлы: `supabase/functions/bepaid-create-token/index.ts`, `supabase/functions/grant-access-for-order/index.ts`, RPC `public.get_user_section_access`.
+- Таблицы: `orders_v2`, `entitlements`, `subscriptions_v2`, `profiles`, `access_rules`, `app_sections`.
+- Memory к перечитыванию перед патчем: `Public Link user_id = recipient, not payer`, `PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION`, `PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW`, `Canonical Access Sources`.
+
+---
+
+### Отдельный блок: follow-up для PATCH-SAFARI-IDEOLOG-404-DISCOVERY
+
+Принято: discovery остался PARTIAL — нужен прод-evidence. Предлагаю отдельный мини-патч `PATCH-SAFARI-IDEOLOG-404-PROD-EVIDENCE`:
+
+1. Поднять headless Chromium и WebKit (Playwright) против `https://gorbova.by/ideologicheskaya-rabota`:
+  - Chrome normal / incognito.
+  - WebKit (proxy для Safari).
+  - В каждом — собрать: финальный URL, статус DOM (OK/NotFound/FetchError-баннер), наличие `[SiteRenderService:resolveBySlug] fetch error` в console, статус сетевого запроса к `site_pages`, наличие service worker, hash загруженного JS-бандла / deployment id.
+2. По Яндекс.Браузеру: проверить через UA-override Chromium (т.к. Yandex = Chromium); явно зафиксировать, что приватный режим Yandex не использует WebKit-движок.
+3. Отчёт строго по формату:
+  ```
+   Chrome normal:      OK / NotFound / FetchError
+   Chrome incognito:   ...
+   WebKit normal:      ...
+   WebKit private:     ...
+   Yandex UA:          ...
+   Network site_pages: status / error
+   Console fetch err:  present/absent
+   Service worker:     present/absent
+   Bundle hash:        ...
+  ```
+4. Зафиксировать root cause или явно сказать «не воспроизводится, нужен HAR от пользователя».
+
+DoD: все 9 строк отчёта заполнены реальными значениями; либо доказан root cause, либо запрошен HAR.
