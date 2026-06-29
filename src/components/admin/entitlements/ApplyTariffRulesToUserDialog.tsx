@@ -89,6 +89,8 @@ export function ApplyTariffRulesToUserDialog({
   open, onOpenChange, fixedUserId, fixedUserLabel, onApplied,
 }: Props) {
   const [userId, setUserId] = useState<string>(fixedUserId || "");
+  const [userLabel, setUserLabel] = useState<string>(fixedUserLabel || "");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [tariffId, setTariffId] = useState<string>("");
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [recalculate, setRecalculate] = useState(true);
