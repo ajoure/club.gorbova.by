@@ -16829,6 +16829,7 @@ export type Database = {
       }
     }
     Functions: {
+      _crm_tasks_assert_staff: { Args: never; Returns: undefined }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
@@ -17243,6 +17244,58 @@ export type Database = {
       create_support_ticket: {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json
+      }
+      crm_task_apply_automation: {
+        Args: { _context?: Json; _deal_id: string; _offer_id: string }
+        Returns: string[]
+      }
+      crm_task_create: { Args: { payload: Json }; Returns: string }
+      crm_task_list: {
+        Args: { _filters?: Json }
+        Returns: {
+          assignee_user_id: string | null
+          automation_rule_id: string | null
+          closed_at: string | null
+          closed_by: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          deal_id: string | null
+          description: string | null
+          due_at: string | null
+          id: string
+          meta: Json
+          offer_id: string | null
+          order_id: string | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
+          product_id: string | null
+          public_id: string | null
+          remind_at: string | null
+          result_comment: string | null
+          source: string
+          status: string
+          tariff_id: string | null
+          task_type_id: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "crm_tasks"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      crm_task_reassign: {
+        Args: { _assignee: string; _task_id: string }
+        Returns: undefined
+      }
+      crm_task_update_status: {
+        Args: { _result_comment?: string; _status: string; _task_id: string }
+        Returns: undefined
       }
       deactivate_global_document_package: {
         Args: { _package_id: string }
