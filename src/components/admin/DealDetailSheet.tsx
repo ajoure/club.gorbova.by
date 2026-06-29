@@ -66,6 +66,7 @@ import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
+import { CallsHistorySection } from "./calls/CallsHistorySection";
 
 interface DealDetailSheetProps {
   deal: any | null;
