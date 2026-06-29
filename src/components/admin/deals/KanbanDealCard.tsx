@@ -254,7 +254,34 @@ export const KanbanDealCard = memo(function KanbanDealCard({
             </Badge>
           )}
         </div>
+
+        {taskSummary && taskSummary.open_count > 0 && (() => {
+          const TypeIcon = (taskSummary.next_task_type_key && TASK_TYPE_ICONS[taskSummary.next_task_type_key]) || ListChecks;
+          const overdue = (taskSummary.overdue_count ?? 0) > 0;
+          const iconClr = taskSummary.next_task_type_color || (overdue ? "#dc2626" : undefined);
+          return (
+            <div
+              className={cn(
+                "mt-1.5 flex items-center gap-1 text-[10px] rounded-md px-1.5 py-0.5 border w-fit",
+                overdue
+                  ? "border-red-300 bg-red-50 text-red-700"
+                  : "border-border/40 bg-muted/40 text-muted-foreground"
+              )}
+              title={taskSummary.next_task_type_label || "Задачи"}
+            >
+              <TypeIcon className="h-3 w-3 shrink-0" style={iconClr ? { color: iconClr } : undefined} />
+              <span className="font-medium">{taskSummary.open_count}</span>
+              {overdue && (
+                <span className="font-semibold">· {taskSummary.overdue_count} просроч.</span>
+              )}
+              {taskSummary.next_due_at && !overdue && (
+                <span className="opacity-80">· {formatRelativeDue(taskSummary.next_due_at)}</span>
+              )}
+            </div>
+          );
+        })()}
       </div>
+
 
       {/* Compact move icon-button */}
       {showMoveButton && onMoveClick && !bulkMode && (
