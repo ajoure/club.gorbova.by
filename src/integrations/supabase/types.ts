@@ -17327,6 +17327,7 @@ export type Database = {
         Args: { _assignee: string; _task_id: string }
         Returns: undefined
       }
+      crm_task_stats_by_assignee: { Args: never; Returns: Json }
       crm_task_update_status: {
         Args: { _result_comment?: string; _status: string; _task_id: string }
         Returns: undefined
