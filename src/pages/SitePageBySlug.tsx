@@ -34,14 +34,17 @@ export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
   const hashScrolled = useRef(false);
 
-  const { data: page, isLoading } = useQuery({
+  const { data: resolution, isLoading, refetch } = useQuery({
     queryKey: ["site-page-public", slug],
-    queryFn: () => SiteRenderService.resolveBySlug(slug!),
+    queryFn: () => SiteRenderService.resolveBySlugSafe(slug!),
     enabled: !!slug,
+    retry: (failureCount, _err) => failureCount < 2,
   });
 
+  const page = resolution?.status === "ok" ? resolution.page : null;
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
+
 
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
