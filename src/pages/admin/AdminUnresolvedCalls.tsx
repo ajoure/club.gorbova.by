@@ -60,7 +60,7 @@ export default function AdminUnresolvedCalls() {
         .select(
           "id, public_id, direction, status, link_status, started_at, duration_seconds, phone_from_e164, phone_to_e164"
         )
-        .in("link_status", ["unresolved", "ambiguous"])
+        .in("link_status", ["unresolved"])
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(500);
       if (error) throw error;
