@@ -532,6 +532,13 @@ async function processRule(
     window_resolved_from: UserAction["window_resolved_from"];
     window_anchor_source: UserAction["window_anchor_source"];
   } => {
+    if (durationDaysOverride && durationDaysOverride > 0) {
+      return {
+        plannedIso: new Date(Date.now() + durationDaysOverride * 86400000).toISOString(),
+        window_resolved_from: "rule_duration",
+        window_anchor_source: "rule_duration_now",
+      };
+    }
     if (rule.duration_days) {
       return {
         plannedIso: new Date(Date.now() + rule.duration_days * 86400000).toISOString(),
