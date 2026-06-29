@@ -109,8 +109,9 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "communication", label: "Контакт-центр", path: "/admin/communication", icon: "MessageCircle", order: 0, permission: "users.view", badge: "unread" },
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 3, permission: "entitlements.view" },
-      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 4, permission: "users.view" },
+      { id: "tasks", label: "Задачи", path: "/admin/tasks", icon: "ListChecks", order: 3, permission: "users.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 4, permission: "entitlements.view" },
+      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 5, permission: "users.view" },
     ],
   },
   {
