@@ -147,21 +147,14 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Дедлайн</Label>
-              <Input
-                type="datetime-local"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-              />
+              <DateTimePickerField value={dueAt} onChange={setDueAt} />
             </div>
             <div className="space-y-1">
               <Label>Напомнить</Label>
-              <Input
-                type="datetime-local"
-                value={remindAt}
-                onChange={(e) => setRemindAt(e.target.value)}
-              />
+              <DateTimePickerField value={remindAt} onChange={setRemindAt} />
             </div>
           </div>
+
 
           <div className="space-y-1">
             <Label>Ответственный</Label>
