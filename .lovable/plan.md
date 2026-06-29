@@ -1,309 +1,258 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Заголовок отчёта исправить заранее**
+1. **Заголовок оставить как есть**
 
-В DoD указано:
-
-```text
-Отчет о выполнении
-```
-
-Нужно строго:
+Формат корректный:
 
 ```text
-Отчет о выполненной работе: PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
+План: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
 ```
 
-2. **Discovery обязателен до guard**
+Это именно dry-run, без write-действий.
 
-Перед правкой `grant-access-for-order` сначала подтвердить фактический маркер no-card trial в `orders_v2.meta`.
+2. **Добавить safety-правило по heuristic match**
 
-Не писать guard на предполагаемое поле, пока не доказано, что реально есть:
+`heuristic_time_match` нельзя смешивать с явными связями как равнозначный кандидат для будущего sweep.
+
+В dry-run таблице нужно разделить:
 
 ```text
-meta.source = 'trial_no_card'
+safe_candidates       = provider_subscriptions / meta.order_id / meta.tracking_id
+review_candidates     = heuristic_time_match only
 ```
 
-или другой фактический маркер.
+Для будущего удаления автоматически допустимы только `safe_candidates`.  
+`heuristic_time_match only` — только ручная проверка, без auto-delete.
 
-В отчёте показать пример строки `orders_v2.meta` по no-card trial-заказу.
+3. **Проверить, что** `product_id` **реально есть в** `subscriptions_v2`
 
-3. **Guard должен стоять до CREATE/EXTEND subscription**
-
-Правильная точка — до веток:
+В плане есть:
 
 ```text
-existingProductSub extend
-CREATE new subscription
+subscriptions_v2.user_id + product_id + tariff_id
 ```
 
-Иначе no-card trial может либо создать новую `subscriptions_v2`, либо продлить уже существующую.
+Перед запросом проверить фактические колонки `subscriptions_v2`.
 
-4. **Guard должен блокировать и create, и extend**
-
-В плане написано:
-
-```text
-не трогает existing-subscription extend для другого продукта
-```
-
-Нужно точнее:
-
-- для **no-card trial этого продукта** не должно быть ни create, ни extend;
-- для обычных `pay_now` / recurring / provider-side subscription поведение не меняется;
-- для другого продукта guard не срабатывает, потому что order другой.
-
-То есть условие должно быть на сам order:
-
-```ts
-order.is_trial === true
-Number(order.paid_amount || 0) === 0
-order.meta?.source === 'trial_no_card'
-```
-
-и при совпадении — полностью пропустить subscription handling.
-
-5. **Audit insert не должен ломать grant**
-
-`grant.skip_subscription_no_card_trial` нужен, но audit failure не должен валить выдачу доступа.
-
-Сделать warning-only:
-
-```text
-если audit_logs insert упал → console.warn / non-blocking
-```
-
-Не повторять ошибку с молчаливым `WHEN OTHERS THEN NULL`; но и не ломать P0-flow.
-
-6. `results.subscription` **— проверить контракт ответа**
-
-Перед записью:
-
-```ts
-results.subscription = { action: 'skipped', reason: 'no_card_trial' };
-```
-
-проверить, что `results.subscription` уже существует/используется в таком формате и не ломает frontend/log consumers.
-
-Если формата нет — добавить безопасно:
-
-```ts
-results.subscription = {
-  action: 'skipped',
-  reason: 'no_card_trial',
-  order_id: orderId,
-  product_id: productId
-}
-```
-
-7. **Entitlement expiry нужно доказать SQL-ом**
-
-В discovery обязательно показать:
-
-```text
-entitlements.expires_at = orders_v2.trial_end_at / meta trial end / paid_at + trial_days
-```
-
-Если `entitlements.expires_at` сейчас вычисляется через subscription row, guard делать нельзя до дополнительного fix.
-
-8. **Regression pay_now формулировать осторожно**
-
-В DoD написано:
-
-```text
-Regression pay_now → создаётся subscription
-```
-
-Это может быть неверно для обычного one-time `pay_now`.
-
-Правильнее:
-
-```text
-pay_now ведёт себя как раньше: если до патча создавал subscription — создаёт; если не создавал — не создаёт. Главное: no-card guard не сработал.
-```
-
-То же для recurring:
-
-```text
-recurring/provider-side subscription продолжает создавать/обновлять нужные subscription records как раньше.
-```
-
-9. **Runtime proof по subscriptions_v2**
-
-Проверять не только `order_id`, потому что связь может быть через `user_id/product_id/tariff_id`.
-
-Для no-card trial proof:
+Если `product_id` нет, использовать связку через тариф:
 
 ```sql
-select count(*)
-from subscriptions_v2
-where user_id = <trial_user_id>
-  and product_id = <product_id>
-  and created_at >= <test_started_at>;
+subscriptions_v2.tariff_id → tariffs.product_id
 ```
 
-Ожидание:
+И в отчёте явно указать фактический join.
+
+4. **Provider-linked строки считать risk-сегментом**
+
+Если sub связан с:
 
 ```text
-0
+provider_subscriptions
+payment_methods
+provider_subscription_id
+bepaid / stripe ids
 ```
 
-Если в таблице нет `product_id`, использовать реальные поля связи: `tariff_id`, `offer_id`, `metadata`, `created_at`.
+то это не кандидат на автоматический sweep без отдельного разбора.
 
-10. **Repeat guard после cleanup**
-
-После синтетики и cleanup обязательно проверить:
-
-- второй вызов до cleanup возвращал `alreadyUsedTrial=true`;
-- после cleanup тестовые данные удалены;
-- cleanup не удалил реальные записи.
-
-11. **Не удалять старые trial-sub rows в этом патче**
-
-Согласен: cleanup/backfill старых строк только отдельной задачей.
-
-В отчёте явно указать:
+В dry-run добавить флаг:
 
 ```text
-BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS: out of scope
+risk_provider_linked = true/false
 ```
 
-12. **Финальные строки статуса**
-
-В конце отчёта нужно:
+и правило:
 
 ```text
-no-card trial subscription skip: PASS
-entitlement expiry without subscription: PASS
-repeat guard: PASS
-pay_now regression: PASS
-recurring regression: PASS
-synthetic cleanup: PASS
-PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW: PASS
+provider-linked rows excluded from auto-sweep proposal
 ```
 
-После этих правок план можно выполнять.
+5. **Entitlement coverage недостаточно просто “есть active entitlement”**
+
+Нужно проверить не только наличие entitlement, но и срок:
+
+```text
+entitlements.status='active'
+entitlements.expires_at >= subscriptions_v2.access_end_at OR entitlements.expires_at >= now()
+```
+
+И отдельно вывести:
+
+```text
+entitlement_coverage = none / active_shorter / active_ok / expired
+```
+
+Чтобы не удалить sub, если он единственный источник видимого срока доступа.
+
+6. **Добавить проверку ledger**
+
+Для каждого кандидата вывести, есть ли grant в `access_grant_ledger` по тому же user/product/order:
+
+```text
+ledger_grant_exists = true/false
+ledger_grant_status
+ledger_source_order_id
+```
+
+Цель: доказать, что доступ держится ledger/entitlement, а не sub-row.
+
+7. **Не использовать** `status='paid'` **без** `paid_amount=0`
+
+В контрольном запросе добавить `paid_amount=0`, иначе в список могут попасть trial-заказы, которые по ошибке paid, но не no-card 0 BYN:
+
+```sql
+AND paid_amount = 0
+```
+
+И желательно:
+
+```sql
+AND COALESCE(meta->>'source','') = 'trial_no_card'
+```
+
+8. **Агрегаты должны разделять “delete-safe” и “manual-review”**
+
+Второй файл агрегатов должен содержать минимум:
+
+```text
+total_no_card_trial_orders
+total_candidate_subs
+safe_explicit_candidates
+heuristic_only_candidates
+provider_linked_candidates
+entitlement_active_ok
+entitlement_missing_or_short
+recommended_for_sweep
+recommended_for_manual_review
+```
+
+9. **CSV не должен содержать лишние персональные данные**
+
+Email/phone в CSV не выводить, если не нужно.
+
+Достаточно:
+
+```text
+sub_id
+order_id
+user_id
+product_id
+tariff_id
+status
+dates
+link_source
+risk flags
+```
+
+Если нужен email для ручной проверки — маскировать:
+
+```text
+a***@domain.com
+```
+
+10. **Финальный отчёт dry-run**
+
+Заголовок:
+
+```text
+Отчет о выполненной работе: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
+```
+
+В конце:
+
+```text
+no-card trial orders inventory: PASS
+subscription candidates identified: PASS
+explicit vs heuristic split: PASS
+provider-linked risk split: PASS
+entitlement/ledger coverage: PASS
+CSV export: PASS
+BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run: PASS/PARTIAL/FAIL
+```
+
+После этих правок dry-run можно выполнять. Sweep — только отдельным планом после просмотра списка.
 
 &nbsp;
 
-План: PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
+План: BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS — Dry-run
 
-## Diagnose (что уже известно из proof предыдущего раунда)
+## Цель
 
-- `bepaid-create-token` в no-card ветке создаёт `orders_v2` с `is_trial=true`, `paid_amount=0`, `status='paid'`, `meta = { ...ncMeta, paid_at }`.
-- Затем вызывается canonical `grant-access-for-order` (write-path).
-- `grant-access-for-order` идёт в стандартную CREATE/EXTEND ветку для `subscriptions_v2`:
-  - resolver видит на оффере `891c7fe0…` `meta.recurring.is_recurring = true` (триал-оффер технически родителем recurring-семьи),
-  - попадает в `CREATE new subscription` (index.ts ~1740) и пишет sub с `status='active'`, `auto_renew = shouldAutoRenew`, `recurring_snapshot = …`.
-- Второй вызов того же email до фикса репит-гварда удлинял ту же sub через `extended_by_orders` (наблюдалось в proof).
-- Это нарушает семантику: no-card demo ≠ commercial subscription. Старый guard `subscriptions_v2.is_trial=true` не срабатывал именно поэтому.
+Собрать read-only список subscriptions_v2-строк, которые были созданы старой версией `grant-access-for-order` для no-card trial заказов (до фикса PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW). Никаких UPDATE/DELETE. Результат — таблица для согласования перед sweep.
 
-Прецедент уже существующего «не создавать sub» — ветка `order_based_only` (index.ts ~1499) с audit-логом. Тот же шаблон применим здесь.
+## Scope
 
-## Scope (минимальный и точечный)
-
-Только discovery + 1 guard в одном write-path. **Никаких** изменений в:
-
-- recurring/pay_now ветках,
-- bePaid webhook,
-- access-resolver,
-- entitlement-резолвере (entitlement продолжает нести `expires_at = trial_end_at`).
+- Только `SELECT` через `supabase--read_query` / psql.
+- Никаких миграций, edge-функций, кода.
+- Никаких изменений в `subscriptions_v2`, `entitlements`, `access_grant_ledger`.
 
 ## Шаги
 
-### 1. Discovery (read-only, без правок)
+### 1. Идентификация маркера no-card trial
 
-1.1. Подтвердить структуру `meta` у no-card trial-заказа: какой именно маркер источника пишет `bepaid-create-token` (на основе кода ветка пишет `ncMeta + { paid_at }`; нужно увидеть, есть ли там `source: 'trial_no_card'` или эквивалент).
+Маркер заказа (подтверждён в SOT): `orders_v2.meta->>'source' = 'trial_no_card'` + `is_trial=true` + `paid_amount=0` + `status='paid'`.
 
-1.2. Подтвердить, что `entitlement.expires_at` для no-card trial кладётся напрямую из `trial_end_at` (а не вычисляется из subscription.access_end_at) — значит, subscription row для expiry не нужен.
+### 2. Базовый отчёт по orders_v2 (контрольная цифра)
 
-1.3. Проверить, что нет внешних читателей, ожидающих sub-row для no-card trial:
-
-- `purchases` UI (карточки «Мои покупки»),
-- cron `nightly-access-reconcile`,
-- `useUserAccess` / `access-resolver.ts` хелперы,
-- telegram-grant / live-access резолверы.
-
-Ожидается: все читают entitlements/orders, а sub не критична для триала.
-
-### 2. Точечный fix (две минимальные правки)
-
-2.1. `**bepaid-create-token` (no-card ветка)** — гарантировать однозначный маркер источника в `orders_v2.meta`:
-
-- добавить `source: 'trial_no_card'` (или подтвердить, если уже пишется) — этим маркером будет руководствоваться guard в grant-access-for-order.
-
-2.2. `**grant-access-for-order**` — добавить ранний skip-блок ровно по образцу `order_based_only` (~строка 1499) перед `if (existingProductSub) { … } else { CREATE new subscription }`:
-
-```
-const isNoCardTrial =
-  order.is_trial === true &&
-  Number(order.paid_amount || 0) === 0 &&
-  (order.meta?.source === 'trial_no_card');
-
-if (isNoCardTrial) {
-  // Skip subscriptions_v2 entirely. Entitlement carries trial_end_at.
-  await supabase.from('audit_logs').insert({
-    action: 'grant.skip_subscription_no_card_trial',
-    actor_type: 'system',
-    actor_label: 'grant-access-for-order',
-    target_user_id: userId,
-    meta: { order_id, product_id, offer_id, reason: 'no_card_trial' }
-  });
-  results.subscription = { action: 'skipped', reason: 'no_card_trial' };
-} else if (orderBasedOnly) {
-  ...
-} else if (existingProductSub) {
-  ...
-} else {
-  // CREATE
-}
+```sql
+SELECT count(*) AS no_card_trial_orders_total,
+       min(created_at) AS first_seen,
+       max(created_at) AS last_seen
+FROM orders_v2
+WHERE meta->>'source' = 'trial_no_card'
+  AND is_trial = true
+  AND status = 'paid';
 ```
 
-Этот guard:
+### 3. Кандидатные subscriptions_v2
 
-- **не** трогает existing-subscription extend для другого продукта,
-- **не** трогает recurring/pay_now,
-- срабатывает только при совпадении всех трёх признаков.
+Связь sub → order ищется по нескольким каналам (используем UNION DISTINCT, не пропускаем ни одного):
 
-### 3. Dry-run
+- `provider_subscriptions.order_id` → `subscriptions_v2.id`
+- `subscriptions_v2.meta->>'order_id'`
+- `subscriptions_v2.meta->>'tracking_id'` вида `subv2:<sub_id>:order:<order_id>`
+- `subscriptions_v2.user_id + product_id + tariff_id` точно совпадает с no-card trial order, созданным в пределах ±10 минут от `subscriptions_v2.created_at` (страховка для старых строк без явной связи)
 
-3.1. На staging-уровне (через `supabase--read_query`) пройти query-эмуляцией: показать, какие `orders_v2` за последние 30 дней попадут под guard, чтобы убедиться, что это только демо-trial.
+Для каждой кандидатной строки вывести:
 
-3.2. Прогнать `tsgo`/линтер на изменённые edge-функции.
+```text
+sub_id, user_id, product_id, tariff_id, status, is_trial,
+auto_renew, access_start_at, access_end_at, created_at,
+linked_order_id, link_source (provider_subscriptions | meta.order_id | meta.tracking_id | heuristic_time_match),
+order.paid_amount, order.is_trial, order.meta->>'source'
+```
 
-### 4. Execute
+### 4. Срезы для согласования
 
-Деплой `bepaid-create-token` и `grant-access-for-order`. **Никаких** миграций, **никакого** ретроактивного удаления уже существующих trial-sub rows (это backlog: `BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS` — отдельный безопасный sweep с dry-run, не в этом патче).
+- Всего кандидатных subs.
+- Разбивка по `link_source` (явная связь vs heuristic).
+- Разбивка по `status` (active / canceled / expired / past_due / прочие).
+- Разбивка по `is_trial` в самой sub-строке (true/false — ожидаем преимущественно false, что и есть семантический баг).
+- Сколько из них имеют активный `entitlement` для того же `user_id + product_id` (т.е. удаление sub не повредит entitlement).
+- Сколько подвязаны на `payment_methods` / `provider_subscriptions` с реальным платёжным каналом (флаг риска — такие не трогаем без отдельного разбора).
 
-### 5. Verify (runtime-proof)
+### 5. Экспорт
 
-Синтетический прогон через curl `bepaid-create-token` под двумя e-mail:
+CSV в `/mnt/documents/backfill_no_card_trial_subs_dryrun_<date>.csv` с полной таблицей кандидатов + второй файл — агрегаты по срезам.
 
+### 6. Что НЕ делаем
 
-| Проверка              | Ожидание                                                                         |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `orders_v2` создан    | 1 строка, `is_trial=true`, `paid_amount=0`, `meta.source='trial_no_card'`        |
-| `access_grant_ledger` | 1 grant, `reason_code=paid_order`                                                |
-| `entitlements`        | 1 active, `expires_at = paid_at + trial_days`, `meta.tariff_id` присутствует     |
-| `subscriptions_v2`    | **0 строк** для этого order_id/user_id                                           |
-| `audit_logs`          | `grant.skip_subscription_no_card_trial` присутствует                             |
-| Repeat-guard          | 2-й вызов тем же email → `alreadyUsedTrial=true` (по orders_v2, как уже сделано) |
-| Regression pay_now    | один заказ → создаётся subscription (как и раньше), guard не сработал            |
-| Regression recurring  | оплата recurring-оффера → создаётся sub, guard не сработал                       |
+- Не удаляем и не модифицируем ни одной строки.
+- Не трогаем `entitlements` / `access_grant_ledger`.
+- Не пишем audit-логи о sweep (нечего логировать).
+- Не запускаем edge-функции.
 
+## DoD dry-run
 
-После проверок — синтетика откатывается миграцией-cleanup (как делали для audit-fix).
+- Контрольная цифра no-card trial orders получена.
+- Список subscriptions_v2-кандидатов сформирован с указанием `link_source` для каждой.
+- Срезы по статусу / entitlement-coverage / провайдерскому каналу готовы.
+- CSV выгружен.
+- Отчёт отправлен пользователю на согласование. Sweep — отдельным планом после approve списка.
 
-## DoD
+## Технические детали
 
-- trial no-card → `orders_v2 +1`, `access_grant_ledger +1`, `entitlements +1`, `**subscriptions_v2 +0**`
-- repeat-guard продолжает работать (по orders_v2)
-- pay_now и recurring без регрессий (runtime-proof оба)
-- audit-row `grant.skip_subscription_no_card_trial` пишется
-- сводный отчёт в формате «Отчет о выполнении» с proof
-
-## Out of scope (явно)
-
-- Чистка ранее накопленных trial-sub rows — отдельный `BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS` (sweep + audit, после согласования списка).
-- Изменения resolver-классификатора recurring (`tariff_offers.meta.recurring.is_recurring`) — SOT не трогаем.
-- `bepaid-webhook` — no-card trial туда не идёт.
+- Edge function: нет.
+- Миграции: нет.
+- Изменения кода: нет.
+- Все запросы — через `supabase--read_query` либо psql read-only.
