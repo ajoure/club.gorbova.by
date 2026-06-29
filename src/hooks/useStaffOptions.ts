@@ -5,17 +5,29 @@ export interface StaffOption {
   user_id: string;
   label: string;
   email: string | null;
+  telegram_linked: boolean;
 }
 
 /**
  * Lightweight list of staff members that can be assigned tasks.
  * Returns profiles having at least one of: employee | admin | super_admin role.
  * Falls back to all profiles if role-join is restricted by RLS.
+ *
+ * telegram_linked = profiles.telegram_link_status === 'active' — отражает,
+ * получит ли сотрудник CRM-уведомление о задаче в Telegram. Источник —
+ * существующее поле в profiles (см. TelegramLinkReminder).
  */
 export function useStaffOptions() {
   return useQuery({
     queryKey: ["staff-options"],
     queryFn: async (): Promise<StaffOption[]> => {
+      const mapProfile = (p: any): StaffOption => ({
+        user_id: p.user_id,
+        label: p.full_name || p.email || p.user_id,
+        email: p.email ?? null,
+        telegram_linked: p.telegram_link_status === "active",
+      });
+
       // 1) try role-filtered list
       try {
         const { data: roleRows, error: rolesErr } = await supabase
@@ -32,14 +44,10 @@ export function useStaffOptions() {
           if (staffIds.size > 0) {
             const { data: profiles } = await supabase
               .from("profiles")
-              .select("user_id, full_name, email")
+              .select("user_id, full_name, email, telegram_link_status")
               .in("user_id", Array.from(staffIds))
               .order("full_name", { ascending: true });
-            return (profiles ?? []).map((p: any) => ({
-              user_id: p.user_id,
-              label: p.full_name || p.email || p.user_id,
-              email: p.email ?? null,
-            }));
+            return (profiles ?? []).map(mapProfile);
           }
         }
       } catch {
@@ -48,16 +56,12 @@ export function useStaffOptions() {
 
       const { data, error } = await supabase
         .from("profiles")
-        .select("user_id, full_name, email")
+        .select("user_id, full_name, email, telegram_link_status")
         .not("user_id", "is", null)
         .order("full_name", { ascending: true })
         .limit(300);
       if (error) throw error;
-      return (data ?? []).map((p: any) => ({
-        user_id: p.user_id,
-        label: p.full_name || p.email || p.user_id,
-        email: p.email ?? null,
-      }));
+      return (data ?? []).map(mapProfile);
     },
     staleTime: 5 * 60 * 1000,
   });

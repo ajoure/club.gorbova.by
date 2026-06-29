@@ -22,6 +22,12 @@ import { cn } from "@/lib/utils";
 import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
 import type { StaffOption } from "@/hooks/useStaffOptions";
 import type { TaskContactLite, TaskDealLite } from "@/hooks/useTaskRelations";
+import {
+  TASK_BUCKET_THEME,
+  TASK_CARD_GLASS,
+  TASK_CARD_PILL,
+  type TaskBucketId,
+} from "../taskUiTheme";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Phone,
@@ -33,6 +39,7 @@ const TYPE_ICONS: Record<string, typeof CircleDot> = {
   CheckSquare,
   CircleDot,
 };
+
 
 const STATUS_LABELS: Record<CrmTask["status"], string> = {
   open: "Открыта",
@@ -77,6 +84,7 @@ interface Props {
   assignee: StaffOption | null;
   deal: TaskDealLite | null;
   contact: TaskContactLite | null;
+  bucketId?: TaskBucketId;
   onOpen: (task: CrmTask) => void;
   onOpenDeal?: (dealId: string) => void;
 }
@@ -87,12 +95,14 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   assignee,
   deal,
   contact,
+  bucketId = "later",
   onOpen,
   onOpenDeal,
 }: Props) {
   const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
   const accent = type?.color || "#6366f1";
   const overdue = isOverdue(task);
+  const theme = TASK_BUCKET_THEME[bucketId];
 
   return (
     <div
@@ -106,31 +116,30 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         }
       }}
       className={cn(
-        "group relative bg-card border border-border rounded-lg p-3 mb-2 cursor-pointer",
-        "hover:border-foreground/20 hover:shadow-sm transition-all overflow-hidden",
+        TASK_CARD_GLASS,
+        theme.cardGradient,
+        theme.ring,
+        "p-3 mb-2 cursor-pointer",
+        overdue && "ring-2 ring-rose-300/70",
       )}
     >
       {/* Left accent stripe by type color */}
       <div
         className="absolute left-0 top-0 bottom-0 w-1"
-        style={{ backgroundColor: accent }}
+        style={{
+          backgroundColor: accent,
+          boxShadow: `0 0 12px 0 ${accent}55`,
+        }}
         aria-hidden
       />
 
       <div className="pl-2 space-y-2">
-        {/* Header: type + public id */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: accent }} />
-            <span className="text-[11px] font-medium text-muted-foreground truncate">
-              {type?.label ?? "Задача"}
-            </span>
-          </div>
-          {task.public_id ? (
-            <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-              {task.public_id}
-            </span>
-          ) : null}
+        {/* Header: type label only — public_id скрыт по требованию UX */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: accent }} />
+          <span className="text-[11px] font-medium text-muted-foreground truncate">
+            {type?.label ?? "Задача"}
+          </span>
         </div>
 
         {/* Title */}
@@ -145,12 +154,15 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
           </div>
         ) : null}
 
+
         {/* Due & reminder */}
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "inline-flex items-center gap-1",
-              overdue ? "text-destructive font-medium" : "text-muted-foreground",
+              TASK_CARD_PILL,
+              overdue
+                ? "bg-rose-100/80 text-rose-700 border-rose-200/70 font-medium"
+                : "text-muted-foreground",
             )}
           >
             {overdue ? (
@@ -161,7 +173,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
             {formatDue(task.due_at)}
           </span>
           {task.remind_at ? (
-            <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <span className={cn(TASK_CARD_PILL, "text-muted-foreground")}>
               <Bell className="h-3 w-3" />
               {formatDue(task.remind_at)}
             </span>
@@ -178,7 +190,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
                   e.stopPropagation();
                   if (onOpenDeal) onOpenDeal(deal.id);
                 }}
-                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] font-mono text-foreground hover:bg-muted"
+                className={cn(TASK_CARD_PILL, "font-mono hover:bg-white")}
                 title="Открыть сделку"
               >
                 <Briefcase className="h-3 w-3" />
@@ -186,7 +198,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
               </button>
             ) : null}
             {contact ? (
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-foreground max-w-[160px] truncate">
+              <span className={cn(TASK_CARD_PILL, "max-w-[160px] truncate")}>
                 <UserIcon className="h-3 w-3" />
                 <span className="truncate">
                   {contact.full_name || contact.email || contact.phone || "Контакт"}
@@ -200,7 +212,10 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         <div className="flex items-center justify-between gap-2 pt-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <div
-              className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-foreground/80 shrink-0"
+              className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-semibold text-white shrink-0 shadow-sm"
+              style={{
+                background: `linear-gradient(135deg, ${accent}, ${accent}cc)`,
+              }}
               title={assignee?.label ?? "Не назначен"}
             >
               {initials(assignee?.label)}
@@ -211,11 +226,12 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
           </div>
           <Badge
             variant="outline"
-            className={cn("text-[10px] px-1.5 py-0", STATUS_VARIANTS[task.status])}
+            className={cn("text-[10px] px-1.5 py-0 bg-white/70 backdrop-blur-sm", STATUS_VARIANTS[task.status])}
           >
             {STATUS_LABELS[task.status]}
           </Badge>
         </div>
+
       </div>
     </div>
   );

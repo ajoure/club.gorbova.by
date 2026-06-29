@@ -102,11 +102,6 @@ export function CrmTasksSection({ dealId, contactId, title, bare }: Props) {
             >
               {t.title}
             </button>
-            {t.public_id ? (
-              <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                {t.public_id}
-              </span>
-            ) : null}
           </div>
           <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
             <span className="inline-flex items-center gap-1">

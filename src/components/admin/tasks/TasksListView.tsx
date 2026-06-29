@@ -148,9 +148,6 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
                 </TableCell>
                 <TableCell className="max-w-[280px]">
                   <div className="text-sm font-medium truncate">{t.title}</div>
-                  {t.public_id ? (
-                    <div className="text-[10px] font-mono text-muted-foreground">{t.public_id}</div>
-                  ) : null}
                 </TableCell>
                 <TableCell className="text-sm">
                   {contact ? (
