@@ -262,14 +262,19 @@ export const KanbanDealCard = memo(function KanbanDealCard({
           const overdue = (taskSummary.overdue_count ?? 0) > 0;
           const iconClr = taskSummary.next_task_type_color || (overdue ? "#dc2626" : undefined);
           return (
-            <div
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/admin/tasks?deal=${deal.id}`);
+              }}
               className={cn(
-                "mt-1.5 flex items-center gap-1 text-[10px] rounded-md px-1.5 py-0.5 border w-fit",
+                "mt-1.5 flex items-center gap-1 text-[10px] rounded-md px-1.5 py-0.5 border w-fit cursor-pointer hover:opacity-80 transition-opacity",
                 overdue
                   ? "border-red-300 bg-red-50 text-red-700"
                   : "border-border/40 bg-muted/40 text-muted-foreground"
               )}
-              title={taskSummary.next_task_type_label || "Задачи"}
+              title="Открыть задачи по сделке"
             >
               <TypeIcon className="h-3 w-3 shrink-0" style={iconClr ? { color: iconClr } : undefined} />
               <span className="font-medium">{taskSummary.open_count}</span>
@@ -279,7 +284,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
               {taskSummary.next_due_at && !overdue && (
                 <span className="opacity-80">· {formatRelativeDue(taskSummary.next_due_at)}</span>
               )}
-            </div>
+            </button>
           );
         })()}
       </div>
