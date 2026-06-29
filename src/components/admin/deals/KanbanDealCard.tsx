@@ -10,8 +10,16 @@ import {
   ArrowRightLeft,
   TrendingUp,
   GripVertical,
+  ListChecks,
+  Phone,
+  MessageCircle,
+  Mail,
+  Video,
+  CheckSquare,
+  StickyNote,
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
+import type { DealTaskSummary } from "@/hooks/useDealTaskSummary";
 import { getCardAccentColor } from "@/lib/stagePalette";
 import { DealDragHandle } from "./DealDragHandle";
 
@@ -26,6 +34,27 @@ interface Props {
   stageColor?: string;
   stageType?: "open" | "closed_won" | "closed_lost";
   pipelineId?: string;
+  taskSummary?: DealTaskSummary | null;
+}
+
+const TASK_TYPE_ICONS: Record<string, typeof CheckCircle> = {
+  call: Phone,
+  message: MessageCircle,
+  email: Mail,
+  meeting: Video,
+  todo: CheckSquare,
+  note: StickyNote,
+};
+
+function formatRelativeDue(iso: string): string {
+  const due = new Date(iso).getTime();
+  const diffMin = Math.round((due - Date.now()) / 60000);
+  const abs = Math.abs(diffMin);
+  if (abs < 60) return diffMin >= 0 ? `через ${abs}м` : `${abs}м назад`;
+  const hours = Math.round(abs / 60);
+  if (hours < 24) return diffMin >= 0 ? `через ${hours}ч` : `${hours}ч назад`;
+  const days = Math.round(hours / 24);
+  return diffMin >= 0 ? `через ${days}д` : `${days}д назад`;
 }
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
