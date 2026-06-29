@@ -17270,6 +17270,19 @@ export type Database = {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
       }
+      crm_task_bulk_status: {
+        Args: {
+          _request_id?: string
+          _result_comment?: string
+          _status: string
+          _task_ids: string[]
+        }
+        Returns: Json
+      }
+      crm_task_bulk_update: {
+        Args: { _patch: Json; _request_id?: string; _task_ids: string[] }
+        Returns: Json
+      }
       crm_task_create: { Args: { payload: Json }; Returns: string }
       crm_task_list: {
         Args: { _filters?: Json }
