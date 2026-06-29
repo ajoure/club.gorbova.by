@@ -68,7 +68,7 @@ export function useTelegramReactions(messageIds: string[]) {
     if (!stableIdsCsv) return;
 
     const channel = supabase
-      .channel(`telegram-reactions-rt-${viewerId}`)
+      .channel(`telegram-reactions-rt-${viewerId}-${Math.random().toString(36).slice(2, 10)}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "telegram_message_reactions" },
