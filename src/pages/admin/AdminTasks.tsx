@@ -32,6 +32,8 @@ const DEFAULT_FILTERS: TasksFiltersValue = {
 };
 
 export default function AdminTasks() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dealFilter = searchParams.get("deal");
   const [view, setView] = useState<"board" | "list">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
@@ -43,6 +45,13 @@ export default function AdminTasks() {
   }, []);
 
   const { data: types = [] } = useCrmTaskTypes();
+
+  const clearDealFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("deal");
+    setSearchParams(next, { replace: true });
+  };
+
 
   // Debounce search for RPC
   const [debouncedSearch, setDebouncedSearch] = useState("");
