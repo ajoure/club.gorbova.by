@@ -58,6 +58,8 @@ export function CreateCrmTaskDialog({
   const [dueAt, setDueAt] = useState<string>("");
   const [remindAt, setRemindAt] = useState<string>("");
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
+  const [dealId, setDealId] = useState<string | null>(defaultDealId ?? null);
+  const [contactId, setContactId] = useState<string | null>(defaultContactId ?? null);
 
   useEffect(() => {
     if (open && types.length > 0 && !typeId) {
@@ -66,15 +68,20 @@ export function CreateCrmTaskDialog({
   }, [open, types, typeId]);
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setDealId(defaultDealId ?? null);
+      setContactId(defaultContactId ?? null);
+    } else {
       setTitle("");
       setDescription("");
       setDueAt("");
       setRemindAt("");
       setTypeId("");
       setAssignee(UNASSIGNED);
+      setDealId(null);
+      setContactId(null);
     }
-  }, [open]);
+  }, [open, defaultDealId, defaultContactId]);
 
   useEffect(() => {
     const tt = types.find((t) => t.id === typeId);
