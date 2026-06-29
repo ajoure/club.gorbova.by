@@ -309,6 +309,18 @@ Deno.serve(async (req) => {
     const profileId = order.profile_id;
     const productId = order.product_id;
 
+    // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
+    // Demo trial activated by bepaid-create-token's no-card branch must NOT create
+    // (and must NOT extend) any subscriptions_v2 row. Entitlement carries trial
+    // expiry directly from tariff.access_days; subscription is semantically wrong
+    // for a 0 BYN no-card demo and would break repeat-trial detection.
+    const orderMetaForNcGuard = (order.meta || {}) as Record<string, any>;
+    const isNoCardTrial =
+      order.is_trial === true &&
+      Number(order.paid_amount || 0) === 0 &&
+      orderMetaForNcGuard.source === 'trial_no_card';
+
+
     // Admin manual access edit: exact date correction path.
     // This is intentionally before the idempotency replay guard, because editing an
     // already fulfilled order must not become a no-op. It updates only the primary
@@ -711,7 +723,7 @@ Deno.serve(async (req) => {
     // provider_subscriptions row for THIS order MUST be extended — not bypassed.
     // Otherwise grant-access creates a parallel active subv2 while the bePaid sbs
     // keeps charging the past_due row (split-brain, Belko 2026-05-20).
-    if (extendFromCurrent) {
+    if (extendFromCurrent && !isNoCardTrial) {
       const providerLinked = await resolveProviderLinkedSubscription(supabase, {
         orderId,
         userId,
@@ -813,7 +825,7 @@ Deno.serve(async (req) => {
       // outcome === 'no_provider_linked' → fall through to legacy active-sub lookup below.
     }
 
-    if (extendFromCurrent && !existingProductSub) {
+    if (extendFromCurrent && !existingProductSub && !isNoCardTrial) {
 
       // PATCH: Added auto_renew to select for fallback guard in extend branch
       const { data: activeSub } = await supabase
@@ -1479,7 +1491,40 @@ Deno.serve(async (req) => {
 
     const isOrderBasedOnly = productEntMode?.entitlement_mode === 'order_based_only';
 
-    if (isOrderBasedOnly) {
+    if (isNoCardTrial) {
+      // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW: no-card 0 BYN demo trial must never
+      // create or extend subscriptions_v2. Entitlement carries trial expiry directly.
+      console.log(`[grant-access-for-order] SKIP subscription: no-card trial for order ${orderId}`);
+      results.subscription = {
+        action: 'skipped',
+        reason: 'no_card_trial',
+        order_id: orderId,
+        product_id: productId,
+      };
+
+      try {
+        const { error: ncAuditError } = await supabase.from('audit_logs').insert({
+          action: 'grant.skip_subscription_no_card_trial',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            product_id: productId,
+            offer_id: order.offer_id || null,
+            tariff_id: tariffId || null,
+            reason: 'no_card_trial',
+            patch: 'PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW',
+          },
+        });
+        if (ncAuditError) {
+          console.warn('[grant-access-for-order] no-card trial audit insert failed (non-blocking):', ncAuditError);
+        }
+      } catch (auditErr) {
+        console.warn('[grant-access-for-order] no-card trial audit threw (non-blocking):', auditErr);
+      }
+    } else if (isOrderBasedOnly) {
       console.log(`[grant-access-for-order] SKIP subscription: product ${productId} is order_based_only`);
       results.subscription = { action: 'skipped', reason: 'order_based_only' };
 
@@ -1497,6 +1542,7 @@ Deno.serve(async (req) => {
         },
       });
     } else
+
 
     // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
     // If there's already an active subscription for this user+product, EXTEND it instead of creating new

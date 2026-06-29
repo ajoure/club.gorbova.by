@@ -1,327 +1,309 @@
 да, согласен, с учетом правок:
 
-1. **Разделить задачи и приоритет**
+1. **Заголовок отчёта исправить заранее**
 
-Сейчас есть две разные задачи:
-
-```text
-P0: PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
-Hygiene: PATCH-PREORDER-CONVERT-AUDIT-FIX runtime-proof
-```
-
-Приоритет должен быть такой:
+В DoD указано:
 
 ```text
-1. Сначала починить активацию demo/trial без карты.
-2. Потом закрывать audit-proof по preorder convert.
+Отчет о выполнении
 ```
 
-Потому что на скрине видно, что пользовательский flow всё ещё сломан:
+Нужно строго:
 
 ```text
-Не удалось продолжить оплату.
-Попробуйте ещё раз или оплатите другой картой.
+Отчет о выполненной работе: PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
 ```
 
-Для trial 0 BYN это неверное поведение: **никакой карты и никакой оплаты быть не должно**.
+2. **Discovery обязателен до guard**
 
----
+Перед правкой `grant-access-for-order` сначала подтвердить фактический маркер no-card trial в `orders_v2.meta`.
 
-2. **Audit synthetic-proof можно выполнять, но не вместо P0**
-
-План по `PATCH-PREORDER-CONVERT-AUDIT-FIX` в целом допустим:
-
-- synthetic-прогон;
-- rollback;
-- proof audit row;
-- proof idempotency no-duplicate;
-- проверка отсутствия synthetic-остатков.
-
-Но это **не чинит** ошибку «Активировать демо-доступ».
-
-Поэтому подрядчику нужно явно написать:
+Не писать guard на предполагаемое поле, пока не доказано, что реально есть:
 
 ```text
-Audit-proof не закрывает P0. Даже если audit PASS, trial no-card activation всё ещё требует отдельного fix.
+meta.source = 'trial_no_card'
 ```
 
----
+или другой фактический маркер.
 
-3. **По synthetic rollback — осторожно**
+В отчёте показать пример строки `orders_v2.meta` по no-card trial-заказу.
 
-Идея с `RAISE EXCEPTION` для rollback допустима, но нужно проверить, что внутри DO-блока exception действительно откатывает всю транзакцию, а не ловится так, что изменения остаются.
+3. **Guard должен стоять до CREATE/EXTEND subscription**
 
-Безопаснее:
+Правильная точка — до веток:
+
+```text
+existingProductSub extend
+CREATE new subscription
+```
+
+Иначе no-card trial может либо создать новую `subscriptions_v2`, либо продлить уже существующую.
+
+4. **Guard должен блокировать и create, и extend**
+
+В плане написано:
+
+```text
+не трогает existing-subscription extend для другого продукта
+```
+
+Нужно точнее:
+
+- для **no-card trial этого продукта** не должно быть ни create, ни extend;
+- для обычных `pay_now` / recurring / provider-side subscription поведение не меняется;
+- для другого продукта guard не срабатывает, потому что order другой.
+
+То есть условие должно быть на сам order:
+
+```ts
+order.is_trial === true
+Number(order.paid_amount || 0) === 0
+order.meta?.source === 'trial_no_card'
+```
+
+и при совпадении — полностью пропустить subscription handling.
+
+5. **Audit insert не должен ломать grant**
+
+`grant.skip_subscription_no_card_trial` нужен, но audit failure не должен валить выдачу доступа.
+
+Сделать warning-only:
+
+```text
+если audit_logs insert упал → console.warn / non-blocking
+```
+
+Не повторять ошибку с молчаливым `WHEN OTHERS THEN NULL`; но и не ломать P0-flow.
+
+6. `results.subscription` **— проверить контракт ответа**
+
+Перед записью:
+
+```ts
+results.subscription = { action: 'skipped', reason: 'no_card_trial' };
+```
+
+проверить, что `results.subscription` уже существует/используется в таком формате и не ломает frontend/log consumers.
+
+Если формата нет — добавить безопасно:
+
+```ts
+results.subscription = {
+  action: 'skipped',
+  reason: 'no_card_trial',
+  order_id: orderId,
+  product_id: productId
+}
+```
+
+7. **Entitlement expiry нужно доказать SQL-ом**
+
+В discovery обязательно показать:
+
+```text
+entitlements.expires_at = orders_v2.trial_end_at / meta trial end / paid_at + trial_days
+```
+
+Если `entitlements.expires_at` сейчас вычисляется через subscription row, guard делать нельзя до дополнительного fix.
+
+8. **Regression pay_now формулировать осторожно**
+
+В DoD написано:
+
+```text
+Regression pay_now → создаётся subscription
+```
+
+Это может быть неверно для обычного one-time `pay_now`.
+
+Правильнее:
+
+```text
+pay_now ведёт себя как раньше: если до патча создавал subscription — создаёт; если не создавал — не создаёт. Главное: no-card guard не сработал.
+```
+
+То же для recurring:
+
+```text
+recurring/provider-side subscription продолжает создавать/обновлять нужные subscription records как раньше.
+```
+
+9. **Runtime proof по subscriptions_v2**
+
+Проверять не только `order_id`, потому что связь может быть через `user_id/product_id/tariff_id`.
+
+Для no-card trial proof:
 
 ```sql
-BEGIN;
--- synthetic inserts
--- RPC call #1
--- RPC call #2
--- proof SELECT
-ROLLBACK;
-```
-
-Если используется `DO $$ ... RAISE EXCEPTION ... $$`, то после выполнения обязательно proof:
-
-```sql
-select count(*) from course_preregistrations where meta->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
-select count(*) from orders_v2 where meta->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
-select count(*) from audit_logs where metadata->>'_synthetic_test' = 'PATCH-PREORDER-CONVERT-AUDIT-FIX';
+select count(*)
+from subscriptions_v2
+where user_id = <trial_user_id>
+  and product_id = <product_id>
+  and created_at >= <test_started_at>;
 ```
 
 Ожидание:
 
 ```text
-0 / 0 / 0
+0
 ```
 
----
+Если в таблице нет `product_id`, использовать реальные поля связи: `tariff_id`, `offer_id`, `metadata`, `created_at`.
 
-4. **Не использовать реального super_admin как actor_user_id без необходимости**
+10. **Repeat guard после cleanup**
 
-Если audit actor — system, то лучше:
+После синтетики и cleanup обязательно проверить:
+
+- второй вызов до cleanup возвращал `alreadyUsedTrial=true`;
+- после cleanup тестовые данные удалены;
+- cleanup не удалил реальные записи.
+
+11. **Не удалять старые trial-sub rows в этом патче**
+
+Согласен: cleanup/backfill старых строк только отдельной задачей.
+
+В отчёте явно указать:
 
 ```text
-actor_type='system'
-actor_user_id = null
-actor_label='convert_preorder_on_pay_atomic'
+BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS: out of scope
 ```
 
-Если схема требует `actor_user_id`, можно использовать service/system actor, но в отчёте не светить персональные данные. Достаточно:
+12. **Финальные строки статуса**
+
+В конце отчёта нужно:
 
 ```text
-actor_user_id = <system/test actor uuid>
+no-card trial subscription skip: PASS
+entitlement expiry without subscription: PASS
+repeat guard: PASS
+pay_now regression: PASS
+recurring regression: PASS
+synthetic cleanup: PASS
+PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW: PASS
 ```
 
----
+После этих правок план можно выполнять.
 
-5. **Главный P0: trial 0 BYN должен обходить bePaid полностью**
+&nbsp;
 
-Подрядчику нужно вернуться к:
+План: PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
 
-```text
-PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION
+## Diagnose (что уже известно из proof предыдущего раунда)
+
+- `bepaid-create-token` в no-card ветке создаёт `orders_v2` с `is_trial=true`, `paid_amount=0`, `status='paid'`, `meta = { ...ncMeta, paid_at }`.
+- Затем вызывается canonical `grant-access-for-order` (write-path).
+- `grant-access-for-order` идёт в стандартную CREATE/EXTEND ветку для `subscriptions_v2`:
+  - resolver видит на оффере `891c7fe0…` `meta.recurring.is_recurring = true` (триал-оффер технически родителем recurring-семьи),
+  - попадает в `CREATE new subscription` (index.ts ~1740) и пишет sub с `status='active'`, `auto_renew = shouldAutoRenew`, `recurring_snapshot = …`.
+- Второй вызов того же email до фикса репит-гварда удлинял ту же sub через `extended_by_orders` (наблюдалось в proof).
+- Это нарушает семантику: no-card demo ≠ commercial subscription. Старый guard `subscriptions_v2.is_trial=true` не срабатывал именно поэтому.
+
+Прецедент уже существующего «не создавать sub» — ветка `order_based_only` (index.ts ~1499) с audit-логом. Тот же шаблон применим здесь.
+
+## Scope (минимальный и точечный)
+
+Только discovery + 1 guard в одном write-path. **Никаких** изменений в:
+
+- recurring/pay_now ветках,
+- bePaid webhook,
+- access-resolver,
+- entitlement-резолвере (entitlement продолжает нести `expires_at = trial_end_at`).
+
+## Шаги
+
+### 1. Discovery (read-only, без правок)
+
+1.1. Подтвердить структуру `meta` у no-card trial-заказа: какой именно маркер источника пишет `bepaid-create-token` (на основе кода ветка пишет `ncMeta + { paid_at }`; нужно увидеть, есть ли там `source: 'trial_no_card'` или эквивалент).
+
+1.2. Подтвердить, что `entitlement.expires_at` для no-card trial кладётся напрямую из `trial_end_at` (а не вычисляется из subscription.access_end_at) — значит, subscription row для expiry не нужен.
+
+1.3. Проверить, что нет внешних читателей, ожидающих sub-row для no-card trial:
+
+- `purchases` UI (карточки «Мои покупки»),
+- cron `nightly-access-reconcile`,
+- `useUserAccess` / `access-resolver.ts` хелперы,
+- telegram-grant / live-access резолверы.
+
+Ожидается: все читают entitlements/orders, а sub не критична для триала.
+
+### 2. Точечный fix (две минимальные правки)
+
+2.1. `**bepaid-create-token` (no-card ветка)** — гарантировать однозначный маркер источника в `orders_v2.meta`:
+
+- добавить `source: 'trial_no_card'` (или подтвердить, если уже пишется) — этим маркером будет руководствоваться guard в grant-access-for-order.
+
+2.2. `**grant-access-for-order**` — добавить ранний skip-блок ровно по образцу `order_based_only` (~строка 1499) перед `if (existingProductSub) { … } else { CREATE new subscription }`:
+
 ```
+const isNoCardTrial =
+  order.is_trial === true &&
+  Number(order.paid_amount || 0) === 0 &&
+  (order.meta?.source === 'trial_no_card');
 
-Требуемое поведение:
-
-```text
-isTrial=true
-paymentAmount=0
-requires_card_tokenization=false
-```
-
-→ значит:
-
-- не создавать bePaid token;
-- не открывать оплату;
-- не требовать карту;
-- не попадать в legacy subscription guard;
-- не показывать «оплатите другой картой»;
-- создать/обновить один `orders_v2`;
-- поставить `status='paid'`;
-- `is_trial=true`;
-- `paid_amount=0`;
-- `trial_end_at = now() + trial_days`;
-- `meta.source='trial_no_card'`;
-- вызвать `grant-access-for-order`;
-- вернуть frontend:
-
-```json
-{
-  "success": true,
-  "isTrialNoCard": true,
-  "redirectUrl": "/cabinet?trial=activated&order=<id>"
+if (isNoCardTrial) {
+  // Skip subscriptions_v2 entirely. Entitlement carries trial_end_at.
+  await supabase.from('audit_logs').insert({
+    action: 'grant.skip_subscription_no_card_trial',
+    actor_type: 'system',
+    actor_label: 'grant-access-for-order',
+    target_user_id: userId,
+    meta: { order_id, product_id, offer_id, reason: 'no_card_trial' }
+  });
+  results.subscription = { action: 'skipped', reason: 'no_card_trial' };
+} else if (orderBasedOnly) {
+  ...
+} else if (existingProductSub) {
+  ...
+} else {
+  // CREATE
 }
 ```
 
----
+Этот guard:
 
-6. **Ошибка на скрине должна быть отдельным root cause**
+- **не** трогает existing-subscription extend для другого продукта,
+- **не** трогает recurring/pay_now,
+- срабатывает только при совпадении всех трёх признаков.
 
-В отчёте по P0 обязательно показать:
+### 3. Dry-run
 
-```text
-Root cause: trial 0 BYN попадал в bePaid/subscription/tokenization path вместо no-card activation branch.
-```
+3.1. На staging-уровне (через `supabase--read_query`) пройти query-эмуляцией: показать, какие `orders_v2` за последние 30 дней попадут под guard, чтобы убедиться, что это только демо-trial.
 
-И доказать, что после fix больше нет:
+3.2. Прогнать `tsgo`/линтер на изменённые edge-функции.
 
-```text
-bepaid.subscription.create_blocked
-BLOCKED: legacy subscription path attempted without explicit choice
-```
+### 4. Execute
 
----
+Деплой `bepaid-create-token` и `grant-access-for-order`. **Никаких** миграций, **никакого** ретроактивного удаления уже существующих trial-sub rows (это backlog: `BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS` — отдельный безопасный sweep с dry-run, не в этом патче).
 
-7. **PaymentDialog должен различать “payment error” и “trial activation”**
+### 5. Verify (runtime-proof)
 
-На скрине сейчас сообщение говорит про оплату картой. Для demo 0 BYN это неверно.
+Синтетический прогон через curl `bepaid-create-token` под двумя e-mail:
 
-В `PaymentDialog` нужно:
 
-- если `isTrialNoCard=true` → success toast + redirect;
-- если `alreadyUsedTrial=true` → понятный текст «Демо-доступ уже использован»;
-- если ошибка backend для trial no-card → не писать «оплатите другой картой», а показывать фактическую причину.
+| Проверка              | Ожидание                                                                         |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `orders_v2` создан    | 1 строка, `is_trial=true`, `paid_amount=0`, `meta.source='trial_no_card'`        |
+| `access_grant_ledger` | 1 grant, `reason_code=paid_order`                                                |
+| `entitlements`        | 1 active, `expires_at = paid_at + trial_days`, `meta.tariff_id` присутствует     |
+| `subscriptions_v2`    | **0 строк** для этого order_id/user_id                                           |
+| `audit_logs`          | `grant.skip_subscription_no_card_trial` присутствует                             |
+| Repeat-guard          | 2-й вызов тем же email → `alreadyUsedTrial=true` (по orders_v2, как уже сделано) |
+| Regression pay_now    | один заказ → создаётся subscription (как и раньше), guard не сработал            |
+| Regression recurring  | оплата recurring-оффера → создаётся sub, guard не сработал                       |
 
----
 
-8. **Проверка после P0**
-
-DoD для P0:
-
-```text
-SITE-000018 / «Активировать демо-доступ»:
-- карта не запрашивается;
-- bePaid token не создаётся;
-- orders_v2 создаётся/обновляется ровно 1 строка;
-- status='paid';
-- is_trial=true;
-- paid_amount=0;
-- meta.source='trial_no_card';
-- grant-access-for-order вызван;
-- access_grant_ledger имеет запись;
-- доступ к «База знаний» открыт на 24 часа;
-- вебинары/эфиры не открыты;
-- повторная попытка тем же email не создаёт второй order/grant и возвращает alreadyUsedTrial=true.
-```
-
----
-
-9. **Не трогать платные flow**
-
-В P0 нельзя ломать:
-
-- bePaid pay_now;
-- bePaid recurring;
-- Stripe checkout;
-- provider-side subscriptions;
-- preorder Phase A/B;
-- CRM hide;
-- audit-fix.
-
-No-card ветка должна быть строго ограничена:
-
-```ts
-isTrial && paymentAmount === 0 && requiresCardTokenization === false
-```
-
----
-
-10. **Что отправить подрядчику как итог**
-
-Коротко:
-
-```text
-План audit-proof принимается, но он не закрывает главную пользовательскую ошибку. Сначала нужно починить PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: trial 0 BYN без card tokenization должен активироваться напрямую через orders_v2 + grant-access-for-order, без bePaid и без сообщения “оплатите другой картой”. После P0 можно закрывать PATCH-PREORDER-CONVERT-AUDIT-FIX runtime-proof.
-```
-
-## **Итоговый статус**
-
-```text
-PATCH-PREORDER-CONVERT-AUDIT-FIX proof plan: APPROVED with rollback/cleanup cautions
-PATCH-DEMO-TRIAL-NO-CARD-ACTIVATION: P0 REQUIRED, NOT DONE
-Current user-facing trial activation: FAIL
-
-План: Runtime-proof PATCH-PREORDER-CONVERT-AUDIT-FIX
-```
-
-## Контекст
-
-- Код-фикс уже задеплоен: `convert_preorder_on_pay_atomic` пишет `actor_user_id` + `actor_type='system'` + `actor_label='convert_preorder_on_pay_atomic'`, при ошибке аудита — `RAISE WARNING` (не глушится).
-- В `audit_logs` 0 строк с `action='preorder.convert_on_pay'` — единственная фактическая конверсия (preorder `11b4fd8c…` → order `ea7daf45…`, 2026-06-27) произошла ДО фикса, упала на старом `actor_id` и была молча проглочена прежним `EXCEPTION WHEN OTHERS`.
-- Свежих неконвертированных пар preorder+paid order для естественного триггера сейчас нет.
-
-Нужен прямой runtime-proof обеих веток: «audit row written» и «idempotency no-duplicate».
-
-## Что сделаем
-
-### Шаг 1. Контролируемый synthetic-прогон в одной миграции
-
-Одна транзакция, всё внутри `DO $$ … $$` с явным `RAISE EXCEPTION` в конце для авто-rollback (никаких остаточных данных в проде):
-
-```text
-BEGIN
-  test_user_id := <реальный super_admin uid>
-  test_preorder_id := gen_random_uuid()
-  test_order_id    := gen_random_uuid()
-
-  INSERT course_preregistrations(id, user_id, product_code, status,
-        meta={'_synthetic_test':'PATCH-PREORDER-CONVERT-AUDIT-FIX', ...})
-  INSERT orders_v2(id, user_id, status='paid', amount=0,
-        meta={'_synthetic_test':'…', preorder_id:test_preorder_id})
-
-  -- 1й вызов: должен записать audit-строку
-  r1 := convert_preorder_on_pay_atomic(test_order_id)
-  ASSERT r1.noop = false
-
-  cnt1 := count(audit_logs where action='preorder.convert_on_pay'
-                and meta->>'paid_order_id' = test_order_id::text)
-  ASSERT cnt1 = 1
-  -- читаем строку и логируем actor_user_id/actor_type/actor_label/meta
-  RAISE NOTICE 'AUDIT_ROW_PROOF: %', <row>
-
-  -- 2й вызов: идемпотентность, новой строки быть не должно
-  r2 := convert_preorder_on_pay_atomic(test_order_id)
-  ASSERT r2.noop = true
-
-  cnt2 := count(audit_logs where action='preorder.convert_on_pay'
-                and meta->>'paid_order_id' = test_order_id::text)
-  ASSERT cnt2 = 1   -- НЕ 2
-
-  RAISE NOTICE 'IDEMPOTENCY_PROOF: noop=true, audit_rows_total=%', cnt2
-
-  -- форс-rollback, чтобы прод-БД осталась чистой
-  RAISE EXCEPTION 'SYNTHETIC_TEST_OK_FORCE_ROLLBACK';
-EXCEPTION WHEN OTHERS THEN
-  IF SQLERRM = 'SYNTHETIC_TEST_OK_FORCE_ROLLBACK' THEN
-    RAISE NOTICE 'TEST PASSED, rolled back as expected';
-  ELSE
-    RAISE;
-  END IF;
-END
-```
-
-Это не «миграция» в смысле schema change — это read-only прогон через RPC с гарантированным откатом synthetic-данных. Никаких остатков в `course_preregistrations` / `orders_v2` / `audit_logs` не остаётся.
-
-### Шаг 2. Captures и отчёт
-
-Из логов миграции забираем строки `NOTICE`:
-
-- `AUDIT_ROW_PROOF: …` (JSON со всеми полями audit-строки) — закрывает `audit row written: PASS`.
-- `IDEMPOTENCY_PROOF: noop=true, audit_rows_total=1` — закрывает `idempotency audit no-duplicate: PASS`.
-
-### Шаг 3. Отчёт пользователю
-
-Формат строго:
-
-```text
-Отчет о выполненной работе: PATCH-PREORDER-CONVERT-AUDIT-FIX
-
-audit schema fix:                PASS (код)
-audit warning path:              PASS (код)
-audit row written:               PASS (runtime, synthetic-прогон)
-  actor_user_id = <uid super_admin, инициировавшего тест>
-  actor_type    = 'system'
-  actor_label   = 'convert_preorder_on_pay_atomic'
-  meta          = { preorder_id, paid_order_id, … }
-idempotency audit no-duplicate:  PASS (runtime, 2й вызов → noop=true, audit_rows=1)
-preorder convert logic unchanged: PASS
-
-PATCH-PREORDER-CONVERT-AUDIT-FIX: PASS (full)
-```
-
-## Технические детали / safety
-
-- Synthetic-данные помечаются `meta->>'_synthetic_test'='PATCH-PREORDER-CONVERT-AUDIT-FIX'` — если по какой-то причине rollback не сработает, эти строки тривиально находятся и удаляются.
-- Триггеры на `orders_v2` (grant-access и т.п.): `amount=0`, `status='paid'` создаётся сразу как итог — `grant-access-for-order` это edge-функция, она НЕ зовётся из DB-триггера, риска побочных выдач прав нет. Если в `orders_v2` обнаружится DB-триггер, который что-то записывает наружу — план корректируется: synthetic-вставка orders_v2 заменяется на pre-existing test-order и зовётся только RPC.
-- Никаких изменений в логике `convert_preorder_on_pay_atomic` — только наблюдение.
-- Никаких изменений UI/frontend.
-- Заголовок отчёта будет `Отчет о выполненной работе:` (формальное замечание учтено).
+После проверок — синтетика откатывается миграцией-cleanup (как делали для audit-fix).
 
 ## DoD
 
-- В чате присутствуют JSON audit-строки с актуальными `actor_user_id` / `actor_type` / `actor_label`.
-- Подтверждено: повторный вызов по тому же `paid_order_id` → `noop=true`, новая строка в `audit_logs` НЕ создана.
-- Прод-БД без synthetic-остатков (verify `SELECT count(*) FROM course_preregistrations WHERE meta->>'_synthetic_test' IS NOT NULL` = 0; то же для `orders_v2` и `audit_logs`).
+- trial no-card → `orders_v2 +1`, `access_grant_ledger +1`, `entitlements +1`, `**subscriptions_v2 +0**`
+- repeat-guard продолжает работать (по orders_v2)
+- pay_now и recurring без регрессий (runtime-proof оба)
+- audit-row `grant.skip_subscription_no_card_trial` пишется
+- сводный отчёт в формате «Отчет о выполнении» с proof
+
+## Out of scope (явно)
+
+- Чистка ранее накопленных trial-sub rows — отдельный `BACKFILL-CLEANUP-NO-CARD-TRIAL-SUBS` (sweep + audit, после согласования списка).
+- Изменения resolver-классификатора recurring (`tariff_offers.meta.recurring.is_recurring`) — SOT не трогаем.
+- `bepaid-webhook` — no-card trial туда не идёт.
