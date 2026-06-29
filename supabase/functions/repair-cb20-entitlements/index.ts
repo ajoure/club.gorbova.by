@@ -44,7 +44,28 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // AuthZ: require authenticated super_admin
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!token) {
+      return jsonRes({ error: "Unauthorized" }, 401);
+    }
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) {
+      return jsonRes({ error: "Unauthorized" }, 401);
+    }
+    const { data: isSuper } = await supabase.rpc("has_role_v2", {
+      _user_id: userData.user.id, _role_code: "super_admin",
+    });
+    if (!isSuper) {
+      return jsonRes({ error: "Forbidden" }, 403);
+    }
 
     const body = await req.json();
     const productId = body.product_id;

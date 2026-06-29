@@ -52,13 +52,40 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // AuthZ: require authenticated super_admin
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const { data: isSuper } = await supabase.rpc('has_role_v2', {
+      _user_id: userData.user.id, _role_code: 'super_admin',
+    });
+    if (!isSuper) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const body = await req.json().catch(() => ({}));
     const dry_run = body.dry_run !== false; // default true
     const force_mismatch = body.force_mismatch === true; // skip expected count validation
 
-    console.log(`[${PATCH_VERSION}] Starting entitlement backfill. dry_run=${dry_run}, batch_id=${BATCH_ID}`);
+    console.log(`[${PATCH_VERSION}] Starting entitlement backfill. dry_run=${dry_run}, batch_id=${BATCH_ID}, actor=${userData.user.id}`);
 
     const result: BackfillResult = {
       ok: true,

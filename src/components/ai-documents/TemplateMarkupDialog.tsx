@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
+import DOMPurify from "dompurify";
 import {
   buildAutoSuggestions,
   loadRegistryRefs,
@@ -215,7 +216,15 @@ function escapeHtml(s: string): string {
 }
 
 function sanitizeMammothHtml(html: string): string {
-  return html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'p','table','tr','td','th','thead','tbody','tfoot','ul','ol','li',
+      'strong','em','b','i','u','br','span','div','h1','h2','h3','h4','h5','h6',
+      'blockquote','hr','sub','sup','small','code','pre','a',
+    ],
+    ALLOWED_ATTR: ['class','style','colspan','rowspan','href','target','rel'],
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|#)/i,
+  });
 }
 
 /**
