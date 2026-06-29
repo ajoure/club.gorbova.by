@@ -401,6 +401,24 @@ export function ApplyTariffRulesToUserDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ContactPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        options={{
+          title: "Выбрать пользователя",
+          helperText: "Поиск по ФИО, email или телефону (через admin-search-profiles).",
+        }}
+        onPick={(c: PickedContact) => {
+          if (!c.user_id) {
+            toast.error("У контакта нет связанного user_id (профиль не привязан к auth-пользователю).");
+            return;
+          }
+          setUserId(c.user_id);
+          setUserLabel(c.full_name || c.email || c.user_id);
+          setPreview(null);
+          setPickerOpen(false);
+        }}
+      />
     </Dialog>
   );
 }
