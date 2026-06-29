@@ -17318,6 +17318,7 @@ export type Database = {
         Args: { _result_comment?: string; _status: string; _task_id: string }
         Returns: undefined
       }
+      crm_tasks_schedule_due_notifications: { Args: never; Returns: Json }
       deactivate_global_document_package: {
         Args: { _package_id: string }
         Returns: Json
