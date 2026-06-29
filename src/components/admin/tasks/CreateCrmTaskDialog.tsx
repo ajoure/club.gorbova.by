@@ -197,6 +197,15 @@ export function CreateCrmTaskDialog({
               ) : null}
             </div>
           </div>
+
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+            lockDeal={!!defaultDealId}
+            lockContact={!!defaultContactId}
+          />
         </div>
 
         <DialogFooter>
