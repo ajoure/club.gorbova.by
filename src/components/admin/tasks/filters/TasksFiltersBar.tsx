@@ -1,6 +1,3 @@
-import { Search } from "lucide-react";
-
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,7 +10,8 @@ import {
 import { cn } from "@/lib/utils";
 
 import { useStaffOptions } from "@/hooks/useStaffOptions";
-import type { CrmTaskType } from "@/hooks/useCrmTasks";
+import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
+import { TasksGlobalSearchPopover } from "./TasksGlobalSearchPopover";
 
 export type QuickTab = "mine" | "all" | "overdue" | "today" | "tomorrow" | "no_due";
 
@@ -29,6 +27,7 @@ interface Props {
   value: TasksFiltersValue;
   onChange: (next: TasksFiltersValue) => void;
   types: CrmTaskType[];
+  onPickTask?: (task: CrmTask) => void;
 }
 
 const QUICK_TABS: { id: QuickTab; label: string }[] = [
@@ -40,7 +39,7 @@ const QUICK_TABS: { id: QuickTab; label: string }[] = [
   { id: "no_due", label: "Без срока" },
 ];
 
-export function TasksFiltersBar({ value, onChange, types }: Props) {
+export function TasksFiltersBar({ value, onChange, types, onPickTask }: Props) {
   const { data: staff = [] } = useStaffOptions();
 
   const set = (patch: Partial<TasksFiltersValue>) => onChange({ ...value, ...patch });
@@ -64,15 +63,12 @@ export function TasksFiltersBar({ value, onChange, types }: Props) {
 
       {/* Search + selects */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[240px] max-w-md">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск: задача, TASK-…, клиент, телефон, email, № сделки"
-            className="pl-8 h-9"
-            value={value.search}
-            onChange={(e) => set({ search: e.target.value })}
-          />
-        </div>
+        <TasksGlobalSearchPopover
+          value={value.search}
+          onChange={(next) => set({ search: next })}
+          onPickTask={(task) => onPickTask?.(task)}
+        />
+
 
         <Select value={value.assignee} onValueChange={(v) => set({ assignee: v })}>
           <SelectTrigger className="w-[200px] h-9">
