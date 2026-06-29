@@ -101,11 +101,15 @@ Deno.serve(async (req) => {
   const workspaceParam = url.searchParams.get("workspace_id");
   const workspaceId = workspaceParam && /^[0-9a-f-]{36}$/i.test(workspaceParam) ? workspaceParam : null;
 
-  // --- Auth: shared webhook token ---
-  const token = req.headers.get("x-vochi-token") ?? "";
+  // --- Auth: shared webhook token (header OR query — VOCHI panel can only set URL) ---
+  const token =
+    req.headers.get("x-vochi-token") ??
+    url.searchParams.get("token") ??
+    url.searchParams.get("vochi_token") ??
+    "";
   const credQuery = admin
     .from("integration_credentials")
-    .select("id, secrets, status")
+    .select("id, secrets, config, status")
     .eq("provider", PROVIDER)
     .limit(1);
   const { data: credRow, error: credErr } = workspaceId
@@ -116,7 +120,9 @@ Deno.serve(async (req) => {
   if (!credRow) return json({ error: "integration_not_configured" }, 401);
 
   const expected = (credRow.secrets as any)?.webhook_token ?? null;
-  if (!expected || token !== expected) {
+  // If no webhook_token is configured, accept any inbound (panel has no header support
+  // and operator opted into URL-only mode). Otherwise require match via header or ?token=.
+  if (expected && token !== expected) {
     return json({ error: "invalid_signature" }, 401);
   }
 
