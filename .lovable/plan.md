@@ -1,192 +1,114 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Убрать** `DELETE` **для** `authenticated`**.**  
-Для задач безопаснее: закрытие / отмена / soft-delete через статус.  
-`DELETE` оставить только `service_role` или вообще не давать на MVP.
-2. **Исправить конфликт** `due_offset=15 мин` **и** `reminder=60 мин` **для T-000074.**  
-Если дедлайн через 15 минут, напоминание за 60 минут технически попадает в прошлое.  
-Варианты:
-  - `due_offset=1440 мин`, `reminder=60 мин`; или
-  - `due_offset=15 мин`, `reminder=5 мин`.
-3. **Rollback не формулировать как** `drop table crm_tasks*`**.**  
-Это слишком опасно. Правильно:
-  - rollback UI через `feature.crm_tasks.enabled=false`;
-  - automation hook через early return;
-  - SQL rollback только точечный и явно перечисленный по таблицам;
-  - без wildcard `*`.
-4. **Для** `crm_task_apply_automation` **явно закрепить идемпотентность.**  
-Добавить уникальный индекс/constraint:
-  &nbsp;
-  ```sql
-  unique (automation_rule_id, deal_id)
-  where automation_rule_id is not null and deal_id is not null
-  ```
-  Иначе автозадача может создаться повторно при вызове из `create_preorder_deal_atomic` и “при оплате”.
-5. `assignee_strategy` **не оставлять неопределённым.**  
-В MVP либо:
-  &nbsp;
-  &nbsp;
-  - только `assignee_user_id`,  
-  либо явно разрешённые стратегии:
-  - `fixed_user`
-  - `deal_owner`
-  - `round_robin`
-  Без этого исполнитель может сделать произвольную ad-hoc логику.
+1. **Фильтрацию не делать только на клиенте, если данные пагинируются.**  
+Если `crm_tasks_list` возвращает не все задачи, фильтры должны уходить в RPC через `CrmTaskListFilters`. Клиентская фильтрация допустима только для уже загруженных map’ов/лейблов, но не как основной SoT фильтрации.
+2. **Ответственный должен быть полноценным полем в Create и Edit.**  
+Можно оставить вариант «Не назначен», но поле должно быть явно видно и доступно при создании и редактировании задачи.
+3. **Канонический** `DateTimePicker` **— обязательный gate.**  
+В отчёте отдельно указать, что `<input type="datetime-local">` полностью убран из `CreateCrmTaskDialog` и `EditCrmTaskDialog`.
+4. **Не добавлять новые RPC/DDL под контакт/сделку.**  
+Если существующего combobox/search-хука нет, временно использовать уже существующий источник данных, но без создания новых SQL/RPC в этом UI-fix.
+5. **Бейджи на сделках не должны ломать карточку сделки.**  
+Только довести существующий `DealTaskSummary`-рендер. Без переписывания `KanbanDealCard` и без изменения логики канбана сделок.
 
-Также все таблцицы для пользователя должны быть в каноническом виде всей системы. календарь и время тоже взять канонические.
-
-После этих правок план можно запускать.
+После этих правок можно запускать.
 
 &nbsp;
 
-План: Полноценный CRM-раздел «Задачи» (canonical, не узкий deal_tasks)
+План: UI-fix раздела «Задачи» до уровня CRM-доски
 
-> Весь план, отчёт и переписка — только на русском языке.
+Только UI/UX-доработка существующего раздела `/admin/tasks`. БД, RPC, RLS, роуты — не трогаем. Канонические компоненты переиспользуем.
 
-## 0. DIAGNOSE (обязательно до миграций)
+### 0. DIAGNOSE (фиксируем перед правками, попадёт в отчёт)
 
-Подрядчик до первой миграции делает диагностику и фиксирует результат в `.lovable/discovery/crm-tasks-diagnose.md`:
+- Канбан сделок: `src/components/admin/deals/` — `DealsKanbanBoard.tsx`, `KanbanColumn.tsx`, `KanbanColumnHeader.tsx`, `KanbanDealCard.tsx`, `DealsFiltersBar.tsx`, `KanbanSummaryStrip.tsx`. Цветовая палитра — `src/lib/stagePalette.ts` (`STAGE_PALETTE`, `getCardAccentColor`).
+- Канонический календарь: `src/components/ui/datetime-picker.tsx` (используется в `IndividualDetailsForm`, `BulkExtendAccessDialog`, `AdvancedFilters`, `BroadcastsTabContent` и др.). Текущая форма задач использует `<input type="datetime-local">` — заменим.
+- Выбор сотрудника: `useStaffOptions` уже используется в `EditCrmTaskDialog`; в `CreateCrmTaskDialog` поле «Ответственный» отсутствует — добавим.
+- Бейджи задач на сделках: `KanbanDealCard.tsx` уже принимает `DealTaskSummary` (есть `useDealTaskSummary` и view `crm_deal_task_summary_v`) — нужно проверить отрисовку и довести до DoD.
+- Сделки/контакты в задаче: используем существующие селекторы (`useDealsBoard`/поиск сделок, `useContactSearch` если есть; иначе — `Combobox` поверх RPC, без новых таблиц).
 
-- SoT сделки: отдельная `deals`-таблица или `orders_v2` (по факту — `orders_v2`, нужно подтвердить).
-- SoT контакта: `profiles` vs отдельная `contacts`.
-- Есть ли `workspace_id` / `tenant_id` в `orders_v2`, `profiles`, `crm_pipelines` (если нет — план фиксирует tenant из `tenants`/`tenant_memberships`).
-- Текущий механизм уведомлений: `notification_outbox`, `pending_telegram_notifications`, `domain_events`/`domain_executions`, есть ли работающий event-worker.
-- Источник Telegram chat_id менеджера: `profiles` / `telegram_access` / `tenant_memberships`.
-- Существующий `crm_activity_log` — что из него мигрирует в задачи (только связь, без переноса данных).
+### 1. Канбан задач (`src/pages/admin/AdminTasks.tsx` + новые компоненты в `src/components/admin/tasks/board/`)
 
-Выход: матрица «что есть → что используем → где compatibility layer».
+- Колонки в порядке: **Просроченные → На сегодня → На завтра → Позже → Без срока** (колонку «На этой неделе» убираем; «Закрытые» — отдельная сворачиваемая секция под доской).
+- Новый `TaskKanbanBoard.tsx` по образцу `DealsKanbanBoard.tsx`: горизонтальный скролл, фикс-ширина колонок.
+- `TaskKanbanColumn.tsx` + `TaskKanbanColumnHeader.tsx` — цветная верхняя полоса (палитра: overdue=red, today=amber, tomorrow=blue, later=slate, no_due=muted), счётчик задач, пустое состояние.
+- Drag-and-drop между колонками **не вводим** в этом UI-fix (меняет due_at-семантику, выходит за рамки). Перенос — через действие в карточке/диалоге.
 
-## 1. Канонические таблицы (add-only)
+### 2. Карточка задачи (`TaskKanbanCard.tsx`)
 
-### 1.1 `public.crm_task_types` (настраиваемые типы)
+Визуально в стиле `KanbanDealCard`:
 
-Поля: `id`, `workspace_id`, `key`, `label`, `icon`, `color`, `default_due_offset_minutes`, `default_reminder_offset_minutes`, `is_active`, `sort_order`, `metadata jsonb`, `created_at`, `updated_at`. Unique `(workspace_id, key)`.
+- Левый цветной акцент по типу задачи (`crm_task_types.color`).
+- Иконка типа + label типа (бейдж).
+- Заголовок задачи (truncate, 2 строки).
+- Описание (1 строка, muted).
+- Строка метаданных: дедлайн (с `AlertTriangle` при overdue), напоминание (если задано).
+- Связи: бейдж сделки (`public_id` сделки) и бейдж контакта (имя), кликабельные → открыть `DealDetailSheet`/`ContactDetailSheet`.
+- Аватар + имя ответственного (если есть; иначе «Не назначен»).
+- Статус-бейдж (`open`/`in_progress`/`done`/`canceled`).
+- Клик по карточке → открыть `EditCrmTaskDialog` как drawer-подобный диалог.
 
-Seed: `call`, `message`, `meeting`, `payment_control`, `service_delivery`, `crm_fill`, `other`.
+### 3. Форма создания/редактирования (расширяем `CreateCrmTaskDialog` и сверяем `EditCrmTaskDialog`)
 
-### 1.2 `public.crm_tasks` (канон)
+Поля в обеих формах (единый layout):
 
-Поля:
+- Тип задачи, Название, Описание.
+- **Ответственный** (`useStaffOptions`, с возможностью «Не назначен» — оставляем разрешённым).
+- **Дедлайн** и **Напомнить** — заменить `<input type="datetime-local">` на канонический `DateTimePicker` из `src/components/ui/datetime-picker.tsx`.
+- **Контакт** — Combobox с поиском (по существующему хук-поиску контактов; если такого нет — лёгкий wrapper над RPC `search_*`/`profiles` уже используемым в проекте, без новых RPC).
+- **Сделка** — Combobox с поиском по `orders_v2` (используем уже существующие хуки, например из `useDealsBoard`/`useDealSearch`, либо переиспользуем то, что применяется в Email/Broadcasts).
+- Статус (в Edit), Результат/комментарий при закрытии.
 
-- `id`, `public_id` (через `public_id_sequences`)
-- `workspace_id uuid not null`
-- `task_type_id uuid not null → crm_task_types`
-- `title text`, `description text`
-- `contact_id uuid null → profiles`
-- `deal_id uuid null` (FK резолвится по DIAGNOSE; в MVP — `orders_v2.id` под именем `deal_id`, отдельная колонка `order_id uuid null` зарезервирована для будущей миграции на чистый `deals`)
-- `pipeline_id`, `pipeline_stage_id` — денорм-снапшот, обновляется при создании
-- `offer_id`, `product_id`, `tariff_id` (nullable)
-- `assignee_user_id uuid null`
-- `due_at timestamptz null`, `remind_at timestamptz null`
-- `status text not null default 'open'` — расширяемый, CHECK in (`open`,`in_progress`,`done`,`canceled`) + комментарий «расширять только через миграцию»
-- `result_comment text`, `closed_at timestamptz`, `closed_by uuid`
-- `source text` (`manual`/`auto`/`system`), `automation_rule_id uuid null`
-- `created_by`, `updated_by`, `created_at`, `updated_at`, `meta jsonb`
+### 4. Фильтры и поиск (верхняя панель `AdminTasks`)
 
-Просрочка — вычисляемая: `is_overdue := status in ('open','in_progress') and due_at < now()`. Отдельного статуса нет.
+Заменить текущий минимальный фильтр-бар на компонент `TasksFiltersBar.tsx` в духе `DealsFiltersBar`:
 
-Индексы: `(workspace_id, assignee_user_id, status, due_at)`, `(deal_id)`, `(contact_id)`, `(status, due_at)`, GIN `meta`.
+- Быстрые табы: **Мои · Все · Просроченные · Сегодня · Завтра · Без срока**.
+- Popover-фильтры: Ответственный, Тип задачи, Статус, Воронка, Сделка, Контакт.
+- Поиск (debounced) по: названию, описанию, `public_id` задачи, имени/email/телефону клиента, `public_id` сделки. Фильтрация на клиенте поверх результатов `crm_task_list` (RPC уже отдаёт `search`); связи клиент/сделка резолвим уже подгруженными map'ами.
 
-### 1.3 `public.crm_task_notifications` (ledger)
+### 5. Режим «Список»
 
-Поля: `id`, `task_id`, `notification_type` (`due_soon`/`overdue`/`created`/`assigned`/`reminder`), `channel` (`telegram`/`email`/`in_app`), `recipient_user_id`, `scheduled_at`, `sent_at`, `status` (`pending`/`sent`/`failed`/`skipped`), `error`, `metadata jsonb`. Индексы по `(status, scheduled_at)`, `(task_id)`.
+Оставить вкладку «Список», переоформить таблицу в духе CRM (Card-обёртка, hover, плотные строки):
+Колонки: Дата исполнения · Ответственный (аватар+имя) · Тип (иконка+бейдж) · Текст задачи · Контакт · Сделка · Воронка/стадия · Статус · Действия (Готово/Изменить/Открыть).
 
-### 1.4 `public.crm_task_automation_rules`
+### 6. Связь со сделками (бейджи задач на канбане сделок)
 
-Поля: `id`, `workspace_id`, `offer_id`, `task_type_id`, `title_template`, `description_template`, `assignee_user_id` (или `assignee_strategy`), `due_offset_minutes`, `reminder_offset_minutes`, `is_active`, `metadata`, timestamps.
+- Проверить и довести `KanbanDealCard` рендер `DealTaskSummary`: открытые/просроченные, ближайший дедлайн, иконка ближайшего типа.
+- Клик по бейджу — открывает `DealDetailSheet` на секции «Задачи» (через query-параметр `?tab=tasks` или scroll-to).
 
-На первом этапе допустимо параллельно читать `tariff_offers.meta.auto_tasks[]`, но **только через JSON Schema-валидацию** в RPC; план явно фиксирует миграцию данных из `meta.auto_tasks` в `crm_task_automation_rules` как Шаг 9.
+### 7. Add-only гарантии
 
-### 1.5 RLS / GRANT (обязательно в той же миграции)
+- Не трогаем: RPC, `crm_task_*` таблицы, RLS, роут `/admin/tasks`, раздел сделок (кроме мелкого UI-рендера бейджей задач в существующем `KanbanDealCard`).
+- Все новые компоненты — в `src/components/admin/tasks/board/` и `src/components/admin/tasks/filters/`.
+- Тип `CrmTaskListFilters` уже поддерживает нужные поля (`assignee_user_id`, `task_type_id[]`, `status[]`, `deal_id`, `contact_id`, `bucket`, `search`).
 
-Для каждой таблицы: `GRANT SELECT, INSERT, UPDATE, DELETE … TO authenticated`, `GRANT ALL … TO service_role`, `ALTER TABLE … ENABLE ROW LEVEL SECURITY`. Политики — через `has_role_v2` + `workspace_id ∈ tenant_memberships(auth.uid())`. Без `workspace_id` ни одна таблица не создаётся.
+### 8. DoD
 
-`updated_at` — триггер `public.update_updated_at_column`. `public_id` — триггер по существующему `public_id_sequences`.
+- Канбан задач с 5 колонками, цветными хедерами, счётчиками, пустыми состояниями.
+- Карточки задач красивые, с типом/дедлайном/ответственным/связями; клик открывает редактор.
+- Создание/редактирование задачи включает ответственного и канонический `DateTimePicker`.
+- Фильтры и поиск работают по перечисленным полям.
+- Бейджи задач видны в карточках сделок и кликабельны.
+- Список — аккуратный CRM-стиль.
+- Отчёт о выполнении на русском с блоком DIAGNOSE.
 
-## 2. RPC (security definer, `search_path=public`)
+### Технические детали
 
-- `crm_task_create(payload jsonb) → uuid` — валидация типа/связей/workspace, эмитит `domain_events('crm.task.created')`.
-- `crm_task_update_status(task_id, status, result_comment)` — пишет `closed_at/closed_by`, эмитит `crm.task.status_changed`.
-- `crm_task_reassign(task_id, assignee_user_id)`.
-- `crm_task_apply_automation(offer_id, deal_id, contact_id)` — вызывается из `create_preorder_deal_atomic` и при оплате; идемпотентно по `(automation_rule_id, deal_id)`.
-- `crm_tasks_list(filters jsonb)` — для UI (мои/просроченные/по воронке/…).
+Новые файлы:
 
-## 3. Notification worker (не Telegram из RPC)
+- `src/components/admin/tasks/board/TaskKanbanBoard.tsx`
+- `src/components/admin/tasks/board/TaskKanbanColumn.tsx`
+- `src/components/admin/tasks/board/TaskKanbanColumnHeader.tsx`
+- `src/components/admin/tasks/board/TaskKanbanCard.tsx`
+- `src/components/admin/tasks/filters/TasksFiltersBar.tsx`
+- `src/components/admin/tasks/TasksListView.tsx` (вынос таблицы из `AdminTasks.tsx`)
 
-- RPC только эмитит `domain_events`.
-- Edge function `crm-task-notify-worker` потребляет события + крон-проверка `crm_task_notifications.scheduled_at <= now()`, отправляет через существующий Telegram-адаптер (`telegram-send` / pending_telegram_notifications), пишет результат в `crm_task_notifications`.
-- Cron: `pg_cron` каждую минуту → `crm-task-reminders-tick` (планирует `due_soon`/`overdue` записи в `crm_task_notifications`).
-- Прямой `pg_net` из RPC — запрещён. Если временно нужен bridge — явно помечается `compatibility_layer=true` в meta и в backlog заводится задача на удаление.
+Правки:
 
-## 4. UI
+- `src/pages/admin/AdminTasks.tsx` — собрать новый layout (фильтры + Tabs Канбан/Список).
+- `src/components/admin/tasks/CreateCrmTaskDialog.tsx` — добавить поля ответственного, контакта, сделки; заменить datepicker.
+- `src/components/admin/tasks/EditCrmTaskDialog.tsx` — заменить datepicker; синхронизировать layout с Create.
+- `src/components/admin/deals/KanbanDealCard.tsx` — проверить/довести рендер бейджей задач + клик-навигация в `DealDetailSheet` на таб задач.
 
-### 4.1 Левое меню админки
-
-Новый раздел **«Задачи»** рядом с CRM, под «Контакты»/«Сделки». Sidebar key `crm-tasks`, секция `crm_tasks` в `app_sections` + права в `admin_section`.
-
-### 4.2 Страница `/admin/tasks`
-
-Режимы:
-
-- **Список** (таблица с сортировкой/пагинацией).
-- **Канбан** по бакетам: Просроченные / Сегодня / Завтра / Позже / Без срока.
-- Фильтры: мои / все / просроченные / по ответственному / по типу / по воронке / по сделке / по контакту.
-- Поиск: клиент, email, телефон, № сделки, № задачи.
-
-### 4.3 Карточка задачи (Drawer/Page)
-
-Поля: тип, название, описание, ответственный, дедлайн, время напоминания, контакт, сделка, воронка/стадия (read-only снапшот), оффер/продукт (если auto), источник (`manual/auto/system`), статус, результат, дата закрытия. Действия: создать/редактировать/закрыть/отменить/переназначить.
-
-### 4.4 Карточка сделки
-
-Вкладка «Задачи»: список открытых/закрытых, кнопка «Создать задачу», inline-закрытие, переход в полную карточку.
-
-### 4.5 Карточка контакта
-
-Вкладка «Задачи»: все задачи контакта + задачи связанных сделок + история выполненных.
-
-### 4.6 Бейджи в списке и канбане сделок
-
-На карточке сделки: количество открытых задач, индикатор просрочки, ближайший `due_at`, иконка типа ближайшей задачи. Данные — через агрегатный view `crm_deal_task_summary_v`.
-
-### 4.7 Настройка автозадач
-
-UI в карточке оффера: CRUD `crm_task_automation_rules` (тип, шаблоны, ответственный, offsets, активность).
-
-## 5. Интеграции
-
-- `create_preorder_deal_atomic`: после создания сделки → `crm_task_apply_automation(offer_id, deal_id, contact_id)`.
-- На оффере **T-000074** (Индивидуальный договор): автозадача «Прозвон менеджером», ответственный — выбранный менеджер, `due_offset=15 мин`, `reminder=60 мин`.
-
-## 6. Безопасность и совместимость
-
-- Все миграции **add-only**. Не удаляем поля, не меняем поведение `orders_v2`, `crm_pipelines`, `crm_activity_log`.
-- В `orders_v2` ничего не добавляем — связь только через `crm_tasks.deal_id`.
-- Rollback plan: `drop table crm_tasks*`, фичефлаг `feature.crm_tasks.enabled` для скрытия UI-раздела и отключения automation hook в `create_preorder_deal_atomic` (early return при выключенном флаге).
-
-## 7. Roadmap (порядок исполнения)
-
-1. DIAGNOSE сущностей (сделки/контакты/роли/workspace/Telegram/уведомления) → артефакт.
-2. Миграции `crm_task_types`, `crm_tasks`, `crm_task_notifications`, `crm_task_automation_rules` + RLS/GRANT/индексы/триггеры/public_id + seed типов.
-3. RPC `crm_task_*` + JSON-валидация payload.
-4. UI-раздел «Задачи» в левом меню + страница со списком/канбаном/фильтрами/поиском.
-5. Ручное создание/редактирование/закрытие/отмена/переназначение задач.
-6. Вкладка «Задачи» в карточке сделки и карточке контакта.
-7. Бейджи задач в списке и канбане сделок (`crm_deal_task_summary_v`).
-8. UI настраиваемых типов задач (CRUD `crm_task_types`).
-9. UI и движок `crm_task_automation_rules` + миграция `tariff_offers.meta.auto_tasks` в таблицу.
-10. Хук в `create_preorder_deal_atomic` → `crm_task_apply_automation`.
-11. Notification worker (edge function) + ledger `crm_task_notifications`.
-12. Cron reminders (`pg_cron` → tick-функция).
-13. Настройка автозадачи для оффера T-000074 (ответственный + шаблоны).
-14. End-to-end smoke: заявка «Хочу премиальные условия» → сделка в нужной воронке/стадии → автозадача → Telegram-уведомление менеджеру → менеджер закрывает задачу с результатом → запись в ledger + `crm_activity_log`.
-
-## DoD
-
-- Все таблицы с RLS+GRANT, ни одной без `workspace_id`.
-- Раздел «Задачи» виден в левом меню под правами `crm_tasks.view`.
-- Создание/редактирование/закрытие/отмена/переназначение работают из UI и из RPC.
-- Автозадача на T-000074 создаётся при предзаписи, Telegram-уведомление доходит, факт зафиксирован в `crm_task_notifications`.
-- Бейджи на сделке отражают открытые/просроченные задачи и ближайший дедлайн.
-- Rollback проверен на staging фичефлагом.
-- Отчёт о выполнении — на русском языке.
+Никаких миграций, RPC и изменений RLS.

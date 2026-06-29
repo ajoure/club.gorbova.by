@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { addMinutes, format } from "date-fns";
+import { addMinutes } from "date-fns";
 
 import {
   Dialog,
@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/select";
 
 import { useCrmTaskTypes, useCreateCrmTask } from "@/hooks/useCrmTasks";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { DateTimePickerField } from "./DateTimePickerField";
 
 interface Props {
   open: boolean;
@@ -29,6 +31,8 @@ interface Props {
   defaultDealId?: string | null;
 }
 
+const UNASSIGNED = "__unassigned__";
+
 export function CreateCrmTaskDialog({
   open,
   onOpenChange,
@@ -36,12 +40,15 @@ export function CreateCrmTaskDialog({
   defaultDealId,
 }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
+  const { data: staff = [] } = useStaffOptions();
   const create = useCreateCrmTask();
 
   const [typeId, setTypeId] = useState<string>("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueAt, setDueAt] = useState<string>("");
+  const [remindAt, setRemindAt] = useState<string>("");
+  const [assignee, setAssignee] = useState<string>(UNASSIGNED);
 
   useEffect(() => {
     if (open && types.length > 0 && !typeId) {
@@ -54,7 +61,9 @@ export function CreateCrmTaskDialog({
       setTitle("");
       setDescription("");
       setDueAt("");
+      setRemindAt("");
       setTypeId("");
+      setAssignee(UNASSIGNED);
     }
   }, [open]);
 
@@ -62,10 +71,12 @@ export function CreateCrmTaskDialog({
     const tt = types.find((t) => t.id === typeId);
     if (!tt) return;
     if (!dueAt && tt.default_due_offset_minutes != null) {
-      const dt = addMinutes(new Date(), tt.default_due_offset_minutes);
-      setDueAt(format(dt, "yyyy-MM-dd'T'HH:mm"));
+      setDueAt(addMinutes(new Date(), tt.default_due_offset_minutes).toISOString());
     }
-  }, [typeId, types, dueAt]);
+    if (!remindAt && tt.default_reminder_offset_minutes != null && dueAt) {
+      setRemindAt(addMinutes(new Date(dueAt), -tt.default_reminder_offset_minutes).toISOString());
+    }
+  }, [typeId, types, dueAt, remindAt]);
 
   const submit = () => {
     if (!typeId || !title.trim()) return;
@@ -74,7 +85,9 @@ export function CreateCrmTaskDialog({
         task_type_id: typeId,
         title: title.trim(),
         description: description.trim() || null,
-        due_at: dueAt ? new Date(dueAt).toISOString() : null,
+        due_at: dueAt || null,
+        remind_at: remindAt || null,
+        assignee_user_id: assignee === UNASSIGNED ? null : assignee,
         contact_id: defaultContactId ?? null,
         deal_id: defaultDealId ?? null,
         source: "manual",
@@ -87,12 +100,12 @@ export function CreateCrmTaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Новая задача</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <div className="space-y-1">
             <Label>Тип</Label>
             <Select value={typeId} onValueChange={setTypeId}>
@@ -124,12 +137,31 @@ export function CreateCrmTaskDialog({
           </div>
 
           <div className="space-y-1">
-            <Label>Дедлайн</Label>
-            <Input
-              type="datetime-local"
-              value={dueAt}
-              onChange={(e) => setDueAt(e.target.value)}
-            />
+            <Label>Ответственный</Label>
+            <Select value={assignee} onValueChange={setAssignee}>
+              <SelectTrigger>
+                <SelectValue placeholder="Не назначен" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={UNASSIGNED}>Не назначен</SelectItem>
+                {staff.map((s) => (
+                  <SelectItem key={s.user_id} value={s.user_id}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Дедлайн</Label>
+              <DateTimePickerField value={dueAt} onChange={setDueAt} />
+            </div>
+            <div className="space-y-1">
+              <Label>Напомнить</Label>
+              <DateTimePickerField value={remindAt} onChange={setRemindAt} />
+            </div>
           </div>
         </div>
 

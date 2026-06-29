@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { format, parseISO } from "date-fns";
 
 import {
   Dialog,
@@ -28,6 +27,7 @@ import {
   type CrmTaskStatus,
 } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { DateTimePickerField } from "./DateTimePickerField";
 
 interface Props {
   open: boolean;
@@ -37,14 +37,6 @@ interface Props {
 
 const UNASSIGNED = "__unassigned__";
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return format(parseISO(iso), "yyyy-MM-dd'T'HH:mm");
-  } catch {
-    return "";
-  }
-}
 
 export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
@@ -66,8 +58,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setTypeId(task.task_type_id);
     setTitle(task.title ?? "");
     setDescription(task.description ?? "");
-    setDueAt(toLocalInput(task.due_at));
-    setRemindAt(toLocalInput(task.remind_at));
+    setDueAt(task.due_at ?? "");
+    setRemindAt(task.remind_at ?? "");
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
     setStatus(task.status);
     setResult(task.result_comment ?? "");
@@ -80,8 +72,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
       task_type_id: typeId,
       title: title.trim(),
       description: description.trim() || null,
-      due_at: dueAt ? new Date(dueAt).toISOString() : null,
-      remind_at: remindAt ? new Date(remindAt).toISOString() : null,
+      due_at: dueAt || null,
+      remind_at: remindAt || null,
       assignee_user_id: assignee === UNASSIGNED ? null : assignee,
       result_comment: result.trim() || null,
     };
@@ -155,21 +147,14 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Дедлайн</Label>
-              <Input
-                type="datetime-local"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-              />
+              <DateTimePickerField value={dueAt} onChange={setDueAt} />
             </div>
             <div className="space-y-1">
               <Label>Напомнить</Label>
-              <Input
-                type="datetime-local"
-                value={remindAt}
-                onChange={(e) => setRemindAt(e.target.value)}
-              />
+              <DateTimePickerField value={remindAt} onChange={setRemindAt} />
             </div>
           </div>
+
 
           <div className="space-y-1">
             <Label>Ответственный</Label>
