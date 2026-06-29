@@ -16,6 +16,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { useDealsBoard, type BoardDeal } from "@/hooks/useDealsBoard";
+import { useDealTaskSummary } from "@/hooks/useDealTaskSummary";
 import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
@@ -58,6 +59,10 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
     useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters });
+
+  const dealIds = useMemo(() => deals.map((d) => d.id), [deals]);
+  const { data: taskSummaryByDeal = {} } = useDealTaskSummary(dealIds);
+
 
   const [activeDeal, setActiveDeal] = useState<BoardDeal | null>(null);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
@@ -345,6 +350,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       onEnterSelectionMode={() => setSelectionMode(true)}
       onExitSelectionMode={clearSelection}
       dragHandleProps={dragHandleProps}
+      taskSummaryByDeal={taskSummaryByDeal}
     />
   );
 
@@ -384,6 +390,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                   onDeselectAllInStage={deselectAllInStage}
                   onEnterSelectionMode={() => setSelectionMode(true)}
                   onExitSelectionMode={clearSelection}
+                  taskSummaryByDeal={taskSummaryByDeal}
                 />
               )}
 

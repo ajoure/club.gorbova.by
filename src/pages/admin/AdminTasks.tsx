@@ -45,6 +45,7 @@ import {
   type CrmTaskStatus,
 } from "@/hooks/useCrmTasks";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
+import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Phone,
@@ -100,18 +101,23 @@ function TaskCard({ task, typeLabel, typeIcon }: TaskCardProps) {
   const updateStatus = useUpdateCrmTaskStatus();
   const Icon = TYPE_ICONS[typeIcon ?? "CircleDot"] ?? CircleDot;
   const overdue = isOverdue(task);
+  const [editOpen, setEditOpen] = useState(false);
 
   return (
     <Card className="mb-2">
       <CardContent className="p-3 space-y-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            className="flex items-center gap-2 min-w-0 text-left hover:opacity-80"
+            onClick={() => setEditOpen(true)}
+          >
             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">{task.title}</div>
               <div className="text-xs text-muted-foreground">{typeLabel}</div>
             </div>
-          </div>
+          </button>
           {task.public_id ? (
             <Badge variant="outline" className="text-[10px] font-mono">
               {task.public_id}
@@ -136,40 +142,52 @@ function TaskCard({ task, typeLabel, typeIcon }: TaskCardProps) {
           </Badge>
         </div>
 
-        {task.status !== "done" && task.status !== "canceled" ? (
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={() => updateStatus.mutate({ taskId: task.id, status: "done" })}
-              disabled={updateStatus.isPending}
-            >
-              Готово
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className="h-7 text-xs">
-                  Ещё
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                {task.status !== "in_progress" ? (
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setEditOpen(true)}
+          >
+            Изменить
+          </Button>
+          {task.status !== "done" && task.status !== "canceled" ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => updateStatus.mutate({ taskId: task.id, status: "done" })}
+                disabled={updateStatus.isPending}
+              >
+                Готово
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs">
+                    Ещё
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  {task.status !== "in_progress" ? (
+                    <DropdownMenuItem
+                      onClick={() => updateStatus.mutate({ taskId: task.id, status: "in_progress" })}
+                    >
+                      В работу
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem
-                    onClick={() => updateStatus.mutate({ taskId: task.id, status: "in_progress" })}
+                    onClick={() => updateStatus.mutate({ taskId: task.id, status: "canceled" })}
                   >
-                    В работу
+                    Отменить
                   </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  onClick={() => updateStatus.mutate({ taskId: task.id, status: "canceled" })}
-                >
-                  Отменить
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : null}
+        </div>
+
+        <EditCrmTaskDialog open={editOpen} onOpenChange={setEditOpen} task={task} />
       </CardContent>
     </Card>
   );

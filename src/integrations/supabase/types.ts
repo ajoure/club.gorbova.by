@@ -16426,6 +16426,27 @@ export type Database = {
       }
     }
     Views: {
+      crm_deal_task_summary_v: {
+        Row: {
+          deal_id: string | null
+          next_due_at: string | null
+          next_task_type_color: string | null
+          next_task_type_icon: string | null
+          next_task_type_key: string | null
+          next_task_type_label: string | null
+          open_count: number | null
+          overdue_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_tasks_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_accounts_safe: {
         Row: {
           created_at: string | null

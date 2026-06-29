@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { KanbanDealCard } from "./KanbanDealCard";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
+import type { DealTaskSummary } from "@/hooks/useDealTaskSummary";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ interface Props {
     attributes: Record<string, any>;
     listeners: Record<string, any> | undefined;
   };
+  taskSummaryByDeal?: Record<string, DealTaskSummary>;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
@@ -83,6 +85,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onEnterSelectionMode,
   onExitSelectionMode,
   dragHandleProps,
+  taskSummaryByDeal,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   const qc = useQueryClient();
@@ -193,6 +196,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                 stageColor={color}
                 stageType={stageType}
                 pipelineId={pipelineId}
+                taskSummary={taskSummaryByDeal?.[deal.id] ?? null}
               />
             ))
           )}
