@@ -84,6 +84,7 @@ interface Props {
   assignee: StaffOption | null;
   deal: TaskDealLite | null;
   contact: TaskContactLite | null;
+  bucketId?: TaskBucketId;
   onOpen: (task: CrmTask) => void;
   onOpenDeal?: (dealId: string) => void;
 }
@@ -94,12 +95,14 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   assignee,
   deal,
   contact,
+  bucketId = "later",
   onOpen,
   onOpenDeal,
 }: Props) {
   const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
   const accent = type?.color || "#6366f1";
   const overdue = isOverdue(task);
+  const theme = TASK_BUCKET_THEME[bucketId];
 
   return (
     <div
@@ -113,31 +116,30 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         }
       }}
       className={cn(
-        "group relative bg-card border border-border rounded-lg p-3 mb-2 cursor-pointer",
-        "hover:border-foreground/20 hover:shadow-sm transition-all overflow-hidden",
+        TASK_CARD_GLASS,
+        theme.cardGradient,
+        theme.ring,
+        "p-3 mb-2 cursor-pointer",
+        overdue && "ring-2 ring-rose-300/70",
       )}
     >
       {/* Left accent stripe by type color */}
       <div
         className="absolute left-0 top-0 bottom-0 w-1"
-        style={{ backgroundColor: accent }}
+        style={{
+          backgroundColor: accent,
+          boxShadow: `0 0 12px 0 ${accent}55`,
+        }}
         aria-hidden
       />
 
       <div className="pl-2 space-y-2">
-        {/* Header: type + public id */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: accent }} />
-            <span className="text-[11px] font-medium text-muted-foreground truncate">
-              {type?.label ?? "Задача"}
-            </span>
-          </div>
-          {task.public_id ? (
-            <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-              {task.public_id}
-            </span>
-          ) : null}
+        {/* Header: type label only — public_id скрыт по требованию UX */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: accent }} />
+          <span className="text-[11px] font-medium text-muted-foreground truncate">
+            {type?.label ?? "Задача"}
+          </span>
         </div>
 
         {/* Title */}
@@ -151,6 +153,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
             {task.description}
           </div>
         ) : null}
+
 
         {/* Due & reminder */}
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
