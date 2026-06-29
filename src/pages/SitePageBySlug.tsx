@@ -13,12 +13,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
+import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
+
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
