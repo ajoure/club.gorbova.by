@@ -214,9 +214,9 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
           </div>
           <Badge
             variant="outline"
-            className={cn("text-[10px] px-1.5 py-0 bg-white/70 backdrop-blur-sm", STATUS_VARIANTS[task.status])}
+            className={cn("text-[10px] px-1.5 py-0 backdrop-blur-sm", TASK_STATUS_BADGE[task.status])}
           >
-            {STATUS_LABELS[task.status]}
+            {TASK_STATUS_LABEL[task.status]}
           </Badge>
         </div>
 
