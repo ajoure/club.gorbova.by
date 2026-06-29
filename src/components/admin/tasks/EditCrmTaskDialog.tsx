@@ -251,50 +251,61 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           </div>
         </div>
 
-        <DialogFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+        <DialogFooter className="flex flex-row flex-wrap items-center gap-2 pt-2 w-full">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+            className="h-8 px-3 text-xs"
+          >
             Отмена
           </Button>
-          <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div className="flex flex-row flex-wrap items-center gap-2 ml-auto">
             {showCancel && (
               <Button
+                size="sm"
                 onClick={() => handleStatusTransition("canceled")}
                 disabled={!canSave}
-                className={TASK_DIALOG_CANCEL_CTA}
+                className={cn("h-8 px-3 text-xs font-medium rounded-lg", TASK_DIALOG_CANCEL_CTA)}
               >
-                <XCircle className="h-4 w-4 mr-1" />
+                <XCircle className="h-3.5 w-3.5 mr-1" />
                 Отменить задачу
               </Button>
             )}
             {showInProgress && (
               <Button
+                size="sm"
                 onClick={() => handleStatusTransition("in_progress")}
                 disabled={!canSave}
-                className={TASK_DIALOG_INPROGRESS_CTA}
+                className={cn("h-8 px-3 text-xs font-medium rounded-lg", TASK_DIALOG_INPROGRESS_CTA)}
               >
-                <PlayCircle className="h-4 w-4 mr-1" />
+                <PlayCircle className="h-3.5 w-3.5 mr-1" />
                 В работу
               </Button>
             )}
             <Button
+              size="sm"
               onClick={handleSave}
               disabled={!canSave}
-              className={TASK_DIALOG_SAVE_CTA}
+              className={cn("h-8 px-3 text-xs font-medium rounded-lg", TASK_DIALOG_SAVE_CTA)}
             >
               Сохранить
             </Button>
             {showDone && (
               <Button
+                size="sm"
                 onClick={() => handleStatusTransition("done")}
                 disabled={!canSave}
-                className={TASK_DIALOG_DONE_CTA}
+                className={cn("h-8 px-3 text-xs font-medium rounded-lg", TASK_DIALOG_DONE_CTA)}
               >
-                <CheckCircle2 className="h-4 w-4 mr-1" />
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                 Готово
               </Button>
             )}
           </div>
         </DialogFooter>
+
       </DialogContent>
     </Dialog>
   );
