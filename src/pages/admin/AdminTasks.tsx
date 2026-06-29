@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { parseISO } from "date-fns";
-import { Columns3, LayoutList, Plus, X } from "lucide-react";
+import { BarChart3, Columns3, LayoutList, Plus, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
