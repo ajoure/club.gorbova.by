@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { format, parseISO } from "date-fns";
 
 import {
   Dialog,
@@ -28,6 +27,7 @@ import {
   type CrmTaskStatus,
 } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { DateTimePickerField } from "./DateTimePickerField";
 
 interface Props {
   open: boolean;
@@ -37,14 +37,6 @@ interface Props {
 
 const UNASSIGNED = "__unassigned__";
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return format(parseISO(iso), "yyyy-MM-dd'T'HH:mm");
-  } catch {
-    return "";
-  }
-}
 
 export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
