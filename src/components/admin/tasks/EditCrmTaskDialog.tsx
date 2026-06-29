@@ -72,8 +72,8 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
       task_type_id: typeId,
       title: title.trim(),
       description: description.trim() || null,
-      due_at: dueAt ? new Date(dueAt).toISOString() : null,
-      remind_at: remindAt ? new Date(remindAt).toISOString() : null,
+      due_at: dueAt || null,
+      remind_at: remindAt || null,
       assignee_user_id: assignee === UNASSIGNED ? null : assignee,
       result_comment: result.trim() || null,
     };
