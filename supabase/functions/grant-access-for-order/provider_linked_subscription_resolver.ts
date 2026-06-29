@@ -45,14 +45,17 @@ export type ProviderLinkedResolverOutcome =
         auto_renew: boolean;
       };
       provider_subscription: {
-        id: string;
+        id: string | null;
         subscription_v2_id: string;
         provider_subscription_id: string | null;
         state: string;
         tracking_id: string | null;
         order_id: string | null;
       };
-      reason: 'order_id_match' | 'tracking_id_strict_match';
+      reason:
+        | 'order_id_match'
+        | 'tracking_id_strict_match'
+        | 'checkout_order_id_subv2_fallback';
     }
   | {
       outcome: 'manual_review_provider_linkage_conflict';
