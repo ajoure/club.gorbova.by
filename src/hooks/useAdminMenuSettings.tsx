@@ -74,6 +74,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   ClipboardCheck,
   MessageCircle,
   ClipboardList,
+  ListChecks,
   Building2,
   FileStack,
   Inbox,
