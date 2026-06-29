@@ -9,7 +9,8 @@
 //   1. JWT валиден (без verify_jwt в config.toml — валидируем здесь).
 //   2. Пользователь имеет роль сотрудника (has_role_v2 staff).
 //   3. У пользователя в profiles.vochi_sip_extension задан внутренний номер.
-//   4. integration_credentials provider='vochi' status='active' и config.enabled=true.
+//   4. integrations.is_enabled=true для provider='vochi'; integration_credentials
+//      хранит только секреты/config подключения (никакого второго enabled-флага).
 //   5. Идемпотентность: тот же (user, phone) в течение IDEMPOTENCY_WINDOW_SEC
 //      возвращает существующий call_id вместо нового запроса.
 //
