@@ -86,6 +86,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   onOpen,
   onOpenDeal,
 }: Props) {
+  const theme = TASK_BUCKET_THEME[bucketId];
   const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
   const accent = type?.color || theme.accent;
   const overdue = isOverdue(task);
