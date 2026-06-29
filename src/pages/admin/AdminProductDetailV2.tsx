@@ -2611,6 +2611,9 @@ export default function AdminProductDetailV2() {
                     meta: { ...offerForm.meta, crm_routing: next },
                   })}
                 />
+
+                {/* Авто-задачи на оплату (crm_task_automation_rules) */}
+                <OfferAutomationRulesSection offerId={offerDialog.editing?.id ?? null} />
               </CollapsibleContent>
             </Collapsible>
 
