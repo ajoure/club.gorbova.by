@@ -101,6 +101,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
   stageColor,
   stageType,
   pipelineId,
+  taskSummary,
 }: Props) {
   const Icon = STATUS_ICONS[deal.status] || AlertTriangle;
   const iconColor = STATUS_COLORS[deal.status] || "text-muted-foreground";
