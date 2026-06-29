@@ -75,6 +75,31 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
 
 export function CallsHistorySection({ contactId, dealId, bare = false }: Props) {
   const enabled = Boolean(contactId || dealId);
+  const queryClient = useQueryClient();
+
+  // Phase 3 — Realtime: подписка на INSERT/UPDATE по этому контакту/сделке.
+  useEffect(() => {
+    if (!enabled) return;
+    const filter = contactId
+      ? `contact_id=eq.${contactId}`
+      : `deal_id=eq.${dealId}`;
+    const channel = supabase
+      .channel(`calls-${contactId ?? dealId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "calls", filter },
+        () => {
+          queryClient.invalidateQueries({
+            queryKey: ["calls-history", { contactId, dealId }],
+          });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, contactId, dealId, queryClient]);
+
 
   const { data, isLoading } = useQuery({
     queryKey: ["calls-history", { contactId, dealId }],
