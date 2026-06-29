@@ -397,6 +397,53 @@ Deno.serve(async (req) => {
           user_id: userId,
         });
 
+        // Repeat-guard: prior trial order for the same product by this user/email
+        // (subscriptions_v2-based guard above does NOT fire for no-card trials,
+        // since the no-card path never creates a subscriptions_v2 row.)
+        {
+          let priorQuery = supabase
+            .from('orders_v2')
+            .select('id, created_at, user_id, customer_email')
+            .eq('product_id', productId)
+            .eq('is_trial', true)
+            .eq('status', 'paid')
+            .limit(1);
+          if (userId) {
+            priorQuery = priorQuery.or(`user_id.eq.${userId},customer_email.eq.${emailLower}`);
+          } else {
+            priorQuery = priorQuery.eq('customer_email', emailLower);
+          }
+          const { data: priorTrial } = await priorQuery.maybeSingle();
+          if (priorTrial?.id) {
+            console.log('[bepaid-create-token] DEMO-TRIAL-NO-CARD: alreadyUsedTrial', {
+              product_id: productId,
+              prior_order_id: priorTrial.id,
+            });
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'bepaid-create-token',
+              action: 'trial.no_card.already_used',
+              target_user_id: userId,
+              meta: {
+                product_id: productId,
+                offer_id: trialOfferRow.id,
+                prior_order_id: priorTrial.id,
+                customer_email: emailLower,
+              },
+            });
+            return new Response(JSON.stringify({
+              success: false,
+              error: 'Пробный период для этого продукта уже использован',
+              alreadyUsedTrial: true,
+            }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+
+
         const trialDaysEff = trialOfferRow.trial_days || trialDays || 1;
         const trialEndAt = new Date(Date.now() + trialDaysEff * 24 * 60 * 60 * 1000).toISOString();
         const origin = req.headers.get('origin') || 'https://lovable.app';
