@@ -81,8 +81,8 @@ export function WebSmsSettingsCard() {
       );
       return {
         enabled: !!(integ as any)?.is_enabled,
-        hasApiKey: !!merged.secrets?.apikey,
-        sender: merged.config?.sender ?? null,
+        hasApiKey: !!(merged.secrets?.token || merged.secrets?.apikey),
+        sender: merged.config?.alphaname ?? merged.config?.sender ?? null,
         status: merged.status,
       };
     },
