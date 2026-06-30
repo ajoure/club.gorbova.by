@@ -2566,6 +2566,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                     }
                                   </span>
                                 </div>
+                                {(isSuperAdmin() || hasPermission("users.impersonate")) && trial.product_id && (
+                                  <div className="mt-2 flex justify-end">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                                      onClick={() => {
+                                        if (confirm(`Сбросить пробный период для «${productName}»? Клиент сможет пройти триал заново.`)) {
+                                          resetTrialMutation.mutate({ productId: trial.product_id, tariffId: trial.tariff_id || null });
+                                        }
+                                      }}
+                                      disabled={resetTrialMutation.isPending}
+                                    >
+                                      {resetTrialMutation.isPending ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <RotateCcw className="w-3 h-3" />
+                                      )}
+                                      Сбросить пробный период
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
