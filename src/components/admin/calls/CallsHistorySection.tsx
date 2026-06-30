@@ -80,6 +80,28 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
 }
 
 export function CallsHistorySection({ contactId, dealId, bare = false }: Props) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  async function handleTranscribe(callId: string) {
+    try {
+      setProcessingId(callId);
+      const { data, error } = await supabase.functions.invoke("call-transcribe-summarize", {
+        body: { call_id: callId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast.success("Расшифровка готова");
+      setExpanded((s) => ({ ...s, [callId]: true }));
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Ошибка расшифровки";
+      toast.error(msg);
+    } finally {
+      setProcessingId(null);
+    }
+  }
+
   const enabled = Boolean(contactId || dealId);
   const queryClient = useQueryClient();
 
