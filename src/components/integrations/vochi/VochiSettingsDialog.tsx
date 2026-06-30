@@ -65,7 +65,7 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
       setEnabled(!!(integ as any)?.is_enabled);
       const c = (cred as any) ?? null;
       setBaseUrl(c?.config?.base_url || "https://bot.vochi.by");
-      setSipCode(c?.config?.sip_code || "");
+      // sip_code больше не используется — поле удалено из UI
       setClientId(c?.secrets?.client_id || "");
       setApiToken(c?.secrets?.api_token || "");
       setLoading(false);
