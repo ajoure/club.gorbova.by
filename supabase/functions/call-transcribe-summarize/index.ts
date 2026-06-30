@@ -6,7 +6,7 @@
 // Auth: требуется валидный JWT (verify_jwt=true по умолчанию).
 // ============================================================================
 
-import { createClient } from "https://esh.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
