@@ -245,7 +245,11 @@ function StaffSipSection() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [localSip, setLocalSip] = useState<Record<string, string | null>>({});
 
-  const staff = (users ?? []).filter((u) => (u.roles?.length ?? 0) > 0);
+  const staff = (users ?? []).filter(
+    (u) =>
+      (u.roles?.length ?? 0) > 0 &&
+      u.roles!.some((r) => r.code && r.code !== "user"),
+  );
   const q = query.trim().toLowerCase();
   const filtered = q
     ? staff.filter(
