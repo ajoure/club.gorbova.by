@@ -37,6 +37,7 @@ import { RoleAccessEditor } from "@/components/admin/roles/RoleAccessEditor";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
 import { getRoleDisplayName } from "@/lib/roles";
+import { supabase } from "@/integrations/supabase/client";
 
 /**
  * RBAC v3 — единственная страница управления сотрудниками и ролями.
