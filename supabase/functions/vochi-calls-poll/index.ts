@@ -54,15 +54,24 @@ function toIso(v: any): string | null {
     const ms = v < 1e12 ? v * 1000 : v;
     return new Date(ms).toISOString();
   }
-  const d = new Date(String(v));
+  let s = String(v).trim();
+  // VOCHI отдаёт naive local time без TZ ("2026-06-30T11:16:51") — это Europe/Minsk (+03:00).
+  // Если в строке нет ни 'Z' ни '+hh:mm' / '-hh:mm', трактуем как Minsk.
+  if (s && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(" ", "T") + "+03:00";
+  }
+  const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function mapVochiStatus(raw: any): string | null {
+function mapVochiStatus(raw: any, duration?: number | null): string | null {
+  // Числовые коды VOCHI: 2 = answered/completed, 0/1/иное = miss/no-answer.
+  // Финальный сигнал — duration_seconds: >0 значит звонок состоялся.
+  if (typeof duration === "number" && duration > 0) return "completed";
   const s = String(raw ?? "").toLowerCase();
-  if (!s) return null;
+  if (s === "2") return "completed";
   if (["answered", "completed", "ended", "finished", "success", "ok"].includes(s)) return "completed";
-  if (["no_answer", "noanswer", "missed", "unanswered"].includes(s)) return "no_answer";
+  if (["no_answer", "noanswer", "missed", "unanswered", "0", "1"].includes(s)) return "no_answer";
   if (["busy"].includes(s)) return "busy";
   if (["failed", "error", "cancelled", "canceled", "rejected"].includes(s)) return "failed";
   if (["ringing", "calling", "in_progress", "active", "queued", "new"].includes(s)) return "ringing";
