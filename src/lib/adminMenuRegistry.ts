@@ -55,6 +55,13 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     routePrefix: "/admin/deals",
   },
   {
+    code: "calls",
+    label: "Звонки и SMS",
+    group: "crm",
+    routePrefix: "/admin/calls",
+  },
+
+  {
     code: "contacts",
     label: "Контакты",
     group: "crm",
