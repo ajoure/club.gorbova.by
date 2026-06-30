@@ -165,6 +165,7 @@ Deno.serve(async (req) => {
   const { data: callRow, error: insertErr } = await admin
     .from("calls")
     .insert({
+      external_call_id: `pending:${crypto.randomUUID()}`,
       direction: "outbound",
       status: "queued",
       link_status: contactId ? "manual" : "unresolved",
