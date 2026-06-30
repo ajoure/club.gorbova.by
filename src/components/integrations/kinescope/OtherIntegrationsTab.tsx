@@ -5,6 +5,7 @@ import { GotenbergSettingsCard } from "@/components/integrations/gotenberg/Goten
 import { GoogleMapsSettingsCard } from "@/components/integrations/google-maps/GoogleMapsSettingsCard";
 import { GrpLookupSettingsCard } from "@/components/integrations/grp-lookup/GrpLookupSettingsCard";
 import { VochiSettingsCard } from "@/components/integrations/vochi/VochiSettingsCard";
+import { WebSmsSettingsCard } from "@/components/integrations/websms/WebSmsSettingsCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function OtherIntegrationsTab() {
@@ -31,6 +32,7 @@ export function OtherIntegrationsTab() {
         <GoogleMapsSettingsCard />
         <GrpLookupSettingsCard />
         <VochiSettingsCard />
+        <WebSmsSettingsCard />
       </div>
     </div>
   );

@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Phone, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -41,6 +42,7 @@ export function CallButton({
   className,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
   const disabled = !phone || busy;
 
   const handleClick = async () => {
@@ -83,6 +85,9 @@ export function CallButton({
       } else {
         toast.success("Звоним вам — поднимите трубку, чтобы соединиться");
       }
+      // Мгновенно обновим список звонков (не ждём realtime).
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+      queryClient.invalidateQueries({ queryKey: ["calls-history"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось инициировать звонок");
     } finally {

@@ -40,7 +40,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
   const [baseUrl, setBaseUrl] = useState("https://bot.vochi.by");
   const [clientId, setClientId] = useState("");
   const [apiToken, setApiToken] = useState("");
-  const [sipCode, setSipCode] = useState("");
   const [copied, setCopied] = useState(false);
 
   const webhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vochi-webhook`;
@@ -66,7 +65,7 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
       setEnabled(!!(integ as any)?.is_enabled);
       const c = (cred as any) ?? null;
       setBaseUrl(c?.config?.base_url || "https://bot.vochi.by");
-      setSipCode(c?.config?.sip_code || "");
+      // sip_code больше не используется — поле удалено из UI
       setClientId(c?.secrets?.client_id || "");
       setApiToken(c?.secrets?.api_token || "");
       setLoading(false);
@@ -101,7 +100,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
         display_name: "VOCHI",
         config: {
           base_url: baseUrl.trim().replace(/\/+$/, ""),
-          sip_code: sipCode.trim(),
         },
         secrets: { client_id: clientId.trim(), api_token: apiToken.trim() },
         status: clientId.trim() ? "connected" : "pending",
@@ -172,17 +170,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder="https://bot.vochi.by"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="vochi-sip" className="text-xs">
-                  SIP-code предприятия
-                </Label>
-                <Input
-                  id="vochi-sip"
-                  value={sipCode}
-                  onChange={(e) => setSipCode(e.target.value)}
-                  placeholder="напр. 0371"
                 />
               </div>
               <div className="space-y-1.5">

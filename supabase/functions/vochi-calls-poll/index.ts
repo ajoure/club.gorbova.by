@@ -73,11 +73,15 @@ async function fetchVochiCallsByPhone(
   baseUrl: string,
   apiToken: string,
   phoneE164: string,
-): Promise<any[]> {
+): Promise<{ list: any[]; diag: any[] }> {
+  const k = encodeURIComponent(apiToken);
+  const p = encodeURIComponent(phoneE164);
   const candidates = [
-    `${baseUrl}/api/v1/calls?phone=${encodeURIComponent(phoneE164)}`,
-    `${baseUrl}/api/v1/calls?number=${encodeURIComponent(phoneE164)}`,
+    `${baseUrl}/api/v1/calls?phone=${p}&key=${k}`,
+    `${baseUrl}/api/v1/calls?number=${p}&key=${k}`,
+    `${baseUrl}/api/v1/calls?key=${k}`,
   ];
+  const diag: any[] = [];
   for (const url of candidates) {
     try {
       const resp = await fetch(url, {
@@ -87,8 +91,11 @@ async function fetchVochiCallsByPhone(
           Accept: "application/json",
         },
       });
+      const text = await resp.text().catch(() => "");
+      const sample = text.slice(0, 300);
+      diag.push({ url, status: resp.status, sample });
+      console.log("[vochi-calls-poll] fetch", url, "status=", resp.status, "sample=", sample);
       if (!resp.ok) continue;
-      const text = await resp.text();
       let parsed: any;
       try { parsed = JSON.parse(text); } catch { continue; }
       const list = Array.isArray(parsed)
@@ -96,11 +103,15 @@ async function fetchVochiCallsByPhone(
         : Array.isArray(parsed?.data) ? parsed.data
         : Array.isArray(parsed?.calls) ? parsed.calls
         : Array.isArray(parsed?.items) ? parsed.items
+        : Array.isArray(parsed?.result) ? parsed.result
         : [];
-      if (list.length) return list;
-    } catch (_e) { /* try next */ }
+      if (list.length) return { list, diag };
+    } catch (e) {
+      diag.push({ url, error: String(e) });
+      console.log("[vochi-calls-poll] fetch err", url, String(e));
+    }
   }
-  return [];
+  return { list: [], diag };
 }
 
 function matchCall(remote: any[], localStartedAt: string, phoneDigits: string): any | null {
@@ -129,14 +140,20 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("authorization") ?? "";
   if (!auth.startsWith("Bearer ")) return json({ error: "forbidden" }, 403);
 
-  const { data: cred } = await admin
+  const { data: credRows, error: credErr } = await admin
     .from("integration_credentials")
     .select("config, secrets")
-    .eq("provider", "vochi")
-    .maybeSingle();
-  if (!cred) return json({ ok: true, skipped: "no_credentials" });
-  const baseUrl = String(cred.config?.base_url ?? "https://bot.vochi.by").replace(/\/+$/, "");
-  const apiToken = cred.secrets?.api_token ?? cred.secrets?.api_key ?? "";
+    .eq("provider", "vochi");
+  if (credErr) return json({ error: "cred_lookup_failed", detail: credErr.message }, 500);
+  if (!credRows?.length) return json({ ok: true, skipped: "no_credentials" });
+  const mergedConfig: any = {};
+  const mergedSecrets: any = {};
+  for (const r of credRows) {
+    Object.assign(mergedConfig, r.config ?? {});
+    Object.assign(mergedSecrets, r.secrets ?? {});
+  }
+  const baseUrl = String(mergedConfig.base_url ?? "https://bot.vochi.by").replace(/\/+$/, "");
+  const apiToken = mergedSecrets.api_token ?? mergedSecrets.api_key ?? "";
   if (!apiToken) return json({ ok: true, skipped: "no_api_token" });
 
   const sinceIso = new Date(Date.now() - POLL_WINDOW_MIN * 60 * 1000).toISOString();
@@ -158,7 +175,7 @@ Deno.serve(async (req) => {
   for (const call of pending) {
     const phone = call.direction === "inbound" ? call.phone_from_e164 : call.phone_to_e164;
     if (!phone) continue;
-    const remote = await fetchVochiCallsByPhone(baseUrl, apiToken, phone);
+    const { list: remote, diag } = await fetchVochiCallsByPhone(baseUrl, apiToken, phone);
     const match = matchCall(remote, call.started_at, normalizeDigits(phone));
 
     if (!match) {
@@ -168,11 +185,17 @@ Deno.serve(async (req) => {
           .from("calls")
           .update({
             status: "failed",
-            metadata: { ...(call.metadata ?? {}), poll_result: "stale_no_remote_match" },
+            metadata: { ...(call.metadata ?? {}), poll_result: "stale_no_remote_match", poll_diag: diag },
           })
           .eq("id", call.id);
         stale++;
       } else {
+        await admin
+          .from("calls")
+          .update({
+            metadata: { ...(call.metadata ?? {}), poll_last_at: new Date().toISOString(), poll_diag: diag, poll_result: "no_match_yet" },
+          })
+          .eq("id", call.id);
         missed++;
       }
       continue;

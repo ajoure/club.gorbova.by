@@ -13417,6 +13417,74 @@ export type Database = {
           },
         ]
       }
+      sms_messages: {
+        Row: {
+          contact_id: string | null
+          cost: number | null
+          created_at: string
+          deal_id: string | null
+          error: string | null
+          external_id: string | null
+          id: string
+          initiator_user_id: string | null
+          metadata: Json
+          phone_e164: string
+          provider: string
+          segments: number | null
+          sender: string | null
+          status: string
+          text: string
+          updated_at: string
+          workspace_id: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          cost?: number | null
+          created_at?: string
+          deal_id?: string | null
+          error?: string | null
+          external_id?: string | null
+          id?: string
+          initiator_user_id?: string | null
+          metadata?: Json
+          phone_e164: string
+          provider?: string
+          segments?: number | null
+          sender?: string | null
+          status?: string
+          text: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          cost?: number | null
+          created_at?: string
+          deal_id?: string | null
+          error?: string | null
+          external_id?: string | null
+          id?: string
+          initiator_user_id?: string | null
+          metadata?: Json
+          phone_e164?: string
+          provider?: string
+          segments?: number | null
+          sender?: string | null
+          status?: string
+          text?: string
+          updated_at?: string
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sms_messages_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sphere_goals: {
         Row: {
           completed: boolean
