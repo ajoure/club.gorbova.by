@@ -96,6 +96,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Bot,
   Video,
   KeyRound,
+  Phone,
 };
 
 // Default menu configuration - Reorganized structure
