@@ -31,6 +31,10 @@ interface CallRow {
   phone_from_e164: string | null;
   phone_to_e164: string | null;
   recording_url: string | null;
+  transcript: string | null;
+  summary: string | null;
+  transcript_status: string | null;
+  transcript_error: string | null;
 }
 
 interface Props {
