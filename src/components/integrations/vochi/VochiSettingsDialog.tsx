@@ -184,17 +184,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="vochi-client" className="text-xs">
-                  clientId (secret предприятия)
-                </Label>
-                <Input
-                  id="vochi-client"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  placeholder="e37ac1e4a7dd4d378bfc869aa9dc345a"
-                />
-              </div>
-              <div className="space-y-1.5">
                 <Label htmlFor="vochi-token" className="text-xs">
                   API-токен (для получения записей)
                 </Label>
