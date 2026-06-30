@@ -9,6 +9,7 @@ interface AdminUser {
   status: string;
   created_at: string;
   last_seen_at: string | null;
+  vochi_sip_extension: string | null;
   roles: {
     code: string;
     name: string;
