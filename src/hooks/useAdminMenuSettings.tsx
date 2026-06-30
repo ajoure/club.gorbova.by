@@ -36,6 +36,7 @@ import {
   Bot,
   Video,
   KeyRound,
+  Phone,
   LucideIcon,
 } from "lucide-react";
 
