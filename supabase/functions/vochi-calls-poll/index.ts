@@ -123,8 +123,11 @@ function matchCall(remote: any[], localStartedAt: string, phoneDigits: string): 
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  // Auth: триггерится cron c anon-bearer (verify_jwt=false), либо service-role.
+  // Внутри читаем БД через service-role — функция read-only безопасна, но всё же
+  // запрещаем анонимный вызов без bearer.
   const auth = req.headers.get("authorization") ?? "";
-  if (!auth.includes(SERVICE_ROLE)) return json({ error: "forbidden" }, 403);
+  if (!auth.startsWith("Bearer ")) return json({ error: "forbidden" }, 403);
 
   const { data: cred } = await admin
     .from("integration_credentials")
