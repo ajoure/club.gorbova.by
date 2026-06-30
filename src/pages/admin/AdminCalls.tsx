@@ -281,7 +281,7 @@ export default function AdminCalls() {
                 const isProcessing =
                   processingId === call.id || call.transcript_status === "processing";
                 const isUnresolved =
-                  call.link_status === "unresolved" || call.link_status === "ambiguous";
+                  call.link_status === "unresolved";
                 const binding = bindingCallId === call.id;
                 return (
                   <div
