@@ -74,11 +74,12 @@ async function fetchVochiCallsByPhone(
   apiToken: string,
   phoneE164: string,
 ): Promise<{ list: any[]; diag: any[] }> {
+  const k = encodeURIComponent(apiToken);
+  const p = encodeURIComponent(phoneE164);
   const candidates = [
-    `${baseUrl}/api/v1/calls?phone=${encodeURIComponent(phoneE164)}`,
-    `${baseUrl}/api/v1/calls?number=${encodeURIComponent(phoneE164)}`,
-    `${baseUrl}/api/v1/calls/recent`,
-    `${baseUrl}/api/v1/calls`,
+    `${baseUrl}/api/v1/calls?phone=${p}&key=${k}`,
+    `${baseUrl}/api/v1/calls?number=${p}&key=${k}`,
+    `${baseUrl}/api/v1/calls?key=${k}`,
   ];
   const diag: any[] = [];
   for (const url of candidates) {
