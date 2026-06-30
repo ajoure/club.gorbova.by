@@ -169,6 +169,16 @@ export function WebSmsSettingsCard() {
               </div>
 
               <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => setBulkOpen(true)}
+                  disabled={!isOn}
+                  title={isOn ? "" : "Включите интеграцию в настройках"}
+                >
+                  <Send className="h-4 w-4 mr-2" />
+                  Массовая рассылка
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
                   <Settings className="h-4 w-4 mr-2" />
                   Настройки
