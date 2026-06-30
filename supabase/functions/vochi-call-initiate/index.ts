@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
       started_at: startedAt,
       created_by: userId,
       workspace_id: profile?.workspace_id ?? null,
-      meta: { sip_extension: ext, initiated_via: "vochi-call-initiate" },
+      metadata: { sip_extension: ext, initiated_via: "vochi-call-initiate" },
     })
     .select("id, public_id")
     .single();
@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
         .from("calls")
         .update({
           status: "failed",
-          meta: {
+          metadata: {
             sip_extension: ext,
             initiated_via: "vochi-call-initiate",
             vochi_http_status: resp.status,
@@ -222,7 +222,7 @@ Deno.serve(async (req) => {
       .from("calls")
       .update({
         status: "failed",
-        meta: {
+        metadata: {
           sip_extension: ext,
           initiated_via: "vochi-call-initiate",
           fetch_error: String(e?.message ?? e),

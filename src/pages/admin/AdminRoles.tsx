@@ -138,24 +138,6 @@ export default function AdminRoles() {
     }
   };
 
-  const handleSipExtensionSave = async (userId: string, value: string, prev: string | null) => {
-    const next = value.trim() || null;
-    if (next === (prev ?? null)) return;
-    if (next && !/^\d{2,8}$/.test(next)) {
-      toast.error("SIP-номер: только цифры, 2–8 знаков");
-      return;
-    }
-    const { error } = await supabase
-      .from("profiles")
-      .update({ vochi_sip_extension: next })
-      .eq("user_id", userId);
-    if (error) {
-      toast.error("Не удалось сохранить SIP-номер: " + error.message);
-      return;
-    }
-    toast.success(next ? `SIP-номер сохранён: ${next}` : "SIP-номер очищен");
-    await refetchUsers();
-  };
 
   if (loading) {
     return (
@@ -225,7 +207,6 @@ export default function AdminRoles() {
                 <TableRow className="border-border/20 hover:bg-transparent">
                   <TableHead className="text-muted-foreground/70 font-medium">Сотрудник</TableHead>
                   <TableHead className="text-muted-foreground/70 font-medium">Роль</TableHead>
-                  <TableHead className="text-muted-foreground/70 font-medium w-[160px]">VOCHI SIP-номер</TableHead>
                   <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -292,19 +273,7 @@ export default function AdminRoles() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Input
-                          defaultValue={user.vochi_sip_extension ?? ""}
-                          placeholder="напр. 150"
-                          maxLength={8}
-                          disabled={!hasPermission("admins.manage")}
-                          className="h-9 w-[140px] rounded-lg border-border/30 bg-card/30 font-mono text-sm"
-                          onBlur={(e) => handleSipExtensionSave(user.user_id, e.target.value, user.vochi_sip_extension)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
+
                         {canChangeRole && (
                           <Button
                             size="sm"
@@ -321,7 +290,7 @@ export default function AdminRoles() {
                 })}
                 {staffUsers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
                       {staffSearch ? "Сотрудники не найдены" : "Нет сотрудников с административными ролями"}
                     </TableCell>
                   </TableRow>
