@@ -1151,12 +1151,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram info
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram info (supports both auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id);
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
