@@ -104,12 +104,7 @@ export function MediaLightbox({
               : "w-fit max-w-[92vw] max-h-[calc(92vh-3rem)] p-0"
         )}>
           {isPdf ? (
-            <iframe
-              src={`${url}${url.includes("#") ? "&" : "#"}view=Fit&zoom=page-fit`}
-              className="w-full h-full border-0 bg-background"
-              title={fileName || "PDF Document"}
-              style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-            />
+            <PdfViewer url={url} fileName={fileName} />
           ) : isDocument ? (
             <div className="flex flex-col items-center gap-6 p-8">
               <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center">
