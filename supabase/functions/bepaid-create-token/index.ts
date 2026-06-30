@@ -247,24 +247,45 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Check for existing trial usage for this product (prevent repeat trials)
+    // Resolve tariff_id for per-tariff trial scoping
+    let resolvedTariffId: string | null = null;
+    if (offerId) {
+      const { data: ofRow } = await supabase
+        .from('tariff_offers')
+        .select('tariff_id')
+        .eq('id', offerId)
+        .maybeSingle();
+      resolvedTariffId = (ofRow as any)?.tariff_id || null;
+    }
+    if (!resolvedTariffId && tariffCode) {
+      const { data: tRow } = await supabase
+        .from('tariffs')
+        .select('id')
+        .eq('code', tariffCode)
+        .eq('product_id', productId)
+        .maybeSingle();
+      resolvedTariffId = (tRow as any)?.id || null;
+    }
+
+    // Check for existing trial usage for this product+tariff (prevent repeat trials per tariff)
     if (isTrial && (userId || authUserId)) {
       const checkUserId = userId || authUserId;
-      const { data: existingTrial } = await supabase
+      let trialQuery = supabase
         .from('subscriptions_v2')
         .select('id')
         .eq('user_id', checkUserId)
         .eq('product_id', productId)
         .eq('is_trial', true)
-        .limit(1)
-        .maybeSingle();
-      
+        .limit(1);
+      if (resolvedTariffId) trialQuery = trialQuery.eq('tariff_id', resolvedTariffId);
+      const { data: existingTrial } = await trialQuery.maybeSingle();
+
       if (existingTrial) {
-        console.log('User already used trial for this product:', productId);
+        console.log('User already used trial for this product+tariff:', productId, resolvedTariffId);
         // Business rule violation (not a server error): return 200 so clients don't treat it as transport failure
         return new Response(JSON.stringify({
           success: false,
-          error: 'Пробный период для этого продукта уже использован',
+          error: 'Пробный период для этого тарифа уже использован',
           alreadyUsedTrial: true,
         }), {
           status: 200,
@@ -397,7 +418,7 @@ Deno.serve(async (req) => {
           user_id: userId,
         });
 
-        // Repeat-guard: prior trial order for the same product by this user/email
+        // Repeat-guard: prior trial order for the same product+tariff by this user/email
         // (subscriptions_v2-based guard above does NOT fire for no-card trials,
         // since the no-card path never creates a subscriptions_v2 row.)
         {
@@ -408,6 +429,9 @@ Deno.serve(async (req) => {
             .eq('is_trial', true)
             .eq('status', 'paid')
             .limit(1);
+          if (trialOfferRow.tariff_id) {
+            priorQuery = priorQuery.eq('tariff_id', trialOfferRow.tariff_id);
+          }
           if (userId) {
             priorQuery = priorQuery.or(`user_id.eq.${userId},customer_email.eq.${emailLower}`);
           } else {
@@ -417,6 +441,7 @@ Deno.serve(async (req) => {
           if (priorTrial?.id) {
             console.log('[bepaid-create-token] DEMO-TRIAL-NO-CARD: alreadyUsedTrial', {
               product_id: productId,
+              tariff_id: trialOfferRow.tariff_id,
               prior_order_id: priorTrial.id,
             });
             await supabase.from('audit_logs').insert({
@@ -427,6 +452,7 @@ Deno.serve(async (req) => {
               target_user_id: userId,
               meta: {
                 product_id: productId,
+                tariff_id: trialOfferRow.tariff_id,
                 offer_id: trialOfferRow.id,
                 prior_order_id: priorTrial.id,
                 customer_email: emailLower,
@@ -434,7 +460,7 @@ Deno.serve(async (req) => {
             });
             return new Response(JSON.stringify({
               success: false,
-              error: 'Пробный период для этого продукта уже использован',
+              error: 'Пробный период для этого тарифа уже использован',
               alreadyUsedTrial: true,
             }), {
               status: 200,

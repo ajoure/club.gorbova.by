@@ -392,22 +392,24 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    // Block trial if user already used trial for this product
+    // Block trial if user already used trial for this product AND tariff.
+    // Per-tariff scoping: different trial offers under different tariffs of the same product are independent.
     if (isTrial) {
       const { data: usedTrial } = await supabase
         .from('subscriptions_v2')
         .select('id')
         .eq('user_id', user.id)
         .eq('product_id', productId)
+        .eq('tariff_id', tariff.id)
         .eq('is_trial', true)
         .limit(1)
         .maybeSingle();
 
       if (usedTrial) {
-        console.log(`User already used trial for this product`);
+        console.log(`User already used trial for this product+tariff`);
         return new Response(JSON.stringify({
           success: false,
-          error: 'Вы уже использовали пробный период для этого продукта',
+          error: 'Вы уже использовали пробный период для этого тарифа',
           alreadyUsedTrial: true,
         }), {
           status: 400,

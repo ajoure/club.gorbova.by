@@ -17300,6 +17300,10 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_reset_user_trial: {
+        Args: { p_product_id: string; p_tariff_id?: string; p_user_id: string }
+        Returns: Json
+      }
       admin_safe_delete_profile: {
         Args: { _dry_run?: boolean; _profile_id: string }
         Returns: Json
