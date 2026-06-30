@@ -42,6 +42,7 @@ export function CallButton({
   className,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
   const disabled = !phone || busy;
 
   const handleClick = async () => {
