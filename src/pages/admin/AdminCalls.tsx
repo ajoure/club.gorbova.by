@@ -125,8 +125,8 @@ export default function AdminCalls() {
         )
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(500);
-      if (tab === "unresolved") q = q.in("link_status", ["unresolved", "ambiguous"]);
-      if (tab === "missed") q = q.in("status", ["no_answer", "busy", "canceled"]);
+      if (tab === "unresolved") q = q.in("link_status", ["unresolved"]);
+      if (tab === "missed") q = q.in("status", ["no_answer", "busy", "cancelled"]);
       if (tab === "today") {
         const since = new Date();
         since.setHours(0, 0, 0, 0);
@@ -134,7 +134,7 @@ export default function AdminCalls() {
       }
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as CallRow[];
+      return (data ?? []) as unknown as CallRow[];
     },
   });
 
