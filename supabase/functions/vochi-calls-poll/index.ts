@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
     if (startedAt && !call.started_at) patch.started_at = startedAt;
     if (answeredAt) patch.answered_at = answeredAt;
     if (endedAt) patch.ended_at = endedAt;
-    if (duration && duration > 0) patch.duration_seconds = Math.round(duration);
+    // duration_seconds — generated column в БД (answered_at..ended_at), напрямую не пишем.
     if (externalId) {
       const cur = String(call.external_call_id ?? "");
       if (!cur || cur.startsWith("pending:")) patch.external_call_id = String(externalId);
