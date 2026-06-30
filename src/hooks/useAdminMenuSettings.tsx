@@ -111,7 +111,7 @@ export const DEFAULT_MENU: MenuSettings = [
     order: 0,
     items: [
       { id: "communication", label: "Контакт-центр", path: "/admin/communication", icon: "MessageCircle", order: 0, permission: "users.view", badge: "unread" },
-      { id: "calls", label: "Звонки", path: "/admin/calls", icon: "Phone", order: 1, permission: "users.view" },
+      { id: "calls", label: "Звонки и SMS", path: "/admin/calls", icon: "Phone", order: 1, permission: "users.view" },
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 2, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 3, permission: "users.view", badge: "duplicates" },
       { id: "tasks", label: "Задачи", path: "/admin/tasks", icon: "ListChecks", order: 4, permission: "users.view" },
