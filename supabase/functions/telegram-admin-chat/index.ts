@@ -1343,12 +1343,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram_user_id from profile
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram_user_id from profile (supports auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id);
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
