@@ -100,7 +100,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
         display_name: "VOCHI",
         config: {
           base_url: baseUrl.trim().replace(/\/+$/, ""),
-          sip_code: sipCode.trim(),
         },
         secrets: { client_id: clientId.trim(), api_token: apiToken.trim() },
         status: clientId.trim() ? "connected" : "pending",
