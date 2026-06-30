@@ -301,8 +301,6 @@ export default function Auth() {
       } else if (/session|jwt|expired|invalid/i.test(msg)) {
         title = "Ссылка устарела";
         description = "Запросите новое письмо для восстановления пароля.";
-      } else if (msg) {
-        description = msg;
       }
 
       toast({
@@ -522,10 +520,10 @@ export default function Auth() {
               variant: "destructive",
             });
           } else {
-            // Show actual error message for debugging, but user-friendly title
+            // User-friendly Russian fallback. Original message logged above for debugging.
             toast({
               title: "Ошибка регистрации",
-              description: signUpResult.error.message || "Не удалось зарегистрироваться. Попробуйте позже.",
+              description: "Не удалось зарегистрироваться. Попробуйте позже или обратитесь в поддержку.",
               variant: "destructive",
             });
           }
@@ -746,30 +744,44 @@ export default function Auth() {
               </form>
             )
           ) : mode === "account_exists" ? (
-            /* Account Exists - Reset Password Flow */
+            /* Account Exists — offer Login or Reset/Set password */
             <div className="space-y-5">
               <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
                 <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-3">
                   <Mail className="h-6 w-6 text-amber-600" />
                 </div>
                 <p className="text-sm text-amber-800">
-                  Email <strong>{existingEmail}</strong> уже зарегистрирован в системе.
-                  Для входа отправьте ссылку для установки пароля на вашу почту.
+                  Аккаунт с email <strong>{existingEmail}</strong> уже существует.
+                  Войдите со своим паролем или восстановите доступ — мы отправим
+                  ссылку для установки нового пароля на вашу почту.
                 </p>
               </div>
-              
+
               <Button
+                type="button"
+                onClick={() => {
+                  setEmail(existingEmail);
+                  setPassword("");
+                  setFieldErrors([]);
+                  setMode("login");
+                }}
+                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+              >
+                Войти
+                <ArrowRight className="ml-2 h-5 w-5" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
                 onClick={handleSendResetFromExists}
                 disabled={isSubmitting}
-                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+                className="w-full h-12 rounded-xl text-base font-medium"
               >
                 {isSubmitting ? (
                   <Loader2 className="h-5 w-5 animate-spin" />
                 ) : (
-                  <>
-                    Отправить ссылку для входа
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </>
+                  <>Восстановить пароль</>
                 )}
               </Button>
 

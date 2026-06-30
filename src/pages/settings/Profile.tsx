@@ -271,7 +271,15 @@ export default function ProfileSettings() {
         });
 
         if (updateError) {
-          toast.error("Ошибка при изменении пароля: " + updateError.message);
+          console.error("[Profile] password update error:", updateError);
+          const msg = (updateError as any)?.message || "";
+          if ((updateError as any)?.code === "same_password" || /should be different/i.test(msg)) {
+            toast.error("Новый пароль совпадает со старым. Введите другой.");
+          } else if ((updateError as any)?.code === "weak_password" || /pwned|leaked|compromis/i.test(msg)) {
+            toast.error("Этот пароль найден в утечках. Придумайте более надёжный.");
+          } else {
+            toast.error("Не удалось изменить пароль. Попробуйте позже.");
+          }
           setIsChanging(false);
           return;
         }
