@@ -5,16 +5,18 @@
 // Источник: public.calls. RLS гарантирует, что строки видят только staff.
 // ============================================================================
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Play } from "lucide-react";
+import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Play, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface CallRow {
@@ -29,6 +31,10 @@ interface CallRow {
   phone_from_e164: string | null;
   phone_to_e164: string | null;
   recording_url: string | null;
+  transcript: string | null;
+  summary: string | null;
+  transcript_status: string | null;
+  transcript_error: string | null;
 }
 
 interface Props {
@@ -74,6 +80,28 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
 }
 
 export function CallsHistorySection({ contactId, dealId, bare = false }: Props) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  async function handleTranscribe(callId: string) {
+    try {
+      setProcessingId(callId);
+      const { data, error } = await supabase.functions.invoke("call-transcribe-summarize", {
+        body: { call_id: callId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast.success("Расшифровка готова");
+      setExpanded((s) => ({ ...s, [callId]: true }));
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Ошибка расшифровки";
+      toast.error(msg);
+    } finally {
+      setProcessingId(null);
+    }
+  }
+
   const enabled = Boolean(contactId || dealId);
   const queryClient = useQueryClient();
 
@@ -108,7 +136,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
       let q = supabase
         .from("calls")
         .select(
-          "id, public_id, direction, status, started_at, answered_at, ended_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url"
+          "id, public_id, direction, status, started_at, answered_at, ended_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url, transcript, summary, transcript_status, transcript_error"
         )
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(100);
@@ -132,60 +160,122 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
             call.direction === "inbound" ? call.phone_from_e164 : call.phone_to_e164;
           const counterPhone =
             call.direction === "inbound" ? call.phone_to_e164 : call.phone_from_e164;
+          const isOpen = expanded[call.id];
+          const hasResult = Boolean(call.transcript || call.summary);
+          const isProcessing = processingId === call.id || call.transcript_status === "processing";
           return (
             <div
               key={call.id}
-              className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 hover:bg-muted/30 transition-colors"
+              className="rounded-lg border bg-card hover:bg-muted/30 transition-colors"
             >
-              <DirectionIcon direction={call.direction} status={call.status} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium">{phone ?? "—"}</span>
-                  <Badge
-                    variant={STATUS_VARIANT[call.status] ?? "outline"}
-                    className="text-[10px] py-0 h-5"
-                  >
-                    {STATUS_LABEL[call.status] ?? call.status}
-                  </Badge>
-                  {call.public_id && (
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {call.public_id}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
-                  {call.started_at && (
-                    <span>
-                      {format(new Date(call.started_at), "d MMM yyyy HH:mm", { locale: ru })}
-                    </span>
-                  )}
-                  <span>длит. {formatDuration(call.duration_seconds)}</span>
-                  {counterPhone && (
-                    <span className="hidden sm:inline">через {counterPhone}</span>
-                  )}
-                </div>
-              </div>
-              {call.recording_url && (
-                <div className="shrink-0 flex items-center gap-2">
-                  <audio
-                    controls
-                    preload="none"
-                    src={call.recording_url}
-                    className="h-8 max-w-[220px]"
-                    title="Запись звонка"
-                  />
-                  <a
-                    href={call.recording_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-                      "hover:bg-accent transition-colors"
+              <div className="flex items-center gap-3 px-3 py-2">
+                <DirectionIcon direction={call.direction} status={call.status} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium">{phone ?? "—"}</span>
+                    <Badge
+                      variant={STATUS_VARIANT[call.status] ?? "outline"}
+                      className="text-[10px] py-0 h-5"
+                    >
+                      {STATUS_LABEL[call.status] ?? call.status}
+                    </Badge>
+                    {call.public_id && (
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {call.public_id}
+                      </span>
                     )}
-                    title="Открыть запись в новой вкладке"
-                  >
-                    <Play className="h-3 w-3" />
-                  </a>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+                    {call.started_at && (
+                      <span>
+                        {format(new Date(call.started_at), "d MMM yyyy HH:mm", { locale: ru })}
+                      </span>
+                    )}
+                    <span>длит. {formatDuration(call.duration_seconds)}</span>
+                    {counterPhone && (
+                      <span className="hidden sm:inline">через {counterPhone}</span>
+                    )}
+                  </div>
+                </div>
+                {call.recording_url && (
+                  <div className="shrink-0 flex items-center gap-2">
+                    <audio
+                      controls
+                      preload="none"
+                      src={call.recording_url}
+                      className="h-8 max-w-[220px]"
+                      title="Запись звонка"
+                    />
+                    {hasResult ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2 text-xs"
+                        onClick={() => setExpanded((s) => ({ ...s, [call.id]: !isOpen }))}
+                        title={isOpen ? "Скрыть расшифровку" : "Показать расшифровку"}
+                      >
+                        {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        <span className="ml-1 hidden sm:inline">AI</span>
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2 text-xs"
+                        disabled={isProcessing}
+                        onClick={() => handleTranscribe(call.id)}
+                        title="Расшифровать и суммировать звонок"
+                      >
+                        {isProcessing ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3 w-3" />
+                        )}
+                        <span className="ml-1 hidden sm:inline">AI-сводка</span>
+                      </Button>
+                    )}
+                    <a
+                      href={call.recording_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                        "hover:bg-accent transition-colors"
+                      )}
+                      title="Открыть запись в новой вкладке"
+                    >
+                      <Play className="h-3 w-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+              {hasResult && isOpen && (
+                <div className="border-t px-3 py-2 space-y-2 bg-muted/20">
+                  {call.summary && (
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                        Сводка
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{call.summary}</p>
+                    </div>
+                  )}
+                  {call.transcript && (
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">
+                        Расшифровка
+                      </div>
+                      <p className="text-xs whitespace-pre-wrap text-muted-foreground max-h-64 overflow-y-auto">
+                        {call.transcript}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {call.transcript_status === "error" && call.transcript_error && (
+                <div className="border-t px-3 py-1.5 text-xs text-destructive bg-destructive/5">
+                  Ошибка расшифровки: {call.transcript_error}
                 </div>
               )}
             </div>

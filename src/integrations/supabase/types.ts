@@ -3128,6 +3128,11 @@ export type Database = {
           recording_url: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["call_status"]
+          summary: string | null
+          transcribed_at: string | null
+          transcript: string | null
+          transcript_error: string | null
+          transcript_status: string | null
           updated_at: string
           updated_by: string | null
           workspace_id: string | null
@@ -3158,6 +3163,11 @@ export type Database = {
           recording_url?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["call_status"]
+          summary?: string | null
+          transcribed_at?: string | null
+          transcript?: string | null
+          transcript_error?: string | null
+          transcript_status?: string | null
           updated_at?: string
           updated_by?: string | null
           workspace_id?: string | null
@@ -3188,6 +3198,11 @@ export type Database = {
           recording_url?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["call_status"]
+          summary?: string | null
+          transcribed_at?: string | null
+          transcript?: string | null
+          transcript_error?: string | null
+          transcript_status?: string | null
           updated_at?: string
           updated_by?: string | null
           workspace_id?: string | null

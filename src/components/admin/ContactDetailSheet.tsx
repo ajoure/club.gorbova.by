@@ -140,6 +140,7 @@ import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
+import { SmsHistorySection } from "./sms/SmsHistorySection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
@@ -1623,6 +1624,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="calls" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Phone className="w-3 h-3 mr-1" />
                 Звонки
+              </TabsTrigger>
+              <TabsTrigger value="sms" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <MessageCircle className="w-3 h-3 mr-1" />
+                SMS
               </TabsTrigger>
               <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Mail className="w-3 h-3 mr-1" />
@@ -3438,6 +3443,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Calls Tab — VOCHI Phase 2 */}
             <TabsContent value="calls" className="m-0 space-y-3">
               <CallsHistorySection contactId={contact.id} bare />
+            </TabsContent>
+
+            <TabsContent value="sms" className="m-0 space-y-3">
+              <SmsHistorySection contactId={contact.id} bare />
             </TabsContent>
 
             {/* Communications Tab */}

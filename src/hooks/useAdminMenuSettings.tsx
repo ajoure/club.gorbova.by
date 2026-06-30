@@ -36,6 +36,7 @@ import {
   Bot,
   Video,
   KeyRound,
+  Phone,
   LucideIcon,
 } from "lucide-react";
 
@@ -95,6 +96,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Bot,
   Video,
   KeyRound,
+  Phone,
 };
 
 // Default menu configuration - Reorganized structure
@@ -109,13 +111,13 @@ export const DEFAULT_MENU: MenuSettings = [
     order: 0,
     items: [
       { id: "communication", label: "Контакт-центр", path: "/admin/communication", icon: "MessageCircle", order: 0, permission: "users.view", badge: "unread" },
-      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
-      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
-      { id: "tasks", label: "Задачи", path: "/admin/tasks", icon: "ListChecks", order: 3, permission: "users.view" },
-      { id: "entitlements", label: "Доступы", path: "/admin/entitlements", icon: "KeyRound", order: 4, permission: "entitlements.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 5, permission: "entitlements.view" },
-      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 6, permission: "users.view" },
-      { id: "calls-unresolved", label: "Звонки без привязки", path: "/admin/calls/unresolved", icon: "PhoneMissed", order: 7, permission: "users.view" },
+      { id: "calls", label: "Звонки", path: "/admin/calls", icon: "Phone", order: 1, permission: "users.view" },
+      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 2, permission: "entitlements.view" },
+      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 3, permission: "users.view", badge: "duplicates" },
+      { id: "tasks", label: "Задачи", path: "/admin/tasks", icon: "ListChecks", order: 4, permission: "users.view" },
+      { id: "entitlements", label: "Доступы", path: "/admin/entitlements", icon: "KeyRound", order: 5, permission: "entitlements.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 6, permission: "entitlements.view" },
+      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 7, permission: "users.view" },
     ],
   },
   {
