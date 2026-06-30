@@ -32,6 +32,7 @@ export function OtherIntegrationsTab() {
         <GoogleMapsSettingsCard />
         <GrpLookupSettingsCard />
         <VochiSettingsCard />
+        <WebSmsSettingsCard />
       </div>
     </div>
   );
