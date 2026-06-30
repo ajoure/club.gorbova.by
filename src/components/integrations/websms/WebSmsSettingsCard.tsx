@@ -35,6 +35,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { WebSmsSettingsDialog } from "./WebSmsSettingsDialog";
+import { BulkSmsDialog } from "@/components/admin/sms/BulkSmsDialog";
+import { Send } from "lucide-react";
 
 const PROVIDER = "websms";
 
