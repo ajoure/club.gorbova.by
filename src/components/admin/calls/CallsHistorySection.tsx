@@ -114,7 +114,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
       let q = supabase
         .from("calls")
         .select(
-          "id, public_id, direction, status, started_at, answered_at, ended_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url"
+          "id, public_id, direction, status, started_at, answered_at, ended_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url, transcript, summary, transcript_status, transcript_error"
         )
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(100);
