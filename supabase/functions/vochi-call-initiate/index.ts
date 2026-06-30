@@ -99,10 +99,13 @@ Deno.serve(async (req) => {
   // ── 4. Profile.vochi_sip_extension ───────────────────────────────────────
   const { data: profile, error: profileErr } = await admin
     .from("profiles")
-    .select("vochi_sip_extension, workspace_id")
+    .select("vochi_sip_extension")
     .eq("user_id", userId)
     .maybeSingle();
-  if (profileErr) return json(500, { error: "profile_lookup_failed" });
+  if (profileErr) {
+    console.error("profile_lookup_failed", profileErr);
+    return json(500, { error: "profile_lookup_failed", detail: profileErr.message });
+  }
   const ext = profile?.vochi_sip_extension?.trim();
   if (!ext) return json(412, { error: "sip_extension_missing" });
 
