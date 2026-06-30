@@ -156,6 +156,12 @@ const DEPRECATED_ITEM_IDS = new Set([
   "templates",              // → /admin/ai → Документы → Шаблоны документов
 ]);
 
+// IDs принудительно перепозиционируемые из DEFAULT_MENU (one-shot fix saved order).
+// При обнаружении в сохранённом меню — удаляются и заново вставляются на default-позицию.
+const REPOSITION_ITEM_IDS = new Set([
+  "calls", // вторым пунктом после «Контакт-центра», перед «Сделками»
+]);
+
 // Remove duplicate items across all groups (keeps first occurrence)
 export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
   const seenIds = new Set<string>();
@@ -174,10 +180,12 @@ export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
 
 // Merge new DEFAULT_MENU items into saved settings
 function mergeMenuSettings(saved: MenuSettings): MenuSettings {
-  // 1. Filter out deprecated items from ALL saved groups FIRST
+  // 1. Filter out deprecated + reposition items from ALL saved groups FIRST
   const cleanedSaved = saved.map(group => ({
     ...group,
-    items: (group.items || []).filter(item => !DEPRECATED_ITEM_IDS.has(item.id))
+    items: (group.items || []).filter(
+      item => !DEPRECATED_ITEM_IDS.has(item.id) && !REPOSITION_ITEM_IDS.has(item.id)
+    ),
   }));
   
   // 2. Collect ALL item IDs from cleaned saved groups to prevent duplicates
@@ -192,26 +200,36 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
   
   for (const defaultGroup of DEFAULT_MENU) {
     const savedGroup = cleanedSaved.find(g => g.id === defaultGroup.id);
+    const defaultIdx = new Map(defaultGroup.items.map((it, i) => [it.id, i] as const));
     
     if (!savedGroup) {
       // New group - add only items that don't exist in other groups
       const newItems = defaultGroup.items.filter(i => !allSavedItemIds.has(i.id));
       if (newItems.length > 0) {
-        merged.push({ ...defaultGroup, items: newItems });
+        merged.push({ ...defaultGroup, items: newItems.map((it, idx) => ({ ...it, order: idx })) });
       }
     } else {
-      // Existing group - add only items that don't exist anywhere
+      // Existing group — вставляем недостающие пункты на default-позицию
       const newItems = defaultGroup.items.filter(i => !allSavedItemIds.has(i.id));
+      const items = [...savedGroup.items];
+      
+      for (const newItem of newItems) {
+        const targetIdx = defaultIdx.get(newItem.id);
+        if (targetIdx === undefined) {
+          items.push(newItem);
+          continue;
+        }
+        let insertAt = items.findIndex(it => {
+          const idx = defaultIdx.get(it.id);
+          return idx !== undefined && idx > targetIdx;
+        });
+        if (insertAt === -1) insertAt = items.length;
+        items.splice(insertAt, 0, newItem);
+      }
       
       merged.push({
         ...savedGroup,
-        items: [
-          ...savedGroup.items,
-          ...newItems.map((item, idx) => ({
-            ...item,
-            order: savedGroup.items.length + idx
-          }))
-        ]
+        items: items.map((it, idx) => ({ ...it, order: idx })),
       });
     }
   }
@@ -236,6 +254,7 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
   // Remove any duplicates that slipped through and sort groups
   return removeDuplicateItems(sorted).sort((a, b) => a.order - b.order);
 }
+
 
 
 export function useAdminMenuSettings() {
