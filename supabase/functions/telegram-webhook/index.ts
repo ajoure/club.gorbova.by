@@ -1308,8 +1308,8 @@ Deno.serve(async (req) => {
 
 
           // ========== AI SUPPORT INTEGRATION ==========
-          // Invoke AI support for text messages (non-blocking)
-          if (msg.text && !fileId) {
+          // Invoke AI support for text messages (non-blocking) — only for real users
+          if (msg.text && !fileId && !isGuestProfile) {
             invokeAISupport(supabase, {
               telegramUserId,
               messageText: msg.text,
@@ -1320,6 +1320,7 @@ Deno.serve(async (req) => {
               profileUserId: profile.user_id,
             }).catch(err => console.error('[AI Support] Invocation error:', err));
           }
+
 
           // ========== PUSH NOTIFICATIONS TO ADMINS ==========
           // Send browser push to all admins with support.view permission
