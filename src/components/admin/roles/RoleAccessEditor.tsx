@@ -140,6 +140,29 @@ export function RoleAccessEditor() {
     staleTime: 60_000,
   });
 
+  // Авто-синк каталога секций из кода в БД: если в коде есть секции,
+  // которых нет в admin_section — синхронизируем один раз при открытии редактора.
+  useEffect(() => {
+    if (!canManageRoles) return;
+    const sections = catalogQ.data?.sections;
+    if (!sections) return;
+    const dbCodes = new Set(sections.map((s) => s.code));
+    const missing = ADMIN_SECTIONS.filter((s) => !dbCodes.has(s.code)).map((s) => s.code);
+    if (missing.length === 0) return;
+    console.info("[RoleAccessEditor] Синхронизация недостающих секций:", missing);
+    callRolesAdmin("sync_menu_registry", { menuPayload: buildSyncRegistryPayload() })
+      .then(() => {
+        toast.success(`Добавлены новые разделы: ${missing.join(", ")}`);
+        qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
+      })
+      .catch((err) => {
+        console.warn("[RoleAccessEditor] sync_menu_registry failed:", err);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogQ.data?.sections, canManageRoles]);
+
+
+
   useEffect(() => {
     if (!selectedRoleId && catalogQ.data?.roles?.length) {
       const firstEditable = catalogQ.data.roles.find((r) => r.is_editable && r.code !== "super_admin");
