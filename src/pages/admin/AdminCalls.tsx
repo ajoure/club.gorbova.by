@@ -73,7 +73,7 @@ const STATUS_LABEL: Record<string, string> = {
   no_answer: "Без ответа",
   busy: "Занято",
   failed: "Сбой",
-  canceled: "Отменён",
+  cancelled: "Отменён",
 };
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
