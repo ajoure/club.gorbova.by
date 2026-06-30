@@ -62,7 +62,6 @@ export function VochiSettingsCard() {
         enabled: !!(integ as any)?.is_enabled,
         hasClientId: !!c?.secrets?.client_id,
         baseUrl: c?.config?.base_url ?? null,
-        sipCode: c?.config?.sip_code ?? null,
         lastCheckedAt: c?.last_checked_at ?? null,
         status: c?.status ?? null,
       };
