@@ -125,10 +125,17 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
 
       if (authError) {
         authInProgressRef.current = false;
-        if (authError.message.includes("Invalid login credentials")) {
-          setError("Неверный пароль");
+        const msg = authError.message || "";
+        const code = (authError as any)?.code || "";
+        if (msg.includes("Invalid login credentials")) {
+          setError("Неверный email или пароль");
+        } else if (code === "email_not_confirmed" || /email not confirmed/i.test(msg)) {
+          setError("Email не подтверждён. Проверьте почту со ссылкой подтверждения.");
+        } else if (/rate|limit|too many/i.test(msg)) {
+          setError("Слишком много попыток. Подождите несколько минут и попробуйте снова.");
         } else {
-          setError(authError.message);
+          console.error("[useInlineAuth] login error:", authError);
+          setError("Не удалось войти. Попробуйте позже.");
         }
         return null;
       }
@@ -179,7 +186,19 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
 
       if (authError) {
         authInProgressRef.current = false;
-        setError(authError.message);
+        const msg = authError.message || "";
+        console.error("[useInlineAuth] signup error:", authError);
+        if (/already registered|already exists|user already/i.test(msg)) {
+          setError("Аккаунт с этим email уже существует. Войдите или восстановите пароль.");
+        } else if (/password/i.test(msg) && /(weak|short|length|pwned|leaked)/i.test(msg)) {
+          setError("Пароль слишком слабый. Используйте минимум 8 символов, цифру и спецсимвол.");
+        } else if (/email/i.test(msg) && /(invalid|format)/i.test(msg)) {
+          setError("Некорректный формат email.");
+        } else if (/rate|limit|too many/i.test(msg)) {
+          setError("Слишком много попыток. Подождите несколько минут и попробуйте снова.");
+        } else {
+          setError("Не удалось зарегистрироваться. Попробуйте позже.");
+        }
         return null;
       }
 
