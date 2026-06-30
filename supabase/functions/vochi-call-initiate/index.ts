@@ -190,10 +190,38 @@ Deno.serve(async (req) => {
   const url =
     `${baseUrl}/api/makecallexternal?code=${encodeURIComponent(ext)}` +
     `&phone=${encodeURIComponent(phone)}&clientId=${encodeURIComponent(clientId)}`;
+  const redactedUrl = url.replace(
+    /clientId=[^&]+/,
+    `clientId=${String(clientId).slice(0, 4)}***`,
+  );
+  const reqMeta = {
+    base_url: baseUrl,
+    path: "/api/makecallexternal",
+    code: ext,
+    phone,
+    client_id_prefix: String(clientId).slice(0, 4),
+    client_id_len: String(clientId).length,
+    url_redacted: redactedUrl,
+    sent_at: new Date().toISOString(),
+  };
+  console.log("vochi-call-initiate request", JSON.stringify(reqMeta));
 
+  const startedFetch = Date.now();
   try {
-    const resp = await fetch(url, { method: "GET" });
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json, text/plain, */*" },
+    });
     const text = await resp.text();
+    const latencyMs = Date.now() - startedFetch;
+    const respMeta = {
+      http_status: resp.status,
+      latency_ms: latencyMs,
+      content_type: resp.headers.get("content-type"),
+      body_snippet: text.slice(0, 1000),
+    };
+    console.log("vochi-call-initiate response", JSON.stringify(respMeta));
+
     if (!resp.ok) {
       await admin
         .from("calls")
@@ -202,23 +230,41 @@ Deno.serve(async (req) => {
           metadata: {
             sip_extension: ext,
             initiated_via: "vochi-call-initiate",
-            vochi_http_status: resp.status,
-            vochi_response: text.slice(0, 500),
+            vochi_request: reqMeta,
+            vochi_response: respMeta,
           },
         })
         .eq("id", callRow.id);
       return json(502, {
         error: "vochi_api_error",
         http_status: resp.status,
+        body_snippet: text.slice(0, 500),
         call_id: callRow.id,
       });
     }
+
+    await admin
+      .from("calls")
+      .update({
+        metadata: {
+          sip_extension: ext,
+          initiated_via: "vochi-call-initiate",
+          vochi_request: reqMeta,
+          vochi_response: respMeta,
+        },
+      })
+      .eq("id", callRow.id);
+
     return json(200, {
       call_id: callRow.id,
       public_id: callRow.public_id,
       status: "queued",
+      vochi_http_status: resp.status,
+      vochi_body_snippet: text.slice(0, 500),
     });
   } catch (e: any) {
+    const errMsg = String(e?.message ?? e);
+    console.error("vochi-call-initiate fetch_failed", errMsg);
     await admin
       .from("calls")
       .update({
@@ -226,10 +272,11 @@ Deno.serve(async (req) => {
         metadata: {
           sip_extension: ext,
           initiated_via: "vochi-call-initiate",
-          fetch_error: String(e?.message ?? e),
+          vochi_request: reqMeta,
+          fetch_error: errMsg,
         },
       })
       .eq("id", callRow.id);
-    return json(502, { error: "vochi_fetch_failed", call_id: callRow.id });
+    return json(502, { error: "vochi_fetch_failed", detail: errMsg, call_id: callRow.id });
   }
 });
