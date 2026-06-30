@@ -121,7 +121,7 @@ export default function AdminCalls() {
       let q = supabase
         .from("calls")
         .select(
-          "id, public_id, direction, status, link_status, started_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url, transcript, summary, transcript_status, transcript_error, contact_id, deal_id, staff_user_id"
+          "id, public_id, direction, status, link_status, started_at, duration_seconds, phone_from_e164, phone_to_e164, recording_url, transcript, summary, transcript_status, transcript_error, contact_id, deal_id"
         )
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(500);
