@@ -48,6 +48,32 @@ interface ChatAction {
   telegram_message_db_id?: string; // For sync_telegram_reaction (UUID from telegram_messages)
 }
 
+// Resolves a profile by either profiles.user_id (real auth user)
+// or profiles.id (guest contact created from an unregistered Telegram user).
+// Returns the profile with telegram_user_id when available.
+async function resolveProfileForChat(
+  supabase: any,
+  userIdOrProfileId: string,
+  extraColumns: string = "",
+): Promise<any | null> {
+  const cols = `telegram_user_id, telegram_link_bot_id${extraColumns ? ", " + extraColumns : ""}`;
+  const { data: byUser } = await supabase
+    .from("profiles")
+    .select(cols)
+    .eq("user_id", userIdOrProfileId)
+    .not("telegram_user_id", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (byUser?.telegram_user_id) return byUser;
+  const { data: byId } = await supabase
+    .from("profiles")
+    .select(cols)
+    .eq("id", userIdOrProfileId)
+    .limit(1)
+    .maybeSingle();
+  return byId ?? null;
+}
+
 async function fetchAndSaveTelegramPhoto(
   supabase: any,
   botToken: string,
@@ -1051,12 +1077,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram info
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id, avatar_url")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram info (supports both auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id, "avatar_url");
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
@@ -1129,12 +1151,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram info
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram info (supports both auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id);
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
@@ -1227,12 +1245,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram_user_id from profile
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram_user_id from profile (supports auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id);
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
@@ -1329,12 +1343,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram_user_id from profile
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+        // Get user's telegram_user_id from profile (supports auth user_id and guest profile id)
+        const profile = await resolveProfileForChat(supabase, user_id);
 
         if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
