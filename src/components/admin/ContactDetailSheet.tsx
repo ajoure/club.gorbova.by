@@ -1624,6 +1624,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <Phone className="w-3 h-3 mr-1" />
                 Звонки
               </TabsTrigger>
+              <TabsTrigger value="sms" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <MessageCircle className="w-3 h-3 mr-1" />
+                SMS
+              </TabsTrigger>
               <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Mail className="w-3 h-3 mr-1" />
                 Письма
