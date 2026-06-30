@@ -910,7 +910,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   });
 
   const { data: trialHistory, refetch: refetchTrials } = useQuery({
-    queryKey: ["contact-trial-history", contact?.user_id],
+    queryKey: ["contact-trial-history", contact?.user_id, contact?.email],
     queryFn: async () => {
       if (!contact?.user_id) return null;
 
@@ -920,7 +920,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         userIds.push(contact.user_id);
       }
 
-      const { data, error } = await supabase
+      // Source 1: subscriptions_v2 trials (card-tokenized trials)
+      const { data: subs } = await supabase
         .from("subscriptions_v2")
         .select(`
           id, is_trial, status, trial_end_at, created_at,
@@ -930,8 +931,38 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .in("user_id", userIds)
         .eq("is_trial", true)
         .order("created_at", { ascending: false });
-      if (error) return null;
-      return data;
+
+      // Source 2: orders_v2 trials (no-card demo path — guard checks orders_v2 too)
+      let ordersQuery = supabase
+        .from("orders_v2")
+        .select(`
+          id, is_trial, status, created_at,
+          product_id, tariff_id,
+          products_v2:product_id(id, name, code)
+        `)
+        .eq("is_trial", true)
+        .eq("status", "paid")
+        .order("created_at", { ascending: false });
+      if (contact.email) {
+        ordersQuery = ordersQuery.or(`user_id.in.(${userIds.join(",")}),customer_email.eq.${contact.email.toLowerCase()}`);
+      } else {
+        ordersQuery = ordersQuery.in("user_id", userIds);
+      }
+      const { data: orders } = await ordersQuery;
+
+      // Merge & dedupe by (product_id + tariff_id) — keep most recent
+      const merged: any[] = [];
+      const seen = new Set<string>();
+      const pushIfNew = (row: any, source: "sub" | "order") => {
+        const key = `${row.product_id}::${row.tariff_id || "null"}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push({ ...row, _source: source });
+      };
+      (subs || []).forEach((r) => pushIfNew(r, "sub"));
+      (orders || []).forEach((r) => pushIfNew(r, "order"));
+      merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return merged;
     },
     enabled: !!contact?.user_id,
   });
