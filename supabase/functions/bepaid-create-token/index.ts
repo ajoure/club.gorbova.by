@@ -247,24 +247,45 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Check for existing trial usage for this product (prevent repeat trials)
+    // Resolve tariff_id for per-tariff trial scoping
+    let resolvedTariffId: string | null = null;
+    if (offerId) {
+      const { data: ofRow } = await supabase
+        .from('tariff_offers')
+        .select('tariff_id')
+        .eq('id', offerId)
+        .maybeSingle();
+      resolvedTariffId = (ofRow as any)?.tariff_id || null;
+    }
+    if (!resolvedTariffId && tariffCode) {
+      const { data: tRow } = await supabase
+        .from('tariffs')
+        .select('id')
+        .eq('code', tariffCode)
+        .eq('product_id', productId)
+        .maybeSingle();
+      resolvedTariffId = (tRow as any)?.id || null;
+    }
+
+    // Check for existing trial usage for this product+tariff (prevent repeat trials per tariff)
     if (isTrial && (userId || authUserId)) {
       const checkUserId = userId || authUserId;
-      const { data: existingTrial } = await supabase
+      let trialQuery = supabase
         .from('subscriptions_v2')
         .select('id')
         .eq('user_id', checkUserId)
         .eq('product_id', productId)
         .eq('is_trial', true)
-        .limit(1)
-        .maybeSingle();
-      
+        .limit(1);
+      if (resolvedTariffId) trialQuery = trialQuery.eq('tariff_id', resolvedTariffId);
+      const { data: existingTrial } = await trialQuery.maybeSingle();
+
       if (existingTrial) {
-        console.log('User already used trial for this product:', productId);
+        console.log('User already used trial for this product+tariff:', productId, resolvedTariffId);
         // Business rule violation (not a server error): return 200 so clients don't treat it as transport failure
         return new Response(JSON.stringify({
           success: false,
-          error: 'Пробный период для этого продукта уже использован',
+          error: 'Пробный период для этого тарифа уже использован',
           alreadyUsedTrial: true,
         }), {
           status: 200,
