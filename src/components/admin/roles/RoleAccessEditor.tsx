@@ -19,6 +19,8 @@ import { Loader2, Lock, ShieldAlert, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { notifyRolesChanged } from "@/hooks/useAdminRoles";
+import { buildSyncRegistryPayload, ADMIN_SECTIONS } from "@/lib/adminMenuRegistry";
+
 
 const TRANSLIT: Record<string, string> = {
   а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",
