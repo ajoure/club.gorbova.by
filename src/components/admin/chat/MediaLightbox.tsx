@@ -95,14 +95,19 @@ export function MediaLightbox({
 
         {/* Content */}
         <div className={cn(
-          "flex items-center justify-center w-fit max-w-[92vw] overflow-hidden",
-          isPdf || isDocument ? "min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4" : "max-h-[calc(92vh-3rem)] p-0"
+          "flex items-center justify-center overflow-hidden",
+          isPdf
+            ? "w-screen flex-1 min-h-0 bg-background"
+            : isDocument
+              ? "w-fit max-w-[92vw] min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4"
+              : "w-fit max-w-[92vw] max-h-[calc(92vh-3rem)] p-0"
         )}>
           {isPdf ? (
             <iframe
               src={url}
-              className="w-full h-[80vh] rounded-lg border border-border"
+              className="w-full h-full border-0 bg-background"
               title={fileName || "PDF Document"}
+              style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
             />
           ) : isDocument ? (
             <div className="flex flex-col items-center gap-6 p-8">
