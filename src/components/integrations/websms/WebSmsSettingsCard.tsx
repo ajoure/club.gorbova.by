@@ -210,6 +210,7 @@ export function WebSmsSettingsCard() {
       </Card>
 
       <WebSmsSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <BulkSmsDialog open={bulkOpen} onOpenChange={setBulkOpen} />
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
