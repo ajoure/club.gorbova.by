@@ -9,6 +9,7 @@ import { MagicLinkEmail } from '../_shared/email-templates/magic-link.tsx'
 import { RecoveryEmail } from '../_shared/email-templates/recovery.tsx'
 import { EmailChangeEmail } from '../_shared/email-templates/email-change.tsx'
 import { ReauthenticationEmail } from '../_shared/email-templates/reauthentication.tsx'
+import { sendViaYandexSmtp } from '../_shared/yandex-smtp-sender.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,16 +17,17 @@ const corsHeaders = {
     'authorization, x-client-info, apikey, content-type, x-lovable-signature, x-lovable-timestamp, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 }
 
+// Темы писем на русском языке.
 const EMAIL_SUBJECTS: Record<string, string> = {
-  signup: 'Confirm your email',
-  invite: "You've been invited",
-  magiclink: 'Your login link',
-  recovery: 'Reset your password',
-  email_change: 'Confirm your new email',
-  reauthentication: 'Your verification code',
+  signup: 'Подтверждение почты',
+  invite: 'Приглашение в Gorbova Club',
+  magiclink: 'Ссылка для входа',
+  recovery: 'Восстановление пароля',
+  email_change: 'Подтверждение нового email',
+  reauthentication: 'Код подтверждения',
 }
 
-// Template mapping
+// Маппинг типа события на React Email шаблон.
 const EMAIL_TEMPLATES: Record<string, React.ComponentType<any>> = {
   signup: SignupEmail,
   invite: InviteEmail,
@@ -35,51 +37,63 @@ const EMAIL_TEMPLATES: Record<string, React.ComponentType<any>> = {
   reauthentication: ReauthenticationEmail,
 }
 
-// Configuration
-const SITE_NAME = "gorbova"
-const SENDER_DOMAIN = "sent.gorbova.by"
-const ROOT_DOMAIN = "gorbova.by"
-const FROM_DOMAIN = "gorbova.by" // Domain shown in From address (may be root or sender subdomain)
+// Конфигурация отправителя.
+const SITE_NAME = 'Gorbova Club'
+const ROOT_DOMAIN = 'gorbova.by'
+const FROM_EMAIL = 'noreply@gorbova.by'
+const SMTP_HOST = 'smtp.yandex.ru'
+const SMTP_PORT = 465
 
-// Sample data for preview mode ONLY (not used in actual email sending).
-// URLs are baked in at scaffold time from the project's real data.
-// The sample email uses a fixed placeholder (RFC 6761 .test TLD) so the Go backend
-// can always find-and-replace it with the actual recipient when sending test emails,
-// even if the project's domain has changed since the template was scaffolded.
-const SAMPLE_PROJECT_URL = "https://gorbova.lovable.app"
-const SAMPLE_EMAIL = "user@example.test"
+// Sample data for preview mode ONLY.
+const SAMPLE_PROJECT_URL = 'https://gorbova.by'
+const SAMPLE_EMAIL = 'user@example.test'
 const SAMPLE_DATA: Record<string, object> = {
-  signup: {
-    siteName: SITE_NAME,
-    siteUrl: SAMPLE_PROJECT_URL,
-    recipient: SAMPLE_EMAIL,
-    confirmationUrl: SAMPLE_PROJECT_URL,
-  },
-  magiclink: {
-    siteName: SITE_NAME,
-    confirmationUrl: SAMPLE_PROJECT_URL,
-  },
-  recovery: {
-    siteName: SITE_NAME,
-    confirmationUrl: SAMPLE_PROJECT_URL,
-  },
-  invite: {
-    siteName: SITE_NAME,
-    siteUrl: SAMPLE_PROJECT_URL,
-    confirmationUrl: SAMPLE_PROJECT_URL,
-  },
-  email_change: {
-    siteName: SITE_NAME,
-    email: SAMPLE_EMAIL,
-    newEmail: SAMPLE_EMAIL,
-    confirmationUrl: SAMPLE_PROJECT_URL,
-  },
-  reauthentication: {
-    token: '123456',
-  },
+  signup: { siteName: SITE_NAME, siteUrl: SAMPLE_PROJECT_URL, recipient: SAMPLE_EMAIL, confirmationUrl: SAMPLE_PROJECT_URL },
+  magiclink: { siteName: SITE_NAME, confirmationUrl: SAMPLE_PROJECT_URL },
+  recovery: { siteName: SITE_NAME, confirmationUrl: SAMPLE_PROJECT_URL },
+  invite: { siteName: SITE_NAME, siteUrl: SAMPLE_PROJECT_URL, confirmationUrl: SAMPLE_PROJECT_URL },
+  email_change: { siteName: SITE_NAME, email: SAMPLE_EMAIL, newEmail: SAMPLE_EMAIL, confirmationUrl: SAMPLE_PROJECT_URL },
+  reauthentication: { token: '123456' },
 }
 
-// Preview endpoint handler - returns rendered HTML without sending email
+// Получение SMTP-пароля Яндекса: сначала из integration_instances (alias/category=email,
+// noreply@gorbova.by), затем из секрета YANDEX_SMTP_PASSWORD.
+async function getYandexPassword(supabase: any): Promise<string> {
+  // 1. integration_instances (alias может быть произвольный, но email = noreply@gorbova.by)
+  const { data: integrations } = await supabase
+    .from('integration_instances')
+    .select('config')
+    .eq('category', 'email')
+    .eq('is_active', true)
+
+  if (Array.isArray(integrations)) {
+    for (const row of integrations) {
+      const cfg = (row?.config || {}) as Record<string, unknown>
+      const email = (cfg.email as string) || (cfg.from_email as string) || ''
+      if (email === FROM_EMAIL) {
+        const pwd = (cfg.smtp_password as string) || (cfg.password as string) || ''
+        if (pwd) return pwd
+      }
+    }
+  }
+
+  // 2. email_accounts по email
+  const { data: acc } = await supabase
+    .from('email_accounts')
+    .select('smtp_password')
+    .eq('email', FROM_EMAIL)
+    .eq('is_active', true)
+    .maybeSingle()
+  if (acc?.smtp_password) return acc.smtp_password
+
+  // 3. Секрет окружения
+  const envPwd = Deno.env.get('YANDEX_SMTP_PASSWORD') || ''
+  if (envPwd) return envPwd
+
+  throw new Error('YANDEX_SMTP_PASSWORD не настроен и не найден в integration_instances/email_accounts')
+}
+
+// Preview endpoint — возвращает HTML без отправки. Используется превью писем в админке.
 async function handlePreview(req: Request): Promise<Response> {
   const previewCorsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -104,7 +118,7 @@ async function handlePreview(req: Request): Promise<Response> {
   try {
     const body = await req.json()
     type = body.type
-  } catch (error) {
+  } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON in request body' }), {
       status: 400,
       headers: { ...previewCorsHeaders, 'Content-Type': 'application/json' },
@@ -112,7 +126,6 @@ async function handlePreview(req: Request): Promise<Response> {
   }
 
   const EmailTemplate = EMAIL_TEMPLATES[type]
-
   if (!EmailTemplate) {
     return new Response(JSON.stringify({ error: `Unknown email type: ${type}` }), {
       status: 400,
@@ -129,27 +142,22 @@ async function handlePreview(req: Request): Promise<Response> {
   })
 }
 
-// Webhook handler - verifies signature and sends email
+// Основной webhook — верифицируем подпись Lovable, рендерим шаблон,
+// отправляем напрямую через Яндекс SMTP.
 async function handleWebhook(req: Request): Promise<Response> {
   const apiKey = Deno.env.get('LOVABLE_API_KEY')
-
   if (!apiKey) {
     console.error('LOVABLE_API_KEY not configured')
-    return new Response(
-      JSON.stringify({ error: 'Server configuration error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Server configuration error' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 
-  // Verify signature + timestamp, then parse payload.
   let payload: any
   let run_id = ''
   try {
-    const verified = await verifyWebhookRequest({
-      req,
-      secret: apiKey,
-      parser: parseEmailWebhookPayload,
-    })
+    const verified = await verifyWebhookRequest({ req, secret: apiKey, parser: parseEmailWebhookPayload })
     payload = verified.payload
     run_id = payload.run_id
   } catch (error) {
@@ -159,166 +167,163 @@ async function handleWebhook(req: Request): Promise<Response> {
         case 'missing_timestamp':
         case 'invalid_timestamp':
         case 'stale_timestamp':
-          console.error('Invalid webhook signature', { error: error.message })
           return new Response(JSON.stringify({ error: 'Invalid signature' }), {
             status: 401,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           })
         case 'invalid_payload':
         case 'invalid_json':
-          console.error('Invalid webhook payload', { error: error.message })
-          return new Response(
-            JSON.stringify({ error: 'Invalid webhook payload' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          )
+          return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
       }
     }
-
     console.error('Webhook verification failed', { error })
-    return new Response(
-      JSON.stringify({ error: 'Invalid webhook payload' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 
-  if (!run_id) {
-    console.error('Webhook payload missing run_id')
-    return new Response(
-      JSON.stringify({ error: 'Invalid webhook payload' }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    )
+  if (!run_id || payload.version !== '1') {
+    return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 
-  if (payload.version !== '1') {
-    console.error('Unsupported payload version', { version: payload.version, run_id })
-    return new Response(
-      JSON.stringify({ error: `Unsupported payload version: ${payload.version}` }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    )
-  }
-
-  // The email action type is in payload.data.action_type (e.g., "signup", "recovery")
-  // payload.type is the hook event type ("auth")
-  const emailType = payload.data.action_type
-  console.log('Received auth event', { emailType, email: payload.data.email, run_id })
+  const emailType: string = payload.data.action_type
+  const recipient: string = payload.data.email
+  console.log('Auth webhook received', { emailType, recipient, run_id })
 
   const EmailTemplate = EMAIL_TEMPLATES[emailType]
   if (!EmailTemplate) {
     console.error('Unknown email type', { emailType, run_id })
-    return new Response(
-      JSON.stringify({ error: `Unknown email type: ${emailType}` }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: `Unknown email type: ${emailType}` }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 
-  // Rewrite host of confirmationUrl to gorbova.by so clients NEVER see *.supabase.co
-  // in their inbox. The path and query (/auth/v1/verify?token=...&redirect_to=...) are preserved.
-  // Frontend route /auth/v1/verify (in src/pages/AuthVerifyProxy.tsx) transparently
-  // redirects to the original Supabase verify endpoint, preserving the query string.
-  // See mem://security/communications/no-supabase-url-leakage
-  let confirmationUrl = payload.data.url
+  // Хост ссылки подменяем на gorbova.by, чтобы пользователь не видел *.supabase.co
+  // в письме. Реальный verify-endpoint вызовет наш AuthVerifyProxy на /auth/v1/verify.
+  let confirmationUrl: string = payload.data.url
   try {
     const u = new URL(payload.data.url)
     u.protocol = 'https:'
     u.host = ROOT_DOMAIN
     confirmationUrl = u.toString()
-  } catch (_e) {
+  } catch {
     console.warn('Failed to rewrite confirmationUrl host', { url: payload.data.url, run_id })
   }
 
-  // Build template props from payload.data (HookData structure)
   const templateProps = {
     siteName: SITE_NAME,
     siteUrl: `https://${ROOT_DOMAIN}`,
-    recipient: payload.data.email,
+    recipient,
     confirmationUrl,
     token: payload.data.token,
-    email: payload.data.email,
+    email: recipient,
     newEmail: payload.data.new_email,
   }
 
-  // Render React Email to HTML and plain text
   const html = await renderAsync(React.createElement(EmailTemplate, templateProps))
-  const text = await renderAsync(React.createElement(EmailTemplate, templateProps), {
-    plainText: true,
-  })
+  const text = await renderAsync(React.createElement(EmailTemplate, templateProps), { plainText: true })
 
-  // Enqueue email for async processing by the dispatcher (process-email-queue).
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
+  const subject = EMAIL_SUBJECTS[emailType] || 'Уведомление'
   const messageId = crypto.randomUUID()
 
-  // Log pending BEFORE enqueue so we have a record even if enqueue crashes
+  // Лог pending до отправки, чтобы был след даже при падении SMTP.
   await supabase.from('email_send_log').insert({
     message_id: messageId,
     template_name: emailType,
-    recipient_email: payload.data.email,
+    recipient_email: recipient,
     status: 'pending',
   })
 
-  const { error: enqueueError } = await supabase.rpc('enqueue_email', {
-    queue_name: 'auth_emails',
-    payload: {
-      run_id,
-      message_id: messageId,
-      to: payload.data.email,
-      from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
-      sender_domain: SENDER_DOMAIN,
-      subject: EMAIL_SUBJECTS[emailType] || 'Notification',
+  try {
+    const password = await getYandexPassword(supabase)
+    const result = await sendViaYandexSmtp({
+      to: recipient,
+      subject,
       html,
       text,
-      purpose: 'transactional',
-      label: emailType,
-      queued_at: new Date().toISOString(),
-    },
-  })
+      fromName: SITE_NAME,
+      fromEmail: FROM_EMAIL,
+      smtpHost: SMTP_HOST,
+      smtpPort: SMTP_PORT,
+      username: FROM_EMAIL,
+      password,
+    })
 
-  if (enqueueError) {
-    console.error('Failed to enqueue auth email', { error: enqueueError, run_id, emailType })
     await supabase.from('email_send_log').insert({
       message_id: messageId,
       template_name: emailType,
-      recipient_email: payload.data.email,
-      status: 'failed',
-      error_message: 'Failed to enqueue email',
+      recipient_email: recipient,
+      status: 'sent',
     })
-    return new Response(JSON.stringify({ error: 'Failed to enqueue email' }), {
+
+    // Дублируем запись в email_logs для единой ленты переписки.
+    try {
+      await supabase.from('email_logs').insert({
+        direction: 'outgoing',
+        from_email: FROM_EMAIL,
+        to_email: recipient,
+        subject,
+        body_html: html,
+        body_text: text || null,
+        provider: 'yandex_smtp',
+        provider_message_id: result.queueId || messageId,
+        status: 'sent',
+        meta: {
+          source: 'auth-email-hook',
+          action_type: emailType,
+          run_id,
+        },
+      })
+    } catch (logErr) {
+      console.warn('email_logs insert failed', { logErr })
+    }
+
+    console.log('Auth email sent via Yandex SMTP', { emailType, recipient, run_id })
+    return new Response(JSON.stringify({ success: true, sent: true, message_id: messageId }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error('Yandex SMTP send failed', { errMsg, recipient, run_id, emailType })
+    await supabase.from('email_send_log').insert({
+      message_id: messageId,
+      template_name: emailType,
+      recipient_email: recipient,
+      status: 'failed',
+      error_message: errMsg.slice(0, 500),
+    })
+    return new Response(JSON.stringify({ error: 'Failed to send email', detail: errMsg }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
-
-  console.log('Auth email enqueued', { emailType, email: payload.data.email, run_id })
-
-  return new Response(
-    JSON.stringify({ success: true, queued: true }),
-    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-  )
 }
 
 Deno.serve(async (req) => {
   const url = new URL(req.url)
 
-  // Handle CORS preflight for main endpoint
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
-  // Route to preview handler for /preview path
   if (url.pathname.endsWith('/preview')) {
     return handlePreview(req)
   }
 
-  // Main webhook handler
   try {
     return await handleWebhook(req)
   } catch (error) {
