@@ -1,33 +1,22 @@
 // ============================================================================
-// websms-send
+// websms-send (SMS.by provider)
 // ----------------------------------------------------------------------------
-// Отправка SMS через websms.by (REST API v3).
+// Отправка SMS через SMS.by (app.sms.by/api/v1).
 //
-// Контракт websms.by (документация cp.websms.by/api/v3):
-//   POST https://cp.websms.by/api/v3/send_sms
-//   Body (JSON):
-//   {
-//     "user":   "<login>",
-//     "apikey": "<apikey>",
-//     "messages": [
-//       {
-//         "recipient":  "375291234567",
-//         "message_id": "<uuid>",
-//         "sms": { "sender": "<alphaname>", "text": "..." }
-//       }, ...
-//     ]
-//   }
-//   Response 200 { status: "success", sms_id: "...", parts: N, cost: ... } для
-//   каждого получателя (формат может варьироваться от тарифа — храним сырой
-//   ответ в metadata).
+// Контракт SMS.by:
+//   GET https://app.sms.by/api/v1/sendQuickSMS?token=<token>
+//       &message=<text>&phone=<msisdn>[&alphaname_id=<id>]
+//   Response 200 JSON: { status: "sent", sms_id: <id>, ... } |
+//                       { error: "<code>" }
 //
-// Тело запроса к функции:
+// Тело запроса к функции (без изменений для совместимости с фронтом):
 //   { phone: E164, text: string, contact_id?: uuid, deal_id?: uuid }
 //   ИЛИ
 //   { recipients: [{ phone, contact_id?, deal_id? }, ...], text: string }
 //
-// Проверки: JWT + has_role_v2 (staff|admin|super_admin). Credentials читаются
-// из integration_credentials.provider='websms', integrations.is_enabled.
+// Проверки: JWT + has_role_v2 (employee|admin|super_admin). Credentials читаются
+// из integration_credentials.provider='websms' (внутренний ключ сохранён для
+// обратной совместимости; внешнее название бренда — SMS.by).
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
@@ -42,6 +31,9 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+const PROVIDER = "websms"; // internal key — preserved
+const DEFAULT_BASE_URL = "https://app.sms.by";
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -59,12 +51,12 @@ function normalizePhone(input: string): string | null {
 }
 
 function toMsisdn(phoneE164: string): string {
-  // websms.by ожидает recipient без '+'
+  // SMS.by ожидает phone без '+'
   return phoneE164.replace(/^\+/, "");
 }
 
 interface Recipient {
-  phone: string; // E.164
+  phone: string;
   contact_id?: string | null;
   deal_id?: string | null;
 }
@@ -111,10 +103,11 @@ Deno.serve(async (req) => {
   }
   if (recipients.length > 500) return json(400, { error: "too_many_recipients" });
 
-  const normalized = recipients
-    .map((r) => ({ ...r, phone: normalizePhone(r.phone) }))
-    .filter((r) => !!r.phone) as Required<Pick<Recipient, "phone">> &
-      Recipient[number] extends never ? Recipient[] : Recipient[];
+  const normalized: Recipient[] = [];
+  for (const r of recipients) {
+    const p = normalizePhone(r.phone);
+    if (p) normalized.push({ ...r, phone: p });
+  }
   if (normalized.length === 0) return json(400, { error: "invalid_phones" });
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
@@ -133,7 +126,7 @@ Deno.serve(async (req) => {
   const { data: integ } = await admin
     .from("integrations")
     .select("is_enabled")
-    .eq("provider", "websms")
+    .eq("provider", PROVIDER)
     .maybeSingle();
   if (!integ) return json(412, { error: "integration_not_configured" });
   if (!integ.is_enabled) return json(412, { error: "integration_disabled" });
@@ -142,7 +135,7 @@ Deno.serve(async (req) => {
   const { data: credRows } = await admin
     .from("integration_credentials")
     .select("config, secrets")
-    .eq("provider", "websms");
+    .eq("provider", PROVIDER);
   const cfg = (credRows ?? []).reduce<{ config: any; secrets: any }>(
     (acc, row) => ({
       config: { ...acc.config, ...(row.config ?? {}) },
@@ -150,24 +143,25 @@ Deno.serve(async (req) => {
     }),
     { config: {}, secrets: {} },
   );
-  const login = String(cfg.secrets?.user ?? cfg.config?.user ?? "").trim();
-  const apikey = String(cfg.secrets?.apikey ?? "").trim();
-  const sender = String(cfg.config?.sender ?? "").trim();
-  const baseUrl =
-    String(cfg.config?.base_url ?? "https://cp.websms.by").replace(/\/+$/, "");
-  if (!login || !apikey || !sender) {
-    return json(412, { error: "websms_credentials_missing" });
+  const token = String(cfg.secrets?.token ?? cfg.secrets?.apikey ?? "").trim();
+  const alphanameId = cfg.config?.alphaname_id != null && cfg.config?.alphaname_id !== ""
+    ? String(cfg.config.alphaname_id).trim()
+    : "";
+  const alphanameLabel = String(cfg.config?.alphaname ?? cfg.config?.sender ?? "").trim();
+  const baseUrl = String(cfg.config?.base_url ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  if (!token) {
+    return json(412, { error: "smsby_credentials_missing" });
   }
 
   // ── 6. Pre-insert sms_messages rows (status=queued) ─────────────────────
   const initialRows = normalized.map((r) => ({
     contact_id: r.contact_id ?? null,
     deal_id: r.deal_id ?? null,
-    phone_e164: r.phone!,
+    phone_e164: r.phone,
     text,
-    provider: "websms",
+    provider: "smsby",
     status: "queued",
-    sender,
+    sender: alphanameLabel || null,
     initiator_user_id: userId,
   }));
   const { data: inserted, error: insertErr } = await admin
@@ -181,134 +175,111 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ── 7. Запрос к websms.by ───────────────────────────────────────────────
-  const payload = {
-    user: login,
-    apikey,
-    messages: inserted.map((row) => ({
-      recipient: toMsisdn(row.phone_e164),
-      message_id: row.id,
-      sms: { sender, text },
-    })),
-  };
-
-  const url = `${baseUrl}/api/v3/send_sms`;
+  // ── 7. Запросы к SMS.by (по одному per recipient) ────────────────────────
   const startedFetch = Date.now();
-  let respText = "";
-  let httpStatus = 0;
-  let respJson: any = null;
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    httpStatus = resp.status;
-    respText = await resp.text();
-    try {
-      respJson = JSON.parse(respText);
-    } catch {
-      respJson = null;
-    }
-  } catch (e: any) {
-    const errMsg = String(e?.message ?? e);
-    await admin
-      .from("sms_messages")
-      .update({
-        status: "failed",
-        error: `fetch_failed: ${errMsg}`,
-        updated_at: new Date().toISOString(),
-      })
-      .in(
-        "id",
-        inserted.map((r) => r.id),
-      );
-    return json(502, { error: "websms_fetch_failed", detail: errMsg });
-  }
+  let sentCount = 0;
+  let failedCount = 0;
+  const sampleResponses: any[] = [];
 
-  const latencyMs = Date.now() - startedFetch;
-  const reqMeta = {
-    url,
-    sender,
-    recipients_count: inserted.length,
-    sent_at: new Date().toISOString(),
-    user_prefix: login.slice(0, 3),
-  };
-  const respMeta = {
-    http_status: httpStatus,
-    latency_ms: latencyMs,
-    body_snippet: respText.slice(0, 2000),
-  };
-  console.log("websms-send", JSON.stringify({ reqMeta, respMeta }));
-
-  if (httpStatus < 200 || httpStatus >= 300) {
-    await admin
-      .from("sms_messages")
-      .update({
-        status: "failed",
-        error: `http_${httpStatus}: ${respText.slice(0, 300)}`,
-        metadata: { websms_request: reqMeta, websms_response: respMeta },
-        updated_at: new Date().toISOString(),
-      })
-      .in(
-        "id",
-        inserted.map((r) => r.id),
-      );
-    return json(502, {
-      error: "websms_api_error",
-      http_status: httpStatus,
-      body_snippet: respText.slice(0, 500),
-    });
-  }
-
-  // Разбор ответа: формат varies; пытаемся вытащить по message_id.
-  // Универсально: считаем, что все ушли в sent, если success.
-  const byMessageId = new Map<string, any>();
-  if (respJson && typeof respJson === "object") {
-    const arr =
-      (Array.isArray(respJson) && respJson) ||
-      respJson.messages ||
-      respJson.result ||
-      respJson.data ||
-      [];
-    if (Array.isArray(arr)) {
-      for (const item of arr) {
-        const mid =
-          item?.message_id ?? item?.client_id ?? item?.id ?? null;
-        if (mid) byMessageId.set(String(mid), item);
-      }
-    }
-  }
-
-  // Обновляем по каждой строке
   for (const row of inserted) {
-    const item = byMessageId.get(String(row.id));
-    const ok = !item || item?.status === "success" || item?.status === "ok" || httpStatus === 200;
+    const params = new URLSearchParams({
+      token,
+      message: text,
+      phone: toMsisdn(row.phone_e164),
+    });
+    if (alphanameId) params.set("alphaname_id", alphanameId);
+    const url = `${baseUrl}/api/v1/sendQuickSMS?${params.toString()}`;
+
+    let respText = "";
+    let httpStatus = 0;
+    let respJson: any = null;
+    try {
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      httpStatus = resp.status;
+      respText = await resp.text();
+      try {
+        respJson = JSON.parse(respText);
+      } catch {
+        respJson = null;
+      }
+    } catch (e: any) {
+      failedCount++;
+      await admin
+        .from("sms_messages")
+        .update({
+          status: "failed",
+          error: `fetch_failed: ${String(e?.message ?? e)}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+      continue;
+    }
+
+    const ok =
+      httpStatus >= 200 &&
+      httpStatus < 300 &&
+      respJson &&
+      !respJson.error &&
+      (respJson.status === "sent" || respJson.sms_id != null);
+
+    if (sampleResponses.length < 3) sampleResponses.push(respJson ?? respText.slice(0, 200));
+
     await admin
       .from("sms_messages")
       .update({
         status: ok ? "sent" : "failed",
-        external_id: item?.sms_id ?? item?.id ?? null,
-        cost: item?.cost ?? null,
-        segments: item?.parts ?? null,
-        error: ok ? null : String(item?.error ?? item?.status ?? "unknown"),
+        external_id: respJson?.sms_id != null ? String(respJson.sms_id) : null,
+        cost: respJson?.cost ?? null,
+        segments: respJson?.parts ?? null,
+        error: ok
+          ? null
+          : String(respJson?.error ?? `http_${httpStatus}: ${respText.slice(0, 200)}`),
         metadata: {
-          websms_request: reqMeta,
-          websms_response: respMeta,
-          websms_item: item ?? null,
+          smsby_request: {
+            url: `${baseUrl}/api/v1/sendQuickSMS`,
+            alphaname_id: alphanameId || null,
+            sent_at: new Date().toISOString(),
+          },
+          smsby_response: {
+            http_status: httpStatus,
+            body: respJson ?? respText.slice(0, 1000),
+          },
         },
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
+
+    if (ok) sentCount++;
+    else failedCount++;
+  }
+
+  const latencyMs = Date.now() - startedFetch;
+  console.log(
+    "websms-send",
+    JSON.stringify({
+      provider: "smsby",
+      recipients: inserted.length,
+      sent: sentCount,
+      failed: failedCount,
+      latency_ms: latencyMs,
+      sample: sampleResponses,
+    }),
+  );
+
+  if (sentCount === 0) {
+    return json(502, {
+      error: "smsby_api_error",
+      detail: sampleResponses[0] ?? "no_response",
+    });
   }
 
   return json(200, {
     ok: true,
-    count: inserted.length,
+    count: sentCount,
+    failed: failedCount,
     sms_ids: inserted.map((r) => r.id),
-    http_status: httpStatus,
   });
 });

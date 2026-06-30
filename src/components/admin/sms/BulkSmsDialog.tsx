@@ -163,7 +163,7 @@ export function BulkSmsDialog({ open, onOpenChange }: Props) {
           </DialogTitle>
           <DialogDescription>
             Найдите контакты, отметьте получателей и отправьте одно SMS-сообщение всем
-            сразу через websms.by.
+            сразу через SMS.by.
           </DialogDescription>
         </DialogHeader>
 
