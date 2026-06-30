@@ -118,6 +118,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "entitlements", label: "Доступы", path: "/admin/entitlements", icon: "KeyRound", order: 5, permission: "entitlements.view" },
       { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 6, permission: "entitlements.view" },
       { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 7, permission: "users.view" },
+
     ],
   },
   {
