@@ -941,6 +941,46 @@ Deno.serve(async (req) => {
         .single();
 
       if (!profile) {
+        // Brand-new user → create a guest contact so the dialog appears in inbox
+        try {
+          const tgFirst = (msg.from?.first_name || '').trim() || null;
+          const tgLast = (msg.from?.last_name || '').trim() || null;
+          const tgUsername = (msg.from?.username || '').trim() || null;
+          const fullName = [tgFirst, tgLast].filter(Boolean).join(' ')
+            || (tgUsername ? `@${tgUsername}` : `Telegram ${telegramUserId}`);
+          const { data: createdGuest, error: guestErr } = await supabase
+            .from('profiles')
+            .insert({
+              user_id: null,
+              source: 'telegram_bot',
+              telegram_user_id: telegramUserId,
+              telegram_username: tgUsername,
+              first_name: tgFirst,
+              last_name: tgLast,
+              full_name: fullName,
+            })
+            .select('id')
+            .single();
+          if (guestErr) {
+            console.error('[WEBHOOK] /start guest profile creation failed:', guestErr);
+          } else if (createdGuest?.id) {
+            // Save the /start message so the dialog has content in inbox
+            await supabase.from('telegram_messages').insert({
+              user_id: createdGuest.id,
+              telegram_user_id: telegramUserId,
+              bot_id: botId,
+              direction: 'incoming',
+              message_text: '/start',
+              message_id: msg.message_id,
+              status: 'sent',
+              meta: { webhook_stage: 'inserted', raw: msg, is_guest_start: true },
+            });
+            console.log('[WEBHOOK] Created guest via /start', createdGuest.id, 'tg', telegramUserId);
+          }
+        } catch (e) {
+          console.error('[WEBHOOK] /start guest creation exception:', e);
+        }
+
         // New user - send logo + welcome + link buttons
         const keyboard = {
           inline_keyboard: [
@@ -970,6 +1010,7 @@ Deno.serve(async (req) => {
         }
       }
     }
+
 
     // ==========================================
     // Handle regular messages - save for analytics
