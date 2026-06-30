@@ -447,15 +447,30 @@ Deno.serve(async (req) => {
         // Get user's telegram_user_id from profile.
         // The dialog "user_id" we receive may be either profiles.user_id (real auth user)
         // or profiles.id (guest contact created from an unregistered Telegram user).
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("telegram_user_id, telegram_link_bot_id")
-          .or(`user_id.eq.${user_id},id.eq.${user_id}`)
-          .order("user_id", { ascending: false, nullsFirst: false })
-          .limit(1)
-          .maybeSingle();
+        // Query both shapes separately, prefer the auth-linked profile when present.
+        let profile: { telegram_user_id: number | null; telegram_link_bot_id: string | null } | null = null;
+        {
+          const { data: byUser } = await supabase
+            .from("profiles")
+            .select("telegram_user_id, telegram_link_bot_id")
+            .eq("user_id", user_id)
+            .not("telegram_user_id", "is", null)
+            .limit(1)
+            .maybeSingle();
+          if (byUser?.telegram_user_id) {
+            profile = byUser;
+          } else {
+            const { data: byId } = await supabase
+              .from("profiles")
+              .select("telegram_user_id, telegram_link_bot_id")
+              .eq("id", user_id)
+              .limit(1)
+              .maybeSingle();
+            profile = byId ?? null;
+          }
+        }
 
-        if (profileError || !profile?.telegram_user_id) {
+        if (!profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
             error: "User has no linked Telegram account",
             success: false,
