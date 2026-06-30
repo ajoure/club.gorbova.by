@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
       started_at: startedAt,
       created_by: userId,
       workspace_id: profile?.workspace_id ?? null,
-      meta: { sip_extension: ext, initiated_via: "vochi-call-initiate" },
+      metadata: { sip_extension: ext, initiated_via: "vochi-call-initiate" },
     })
     .select("id, public_id")
     .single();
