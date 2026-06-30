@@ -128,7 +128,8 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+
         <DialogHeader>
           <DialogTitle>Настройки VOCHI</DialogTitle>
           <DialogDescription>
