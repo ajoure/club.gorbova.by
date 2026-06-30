@@ -31,16 +31,20 @@ interface Props {
 }
 
 const ERROR_LABEL: Record<string, string> = {
+  smsby_credentials_missing:
+    "В админке не настроен API-токен SMS.by",
   websms_credentials_missing:
-    "В админке не настроены доступы websms.by (логин/apikey/sender)",
-  integration_not_configured: "websms ещё не подключён в админке",
-  integration_disabled: "Интеграция websms отключена",
+    "В админке не настроен API-токен SMS.by",
+  integration_not_configured: "SMS.by ещё не подключён в админке",
+  integration_disabled: "Интеграция SMS.by отключена",
   not_staff: "У вас нет прав на отправку SMS",
   invalid_phone: "Некорректный номер телефона",
   empty_text: "Введите текст сообщения",
   text_too_long: "Слишком длинный текст (максимум 1000 символов)",
-  websms_api_error: "websms.by вернул ошибку",
-  websms_fetch_failed: "Не удалось связаться с websms.by",
+  smsby_api_error: "SMS.by вернул ошибку",
+  websms_api_error: "SMS.by вернул ошибку",
+  smsby_fetch_failed: "Не удалось связаться с SMS.by",
+  websms_fetch_failed: "Не удалось связаться с SMS.by",
 };
 
 const SMS_SEGMENT = 70; // Cyrillic UCS-2 — 70 символов в одном сегменте
