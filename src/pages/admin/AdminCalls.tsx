@@ -82,7 +82,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   no_answer: "secondary",
   busy: "secondary",
   failed: "destructive",
-  canceled: "outline",
+  cancelled: "outline",
 };
 
 function formatDuration(seconds: number | null): string {
