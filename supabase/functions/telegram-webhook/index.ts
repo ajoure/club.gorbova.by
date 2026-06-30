@@ -1343,17 +1343,16 @@ Deno.serve(async (req) => {
               // Контакт-центр UI ("Шостак Каролина", "Дергелёва Ольга").
               // Pure helper — no DB writes, no side effects.
               // ============================================================
-              let platformProfile: { first_name: string | null; last_name: string | null; full_name: string | null } | null = null;
-              try {
-                const { data: pp } = await supabase
-                  .from('profiles')
-                  .select('first_name, last_name, full_name')
-                  .eq('user_id', profile.user_id)
-                  .maybeSingle();
-                platformProfile = pp as any ?? null;
-              } catch (_) {
-                platformProfile = null;
-              }
+              // Reuse the profile we already loaded/created (works for guests too).
+              const platformProfile: { first_name: string | null; last_name: string | null; full_name: string | null } | null =
+                profile
+                  ? {
+                      first_name: profile.first_name ?? null,
+                      last_name: profile.last_name ?? null,
+                      full_name: profile.full_name ?? null,
+                    }
+                  : null;
+
 
               const resolvePlatformDisplayName = (
                 pp: { first_name: string | null; last_name: string | null; full_name: string | null } | null,
