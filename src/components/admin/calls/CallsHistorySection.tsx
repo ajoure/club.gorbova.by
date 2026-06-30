@@ -166,19 +166,27 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                 </div>
               </div>
               {call.recording_url && (
-                <a
-                  href={call.recording_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    "shrink-0 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-                    "hover:bg-accent transition-colors"
-                  )}
-                  title="Открыть запись звонка"
-                >
-                  <Play className="h-3 w-3" />
-                  Запись
-                </a>
+                <div className="shrink-0 flex items-center gap-2">
+                  <audio
+                    controls
+                    preload="none"
+                    src={call.recording_url}
+                    className="h-8 max-w-[220px]"
+                    title="Запись звонка"
+                  />
+                  <a
+                    href={call.recording_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                      "hover:bg-accent transition-colors"
+                    )}
+                    title="Открыть запись в новой вкладке"
+                  >
+                    <Play className="h-3 w-3" />
+                  </a>
+                </div>
               )}
             </div>
           );
