@@ -85,6 +85,9 @@ export function CallButton({
       } else {
         toast.success("Звоним вам — поднимите трубку, чтобы соединиться");
       }
+      // Мгновенно обновим список звонков (не ждём realtime).
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+      queryClient.invalidateQueries({ queryKey: ["calls-history"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось инициировать звонок");
     } finally {
