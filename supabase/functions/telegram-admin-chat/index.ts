@@ -444,12 +444,16 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get user's telegram_user_id from profile
+        // Get user's telegram_user_id from profile.
+        // The dialog "user_id" we receive may be either profiles.user_id (real auth user)
+        // or profiles.id (guest contact created from an unregistered Telegram user).
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("telegram_user_id, telegram_link_bot_id")
-          .eq("user_id", user_id)
-          .single();
+          .or(`user_id.eq.${user_id},id.eq.${user_id}`)
+          .order("user_id", { ascending: false, nullsFirst: false })
+          .limit(1)
+          .maybeSingle();
 
         if (profileError || !profile?.telegram_user_id) {
           return new Response(JSON.stringify({ 
@@ -460,6 +464,7 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+
 
         // Get bot token
         let botToken: string | null = null;
