@@ -172,8 +172,8 @@ export function VochiSettingsCard() {
             <>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground">SIP-code:</span>
-                  <span className="ml-2 font-medium">{data?.sipCode || "—"}</span>
+                  <span className="text-muted-foreground">URL:</span>
+                  <span className="ml-2 font-medium">{data?.baseUrl || "—"}</span>
                 </div>
                 {data?.lastCheckedAt && (
                   <div>
