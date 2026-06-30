@@ -138,24 +138,6 @@ export default function AdminRoles() {
     }
   };
 
-  const handleSipExtensionSave = async (userId: string, value: string, prev: string | null) => {
-    const next = value.trim() || null;
-    if (next === (prev ?? null)) return;
-    if (next && !/^\d{2,8}$/.test(next)) {
-      toast.error("SIP-номер: только цифры, 2–8 знаков");
-      return;
-    }
-    const { error } = await supabase
-      .from("profiles")
-      .update({ vochi_sip_extension: next })
-      .eq("user_id", userId);
-    if (error) {
-      toast.error("Не удалось сохранить SIP-номер: " + error.message);
-      return;
-    }
-    toast.success(next ? `SIP-номер сохранён: ${next}` : "SIP-номер очищен");
-    await refetchUsers();
-  };
 
   if (loading) {
     return (
