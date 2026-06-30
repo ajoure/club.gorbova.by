@@ -220,6 +220,8 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
                 Интеграция включена
               </Label>
             </div>
+
+            <StaffSipSection />
           </div>
         )}
 
