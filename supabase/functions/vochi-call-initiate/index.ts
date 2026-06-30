@@ -85,15 +85,73 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  // ── 3. Роль сотрудника (staff | admin | super_admin) ─────────────────────
-  const roleChecks = await Promise.all(
-    (["staff", "admin", "super_admin"] as const).map((r) =>
-      admin.rpc("has_role_v2", { _user_id: userId, _role_code: r }),
-    ),
-  );
-  const isStaff = roleChecks.some((r) => r.data === true);
-  if (!isStaff) {
-    return json(403, { error: "not_staff" });
+  // ── 3. Право на исходящие звонки ─────────────────────────────────────────
+  // SOT — матрица доступа: роль пользователя должна иметь access_level
+  // 'manage' (или будущий 'write'/'full') на секцию 'calls'. Так совпадает
+  // с тем, что админ настраивает в «Сотрудники и роли → Доступ → Звонки и SMS».
+  const { data: sectionRows, error: sectionErr } = await admin
+    .from("user_roles_v2")
+    .select(
+      "role_admin_section_access:role_id!inner(access_level, section:admin_section!inner(code))",
+    )
+    .eq("user_id", userId);
+  if (sectionErr) {
+    // На случай нюансов FK-join — фолбэк двумя запросами.
+    const { data: roleRows } = await admin
+      .from("user_roles_v2")
+      .select("role_id")
+      .eq("user_id", userId);
+    const roleIds = (roleRows ?? []).map((r: any) => r.role_id).filter(Boolean);
+    let hasCallsAccess = false;
+    if (roleIds.length) {
+      const { data: secId } = await admin
+        .from("admin_section")
+        .select("id")
+        .eq("code", "calls")
+        .maybeSingle();
+      if (secId?.id) {
+        const { data: acc } = await admin
+          .from("role_admin_section_access")
+          .select("access_level")
+          .in("role_id", roleIds)
+          .eq("section_id", secId.id);
+        hasCallsAccess = (acc ?? []).some((a: any) =>
+          ["manage", "write", "full"].includes(String(a.access_level)),
+        );
+      }
+    }
+    if (!hasCallsAccess) {
+      // Доп. проверка: глобальные admin/super_admin всегда могут.
+      const roleChecks = await Promise.all(
+        (["admin", "super_admin"] as const).map((r) =>
+          admin.rpc("has_role_v2", { _user_id: userId, _role_code: r }),
+        ),
+      );
+      if (!roleChecks.some((r) => r.data === true)) {
+        return json(403, { error: "not_staff" });
+      }
+    }
+  } else {
+    const allowed = (sectionRows ?? []).some((row: any) => {
+      const list = Array.isArray(row.role_admin_section_access)
+        ? row.role_admin_section_access
+        : [row.role_admin_section_access].filter(Boolean);
+      return list.some(
+        (r: any) =>
+          r?.section?.code === "calls" &&
+          ["manage", "write", "full"].includes(String(r?.access_level)),
+      );
+    });
+    if (!allowed) {
+      const roleChecks = await Promise.all(
+        (["admin", "super_admin"] as const).map((r) =>
+          admin.rpc("has_role_v2", { _user_id: userId, _role_code: r }),
+        ),
+      );
+      if (!roleChecks.some((r) => r.data === true)) {
+        return json(403, { error: "not_staff" });
+      }
+    }
   }
 
   // ── 4. Profile.vochi_sip_extension ───────────────────────────────────────
