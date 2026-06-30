@@ -44,19 +44,27 @@ export function MediaLightbox({
       <DialogContent
         className={cn(
           "p-0 border-none overflow-visible shadow-none bg-transparent",
-          "!max-w-none !w-screen !h-screen !top-0 !left-0 !translate-x-0 !translate-y-0 !rounded-none",
-          "flex items-center justify-center"
+          "!max-w-none !w-screen !h-[100dvh] !top-0 !left-0 !translate-x-0 !translate-y-0 !rounded-none",
+          isPdf ? "flex flex-col" : "flex items-center justify-center"
         )}
         showCloseButton={false}
         onEscapeKeyDown={() => onOpenChange(false)}
         onClick={handleBackdropClick}
       >
         <div
-          className="inline-flex w-fit max-w-[92vw] flex-col items-end gap-2"
+          className={cn(
+            "flex flex-col gap-2",
+            isPdf
+              ? "w-screen h-[100dvh] items-stretch"
+              : "inline-flex w-fit max-w-[92vw] items-end"
+          )}
           onClick={(e) => e.stopPropagation()}
         >
         {/* Controls */}
-        <div className="z-50 flex items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div
+          className="z-50 flex items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 self-end"
+          style={isPdf ? { marginTop: "max(env(safe-area-inset-top), 12px)", marginRight: "max(env(safe-area-inset-right), 12px)" } : undefined}
+        >
           <Button
             variant="ghost"
             size="icon"
@@ -87,14 +95,19 @@ export function MediaLightbox({
 
         {/* Content */}
         <div className={cn(
-          "flex items-center justify-center w-fit max-w-[92vw] overflow-hidden",
-          isPdf || isDocument ? "min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4" : "max-h-[calc(92vh-3rem)] p-0"
+          "flex items-center justify-center overflow-hidden",
+          isPdf
+            ? "w-screen flex-1 min-h-0 bg-background"
+            : isDocument
+              ? "w-fit max-w-[92vw] min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4"
+              : "w-fit max-w-[92vw] max-h-[calc(92vh-3rem)] p-0"
         )}>
           {isPdf ? (
             <iframe
               src={url}
-              className="w-full h-[80vh] rounded-lg border border-border"
+              className="w-full h-full border-0 bg-background"
               title={fileName || "PDF Document"}
+              style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
             />
           ) : isDocument ? (
             <div className="flex flex-col items-center gap-6 p-8">
