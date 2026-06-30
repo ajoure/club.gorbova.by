@@ -204,7 +204,7 @@ export default function AdminCalls() {
   }
 
   const unresolvedCount = useMemo(
-    () => (data ?? []).filter((c) => c.link_status === "unresolved" || c.link_status === "ambiguous").length,
+    () => (data ?? []).filter((c) => c.link_status === "unresolved").length,
     [data]
   );
 
