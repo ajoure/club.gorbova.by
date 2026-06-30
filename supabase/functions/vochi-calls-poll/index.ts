@@ -129,14 +129,20 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("authorization") ?? "";
   if (!auth.startsWith("Bearer ")) return json({ error: "forbidden" }, 403);
 
-  const { data: cred } = await admin
+  const { data: credRows, error: credErr } = await admin
     .from("integration_credentials")
     .select("config, secrets")
-    .eq("provider", "vochi")
-    .maybeSingle();
-  if (!cred) return json({ ok: true, skipped: "no_credentials" });
-  const baseUrl = String(cred.config?.base_url ?? "https://bot.vochi.by").replace(/\/+$/, "");
-  const apiToken = cred.secrets?.api_token ?? cred.secrets?.api_key ?? "";
+    .eq("provider", "vochi");
+  if (credErr) return json({ error: "cred_lookup_failed", detail: credErr.message }, 500);
+  if (!credRows?.length) return json({ ok: true, skipped: "no_credentials" });
+  const mergedConfig: any = {};
+  const mergedSecrets: any = {};
+  for (const r of credRows) {
+    Object.assign(mergedConfig, r.config ?? {});
+    Object.assign(mergedSecrets, r.secrets ?? {});
+  }
+  const baseUrl = String(mergedConfig.base_url ?? "https://bot.vochi.by").replace(/\/+$/, "");
+  const apiToken = mergedSecrets.api_token ?? mergedSecrets.api_key ?? "";
   if (!apiToken) return json({ ok: true, skipped: "no_api_token" });
 
   const sinceIso = new Date(Date.now() - POLL_WINDOW_MIN * 60 * 1000).toISOString();
