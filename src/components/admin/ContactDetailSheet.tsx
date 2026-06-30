@@ -909,21 +909,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  const { data: trialHistory } = useQuery({
+  const { data: trialHistory, refetch: refetchTrials } = useQuery({
     queryKey: ["contact-trial-history", contact?.user_id],
     queryFn: async () => {
       if (!contact?.user_id) return null;
-      
+
       // Build array of IDs to search
       const userIds = [contact.id];
       if (contact.user_id && contact.user_id !== contact.id) {
         userIds.push(contact.user_id);
       }
-      
+
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
           id, is_trial, status, trial_end_at, created_at,
+          product_id, tariff_id,
           products_v2:product_id(id, name, code)
         `)
         .in("user_id", userIds)
@@ -934,6 +935,29 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
     enabled: !!contact?.user_id,
   });
+
+  // Admin: reset trial usage for (product, tariff)
+  const resetTrialMutation = useMutation({
+    mutationFn: async ({ productId, tariffId }: { productId: string; tariffId: string | null }) => {
+      if (!contact?.user_id) throw new Error("No user ID");
+      const { data, error } = await supabase.rpc("admin_reset_user_trial", {
+        p_user_id: contact.user_id,
+        p_product_id: productId,
+        p_tariff_id: tariffId,
+      } as any);
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Пробный период сброшен — клиент может пройти триал снова");
+      queryClient.invalidateQueries({ queryKey: ["contact-trial-history", contact?.user_id] });
+      refetchTrials();
+    },
+    onError: (e: any) => {
+      toast.error("Не удалось сбросить триал: " + (e?.message || "ошибка"));
+    },
+  });
+
 
   // Fetch reentry (former club member) status
   const { data: reentryStatus, refetch: refetchReentry } = useQuery({
