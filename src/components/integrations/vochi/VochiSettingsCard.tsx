@@ -32,7 +32,6 @@ interface VochiState {
   enabled: boolean;
   hasClientId: boolean;
   baseUrl: string | null;
-  sipCode: string | null;
   lastCheckedAt: string | null;
   status: string | null;
 }
