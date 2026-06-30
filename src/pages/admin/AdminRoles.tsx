@@ -308,7 +308,7 @@ export default function AdminRoles() {
                 })}
                 {staffUsers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
                       {staffSearch ? "Сотрудники не найдены" : "Нет сотрудников с административными ролями"}
                     </TableCell>
                   </TableRow>
