@@ -1,5 +1,5 @@
 // ============================================================================
-// WebSmsSettingsCard — карточка интеграции websms.by для вкладки «Разное».
+// WebSmsSettingsCard — карточка интеграции SMS.by для вкладки «Разное».
 // UI-паттерн повторяет VochiSettingsCard.
 // ============================================================================
 
@@ -102,7 +102,7 @@ export function WebSmsSettingsCard() {
       ]);
       if (r1.error) throw r1.error;
       if (r2.error) throw r2.error;
-      toast.success("Подключение websms удалено");
+      toast.success("Подключение SMS.by удалено");
       setDeleteOpen(false);
       queryClient.invalidateQueries({ queryKey: ["websms-card-state"] });
     } catch (e: any) {
@@ -145,7 +145,7 @@ export function WebSmsSettingsCard() {
               </div>
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
-                  websms.by {badge}
+                  SMS.by {badge}
                 </CardTitle>
                 <CardDescription className="text-sm mt-1">
                   SMS-рассылки: индивидуальные и массовые сообщения по контактам CRM
@@ -197,12 +197,12 @@ export function WebSmsSettingsCard() {
           ) : (
             <div className="text-center py-4">
               <p className="text-muted-foreground mb-4">
-                Подключите SMS-провайдера websms.by, чтобы отправлять SMS из карточек
+                Подключите SMS-провайдера SMS.by, чтобы отправлять SMS из карточек
                 контактов и делать массовые рассылки.
               </p>
               <Button onClick={() => setSettingsOpen(true)}>
                 <MessageSquare className="h-4 w-4 mr-2" />
-                Подключить websms.by
+                Подключить SMS.by
               </Button>
             </div>
           )}
@@ -215,7 +215,7 @@ export function WebSmsSettingsCard() {
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить подключение websms?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить подключение SMS.by?</AlertDialogTitle>
             <AlertDialogDescription>
               Будут удалены сохранённые секреты и интеграция отключится. История
               отправленных SMS сохранится.
