@@ -93,7 +93,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 function DirectionIcon({ direction, status }: { direction: string; status: string }) {
-  const missed = status === "no_answer" || status === "busy" || status === "canceled";
+  const missed = status === "no_answer" || status === "busy" || status === "cancelled";
   if (missed) return <PhoneMissed className="h-4 w-4 text-destructive" />;
   if (direction === "inbound") return <PhoneIncoming className="h-4 w-4 text-emerald-600" />;
   if (direction === "outbound") return <PhoneOutgoing className="h-4 w-4 text-blue-600" />;
