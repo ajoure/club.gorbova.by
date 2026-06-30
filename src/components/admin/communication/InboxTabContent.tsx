@@ -902,6 +902,11 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                             ? formatContactName({ full_name: dialog.profile.full_name }) 
                             : dialog.profile?.email || "Неизвестный"}
                         </span>
+                        {(dialog.profile && !(dialog.profile as any).user_id) && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-amber-700 border-amber-400/60 bg-amber-50 whitespace-nowrap">
+                            из Telegram (без аккаунта)
+                          </Badge>
+                        )}
                         {(dialog.last_bot_name || dialog.last_bot_username) && (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
                             {displayBotLabel(dialog.last_bot_name, dialog.last_bot_username)}
