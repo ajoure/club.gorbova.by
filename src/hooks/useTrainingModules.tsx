@@ -249,6 +249,37 @@ export function useTrainingModules() {
         }
       });
 
+      // PATCH-CROSS-PRODUCT-TRAINING-CONTENT: build a set of module ids explicitly
+      // granted by ANY active training_content rule the user has, even when the
+      // rule's source product differs from the target module's product.
+      // Supports e.g. trial offer for product A granting access to selected modules
+      // of product B (trial «Идеологическая работа» → модуль «Видеоответы» Клуба).
+      const ruleGrantedModuleIds = new Set<string>();
+      if (!isAdminUser && tcRules.length > 0) {
+        const collectSubtree = (rootId: string) => {
+          const queue = [rootId];
+          const seen = new Set<string>();
+          while (queue.length) {
+            const id = queue.shift()!;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            ruleGrantedModuleIds.add(id);
+            (childrenMap[id] || []).forEach(c => queue.push(c));
+          }
+        };
+        for (const r of tcRules) {
+          if (!r.is_active) continue;
+          const cond = r.conditions || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] };
+          if (cond.access_mode === "full" && r.target_ref) {
+            collectSubtree(r.target_ref);
+          } else if (Array.isArray(cond.allowed_module_ids)) {
+            cond.allowed_module_ids.forEach(id => {
+              if (id) collectSubtree(id);
+            });
+          }
+        }
+      }
+
       const normalizedModules = enrichedModules.map(m => {
         if (isAdminUser) return { ...m, has_access: true };
         
@@ -262,7 +293,13 @@ export function useTrainingModules() {
             }
           }
         }
-        
+
+        // Cross-product rule grant: any module explicitly listed (or under a full
+        // subtree target_ref) of an active training_content rule becomes accessible.
+        if (!m.has_access && ruleGrantedModuleIds.has(m.id)) {
+          m = { ...m, has_access: true };
+        }
+
         if (!m.has_access) return m;
 
         // Apply training_content filter only for modules with confirmed access
