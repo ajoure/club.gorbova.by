@@ -281,16 +281,20 @@ export function useAdminMenuSettings() {
       
       const savedItems = items as unknown as MenuSettings;
       
-      // Check if deprecated items exist in saved settings
+      // Check if deprecated or reposition items exist in saved settings
       const hasDeprecated = savedItems.some(group => 
         group.items?.some(item => DEPRECATED_ITEM_IDS.has(item.id))
+      );
+      const hasReposition = savedItems.some(group =>
+        group.items?.some(item => REPOSITION_ITEM_IDS.has(item.id))
       );
       
       // Merge (which filters deprecated items)
       const cleaned = mergeMenuSettings(savedItems);
       
       // One-time auto-cleanup with guards
-      if (hasDeprecated && data?.id) {
+      if ((hasDeprecated || hasReposition) && data?.id) {
+
         // Guard 1: Check if data actually changed (idempotency)
         const savedJson = JSON.stringify(savedItems);
         const cleanedJson = JSON.stringify(cleaned);
