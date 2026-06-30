@@ -1232,7 +1232,9 @@ Deno.serve(async (req) => {
           }
 
           // ========== SUPPORT TICKET BRIDGE (TG → Ticket) ==========
-          // If user has an active bridged ticket, create a ticket_message
+          // If user has an active bridged ticket, create a ticket_message.
+          // Guests (no auth user) cannot author ticket messages — skip the bridge.
+          if (!isGuestProfile) {
           try {
             const { data: bridgedTicket } = await supabase
               .from('support_tickets')
@@ -1301,6 +1303,9 @@ Deno.serve(async (req) => {
           } catch (bridgeErr) {
             console.error('[BRIDGE] Error:', bridgeErr);
           }
+          } // end if (!isGuestProfile) bridge guard
+
+
 
           // ========== AI SUPPORT INTEGRATION ==========
           // Invoke AI support for text messages (non-blocking)
