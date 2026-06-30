@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
         .from("calls")
         .update({
           status: "failed",
-          meta: {
+          metadata: {
             sip_extension: ext,
             initiated_via: "vochi-call-initiate",
             vochi_http_status: resp.status,
