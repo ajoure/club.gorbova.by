@@ -225,6 +225,7 @@ export default function AdminRoles() {
                 <TableRow className="border-border/20 hover:bg-transparent">
                   <TableHead className="text-muted-foreground/70 font-medium">Сотрудник</TableHead>
                   <TableHead className="text-muted-foreground/70 font-medium">Роль</TableHead>
+                  <TableHead className="text-muted-foreground/70 font-medium w-[160px]">VOCHI SIP-номер</TableHead>
                   <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
               </TableHeader>
