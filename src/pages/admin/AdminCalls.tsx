@@ -181,7 +181,8 @@ export default function AdminCalls() {
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [selectedCallIds, setSelectedCallIds] = useState<Set<string>>(new Set());
+  // Универсальная выборка: ключи вида "call:<id>" и "sms:<id>" — чекбоксы на каждой строке.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkRunning, setBulkRunning] = useState(false);
 
   // Contact slideover
