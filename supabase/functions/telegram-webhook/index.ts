@@ -1141,7 +1141,7 @@ Deno.serve(async (req) => {
             const { data: insertedMsg, error: insertError } = await supabase
               .from('telegram_messages')
               .insert({
-                user_id: profile.user_id,
+                user_id: effectiveUserId,
                 telegram_user_id: telegramUserId,
                 bot_id: botId,
                 direction: 'incoming',
@@ -1180,7 +1180,7 @@ Deno.serve(async (req) => {
             try {
               await supabase.from("media_jobs").insert({
                 message_db_id: dbMessageId,
-                user_id: profile.user_id,
+                user_id: effectiveUserId,
                 bot_id: botId,
                 telegram_file_id: fileId,
                 file_type: fileType,
@@ -1213,7 +1213,7 @@ Deno.serve(async (req) => {
                     body: JSON.stringify({
                       trigger: 'webhook',
                       message_db_id: dbMessageId,
-                      user_id: profile.user_id,
+                      user_id: effectiveUserId,
                       limit: 5,
                     }),
                   }).catch((e) => console.error('[WEBHOOK] media-worker invoke failed:', e));
