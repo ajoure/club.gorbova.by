@@ -366,36 +366,52 @@ export default function AdminCalls() {
     }
   }
 
-  // Candidates for bulk transcribe = calls with recording and no transcript yet
-  const bulkCandidates = useMemo(() => {
+  // Звонки, по которым ИМЕЕТ СМЫСЛ запускать AI-расшифровку (запись есть, транскрипта нет, не в процессе).
+  const transcribableCalls = useMemo(() => {
     return (calls ?? []).filter(
       (c) => c.recording_url && !c.transcript && c.transcript_status !== "processing"
     );
   }, [calls]);
 
-  function toggleSelect(callId: string) {
-    setSelectedCallIds((prev) => {
+  function toggleSelectKey(key: string) {
+    setSelectedKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(callId)) next.delete(callId);
-      else next.add(callId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
-  function selectAllCandidates() {
-    setSelectedCallIds(new Set(bulkCandidates.map((c) => c.id)));
+  function selectAllVisible() {
+    const keys = items.map((it) => (it.kind === "call" ? `call:${it.call.id}` : `sms:${it.sms.id}`));
+    setSelectedKeys(new Set(keys));
   }
 
   function clearSelection() {
-    setSelectedCallIds(new Set());
+    setSelectedKeys(new Set());
   }
 
+  // Сколько из выбранных можно отправить на AI-расшифровку
+  const selectedTranscribableIds = useMemo(() => {
+    const ids: string[] = [];
+    const transcribableSet = new Set(transcribableCalls.map((c) => c.id));
+    selectedKeys.forEach((k) => {
+      if (!k.startsWith("call:")) return;
+      const id = k.slice(5);
+      if (transcribableSet.has(id)) ids.push(id);
+    });
+    return ids;
+  }, [selectedKeys, transcribableCalls]);
+
   async function runBulkTranscribe() {
-    if (selectedCallIds.size === 0) return;
+    if (selectedTranscribableIds.length === 0) {
+      toast.info("Нет выбранных звонков с записью, доступных для расшифровки");
+      return;
+    }
     setBulkRunning(true);
     let ok = 0;
     let fail = 0;
-    for (const id of Array.from(selectedCallIds)) {
+    for (const id of selectedTranscribableIds) {
       try {
         const { data, error } = await supabase.functions.invoke("call-transcribe-summarize", {
           body: { call_id: id },
