@@ -609,45 +609,44 @@ export default function AdminCalls() {
       </div>
 
       {/* Bulk bar */}
-      {(tab === "all" || tab === "calls" || tab === "today" || tab === "missed" || tab === "unresolved") && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-muted-foreground">
-            Выбрано звонков: <b>{selectedCallIds.size}</b> / можно расшифровать: {bulkCandidates.length}
-          </span>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">
+          Выбрано: <b>{selectedKeys.size}</b> · к расшифровке: {selectedTranscribableIds.length}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7"
+          onClick={selectAllVisible}
+          disabled={items.length === 0}
+        >
+          Выбрать все
+        </Button>
+        {selectedKeys.size > 0 && (
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="h-7"
-            onClick={selectAllCandidates}
-            disabled={bulkCandidates.length === 0}
+            onClick={clearSelection}
           >
-            Выбрать все доступные
+            Снять выделение
           </Button>
-          {selectedCallIds.size > 0 && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7"
-              onClick={clearSelection}
-            >
-              Снять выделение
-            </Button>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          className="h-7"
+          onClick={runBulkTranscribe}
+          disabled={selectedTranscribableIds.length === 0 || bulkRunning}
+        >
+          {bulkRunning ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5 mr-1" />
           )}
-          <Button
-            type="button"
-            size="sm"
-            className="h-7"
-            onClick={runBulkTranscribe}
-            disabled={selectedCallIds.size === 0 || bulkRunning}
-          >
-            {bulkRunning ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5 mr-1" />
-            )}
-            Расшифровать выбранные
+          Расшифровать выбранные
           </Button>
         </div>
       )}
