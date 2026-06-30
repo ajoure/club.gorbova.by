@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
   for (const call of pending) {
     const phone = call.direction === "inbound" ? call.phone_from_e164 : call.phone_to_e164;
     if (!phone) continue;
-    const remote = await fetchVochiCallsByPhone(baseUrl, apiToken, phone);
+    const { list: remote, diag } = await fetchVochiCallsByPhone(baseUrl, apiToken, phone);
     const match = matchCall(remote, call.started_at, normalizeDigits(phone));
 
     if (!match) {
@@ -184,11 +184,17 @@ Deno.serve(async (req) => {
           .from("calls")
           .update({
             status: "failed",
-            metadata: { ...(call.metadata ?? {}), poll_result: "stale_no_remote_match" },
+            metadata: { ...(call.metadata ?? {}), poll_result: "stale_no_remote_match", poll_diag: diag },
           })
           .eq("id", call.id);
         stale++;
       } else {
+        await admin
+          .from("calls")
+          .update({
+            metadata: { ...(call.metadata ?? {}), poll_last_at: new Date().toISOString(), poll_diag: diag, poll_result: "no_match_yet" },
+          })
+          .eq("id", call.id);
         missed++;
       }
       continue;
