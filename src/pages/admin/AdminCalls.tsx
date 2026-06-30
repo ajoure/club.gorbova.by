@@ -62,7 +62,7 @@ interface CallRow {
   transcript_error: string | null;
   contact_id: string | null;
   deal_id: string | null;
-  staff_user_id: string | null;
+  staff_user_id?: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
