@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
   // ── 3. Роль сотрудника (staff | admin | super_admin) ─────────────────────
   const roleChecks = await Promise.all(
     (["staff", "admin", "super_admin"] as const).map((r) =>
-      admin.rpc("has_role_v2", { _user_id: userId, _role: r }),
+      admin.rpc("has_role_v2", { _user_id: userId, _role_code: r }),
     ),
   );
   const isStaff = roleChecks.some((r) => r.data === true);
