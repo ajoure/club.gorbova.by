@@ -982,15 +982,66 @@ Deno.serve(async (req) => {
       // Save private messages to telegram_messages for admin chat history
       if (chatType === 'private') {
         const telegramUserId = msg.from.id;
-        
-        // Find user by telegram_user_id
-        const { data: profile } = await supabase
+
+        // Find profile by telegram_user_id (may be a real user or a guest)
+        const { data: existingProfile } = await supabase
           .from('profiles')
-          .select('id, user_id')
+          .select('id, user_id, first_name, last_name, full_name, telegram_username')
           .eq('telegram_user_id', telegramUserId)
-          .single();
-        
-        if (profile?.user_id) {
+          .maybeSingle();
+
+        let profile: any = existingProfile;
+        let isGuestProfile = !profile?.user_id && !!profile;
+        let justCreatedGuest = false;
+
+        // No profile at all → create a "guest" contact so the message lands in inbox
+        if (!profile) {
+          const tgFirst = (msg.from?.first_name || '').trim() || null;
+          const tgLast = (msg.from?.last_name || '').trim() || null;
+          const tgUsername = (msg.from?.username || '').trim() || null;
+          const fullName = [tgFirst, tgLast].filter(Boolean).join(' ')
+            || (tgUsername ? `@${tgUsername}` : `Telegram ${telegramUserId}`);
+          const { data: createdGuest, error: guestErr } = await supabase
+            .from('profiles')
+            .insert({
+              user_id: null,
+              source: 'telegram_bot',
+              telegram_user_id: telegramUserId,
+              telegram_username: tgUsername,
+              first_name: tgFirst,
+              last_name: tgLast,
+              full_name: fullName,
+            })
+            .select('id, user_id, first_name, last_name, full_name, telegram_username')
+            .single();
+          if (guestErr) {
+            console.error('[WEBHOOK] Guest profile creation failed:', guestErr);
+          } else {
+            profile = createdGuest;
+            isGuestProfile = true;
+            justCreatedGuest = true;
+            console.log('[WEBHOOK] Created guest profile', profile?.id, 'for tg', telegramUserId);
+          }
+        }
+
+        // Effective key used for dialog grouping in telegram_messages.user_id
+        // (this column has no FK to auth.users; for guests we use profile.id).
+        const effectiveUserId: string | null = profile?.user_id || profile?.id || null;
+
+        // One-time confirmation to a brand-new guest so they know the team will reply
+        if (justCreatedGuest && botToken) {
+          try {
+            await sendMessage(
+              botToken,
+              chatId,
+              'Спасибо, ваше сообщение получено! Мы ответим в ближайшее время.'
+            );
+          } catch (ackErr) {
+            console.error('[WEBHOOK] Guest ack send failed:', ackErr);
+          }
+        }
+
+        if (effectiveUserId) {
           // Determine file info if present
           let fileType: string | null = null;
           let fileName: string | null = null;
