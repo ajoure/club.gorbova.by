@@ -181,7 +181,8 @@ export default function AdminCalls() {
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [selectedCallIds, setSelectedCallIds] = useState<Set<string>>(new Set());
+  // Универсальная выборка: ключи вида "call:<id>" и "sms:<id>" — чекбоксы на каждой строке.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkRunning, setBulkRunning] = useState(false);
 
   // Contact slideover
@@ -365,36 +366,52 @@ export default function AdminCalls() {
     }
   }
 
-  // Candidates for bulk transcribe = calls with recording and no transcript yet
-  const bulkCandidates = useMemo(() => {
+  // Звонки, по которым ИМЕЕТ СМЫСЛ запускать AI-расшифровку (запись есть, транскрипта нет, не в процессе).
+  const transcribableCalls = useMemo(() => {
     return (calls ?? []).filter(
       (c) => c.recording_url && !c.transcript && c.transcript_status !== "processing"
     );
   }, [calls]);
 
-  function toggleSelect(callId: string) {
-    setSelectedCallIds((prev) => {
+  function toggleSelectKey(key: string) {
+    setSelectedKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(callId)) next.delete(callId);
-      else next.add(callId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
-  function selectAllCandidates() {
-    setSelectedCallIds(new Set(bulkCandidates.map((c) => c.id)));
+  function selectAllVisible() {
+    const keys = items.map((it) => (it.kind === "call" ? `call:${it.call.id}` : `sms:${it.sms.id}`));
+    setSelectedKeys(new Set(keys));
   }
 
   function clearSelection() {
-    setSelectedCallIds(new Set());
+    setSelectedKeys(new Set());
   }
 
+  // Сколько из выбранных можно отправить на AI-расшифровку
+  const selectedTranscribableIds = useMemo(() => {
+    const ids: string[] = [];
+    const transcribableSet = new Set(transcribableCalls.map((c) => c.id));
+    selectedKeys.forEach((k) => {
+      if (!k.startsWith("call:")) return;
+      const id = k.slice(5);
+      if (transcribableSet.has(id)) ids.push(id);
+    });
+    return ids;
+  }, [selectedKeys, transcribableCalls]);
+
   async function runBulkTranscribe() {
-    if (selectedCallIds.size === 0) return;
+    if (selectedTranscribableIds.length === 0) {
+      toast.info("Нет выбранных звонков с записью, доступных для расшифровки");
+      return;
+    }
     setBulkRunning(true);
     let ok = 0;
     let fail = 0;
-    for (const id of Array.from(selectedCallIds)) {
+    for (const id of selectedTranscribableIds) {
       try {
         const { data, error } = await supabase.functions.invoke("call-transcribe-summarize", {
           body: { call_id: id },
@@ -592,48 +609,47 @@ export default function AdminCalls() {
       </div>
 
       {/* Bulk bar */}
-      {(tab === "all" || tab === "calls" || tab === "today" || tab === "missed" || tab === "unresolved") && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-muted-foreground">
-            Выбрано звонков: <b>{selectedCallIds.size}</b> / можно расшифровать: {bulkCandidates.length}
-          </span>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">
+          Выбрано: <b>{selectedKeys.size}</b> · к расшифровке: {selectedTranscribableIds.length}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7"
+          onClick={selectAllVisible}
+          disabled={items.length === 0}
+        >
+          Выбрать все
+        </Button>
+        {selectedKeys.size > 0 && (
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="h-7"
-            onClick={selectAllCandidates}
-            disabled={bulkCandidates.length === 0}
+            onClick={clearSelection}
           >
-            Выбрать все доступные
+            Снять выделение
           </Button>
-          {selectedCallIds.size > 0 && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7"
-              onClick={clearSelection}
-            >
-              Снять выделение
-            </Button>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          className="h-7"
+          onClick={runBulkTranscribe}
+          disabled={selectedTranscribableIds.length === 0 || bulkRunning}
+        >
+          {bulkRunning ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5 mr-1" />
           )}
-          <Button
-            type="button"
-            size="sm"
-            className="h-7"
-            onClick={runBulkTranscribe}
-            disabled={selectedCallIds.size === 0 || bulkRunning}
-          >
-            {bulkRunning ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5 mr-1" />
-            )}
-            Расшифровать выбранные
-          </Button>
-        </div>
-      )}
+          Расшифровать выбранные
+        </Button>
+      </div>
+
 
       {/* List */}
       <Card>
@@ -691,8 +707,11 @@ export default function AdminCalls() {
     const isUnresolved = call.link_status === "unresolved";
     const binding = bindingCallId === call.id;
     const cname = contactName(call.contact_id);
-    const canSelect = Boolean(call.recording_url && !call.transcript && call.transcript_status !== "processing");
-    const checked = selectedCallIds.has(call.id);
+    const key = `call:${call.id}`;
+    const checked = selectedKeys.has(key);
+    const eligibleForTranscribe = Boolean(
+      call.recording_url && !call.transcript && call.transcript_status !== "processing"
+    );
 
     return (
       <div
@@ -701,15 +720,12 @@ export default function AdminCalls() {
       >
         <div className="flex items-center gap-3 px-3 py-2 flex-wrap sm:flex-nowrap">
           <div className="shrink-0 flex items-center gap-2">
-            {canSelect ? (
-              <Checkbox
-                checked={checked}
-                onCheckedChange={() => toggleSelect(call.id)}
-                aria-label="Выбрать звонок"
-              />
-            ) : (
-              <div className="w-4" />
-            )}
+            <Checkbox
+              checked={checked}
+              onCheckedChange={() => toggleSelectKey(key)}
+              aria-label="Выбрать звонок"
+              title={eligibleForTranscribe ? "Выбрать звонок" : "Расшифровка недоступна для этого звонка"}
+            />
             <DirectionIcon direction={call.direction} status={call.status} />
           </div>
           <div className="flex-1 min-w-0">
@@ -864,6 +880,8 @@ export default function AdminCalls() {
 
   function renderSms(sms: SmsRow) {
     const cname = contactName(sms.contact_id);
+    const key = `sms:${sms.id}`;
+    const checked = selectedKeys.has(key);
     return (
       <div
         key={`sms-${sms.id}`}
@@ -871,7 +889,12 @@ export default function AdminCalls() {
       >
         <div className="flex items-start gap-3 px-3 py-2">
           <div className="shrink-0 flex items-center gap-2 pt-0.5">
-            <div className="w-4" />
+            <Checkbox
+              checked={checked}
+              onCheckedChange={() => toggleSelectKey(key)}
+              aria-label="Выбрать SMS"
+              title="Выбрать SMS"
+            />
             <MessageSquare className="h-4 w-4 text-violet-600" />
           </div>
           <div className="flex-1 min-w-0">
