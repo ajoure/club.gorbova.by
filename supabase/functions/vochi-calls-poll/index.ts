@@ -73,11 +73,14 @@ async function fetchVochiCallsByPhone(
   baseUrl: string,
   apiToken: string,
   phoneE164: string,
-): Promise<any[]> {
+): Promise<{ list: any[]; diag: any[] }> {
   const candidates = [
     `${baseUrl}/api/v1/calls?phone=${encodeURIComponent(phoneE164)}`,
     `${baseUrl}/api/v1/calls?number=${encodeURIComponent(phoneE164)}`,
+    `${baseUrl}/api/v1/calls/recent`,
+    `${baseUrl}/api/v1/calls`,
   ];
+  const diag: any[] = [];
   for (const url of candidates) {
     try {
       const resp = await fetch(url, {
@@ -87,8 +90,11 @@ async function fetchVochiCallsByPhone(
           Accept: "application/json",
         },
       });
+      const text = await resp.text().catch(() => "");
+      const sample = text.slice(0, 300);
+      diag.push({ url, status: resp.status, sample });
+      console.log("[vochi-calls-poll] fetch", url, "status=", resp.status, "sample=", sample);
       if (!resp.ok) continue;
-      const text = await resp.text();
       let parsed: any;
       try { parsed = JSON.parse(text); } catch { continue; }
       const list = Array.isArray(parsed)
@@ -96,11 +102,15 @@ async function fetchVochiCallsByPhone(
         : Array.isArray(parsed?.data) ? parsed.data
         : Array.isArray(parsed?.calls) ? parsed.calls
         : Array.isArray(parsed?.items) ? parsed.items
+        : Array.isArray(parsed?.result) ? parsed.result
         : [];
-      if (list.length) return list;
-    } catch (_e) { /* try next */ }
+      if (list.length) return { list, diag };
+    } catch (e) {
+      diag.push({ url, error: String(e) });
+      console.log("[vochi-calls-poll] fetch err", url, String(e));
+    }
   }
-  return [];
+  return { list: [], diag };
 }
 
 function matchCall(remote: any[], localStartedAt: string, phoneDigits: string): any | null {
