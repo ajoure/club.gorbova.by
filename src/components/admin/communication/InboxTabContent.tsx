@@ -265,7 +265,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       // Fetch profiles, orders, subscriptions IN PARALLEL (not sequentially).
       // Dialog "user_id" from RPC may actually be profile.id (guest contacts without auth user),
       // so we look profiles up by user_id OR by id.
-      const idsCsv = userIds.map((u: string) => `"${u}"`).join(',');
+      
       const [profilesRes, ordersRes, subsRes] = await Promise.all([
         supabase
           .from("profiles")
