@@ -40,7 +40,6 @@ export function VochiSettingsDialog({ open, onOpenChange }: Props) {
   const [baseUrl, setBaseUrl] = useState("https://bot.vochi.by");
   const [clientId, setClientId] = useState("");
   const [apiToken, setApiToken] = useState("");
-  const [sipCode, setSipCode] = useState("");
   const [copied, setCopied] = useState(false);
 
   const webhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vochi-webhook`;
