@@ -87,6 +87,7 @@ const AdminDeals = lazy(() => import("./pages/admin/AdminDeals"));
 const AdminTasks = lazy(() => import("./pages/admin/AdminTasks"));
 const AdminTaskTypes = lazy(() => import("./pages/admin/AdminTaskTypes"));
 const AdminUnresolvedCalls = lazy(() => import("./pages/admin/AdminUnresolvedCalls"));
+const AdminCalls = lazy(() => import("./pages/admin/AdminCalls"));
 const AdminRoles = lazy(() => import("./pages/admin/AdminRoles"));
 const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
 const AdminTenants = lazy(() => import("./pages/admin/AdminTenants"));
