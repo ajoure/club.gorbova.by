@@ -707,8 +707,11 @@ export default function AdminCalls() {
     const isUnresolved = call.link_status === "unresolved";
     const binding = bindingCallId === call.id;
     const cname = contactName(call.contact_id);
-    const canSelect = Boolean(call.recording_url && !call.transcript && call.transcript_status !== "processing");
-    const checked = selectedCallIds.has(call.id);
+    const key = `call:${call.id}`;
+    const checked = selectedKeys.has(key);
+    const eligibleForTranscribe = Boolean(
+      call.recording_url && !call.transcript && call.transcript_status !== "processing"
+    );
 
     return (
       <div
@@ -717,15 +720,12 @@ export default function AdminCalls() {
       >
         <div className="flex items-center gap-3 px-3 py-2 flex-wrap sm:flex-nowrap">
           <div className="shrink-0 flex items-center gap-2">
-            {canSelect ? (
-              <Checkbox
-                checked={checked}
-                onCheckedChange={() => toggleSelect(call.id)}
-                aria-label="Выбрать звонок"
-              />
-            ) : (
-              <div className="w-4" />
-            )}
+            <Checkbox
+              checked={checked}
+              onCheckedChange={() => toggleSelectKey(key)}
+              aria-label="Выбрать звонок"
+              title={eligibleForTranscribe ? "Выбрать звонок" : "Расшифровка недоступна для этого звонка"}
+            />
             <DirectionIcon direction={call.direction} status={call.status} />
           </div>
           <div className="flex-1 min-w-0">
