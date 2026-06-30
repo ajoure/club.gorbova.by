@@ -130,7 +130,7 @@ export function SmsButton({
           <DialogHeader>
             <DialogTitle>Отправить SMS</DialogTitle>
             <DialogDescription>
-              На номер <span className="font-medium">{phone}</span> через websms.by
+              На номер <span className="font-medium">{phone}</span> через SMS.by
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
