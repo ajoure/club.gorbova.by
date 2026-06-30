@@ -1,8 +1,9 @@
 // ============================================================================
-// WebSmsSettingsDialog — настройки интеграции с websms.by.
-// Поля: login (user), apikey, sender (alphaname), base_url.
-// SOT: integrations.is_enabled — флаг включения; integration_credentials —
-// секреты и конфиг (NULLS NOT DISTINCT по (workspace_id, provider)).
+// WebSmsSettingsDialog — настройки интеграции с SMS.by.
+// Поля: token (API-ключ), alphaname (отображаемое имя), alphaname_id (числовой
+// идентификатор отправителя из кабинета SMS.by, опционально).
+// Внутренний provider-ключ оставлен 'websms' для обратной совместимости с
+// сохранёнными записями integration_credentials/integrations.
 // ============================================================================
 
 import { useEffect, useState } from "react";
@@ -35,10 +36,9 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("https://cp.websms.by");
-  const [login, setLogin] = useState("");
-  const [apikey, setApikey] = useState("");
-  const [sender, setSender] = useState("");
+  const [token, setToken] = useState("");
+  const [alphaname, setAlphaname] = useState("");
+  const [alphanameId, setAlphanameId] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -65,10 +65,13 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
         }),
         { config: {}, secrets: {} },
       );
-      setBaseUrl(merged.config?.base_url || "https://cp.websms.by");
-      setLogin(merged.secrets?.user || merged.config?.user || "");
-      setApikey(merged.secrets?.apikey || "");
-      setSender(merged.config?.sender || "");
+      setToken(merged.secrets?.token || merged.secrets?.apikey || "");
+      setAlphaname(merged.config?.alphaname || merged.config?.sender || "");
+      setAlphanameId(
+        merged.config?.alphaname_id != null
+          ? String(merged.config.alphaname_id)
+          : "",
+      );
       setLoading(false);
     })();
     return () => {
@@ -81,19 +84,20 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
     try {
       const integPayload = {
         provider: PROVIDER,
-        display_name: "websms.by",
+        display_name: "SMS.by",
         is_enabled: enabled,
         config: {},
       };
       const credPayload = {
         provider: PROVIDER,
-        display_name: "websms.by",
+        display_name: "SMS.by",
         config: {
-          base_url: baseUrl.trim().replace(/\/+$/, ""),
-          sender: sender.trim(),
+          base_url: "https://app.sms.by",
+          alphaname: alphaname.trim(),
+          alphaname_id: alphanameId.trim() || null,
         },
-        secrets: { user: login.trim(), apikey: apikey.trim() },
-        status: login.trim() && apikey.trim() ? "connected" : "pending",
+        secrets: { token: token.trim() },
+        status: token.trim() ? "connected" : "pending",
       };
       const [r1, r2] = await Promise.all([
         supabase
@@ -105,7 +109,7 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
       ]);
       if (r1.error) throw r1.error;
       if (r2.error) throw r2.error;
-      toast.success("Настройки websms сохранены");
+      toast.success("Настройки SMS.by сохранены");
       queryClient.invalidateQueries({ queryKey: ["websms-card-state"] });
       onOpenChange(false);
     } catch (e: any) {
@@ -119,10 +123,11 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Настройки websms.by</DialogTitle>
+          <DialogTitle>Настройки SMS.by</DialogTitle>
           <DialogDescription>
-            Логин, API-ключ и имя отправителя (alphaname), зарегистрированные в кабинете
-            websms.by.
+            API-токен из личного кабинета SMS.by (раздел «API»). Имя отправителя
+            (alphaname) и его числовой ID — опционально, если используете брендовое
+            имя.
           </DialogDescription>
         </DialogHeader>
 
@@ -133,66 +138,67 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="websms-base" className="text-xs">
-                URL API
+              <Label htmlFor="smsby-token" className="text-xs">
+                API-токен
               </Label>
               <Input
-                id="websms-base"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://cp.websms.by"
+                id="smsby-token"
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="off"
               />
+              <p className="text-xs text-muted-foreground">
+                Получить токен:{" "}
+                <a
+                  href="https://sms.by/cabinet/api"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  sms.by → Кабинет → API
+                </a>
+                .
+              </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="websms-user" className="text-xs">
-                  Логин (user)
+                <Label htmlFor="smsby-alphaname" className="text-xs">
+                  Alphaname (имя)
                 </Label>
                 <Input
-                  id="websms-user"
-                  value={login}
-                  onChange={(e) => setLogin(e.target.value)}
-                  placeholder="login"
+                  id="smsby-alphaname"
+                  value={alphaname}
+                  onChange={(e) => setAlphaname(e.target.value)}
+                  placeholder="напр. GorbovaCo"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="websms-apikey" className="text-xs">
-                  API-key
+                <Label htmlFor="smsby-alphaname-id" className="text-xs">
+                  Alphaname ID
                 </Label>
                 <Input
-                  id="websms-apikey"
-                  type="password"
-                  value={apikey}
-                  onChange={(e) => setApikey(e.target.value)}
-                  placeholder="••••••••"
+                  id="smsby-alphaname-id"
+                  value={alphanameId}
+                  onChange={(e) => setAlphanameId(e.target.value)}
+                  placeholder="напр. 12345"
+                  inputMode="numeric"
                 />
               </div>
             </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="websms-sender" className="text-xs">
-                Имя отправителя (alphaname)
-              </Label>
-              <Input
-                id="websms-sender"
-                value={sender}
-                onChange={(e) => setSender(e.target.value)}
-                placeholder="напр. GorbovaCo"
-              />
-              <p className="text-xs text-muted-foreground">
-                Alphaname должен быть зарегистрирован у websms.by, иначе сообщения не
-                будут доставлены.
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground -mt-2">
+              Если ID не указан — SMS уйдут с системного отправителя SMS.by.
+            </p>
 
             <div className="flex items-center gap-3 pt-2 border-t">
               <Switch
-                id="websms-enabled"
+                id="smsby-enabled"
                 checked={enabled}
                 onCheckedChange={setEnabled}
               />
-              <Label htmlFor="websms-enabled" className="text-sm cursor-pointer">
+              <Label htmlFor="smsby-enabled" className="text-sm cursor-pointer">
                 Интеграция включена
               </Label>
             </div>
@@ -203,7 +209,7 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Отмена
           </Button>
-          <Button onClick={save} disabled={saving || loading}>
+          <Button onClick={save} disabled={saving || loading || !token.trim()}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Сохранить
           </Button>
@@ -212,3 +218,4 @@ export function WebSmsSettingsDialog({ open, onOpenChange }: Props) {
     </Dialog>
   );
 }
+
