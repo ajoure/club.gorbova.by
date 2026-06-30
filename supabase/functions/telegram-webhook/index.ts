@@ -1380,7 +1380,9 @@ Deno.serve(async (req) => {
               // PII-safe log: only source / IDs / fallback flag — no names, no message text.
               console.log('[Push][telegram] resolved name', JSON.stringify({
                 source,
-                profile_user_id: profile.user_id,
+                profile_user_id: profile?.user_id ?? null,
+                profile_id: profile?.id ?? null,
+                is_guest: isGuestProfile,
                 tg_id: telegramUserId,
                 fallback,
               }));
