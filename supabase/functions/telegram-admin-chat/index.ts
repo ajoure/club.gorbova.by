@@ -184,6 +184,20 @@ function guessMimeType(fileName: string, kind: FileData["type"]) {
   }
   // document
   if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".docx"))
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".xlsx"))
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".pptx"))
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".zip")) return "application/zip";
+  if (lower.endsWith(".rar")) return "application/vnd.rar";
+  if (lower.endsWith(".json")) return "application/json";
   return "application/octet-stream";
 }
 
