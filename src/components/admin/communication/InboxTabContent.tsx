@@ -262,12 +262,15 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
 
       const userIds = rpcDialogs.map((d: any) => d.user_id);
 
-      // Fetch profiles, orders, subscriptions IN PARALLEL (not sequentially)
+      // Fetch profiles, orders, subscriptions IN PARALLEL (not sequentially).
+      // Dialog "user_id" from RPC may actually be profile.id (guest contacts without auth user),
+      // so we look profiles up by user_id OR by id.
+      
       const [profilesRes, ordersRes, subsRes] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url")
-          .in("user_id", userIds),
+          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
+          .or(`user_id.in.(${userIds.join(',')}),id.in.(${userIds.join(',')})`),
         supabase
           .from("orders_v2")
           .select("id, user_id, order_number, status, products_v2(name)")
@@ -284,7 +287,12 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       const orders = ordersRes.data || [];
       const subscriptions = subsRes.data || [];
 
-      const profileMap = new Map(profiles.map(p => [p.user_id, p]));
+      // Key the map by both user_id and id so dialog lookups by either work.
+      const profileMap = new Map<string, any>();
+      profiles.forEach((p: any) => {
+        if (p.user_id) profileMap.set(p.user_id, p);
+        if (p.id) profileMap.set(p.id, p);
+      });
       
       const ordersMap = new Map<string, any[]>();
       orders.forEach(o => {
@@ -894,6 +902,11 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                             ? formatContactName({ full_name: dialog.profile.full_name }) 
                             : dialog.profile?.email || "Неизвестный"}
                         </span>
+                        {(dialog.profile && !(dialog.profile as any).user_id) && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-amber-700 border-amber-400/60 bg-amber-50 whitespace-nowrap">
+                            из Telegram (без аккаунта)
+                          </Badge>
+                        )}
                         {(dialog.last_bot_name || dialog.last_bot_username) && (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
                             {displayBotLabel(dialog.last_bot_name, dialog.last_bot_username)}
