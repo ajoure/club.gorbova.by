@@ -128,13 +128,15 @@ function matchCall(remote: any[], localStartedAt: string, phoneDigits: string): 
   let best: { cand: any; score: number } | null = null;
   for (const c of remote) {
     const cPhone = normalizeDigits(
-      pick<string>(c, "phone", "destination", "to", "callee", "external_number", "client_number"),
+      pick<string>(c, "phone_number", "phone", "destination", "to", "callee", "external_number", "client_number"),
     );
+    // Совпадение по последним 9 цифрам (без кода страны).
     if (cPhone && !cPhone.endsWith(phoneDigits.slice(-9))) continue;
-    const startRaw = pick(c, "started_at", "start_time", "start", "created_at", "date");
+    const startRaw = pick(c, "start_time", "started_at", "start", "created_at", "date");
     const startTs = toIso(startRaw);
     const dt = startTs ? Math.abs(new Date(startTs).getTime() - localTs) : 1e15;
-    if (dt > 30 * 60 * 1000) continue; // в пределах 30 мин
+    // расширили окно до 2ч на случай рассинхронизации часов / задержек поллинга
+    if (dt > 2 * 60 * 60 * 1000) continue;
     const score = -dt;
     if (!best || score > best.score) best = { cand: c, score };
   }
@@ -143,9 +145,6 @@ function matchCall(remote: any[], localStartedAt: string, phoneDigits: string): 
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  // Auth: триггерится cron c anon-bearer (verify_jwt=false), либо service-role.
-  // Внутри читаем БД через service-role — функция read-only безопасна, но всё же
-  // запрещаем анонимный вызов без bearer.
   const auth = req.headers.get("authorization") ?? "";
   if (!auth.startsWith("Bearer ")) return json({ error: "forbidden" }, 403);
 
@@ -166,10 +165,11 @@ Deno.serve(async (req) => {
   if (!apiToken) return json({ ok: true, skipped: "no_api_token" });
 
   const sinceIso = new Date(Date.now() - POLL_WINDOW_MIN * 60 * 1000).toISOString();
+  // Берём также failed — VOCHI может прислать данные позднее, чем мы пометили stale.
   const { data: pending, error: pendErr } = await admin
     .from("calls")
-    .select("id, status, direction, phone_to_e164, phone_from_e164, started_at, external_call_id, metadata")
-    .in("status", ["queued", "ringing"])
+    .select("id, status, direction, phone_to_e164, phone_from_e164, started_at, external_call_id, duration_seconds, recording_url, metadata")
+    .in("status", ["queued", "ringing", "failed"])
     .gte("started_at", sinceIso)
     .order("started_at", { ascending: true })
     .limit(BATCH);
@@ -182,14 +182,17 @@ Deno.serve(async (req) => {
   let missed = 0;
 
   for (const call of pending) {
+    // Если failed-звонок уже не reachable через VOCHI и duration уже выставлен — не трогаем.
+    if (call.status === "failed" && call.duration_seconds && call.recording_url) continue;
+
     const phone = call.direction === "inbound" ? call.phone_from_e164 : call.phone_to_e164;
     if (!phone) continue;
     const { list: remote, diag } = await fetchVochiCallsByPhone(baseUrl, apiToken, phone);
     const match = matchCall(remote, call.started_at, normalizeDigits(phone));
 
     if (!match) {
-      // Если звонок завис дольше STALE_TIMEOUT_MIN — помечаем failed.
-      if (new Date(call.started_at).getTime() < staleCutoff) {
+      // Зависшие queued/ringing старше N минут — failed.
+      if (call.status !== "failed" && new Date(call.started_at).getTime() < staleCutoff) {
         await admin
           .from("calls")
           .update({
@@ -210,32 +213,46 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    const durationRaw = pick<number>(match, "duration_seconds", "duration", "billsec");
+    const duration = typeof durationRaw === "number" ? durationRaw : Number(durationRaw ?? 0) || null;
+
     const mappedStatus = mapVochiStatus(
-      pick(match, "status", "state", "result", "disposition"),
+      pick(match, "call_status", "status", "state", "result", "disposition"),
+      duration,
     );
-    const recordingUrl = pick<string>(match, "recording_url", "record_url", "recording", "audio_url");
-    const startedAt = toIso(pick(match, "started_at", "start_time", "start", "created_at"));
-    const answeredAt = toIso(pick(match, "answered_at", "answer_time", "answered"));
-    const endedAt = toIso(pick(match, "ended_at", "end_time", "ended", "finished_at"));
-    const externalId = pick<string>(match, "id", "call_id", "uuid", "uid");
+    const recordingUrl = pick<string>(match, "recording_url", "record_url", "recording", "audio_url", "download_url");
+    const startedAt = toIso(pick(match, "start_time", "started_at", "start", "created_at"));
+    const answeredAt = toIso(pick(match, "answered_at", "answer_time", "answered"))
+      // если answered нет, но звонок completed — считаем answered=start
+      ?? (mappedStatus === "completed" ? startedAt : null);
+    const endedAt = toIso(pick(match, "end_time", "ended_at", "ended", "finished_at"));
+    const externalId = pick<string>(match, "unique_id", "id", "call_id", "uuid", "uid");
 
     const patch: Record<string, any> = {};
     if (mappedStatus) patch.status = mappedStatus;
     if (recordingUrl) patch.recording_url = String(recordingUrl);
+    if (recordingUrl && !call.recording_url) {
+      patch.recording_provider = "vochi";
+      patch.recording_ready_at = new Date().toISOString();
+    }
     if (startedAt && !call.started_at) patch.started_at = startedAt;
     if (answeredAt) patch.answered_at = answeredAt;
     if (endedAt) patch.ended_at = endedAt;
-    if (externalId && String(call.external_call_id).startsWith("pending:")) {
-      patch.external_call_id = String(externalId);
+    if (duration && duration > 0) patch.duration_seconds = Math.round(duration);
+    if (externalId) {
+      const cur = String(call.external_call_id ?? "");
+      if (!cur || cur.startsWith("pending:")) patch.external_call_id = String(externalId);
     }
     patch.metadata = {
       ...(call.metadata ?? {}),
       poll_last_at: new Date().toISOString(),
+      poll_result: "matched",
       poll_remote_snapshot: match,
     };
 
     const { error: updErr } = await admin.from("calls").update(patch).eq("id", call.id);
     if (!updErr) updated++;
+    else console.log("[vochi-calls-poll] update err", call.id, updErr.message);
   }
 
   return json({ ok: true, scanned: pending.length, updated, stale_failed: stale, no_match: missed });
