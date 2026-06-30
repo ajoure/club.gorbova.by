@@ -296,14 +296,23 @@ export function useTrainingModules() {
 
         // Cross-product rule grant: any module explicitly listed (or under a full
         // subtree target_ref) of an active training_content rule becomes accessible.
+        let grantedByCrossProductRule = false;
         if (!m.has_access && ruleGrantedModuleIds.has(m.id)) {
           m = { ...m, has_access: true };
+          grantedByCrossProductRule = true;
+        } else if (m.has_access && ruleGrantedModuleIds.has(m.id)) {
+          // Module already had access via own product; cross-product rule also
+          // grants it explicitly — TC filter below must not strip it.
+          grantedByCrossProductRule = true;
         }
 
         if (!m.has_access) return m;
 
         // Apply training_content filter only for modules with confirmed access
-        if (m.product_id && tcRules.length > 0) {
+        // Skip filter for modules explicitly granted by a cross-product rule:
+        // the rule for product A targets a module under product B's tree, so
+        // resolving by m.product_id (= B) would default-deny it back.
+        if (!grantedByCrossProductRule && m.product_id && tcRules.length > 0) {
           const rootId = m.parent_module_id 
             ? enrichedModules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id
             : m.id;
@@ -319,6 +328,7 @@ export function useTrainingModules() {
           }
         }
         return m;
+
       });
 
       // Phase E: Compute visible recursive lesson count based on effective scope
