@@ -291,19 +291,7 @@ export default function AdminRoles() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Input
-                          defaultValue={user.vochi_sip_extension ?? ""}
-                          placeholder="напр. 150"
-                          maxLength={8}
-                          disabled={!hasPermission("admins.manage")}
-                          className="h-9 w-[140px] rounded-lg border-border/30 bg-card/30 font-mono text-sm"
-                          onBlur={(e) => handleSipExtensionSave(user.user_id, e.target.value, user.vochi_sip_extension)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
+
                         {canChangeRole && (
                           <Button
                             size="sm"
