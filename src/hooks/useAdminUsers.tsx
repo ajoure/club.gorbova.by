@@ -9,6 +9,7 @@ interface AdminUser {
   status: string;
   created_at: string;
   last_seen_at: string | null;
+  vochi_sip_extension: string | null;
   roles: {
     code: string;
     name: string;
@@ -70,6 +71,7 @@ export function useAdminUsers() {
         status: p.status,
         created_at: p.created_at,
         last_seen_at: p.last_seen_at,
+        vochi_sip_extension: (p as any).vochi_sip_extension ?? null,
         roles: rolesMap.get(p.user_id) || [],
       }));
 
