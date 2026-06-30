@@ -104,7 +104,7 @@ export function MediaLightbox({
         )}>
           {isPdf ? (
             <iframe
-              src={url}
+              src={`${url}${url.includes("#") ? "&" : "#"}view=Fit&zoom=page-fit`}
               className="w-full h-full border-0 bg-background"
               title={fileName || "PDF Document"}
               style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
