@@ -2,6 +2,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { X, Download, ExternalLink, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PdfViewer } from "./PdfViewer";
 
 interface MediaLightboxProps {
   open: boolean;
