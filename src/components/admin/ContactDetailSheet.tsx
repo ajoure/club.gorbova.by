@@ -140,6 +140,7 @@ import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
+import { SmsHistorySection } from "./sms/SmsHistorySection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
