@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Phone, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
