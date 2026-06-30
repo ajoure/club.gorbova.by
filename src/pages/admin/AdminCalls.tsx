@@ -647,9 +647,9 @@ export default function AdminCalls() {
             <Sparkles className="h-3.5 w-3.5 mr-1" />
           )}
           Расшифровать выбранные
-          </Button>
-        </div>
-      )}
+        </Button>
+      </div>
+
 
       {/* List */}
       <Card>
