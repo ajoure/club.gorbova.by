@@ -140,6 +140,18 @@ Deno.serve(async (req) => {
     const { base64, contentType } = await fetchRecordingBase64(call.recording_url, vochiToken);
     const format = audioFormatFromMime(contentType);
 
+    // Guard: пустая/битая запись (Vochi иногда отдаёт заглушку ~1 KB).
+    // base64.length * 3/4 ≈ размер бинарника; порог 4 KB.
+    const approxBytes = Math.floor(base64.length * 0.75);
+    if (approxBytes < 4096) {
+      await service.from("calls").update({
+        transcript_status: "skipped_empty_recording",
+        transcript_error: `recording_too_small_${approxBytes}b`,
+      }).eq("id", callId);
+      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes: approxBytes }, 200);
+    }
+
+
     // 1) Транскрипт
     const transcript = await callGateway([
       {
