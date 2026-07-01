@@ -154,8 +154,53 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     switch (action) {
       case "reset_password": {
-        const authUser = await findAuthUserByEmail(supabaseAdmin, normalizedEmail);
-        // Privacy: always return success even if user is missing.
+        let authUser = await findAuthUserByEmail(supabaseAdmin, normalizedEmail);
+
+        // Auto-provision auth account for imported profiles (getcourse_import etc.):
+        // profile exists with user_id IS NULL — there's no auth.users record yet,
+        // so `generateLink(type=recovery)` would fail. Create the auth user first;
+        // the handle_new_user trigger claims the imported profile automatically,
+        // then we send a normal recovery link so the user sets a real password.
+        if (!authUser) {
+          try {
+            const { data: importedProfile } = await supabaseAdmin
+              .from("profiles")
+              .select("id, email, first_name, last_name, full_name, phone, status, user_id")
+              .ilike("email", normalizedEmail)
+              .is("user_id", null)
+              .maybeSingle();
+
+            if (importedProfile?.id) {
+              const randomPassword = crypto.randomUUID() + crypto.randomUUID();
+              const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+                email: normalizedEmail,
+                password: randomPassword,
+                email_confirm: true,
+                user_metadata: {
+                  first_name: (importedProfile as any).first_name || undefined,
+                  last_name: (importedProfile as any).last_name || undefined,
+                  full_name: (importedProfile as any).full_name || undefined,
+                  phone: (importedProfile as any).phone || undefined,
+                  imported_claim: true,
+                },
+              });
+              if (createErr) {
+                console.error("[auth-actions] createUser for imported profile failed:", createErr);
+              } else if (created?.user) {
+                console.log(`[auth-actions] Auto-provisioned auth user for imported ${normalizedEmail} → ${created.user.id}`);
+                authUser = {
+                  id: created.user.id,
+                  email: created.user.email || normalizedEmail,
+                  email_confirmed_at: created.user.email_confirmed_at ?? null,
+                };
+              }
+            }
+          } catch (provErr) {
+            console.warn("[auth-actions] imported-profile auto-provision failed:", provErr);
+          }
+        }
+
+        // Privacy: still return success even if no profile exists at all.
         if (!authUser) {
           console.log(`[auth-actions] User not found — privacy-safe success for ${normalizedEmail}`);
           return new Response(JSON.stringify({ success: true }), {
