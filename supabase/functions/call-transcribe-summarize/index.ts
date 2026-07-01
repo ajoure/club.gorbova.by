@@ -108,6 +108,16 @@ Deno.serve(async (req) => {
     if (callErr || !call) return jsonResponse({ error: "call_not_found" }, 404);
     if (!call.recording_url) return jsonResponse({ error: "no_recording" }, 400);
 
+    // Guard: слишком короткий звонок → Gemini/Whisper галлюцинируют полный диалог
+    // из тишины/шума. Не расшифровываем звонки короче 5 секунд.
+    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < 5) {
+      await service.from("calls").update({
+        transcript_status: "skipped_too_short",
+        transcript_error: `duration_${call.duration_seconds}s_below_min_5s`,
+      }).eq("id", callId);
+      return jsonResponse({ ok: false, skipped: true, reason: "too_short", duration_seconds: call.duration_seconds }, 200);
+    }
+
     // mark processing
     await service.from("calls").update({
       transcript_status: "processing",
@@ -129,6 +139,18 @@ Deno.serve(async (req) => {
 
     const { base64, contentType } = await fetchRecordingBase64(call.recording_url, vochiToken);
     const format = audioFormatFromMime(contentType);
+
+    // Guard: пустая/битая запись (Vochi иногда отдаёт заглушку ~1 KB).
+    // base64.length * 3/4 ≈ размер бинарника; порог 4 KB.
+    const approxBytes = Math.floor(base64.length * 0.75);
+    if (approxBytes < 4096) {
+      await service.from("calls").update({
+        transcript_status: "skipped_empty_recording",
+        transcript_error: `recording_too_small_${approxBytes}b`,
+      }).eq("id", callId);
+      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes: approxBytes }, 200);
+    }
+
 
     // 1) Транскрипт
     const transcript = await callGateway([
