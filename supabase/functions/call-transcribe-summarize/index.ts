@@ -72,10 +72,10 @@ Deno.serve(async (req) => {
 
     // Guard: слишком короткий звонок → Gemini/Whisper галлюцинируют полный диалог
     // из тишины/шума. Не расшифровываем звонки короче 5 секунд.
-    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < 5) {
+    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < MIN_DURATION_SEC) {
       await service.from("calls").update({
         transcript_status: "skipped_too_short",
-        transcript_error: `duration_${call.duration_seconds}s_below_min_5s`,
+        transcript_error: `duration_${call.duration_seconds}s_below_min_${MIN_DURATION_SEC}s`,
       }).eq("id", callId);
       return jsonResponse({ ok: false, skipped: true, reason: "too_short", duration_seconds: call.duration_seconds }, 200);
     }
@@ -99,46 +99,24 @@ Deno.serve(async (req) => {
       vochiToken = (cred.data as any).api_token ?? null;
     }
 
-    const { base64, contentType } = await fetchRecordingBase64(call.recording_url, vochiToken);
+    const { base64, contentType, bytes } = await fetchRecordingBase64(call.recording_url, vochiToken);
     const format = audioFormatFromMime(contentType);
 
     // Guard: пустая/битая запись (Vochi иногда отдаёт заглушку ~1 KB).
-    // base64.length * 3/4 ≈ размер бинарника; порог 4 KB.
-    const approxBytes = Math.floor(base64.length * 0.75);
-    if (approxBytes < 4096) {
+    if (bytes < MIN_AUDIO_BYTES) {
       await service.from("calls").update({
         transcript_status: "skipped_empty_recording",
-        transcript_error: `recording_too_small_${approxBytes}b`,
+        transcript_error: `recording_too_small_${bytes}b`,
       }).eq("id", callId);
-      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes: approxBytes }, 200);
+      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes }, 200);
     }
 
-
-    // 1) Транскрипт
-    const transcript = await callGateway([
-      {
-        role: "system",
-        content:
-          "Ты — точный транскрибатор телефонных разговоров на русском языке. Верни только дословный текст разговора с разметкой по ролям (Оператор:/Клиент:) если можно определить. Не добавляй комментариев.",
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Расшифруй этот телефонный разговор полностью." },
-          { type: "input_audio", input_audio: { data: base64, format } },
-        ],
-      },
-    ]);
-
-    // 2) Сводка по транскрипту
-    const summary = await callGateway([
-      {
-        role: "system",
-        content:
-          "Ты — ассистент CRM. По расшифровке звонка составь краткое резюме (3-6 строк) на русском: тема, договорённости, следующий шаг. Без приветствий, без лишнего.",
-      },
-      { role: "user", content: `Расшифровка звонка:\n\n${transcript}` },
-    ]);
+    const { transcript, summary } = await transcribeAndSummarize({
+      apiKey: LOVABLE_API_KEY,
+      base64,
+      format,
+      kind: "call",
+    });
 
     await service.from("calls").update({
       transcript: transcript.trim(),
