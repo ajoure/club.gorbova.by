@@ -800,7 +800,7 @@ export default function AdminCalls() {
                   {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   <span className="ml-1 hidden sm:inline">AI</span>
                 </Button>
-              ) : (
+              ) : canShowAiButton ? (
                 <Button
                   type="button"
                   size="sm"
@@ -817,7 +817,7 @@ export default function AdminCalls() {
                   )}
                   <span className="ml-1 hidden sm:inline">AI-сводка</span>
                 </Button>
-              ))}
+              ) : null)}
             {isUnresolved && (
               <Button
                 size="sm"
