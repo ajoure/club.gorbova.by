@@ -89,12 +89,6 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setContactId(task.contact_id ?? null);
   }, [task, open]);
 
-  if (!task) return null;
-
-  const currentStatus = task.status;
-  const isPending = update.isPending || updateStatus.isPending;
-  const canSave = !!title.trim() && !!typeId && !isPending;
-
   const remindAtComputed = useMemo(
     () => computeRemindAt(dueAt || null, remindOffset),
     [dueAt, remindOffset],
@@ -103,6 +97,12 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     if (!remindAtComputed) return false;
     return new Date(remindAtComputed).getTime() < Date.now();
   }, [remindAtComputed]);
+
+  if (!task) return null;
+
+  const currentStatus = task.status;
+  const isPending = update.isPending || updateStatus.isPending;
+  const canSave = !!title.trim() && !!typeId && !isPending;
 
   const buildPatch = () => ({
     task_type_id: typeId,
