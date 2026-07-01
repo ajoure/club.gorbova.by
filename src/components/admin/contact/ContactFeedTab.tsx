@@ -146,15 +146,140 @@ function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
   );
 }
 
-function VoiceNoteBubble({ path }: { path: string }) {
+/**
+ * Принудительное скачивание: fetch → blob → object URL.
+ * Атрибут `download` игнорируется браузером на cross-origin ответах Storage
+ * (open in tab вместо save), поэтому качаем через blob.
+ */
+async function forceDownload(url: string, name: string) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`http_${resp.status}`);
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (e: any) {
+    toast.error(e?.message || "Ошибка скачивания");
+  }
+}
+
+/**
+ * VoiceNoteBubble — карточка голосового с плеером как у звонков,
+ * AI-расшифровкой (авто-запуск при отсутствии), сводкой, кнопкой отправки
+ * в support-Telegram. Никакого нативного <audio controls> с серым меню.
+ */
+function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+  const qc = useQueryClient();
+  const path = evt.meta?.storage_path as string | undefined;
+  const name = (evt.title || evt.meta?.name || `voice_${evt.id}.webm`) as string;
   const [url, setUrl] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [tgBusy, setTgBusy] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+
+  const transcript = evt.meta?.transcript as string | undefined;
+  const summary = evt.meta?.summary as string | undefined;
+  const status = evt.meta?.transcribe_status as string | undefined;
+  const reason = evt.meta?.transcribe_reason as string | undefined;
+  const sizeBytes = Number(evt.meta?.size_bytes || 0);
+  const canTranscribe = !!path && !transcript && !summary
+    && status !== "processing" && status !== "skipped_too_short" && sizeBytes >= 4096;
+
   useEffect(() => {
+    if (!path) return;
     supabase.storage.from("contact-files").createSignedUrl(path, 60 * 60).then(({ data }) => {
       if (data?.signedUrl) setUrl(data.signedUrl);
     });
   }, [path]);
+
+  async function runTranscribe() {
+    if (!evt.id) return;
+    try {
+      setAiBusy(true);
+      const { data, error } = await supabase.functions.invoke("voice-note-transcribe-summarize", {
+        body: { file_id: evt.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (data?.skipped) toast.info("Голосовое слишком короткое для расшифровки");
+      else toast.success("Расшифровка готова");
+      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+    } catch (e: any) {
+      toast.error(e?.message || "Ошибка расшифровки");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function sendToSupport() {
+    try {
+      setTgBusy(true);
+      const { data, error } = await supabase.functions.invoke("voice-note-forward-to-support", {
+        body: { file_id: evt.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const sent = Number(data?.sent || 0);
+      if (sent > 0) toast.success(`Отправлено в Telegram (${sent})`);
+      else toast.warning("Никто из support-админов не привязал Telegram");
+    } catch (e: any) {
+      toast.error(e?.message || "Ошибка отправки в Telegram");
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
   if (!url) return <div className="text-xs text-muted-foreground">Загрузка аудио…</div>;
-  return <audio src={url} controls className="w-full max-w-sm h-9" />;
+
+  return (
+    <div className="space-y-2">
+      {/* Плеер — тот же кастомный, что и в звонках, тонированный под голосовые */}
+      <CallRecordingPlayer
+        src={url}
+        fileName={name}
+        className="!bg-fuchsia-500/10 !border-fuchsia-500/25"
+      />
+
+      {/* Статусные состояния AI */}
+      {status === "processing" && (
+        <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+          <Sparkles className="w-3 h-3 animate-pulse" /> Расшифровка…
+        </div>
+      )}
+      {status === "skipped_too_short" && (
+        <div className="text-[11px] text-muted-foreground">Слишком короткое сообщение для AI</div>
+      )}
+      {status === "failed" && reason && (
+        <div className="text-[11px] text-destructive/80">AI: {reason}</div>
+      )}
+
+      {summary && (
+        <div className="rounded-lg bg-background/60 border border-fuchsia-500/20 p-2 text-xs whitespace-pre-wrap">
+          <div className="font-semibold text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Сводка</div>
+          {summary}
+        </div>
+      )}
+      {transcript && (
+        <details className="text-xs" open={showTranscript} onToggle={(e) => setShowTranscript((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Расшифровка</summary>
+          <div className="mt-1 whitespace-pre-wrap opacity-80">{transcript}</div>
+        </details>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {canTranscribe && (
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={aiBusy} onClick={runTranscribe}>
+            <Sparkles className="w-3 h-3 mr-1" /> {aiBusy ? "Расшифровка…" : "AI-сводка"}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" className="h-7 text-xs" disabled={tgBusy} onClick={sendToSupport}>
+          <Send className="w-3 h-3 mr-1" /> {tgBusy ? "Отправка…" : "В Telegram support"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function TextFilePreview({
