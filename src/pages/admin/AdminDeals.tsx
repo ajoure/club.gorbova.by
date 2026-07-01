@@ -90,6 +90,7 @@ import { BulkExtendAccessDialog } from "@/components/admin/BulkExtendAccessDialo
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
+import { CreateDealDialog } from "@/components/admin/CreateDealDialog";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
