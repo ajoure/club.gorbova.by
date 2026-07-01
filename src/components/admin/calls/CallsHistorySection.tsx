@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Play, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { CallRecordingPlayer } from "./CallRecordingPlayer";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
