@@ -763,8 +763,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       {/* Composer (Telegram-style, sticky bottom) */}
       <div className="sticky bottom-0 z-10 mt-2">
         {rec.blob ? (
-          <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
-            <audio src={URL.createObjectURL(rec.blob)} controls className="h-9 flex-1" />
+          <div className="flex items-center gap-2 rounded-2xl border border-fuchsia-500/25 bg-fuchsia-500/10 p-2 backdrop-blur">
+            <CallRecordingPlayer
+              src={recBlobUrl!}
+              className="!bg-fuchsia-500/10 !border-fuchsia-500/25 flex-1"
+              fileName={`voice_${Date.now()}.webm`}
+            />
             <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={rec.reset} title="Отменить">
               <X className="w-4 h-4" />
             </Button>
