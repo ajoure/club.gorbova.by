@@ -17230,6 +17230,20 @@ export type Database = {
         }
         Returns: string
       }
+      admin_create_deal: {
+        Args: {
+          p_amount?: number
+          p_currency?: string
+          p_notes?: string
+          p_pipeline_id?: string
+          p_pipeline_stage_id?: string
+          p_product_id?: string
+          p_profile_id: string
+          p_tariff_id?: string
+          p_title?: string
+        }
+        Returns: string
+      }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
