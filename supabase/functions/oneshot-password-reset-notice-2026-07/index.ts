@@ -133,14 +133,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const { data: roleRow } = await admin
+    const { data: roleRows } = await admin
       .from("user_roles_v2")
-      .select("role")
-      .eq("user_id", userData.user.id)
-      .in("role", ["super_admin"])
-      .maybeSingle();
-    if (!roleRow) {
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
+      .select("roles!inner(code)")
+      .eq("user_id", userData.user.id);
+    const codes = (roleRows || []).map((r: any) => r.roles?.code);
+    if (!codes.includes("super_admin")) {
+      return new Response(JSON.stringify({ error: "Forbidden", codes }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
