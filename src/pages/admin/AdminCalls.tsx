@@ -49,6 +49,7 @@ import {
 } from "@/components/admin/shared/pickers/ContactPickerDialog";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import callsHero from "@/assets/calls-hero.jpg";
+import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 
 // ---------- Types ----------
 
