@@ -1,0 +1,2 @@
+REVOKE ALL ON FUNCTION public.contact_feed_list(uuid, text[], text, integer, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.contact_feed_list(uuid, text[], text, integer, integer) TO authenticated, service_role;

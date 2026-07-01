@@ -113,6 +113,7 @@ import {
   RefreshCw,
   Link2,
   Activity,
+  Unlink,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -991,6 +992,27 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // Admin: reset Telegram binding for a contact profile (guest or real user)
+  const resetTelegramMutation = useMutation({
+    mutationFn: async ({ profileId }: { profileId: string }) => {
+      const { data, error } = await supabase.rpc("admin_reset_user_telegram" as any, {
+        _profile_id: profileId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Telegram-привязка сброшена — контакт может привязать свой Telegram заново");
+      queryClient.invalidateQueries({ queryKey: ["contact-full-profile", contact?.id] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+    },
+    onError: (e: any) => {
+      toast.error("Не удалось сбросить Telegram: " + (e?.message || "ошибка"));
+    },
+  });
+
+
+
 
   // Fetch reentry (former club member) status
   const { data: reentryStatus, refetch: refetchReentry } = useQuery({
@@ -1855,20 +1877,40 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           </>
                         )}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchPhotoFromTelegram}
-                        disabled={isFetchingPhoto}
-                        className="gap-1"
-                      >
-                        {isFetchingPhoto ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Download className="h-4 w-4" />
-                        )}
-                        Загрузить фото
-                      </Button>
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={fetchPhotoFromTelegram}
+                          disabled={isFetchingPhoto}
+                          className="gap-1"
+                        >
+                          {isFetchingPhoto ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          Загрузить фото
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 text-destructive hover:text-destructive"
+                          disabled={resetTelegramMutation.isPending}
+                          onClick={() => {
+                            if (!contact?.id) return;
+                            if (!confirm("Сбросить привязку Telegram у этого контакта? После этого человек сможет заново привязать свой Telegram-аккаунт.")) return;
+                            resetTelegramMutation.mutate({ profileId: contact.id });
+                          }}
+                        >
+                          {resetTelegramMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Unlink className="h-4 w-4" />
+                          )}
+                          Сбросить Telegram
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 )}

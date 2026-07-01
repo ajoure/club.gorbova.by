@@ -17419,6 +17419,10 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_reset_user_telegram: {
+        Args: { _profile_id: string }
+        Returns: Json
+      }
       admin_reset_user_trial: {
         Args: { p_product_id: string; p_tariff_id?: string; p_user_id: string }
         Returns: Json
