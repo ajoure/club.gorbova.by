@@ -1681,6 +1681,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Badge>
             )}
 
+            {!resolvedUserId && contact?.email && (
+              <Badge
+                variant="outline"
+                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+                onClick={() => {
+                  if (sendInviteMutation.isPending) return;
+                  if (!confirm(`Отправить приглашение на ${contact.email}? Клиент получит письмо со ссылкой для входа и сможет задать свой пароль.`)) return;
+                  sendInviteMutation.mutate({ email: contact.email! });
+                }}
+              >
+                {sendInviteMutation.isPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Mail className="w-3 h-3" />
+                )}
+                отправить приглашение
+              </Badge>
+            )}
+
             {resolvedStatus === "imported" ? (
               <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 bg-blue-500/20 text-blue-600 border-blue-500/30">
                 <UserX className="w-3 h-3" />
