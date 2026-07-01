@@ -108,6 +108,16 @@ Deno.serve(async (req) => {
     if (callErr || !call) return jsonResponse({ error: "call_not_found" }, 404);
     if (!call.recording_url) return jsonResponse({ error: "no_recording" }, 400);
 
+    // Guard: слишком короткий звонок → Gemini/Whisper галлюцинируют полный диалог
+    // из тишины/шума. Не расшифровываем звонки короче 5 секунд.
+    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < 5) {
+      await service.from("calls").update({
+        transcript_status: "skipped_too_short",
+        transcript_error: `duration_${call.duration_seconds}s_below_min_5s`,
+      }).eq("id", callId);
+      return jsonResponse({ ok: false, skipped: true, reason: "too_short", duration_seconds: call.duration_seconds }, 200);
+    }
+
     // mark processing
     await service.from("calls").update({
       transcript_status: "processing",
