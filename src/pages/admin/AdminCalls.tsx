@@ -710,9 +710,14 @@ export default function AdminCalls() {
     const cname = contactName(call.contact_id);
     const key = `call:${call.id}`;
     const checked = selectedKeys.has(key);
+    const isSkippedTranscript =
+      call.transcript_status === "skipped_too_short" ||
+      call.transcript_status === "skipped_empty_recording";
+    const isTooShort = (call.duration_seconds ?? 0) < 5;
+    const canShowAiButton = Boolean(call.recording_url) && !isSkippedTranscript && !isTooShort;
     const eligibleForTranscribe = Boolean(
       call.recording_url && !call.transcript && call.transcript_status !== "processing"
-    );
+    ) && !isSkippedTranscript && !isTooShort;
 
     return (
       <div
@@ -795,7 +800,7 @@ export default function AdminCalls() {
                   {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   <span className="ml-1 hidden sm:inline">AI</span>
                 </Button>
-              ) : (
+              ) : canShowAiButton ? (
                 <Button
                   type="button"
                   size="sm"
@@ -812,7 +817,7 @@ export default function AdminCalls() {
                   )}
                   <span className="ml-1 hidden sm:inline">AI-сводка</span>
                 </Button>
-              ))}
+              ) : null)}
             {isUnresolved && (
               <Button
                 size="sm"

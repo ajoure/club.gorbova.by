@@ -164,6 +164,11 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
           const isOpen = expanded[call.id];
           const hasResult = Boolean(call.transcript || call.summary);
           const isProcessing = processingId === call.id || call.transcript_status === "processing";
+          const isSkippedTranscript =
+            call.transcript_status === "skipped_too_short" ||
+            call.transcript_status === "skipped_empty_recording";
+          const isTooShort = (call.duration_seconds ?? 0) < 5;
+          const canShowAiButton = Boolean(call.recording_url) && !isSkippedTranscript && !isTooShort;
           return (
             <div
               key={call.id}
@@ -217,7 +222,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                         {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         <span className="ml-1 hidden sm:inline">AI</span>
                       </Button>
-                    ) : (
+                    ) : canShowAiButton ? (
                       <Button
                         type="button"
                         size="sm"
@@ -234,7 +239,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                         )}
                         <span className="ml-1 hidden sm:inline">AI-сводка</span>
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>
