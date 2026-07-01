@@ -95,17 +95,27 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const isPending = update.isPending || updateStatus.isPending;
   const canSave = !!title.trim() && !!typeId && !isPending;
 
+  const remindAtComputed = useMemo(
+    () => computeRemindAt(dueAt || null, remindOffset),
+    [dueAt, remindOffset],
+  );
+  const remindWarnPast = useMemo(() => {
+    if (!remindAtComputed) return false;
+    return new Date(remindAtComputed).getTime() < Date.now();
+  }, [remindAtComputed]);
+
   const buildPatch = () => ({
     task_type_id: typeId,
     title: title.trim(),
     description: description.trim() || null,
     due_at: dueAt || null,
-    remind_at: remindAt || null,
+    remind_at: remindAtComputed,
     assignee_user_id: assignee === UNASSIGNED ? null : assignee,
     result_comment: result.trim() || null,
     deal_id: dealId,
     contact_id: contactId,
   });
+
 
   // Save: persist field edits without changing status.
   const handleSave = async () => {
