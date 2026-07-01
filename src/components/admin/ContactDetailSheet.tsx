@@ -1855,20 +1855,40 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           </>
                         )}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchPhotoFromTelegram}
-                        disabled={isFetchingPhoto}
-                        className="gap-1"
-                      >
-                        {isFetchingPhoto ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Download className="h-4 w-4" />
-                        )}
-                        Загрузить фото
-                      </Button>
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={fetchPhotoFromTelegram}
+                          disabled={isFetchingPhoto}
+                          className="gap-1"
+                        >
+                          {isFetchingPhoto ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          Загрузить фото
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 text-destructive hover:text-destructive"
+                          disabled={resetTelegramMutation.isPending}
+                          onClick={() => {
+                            if (!contact?.id) return;
+                            if (!confirm("Сбросить привязку Telegram у этого контакта? После этого человек сможет заново привязать свой Telegram-аккаунт.")) return;
+                            resetTelegramMutation.mutate({ profileId: contact.id });
+                          }}
+                        >
+                          {resetTelegramMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Unlink className="h-4 w-4" />
+                          )}
+                          Сбросить Telegram
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 )}
