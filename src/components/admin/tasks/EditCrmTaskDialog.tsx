@@ -81,7 +81,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setTitle(task.title ?? "");
     setDescription(task.description ?? "");
     setDueAt(task.due_at ?? "");
-    setRemindAt(task.remind_at ?? "");
+    setRemindOffset(inferOffsetMinutes(task.due_at, task.remind_at));
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
     setResult(task.result_comment ?? "");
     setCommentError(null);
