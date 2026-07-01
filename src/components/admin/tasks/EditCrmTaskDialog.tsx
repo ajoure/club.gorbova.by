@@ -33,6 +33,12 @@ import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
 import { TaskRelationsField } from "./TaskRelationsField";
 import {
+  RemindOffsetSelect,
+  computeRemindAt,
+  inferOffsetMinutes,
+} from "./RemindOffsetSelect";
+
+import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
   TASK_DIALOG_SAVE_CTA,
