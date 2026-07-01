@@ -289,7 +289,16 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
         _offset: 0,
       });
       if (error) throw error;
-      return ((data ?? []) as unknown) as FeedEvent[];
+      // RPC возвращает jsonb-массив. Иногда supabase-js оборачивает в {data: [...]}.
+      const raw: any = data;
+      const arr = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : typeof raw === "string"
+            ? (() => { try { return JSON.parse(raw); } catch { return []; } })()
+            : [];
+      return arr as FeedEvent[];
     },
   });
 
