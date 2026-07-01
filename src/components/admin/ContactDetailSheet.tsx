@@ -1707,7 +1707,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <CreditCard className="w-3 h-3 mr-1" />
                 Платежи
               </TabsTrigger>
-              <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
+              
               <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Согласия
                 {profileConsent?.consent_version && (
