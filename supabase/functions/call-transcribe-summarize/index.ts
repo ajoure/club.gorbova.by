@@ -7,6 +7,13 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  audioFormatFromMime,
+  fetchAudioBase64,
+  transcribeAndSummarize,
+  MIN_AUDIO_BYTES,
+  MIN_DURATION_SEC,
+} from "../_shared/transcribe-audio.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,9 +24,6 @@ const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-const GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const MODEL = "google/gemini-2.5-flash"; // audio in -> text out
-
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -28,53 +32,11 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 async function fetchRecordingBase64(url: string, vochiToken?: string | null) {
-  // Если ссылка ведёт на VOCHI API — добавим ?key=<token> для авторизации.
   let finalUrl = url;
   if (vochiToken && /vochi\.by/i.test(url) && !/[?&]key=/i.test(url)) {
     finalUrl = `${url}${url.includes("?") ? "&" : "?"}key=${encodeURIComponent(vochiToken)}`;
   }
-  const res = await fetch(finalUrl);
-  if (!res.ok) {
-    throw new Error(`recording_fetch_failed: ${res.status} ${res.statusText}`);
-  }
-  const contentType = res.headers.get("content-type") || "audio/mpeg";
-  const buf = new Uint8Array(await res.arrayBuffer());
-  // base64 chunked encode
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < buf.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)));
-  }
-  const base64 = btoa(binary);
-  return { base64, contentType };
-}
-
-function audioFormatFromMime(mime: string): string {
-  const m = mime.toLowerCase();
-  if (m.includes("wav")) return "wav";
-  if (m.includes("ogg") || m.includes("opus")) return "ogg";
-  if (m.includes("webm")) return "webm";
-  if (m.includes("flac")) return "flac";
-  return "mp3";
-}
-
-async function callGateway(messages: any[]): Promise<string> {
-  const res = await fetch(GATEWAY, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: MODEL, messages }),
-  });
-  if (res.status === 429) throw new Error("ai_rate_limited");
-  if (res.status === 402) throw new Error("ai_credits_exhausted");
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`ai_gateway_${res.status}: ${text.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content ?? "";
+  return await fetchAudioBase64(finalUrl);
 }
 
 Deno.serve(async (req) => {
@@ -110,10 +72,10 @@ Deno.serve(async (req) => {
 
     // Guard: слишком короткий звонок → Gemini/Whisper галлюцинируют полный диалог
     // из тишины/шума. Не расшифровываем звонки короче 5 секунд.
-    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < 5) {
+    if (typeof call.duration_seconds === "number" && call.duration_seconds > 0 && call.duration_seconds < MIN_DURATION_SEC) {
       await service.from("calls").update({
         transcript_status: "skipped_too_short",
-        transcript_error: `duration_${call.duration_seconds}s_below_min_5s`,
+        transcript_error: `duration_${call.duration_seconds}s_below_min_${MIN_DURATION_SEC}s`,
       }).eq("id", callId);
       return jsonResponse({ ok: false, skipped: true, reason: "too_short", duration_seconds: call.duration_seconds }, 200);
     }
@@ -137,46 +99,24 @@ Deno.serve(async (req) => {
       vochiToken = (cred.data as any).api_token ?? null;
     }
 
-    const { base64, contentType } = await fetchRecordingBase64(call.recording_url, vochiToken);
+    const { base64, contentType, bytes } = await fetchRecordingBase64(call.recording_url, vochiToken);
     const format = audioFormatFromMime(contentType);
 
     // Guard: пустая/битая запись (Vochi иногда отдаёт заглушку ~1 KB).
-    // base64.length * 3/4 ≈ размер бинарника; порог 4 KB.
-    const approxBytes = Math.floor(base64.length * 0.75);
-    if (approxBytes < 4096) {
+    if (bytes < MIN_AUDIO_BYTES) {
       await service.from("calls").update({
         transcript_status: "skipped_empty_recording",
-        transcript_error: `recording_too_small_${approxBytes}b`,
+        transcript_error: `recording_too_small_${bytes}b`,
       }).eq("id", callId);
-      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes: approxBytes }, 200);
+      return jsonResponse({ ok: false, skipped: true, reason: "empty_recording", bytes }, 200);
     }
 
-
-    // 1) Транскрипт
-    const transcript = await callGateway([
-      {
-        role: "system",
-        content:
-          "Ты — точный транскрибатор телефонных разговоров на русском языке. Верни только дословный текст разговора с разметкой по ролям (Оператор:/Клиент:) если можно определить. Не добавляй комментариев.",
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Расшифруй этот телефонный разговор полностью." },
-          { type: "input_audio", input_audio: { data: base64, format } },
-        ],
-      },
-    ]);
-
-    // 2) Сводка по транскрипту
-    const summary = await callGateway([
-      {
-        role: "system",
-        content:
-          "Ты — ассистент CRM. По расшифровке звонка составь краткое резюме (3-6 строк) на русском: тема, договорённости, следующий шаг. Без приветствий, без лишнего.",
-      },
-      { role: "user", content: `Расшифровка звонка:\n\n${transcript}` },
-    ]);
+    const { transcript, summary } = await transcribeAndSummarize({
+      apiKey: LOVABLE_API_KEY,
+      base64,
+      format,
+      kind: "call",
+    });
 
     await service.from("calls").update({
       transcript: transcript.trim(),

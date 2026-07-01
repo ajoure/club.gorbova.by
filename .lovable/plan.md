@@ -1,76 +1,112 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. В RPC fix обязательно заменить не только `cancelled` → `canceled`, а проверить все enum-сравнения в `contact_feed_list`, чтобы не осталось других строковых значений, которых нет в enum.
-2. В DoD добавить proof:
-  - direct SQL call RPC от service/admin возвращает события;
-  - authenticated UI call возвращает 200;
-  - React Query `isError` реально показывает error-state при искусственной ошибке.
-3. В `ContactFeedTab.tsx` error-state должен показывать:
-  - текст ошибки;
-  - кнопку «Повторить»;
-  - не должен очищать уже загруженные события, если ошибка случилась при refetch.
-4. Composer/layout править только после browser-preview. Не трогать `ContactDetailSheet`, если проблема решается локально в `ContactFeedTab`.
-5. В отчет о выполнении обязательно включить raw proof:
-  - enum values `order_status`;
-  - старый 400 network error;
-  - новый 200 network response;
-  - количество событий по тестовому contact_id.
-  - &nbsp;
-  - План:
+1. **Не создавать новую Edge Function**, если можно расширить существующую.  
+Сначала проверить `call-transcribe-summarize`: если можно вынести shared-модуль — делаем:
+  - `_shared/transcribe-audio.ts`
+  - `call-transcribe-summarize` использует shared
+  - `voice-note-transcribe-summarize` только thin wrapper
+2. **Перед миграцией проверить** `contact_files` **schema.**  
+Если уже есть `meta jsonb`, лучше хранить:
+  &nbsp;
+  ```sql
+  meta.transcript
+  meta.summary
+  meta.transcribe_status
+  meta.transcribe_reason
+  ```
+  Не добавлять колонки, если `meta` уже есть.
+3. **Telegram forward:**  
+Лучше не новая функция, а сначала проверить существующие:
+  &nbsp;
+  &nbsp;
+  - `telegram-admin-chat`
+  - `telegram-webhook`
+  - support-bot send helpers  
+  Если нет подходящего action — добавить action add-only.
+4. **Security guard:**  
+Для forward/download/transcribe:
+  - только authenticated staff;
+  - `has_permission(auth.uid(), 'contacts.view')`;
+  - service_role только внутри edge.
+5. **Download fix:**  
+Обязательно оставить два действия:
+  - `Открыть`
+  - `Скачать`  
+  Не заменять preview полностью.
+6. **CallRecordingPlayer:**  
+Не ломать звонки. `accentClassName` сделать optional, default оставить прежним.
+7. **Realtime / refresh:**  
+После транскрибации обязательно:
+  - обновить `contact_files.meta`;
+  - invalidate `contact_feed_list`;
+  - проверить, что карточка обновляется без F5.
+8. **DoD добавить raw proof:**
+  - schema `contact_files`;
+  - proof reuse shared transcribe;
+  - SQL по voice file meta после транскрибации;
+  - browser proof download;
+  - Telegram delivery screenshot/log.
 
-1. **Проблема**
-  - Вкладка «Лента» в карточке контакта показывает пустое состояние, хотя по тестовому контакту реально есть данные: звонки, Telegram, письма, SMS, заметки, файлы и сделки.
-  - Интерфейс маскирует backend-ошибку как «Пока событий нет», поэтому визуально выглядит так, будто данных нет.
-2. **Диагностика**
-  - Фактическая причина, почему прошлое исправление не сработало: я проверил наличие функции и частично фронтовый парсинг, но не проверил реальный authenticated-вызов RPC из UI и network response.
-  - Сейчас реальный запрос `/rpc/contact_feed_list` падает с ошибкой `invalid input value for enum order_status: "cancelled"`.
-  - В базе enum статусов заказа содержит `canceled`, а в функции `contact_feed_list` используется ветка `WHEN 'cancelled'`. Из-за этого вся функция падает целиком, React Query получает ошибку, а компонент показывает пустое состояние вместо событий.
-  - Дополнительная проблема: `ContactFeedTab.tsx` не показывает состояние ошибки RPC, а превращает сбой загрузки в empty-state, поэтому баг был скрыт.
-  - Композер в текущем коде уже близок к требованию: одна строка `[emoji] [paperclip] [input] [mic] [send]`, файл/задача внутри Popover. Но нужно проверить live UI после исправления ленты и убрать любые остаточные внешние отступы/пустую нижнюю зону, если они появляются из контейнера вкладки/Sheet.
-3. **Предлагаемое решение**
-  - Исправить backend RPC `public.contact_feed_list`, заменив неверное сравнение enum-статуса `cancelled` на фактический `canceled` или безопасный `o.status::text`, чтобы функция не падала на enum-cast.
-  - Добавить защиту в `ContactFeedTab.tsx`: если RPC возвращает ошибку, показывать явную ошибку с кнопкой повторить, а не «Пока событий нет».
-  - Уточнить парсинг результата RPC: оставить поддержку `jsonb`-массива, но добавить безопасный fallback только для реально пустого массива, не для ошибки.
-  - Проверить composer/layout: оставить одну строку, Paperclip Popover с двумя пунктами «Файл» и «Задача», без отдельной строки «+ Задача», без второго футера и без нижней пустой панели.
-4. **Изменяемые компоненты**
-  - Backend/database:
-    - RPC `public.contact_feed_list(uuid, text[], text, int, int)`.
-  - Frontend:
-    - `src/components/admin/contact/ContactFeedTab.tsx`.
-    - При необходимости только layout-классы контейнера вкладки в `src/components/admin/ContactDetailSheet.tsx`, если реальный preview покажет, что пустая зона создаётся родительским `TabsContent`/Sheet-контейнером.
-  - Не создаю новые таблицы, новые источники данных, новые вкладки или параллельные workflow.
-5. **Что не будет изменено**
-  - Не меняю структуру CRM, карточку контакта целиком, бизнес-логику сделок, роли доступа, платежи, заказы, Telegram/SMS/email интеграции.
-  - Не делаю массовых UPDATE/DELETE данных.
-  - Не заменяю существующую архитектуру ленты — только исправляю фактический runtime-сбой и UI-маскировку ошибки.
-6. **Dry-run**
-  - До применения миграции выполнить read-only проверки:
-    - подтвердить enum-значения `order_status`;
-    - подтвердить, что по тестовому контакту есть строки в `calls`, `sms_messages`, `telegram_messages`, `email_logs`, `contact_notes`, `contact_files`, `orders_v2`;
-    - проверить текущие grants/execute на RPC;
-    - проверить network response из preview — сейчас он 400.
-  - STOP до Execute, если окажется, что в production есть другой тип статуса или другая активная сигнатура функции.
-7. **Execute**
-  - Выпустить миграцию `PATCH-CONTACT-FEED-ENUM-CRASH-FIX`:
-    - исправить `contact_feed_list`, чтобы статус заказа обрабатывался через безопасное текстовое сравнение и не валил всю ленту;
-    - сохранить `SECURITY DEFINER`, `search_path = public`, `REVOKE` для `PUBLIC/anon`, `GRANT EXECUTE` для authenticated/service role.
-  - Обновить `ContactFeedTab.tsx`:
-    - добавить обработку `isError/error`;
-    - empty-state показывать только если RPC успешно вернул пустой массив;
-    - оставить composer одной строкой и удалить/сузить остаточные отступы, если они подтверждаются в preview.
-8. **STOP-guards**
-  - Остановиться, если:
-    - RPC после исправления возвращает 0 событий при подтвержденных rowcount > 0;
-    - меняется сигнатура функции и фронт не сможет вызвать RPC без обновления типов;
-    - обнаруживается RLS/role regression для сотрудников/админов;
-    - layout-правка требует изменения общей архитектуры Sheet, а не локального компонента.
-9. **DoD**
-  - SQL-проверка показывает, что по контакту `5ec52e5f-424c-4486-82e6-301c3d4af9c8` RPC возвращает непустой массив событий.
-  - Network request `/rpc/contact_feed_list` в preview возвращает успешный ответ, не 400.
-  - В UI вкладка «Лента» показывает реальные карточки событий, а не «Пока событий нет».
-  - Ошибка RPC больше не маскируется под пустую ленту.
-  - Композер визуально в одну строку: emoji, paperclip menu, input, mic, send.
-  - Внизу нет отдельной строки «+ Задача» и нет пустой второй панели.
-10. **Риски и зависимости**
-  - Основной риск — функция агрегирует много источников, поэтому одно несовпадение типа/enum в любом источнике может снова валить всю ленту. Я закрою найденный enum-crash и добавлю UI-защиту, чтобы следующий backend-сбой был виден как ошибка, а не как «нет данных».
-  - Если после исправления enum появится другая ошибка внутри RPC, работа не будет считаться выполненной до успешного browser/network proof.
+&nbsp;
+
+Можно отдавать в работу.
+
+&nbsp;
+
+План: Апгрейд «Ленты» — голосовые, плеер, цвета, скачивание, Telegram
+
+### 1. Транскрибация голосовых (reuse call-transcribe-summarize)
+
+- Добавить в `contact_files` (или meta) поля-снапшот: `transcript`, `summary`, `transcribe_status` (`pending|processing|done|skipped_too_short|failed`), `transcribe_reason`.
+- Создать Edge Function `voice-note-transcribe-summarize` — тонкий wrapper поверх существующей логики `call-transcribe-summarize` (переиспользовать shared-модуль или вынести общую функцию `transcribeAndSummarize(audioUrl)` в `_shared/`). Никакой параллельной второй реализации.
+- Автозапуск: после успешной загрузки голосового в композере (`ContactFeedTab`) — вызвать функцию (fire-and-forget), UI показывает статус «Расшифровывается…», при готовности — карточка обновляется через React Query invalidation/Realtime.
+- Применить те же guard'ы: файл < 4KB или длительность < 5с → `skipped_too_short`, кнопка AI-сводки скрыта (единая логика, как в `AdminCalls.tsx`).
+- Расширить `contact_feed_list` — отдавать `transcript`, `summary`, `transcribe_status` в событии типа `voice_note`.
+
+### 2. Единый медиаплеер для голосовых
+
+- Переиспользовать `CallRecordingPlayer` (тот же, что в звонках): seek-bar, скорость 0.5×–2×, скачивание.
+- В `ContactFeedTab.tsx` заменить `<audio controls>` в ветке `voice_note` на `<CallRecordingPlayer src={fileUrl} />`.
+- Убрать нативное меню трёх точек браузера (оно исчезнет автоматически вместе с `controls`).
+
+### 3. Кнопка «Отправить в Telegram support-бот»
+
+- В карточке голосового — иконка Telegram рядом со скачиванием.
+- Edge Function `voice-note-forward-to-support` (или расширить существующую `telegram-send-support`): скачивает файл из `contact-files` bucket (service_role), шлёт `sendVoice`/`sendAudio` в чат support-бота (ID из secret `TELEGRAM_SUPPORT_CHAT_ID`), в caption — ссылка на контакт + транскрипт (если готов).
+- Гвард: только роли с правом `contacts.view` (employee+).
+
+### 4. Фикс «Скачать» для файлов
+
+- В `ContactFeedTab.tsx` кнопка скачивания сейчас открывает `getPublicUrl` в новом табе → браузер показывает preview.
+- Использовать `supabase.storage.from('contact-files').download(path)` → `Blob` → `URL.createObjectURL` + `<a download={filename}>` программный клик. Для крупных файлов — сгенерировать signed URL с `?download=filename` параметром (Supabase поддерживает `download` опцию в `createSignedUrl`).
+- Оставить отдельный action «Открыть» для preview (текст/PDF/картинка).
+
+### 5. Цветовая система событий (все типы разные)
+
+Ввести единый map `EVENT_STYLES` в `ContactFeedTab.tsx`:
+
+
+| Тип        | Bg (light)                        | Icon color  | Accent      |
+| ---------- | --------------------------------- | ----------- | ----------- |
+| call       | sky-50                            | sky-600     | sky-500     |
+| sms        | emerald-50                        | emerald-600 | emerald-500 |
+| email      | violet-50                         | violet-600  | violet-500  |
+| telegram   | cyan-50                           | cyan-600    | cyan-500    |
+| voice_note | pink-50 (сохранить текущий)       | pink-600    | pink-500    |
+| file       | amber-50                          | amber-600   | amber-500   |
+| note       | yellow-50                         | yellow-700  | yellow-600  |
+| task       | indigo-50                         | indigo-600  | indigo-500  |
+| deal       | teal-50 (сейчас совпадает с file) | teal-600    | teal-500    |
+| event      | slate-50                          | slate-600   | slate-500   |
+
+
+Сейчас `file` и `deal` одного цвета — развести. Плеер `CallRecordingPlayer` в голосовом получает пропс `accentClassName`, чтобы прогресс-бар/кнопки совпадали с pink-акцентом карточки (для звонков остаётся sky).
+
+### 6. DoD
+
+- Голосовое, записанное в композере, появляется в ленте, через ~10с показывает транскрипт и AI-сводку (или `skipped_too_short`).
+- Плеер голосового = плеер звонка (внешне и функционально), 3-точечного нативного меню нет.
+- Клик «Скачать» на файле или голосовом — реально скачивает (Content-Disposition: attachment), а не открывает preview.
+- Кнопка Telegram отправляет файл + метаданные в support-бот, приходит уведомление.
+- Все 10 типов событий визуально различимы (bg/icon/accent), `file` ≠ `deal`.
+- Никаких дубликатов Edge-функций/RPC: воспроизводимая цепочка `_shared/transcribe.ts` → `call-transcribe-summarize` и `voice-note-transcribe-summarize`.

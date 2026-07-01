@@ -50,6 +50,8 @@ interface FeedEvent {
   author: string | null;
 }
 
+// Каждый тип события — уникальный «дорогой» оттенок; никаких коллизий цвета
+// между двумя разными типами (например, file/deal больше не оба зелёные).
 const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; iconColor: string; }> = {
   call:       { label: "Звонок",   icon: Phone,         tint: "bg-blue-500/10 border-blue-500/20",       iconColor: "text-blue-600 bg-blue-500/15" },
   sms:        { label: "SMS",      icon: MessageCircle, tint: "bg-green-500/10 border-green-500/20",     iconColor: "text-green-600 bg-green-500/15" },
@@ -57,8 +59,8 @@ const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; icon
   telegram:   { label: "Telegram", icon: Send,          tint: "bg-sky-500/10 border-sky-500/20",         iconColor: "text-sky-600 bg-sky-500/15" },
   task:       { label: "Задача",   icon: ClipboardList, tint: "bg-amber-500/10 border-amber-500/20",     iconColor: "text-amber-600 bg-amber-500/15" },
   note:       { label: "Заметка",  icon: StickyNote,    tint: "bg-rose-400/10 border-rose-400/20",       iconColor: "text-rose-600 bg-rose-400/15" },
-  file:       { label: "Файл",     icon: Paperclip,     tint: "bg-teal-500/10 border-teal-500/20",       iconColor: "text-teal-600 bg-teal-500/15" },
-  voice_note: { label: "Голосовое",icon: Mic,           tint: "bg-fuchsia-500/10 border-fuchsia-500/20", iconColor: "text-fuchsia-600 bg-fuchsia-500/15" },
+  file:       { label: "Файл",     icon: Paperclip,     tint: "bg-orange-500/10 border-orange-500/20",   iconColor: "text-orange-600 bg-orange-500/15" },
+  voice_note: { label: "Голосовое",icon: Mic,           tint: "bg-fuchsia-500/10 border-fuchsia-500/25", iconColor: "text-fuchsia-600 bg-fuchsia-500/15" },
   deal:       { label: "Сделка",   icon: Handshake,     tint: "bg-emerald-500/10 border-emerald-500/20", iconColor: "text-emerald-600 bg-emerald-500/15" },
   event:      { label: "Событие",  icon: Activity,      tint: "bg-indigo-500/10 border-indigo-500/20",   iconColor: "text-indigo-600 bg-indigo-500/15" },
 };
@@ -144,15 +146,140 @@ function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
   );
 }
 
-function VoiceNoteBubble({ path }: { path: string }) {
+/**
+ * Принудительное скачивание: fetch → blob → object URL.
+ * Атрибут `download` игнорируется браузером на cross-origin ответах Storage
+ * (open in tab вместо save), поэтому качаем через blob.
+ */
+async function forceDownload(url: string, name: string) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`http_${resp.status}`);
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (e: any) {
+    toast.error(e?.message || "Ошибка скачивания");
+  }
+}
+
+/**
+ * VoiceNoteBubble — карточка голосового с плеером как у звонков,
+ * AI-расшифровкой (авто-запуск при отсутствии), сводкой, кнопкой отправки
+ * в support-Telegram. Никакого нативного <audio controls> с серым меню.
+ */
+function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+  const qc = useQueryClient();
+  const path = evt.meta?.storage_path as string | undefined;
+  const name = (evt.title || evt.meta?.name || `voice_${evt.id}.webm`) as string;
   const [url, setUrl] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [tgBusy, setTgBusy] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+
+  const transcript = evt.meta?.transcript as string | undefined;
+  const summary = evt.meta?.summary as string | undefined;
+  const status = evt.meta?.transcribe_status as string | undefined;
+  const reason = evt.meta?.transcribe_reason as string | undefined;
+  const sizeBytes = Number(evt.meta?.size_bytes || 0);
+  const canTranscribe = !!path && !transcript && !summary
+    && status !== "processing" && status !== "skipped_too_short" && sizeBytes >= 4096;
+
   useEffect(() => {
+    if (!path) return;
     supabase.storage.from("contact-files").createSignedUrl(path, 60 * 60).then(({ data }) => {
       if (data?.signedUrl) setUrl(data.signedUrl);
     });
   }, [path]);
+
+  async function runTranscribe() {
+    if (!evt.id) return;
+    try {
+      setAiBusy(true);
+      const { data, error } = await supabase.functions.invoke("voice-note-transcribe-summarize", {
+        body: { file_id: evt.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (data?.skipped) toast.info("Голосовое слишком короткое для расшифровки");
+      else toast.success("Расшифровка готова");
+      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+    } catch (e: any) {
+      toast.error(e?.message || "Ошибка расшифровки");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function sendToSupport() {
+    try {
+      setTgBusy(true);
+      const { data, error } = await supabase.functions.invoke("voice-note-forward-to-support", {
+        body: { file_id: evt.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const sent = Number(data?.sent || 0);
+      if (sent > 0) toast.success(`Отправлено в Telegram (${sent})`);
+      else toast.warning("Никто из support-админов не привязал Telegram");
+    } catch (e: any) {
+      toast.error(e?.message || "Ошибка отправки в Telegram");
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
   if (!url) return <div className="text-xs text-muted-foreground">Загрузка аудио…</div>;
-  return <audio src={url} controls className="w-full max-w-sm h-9" />;
+
+  return (
+    <div className="space-y-2">
+      {/* Плеер — тот же кастомный, что и в звонках, тонированный под голосовые */}
+      <CallRecordingPlayer
+        src={url}
+        fileName={name}
+        className="!bg-fuchsia-500/10 !border-fuchsia-500/25"
+      />
+
+      {/* Статусные состояния AI */}
+      {status === "processing" && (
+        <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+          <Sparkles className="w-3 h-3 animate-pulse" /> Расшифровка…
+        </div>
+      )}
+      {status === "skipped_too_short" && (
+        <div className="text-[11px] text-muted-foreground">Слишком короткое сообщение для AI</div>
+      )}
+      {status === "failed" && reason && (
+        <div className="text-[11px] text-destructive/80">AI: {reason}</div>
+      )}
+
+      {summary && (
+        <div className="rounded-lg bg-background/60 border border-fuchsia-500/20 p-2 text-xs whitespace-pre-wrap">
+          <div className="font-semibold text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Сводка</div>
+          {summary}
+        </div>
+      )}
+      {transcript && (
+        <details className="text-xs" open={showTranscript} onToggle={(e) => setShowTranscript((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Расшифровка</summary>
+          <div className="mt-1 whitespace-pre-wrap opacity-80">{transcript}</div>
+        </details>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {canTranscribe && (
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={aiBusy} onClick={runTranscribe}>
+            <Sparkles className="w-3 h-3 mr-1" /> {aiBusy ? "Расшифровка…" : "AI-сводка"}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" className="h-7 text-xs" disabled={tgBusy} onClick={sendToSupport}>
+          <Send className="w-3 h-3 mr-1" /> {tgBusy ? "Отправка…" : "В Telegram support"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function TextFilePreview({
@@ -276,6 +403,11 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     el.style.height = Math.min(160, el.scrollHeight) + "px";
   }, [noteBody]);
 
+  // Blob URL для превью только что записанного голосового; освобождаем при смене blob.
+  const recBlobUrl = useMemo(() => (rec.blob ? URL.createObjectURL(rec.blob) : null), [rec.blob]);
+  useEffect(() => () => { if (recBlobUrl) URL.revokeObjectURL(recBlobUrl); }, [recBlobUrl]);
+
+
   const types = selected.size === 0 ? null : Array.from(selected);
 
   const {
@@ -368,7 +500,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     onError: (e: any) => toast.error(e?.message || "Не удалось удалить"),
   });
 
-  async function uploadBlob(blob: Blob, filename: string, mime: string) {
+  async function uploadBlob(blob: Blob, filename: string, mime: string): Promise<string> {
     const { data: u } = await supabase.auth.getUser();
     const uid = u?.user?.id;
     if (!uid) throw new Error("no auth");
@@ -376,7 +508,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     const path = `${contactId}/${Date.now()}_${safeName}`;
     const up = await supabase.storage.from("contact-files").upload(path, blob, { contentType: mime, upsert: false });
     if (up.error) throw up.error;
-    const { error: insErr } = await supabase.from("contact_files").insert({
+    const { data: inserted, error: insErr } = await supabase.from("contact_files").insert({
       contact_id: contactId,
       uploader_id: uid,
       name: filename,
@@ -384,8 +516,9 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       url: null,
       mime_type: mime,
       size_bytes: blob.size,
-    });
+    }).select("id").single();
     if (insErr) throw insErr;
+    return inserted!.id as string;
   }
 
   async function handleFiles(list: FileList | null) {
@@ -410,10 +543,14 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     try {
       setUploading(true);
       const name = `voice_${Date.now()}.webm`;
-      await uploadBlob(rec.blob, name, "audio/webm");
+      const fileId = await uploadBlob(rec.blob, name, "audio/webm");
       toast.success("Голосовое отправлено");
       rec.reset();
       invalidate();
+      // Фоновая AI-расшифровка (не блокирует UI). Ошибки уже пишутся в meta функцией.
+      supabase.functions.invoke("voice-note-transcribe-summarize", { body: { file_id: fileId } })
+        .then(() => invalidate())
+        .catch((e) => console.warn("[voice-note] auto-transcribe failed:", e));
     } catch (e: any) {
       toast.error(e?.message || "Ошибка загрузки");
     } finally {
@@ -421,6 +558,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     }
   }
 
+  /** Открывает файл в подходящем предпросмотре (или скачивает, если превью нет). */
   async function openFile(evt: FeedEvent) {
     const path = evt.meta?.storage_path as string | undefined;
     const name = (evt.title || evt.meta?.name || "file") as string;
@@ -434,10 +572,20 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     if (kind === "image") setPreviewImage({ url: data.signedUrl, name });
     else if (kind === "pdf") setPreviewPdf({ url: data.signedUrl, name });
     else if (kind === "text") setPreviewText({ path, name });
-    else {
-      const a = document.createElement("a");
-      a.href = data.signedUrl; a.download = name; a.click();
+    else await forceDownload(data.signedUrl, name);
+  }
+
+  /** Всегда качает файл на диск (кнопка «Скачать» в списке). */
+  async function downloadFile(evt: FeedEvent) {
+    const path = evt.meta?.storage_path as string | undefined;
+    const name = (evt.title || evt.meta?.name || "file") as string;
+    if (!path) {
+      if (evt.meta?.url) await forceDownload(evt.meta.url, name);
+      return;
     }
+    const { data, error } = await supabase.storage.from("contact-files").createSignedUrl(path, 60 * 10);
+    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
+    await forceDownload(data.signedUrl, name);
   }
 
   const toggleType = (k: FeedKind) => {
@@ -559,7 +707,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                       <div className="mt-2"><CallCard evt={evt} contactId={contactId} /></div>
                     ) : evt.kind === "voice_note" ? (
                       <div className="mt-2">
-                        {evt.meta?.storage_path && <VoiceNoteBubble path={evt.meta.storage_path} />}
+                        <VoiceNoteBubble evt={evt} contactId={contactId} />
                       </div>
                     ) : evt.kind === "note" ? (
                       <div className="mt-1 text-sm whitespace-pre-wrap break-words">{evt.body}</div>
@@ -599,7 +747,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                   {(evt.kind === "file" || evt.kind === "voice_note") && (
                     <div className="flex flex-col gap-1">
                       {evt.kind === "file" && (
-                        <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => openFile(evt)} title="Скачать">
+                        <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => downloadFile(evt)} title="Скачать">
                           <Download className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -620,8 +768,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       {/* Composer (Telegram-style, sticky bottom) */}
       <div className="sticky bottom-0 z-10 mt-2">
         {rec.blob ? (
-          <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
-            <audio src={URL.createObjectURL(rec.blob)} controls className="h-9 flex-1" />
+          <div className="flex items-center gap-2 rounded-2xl border border-fuchsia-500/25 bg-fuchsia-500/10 p-2 backdrop-blur">
+            <CallRecordingPlayer
+              src={recBlobUrl!}
+              className="!bg-fuchsia-500/10 !border-fuchsia-500/25 flex-1"
+              fileName={`voice_${Date.now()}.webm`}
+            />
             <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={rec.reset} title="Отменить">
               <X className="w-4 h-4" />
             </Button>

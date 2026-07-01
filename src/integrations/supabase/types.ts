@@ -3608,6 +3608,7 @@ export type Database = {
           contact_id: string
           created_at: string
           id: string
+          meta: Json
           mime_type: string | null
           name: string
           size_bytes: number | null
@@ -3619,6 +3620,7 @@ export type Database = {
           contact_id: string
           created_at?: string
           id?: string
+          meta?: Json
           mime_type?: string | null
           name: string
           size_bytes?: number | null
@@ -3630,6 +3632,7 @@ export type Database = {
           contact_id?: string
           created_at?: string
           id?: string
+          meta?: Json
           mime_type?: string | null
           name?: string
           size_bytes?: number | null
