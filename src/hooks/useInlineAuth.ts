@@ -208,6 +208,16 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
         const needsConfirmation = !data.session;
 
         if (needsConfirmation) {
+          // Reliable-delivery follow-up (see AuthContext.signUp for rationale):
+          // re-send confirmation via Yandex-SMTP-backed auth-actions so users
+          // actually receive the confirmation link.
+          try {
+            await supabase.functions.invoke("auth-actions", {
+              body: { action: "confirm_signup", email: email.toLowerCase().trim() },
+            });
+          } catch (hookErr) {
+            console.warn("[useInlineAuth] confirm_signup follow-up failed:", hookErr);
+          }
           setStep("email_confirm");
           authInProgressRef.current = false;
         } else {
