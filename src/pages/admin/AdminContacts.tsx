@@ -1144,7 +1144,7 @@ export default function AdminContacts() {
           />
 
           {/* Create contact — quick action */}
-          {hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
+          {canWrite("contacts") || isSuperAdmin() || hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
             <button
               type="button"
               onClick={() => setShowCreateContact(true)}
