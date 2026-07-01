@@ -49,6 +49,7 @@ import {
 } from "@/components/admin/shared/pickers/ContactPickerDialog";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import callsHero from "@/assets/calls-hero.jpg";
+import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 
 // ---------- Types ----------
 
@@ -775,12 +776,10 @@ export default function AdminCalls() {
 
           <div className="shrink-0 flex items-center gap-2 flex-wrap">
             {call.recording_url && (
-              <audio
-                controls
-                preload="none"
+              <CallRecordingPlayer
                 src={call.recording_url}
-                className="h-8 max-w-[220px]"
-                title="Запись звонка"
+                fallbackDurationSec={call.duration_seconds}
+                fileName={`call-${call.public_id ?? call.id}.mp3`}
               />
             )}
             {call.recording_url &&
@@ -814,20 +813,6 @@ export default function AdminCalls() {
                   <span className="ml-1 hidden sm:inline">AI-сводка</span>
                 </Button>
               ))}
-            {call.recording_url && (
-              <a
-                href={call.recording_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-                  "hover:bg-accent transition-colors"
-                )}
-                title="Открыть запись"
-              >
-                <Play className="h-3 w-3" />
-              </a>
-            )}
             {isUnresolved && (
               <Button
                 size="sm"

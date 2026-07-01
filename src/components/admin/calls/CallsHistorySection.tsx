@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Play, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { CallRecordingPlayer } from "./CallRecordingPlayer";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -199,12 +200,10 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                 </div>
                 {call.recording_url && (
                   <div className="shrink-0 flex items-center gap-2">
-                    <audio
-                      controls
-                      preload="none"
+                    <CallRecordingPlayer
                       src={call.recording_url}
-                      className="h-8 max-w-[220px]"
-                      title="Запись звонка"
+                      fallbackDurationSec={call.duration_seconds}
+                      fileName={`call-${call.public_id ?? call.id}.mp3`}
                     />
                     {hasResult ? (
                       <Button
@@ -236,18 +235,6 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                         <span className="ml-1 hidden sm:inline">AI-сводка</span>
                       </Button>
                     )}
-                    <a
-                      href={call.recording_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-                        "hover:bg-accent transition-colors"
-                      )}
-                      title="Открыть запись в новой вкладке"
-                    >
-                      <Play className="h-3 w-3" />
-                    </a>
                   </div>
                 )}
               </div>
