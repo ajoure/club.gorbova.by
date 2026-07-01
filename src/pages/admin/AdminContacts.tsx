@@ -218,7 +218,7 @@ export default function AdminContacts() {
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
   const [showCreateContact, setShowCreateContact] = useState(false);
-  const { hasPermission } = usePermissions();
+  const { hasPermission, canWrite, isSuperAdmin } = usePermissions();
   
   // Bulk action dialogs
   const [showBulkArchiveDialog, setShowBulkArchiveDialog] = useState(false);
@@ -1144,7 +1144,7 @@ export default function AdminContacts() {
           />
 
           {/* Create contact — quick action */}
-          {hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
+          {canWrite("contacts") || isSuperAdmin() || hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
             <button
               type="button"
               onClick={() => setShowCreateContact(true)}

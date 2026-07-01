@@ -46,7 +46,7 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
       const [pipesRes, stagesRes, prodRes, tariffRes] = await Promise.all([
         supabase.from("crm_pipelines").select("id,name").order("name"),
         supabase.from("crm_pipeline_stages").select("id,name,pipeline_id,order_index,is_default").order("order_index"),
-        supabase.from("products").select("id,name").eq("is_active", true).order("name"),
+        supabase.from("products_v2").select("id,name").eq("is_active", true).order("name"),
         supabase.from("tariffs").select("id,name,product_id").eq("is_active", true).order("name"),
       ]);
       setPipelines(pipesRes.data ?? []);
