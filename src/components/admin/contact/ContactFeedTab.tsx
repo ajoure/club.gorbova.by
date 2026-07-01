@@ -596,9 +596,27 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                 </div>
               </PopoverContent>
             </Popover>
-            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading} onClick={() => fileRef.current?.click()} title="Файл">
-              <Paperclip className="w-4 h-4" />
-            </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading}>
+                  <Paperclip className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-44 p-1" side="top" align="start">
+                <button
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-accent"
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Paperclip className="w-4 h-4" /> Файл
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-accent"
+                  onClick={() => setCreateTaskOpen(true)}
+                >
+                  <ClipboardList className="w-4 h-4" /> Задача
+                </button>
+              </PopoverContent>
+            </Popover>
             <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
             <Textarea
               ref={composerRef}
@@ -628,11 +646,6 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
             </Button>
           </div>
         )}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" className="h-7 px-3 text-xs" onClick={() => setCreateTaskOpen(true)}>
-            <Plus className="w-3 h-3 mr-1" /> Задача
-          </Button>
-        </div>
       </div>
 
       {/* Modals */}
