@@ -1,6 +1,12 @@
 import {
-  h
-} from "./chunk-DBLFZ5FW.js";
+  Dropcursor,
+  Gapcursor,
+  TrailingNode,
+  UndoRedo
+} from "./chunk-GMRYMVEE.js";
+import {
+  Underline
+} from "./chunk-BQBJTJ3P.js";
 import {
   find,
   registerCustomProtocol,
@@ -8,14 +14,8 @@ import {
   tokenize
 } from "./chunk-EQWNW52X.js";
 import {
-  Underline
-} from "./chunk-BQBJTJ3P.js";
-import {
-  Dropcursor,
-  Gapcursor,
-  TrailingNode,
-  UndoRedo
-} from "./chunk-GMRYMVEE.js";
+  h
+} from "./chunk-DBLFZ5FW.js";
 import {
   Extension,
   Mark,
