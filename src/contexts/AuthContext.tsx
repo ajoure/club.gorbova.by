@@ -170,7 +170,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data: null 
       };
     }
-    
+
+    // Reliable-delivery follow-up: Supabase's built-in signup email uses the
+    // default sender (no wired auth-send-email hook at project level), which
+    // caused mass "письмо не приходит" incidents. Re-send the confirmation via
+    // our Yandex-SMTP-backed auth-actions edge function so delivery is
+    // guaranteed even if the built-in mail is throttled or dropped.
+    if (data?.user && !data?.session && !error) {
+      try {
+        await supabase.functions.invoke("auth-actions", {
+          body: { action: "confirm_signup", email: email.trim().toLowerCase() },
+        });
+      } catch (hookErr) {
+        console.warn("[signUp] auth-actions confirm_signup follow-up failed:", hookErr);
+      }
+    }
+
     return { error, data };
   };
 
