@@ -217,6 +217,7 @@ export default function AdminContacts() {
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
+  const [showCreateContact, setShowCreateContact] = useState(false);
   const { hasPermission } = usePermissions();
   
   // Bulk action dialogs
