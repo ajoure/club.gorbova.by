@@ -2,7 +2,7 @@ import { chromium } from '@playwright/test';
 const session = process.env.LOVABLE_BROWSER_SUPABASE_SESSION_JSON;
 const storageKey = process.env.LOVABLE_BROWSER_SUPABASE_STORAGE_KEY;
 if (!session || !storageKey) throw new Error('Missing browser session env');
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: '/bin/chromium' });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 page.on('console', msg => {
   const text = msg.text();
