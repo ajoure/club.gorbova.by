@@ -570,10 +570,10 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       </div>
 
       {/* Composer (Telegram-style, sticky bottom) */}
-      <div className="sticky bottom-0 z-10 mt-2 border-t bg-background/95 backdrop-blur pt-3">
+      <div className="sticky bottom-0 z-10 mt-2">
         {rec.blob ? (
-          <div className="flex items-center gap-2 p-2 rounded-2xl bg-muted/40 border border-border/50">
-            <audio src={URL.createObjectURL(rec.blob)} controls className="flex-1 h-9" />
+          <div className="flex items-center gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
+            <audio src={URL.createObjectURL(rec.blob)} controls className="h-9 flex-1" />
             <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={rec.reset} title="Отменить">
               <X className="w-4 h-4" />
             </Button>
@@ -582,7 +582,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
             </Button>
           </div>
         ) : rec.recording ? (
-          <div className="flex items-center gap-2 p-2 rounded-2xl bg-red-500/10 border border-red-500/30">
+          <div className="flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 p-2 backdrop-blur">
             <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm tabular-nums">{Math.floor(rec.elapsed/60)}:{String(rec.elapsed%60).padStart(2,"0")}</span>
             <span className="text-xs text-muted-foreground flex-1">Идёт запись…</span>
@@ -591,7 +591,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
             </Button>
           </div>
         ) : (
-          <div className="flex items-end gap-2 p-2 rounded-2xl bg-muted/30 border border-border/50">
+          <div className="flex items-end gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
             <Popover>
               <PopoverTrigger asChild>
                 <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" title="Эмодзи">
