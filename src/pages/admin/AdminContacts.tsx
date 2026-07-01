@@ -90,6 +90,7 @@ import { ContactFiltersBar } from "@/components/admin/ContactFiltersBar";
 import { CleanupDialog } from "@/components/admin/CleanupDialog";
 import { GetCourseContactsImportDialog } from "@/components/admin/GetCourseContactsImportDialog";
 import { usePermissions } from "@/hooks/usePermissions";
+import { CreateContactDialog } from "@/components/admin/CreateContactDialog";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
 import { formatContactName } from "@/lib/nameUtils";
