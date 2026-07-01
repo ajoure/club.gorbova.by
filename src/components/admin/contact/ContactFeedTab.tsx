@@ -686,7 +686,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                       <div className="mt-2"><CallCard evt={evt} contactId={contactId} /></div>
                     ) : evt.kind === "voice_note" ? (
                       <div className="mt-2">
-                        {evt.meta?.storage_path && <VoiceNoteBubble path={evt.meta.storage_path} />}
+                        <VoiceNoteBubble evt={evt} contactId={contactId} />
                       </div>
                     ) : evt.kind === "note" ? (
                       <div className="mt-1 text-sm whitespace-pre-wrap break-words">{evt.body}</div>
