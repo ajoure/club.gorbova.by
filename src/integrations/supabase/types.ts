@@ -17215,6 +17215,21 @@ export type Database = {
     }
     Functions: {
       _crm_tasks_assert_staff: { Args: never; Returns: undefined }
+      admin_create_contact: {
+        Args: {
+          p_city?: string
+          p_country?: string
+          p_email?: string
+          p_first_name?: string
+          p_full_name?: string
+          p_last_name?: string
+          p_notes?: string
+          p_phone?: string
+          p_position?: string
+          p_telegram_username?: string
+        }
+        Returns: string
+      }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
