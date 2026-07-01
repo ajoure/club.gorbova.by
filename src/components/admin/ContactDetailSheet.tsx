@@ -1902,7 +1902,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             ref={scrollContainerRef}
             className={cn("flex-1 overflow-y-auto", activeTab === "telegram" && "hidden")}
           >
-            <div className="px-4 sm:px-6 py-4 pb-24">
+            <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
                 <CardHeader className="pb-2">
