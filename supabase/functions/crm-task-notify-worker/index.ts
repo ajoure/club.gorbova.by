@@ -210,11 +210,14 @@ Deno.serve(async (req: Request) => {
         .eq("id", task.task_type_id)
         .maybeSingle();
 
-      const text = buildText(
-        n.notification_type === "overdue" ? "overdue" : "reminder",
-        task,
-        ttype,
-      );
+      const kind: "reminder" | "overdue" | "assigned" =
+        n.notification_type === "overdue"
+          ? "overdue"
+          : n.notification_type === "assigned"
+            ? "assigned"
+            : "reminder";
+      const text = buildText(kind, task, ttype);
+
 
       const chatId = String(profile.telegram_user_id).replace(/\.\d+$/, ""); // tolerate float repr
       const sendRes = await sendTelegram(botToken, chatId, text);
