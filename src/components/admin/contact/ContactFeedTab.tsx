@@ -742,7 +742,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                   {(evt.kind === "file" || evt.kind === "voice_note") && (
                     <div className="flex flex-col gap-1">
                       {evt.kind === "file" && (
-                        <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => openFile(evt)} title="Скачать">
+                        <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => downloadFile(evt)} title="Скачать">
                           <Download className="w-3.5 h-3.5" />
                         </Button>
                       )}
