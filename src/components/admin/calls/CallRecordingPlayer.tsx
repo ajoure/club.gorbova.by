@@ -111,7 +111,7 @@ export function CallRecordingPlayer({ src, fallbackDurationSec, className, fileN
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border border-border/60",
+        "flex w-full items-center gap-2 rounded-full border border-border/60",
         "bg-background/60 backdrop-blur px-2 py-1 shadow-sm",
         className,
       )}
@@ -130,7 +130,7 @@ export function CallRecordingPlayer({ src, fallbackDurationSec, className, fileN
         {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-[1px]" />}
       </button>
 
-      <div className="flex items-center gap-2 min-w-[180px]">
+      <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-right">
           {fmt(cur)}
         </span>
