@@ -1316,6 +1316,15 @@ export default function AdminContacts() {
         onSuccess={() => refetch()}
       />
 
+      <CreateContactDialog
+        open={showCreateContact}
+        onOpenChange={setShowCreateContact}
+        onCreated={(id) => {
+          queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
+          setSelectedContactId(id);
+        }}
+      />
+
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row gap-4">
