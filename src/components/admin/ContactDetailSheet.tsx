@@ -24,6 +24,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -111,6 +112,7 @@ import {
   
   RefreshCw,
   Link2,
+  Activity,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -1672,6 +1674,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Activity className="w-3 h-3 mr-1" />
+                Лента
+              </TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <MessageCircle className="w-3 h-3 mr-1" />
                 Telegram
@@ -1701,7 +1707,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <CreditCard className="w-3 h-3 mr-1" />
                 Платежи
               </TabsTrigger>
-              <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
+              
               <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Согласия
                 {profileConsent?.consent_version && (
@@ -3527,120 +3533,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Communications Tab */}
-            <TabsContent value="communications" className="m-0 space-y-4">
-              {/* Webinar Activity Section */}
-              {resolvedUserId && (
-                <WebinarActivitySection userId={resolvedUserId} isStaff={isStaffRole(authRole)} />
-              )}
-
-              {/* Notification Events Section */}
-              {notificationEvents && notificationEvents.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Send className="w-4 h-4" />
-                      Уведомления
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {notificationEvents.slice(0, 10).map((event: any) => (
-                      <div key={event.id} className={cn(
-                        "flex items-center justify-between p-2 rounded border-l-2",
-                        event.channel === 'telegram' ? 'border-l-blue-500 bg-blue-50/50' : 'border-l-green-500 bg-green-50/50'
-                      )}>
-                        <div className="flex items-center gap-2">
-                          {event.channel === 'telegram' ? (
-                            <Send className="w-3.5 h-3.5 text-blue-500" />
-                          ) : (
-                            <Mail className="w-3.5 h-3.5 text-green-500" />
-                          )}
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium">{getEventLabel(event.event_type)}</span>
-                            <div className="flex items-center gap-1.5">
-                              <Badge 
-                                variant="outline" 
-                                className={cn(
-                                  "text-[10px] px-1.5 py-0",
-                                  event.status === 'success' && 'bg-green-100 text-green-700 border-green-200',
-                                  event.status === 'skipped' && 'bg-amber-100 text-amber-700 border-amber-200',
-                                  event.status === 'failed' && 'bg-red-100 text-red-700 border-red-200',
-                                )}
-                              >
-                                {event.status === 'success' ? 'Отправлено' : event.status === 'skipped' ? 'Пропущено' : 'Ошибка'}
-                              </Badge>
-                              {event.reason && (
-                                <span className="text-xs text-muted-foreground">
-                                  {event.reason === 'no_telegram_linked' ? 'TG не привязан' : 
-                                   event.reason === 'no_link_bot_configured' ? 'Бот не настроен' : event.reason}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {format(new Date(event.created_at), "dd.MM HH:mm")}
-                        </span>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Audit Events Section */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <History className="w-4 h-4" />
-                    События
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {commsLoading ? (
-                    <div className="space-y-3">
-                      {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
-                    </div>
-                  ) : !communications?.length ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                      <p>Нет событий</p>
-                    </div>
-                  ) : (
-                    communications.map((comm: any) => (
-                      <div key={comm.id} className="p-3 border rounded-lg space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-medium text-sm">{getEventLabel(comm.action)}</span>
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {format(new Date(comm.created_at), "dd.MM.yy HH:mm")}
-                          </span>
-                        </div>
-                        {comm.actor_profile && (
-                          <div className="text-xs text-muted-foreground">
-                            <span>Выполнил: </span>
-                            <button
-                              onClick={() => {
-                                window.location.href = `/admin/contacts?user=${comm.actor_user_id}`;
-                              }}
-                              className="text-primary hover:underline inline-flex items-center gap-1"
-                            >
-                              {comm.actor_profile.full_name || comm.actor_profile.email || "Сотрудник"}
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                        {comm.meta && Object.keys(comm.meta).length > 0 && (
-                          <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1">
-                            {Object.entries(comm.meta).slice(0, 3).map(([key, value]) => (
-                              <div key={key} className="truncate">
-                                <span className="font-medium">{key}:</span> {String(value)}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+            <TabsContent value="feed" className="m-0 space-y-4">
+              <ContactFeedTab contactId={contact.id} />
             </TabsContent>
 
             {/* Consent Tab */}

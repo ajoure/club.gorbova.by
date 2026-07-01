@@ -3603,6 +3603,85 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_files: {
+        Row: {
+          contact_id: string
+          created_at: string
+          id: string
+          mime_type: string | null
+          name: string
+          size_bytes: number | null
+          storage_path: string
+          uploader_id: string
+          url: string | null
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          id?: string
+          mime_type?: string | null
+          name: string
+          size_bytes?: number | null
+          storage_path: string
+          uploader_id: string
+          url?: string | null
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          id?: string
+          mime_type?: string | null
+          name?: string
+          size_bytes?: number | null
+          storage_path?: string
+          uploader_id?: string
+          url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_files_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contact_notes: {
+        Row: {
+          author_id: string
+          body: string
+          contact_id: string
+          created_at: string
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          contact_id: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          contact_id?: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_notes_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_requests: {
         Row: {
           consent: boolean
@@ -17632,6 +17711,21 @@ export type Database = {
         Args: { from_ts: string; rule: Json }
         Returns: string
       }
+      contact_feed_list: {
+        Args: {
+          _contact_id: string
+          _limit?: number
+          _offset?: number
+          _search?: string
+          _types?: string[]
+        }
+        Returns: Json
+      }
+      contact_note_create: {
+        Args: { _body: string; _contact_id: string }
+        Returns: string
+      }
+      contact_note_delete: { Args: { _note_id: string }; Returns: boolean }
       convert_preorder_on_pay_atomic: {
         Args: { p_paid_order_id: string }
         Returns: Json
