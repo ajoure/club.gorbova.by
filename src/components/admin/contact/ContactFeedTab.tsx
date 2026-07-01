@@ -50,6 +50,8 @@ interface FeedEvent {
   author: string | null;
 }
 
+// Каждый тип события — уникальный «дорогой» оттенок; никаких коллизий цвета
+// между двумя разными типами (например, file/deal больше не оба зелёные).
 const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; iconColor: string; }> = {
   call:       { label: "Звонок",   icon: Phone,         tint: "bg-blue-500/10 border-blue-500/20",       iconColor: "text-blue-600 bg-blue-500/15" },
   sms:        { label: "SMS",      icon: MessageCircle, tint: "bg-green-500/10 border-green-500/20",     iconColor: "text-green-600 bg-green-500/15" },
@@ -57,8 +59,8 @@ const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; icon
   telegram:   { label: "Telegram", icon: Send,          tint: "bg-sky-500/10 border-sky-500/20",         iconColor: "text-sky-600 bg-sky-500/15" },
   task:       { label: "Задача",   icon: ClipboardList, tint: "bg-amber-500/10 border-amber-500/20",     iconColor: "text-amber-600 bg-amber-500/15" },
   note:       { label: "Заметка",  icon: StickyNote,    tint: "bg-rose-400/10 border-rose-400/20",       iconColor: "text-rose-600 bg-rose-400/15" },
-  file:       { label: "Файл",     icon: Paperclip,     tint: "bg-teal-500/10 border-teal-500/20",       iconColor: "text-teal-600 bg-teal-500/15" },
-  voice_note: { label: "Голосовое",icon: Mic,           tint: "bg-fuchsia-500/10 border-fuchsia-500/20", iconColor: "text-fuchsia-600 bg-fuchsia-500/15" },
+  file:       { label: "Файл",     icon: Paperclip,     tint: "bg-orange-500/10 border-orange-500/20",   iconColor: "text-orange-600 bg-orange-500/15" },
+  voice_note: { label: "Голосовое",icon: Mic,           tint: "bg-fuchsia-500/10 border-fuchsia-500/25", iconColor: "text-fuchsia-600 bg-fuchsia-500/15" },
   deal:       { label: "Сделка",   icon: Handshake,     tint: "bg-emerald-500/10 border-emerald-500/20", iconColor: "text-emerald-600 bg-emerald-500/15" },
   event:      { label: "Событие",  icon: Activity,      tint: "bg-indigo-500/10 border-indigo-500/20",   iconColor: "text-indigo-600 bg-indigo-500/15" },
 };
