@@ -68,7 +68,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueAt, setDueAt] = useState("");
-  const [remindAt, setRemindAt] = useState("");
+  const [remindOffset, setRemindOffset] = useState<number | null>(null);
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [result, setResult] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
