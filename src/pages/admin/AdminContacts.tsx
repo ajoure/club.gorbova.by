@@ -218,7 +218,7 @@ export default function AdminContacts() {
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
   const [showCreateContact, setShowCreateContact] = useState(false);
-  const { hasPermission } = usePermissions();
+  const { hasPermission, canWrite, isSuperAdmin } = usePermissions();
   
   // Bulk action dialogs
   const [showBulkArchiveDialog, setShowBulkArchiveDialog] = useState(false);
