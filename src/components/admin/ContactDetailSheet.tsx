@@ -991,6 +991,27 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // Admin: reset Telegram binding for a contact profile (guest or real user)
+  const resetTelegramMutation = useMutation({
+    mutationFn: async ({ profileId }: { profileId: string }) => {
+      const { data, error } = await supabase.rpc("admin_reset_user_telegram" as any, {
+        _profile_id: profileId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Telegram-привязка сброшена — контакт может привязать свой Telegram заново");
+      queryClient.invalidateQueries({ queryKey: ["contact-full-profile", contact?.id] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+    },
+    onError: (e: any) => {
+      toast.error("Не удалось сбросить Telegram: " + (e?.message || "ошибка"));
+    },
+  });
+
+
+
 
   // Fetch reentry (former club member) status
   const { data: reentryStatus, refetch: refetchReentry } = useQuery({
