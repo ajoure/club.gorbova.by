@@ -37,12 +37,16 @@ function fmtDate(iso: string | null): string {
 }
 
 function buildText(
-  kind: "reminder" | "overdue",
+  kind: "reminder" | "overdue" | "assigned",
   task: any,
   taskType: any,
 ): string {
   const head =
-    kind === "overdue" ? "🔴 Просрочена задача" : "⏰ Напоминание о задаче";
+    kind === "overdue"
+      ? "🔴 Просрочена задача"
+      : kind === "assigned"
+        ? "🆕 Вам назначена задача"
+        : "⏰ Напоминание о задаче";
   const typeLabel = taskType?.label ?? "Задача";
   const lines = [
     `<b>${head}</b>`,
@@ -57,6 +61,7 @@ function buildText(
   if (task.public_id) lines.push(`ID: <code>${escapeHtml(task.public_id)}</code>`);
   return lines.join("\n");
 }
+
 
 async function sendTelegram(
   botToken: string,
