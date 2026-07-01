@@ -9,17 +9,18 @@ export interface StaffOption {
 }
 
 /**
- * Lightweight list of staff members that can be assigned tasks.
- * Returns profiles having at least one of: employee | admin | super_admin role.
- * Falls back to all profiles if role-join is restricted by RLS.
+ * Список сотрудников, которых можно назначать на CRM-задачи.
+ * В staff-пул попадают все пользователи, у которых в user_roles_v2 есть
+ * хотя бы одна роль с кодом ≠ 'user' (т.е. любая роль, дающая доступ к
+ * панели управления). Если у человека есть комбинация ролей `user + staff`,
+ * он также считается сотрудником. Чистые клиенты (только `user`) не попадают.
  *
  * telegram_linked = profiles.telegram_link_status === 'active' — отражает,
- * получит ли сотрудник CRM-уведомление о задаче в Telegram. Источник —
- * существующее поле в profiles (см. TelegramLinkReminder).
+ * получит ли сотрудник CRM-уведомление о задаче в Telegram.
  */
 export function useStaffOptions() {
   return useQuery({
-    queryKey: ["staff-options"],
+    queryKey: ["staff-options", "v2-any-non-user-role"],
     queryFn: async (): Promise<StaffOption[]> => {
       const mapProfile = (p: any): StaffOption => ({
         user_id: p.user_id,
@@ -28,40 +29,27 @@ export function useStaffOptions() {
         telegram_linked: p.telegram_link_status === "active",
       });
 
-      // 1) try role-filtered list
-      try {
-        const { data: roleRows, error: rolesErr } = await supabase
-          .from("user_roles_v2")
-          .select("user_id, roles:role_id(code)");
-        if (!rolesErr && roleRows) {
-          const staffIds = new Set<string>();
-          roleRows.forEach((r: any) => {
-            const code = r.roles?.code;
-            if (code === "employee" || code === "admin" || code === "super_admin") {
-              if (r.user_id) staffIds.add(r.user_id);
-            }
-          });
-          if (staffIds.size > 0) {
-            const { data: profiles } = await supabase
-              .from("profiles")
-              .select("user_id, full_name, email, telegram_link_status")
-              .in("user_id", Array.from(staffIds))
-              .order("full_name", { ascending: true });
-            return (profiles ?? []).map(mapProfile);
-          }
-        }
-      } catch {
-        // ignore – fallback below
-      }
+      const { data: roleRows, error: rolesErr } = await supabase
+        .from("user_roles_v2")
+        .select("user_id, roles:role_id(code)");
+      if (rolesErr) throw rolesErr;
 
-      const { data, error } = await supabase
+      const staffIds = new Set<string>();
+      (roleRows ?? []).forEach((r: any) => {
+        const code = r.roles?.code;
+        if (!code || code === "user") return;
+        if (r.user_id) staffIds.add(r.user_id);
+      });
+
+      if (staffIds.size === 0) return [];
+
+      const { data: profiles, error: profErr } = await supabase
         .from("profiles")
         .select("user_id, full_name, email, telegram_link_status")
-        .not("user_id", "is", null)
-        .order("full_name", { ascending: true })
-        .limit(300);
-      if (error) throw error;
-      return (data ?? []).map(mapProfile);
+        .in("user_id", Array.from(staffIds))
+        .order("full_name", { ascending: true });
+      if (profErr) throw profErr;
+      return (profiles ?? []).map(mapProfile);
     },
     staleTime: 5 * 60 * 1000,
   });
