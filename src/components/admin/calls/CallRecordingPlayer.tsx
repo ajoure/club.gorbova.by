@@ -111,7 +111,7 @@ export function CallRecordingPlayer({ src, fallbackDurationSec, className, fileN
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border border-border/60",
+        "flex w-full items-center gap-2 rounded-full border border-border/60",
         "bg-background/60 backdrop-blur px-2 py-1 shadow-sm",
         className,
       )}
