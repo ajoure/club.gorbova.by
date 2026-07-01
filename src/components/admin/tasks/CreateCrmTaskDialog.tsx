@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addMinutes } from "date-fns";
 
 import {
@@ -25,6 +25,10 @@ import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
 import { TaskRelationsField } from "./TaskRelationsField";
+import {
+  RemindOffsetSelect,
+  computeRemindAt,
+} from "./RemindOffsetSelect";
 import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
@@ -56,7 +60,7 @@ export function CreateCrmTaskDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueAt, setDueAt] = useState<string>("");
-  const [remindAt, setRemindAt] = useState<string>("");
+  const [remindOffset, setRemindOffset] = useState<number | null>(null);
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [dealId, setDealId] = useState<string | null>(defaultDealId ?? null);
   const [contactId, setContactId] = useState<string | null>(defaultContactId ?? null);
@@ -75,7 +79,7 @@ export function CreateCrmTaskDialog({
       setTitle("");
       setDescription("");
       setDueAt("");
-      setRemindAt("");
+      setRemindOffset(null);
       setTypeId("");
       setAssignee(UNASSIGNED);
       setDealId(null);
@@ -83,16 +87,26 @@ export function CreateCrmTaskDialog({
     }
   }, [open, defaultDealId, defaultContactId]);
 
+  // Автозаполнение из шаблона типа задачи
   useEffect(() => {
     const tt = types.find((t) => t.id === typeId);
     if (!tt) return;
     if (!dueAt && tt.default_due_offset_minutes != null) {
       setDueAt(addMinutes(new Date(), tt.default_due_offset_minutes).toISOString());
     }
-    if (!remindAt && tt.default_reminder_offset_minutes != null && dueAt) {
-      setRemindAt(addMinutes(new Date(dueAt), -tt.default_reminder_offset_minutes).toISOString());
+    if (remindOffset == null && tt.default_reminder_offset_minutes != null) {
+      setRemindOffset(tt.default_reminder_offset_minutes);
     }
-  }, [typeId, types, dueAt, remindAt]);
+  }, [typeId, types, dueAt, remindOffset]);
+
+  const remindAtComputed = useMemo(
+    () => computeRemindAt(dueAt || null, remindOffset),
+    [dueAt, remindOffset],
+  );
+  const remindWarnPast = useMemo(() => {
+    if (!remindAtComputed) return false;
+    return new Date(remindAtComputed).getTime() < Date.now();
+  }, [remindAtComputed]);
 
   const submit = () => {
     if (!typeId || !title.trim()) return;
@@ -102,7 +116,7 @@ export function CreateCrmTaskDialog({
         title: title.trim(),
         description: description.trim() || null,
         due_at: dueAt || null,
-        remind_at: remindAt || null,
+        remind_at: remindAtComputed,
         assignee_user_id: assignee === UNASSIGNED ? null : assignee,
         contact_id: contactId,
         deal_id: dealId,
@@ -168,10 +182,24 @@ export function CreateCrmTaskDialog({
               </div>
               <div className="space-y-1">
                 <Label>Напомнить</Label>
-                <DateTimePickerField value={remindAt} onChange={setRemindAt} />
+                <RemindOffsetSelect
+                  offsetMinutes={remindOffset}
+                  onChange={setRemindOffset}
+                  dueAt={dueAt || null}
+                  warnPast={remindWarnPast}
+                />
               </div>
             </div>
           </div>
+
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+            lockDeal={!!defaultDealId}
+            lockContact={!!defaultContactId}
+          />
 
           <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">
@@ -197,15 +225,6 @@ export function CreateCrmTaskDialog({
               ) : null}
             </div>
           </div>
-
-          <TaskRelationsField
-            dealId={dealId}
-            contactId={contactId}
-            onChangeDeal={setDealId}
-            onChangeContact={setContactId}
-            lockDeal={!!defaultDealId}
-            lockContact={!!defaultContactId}
-          />
         </div>
 
         <DialogFooter>
@@ -224,4 +243,3 @@ export function CreateCrmTaskDialog({
     </Dialog>
   );
 }
-

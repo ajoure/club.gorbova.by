@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, PlayCircle, XCircle } from "lucide-react";
 
 import {
@@ -33,6 +33,12 @@ import { DateTimePickerField } from "./DateTimePickerField";
 import { StaffOptionRow } from "./StaffOptionRow";
 import { TaskRelationsField } from "./TaskRelationsField";
 import {
+  RemindOffsetSelect,
+  computeRemindAt,
+  inferOffsetMinutes,
+} from "./RemindOffsetSelect";
+
+import {
   TASK_DIALOG_GLASS,
   TASK_DIALOG_SECTION,
   TASK_DIALOG_SAVE_CTA,
@@ -62,7 +68,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueAt, setDueAt] = useState("");
-  const [remindAt, setRemindAt] = useState("");
+  const [remindOffset, setRemindOffset] = useState<number | null>(null);
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [result, setResult] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -75,7 +81,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     setTitle(task.title ?? "");
     setDescription(task.description ?? "");
     setDueAt(task.due_at ?? "");
-    setRemindAt(task.remind_at ?? "");
+    setRemindOffset(inferOffsetMinutes(task.due_at, task.remind_at));
     setAssignee(task.assignee_user_id ?? UNASSIGNED);
     setResult(task.result_comment ?? "");
     setCommentError(null);
@@ -89,17 +95,27 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
   const isPending = update.isPending || updateStatus.isPending;
   const canSave = !!title.trim() && !!typeId && !isPending;
 
+  const remindAtComputed = useMemo(
+    () => computeRemindAt(dueAt || null, remindOffset),
+    [dueAt, remindOffset],
+  );
+  const remindWarnPast = useMemo(() => {
+    if (!remindAtComputed) return false;
+    return new Date(remindAtComputed).getTime() < Date.now();
+  }, [remindAtComputed]);
+
   const buildPatch = () => ({
     task_type_id: typeId,
     title: title.trim(),
     description: description.trim() || null,
     due_at: dueAt || null,
-    remind_at: remindAt || null,
+    remind_at: remindAtComputed,
     assignee_user_id: assignee === UNASSIGNED ? null : assignee,
     result_comment: result.trim() || null,
     deal_id: dealId,
     contact_id: contactId,
   });
+
 
   // Save: persist field edits without changing status.
   const handleSave = async () => {
@@ -200,10 +216,22 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
               </div>
               <div className="space-y-1">
                 <Label>Напомнить</Label>
-                <DateTimePickerField value={remindAt} onChange={setRemindAt} />
+                <RemindOffsetSelect
+                  offsetMinutes={remindOffset}
+                  onChange={setRemindOffset}
+                  dueAt={dueAt || null}
+                  warnPast={remindWarnPast}
+                />
               </div>
             </div>
           </div>
+
+          <TaskRelationsField
+            dealId={dealId}
+            contactId={contactId}
+            onChangeDeal={setDealId}
+            onChangeContact={setContactId}
+          />
 
           <div className={TASK_DIALOG_SECTION}>
             <div className="space-y-1">
@@ -230,12 +258,6 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
             </div>
           </div>
 
-          <TaskRelationsField
-            dealId={dealId}
-            contactId={contactId}
-            onChangeDeal={setDealId}
-            onChangeContact={setContactId}
-          />
 
 
           <div className={TASK_DIALOG_SECTION}>
