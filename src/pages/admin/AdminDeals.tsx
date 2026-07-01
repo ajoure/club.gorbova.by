@@ -271,6 +271,7 @@ export default function AdminDeals() {
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+  const [showCreateDealDialog, setShowCreateDealDialog] = useState(false);
 
   // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
