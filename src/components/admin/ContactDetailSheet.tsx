@@ -1011,6 +1011,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // Admin: send invite / reset-password email for imported contacts (no auth account yet).
+  // Reuses auth-actions.reset_password: it auto-provisions an auth user for imported
+  // profiles and mails a recovery link so the client sets their own password.
+  const sendInviteMutation = useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const { data, error } = await supabase.functions.invoke("auth-actions", {
+        body: { action: "reset_password", email: email.trim().toLowerCase() },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Приглашение отправлено — клиент получит письмо со ссылкой для входа");
+      queryClient.invalidateQueries({ queryKey: ["contact-full-profile", contact?.id] });
+    },
+    onError: (e: any) => {
+      toast.error("Не удалось отправить приглашение: " + (e?.message || "ошибка"));
+    },
+  });
+
 
 
 
@@ -1658,6 +1678,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 border-amber-400 text-amber-600 dark:text-amber-400">
                 <UserX className="w-3 h-3" />
                 без аккаунта
+              </Badge>
+            )}
+
+            {!resolvedUserId && contact?.email && (
+              <Badge
+                variant="outline"
+                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+                onClick={() => {
+                  if (sendInviteMutation.isPending) return;
+                  if (!confirm(`Отправить приглашение на ${contact.email}? Клиент получит письмо со ссылкой для входа и сможет задать свой пароль.`)) return;
+                  sendInviteMutation.mutate({ email: contact.email! });
+                }}
+              >
+                {sendInviteMutation.isPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Mail className="w-3 h-3" />
+                )}
+                отправить приглашение
               </Badge>
             )}
 
