@@ -1143,6 +1143,19 @@ export default function AdminContacts() {
             presets={CONTACT_PRESETS}
           />
 
+          {/* Create contact — quick action */}
+          {hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
+            <button
+              type="button"
+              onClick={() => setShowCreateContact(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25 transition-colors whitespace-nowrap"
+              title="Создать контакт вручную"
+            >
+              <Users className="w-3 h-3" />
+              Новый контакт
+            </button>
+          ) : null}
+
           {/* Gear menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
