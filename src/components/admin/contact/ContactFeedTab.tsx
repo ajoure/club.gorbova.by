@@ -28,7 +28,7 @@ import { ru } from "date-fns/locale";
 import {
   Phone, MessageCircle, Mail, Send, ClipboardList, StickyNote,
   Paperclip, Search, Trash2, Download, Plus, Activity, Handshake,
-  Smile, Mic, Square, Sparkles, Play, Pause, X,
+  Smile, Mic, Square, Sparkles, Play, Pause, X, AlertTriangle, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
@@ -254,6 +254,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
   const [noteBody, setNoteBody] = useState("");
   const [uploading, setUploading] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [lastGoodFeedEvents, setLastGoodFeedEvents] = useState<FeedEvent[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const rec = useVoiceRecorder();
@@ -277,9 +278,17 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
   const types = selected.size === 0 ? null : Array.from(selected);
 
-  const { data, isLoading } = useQuery({
+  const {
+    data: feedEvents = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
     queryKey: ["contact_feed", contactId, types, debounced],
     enabled: !!contactId,
+    placeholderData: (previousData) => previousData ?? [],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("contact_feed_list", {
         _contact_id: contactId,
@@ -311,6 +320,22 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       return arr as FeedEvent[];
     },
   });
+
+  useEffect(() => {
+    setLastGoodFeedEvents([]);
+  }, [contactId]);
+
+  useEffect(() => {
+    if (!isLoading && !isError) {
+      setLastGoodFeedEvents(feedEvents);
+    }
+  }, [contactId, feedEvents, isError, isLoading]);
+
+  const visibleFeedEvents = isError && lastGoodFeedEvents.length > 0 ? lastGoodFeedEvents : feedEvents;
+  const hasFeedEvents = visibleFeedEvents.length > 0;
+  const feedErrorMessage = error instanceof Error
+    ? error.message
+    : "Не удалось загрузить ленту контакта";
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
 
@@ -471,16 +496,39 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
       {/* List (scrollable) */}
       <div className="flex-1 overflow-y-auto space-y-2 pb-3 pt-1">
+        {isError && hasFeedEvents && (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">Не удалось обновить ленту</div>
+              <div className="mt-0.5 break-words opacity-90">{feedErrorMessage}</div>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" disabled={isFetching} onClick={() => refetch()}>
+              <RefreshCw className={cn("mr-1 h-3 w-3", isFetching && "animate-spin")} />
+              Повторить
+            </Button>
+          </div>
+        )}
         {isLoading ? (
           [1,2,3,4].map(i => <Skeleton key={i} className="h-16 w-full" />)
-        ) : !data || data.length === 0 ? (
+        ) : isError && !hasFeedEvents ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-10 text-center text-destructive">
+            <AlertTriangle className="mb-2 h-10 w-10 opacity-70" />
+            <p className="text-sm font-medium">Лента не загрузилась</p>
+            <p className="mt-1 max-w-md break-words text-xs opacity-90">{feedErrorMessage}</p>
+            <Button size="sm" variant="outline" className="mt-3 h-8 text-xs" disabled={isFetching} onClick={() => refetch()}>
+              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", isFetching && "animate-spin")} />
+              Повторить
+            </Button>
+          </div>
+        ) : !hasFeedEvents ? (
           <div className="text-center py-12 text-muted-foreground">
             <Activity className="w-12 h-12 mx-auto mb-2 opacity-30" />
             <p className="text-sm">Пока событий нет</p>
             <p className="text-xs">Добавь заметку, задачу или загрузи файл — они появятся здесь.</p>
           </div>
         ) : (
-          data.map((evt) => {
+          visibleFeedEvents.map((evt) => {
             const M = KIND_META[evt.kind] ?? KIND_META.event;
             const Icon = M.icon;
             const canDelete = evt.meta?.can_delete === true;
