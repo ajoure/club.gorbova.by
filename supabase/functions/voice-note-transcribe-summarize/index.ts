@@ -16,7 +16,10 @@ import {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, x-supabase-client-platform, apikey, content-type",
+  // Supabase JS 2.108+ in the browser may send additional client/runtime
+  // headers. If they are not allowed in the preflight, the browser reports
+  // only a generic "Failed to fetch" before the function body is reached.
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
