@@ -222,7 +222,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                         {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         <span className="ml-1 hidden sm:inline">AI</span>
                       </Button>
-                    ) : (
+                    ) : canShowAiButton ? (
                       <Button
                         type="button"
                         size="sm"
@@ -239,7 +239,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
                         )}
                         <span className="ml-1 hidden sm:inline">AI-сводка</span>
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>
