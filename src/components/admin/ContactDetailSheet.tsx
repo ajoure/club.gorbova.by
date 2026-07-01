@@ -1700,6 +1700,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Badge>
             )}
 
+            {!resolvedUserId && !contact?.email && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 border-slate-300 text-slate-500">
+                    <Mail className="w-3 h-3" />
+                    нет email для приглашения
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Кнопка «Отправить приглашение» появляется только если у контакта заполнен email; без email письмо отправить некуда.
+                </TooltipContent>
+              </Tooltip>
+            )}
+
             {resolvedStatus === "imported" ? (
               <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 bg-blue-500/20 text-blue-600 border-blue-500/30">
                 <UserX className="w-3 h-3" />

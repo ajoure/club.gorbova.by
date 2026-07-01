@@ -15,6 +15,7 @@ const corsHeaders = {
 const SITE_NAME = "Gorbova Club";
 const ROOT_DOMAIN = "gorbova.by";
 const SITE_URL = `https://club.${ROOT_DOMAIN}`;
+const VERIFY_PROXY_PATH = "/auth-verify";
 const FROM_EMAIL = "noreply@gorbova.by";
 const SMTP_HOST = "smtp.yandex.ru";
 const SMTP_PORT = 465;
@@ -96,11 +97,58 @@ async function findAuthUserByEmail(
   return null;
 }
 
+type ClaimableProfile = {
+  id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  phone: string | null;
+  status: string | null;
+  user_id: string | null;
+};
+
+async function findClaimableLegacyProfile(
+  supabaseAdmin: any,
+  email: string,
+): Promise<ClaimableProfile | null> {
+  const normalized = email.toLowerCase().trim();
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id, email, first_name, last_name, full_name, phone, status, user_id, created_at")
+    .ilike("email", normalized)
+    .is("user_id", null)
+    .in("status", ["active", "imported", "archived", "blocked"])
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error) {
+    console.error("[auth-actions] claimable profile lookup failed:", error);
+    return null;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const exactRows = rows.filter(
+    (row: any) => String(row?.email || "").toLowerCase().trim() === normalized,
+  );
+  const candidates = exactRows.length ? exactRows : rows;
+  const statusRank: Record<string, number> = { active: 0, imported: 1, archived: 2, blocked: 3 };
+  candidates.sort((a: any, b: any) => {
+    const ar = statusRank[String(a?.status || "")] ?? 99;
+    const br = statusRank[String(b?.status || "")] ?? 99;
+    if (ar !== br) return ar - br;
+    return String(b?.created_at || "").localeCompare(String(a?.created_at || ""));
+  });
+
+  return (candidates[0] as ClaimableProfile | undefined) ?? null;
+}
+
 function rewriteHostToRoot(url: string): string {
   try {
     const u = new URL(url);
     u.protocol = "https:";
-    u.host = ROOT_DOMAIN;
+    u.host = new URL(SITE_URL).host;
+    u.pathname = VERIFY_PROXY_PATH;
     return u.toString();
   } catch {
     return url;
@@ -156,19 +204,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       case "reset_password": {
         let authUser = await findAuthUserByEmail(supabaseAdmin, normalizedEmail);
 
-        // Auto-provision auth account for imported profiles (getcourse_import etc.):
+        // Auto-provision auth account for legacy/archived/imported profiles:
         // profile exists with user_id IS NULL — there's no auth.users record yet,
         // so `generateLink(type=recovery)` would fail. Create the auth user first;
-        // the handle_new_user trigger claims the imported profile automatically,
+        // the handle_new_user trigger claims the legacy profile automatically,
         // then we send a normal recovery link so the user sets a real password.
         if (!authUser) {
           try {
-            const { data: importedProfile } = await supabaseAdmin
-              .from("profiles")
-              .select("id, email, first_name, last_name, full_name, phone, status, user_id")
-              .ilike("email", normalizedEmail)
-              .is("user_id", null)
-              .maybeSingle();
+            const importedProfile = await findClaimableLegacyProfile(supabaseAdmin, normalizedEmail);
 
             if (importedProfile?.id) {
               const randomPassword = crypto.randomUUID() + crypto.randomUUID();
@@ -182,12 +225,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
                   full_name: (importedProfile as any).full_name || undefined,
                   phone: (importedProfile as any).phone || undefined,
                   imported_claim: true,
+                  legacy_profile_id: importedProfile.id,
+                  legacy_status: importedProfile.status || undefined,
                 },
               });
               if (createErr) {
-                console.error("[auth-actions] createUser for imported profile failed:", createErr);
+                console.error("[auth-actions] createUser for legacy profile failed:", createErr);
               } else if (created?.user) {
-                console.log(`[auth-actions] Auto-provisioned auth user for imported ${normalizedEmail} → ${created.user.id}`);
+                console.log(`[auth-actions] Auto-provisioned auth user for legacy ${normalizedEmail} → ${created.user.id}`);
                 authUser = {
                   id: created.user.id,
                   email: created.user.email || normalizedEmail,
@@ -196,7 +241,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
               }
             }
           } catch (provErr) {
-            console.warn("[auth-actions] imported-profile auto-provision failed:", provErr);
+            console.warn("[auth-actions] legacy-profile auto-provision failed:", provErr);
           }
         }
 
