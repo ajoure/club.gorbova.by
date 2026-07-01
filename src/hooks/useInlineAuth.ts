@@ -21,7 +21,9 @@ export type InlineAuthStep =
 export interface EmailCheckResult {
   exists: boolean;
   has_password?: boolean;
+  hasPassword?: boolean;
   profile_name?: string;
+  maskedName?: string;
 }
 
 export interface InlineAuthState {
@@ -90,9 +92,14 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
 
       setEmailCheckResult(data);
 
-      if (data.exists) {
+      const hasPassword = Boolean(data.hasPassword ?? data.has_password);
+
+      if (data.exists && hasPassword) {
         setStep("login");
       } else {
+        // Legacy/imported/archived profile found but no auth user/password yet:
+        // let the client register normally. The DB trigger claims the existing
+        // profile by email instead of creating a duplicate.
         setStep("signup");
       }
 

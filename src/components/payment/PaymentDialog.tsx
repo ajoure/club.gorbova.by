@@ -322,11 +322,12 @@ export function PaymentDialog({
 
       setEmailCheckResult(data);
 
-      if (data.exists) {
+      if (data.exists && data.hasPassword) {
         // User exists - show login step
         setStep("login");
       } else {
-        // New user - collect info
+        // New user OR legacy/imported profile without auth/password yet.
+        // Registration will claim the existing profile by email via handle_new_user.
         setStep("additional_info");
       }
     } catch (error) {

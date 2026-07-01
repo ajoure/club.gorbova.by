@@ -13,7 +13,30 @@ interface CheckEmailRequest {
 interface CheckEmailResponse {
   exists: boolean;
   hasPassword: boolean;
+  has_password?: boolean;
   maskedName?: string;
+  profile_name?: string;
+}
+
+async function findAuthUserByEmail(supabaseAdmin: any, email: string): Promise<any | null> {
+  const normalized = email.toLowerCase().trim();
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 50;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: PAGE_SIZE });
+    if (error) {
+      console.error(`[auth-check-email] listUsers page=${page} error:`, error);
+      return null;
+    }
+
+    const users = data?.users ?? [];
+    const found = users.find((user: any) => String(user?.email || "").toLowerCase().trim() === normalized);
+    if (found) return found;
+    if (users.length < PAGE_SIZE) break;
+  }
+
+  return null;
 }
 
 Deno.serve(async (req) => {
@@ -56,24 +79,30 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if user exists in auth.users via admin API
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers({
-      page: 1,
-      perPage: 1,
-    });
-
-    // Get user by email using a more reliable method
-    const { data: userData } = await supabaseAdmin
+    // Find the best profile row by normalized email. Do not use maybeSingle():
+    // legacy imports contain duplicate email groups and maybeSingle() turns that
+    // into an error, breaking registration/password-reset discovery.
+    const { data: profileRows, error: profileError } = await supabaseAdmin
       .from("profiles")
       .select("user_id, full_name, email")
-      .eq("email", email)
-      .maybeSingle();
+      .ilike("email", email)
+      .order("updated_at", { ascending: false })
+      .limit(20);
 
-    if (!userData) {
+    if (profileError) {
+      console.error("[auth-check-email] profile lookup failed:", profileError);
+    }
+
+    const rows = Array.isArray(profileRows) ? profileRows : [];
+    const userData = rows.find((row: any) => String(row?.email || "").toLowerCase().trim() === email) ?? rows[0] ?? null;
+    const authUserByEmail = await findAuthUserByEmail(supabaseAdmin, email);
+
+    if (!userData && !authUserByEmail) {
       // User doesn't exist
       const response: CheckEmailResponse = {
         exists: false,
         hasPassword: false,
+        has_password: false,
       };
       return new Response(
         JSON.stringify(response),
@@ -81,44 +110,34 @@ Deno.serve(async (req) => {
       );
     }
 
-    // User exists - check if they have a password set
-    // We do this by checking auth.users
-    let hasPassword = false;
+    // User exists. Legacy/imported/archived profiles can have user_id IS NULL:
+    // they are claimable accounts, but do not have a password yet. Returning
+    // hasPassword=true here sends people to the login form where they can never
+    // sign in, which was the registration regression.
+    let hasPassword = Boolean(authUserByEmail);
     let maskedName: string | undefined;
 
-    try {
-      const { data: authUser, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(
-        userData.user_id
-      );
-
-      if (authUser?.user) {
-        // Check if user has encrypted_password (meaning they have a password)
-        // Users created via passwordless methods may not have one
-        // For Supabase, if the user was created with email/password signup, they have a password
-        // We can check identities or app_metadata
-        const identities = authUser.user.identities || [];
-        const hasEmailIdentity = identities.some(
-          (identity: any) => identity.provider === "email"
+    if (!authUserByEmail && userData?.user_id) {
+      try {
+        const { data: authUser, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(
+          userData.user_id
         );
-        
-        // If user has email identity and was not created via magic link only
-        // We consider them to have a password
-        hasPassword = hasEmailIdentity;
-        
-        // Also check if password was explicitly set
-        // Supabase stores confirmation status
-        if (authUser.user.email_confirmed_at) {
+
+        if (getUserError) {
+          console.warn("[auth-check-email] getUserById failed:", getUserError.message || getUserError);
+        }
+
+        if (authUser?.user) {
           hasPassword = true;
         }
+      } catch (e) {
+        console.error("[auth-check-email] error checking auth user:", e);
+        hasPassword = false;
       }
-    } catch (e) {
-      console.error("Error checking auth user:", e);
-      // Default to assuming they have a password if profile exists
-      hasPassword = true;
     }
 
     // Mask the name for privacy
-    if (userData.full_name) {
+    if (userData?.full_name) {
       const parts = userData.full_name.split(" ");
       if (parts.length >= 1 && parts[0]) {
         // Show first name and first letter of last name
@@ -131,7 +150,9 @@ Deno.serve(async (req) => {
     const response: CheckEmailResponse = {
       exists: true,
       hasPassword,
+      has_password: hasPassword,
       maskedName,
+      profile_name: maskedName,
     };
 
     return new Response(
