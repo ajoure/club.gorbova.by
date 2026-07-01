@@ -72,8 +72,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (fErr || !file) return jsonResponse({ error: "file_not_found" }, 404);
 
-    const status = (file.meta as any)?.transcribe_status;
-    if (status === "done") return jsonResponse({ ok: true, cached: true, status });
+    const existingMeta = (file.meta && typeof file.meta === "object") ? (file.meta as Record<string, any>) : {};
+    const status = existingMeta?.transcribe_status;
+    if (status === "done") {
+      return jsonResponse({
+        ok: true,
+        cached: true,
+        status,
+        transcript: existingMeta.transcript ?? "",
+        summary: existingMeta.summary ?? "",
+      });
+    }
 
     // Guard: слишком маленький файл → шум/тишина, галлюцинации
     if (typeof file.size_bytes === "number" && file.size_bytes > 0 && file.size_bytes < MIN_AUDIO_BYTES) {
