@@ -19,7 +19,7 @@ interface CreateDealDialogProps {
 interface Pipeline { id: string; name: string }
 interface Stage { id: string; name: string; pipeline_id: string; order_index: number | null; is_default: boolean | null }
 interface Product { id: string; name: string }
-interface Tariff { id: string; name: string; product_id: string; price: number | null }
+interface Tariff { id: string; name: string; product_id: string }
 
 const CURRENCIES = ["BYN", "USD", "EUR", "RUB"];
 
