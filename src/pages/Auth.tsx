@@ -147,12 +147,12 @@ export default function Auth() {
     if (!unconfirmedEmail || resendingConfirm || resendCooldown > 0) return;
     setResendingConfirm(true);
     try {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: unconfirmedEmail,
-        options: { emailRedirectTo: `${window.location.origin}/` },
+      const { data, error } = await supabase.functions.invoke("auth-actions", {
+        body: { action: "confirm_signup", email: unconfirmedEmail.toLowerCase().trim() },
       });
-      if (error) throw error;
+      if (error || (data && typeof data === "object" && "error" in data)) {
+        throw error ?? new Error(String((data as any).error || "confirm_signup_failed"));
+      }
       toast({
         title: "Письмо отправлено повторно",
         description: "Проверьте почту, в том числе папку «Спам».",
