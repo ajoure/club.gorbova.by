@@ -1673,6 +1673,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Activity className="w-3 h-3 mr-1" />
+                Лента
+              </TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <MessageCircle className="w-3 h-3 mr-1" />
                 Telegram
