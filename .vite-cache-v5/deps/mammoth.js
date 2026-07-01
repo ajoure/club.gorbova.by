@@ -19647,13 +19647,11 @@ var require_body_reader = __commonJS({
         );
       }
       function parseInstrText(instrText, fldChar) {
-        var externalLinkResult = /\s*HYPERLINK "(.*)"/.exec(instrText);
-        if (externalLinkResult) {
-          return { type: "hyperlink", options: { href: externalLinkResult[1] } };
-        }
-        var internalLinkResult = /\s*HYPERLINK\s+\\l\s+"(.*)"/.exec(instrText);
-        if (internalLinkResult) {
-          return { type: "hyperlink", options: { anchor: internalLinkResult[1] } };
+        var linkResult = /^\s*HYPERLINK\s+(\\l\s+)?(?:"(.*)"|([^\\]\S*))/.exec(instrText);
+        if (linkResult) {
+          var location = linkResult[2] === void 0 ? linkResult[3] : linkResult[2];
+          var options2 = linkResult[1] === void 0 ? { href: location } : { anchor: location };
+          return { type: "hyperlink", options: options2 };
         }
         var checkboxResult = /\s*FORMCHECKBOX\s*/.exec(instrText);
         if (checkboxResult) {
@@ -19963,14 +19961,23 @@ var require_body_reader = __commonJS({
         return combineResults(blips.map(readBlip.bind(null, element)));
       }
       function readBlip(element, blip) {
-        var properties = element.first("wp:docPr").attributes;
+        var propertiesElement = element.firstOrEmpty("wp:docPr");
+        var properties = propertiesElement.attributes;
         var altText = isBlank(properties.descr) ? properties.title : properties.descr;
         var blipImageFile = findBlipImageFile(blip);
         if (blipImageFile === null) {
           return emptyResultWithMessages([warning("Could not find image file for a:blip element")]);
-        } else {
-          return readImage(blipImageFile, altText);
         }
+        return readImage(blipImageFile, altText).map(function(imageElement) {
+          var hlinkClickElement = propertiesElement.firstOrEmpty("a:hlinkClick");
+          var relationshipId = hlinkClickElement.attributes["r:id"];
+          if (relationshipId) {
+            var href = relationships.findTargetByRelationshipId(relationshipId);
+            return new documents.Hyperlink([imageElement], { href });
+          } else {
+            return imageElement;
+          }
+        });
       }
       function isBlank(value) {
         return value == null || /^\s*$/.test(value);

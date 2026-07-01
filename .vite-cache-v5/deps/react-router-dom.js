@@ -17,18 +17,13 @@ var React = __toESM(require_react());
 
 // node_modules/@remix-run/router/dist/router.js
 function _extends() {
-  _extends = Object.assign ? Object.assign.bind() : function(target) {
-    for (var i = 1; i < arguments.length; i++) {
-      var source = arguments[i];
-      for (var key in source) {
-        if (Object.prototype.hasOwnProperty.call(source, key)) {
-          target[key] = source[key];
-        }
-      }
+  return _extends = Object.assign ? Object.assign.bind() : function(n) {
+    for (var e = 1; e < arguments.length; e++) {
+      var t = arguments[e];
+      for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
     }
-    return target;
-  };
-  return _extends.apply(this, arguments);
+    return n;
+  }, _extends.apply(null, arguments);
 }
 var Action;
 (function(Action2) {
@@ -453,8 +448,8 @@ function matchRoutesImpl(routes, locationArg, basename, allowPartial) {
   let branches = flattenRoutes(routes);
   rankRouteBranches(branches);
   let matches = null;
+  let decoded = decodePath(pathname);
   for (let i = 0; matches == null && i < branches.length; ++i) {
-    let decoded = decodePath(pathname);
     matches = matchRouteBranch(branches[i], decoded, allowPartial);
   }
   return matches;
@@ -737,6 +732,8 @@ function stripBasename(pathname, basename) {
   }
   return pathname.slice(startIndex) || "/";
 }
+var ABSOLUTE_URL_REGEX$1 = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+var isAbsoluteUrl = (url) => ABSOLUTE_URL_REGEX$1.test(url);
 function resolvePath(to, fromPathname) {
   if (fromPathname === void 0) {
     fromPathname = "/";
@@ -746,7 +743,25 @@ function resolvePath(to, fromPathname) {
     search = "",
     hash = ""
   } = typeof to === "string" ? parsePath(to) : to;
-  let pathname = toPathname ? toPathname.startsWith("/") ? toPathname : resolvePathname(toPathname, fromPathname) : fromPathname;
+  let pathname;
+  if (toPathname) {
+    if (isAbsoluteUrl(toPathname)) {
+      pathname = toPathname;
+    } else {
+      if (toPathname.includes("//")) {
+        let oldPathname = toPathname;
+        toPathname = removeDoubleSlashes(toPathname);
+        warning(false, "Pathnames cannot have embedded double slashes - normalizing " + (oldPathname + " -> " + toPathname));
+      }
+      if (toPathname.startsWith("/")) {
+        pathname = resolvePathname(toPathname.substring(1), "/");
+      } else {
+        pathname = resolvePathname(toPathname, fromPathname);
+      }
+    }
+  } else {
+    pathname = fromPathname;
+  }
   return {
     pathname,
     search: normalizeSearch(search),
@@ -816,7 +831,8 @@ function resolveTo(toArg, routePathnames, locationPathname, isPathRelative) {
   }
   return path;
 }
-var joinPaths = (paths) => paths.join("/").replace(/\/\/+/g, "/");
+var removeDoubleSlashes = (path) => path.replace(/\/\/+/g, "/");
+var joinPaths = (paths) => removeDoubleSlashes(paths.join("/"));
 var normalizePathname = (pathname) => pathname.replace(/\/+$/, "").replace(/^\/*/, "/");
 var normalizeSearch = (search) => !search || search === "?" ? "" : search.startsWith("?") ? search : "?" + search;
 var normalizeHash = (hash) => !hash || hash === "#" ? "" : hash.startsWith("#") ? hash : "#" + hash;
@@ -1624,7 +1640,7 @@ function createRouter(init) {
       if (opts && opts.replace != null) {
         replace2 = opts.replace;
       } else {
-        let location2 = normalizeRedirectLocation(result.response.headers.get("Location"), new URL(request.url), basename);
+        let location2 = normalizeRedirectLocation(result.response.headers.get("Location"), new URL(request.url), basename, init.history);
         replace2 = location2 === state.location.pathname + state.location.search;
       }
       await startRedirectNavigation(request, result, true, {
@@ -2113,7 +2129,7 @@ function createRouter(init) {
     }
     let location = redirect3.response.headers.get("Location");
     invariant(location, "Expected a Location header on the redirect Response");
-    location = normalizeRedirectLocation(location, new URL(request.url), basename);
+    location = normalizeRedirectLocation(location, new URL(request.url), basename, init.history);
     let redirectLocation = createLocation(state.location, location, {
       _isRedirect: true
     });
@@ -3188,14 +3204,37 @@ function normalizeRelativeRoutingRedirectResponse(response, request, routeId, ma
   }
   return response;
 }
-function normalizeRedirectLocation(location, currentUrl, basename) {
+function normalizeRedirectLocation(location, currentUrl, basename, historyInstance) {
+  let invalidProtocols = [
+    "about:",
+    "blob:",
+    "chrome:",
+    "chrome-untrusted:",
+    "content:",
+    "data:",
+    "devtools:",
+    "file:",
+    "filesystem:",
+    // eslint-disable-next-line no-script-url
+    "javascript:"
+  ];
   if (ABSOLUTE_URL_REGEX.test(location)) {
     let normalizedLocation = location;
     let url = normalizedLocation.startsWith("//") ? new URL(currentUrl.protocol + normalizedLocation) : new URL(normalizedLocation);
+    if (invalidProtocols.includes(url.protocol)) {
+      throw new Error("Invalid redirect location");
+    }
     let isSameBasename = stripBasename(url.pathname, basename) != null;
     if (url.origin === currentUrl.origin && isSameBasename) {
-      return url.pathname + url.search + url.hash;
+      return removeDoubleSlashes(url.pathname) + url.search + url.hash;
     }
+  }
+  try {
+    let url = historyInstance.createURL(location);
+    if (invalidProtocols.includes(url.protocol)) {
+      throw new Error("Invalid redirect location");
+    }
+  } catch (e) {
   }
   return location;
 }
@@ -3738,18 +3777,13 @@ function persistAppliedTransitions(_window, transitions) {
 
 // node_modules/react-router/dist/index.js
 function _extends2() {
-  _extends2 = Object.assign ? Object.assign.bind() : function(target) {
-    for (var i = 1; i < arguments.length; i++) {
-      var source = arguments[i];
-      for (var key in source) {
-        if (Object.prototype.hasOwnProperty.call(source, key)) {
-          target[key] = source[key];
-        }
-      }
+  return _extends2 = Object.assign ? Object.assign.bind() : function(n) {
+    for (var e = 1; e < arguments.length; e++) {
+      var t = arguments[e];
+      for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
     }
-    return target;
-  };
-  return _extends2.apply(this, arguments);
+    return n;
+  }, _extends2.apply(null, arguments);
 }
 var DataRouterContext = React.createContext(null);
 if (true) {
@@ -4768,30 +4802,22 @@ function createMemoryRouter(routes, opts) {
 
 // node_modules/react-router-dom/dist/index.js
 function _extends3() {
-  _extends3 = Object.assign ? Object.assign.bind() : function(target) {
-    for (var i = 1; i < arguments.length; i++) {
-      var source = arguments[i];
-      for (var key in source) {
-        if (Object.prototype.hasOwnProperty.call(source, key)) {
-          target[key] = source[key];
-        }
-      }
+  return _extends3 = Object.assign ? Object.assign.bind() : function(n) {
+    for (var e = 1; e < arguments.length; e++) {
+      var t = arguments[e];
+      for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
     }
-    return target;
-  };
-  return _extends3.apply(this, arguments);
+    return n;
+  }, _extends3.apply(null, arguments);
 }
-function _objectWithoutPropertiesLoose(source, excluded) {
-  if (source == null) return {};
-  var target = {};
-  var sourceKeys = Object.keys(source);
-  var key, i;
-  for (i = 0; i < sourceKeys.length; i++) {
-    key = sourceKeys[i];
-    if (excluded.indexOf(key) >= 0) continue;
-    target[key] = source[key];
+function _objectWithoutPropertiesLoose(r, e) {
+  if (null == r) return {};
+  var t = {};
+  for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+    if (-1 !== e.indexOf(n)) continue;
+    t[n] = r[n];
   }
-  return target;
+  return t;
 }
 var defaultMethod = "get";
 var defaultEncType = "application/x-www-form-urlencoded";
@@ -5519,11 +5545,11 @@ var Form = React2.forwardRef((_ref9, forwardedRef) => {
 if (true) {
   Form.displayName = "Form";
 }
-function ScrollRestoration(_ref10) {
+function ScrollRestoration(_ref0) {
   let {
     getKey,
     storageKey
-  } = _ref10;
+  } = _ref0;
   useScrollRestoration({
     getKey,
     storageKey
@@ -5759,8 +5785,8 @@ function useFetcher(_temp3) {
 }
 function useFetchers() {
   let state = useDataRouterState2(DataRouterStateHook2.UseFetchers);
-  return Array.from(state.fetchers.entries()).map((_ref11) => {
-    let [key, fetcher] = _ref11;
+  return Array.from(state.fetchers.entries()).map((_ref1) => {
+    let [key, fetcher] = _ref1;
     return _extends3({}, fetcher, {
       key
     });
@@ -5875,11 +5901,11 @@ function usePageHide(callback, options) {
     };
   }, [callback, capture]);
 }
-function usePrompt(_ref12) {
+function usePrompt(_ref10) {
   let {
     when,
     message
-  } = _ref12;
+  } = _ref10;
   let blocker = useBlocker(when);
   React2.useEffect(() => {
     if (blocker.state === "blocked") {
@@ -5998,7 +6024,7 @@ export {
 
 @remix-run/router/dist/router.js:
   (**
-   * @remix-run/router v1.23.0
+   * @remix-run/router v1.23.3
    *
    * Copyright (c) Remix Software Inc.
    *
@@ -6010,7 +6036,7 @@ export {
 
 react-router/dist/index.js:
   (**
-   * React Router v6.30.1
+   * React Router v6.30.4
    *
    * Copyright (c) Remix Software Inc.
    *
@@ -6022,7 +6048,7 @@ react-router/dist/index.js:
 
 react-router-dom/dist/index.js:
   (**
-   * React Router DOM v6.30.1
+   * React Router DOM v6.30.4
    *
    * Copyright (c) Remix Software Inc.
    *
