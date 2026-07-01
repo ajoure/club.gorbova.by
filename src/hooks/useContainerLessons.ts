@@ -169,6 +169,51 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     const tariffNames = data.tariffNames || {};
     const entitlementProductIds = new Set(data.userEntitlementProductIds || []);
 
+    // Cross-product grants: active training_content rules may explicitly grant
+    // lessons/modules under this container even when the content belongs to a
+    // different product than the user's entitlement (e.g. Trial product →
+    // selected Club video answers). This mirrors useTrainingModules and keeps
+    // default-deny: only IDs explicitly listed by active rules are granted.
+    const childrenByModule = new Map<string, string[]>();
+    for (const child of data.childModules || []) {
+      const parentId = child.parent_module_id;
+      if (!childrenByModule.has(parentId)) childrenByModule.set(parentId, []);
+      childrenByModule.get(parentId)!.push(child.id);
+    }
+
+    const ruleGrantedModuleIds = new Set<string>();
+    const ruleGrantedLessonIds = new Set<string>();
+    if (!isAdminUser && !tcLoading && tcData?.rules?.length) {
+      const collectSubtree = (rootId: string) => {
+        const queue = [rootId];
+        const seen = new Set<string>();
+        while (queue.length > 0) {
+          const id = queue.shift()!;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          ruleGrantedModuleIds.add(id);
+          (childrenByModule.get(id) || []).forEach(childId => queue.push(childId));
+        }
+      };
+
+      for (const rule of tcData.rules) {
+        if (!rule.is_active) continue;
+        const conditions = rule.conditions || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] };
+
+        if (conditions.access_mode === "full" && rule.target_ref) {
+          collectSubtree(rule.target_ref);
+        }
+
+        (conditions.allowed_module_ids || []).forEach(moduleId => {
+          if (moduleId) collectSubtree(moduleId);
+        });
+
+        (conditions.allowed_lesson_ids || []).forEach(lessonId => {
+          if (lessonId) ruleGrantedLessonIds.add(lessonId);
+        });
+      }
+    }
+
     for (const lesson of data.lessons) {
       const container = containerMap.get(lesson.module_id);
       if (!container) continue;
@@ -202,16 +247,19 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           moduleTariffs = accessByContainer[childMod.parent_module_id] || [];
         }
       }
-      // Access precedence: admin → public → tariff → entitlement
+      const grantedByCrossProductRule = ruleGrantedModuleIds.has(lesson.module_id) || ruleGrantedLessonIds.has(lesson.id);
+
+      // Access precedence: admin → public → tariff → entitlement → explicit cross-product rule
       const hasAccess = isAdminUser || 
         moduleTariffs.length === 0 || 
         moduleTariffs.some((tid: string) => userTariffIds.includes(tid)) ||
-        (container.productId != null && entitlementProductIds.has(container.productId));
+        (container.productId != null && entitlementProductIds.has(container.productId)) ||
+        grantedByCrossProductRule;
 
       // PATCH B: training_content filter (only for users with confirmed access, non-admin)
       // Guard: skip tc-filter while rules are still loading (prevents stale filter on refresh)
       let filteredOut = false;
-      if (hasAccess && !isAdminUser && !tcLoading && container.productId && tcData) {
+      if (hasAccess && !grantedByCrossProductRule && !isAdminUser && !tcLoading && container.productId && tcData) {
         // Find root training for this container
         const rootContainer = data.containers.find(c => c.id === lesson.module_id) || 
           (() => {
@@ -303,7 +351,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     lessonsBySection: lessonsBySectionGated,
     containerModules,
     restrictedTariffs: Array.from(restrictedTariffIds),
-    isLoading,
+    isLoading: isLoading || (!isAdminUser && tcLoading),
     isAdminUser,
   };
 }

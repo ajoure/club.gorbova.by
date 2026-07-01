@@ -1,152 +1,65 @@
-да, согласен, с учетом правок:
+План:
 
-## **Обязательные правки перед запуском**
+1. **Проблема**
+   - На `/knowledge` вкладка «Видеоответы» показывает «Раздел пока пуст».
+   - При прямом переходе на `/library/knowledge-videoanswers/episode-101` и `/episode-102` отображается «Нет доступа к уроку».
+   - При этом у тестового пользователя активирован Trial «Идеологическая работа», который должен открывать модуль «Видеоответы».
 
-1. **Добавить языковой блок в начало/конец плана:**
+2. **Диагностика**
+   - В базе есть активный entitlement пользователя `1@ajoure.by` по продукту Trial «Идеологическая работа» до `2026-07-01`.
+   - В базе есть активное правило доступа `training_content`: продукт Trial «Идеологическая работа» явно разрешает модуль `f5dc3e63-4cfd-40ba-9ce6-cee3b8790630` («Видеоответы») внутри корня `8b1fb03e-8743-4654-a07f-b6c03ca7517b`.
+   - В модуле «Видеоответы» есть активные уроки, включая `episode-101` и `episode-102`.
+   - Конкретное расхождение в коде:
+     - Список карточек на `/knowledge` строится не через ранее исправленный `useTrainingModules`, а через `src/hooks/useContainerLessons.ts`.
+     - В `useContainerLessons.ts` доступ считается по product_id контейнера/модуля основного клуба (`11c9f1b8-...`), а Trial выдан по другому product_id (`3ea08f79-...`).
+     - Поэтому cross-product правило найдено в БД, но не учитывается в этом пути загрузки карточек.
+     - После этого `resolveTrainingContentFilter` повторно режет уроки по product_id основного клуба и вкладка становится пустой.
+   - Отдельный риск deep-link:
+     - `LibraryLesson.tsx` показывает «Нет доступа к уроку», когда `hasAccess=false` и у урока нет блоков.
+     - Даже после появления карточек может остаться второй false-deny на странице урока, если проверка deep-link не синхронизирована с cross-product правилом.
 
-```text
-План должен быть составлен на русском языке.
-Отчет о выполненной работе должен быть составлен на русском языке.
-Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
-```
+3. **Предлагаемое решение**
+   - Исправить `src/hooks/useContainerLessons.ts` так, чтобы он учитывал активные cross-product `training_content` rules так же, как `useTrainingModules`:
+     - собрать список модулей, явно разрешённых правилами текущего пользователя;
+     - считать урок доступным, если его `module_id` входит в явно разрешённый модуль/поддерево;
+     - не прогонять такой урок через повторный фильтр по чужому product_id основного клуба.
+   - Затем проверить `LibraryLesson.tsx`:
+     - если deep-link всё ещё показывает «Нет доступа», добавить такую же проверку explicit cross-product grant для страницы урока;
+     - разделить состояние «нет права» и «нет lesson_blocks», чтобы отсутствие блоков не превращалось в ложный lock.
 
-2. **Не заявлять заранее факты отчёта как уже выполненные.**  
-Раздел 6 лучше оформить как **“Требования к отчёту после выполнения”**, а не как готовый отчёт.
-3. **Проверить путь** `CrmTasksSection.tsx`**.**  
-В плане раньше фигурировал:
+4. **Изменяемые компоненты**
+   - `src/hooks/useContainerLessons.ts` — основной fix для видимости карточек во вкладке «Видеоответы».
+   - `src/pages/LibraryLesson.tsx` — только если после основного fix deep-link урока всё ещё закрыт.
+   - База данных не меняется, потому что нужный entitlement, уроки и правило доступа уже существуют.
 
-```text
-src/components/admin/tasks/CrmTasksSection.tsx
-```
+5. **Что не будет изменено**
+   - Не открывать весь Gorbova Club для Trial «Идеологическая работа».
+   - Не создавать новые таблицы, RPC, edge functions или параллельную систему доступа.
+   - Не править заказы, подписки или entitlements вручную.
+   - Не использовать названия продуктов/slug как источник бизнес-логики — только UUID и существующие access rules.
 
-А сейчас:
+6. **Dry-run**
+   - До применения patch смоделировать на текущих данных:
+     - active entitlement пользователя содержит `product_id=3ea08f79-...`;
+     - active rule содержит `allowed_module_ids=[f5dc3e63-...]`;
+     - уроки `episode-101/102` должны попасть в `lessonsBySection['knowledge-videos']` с `has_access=true`.
+   - Проверить, что другие дочерние разделы базы знаний не становятся доступными без явного разрешения в `allowed_module_ids`.
 
-```text
-src/components/admin/crm/CrmTasksSection.tsx
-```
+7. **Execute**
+   - Внести минимальный frontend patch:
+     - в `useContainerLessons.ts` построить `ruleGrantedModuleIds` из `tcData.rules`;
+     - включить cross-product grant в расчёт `hasAccess`;
+     - пропускать повторный `resolveTrainingContentFilter` для явно разрешённых cross-product модулей.
+   - При необходимости точечно обновить `LibraryLesson.tsx`, чтобы deep-link урока использовал тот же источник прав.
 
-Нужно до старта подтвердить фактический путь и не править два разных компонента случайно.
+8. **STOP-guards**
+   - Остановиться, если активное правило для Trial «Идеологическая работа» исчезло или стало неактивным.
+   - Остановиться, если `allowed_module_ids` не содержит модуль «Видеоответы».
+   - Остановиться, если dry-run показывает, что patch откроет больше модулей, чем явно перечислено в правилах.
+   - Остановиться, если trial тестового пользователя истёк до браузерной проверки — сначала потребуется отдельное восстановление trial.
 
-4. **TG-пометка “нет TG” — только если** `telegram_linked` **реально уже есть в** `useStaffOptions`**.**  
-Если поля нет — не расширять backend/API в этом патче. Вынести TG-пометку в follow-up.
-5. **Комментарий при** `canceled/done`**: уточнить переходы.**
-
-Добавить:
-
-```text
-Комментарий обязателен только при новом переходе в done/canceled.
-Если задача уже done/canceled и пользователь просто сохраняет поля, повторно требовать комментарий не нужно.
-```
-
-6. **Сохранить статус без изменений.**
-
-Зафиксировать явно:
-
-```text
-Кнопка «Сохранить» не передает status и не вызывает update_status. Она сохраняет только редактируемые поля.
-```
-
-7. **Не начинать PATCH B/C/D до отдельного approve.**
-
-Добавить:
-
-```text
-После PATCH A.1 подрядчик сдаёт отчёт. Следующие патчи — pickers / список / bulk / поиск / статистика — не начинать без отдельного подтверждения.
-```
-
-## **Вердикт**
-
-После этих правок **PATCH A.1 можно запускать**. Это безопасный UI-only патч, если действительно не трогать БД/RPC/RLS/edge/cron.
-
-&nbsp;
-
-План: PATCH A.1 — UI-доводка карточки/диалога CRM-задач + закрытие отчёта по PATCH A
-
-Только presentation-слой (UI). Никаких изменений в БД/RPC/RLS/edge/cron, типы и API сохраняются.
-
-## 1. Кнопки в футере редактора — одна строка, компактные, "дорогие"
-
-Файл: `src/components/admin/tasks/EditCrmTaskDialog.tsx`
-
-- Футер: `DialogFooter` → один flex-row, `flex-nowrap items-center gap-2 w-full`. «Отмена» слева, остальные жмутся вправо (`ml-auto`).
-- Все CTA — `size="sm"` + `h-8 px-3 text-xs font-medium rounded-lg`, иконки `h-3.5 w-3.5`.
-- Порядок справа-налево: `Отменить задачу` → `В работу` → `Сохранить` → `Готово`.
-- На узких ширинах (sm:) допускается перенос (`flex-wrap`), но по умолчанию — одна строка.
-
-## 2. Бледные «дорогие» цвета кнопок
-
-Файл: `src/components/admin/tasks/taskUiTheme.ts`
-Заменить насыщенные градиенты на pastel-glass:
-
-- `TASK_DIALOG_SAVE_CTA` → `bg-emerald-100/70 text-emerald-800 border border-emerald-200/70 hover:bg-emerald-200/70 backdrop-blur-sm`
-- `TASK_DIALOG_DONE_CTA` → `bg-emerald-200/70 text-emerald-900 border border-emerald-300/70 hover:bg-emerald-300/70 backdrop-blur-sm`
-- `TASK_DIALOG_CANCEL_CTA` → `bg-rose-100/70 text-rose-800 border border-rose-200/70 hover:bg-rose-200/70 backdrop-blur-sm`
-- `TASK_DIALOG_INPROGRESS_CTA` → `bg-amber-100/70 text-amber-800 border border-amber-200/70 hover:bg-amber-200/70 backdrop-blur-sm`
-- `shadow-sm` вместо `shadow-md`.
-
-## 3. Фон карточки/диалога — матовое стекло, отделённое от подложки
-
-Файл: `taskUiTheme.ts`
-
-- `TASK_DIALOG_GLASS` → более прозрачный pastel-emerald gradient с заметным `backdrop-blur-2xl`, плотная белая граница, ring, мягкая тень. Пример:
-`bg-gradient-to-br from-emerald-50/55 via-white/60 to-teal-50/40 backdrop-blur-2xl border border-white/70 ring-1 ring-emerald-200/40 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)] rounded-2xl`
-- `TASK_DIALOG_SECTION` → `bg-white/45 backdrop-blur-md border border-white/60` (раньше 0.60 — сливалось).
-- Card-glass для канбана (`TASK_CARD_GLASS` и палитра бакетов): снизить непрозрачность фона (0.45→0.35), оставить цветной hover-glow.
-
-Файл: `src/components/admin/tasks/board/TaskKanbanCard.tsx` — никаких структурных изменений, только подхватит обновлённые токены.
-
-## 4. DateTimePicker и связки сделка/контакт
-
-Не трогаем (вне scope этого патча).
-
-## 5. Verify
-
-- `bunx tsgo --noEmit` → PASS.
-- Открыть `/admin/tasks`, отредактировать `тест`: убедиться, что кнопки в одну строку, цвета пастельные, фон диалога визуально отделён от подложки канбана.
-- Канбан-карточка остаётся читаемой на белой подложке.
-
-## 6. Отчёт о выполненной работе: PATCH A — premium UI/status/TASK-ID для CRM-задач
-
-После применения A.1 отдать пользователю отчёт ровно в требуемом формате:
-
-**TASK-ID скрыт из UI (только UI, БД и типы не трогались):**
-
-- `TaskKanbanCard.tsx` — `public_id` не рендерится.
-- `EditCrmTaskDialog.tsx` — `public_id` не выводится, в заголовке только «Редактировать задачу» + статус-чип.
-- `CreateCrmTaskDialog.tsx` — заголовок без id.
-- `TasksListView.tsx` — колонка с `public_id` удалена.
-- `CrmTasksSection.tsx` — `public_id` снят с карточек.
-- В БД `crm_tasks.public_id` сохранён; в типе `CrmTask` поле осталось — только не отображается.
-
-**Поведение «Сохранить»:**
-
-- `handleSave` пишет только поля задачи через `crm_tasks.update`, статус не меняет — задача `in_progress` остаётся `in_progress`.
-
-**Обязательный комментарий:**
-
-- Проверка `requiresComment` только при переходе в `done`/`canceled`; обычный Save и переход в `in_progress` не требуют комментария. Ошибка показывается inline под textarea, поле подсвечивается rose.
-
-**TG-пометка «нет TG» у ответственного:**
-
-- В селекте сотрудников используется `StaffOptionRow` (бейдж TG/нет TG).
-- Источник TG-статуса — `useStaffOptions` (хук уже существует), флаг `telegram_linked`.
-- Под селектом — предупреждение «Уведомление не дойдёт», если у выбранного сотрудника `telegram_linked=false`.
-
-**Файлы изменены в PATCH A + A.1:**
-
-- `src/components/admin/tasks/taskUiTheme.ts`
-- `src/components/admin/tasks/board/TaskKanbanCard.tsx`
-- `src/components/admin/tasks/EditCrmTaskDialog.tsx`
-- `src/components/admin/tasks/CreateCrmTaskDialog.tsx`
-- `src/components/admin/tasks/StaffOptionRow.tsx` (создан ранее)
-- `src/components/admin/tasks/TasksListView.tsx`
-- `src/components/admin/crm/CrmTasksSection.tsx`
-
-**Проверки:**
-
-- `bunx tsgo --noEmit` → PASS.
-- БД/RPC/RLS/edge/cron не трогались (только presentation).
-- `DateTimePickerField` не изменён и работает.
-- Создание/редактирование/переходы статуса задач работают (ручной smoke на `/admin/tasks`).
-
-**Вердикт:** PATCH A + A.1 закрыт. Следующие патчи (pickers / канон-список / bulk / поиск / статистика) — только после приёмки.
+9. **DoD**
+   - У тестового пользователя `1@ajoure.by` на `/knowledge` во вкладке «Видеоответы» отображаются карточки выпусков, а не «Раздел пока пуст».
+   - `/library/knowledge-videoanswers/episode-101` и `/episode-102` не показывают «Нет доступа к уроку».
+   - Браузерная симуляция с авторизацией подтверждает результат скриншотами.
+   - Правило остаётся default-deny: доступ открывается только по явному `access_rules` grant.
