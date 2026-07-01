@@ -1,112 +1,135 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Не создавать новую Edge Function**, если можно расширить существующую.  
-Сначала проверить `call-transcribe-summarize`: если можно вынести shared-модуль — делаем:
-  - `_shared/transcribe-audio.ts`
-  - `call-transcribe-summarize` использует shared
-  - `voice-note-transcribe-summarize` только thin wrapper
-2. **Перед миграцией проверить** `contact_files` **schema.**  
-Если уже есть `meta jsonb`, лучше хранить:
-  &nbsp;
-  ```sql
-  meta.transcript
-  meta.summary
-  meta.transcribe_status
-  meta.transcribe_reason
-  ```
-  Не добавлять колонки, если `meta` уже есть.
-3. **Telegram forward:**  
-Лучше не новая функция, а сначала проверить существующие:
-  &nbsp;
-  &nbsp;
-  - `telegram-admin-chat`
-  - `telegram-webhook`
-  - support-bot send helpers  
-  Если нет подходящего action — добавить action add-only.
-4. **Security guard:**  
-Для forward/download/transcribe:
-  - только authenticated staff;
-  - `has_permission(auth.uid(), 'contacts.view')`;
-  - service_role только внутри edge.
-5. **Download fix:**  
-Обязательно оставить два действия:
-  - `Открыть`
-  - `Скачать`  
-  Не заменять preview полностью.
-6. **CallRecordingPlayer:**  
-Не ломать звонки. `accentClassName` сделать optional, default оставить прежним.
-7. **Realtime / refresh:**  
-После транскрибации обязательно:
-  - обновить `contact_files.meta`;
-  - invalidate `contact_feed_list`;
-  - проверить, что карточка обновляется без F5.
-8. **DoD добавить raw proof:**
-  - schema `contact_files`;
-  - proof reuse shared transcribe;
-  - SQL по voice file meta после транскрибации;
-  - browser proof download;
-  - Telegram delivery screenshot/log.
-
-&nbsp;
+1. **Telegram Support**
+  - сначала найти существующий canonical sender;
+  - не использовать `bot_token_encrypted` напрямую;
+  - если секрета/чата нет — вернуть понятную ошибку `support_chat_not_configured`.
+2. **AI-расшифровка**
+  - не создавать вторую реализацию транскрибации;
+  - raw proof reuse `_shared/transcribe-audio.ts` / `call-transcribe-summarize`;
+  - короткие файлы: `skipped_too_short`, без ошибки.
+3. **RPC** `contact_feed_list`
+  - не ломать сигнатуру;
+  - сохранить `_limit/_offset`;
+  - события платежей/сделок добавлять только по реально существующим таблицам/полям после schema proof.
+4. **UI ошибки**
+  - в карточке голосового показывать не `Edge Function failed`, а нормальный текст:
+    - «Не удалось расшифровать»
+    - «Telegram Support не настроен»
+    - «Файл слишком короткий»
+5. **Composer**
+  - `ContactDetailSheet` трогать только если локальный fix в `ContactFeedTab` не помогает.
+6. **DoD дополнить raw proof:**
+  - schema используемых таблиц;
+  - ответ `voice-note-transcribe-summarize`;
+  - ответ `voice-note-forward-to-support`;
+  - SQL/RPC count событий по тестовому контакту;
+  - browser screenshots до/после.
 
 Можно отдавать в работу.
 
 &nbsp;
 
-План: Апгрейд «Ленты» — голосовые, плеер, цвета, скачивание, Telegram
+План:
 
-### 1. Транскрибация голосовых (reuse call-transcribe-summarize)
+1. Проблема
 
-- Добавить в `contact_files` (или meta) поля-снапшот: `transcript`, `summary`, `transcribe_status` (`pending|processing|done|skipped_too_short|failed`), `transcribe_reason`.
-- Создать Edge Function `voice-note-transcribe-summarize` — тонкий wrapper поверх существующей логики `call-transcribe-summarize` (переиспользовать shared-модуль или вынести общую функцию `transcribeAndSummarize(audioUrl)` в `_shared/`). Никакой параллельной второй реализации.
-- Автозапуск: после успешной загрузки голосового в композере (`ContactFeedTab`) — вызвать функцию (fire-and-forget), UI показывает статус «Расшифровывается…», при готовности — карточка обновляется через React Query invalidation/Realtime.
-- Применить те же guard'ы: файл < 4KB или длительность < 5с → `skipped_too_short`, кнопка AI-сводки скрыта (единая логика, как в `AdminCalls.tsx`).
-- Расширить `contact_feed_list` — отдавать `transcript`, `summary`, `transcribe_status` в событии типа `voice_note`.
+- В ленте контакта не работают действия у голосового: AI-расшифровка и отправка в Telegram Support падают с ошибкой Edge Function.
+- Кнопки AI/Telegram сейчас расположены под голосовым, а нужно справа от плеера как аккуратные круглые icon-only кнопки с подсказками.
+- Композер снова съезжает вниз/оставляет пустую область при пустой или неполной ленте; его положение должно быть одинаковым при любом заполнении карточки.
+- Фильтр «Событие» пустой/неполный: нужны русскоязычные amoCRM-style логи по контакту, сделкам, платежам и всем связанным действиям с временем до миллисекунд и автором/системой.
 
-### 2. Единый медиаплеер для голосовых
+2. Диагностика
 
-- Переиспользовать `CallRecordingPlayer` (тот же, что в звонках): seek-bar, скорость 0.5×–2×, скачивание.
-- В `ContactFeedTab.tsx` заменить `<audio controls>` в ветке `voice_note` на `<CallRecordingPlayer src={fileUrl} />`.
-- Убрать нативное меню трёх точек браузера (оно исчезнет автоматически вместе с `controls`).
+- Текущий UI ленты находится в `src/components/admin/contact/ContactFeedTab.tsx`.
+- Голосовые вызывают `voice-note-transcribe-summarize` и `voice-note-forward-to-support`.
+- В `voice-note-forward-to-support` найден риск: функция вызывает Telegram напрямую через `api.telegram.org` и использует поле `bot_token_encrypted` как токен. В текущей архитектуре это вероятная причина падения/неработающей отправки; надо использовать существующий backend/gateway-паттерн проекта, а не прямой raw-token вызов.
+- Текущая `contact_feed_list` уже агрегирует calls/SMS/Telegram/email/tasks/notes/files/deals/events, но «events» ограничены только `crm_activity_log` по `contact_id/user_id` и не подтягивают связанные события сделок/платежей достаточно полно и человекочитаемо.
+- Композер реализован внутри `ContactFeedTab`; нужно стабилизировать flex-layout, чтобы список занимал доступную высоту, empty-state не растягивал нижний блок, а composer был закреплен в одном месте без второй пустой полосы.
 
-### 3. Кнопка «Отправить в Telegram support-бот»
+3. Предлагаемое решение
 
-- В карточке голосового — иконка Telegram рядом со скачиванием.
-- Edge Function `voice-note-forward-to-support` (или расширить существующую `telegram-send-support`): скачивает файл из `contact-files` bucket (service_role), шлёт `sendVoice`/`sendAudio` в чат support-бота (ID из secret `TELEGRAM_SUPPORT_CHAT_ID`), в caption — ссылка на контакт + транскрипт (если готов).
-- Гвард: только роли с правом `contacts.view` (employee+).
+- Исправить обе Edge-функции голосовых:
+  - добавить нормальные CORS-ответы во всех ветках;
+  - нормализовать ошибки, чтобы UI не показывал сырой `Edge Function failed`, а давал понятное сообщение;
+  - для Telegram Support переиспользовать существующий безопасный способ отправки через backend/gateway/ботов проекта, не раскрывая токены и не вызывая Telegram raw API напрямую, если в проекте уже есть соответствующий helper/паттерн;
+  - для AI-расшифровки проверить формат файла, размер, download из `contact-files`, вызов `_shared/transcribe-audio.ts` и статус записи в `contact_files.meta`.
+- Обновить карточку голосового:
+  - плеер и справа вертикальный/горизонтальный блок маленьких круглых кнопок;
+  - tooltips: «Расшифровать через AI», «Отправить в Telegram Support», состояние загрузки/ошибки;
+  - убрать текстовые кнопки под плеером.
+- Исправить композер:
+  - контейнер вкладки сделать стабильным `flex-column` с `min-h-0`;
+  - список/empty-state получает `flex-1 min-h-0 overflow-y-auto`;
+  - composer всегда внизу одной строкой `[emoji] [attach] [input] [mic] [send]`;
+  - убрать лишнюю нижнюю sticky-панель/пустой блок и любые зависимые от наполнения `padding-bottom`.
+- Расширить `contact_feed_list`:
+  - сохранить текущий SOT, не создавать вторую таблицу лога;
+  - добавить/исправить CTE для событий, связанных со всеми сделками контакта (`orders_v2`) и платежами/финансовыми событиями, если соответствующие таблицы существуют;
+  - расширить связь `crm_activity_log` не только по `contact_id/user_id`, но и по `source_entity_id` сделок/платежей/контактных сущностей;
+  - формировать русские заголовки и тела: кто сделал, что произошло, с какой сущностью, статус/сумма/канал, без сырых enum где возможно;
+  - возвращать `at` с исходным timestamp; в UI показывать время с миллисекундами для `event`.
 
-### 4. Фикс «Скачать» для файлов
+4. Изменяемые компоненты
 
-- В `ContactFeedTab.tsx` кнопка скачивания сейчас открывает `getPublicUrl` в новом табе → браузер показывает preview.
-- Использовать `supabase.storage.from('contact-files').download(path)` → `Blob` → `URL.createObjectURL` + `<a download={filename}>` программный клик. Для крупных файлов — сгенерировать signed URL с `?download=filename` параметром (Supabase поддерживает `download` опцию в `createSignedUrl`).
-- Оставить отдельный action «Открыть» для preview (текст/PDF/картинка).
+- UI:
+  - `src/components/admin/contact/ContactFeedTab.tsx`
+  - при необходимости точечно `src/components/admin/ContactDetailSheet.tsx`, если внешний sheet всё еще добавляет лишний нижний отступ для вкладки `feed`.
+- Edge Functions:
+  - `supabase/functions/voice-note-transcribe-summarize/index.ts`
+  - `supabase/functions/voice-note-forward-to-support/index.ts`
+  - возможно переиспользуем существующие Telegram helpers/functions после проверки.
+- Database/RPC:
+  - новая миграция с полным `CREATE OR REPLACE FUNCTION public.contact_feed_list(...)`, GRANT/REVOKE без изменения схемы таблиц.
 
-### 5. Цветовая система событий (все типы разные)
+5. Что не будет изменено
 
-Ввести единый map `EVENT_STYLES` в `ContactFeedTab.tsx`:
+- Не создаю новую узкую таблицу событий и не дублирую `crm_activity_log`.
+- Не меняю глобальную CRM-архитектуру, роли и платежную логику.
+- Не меняю регистрацию, доступы, тарифы, звонки/SMS/почту, если они уже работают.
+- Не делаю массовых UPDATE/DELETE данных.
 
+6. Dry-run
 
-| Тип        | Bg (light)                        | Icon color  | Accent      |
-| ---------- | --------------------------------- | ----------- | ----------- |
-| call       | sky-50                            | sky-600     | sky-500     |
-| sms        | emerald-50                        | emerald-600 | emerald-500 |
-| email      | violet-50                         | violet-600  | violet-500  |
-| telegram   | cyan-50                           | cyan-600    | cyan-500    |
-| voice_note | pink-50 (сохранить текущий)       | pink-600    | pink-500    |
-| file       | amber-50                          | amber-600   | amber-500   |
-| note       | yellow-50                         | yellow-700  | yellow-600  |
-| task       | indigo-50                         | indigo-600  | indigo-500  |
-| deal       | teal-50 (сейчас совпадает с file) | teal-600    | teal-500    |
-| event      | slate-50                          | slate-600   | slate-500   |
+- Проверить реальные схемы таблиц, которые участвуют в событиях: `crm_activity_log`, `orders_v2`, платежные таблицы, `calls`, `sms_messages`, `telegram_messages`, `email_logs`, `contact_files`, `contact_notes`, `crm_tasks`, `telegram_bots/logs`.
+- Проверить текущую сигнатуру `contact_feed_list` и выполнить SELECT/RPC на тестовом контакте до миграции, чтобы увидеть фактические пустоты.
+- Проверить логи/ответы функций голосового на тестовом `file_id`: статус, тело ошибки, где именно падает.
+- Проверить, есть ли существующий безопасный Telegram-sender/helper, чтобы не создавать параллельный workflow.
 
+7. Execute
 
-Сейчас `file` и `deal` одного цвета — развести. Плеер `CallRecordingPlayer` в голосовом получает пропс `accentClassName`, чтобы прогресс-бар/кнопки совпадали с pink-акцентом карточки (для звонков остаётся sky).
+- Внести минимальные правки в UI ленты: layout композера, кнопки голосового, tooltip, обработку ошибок функций.
+- Внести правки в Edge-функции голосового с безопасной авторизацией staff и корректным Telegram send path.
+- Создать миграцию, полностью перезаписать `contact_feed_list`, добавив русские события по контакту/сделкам/платежам и корректную фильтрацию.
+- Не выполнять опасных массовых операций с данными.
 
-### 6. DoD
+8. STOP-guards
 
-- Голосовое, записанное в композере, появляется в ленте, через ~10с показывает транскрипт и AI-сводку (или `skipped_too_short`).
-- Плеер голосового = плеер звонка (внешне и функционально), 3-точечного нативного меню нет.
-- Клик «Скачать» на файле или голосовом — реально скачивает (Content-Disposition: attachment), а не открывает preview.
-- Кнопка Telegram отправляет файл + метаданные в support-бот, приходит уведомление.
-- Все 10 типов событий визуально различимы (bg/icon/accent), `file` ≠ `deal`.
-- Никаких дубликатов Edge-функций/RPC: воспроизводимая цепочка `_shared/transcribe.ts` → `call-transcribe-summarize` и `voice-note-transcribe-summarize`.
+- Остановиться, если фактические платежные таблицы/поля отличаются от ожидаемых и нельзя безопасно связать оплату с контактом через UUID.
+- Остановиться, если Telegram Support в проекте использует другой канонический бот/канал и нет безопасного способа определить получателей без новой бизнес-логики.
+- Остановиться, если функция возвращает неожиданно большой объем событий; оставить `_limit/_offset` и не убирать пагинацию.
+- Остановиться, если проверка показывает, что ошибка функций вызвана отсутствующим секретом/коннектором, а не кодом.
+
+9. DoD
+
+- В симуляции браузера на `/admin/contacts`:
+  - лента показывает существующие звонки, SMS, письма, Telegram, заметки, файлы, сделки;
+  - фильтр «Событие» показывает русские логи по контакту/сделкам/платежам, а не пустоту;
+  - композер остается внизу и одинаково выглядит при фильтре «Все» и при пустой/частично заполненной ленте;
+  - у голосового кнопки AI и Telegram Support справа, круглые, с tooltip;
+  - AI-расшифровка и отправка в Telegram Support не дают `Edge Function failed`, показывают понятный результат/ошибку.
+- Backend-проверки:
+  - `contact_feed_list(contact_id, ...)` возвращает непустой jsonb для тестового контакта;
+  - RPC через client-формат парсится корректно;
+  - Edge-функции отвечают предсказуемым JSON и CORS.
+- Подтверждение: приложить скриншоты после браузерной проверки.
+
+10. Риски и зависимости
+
+- Если причина Telegram Support — не код, а отсутствие привязанных Telegram у support-админов, UI должен показать это явно, а не как падение функции.
+- AI-расшифровка зависит от доступности Lovable AI и корректного формата аудио; короткие/пустые записи должны пропускаться безопасно.
+- Полнота «всех событий» ограничена тем, что реально логируется в существующих таблицах; если действие никогда не писалось в `crm_activity_log` или профильную таблицу, ретроактивно восстановить его можно только из существующих источников, без выдумывания событий.
+
+11. Требуется дополнительная информация
+
+- Не требуется: по скриншотам и описанию scope достаточно ясен. После подтверждения плана выполню правки и проверю симуляцией со скриншотами.

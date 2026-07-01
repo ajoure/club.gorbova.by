@@ -3533,7 +3533,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Communications Tab */}
-            <TabsContent value="feed" className="m-0 space-y-4">
+            <TabsContent value="feed" className="m-0">
               <ContactFeedTab contactId={contact.id} />
             </TabsContent>
 

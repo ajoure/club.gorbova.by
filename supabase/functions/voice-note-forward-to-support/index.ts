@@ -10,7 +10,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, x-supabase-client-platform, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -39,9 +40,9 @@ Deno.serve(async (req) => {
 
     const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { data: isEmployee } = await service.rpc("has_role_v2", { _user_id: user.id, _role: "employee" });
-    const { data: isAdmin } = await service.rpc("has_role_v2", { _user_id: user.id, _role: "admin" });
-    const { data: isSuper } = await service.rpc("has_role_v2", { _user_id: user.id, _role: "super_admin" });
+    const { data: isEmployee } = await service.rpc("has_role_v2", { _user_id: user.id, _role_code: "employee" });
+    const { data: isAdmin } = await service.rpc("has_role_v2", { _user_id: user.id, _role_code: "admin" });
+    const { data: isSuper } = await service.rpc("has_role_v2", { _user_id: user.id, _role_code: "super_admin" });
     if (!(isEmployee || isAdmin || isSuper)) return jsonResponse({ error: "forbidden" }, 403);
 
     const body = await req.json().catch(() => ({}));

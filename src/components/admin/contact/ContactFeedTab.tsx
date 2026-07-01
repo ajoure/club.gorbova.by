@@ -22,6 +22,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Popover, PopoverTrigger, PopoverContent,
 } from "@/components/ui/popover";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -35,6 +38,7 @@ import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialo
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
 import { PdfViewer } from "@/components/admin/chat/PdfViewer";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 
 type FeedKind =
   | "call" | "sms" | "email" | "telegram" | "task" | "note"
@@ -207,7 +211,7 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
       else toast.success("Расшифровка готова");
       qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
     } catch (e: any) {
-      toast.error(e?.message || "Ошибка расшифровки");
+      toast.error(await normalizeEdgeFunctionErrorAsync(e));
     } finally {
       setAiBusy(false);
     }
@@ -225,7 +229,7 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
       if (sent > 0) toast.success(`Отправлено в Telegram (${sent})`);
       else toast.warning("Никто из support-админов не привязал Telegram");
     } catch (e: any) {
-      toast.error(e?.message || "Ошибка отправки в Telegram");
+      toast.error(await normalizeEdgeFunctionErrorAsync(e));
     } finally {
       setTgBusy(false);
     }
@@ -235,12 +239,51 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
 
   return (
     <div className="space-y-2">
-      {/* Плеер — тот же кастомный, что и в звонках, тонированный под голосовые */}
-      <CallRecordingPlayer
-        src={url}
-        fileName={name}
-        className="!bg-fuchsia-500/10 !border-fuchsia-500/25"
-      />
+      <div className="flex items-center gap-2">
+        {/* Плеер — тот же кастомный, что и в звонках, тонированный под голосовые */}
+        <CallRecordingPlayer
+          src={url}
+          fileName={name}
+          className="min-w-0 flex-1 !bg-fuchsia-500/10 !border-fuchsia-500/25"
+        />
+
+        <TooltipProvider delayDuration={150}>
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-fuchsia-500/15 bg-background/70 p-1 shadow-sm backdrop-blur">
+            {canTranscribe && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 rounded-full text-fuchsia-700 hover:bg-fuchsia-500/15 hover:text-fuchsia-800"
+                    disabled={aiBusy}
+                    onClick={runTranscribe}
+                    aria-label="Сделать AI-сводку голосового"
+                  >
+                    <Sparkles className={cn("h-3.5 w-3.5", aiBusy && "animate-pulse")} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">Расшифровать голосовое и сделать AI-сводку</TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 rounded-full text-sky-700 hover:bg-sky-500/15 hover:text-sky-800"
+                  disabled={tgBusy}
+                  onClick={sendToSupport}
+                  aria-label="Отправить голосовое в Telegram support"
+                >
+                  <Send className={cn("h-3.5 w-3.5", tgBusy && "animate-pulse")} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">Отправить голосовое в Telegram support</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+      </div>
 
       {/* Статусные состояния AI */}
       {status === "processing" && (
@@ -267,17 +310,6 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
           <div className="mt-1 whitespace-pre-wrap opacity-80">{transcript}</div>
         </details>
       )}
-
-      <div className="flex items-center gap-2 flex-wrap">
-        {canTranscribe && (
-          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={aiBusy} onClick={runTranscribe}>
-            <Sparkles className="w-3 h-3 mr-1" /> {aiBusy ? "Расшифровка…" : "AI-сводка"}
-          </Button>
-        )}
-        <Button size="sm" variant="outline" className="h-7 text-xs" disabled={tgBusy} onClick={sendToSupport}>
-          <Send className="w-3 h-3 mr-1" /> {tgBusy ? "Отправка…" : "В Telegram support"}
-        </Button>
-      </div>
     </div>
   );
 }
@@ -371,6 +403,85 @@ function useVoiceRecorder() {
   return { recording, blob, elapsed, start, stop, reset };
 }
 
+
+async function loadPlatformEventsForContact(contactId: string, types: FeedKind[] | null, search: string | null): Promise<FeedEvent[]> {
+  if (types && !types.includes("event") && !types.includes("deal")) return [];
+  const q = (search || "").trim().toLowerCase();
+  const match = (...parts: any[]) => !q || parts.some((v) => String(v ?? "").toLowerCase().includes(q));
+  const events: FeedEvent[] = [];
+
+  const { data: contact } = await supabase.from("profiles").select("id,user_id,email,phone,full_name").eq("id", contactId).maybeSingle();
+  const userId = (contact as any)?.user_id as string | undefined;
+  const email = ((contact as any)?.email || "").toLowerCase();
+  const phoneDigits = String((contact as any)?.phone || "").replace(/\D/g, "");
+
+  const orderOr: string[] = [`profile_id.eq.${contactId}`];
+  if (userId) orderOr.push(`user_id.eq.${userId}`);
+  if (email) orderOr.push(`customer_email.ilike.${email}`);
+  if (phoneDigits) orderOr.push(`customer_phone.ilike.%${phoneDigits}%`);
+
+  const { data: orders } = await supabase
+    .from("orders_v2")
+    .select("id,order_number,status,final_price,currency,created_at,updated_at,deal_date,customer_email,product:products_v2(name),tariff:tariffs(name)")
+    .or(orderOr.join(","))
+    .order("created_at", { ascending: false })
+    .limit(80);
+
+  const orderRows = (orders || []) as any[];
+  const orderIds = orderRows.map((o) => o.id).filter(Boolean);
+
+  if (!types || types.includes("deal")) {
+    for (const o of orderRows) {
+      const productName = o.product?.name;
+      const tariffName = o.tariff?.name;
+      const title = `Сделка ${o.order_number || String(o.id).slice(0, 8)}`;
+      const body = [
+        o.status === "paid" ? "Оплачено" : o.status === "pending" ? "Ожидает оплаты" : o.status === "refunded" ? "Возврат" : o.status === "canceled" ? "Отменена" : `Статус: ${o.status}`,
+        productName ? `Продукт: ${productName}` : null,
+        tariffName ? `Тариф: ${tariffName}` : null,
+        o.final_price != null ? `Сумма: ${o.final_price} ${o.currency || ""}` : null,
+      ].filter(Boolean).join("\n");
+      if (match(title, body)) events.push({ id: `deal-${o.id}`, kind: "deal", at: o.deal_date || o.updated_at || o.created_at, title, body, author: "Система", meta: { status: o.status, order_number: o.order_number, final_price: o.final_price, currency: o.currency, product_name: productName, tariff_name: tariffName } });
+    }
+  }
+
+  if (!types || types.includes("event")) {
+    let payQuery = supabase
+      .from("payments_v2")
+      .select("id,order_id,amount,currency,status,provider,provider_payment_id,transaction_type,product_name_raw,error_message,paid_at,created_at,updated_at")
+      .order("created_at", { ascending: false })
+      .limit(120);
+    const paymentOr = [`profile_id.eq.${contactId}`];
+    if (userId) paymentOr.push(`user_id.eq.${userId}`);
+    for (const oid of orderIds.slice(0, 40)) paymentOr.push(`order_id.eq.${oid}`);
+    payQuery = payQuery.or(paymentOr.join(","));
+    const { data: payments } = await payQuery;
+    for (const p of ((payments || []) as any[])) {
+      const title = p.status === "succeeded" ? "Платёж прошёл" : p.status === "refunded" ? "Платёж возвращён" : p.status === "failed" ? "Платёж не прошёл" : `Платёж: ${p.status}`;
+      const body = [`Сумма: ${p.amount ?? 0} ${p.currency || ""}`, p.product_name_raw ? `Продукт: ${p.product_name_raw}` : null, p.provider ? `Провайдер: ${p.provider}` : null, p.error_message ? `Ошибка: ${p.error_message}` : null].filter(Boolean).join("\n");
+      if (match(title, body, p.provider_payment_id)) events.push({ id: `payment-${p.id}`, kind: "event", at: p.paid_at || p.updated_at || p.created_at, title, body, author: "Система", meta: { event_source: "payment", status: p.status, amount: p.amount, currency: p.currency, provider: p.provider } });
+    }
+
+    const auditFilters = [`entity_id.eq.${contactId}`, `meta.ilike.%${contactId}%`];
+    if (userId) auditFilters.push(`target_user_id.eq.${userId}`, `actor_user_id.eq.${userId}`, `meta.ilike.%${userId}%`);
+    for (const oid of orderIds.slice(0, 20)) auditFilters.push(`entity_id.eq.${oid}`, `meta.ilike.%${oid}%`);
+    const { data: audits } = await supabase
+      .from("audit_logs")
+      .select("id,actor_user_id,action,target_user_id,meta,created_at,actor_type,actor_label,entity_type,entity_id")
+      .or(auditFilters.join(","))
+      .order("created_at", { ascending: false })
+      .limit(160);
+    for (const a of ((audits || []) as any[])) {
+      const action = String(a.action || "");
+      const title = /delete|remove|удал/i.test(action) ? "Удаление данных" : /create|insert|add|создан|добав/i.test(action) ? "Добавление данных" : /update|change|reset|измен/i.test(action) ? "Изменение данных" : /payment|bepaid|pay/i.test(action) ? "Платёжная операция" : "Событие платформы";
+      const body = [`Действие: ${action}`, a.entity_type ? `Объект: ${a.entity_type}` : null, a.entity_id ? `ID: ${a.entity_id}` : null].filter(Boolean).join("\n");
+      if (match(title, body, a.actor_label, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: a.actor_label || (a.actor_type === "system" ? "Система" : "Сотрудник"), meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
+    }
+  }
+
+  return events;
+}
+
 // ---------------------- Main -------------------------------------------------
 
 export function ContactFeedTab({ contactId }: { contactId: string }) {
@@ -449,7 +560,16 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
               : Array.isArray(firstObjectValue)
                 ? firstObjectValue
                 : [];
-      return arr as FeedEvent[];
+      const rpcEvents = arr as FeedEvent[];
+      let platformEvents: FeedEvent[] = [];
+      try {
+        platformEvents = await loadPlatformEventsForContact(contactId, types as FeedKind[] | null, debounced || null);
+      } catch (platformError) {
+        console.warn("[contact-feed] platform events fallback failed:", platformError);
+      }
+      const byKey = new Map<string, FeedEvent>();
+      [...rpcEvents, ...platformEvents].forEach((evt) => byKey.set(`${evt.kind}:${evt.id}`, evt));
+      return Array.from(byKey.values()).sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
     },
   });
 
@@ -604,7 +724,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
   const canSend = noteBody.trim().length > 0 && !createNote.isPending;
 
   return (
-    <div className="flex flex-col h-full min-h-[60vh]">
+    <div className="flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden">
       {/* Filters + search */}
       <div className="flex flex-wrap items-center gap-2 sticky top-0 z-10 bg-background/80 backdrop-blur py-2">
         <button
@@ -643,7 +763,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       </div>
 
       {/* List (scrollable) */}
-      <div className="flex-1 overflow-y-auto space-y-2 pb-3 pt-1">
+      <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pb-3 pt-1">
         {isError && hasFeedEvents && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -670,7 +790,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
             </Button>
           </div>
         ) : !hasFeedEvents ? (
-          <div className="text-center py-12 text-muted-foreground">
+          <div className="flex h-full min-h-[260px] flex-col items-center justify-center text-center text-muted-foreground">
             <Activity className="w-12 h-12 mx-auto mb-2 opacity-30" />
             <p className="text-sm">Пока событий нет</p>
             <p className="text-xs">Добавь заметку, задачу или загрузи файл — они появятся здесь.</p>
@@ -766,7 +886,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       </div>
 
       {/* Composer (Telegram-style, sticky bottom) */}
-      <div className="sticky bottom-0 z-10 mt-2">
+      <div className="z-10 mt-2 shrink-0">
         {rec.blob ? (
           <div className="flex items-center gap-2 rounded-2xl border border-fuchsia-500/25 bg-fuchsia-500/10 p-2 backdrop-blur">
             <CallRecordingPlayer
