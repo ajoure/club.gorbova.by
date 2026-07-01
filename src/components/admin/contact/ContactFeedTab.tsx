@@ -495,7 +495,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     onError: (e: any) => toast.error(e?.message || "Не удалось удалить"),
   });
 
-  async function uploadBlob(blob: Blob, filename: string, mime: string) {
+  async function uploadBlob(blob: Blob, filename: string, mime: string): Promise<string> {
     const { data: u } = await supabase.auth.getUser();
     const uid = u?.user?.id;
     if (!uid) throw new Error("no auth");
@@ -503,7 +503,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     const path = `${contactId}/${Date.now()}_${safeName}`;
     const up = await supabase.storage.from("contact-files").upload(path, blob, { contentType: mime, upsert: false });
     if (up.error) throw up.error;
-    const { error: insErr } = await supabase.from("contact_files").insert({
+    const { data: inserted, error: insErr } = await supabase.from("contact_files").insert({
       contact_id: contactId,
       uploader_id: uid,
       name: filename,
@@ -511,8 +511,9 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
       url: null,
       mime_type: mime,
       size_bytes: blob.size,
-    });
+    }).select("id").single();
     if (insErr) throw insErr;
+    return inserted!.id as string;
   }
 
   async function handleFiles(list: FileList | null) {
@@ -537,10 +538,14 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     try {
       setUploading(true);
       const name = `voice_${Date.now()}.webm`;
-      await uploadBlob(rec.blob, name, "audio/webm");
+      const fileId = await uploadBlob(rec.blob, name, "audio/webm");
       toast.success("Голосовое отправлено");
       rec.reset();
       invalidate();
+      // Фоновая AI-расшифровка (не блокирует UI). Ошибки уже пишутся в meta функцией.
+      supabase.functions.invoke("voice-note-transcribe-summarize", { body: { file_id: fileId } })
+        .then(() => invalidate())
+        .catch((e) => console.warn("[voice-note] auto-transcribe failed:", e));
     } catch (e: any) {
       toast.error(e?.message || "Ошибка загрузки");
     } finally {
@@ -548,6 +553,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     }
   }
 
+  /** Открывает файл в подходящем предпросмотре (или скачивает, если превью нет). */
   async function openFile(evt: FeedEvent) {
     const path = evt.meta?.storage_path as string | undefined;
     const name = (evt.title || evt.meta?.name || "file") as string;
@@ -561,10 +567,20 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     if (kind === "image") setPreviewImage({ url: data.signedUrl, name });
     else if (kind === "pdf") setPreviewPdf({ url: data.signedUrl, name });
     else if (kind === "text") setPreviewText({ path, name });
-    else {
-      const a = document.createElement("a");
-      a.href = data.signedUrl; a.download = name; a.click();
+    else await forceDownload(data.signedUrl, name);
+  }
+
+  /** Всегда качает файл на диск (кнопка «Скачать» в списке). */
+  async function downloadFile(evt: FeedEvent) {
+    const path = evt.meta?.storage_path as string | undefined;
+    const name = (evt.title || evt.meta?.name || "file") as string;
+    if (!path) {
+      if (evt.meta?.url) await forceDownload(evt.meta.url, name);
+      return;
     }
+    const { data, error } = await supabase.storage.from("contact-files").createSignedUrl(path, 60 * 10);
+    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
+    await forceDownload(data.signedUrl, name);
   }
 
   const toggleType = (k: FeedKind) => {
