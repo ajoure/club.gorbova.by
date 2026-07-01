@@ -77,7 +77,7 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
         setDuplicate(null);
         return;
       }
-      setDuplicate((data as DuplicateInfo | null) ?? null);
+      setDuplicate((data as unknown as DuplicateInfo | null) ?? null);
     })();
   }, [open, debouncedEmail, debouncedPhone, debouncedTg]);
 
