@@ -17,6 +17,10 @@ const corsHeaders = {
     'authorization, x-client-info, apikey, content-type, x-lovable-signature, x-lovable-timestamp, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 }
 
+const ROOT_DOMAIN = 'gorbova.by'
+const SITE_URL = `https://club.${ROOT_DOMAIN}`
+const VERIFY_PROXY_PATH = '/auth-verify'
+
 // Темы писем на русском языке.
 const EMAIL_SUBJECTS: Record<string, string> = {
   signup: 'Подтверждение почты',
@@ -206,13 +210,14 @@ async function handleWebhook(req: Request): Promise<Response> {
     })
   }
 
-  // Хост ссылки подменяем на gorbova.by, чтобы пользователь не видел *.supabase.co
-  // в письме. Реальный verify-endpoint вызовет наш AuthVerifyProxy на /auth/v1/verify.
+  // Ссылку ведём на наш SPA-proxy: /auth/v1/verify на корневом домене
+  // может перехватываться сервером до React и отдавать 403/404.
   let confirmationUrl: string = payload.data.url
   try {
     const u = new URL(payload.data.url)
     u.protocol = 'https:'
-    u.host = ROOT_DOMAIN
+    u.host = new URL(SITE_URL).host
+    u.pathname = VERIFY_PROXY_PATH
     confirmationUrl = u.toString()
   } catch {
     console.warn('Failed to rewrite confirmationUrl host', { url: payload.data.url, run_id })
@@ -220,7 +225,7 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   const templateProps = {
     siteName: SITE_NAME,
-    siteUrl: `https://${ROOT_DOMAIN}`,
+    siteUrl: SITE_URL,
     recipient,
     confirmationUrl,
     token: payload.data.token,

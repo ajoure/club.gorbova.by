@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
  * Interstitial для auth-email ссылок (recovery / signup / magiclink / invite / email_change).
  *
  * Письма приходят со ссылкой вида:
- *   https://gorbova.by/auth/v1/verify?token=...&type=...&redirect_to=...
+ *   https://club.gorbova.by/auth-verify?token=...&type=...&redirect_to=...
  *
  * Host подменяется в supabase/functions/auth-email-hook
  * (см. mem://security/communications/no-supabase-url-leakage), чтобы клиент в

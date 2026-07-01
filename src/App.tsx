@@ -193,6 +193,7 @@ const App = () => {
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
+              <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
               <Route path="/pricing/:productSlug" element={<LazyRoute><ProductPricing /></LazyRoute>} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />

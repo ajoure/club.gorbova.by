@@ -15,6 +15,7 @@ const corsHeaders = {
 const SITE_NAME = "Gorbova Club";
 const ROOT_DOMAIN = "gorbova.by";
 const SITE_URL = `https://club.${ROOT_DOMAIN}`;
+const VERIFY_PROXY_PATH = "/auth-verify";
 const FROM_EMAIL = "noreply@gorbova.by";
 const SMTP_HOST = "smtp.yandex.ru";
 const SMTP_PORT = 465;
@@ -146,7 +147,8 @@ function rewriteHostToRoot(url: string): string {
   try {
     const u = new URL(url);
     u.protocol = "https:";
-    u.host = ROOT_DOMAIN;
+    u.host = new URL(SITE_URL).host;
+    u.pathname = VERIFY_PROXY_PATH;
     return u.toString();
   } catch {
     return url;
