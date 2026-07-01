@@ -6089,7 +6089,6 @@ export {
   Schema,
   DOMParser,
   DOMSerializer,
-  Mapping,
   RemoveMarkStep,
   ReplaceStep,
   ReplaceAroundStep,
@@ -6111,4 +6110,4 @@ export {
   Plugin,
   PluginKey
 };
-//# sourceMappingURL=chunk-C3BKHWUU.js.map
+//# sourceMappingURL=chunk-YLIL3JKF.js.map

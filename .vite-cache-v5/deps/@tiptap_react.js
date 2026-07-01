@@ -124,17 +124,17 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-EZQQYADT.js";
-import "./chunk-C3BKHWUU.js";
+} from "./chunk-SXIQHOR3.js";
+import "./chunk-YLIL3JKF.js";
 import {
   require_shim
 } from "./chunk-PU3CAANW.js";
 import {
-  require_react_dom
-} from "./chunk-FKMA2RKD.js";
-import {
   require_jsx_runtime
 } from "./chunk-NZAIND7N.js";
+import {
+  require_react_dom
+} from "./chunk-FKMA2RKD.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";

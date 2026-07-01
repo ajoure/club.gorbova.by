@@ -182,11 +182,17 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
   const [aiBusy, setAiBusy] = useState(false);
   const [tgBusy, setTgBusy] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [localAiResult, setLocalAiResult] = useState<{
+    transcript?: string;
+    summary?: string;
+    status?: string;
+    reason?: string;
+  } | null>(null);
 
-  const transcript = evt.meta?.transcript as string | undefined;
-  const summary = evt.meta?.summary as string | undefined;
-  const status = evt.meta?.transcribe_status as string | undefined;
-  const reason = evt.meta?.transcribe_reason as string | undefined;
+  const transcript = (localAiResult?.transcript || evt.meta?.transcript) as string | undefined;
+  const summary = (localAiResult?.summary || evt.meta?.summary) as string | undefined;
+  const status = (localAiResult?.status || evt.meta?.transcribe_status) as string | undefined;
+  const reason = (localAiResult?.reason || evt.meta?.transcribe_reason) as string | undefined;
   const sizeBytes = Number(evt.meta?.size_bytes || 0);
   const canTranscribe = !!path && !transcript && !summary
     && status !== "processing" && status !== "skipped_too_short" && sizeBytes >= 4096;
@@ -198,6 +204,10 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
     });
   }, [path]);
 
+  useEffect(() => {
+    setLocalAiResult(null);
+  }, [evt.id, evt.meta?.transcript, evt.meta?.summary, evt.meta?.transcribe_status]);
+
   async function runTranscribe() {
     if (!evt.id) return;
     try {
@@ -207,8 +217,18 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      if (data?.skipped) toast.info("Голосовое слишком короткое для расшифровки");
-      else toast.success("Расшифровка готова");
+      if (data?.skipped) {
+        setLocalAiResult({ status: "skipped_too_short", reason: data?.reason || "too_short" });
+        toast.info("Голосовое слишком короткое для расшифровки");
+      } else {
+        setLocalAiResult({
+          transcript: data?.transcript || transcript,
+          summary: data?.summary || summary,
+          status: data?.status || "done",
+        });
+        setShowTranscript(true);
+        toast.success(data?.cached ? "Расшифровка уже готова" : "Расшифровка готова");
+      }
       qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
     } catch (e: any) {
       toast.error(await normalizeEdgeFunctionErrorAsync(e));

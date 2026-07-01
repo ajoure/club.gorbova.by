@@ -16,7 +16,10 @@ import {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, x-supabase-client-platform, apikey, content-type",
+  // Supabase JS 2.108+ in the browser may send additional client/runtime
+  // headers. If they are not allowed in the preflight, the browser reports
+  // only a generic "Failed to fetch" before the function body is reached.
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -72,8 +75,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (fErr || !file) return jsonResponse({ error: "file_not_found" }, 404);
 
-    const status = (file.meta as any)?.transcribe_status;
-    if (status === "done") return jsonResponse({ ok: true, cached: true, status });
+    const existingMeta = (file.meta && typeof file.meta === "object") ? (file.meta as Record<string, any>) : {};
+    const status = existingMeta?.transcribe_status;
+    if (status === "done") {
+      return jsonResponse({
+        ok: true,
+        cached: true,
+        status,
+        transcript: existingMeta.transcript ?? "",
+        summary: existingMeta.summary ?? "",
+      });
+    }
 
     // Guard: слишком маленький файл → шум/тишина, галлюцинации
     if (typeof file.size_bytes === "number" && file.size_bytes > 0 && file.size_bytes < MIN_AUDIO_BYTES) {
