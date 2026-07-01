@@ -200,14 +200,33 @@ export function CallRecordingPlayer({ src, fallbackDurationSec, className, fileN
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <a
-        href={src}
-        download={fileName ?? true}
+      <button
+        type="button"
+        onClick={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            const resp = await fetch(src);
+            if (!resp.ok) throw new Error(`http_${resp.status}`);
+            const blob = await resp.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = objectUrl;
+            a.download = typeof fileName === "string" && fileName ? fileName : "recording";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          } catch (err) {
+            // Fallback: открыть в новой вкладке, если fetch заблокирован
+            window.open(src, "_blank", "noopener,noreferrer");
+          }
+        }}
         className="h-6 w-6 grid place-items-center rounded-full border border-border/60 bg-background/70 hover:bg-accent transition"
         title="Скачать запись"
       >
         <Download className="h-3 w-3" />
-      </a>
+      </button>
 
       {loading && <span className="sr-only">loading…</span>}
     </div>
