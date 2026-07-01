@@ -362,9 +362,8 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
       <CreateCrmTaskDialog
         open={createTaskOpen}
-        onOpenChange={setCreateTaskOpen}
-        contactId={contactId}
-        onCreated={() => { setCreateTaskOpen(false); refetch(); }}
+        onOpenChange={(v) => { setCreateTaskOpen(v); if (!v) refetch(); }}
+        defaultContactId={contactId}
       />
     </div>
   );
