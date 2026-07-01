@@ -79,7 +79,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
         _offset: 0,
       });
       if (error) throw error;
-      return (data ?? []) as FeedEvent[];
+      return ((data ?? []) as unknown) as FeedEvent[];
     },
   });
 
