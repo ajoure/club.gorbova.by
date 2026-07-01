@@ -403,6 +403,11 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     el.style.height = Math.min(160, el.scrollHeight) + "px";
   }, [noteBody]);
 
+  // Blob URL для превью только что записанного голосового; освобождаем при смене blob.
+  const recBlobUrl = useMemo(() => (rec.blob ? URL.createObjectURL(rec.blob) : null), [rec.blob]);
+  useEffect(() => () => { if (recBlobUrl) URL.revokeObjectURL(recBlobUrl); }, [recBlobUrl]);
+
+
   const types = selected.size === 0 ? null : Array.from(selected);
 
   const {
