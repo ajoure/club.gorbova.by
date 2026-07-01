@@ -90,6 +90,7 @@ import { ContactFiltersBar } from "@/components/admin/ContactFiltersBar";
 import { CleanupDialog } from "@/components/admin/CleanupDialog";
 import { GetCourseContactsImportDialog } from "@/components/admin/GetCourseContactsImportDialog";
 import { usePermissions } from "@/hooks/usePermissions";
+import { CreateContactDialog } from "@/components/admin/CreateContactDialog";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
 import { formatContactName } from "@/lib/nameUtils";
@@ -216,6 +217,7 @@ export default function AdminContacts() {
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
+  const [showCreateContact, setShowCreateContact] = useState(false);
   const { hasPermission } = usePermissions();
   
   // Bulk action dialogs
@@ -1141,6 +1143,19 @@ export default function AdminContacts() {
             presets={CONTACT_PRESETS}
           />
 
+          {/* Create contact — quick action */}
+          {hasPermission("contacts.create") || hasPermission("contacts.manage") || hasPermission("admins.manage") ? (
+            <button
+              type="button"
+              onClick={() => setShowCreateContact(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25 transition-colors whitespace-nowrap"
+              title="Создать контакт вручную"
+            >
+              <Users className="w-3 h-3" />
+              Новый контакт
+            </button>
+          ) : null}
+
           {/* Gear menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1299,6 +1314,15 @@ export default function AdminContacts() {
         open={showGCImport}
         onOpenChange={setShowGCImport}
         onSuccess={() => refetch()}
+      />
+
+      <CreateContactDialog
+        open={showCreateContact}
+        onOpenChange={setShowCreateContact}
+        onCreated={(id) => {
+          queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
+          setSelectedContactId(id);
+        }}
       />
 
       {/* Search and Filters */}

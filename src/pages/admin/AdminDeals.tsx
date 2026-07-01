@@ -90,6 +90,7 @@ import { BulkExtendAccessDialog } from "@/components/admin/BulkExtendAccessDialo
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
+import { CreateDealDialog } from "@/components/admin/CreateDealDialog";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -270,6 +271,7 @@ export default function AdminDeals() {
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+  const [showCreateDealDialog, setShowCreateDealDialog] = useState(false);
 
   // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1174,6 +1176,17 @@ export default function AdminDeals() {
           }}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
+          {canEdit && (
+            <Button
+              size="sm"
+              onClick={() => setShowCreateDealDialog(true)}
+              className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-600/90 text-white"
+              title="Создать сделку вручную"
+            >
+              <Handshake className="h-3 w-3" />
+              <span className="hidden sm:inline">Новая сделка</span>
+            </Button>
+          )}
           {isSuperAdmin() && tabCounts && tabCounts.imported > 0 && (
             <Button
               variant="outline"
@@ -1187,6 +1200,17 @@ export default function AdminDeals() {
           )}
         </div>
       </div>
+
+      <CreateDealDialog
+        open={showCreateDealDialog}
+        onOpenChange={setShowCreateDealDialog}
+        onCreated={(orderId) => {
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
+          queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+          setSelectedDealId(orderId);
+        }}
+      />
 
       {/* Board View */}
       {viewMode === "board" && activePipelineId && (
