@@ -730,16 +730,40 @@ Deno.serve(async (req) => {
           .single();
 
         if (!tokenError && tokenData) {
-          // Check if telegram already linked to another account
+          // Check if telegram already linked to another profile
           const { data: existingProfile } = await supabase
             .from('profiles')
             .select('id, user_id')
             .eq('telegram_user_id', telegramUserId)
-            .single();
+            .maybeSingle();
 
-          if (existingProfile && existingProfile.user_id !== tokenData.user_id) {
+          if (existingProfile && existingProfile.user_id && existingProfile.user_id !== tokenData.user_id) {
+            // Настоящий аккаунт — блокируем.
             await sendMessage(botToken, chatId, MESSAGES.alreadyLinked);
             return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+
+          // Гостевой (импортированный) профиль без user_id — освобождаем telegram_user_id,
+          // чтобы можно было привязать к настоящему аккаунту.
+          if (existingProfile && !existingProfile.user_id) {
+            await supabase.from('profiles').update({
+              telegram_user_id: null,
+              telegram_username: null,
+              telegram_linked_at: null,
+              telegram_link_status: 'unlinked',
+              telegram_last_error: 'released_for_real_account_link',
+            }).eq('id', existingProfile.id);
+
+            await supabase.from('telegram_logs').insert({
+              user_id: tokenData.user_id,
+              action: 'GUEST_TG_RELEASED',
+              target: 'profile',
+              status: 'ok',
+              meta: {
+                guest_profile_id: existingProfile.id,
+                telegram_user_id: telegramUserId,
+              },
+            });
           }
 
           // Link telegram account with new status fields
