@@ -17308,6 +17308,14 @@ export type Database = {
         Args: { p_from: string; p_provider?: string; p_to: string }
         Returns: Json
       }
+      admin_lookup_contact_duplicate: {
+        Args: {
+          p_email?: string
+          p_phone?: string
+          p_telegram_username?: string
+        }
+        Returns: Json
+      }
       admin_override_document_number: {
         Args: { p_document_id: string; p_new_number: string; p_reason: string }
         Returns: undefined

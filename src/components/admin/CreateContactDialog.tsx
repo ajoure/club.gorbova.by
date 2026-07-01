@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, UserPlus, Mail, Phone, Send, MapPin, Briefcase, User } from "lucide-react";
+import { Loader2, UserPlus, Mail, Phone, Send, MapPin, Briefcase, User, AlertCircle, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 interface CreateContactDialogProps {
   open: boolean;
@@ -26,16 +27,75 @@ const initialForm = {
   notes: "",
 };
 
+interface DuplicateInfo {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  telegram_username: string | null;
+  matched_field: "email" | "phone" | "telegram";
+}
+
+const FIELD_LABEL: Record<DuplicateInfo["matched_field"], string> = {
+  email: "email",
+  phone: "телефоном",
+  telegram: "Telegram",
+};
+
 export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateContactDialogProps) {
   const [form, setForm] = useState(initialForm);
   const [saving, setSaving] = useState(false);
+  const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const debouncedEmail = useDebouncedValue(form.email, 500);
+  const debouncedPhone = useDebouncedValue(form.phone, 500);
+  const debouncedTg = useDebouncedValue(form.telegram_username, 500);
+  const lookupSeq = useRef(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const email = debouncedEmail.trim();
+    const phone = debouncedPhone.trim();
+    const tg = debouncedTg.trim();
+    if (!email && !phone && !tg) {
+      setDuplicate(null);
+      setChecking(false);
+      return;
+    }
+    const seq = ++lookupSeq.current;
+    setChecking(true);
+    (async () => {
+      const { data, error } = await supabase.rpc("admin_lookup_contact_duplicate", {
+        p_email: email || null,
+        p_phone: phone || null,
+        p_telegram_username: tg || null,
+      });
+      if (seq !== lookupSeq.current) return; // stale
+      setChecking(false);
+      if (error) {
+        setDuplicate(null);
+        return;
+      }
+      setDuplicate((data as unknown as DuplicateInfo | null) ?? null);
+    })();
+  }, [open, debouncedEmail, debouncedPhone, debouncedTg]);
 
   const upd = (k: keyof typeof initialForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const reset = () => setForm(initialForm);
+  const reset = () => {
+    setForm(initialForm);
+    setDuplicate(null);
+    setChecking(false);
+    lookupSeq.current++;
+  };
 
   const submit = async () => {
+    if (duplicate) {
+      toast.error("Сначала откройте существующий контакт или измените данные");
+      return;
+    }
     const hasAny = form.first_name || form.last_name || form.email || form.phone || form.telegram_username;
     if (!hasAny) {
       toast.error("Заполните хотя бы имя, email, телефон или Telegram");
@@ -59,10 +119,14 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
         const msg = error.message || "";
         if (msg.startsWith("duplicate_contact:")) {
           const id = msg.split(":")[1];
-          toast.error("Контакт с таким email/телефоном/telegram уже существует", {
-            action: { label: "Открыть", onClick: () => onCreated?.(id) },
+          setDuplicate({
+            id,
+            full_name: null,
+            email: form.email || null,
+            phone: form.phone || null,
+            telegram_username: form.telegram_username || null,
+            matched_field: form.email ? "email" : form.phone ? "phone" : "telegram",
           });
-          onOpenChange(false);
           return;
         }
         if (msg === "forbidden") toast.error("Нет прав на создание контактов");
@@ -79,6 +143,13 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
     } finally {
       setSaving(false);
     }
+  };
+
+  const openDuplicate = () => {
+    if (!duplicate) return;
+    reset();
+    onOpenChange(false);
+    onCreated?.(duplicate.id);
   };
 
   return (
@@ -118,6 +189,33 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
               <Field label="Telegram" icon={<Send className="h-3.5 w-3.5" />}>
                 <Input value={form.telegram_username} onChange={upd("telegram_username")} placeholder="@username" />
               </Field>
+
+              {duplicate && (
+                <div className="col-span-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">
+                      Контакт с таким {FIELD_LABEL[duplicate.matched_field]} уже существует
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate mt-0.5">
+                      {duplicate.full_name || "Без имени"}
+                      {duplicate.email ? ` · ${duplicate.email}` : ""}
+                      {duplicate.phone ? ` · ${duplicate.phone}` : ""}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 text-xs"
+                      onClick={openDuplicate}
+                    >
+                      <ExternalLink className="h-3 w-3 mr-1" />
+                      Открыть контакт
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <Field label="Должность" icon={<Briefcase className="h-3.5 w-3.5" />} span={2}>
                 <Input value={form.position} onChange={upd("position")} placeholder="Руководитель отдела" />
               </Field>
@@ -143,9 +241,14 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
               <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
                 Отмена
               </Button>
-              <Button onClick={submit} disabled={saving} className="min-w-[140px]">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserPlus className="h-4 w-4 mr-2" />}
-                Создать контакт
+              <Button
+                onClick={submit}
+                disabled={saving || !!duplicate || checking}
+                className="min-w-[140px]"
+                title={duplicate ? "Уже есть контакт с такими данными" : undefined}
+              >
+                {saving || checking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserPlus className="h-4 w-4 mr-2" />}
+                {checking ? "Проверка…" : "Создать контакт"}
               </Button>
             </DialogFooter>
           </div>

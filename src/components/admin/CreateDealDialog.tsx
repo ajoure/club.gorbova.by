@@ -267,8 +267,8 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
                 </div>
 
                 {/* Amount */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2 space-y-1.5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
                       <Coins className="h-3.5 w-3.5" /> Сумма
                     </Label>

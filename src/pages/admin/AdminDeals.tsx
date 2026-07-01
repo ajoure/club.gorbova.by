@@ -203,7 +203,11 @@ function buildDealsQuery(
       tariffs(id, name),
       profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
       payments_v2(id, status, paid_at, created_at, card_holder, meta)
-    `, { count: "exact" });
+    `, { count: "estimated" })
+    // Cap the embedded payments to the latest one only — table only needs
+    // the payer name from the most recent payment (see getLatestPayerName).
+    .order("paid_at", { referencedTable: "payments_v2", ascending: false, nullsFirst: false })
+    .limit(1, { referencedTable: "payments_v2" });
 
   // Server-side preset filters
   if (activePreset === "trial") {

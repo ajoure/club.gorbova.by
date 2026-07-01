@@ -731,7 +731,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Базовая цена</span>
                   <span>
-                    {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.base_price))}
+                    {(() => {
+                      const n = Number(deal.base_price);
+                      const cur = deal.currency || "BYN";
+                      if (!Number.isFinite(n)) return "—";
+                      try {
+                        return new Intl.NumberFormat("ru-BY", { style: "currency", currency: cur }).format(n);
+                      } catch {
+                        return `${n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+                      }
+                    })()}
                   </span>
                 </div>
                 {deal.discount_percent && Number(deal.discount_percent) > 0 && (
@@ -747,7 +756,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Итого</span>
                   <span className="font-bold text-lg">
-                    {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
+                    {(() => {
+                      const n = Number(deal.final_price);
+                      const cur = deal.currency || "BYN";
+                      if (!Number.isFinite(n)) return "—";
+                      try {
+                        return new Intl.NumberFormat("ru-BY", { style: "currency", currency: cur }).format(n);
+                      } catch {
+                        return `${n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+                      }
+                    })()}
                   </span>
                 </div>
                 {deal.is_trial && (
