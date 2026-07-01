@@ -1,88 +1,76 @@
 да, согласен, с учетом правок:
 
-1. Заменить ссылку в письме:
-  - было: `https://gorbova.by/auth?mode=recover`
-  - нужно: **персональная recovery-ссылка Supabase**, по которой пользователь сразу попадает на ввод нового пароля.
-2. Для каждого email генерировать recovery-link через существующий auth/admin механизм, не через публичную страницу повторного запроса.
-3. В письме написать прямо:
+1. В RPC fix обязательно заменить не только `cancelled` → `canceled`, а проверить все enum-сравнения в `contact_feed_list`, чтобы не осталось других строковых значений, которых нет в enum.
+2. В DoD добавить proof:
+  - direct SQL call RPC от service/admin возвращает события;
+  - authenticated UI call возвращает 200;
+  - React Query `isError` реально показывает error-state при искусственной ошибке.
+3. В `ContactFeedTab.tsx` error-state должен показывать:
+  - текст ошибки;
+  - кнопку «Повторить»;
+  - не должен очищать уже загруженные события, если ошибка случилась при refetch.
+4. Composer/layout править только после browser-preview. Не трогать `ContactDetailSheet`, если проблема решается локально в `ContactFeedTab`.
+5. В отчет о выполнении обязательно включить raw proof:
+  - enum values `order_status`;
+  - старый 400 network error;
+  - новый 200 network response;
+  - количество событий по тестовому contact_id.
+  - &nbsp;
+  - План:
 
-Здравствуйте!
-
-Вы недавно запрашивали сброс пароля на платформе gorbova.by.
-
-Доставка писем восстановления была исправлена. Перейдите по ссылке ниже и установите новый пароль:
-
-[Сбросить пароль]
-
-Ссылка действует в течение 24 часов.
-
-Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.
-
-Приносим извинения за неудобства.
-
-Команда gorbova.by
-
-4. Добавить stop-guard:
-  - не отправлять письмо без валидной персональной recovery-ссылки;
-  - не отправлять ссылку, если срок действия меньше 24 часов или это нельзя гарантировать;
-  - не использовать magic-link для входа, только recovery/reset password flow.
-5. Dry-run должен проверять не только доставку письма, но и полный сценарий:
-  - ссылка открывается;
-  - ведет на экран ввода нового пароля;
-  - новый пароль можно сохранить;
-  - после смены пароля вход работает.
-6. Идемпотентность оставить:
-  - `template_code = password_reset_recovery_notice_2026_07`;
-  - не отправлять повторно тем, у кого уже есть `sent`.
-7. Никаких новых кнопок, edge-функций, таблиц, cron и UI-дублей не создавать.
-8. План и отчет — только на русском языке, с маркировкой `План:` / `Отчет о выполненной работе:`.
-9. &nbsp;
-10. План: разовая рассылка «сброс пароля работает» пострадавшим за последние 14 дней
-
-Аудитория (27 уникальных email из `email_logs`, subject ~ «Сброс/Восстановление пароля»):
-[1@ajoure.by](mailto:1@ajoure.by), [7500084@gmail.com](mailto:7500084@gmail.com), [a.falenta1988@gmail.com](mailto:a.falenta1988@gmail.com), [abramovich.87@inbox.ru](mailto:abramovich.87@inbox.ru), [alexasermyazhko@gmail.com](mailto:alexasermyazhko@gmail.com), [anastasiabulygo@gmail.com](mailto:anastasiabulygo@gmail.com), [anelagerasimova@gmail.com](mailto:anelagerasimova@gmail.com), [annakarpovich@outlook.com](mailto:annakarpovich@outlook.com), [annrezvaya@yandex.by](mailto:annrezvaya@yandex.by), [ip.12345@mail.ru](mailto:ip.12345@mail.ru), [irenessa@yandex.ru](mailto:irenessa@yandex.ru), [katerina5515530@gmail.com](mailto:katerina5515530@gmail.com), [katrinn-kat@mail.ru](mailto:katrinn-kat@mail.ru), [katyufka_94@mail.ru](mailto:katyufka_94@mail.ru), [lena_times@mail.ru](mailto:lena_times@mail.ru), [liza-gajduk@inbox.ru](mailto:liza-gajduk@inbox.ru), [m.v.grib@mail.ru](mailto:m.v.grib@mail.ru), [marina.pinchuk.mkp@gmail.com](mailto:marina.pinchuk.mkp@gmail.com), [natasha89k@gmail.com](mailto:natasha89k@gmail.com), [nika.1900735@mail.ru](mailto:nika.1900735@mail.ru), [ninel_dudina@mail.ru](mailto:ninel_dudina@mail.ru), [nserkevich@mail.ru](mailto:nserkevich@mail.ru), [orionna@mail.ru](mailto:orionna@mail.ru), [romashkadarden@gmail.com](mailto:romashkadarden@gmail.com), [tat.swatko@yandex.by](mailto:tat.swatko@yandex.by), [vmargalik@mail.ru](mailto:vmargalik@mail.ru), [volodik_84@mail.ru](mailto:volodik_84@mail.ru)
-
-Канал: Email через существующий Яндекс SMTP (`noreply@gorbova.by`, edge-функция `send-yandex-smtp` / helper `yandex-smtp-sender.ts`, тот же путь, что и починенный `auth-actions`). Никаких новых интеграций.
-
-Ссылка в письме: прямая страница восстановления `https://gorbova.by/auth?mode=recover` (пользователь сам вводит email — так безопаснее, не палим персональные recovery-токены и не создаём 27 живых magic-link'ов).
-
-Черновик текста (subject + HTML):
-
-- Subject: «Сброс пароля восстановлен — можно попробовать ещё раз»
-- Body:
-  > Здравствуйте!
-  > Мы починили доставку писем восстановления пароля. Если недавно вы запрашивали сброс и письмо не пришло — оно уже не нужно, откройте страницу восстановления и запросите новую ссылку:
-  > [https://gorbova.by/auth?mode=recover](https://gorbova.by/auth?mode=recover)
-  > Письмо придёт в течение минуты (проверьте папку «Спам»).
-  > Приносим извинения за неудобства.
-  > Команда gorbova.by
-
-Шаги (без параллели, по одному в ход, идемпотентно):
-
-1. Diagnose — подтвердить, что используемый отправитель (`send-yandex-smtp` / `yandex-smtp-sender.ts`) жив и логирует в `email_logs`. Прочитать код helper'а, чтобы точно вызвать существующим контрактом (не создавать новую edge-функцию).
-2. Plan-verify — сверить финальный список 27 адресов ещё раз перед отправкой (может добавиться свежий за время ожидания одобрения).
-3. Dry-run — сгенерировать письмо на один тестовый ящик `1@ajoure.by` (наш собственный, уже в списке) через тот же helper, убедиться: `email_logs.status='sent'`, письмо реально в inbox.
-4. Execute — последовательно, по одному вызову на адрес (rate-limit friendly), template_code = `password_reset_recovery_notice_2026_07`, meta `{ "campaign": "password_reset_recovery_notice_2026_07", "batch_id": <uuid> }` для идемпотентности и последующего аудита. Перед отправкой проверять, что для этого email + template_code уже нет `sent` записи в `email_logs` — не дублируем.
-5. Verify — после прогона: `SELECT to_email, status FROM email_logs WHERE template_code='password_reset_recovery_notice_2026_07'` — должно быть 27 строк `sent`, 0 `failed`. Отчёт в чат со списком отправленных / провалившихся.
-
-DoD:
-
-- 27 писем ушли (или явно перечислены fail'ы с причиной).
-- В `email_logs` есть строки с `template_code = password_reset_recovery_notice_2026_07`.
-- Никаких новых таблиц, edge-функций, cron'ов, UI-компонентов не создано.
-- Кампания одноразовая — cron/scheduling не заводим.
-
-Stop-guards:
-
-- Не рассылать, если dry-run не подтвердил доставку.
-- Не расширять аудиторию за пределы согласованных 14 дней.
-- Не отправлять повторно тем, у кого уже есть `sent` по этому `template_code`.
-
-Технические детали:
-
-- Источник аудитории: `email_logs WHERE created_at >= now() - interval '14 days' AND subject ILIKE '%сброс%|%восстанов%'` (DISTINCT to_email). Результат зафиксирован выше.
-- Отправка: `supabase.functions.invoke('send-yandex-smtp', { body: { to, subject, html, template_code, meta } })` — с фактическим именем функции сверимся на шаге 1.
-- Идемпотентность через проверку `email_logs` по паре (to_email, template_code).
-- Никаких `admin.generateLink` / персональных recovery-токенов — ссылка публичная страница, снижает риск фишинга при пересылке.
-
-Ничего кроме этой рассылки не трогаем.
+1. **Проблема**
+  - Вкладка «Лента» в карточке контакта показывает пустое состояние, хотя по тестовому контакту реально есть данные: звонки, Telegram, письма, SMS, заметки, файлы и сделки.
+  - Интерфейс маскирует backend-ошибку как «Пока событий нет», поэтому визуально выглядит так, будто данных нет.
+2. **Диагностика**
+  - Фактическая причина, почему прошлое исправление не сработало: я проверил наличие функции и частично фронтовый парсинг, но не проверил реальный authenticated-вызов RPC из UI и network response.
+  - Сейчас реальный запрос `/rpc/contact_feed_list` падает с ошибкой `invalid input value for enum order_status: "cancelled"`.
+  - В базе enum статусов заказа содержит `canceled`, а в функции `contact_feed_list` используется ветка `WHEN 'cancelled'`. Из-за этого вся функция падает целиком, React Query получает ошибку, а компонент показывает пустое состояние вместо событий.
+  - Дополнительная проблема: `ContactFeedTab.tsx` не показывает состояние ошибки RPC, а превращает сбой загрузки в empty-state, поэтому баг был скрыт.
+  - Композер в текущем коде уже близок к требованию: одна строка `[emoji] [paperclip] [input] [mic] [send]`, файл/задача внутри Popover. Но нужно проверить live UI после исправления ленты и убрать любые остаточные внешние отступы/пустую нижнюю зону, если они появляются из контейнера вкладки/Sheet.
+3. **Предлагаемое решение**
+  - Исправить backend RPC `public.contact_feed_list`, заменив неверное сравнение enum-статуса `cancelled` на фактический `canceled` или безопасный `o.status::text`, чтобы функция не падала на enum-cast.
+  - Добавить защиту в `ContactFeedTab.tsx`: если RPC возвращает ошибку, показывать явную ошибку с кнопкой повторить, а не «Пока событий нет».
+  - Уточнить парсинг результата RPC: оставить поддержку `jsonb`-массива, но добавить безопасный fallback только для реально пустого массива, не для ошибки.
+  - Проверить composer/layout: оставить одну строку, Paperclip Popover с двумя пунктами «Файл» и «Задача», без отдельной строки «+ Задача», без второго футера и без нижней пустой панели.
+4. **Изменяемые компоненты**
+  - Backend/database:
+    - RPC `public.contact_feed_list(uuid, text[], text, int, int)`.
+  - Frontend:
+    - `src/components/admin/contact/ContactFeedTab.tsx`.
+    - При необходимости только layout-классы контейнера вкладки в `src/components/admin/ContactDetailSheet.tsx`, если реальный preview покажет, что пустая зона создаётся родительским `TabsContent`/Sheet-контейнером.
+  - Не создаю новые таблицы, новые источники данных, новые вкладки или параллельные workflow.
+5. **Что не будет изменено**
+  - Не меняю структуру CRM, карточку контакта целиком, бизнес-логику сделок, роли доступа, платежи, заказы, Telegram/SMS/email интеграции.
+  - Не делаю массовых UPDATE/DELETE данных.
+  - Не заменяю существующую архитектуру ленты — только исправляю фактический runtime-сбой и UI-маскировку ошибки.
+6. **Dry-run**
+  - До применения миграции выполнить read-only проверки:
+    - подтвердить enum-значения `order_status`;
+    - подтвердить, что по тестовому контакту есть строки в `calls`, `sms_messages`, `telegram_messages`, `email_logs`, `contact_notes`, `contact_files`, `orders_v2`;
+    - проверить текущие grants/execute на RPC;
+    - проверить network response из preview — сейчас он 400.
+  - STOP до Execute, если окажется, что в production есть другой тип статуса или другая активная сигнатура функции.
+7. **Execute**
+  - Выпустить миграцию `PATCH-CONTACT-FEED-ENUM-CRASH-FIX`:
+    - исправить `contact_feed_list`, чтобы статус заказа обрабатывался через безопасное текстовое сравнение и не валил всю ленту;
+    - сохранить `SECURITY DEFINER`, `search_path = public`, `REVOKE` для `PUBLIC/anon`, `GRANT EXECUTE` для authenticated/service role.
+  - Обновить `ContactFeedTab.tsx`:
+    - добавить обработку `isError/error`;
+    - empty-state показывать только если RPC успешно вернул пустой массив;
+    - оставить composer одной строкой и удалить/сузить остаточные отступы, если они подтверждаются в preview.
+8. **STOP-guards**
+  - Остановиться, если:
+    - RPC после исправления возвращает 0 событий при подтвержденных rowcount > 0;
+    - меняется сигнатура функции и фронт не сможет вызвать RPC без обновления типов;
+    - обнаруживается RLS/role regression для сотрудников/админов;
+    - layout-правка требует изменения общей архитектуры Sheet, а не локального компонента.
+9. **DoD**
+  - SQL-проверка показывает, что по контакту `5ec52e5f-424c-4486-82e6-301c3d4af9c8` RPC возвращает непустой массив событий.
+  - Network request `/rpc/contact_feed_list` в preview возвращает успешный ответ, не 400.
+  - В UI вкладка «Лента» показывает реальные карточки событий, а не «Пока событий нет».
+  - Ошибка RPC больше не маскируется под пустую ленту.
+  - Композер визуально в одну строку: emoji, paperclip menu, input, mic, send.
+  - Внизу нет отдельной строки «+ Задача» и нет пустой второй панели.
+10. **Риски и зависимости**
+  - Основной риск — функция агрегирует много источников, поэтому одно несовпадение типа/enum в любом источнике может снова валить всю ленту. Я закрою найденный enum-crash и добавлю UI-защиту, чтобы следующий backend-сбой был виден как ошибка, а не как «нет данных».
+  - Если после исправления enum появится другая ошибка внутри RPC, работа не будет считаться выполненной до успешного browser/network proof.
