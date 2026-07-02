@@ -422,6 +422,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     refetchOnMount: true, // PATCH: перезапрашивать при каждом открытии карточки
   });
 
+  // Open tasks count for the tab badge (Задачи • N)
+  const { data: openTasksForContact } = useCrmTasks(
+    contact?.id
+      ? { contact_id: contact.id, status: ["open", "in_progress"] as any }
+      : ({} as any),
+  );
+  const openTasksCount = contact?.id ? (openTasksForContact?.length ?? 0) : 0;
+
   // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
   // Deals = successful transactions. Payment attempts go to Payments tab.
   const { data: deals, isLoading: dealsLoading } = useQuery({
