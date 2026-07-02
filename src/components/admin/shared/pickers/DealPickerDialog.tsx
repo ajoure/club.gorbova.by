@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
+import { orderStatusRu } from "@/lib/orderStatusLabel";
 
 export interface PickedDeal {
   id: string;
@@ -186,6 +187,16 @@ export function DealPickerDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Debounced auto-search on typing.
+  useEffect(() => {
+    if (!open) return;
+    const id = setTimeout(() => {
+      handleSearch();
+    }, 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, open]);
+
   useEffect(() => {
     if (!open) {
       setSelected(null);
@@ -258,7 +269,7 @@ export function DealPickerDialog({
                             </span>
                             {order.status && (
                               <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
-                                {order.status}
+                                {orderStatusRu(order.status)}
                               </Badge>
                             )}
                           </div>

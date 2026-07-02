@@ -93,14 +93,9 @@ export function TaskRelationsField({
         short_id: picked.order_number ?? picked.id.slice(0, 8),
       },
     }));
-    // If deal has a contact and current contact is empty, auto-fill it.
-    if (picked.profile_id && !contactId) {
-      setContactCache((prev) => ({
-        ...prev,
-        [picked.profile_id!]: { name: picked.contact_name || "Контакт" },
-      }));
-      onChangeContact(picked.profile_id);
-    }
+    // NOTE: не заполняем автоматически contact_id из сделки — контакт задачи
+    // и контакт сделки это разные сущности (задача может быть о сделке клиента,
+    // а привязана к другому человеку). Контакт выбирает пользователь отдельно.
     onChangeDeal(picked.id);
     setDealPickerOpen(false);
   };

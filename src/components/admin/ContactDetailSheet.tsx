@@ -140,6 +140,7 @@ import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
+import { useCrmTasks } from "@/hooks/useCrmTasks";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
