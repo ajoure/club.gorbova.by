@@ -518,6 +518,9 @@ export function HtmlIframePreview({
         const targetOffsetTop = typeof data.targetOffsetTop === 'number' && Number.isFinite(data.targetOffsetTop)
           ? data.targetOffsetTop
           : 0;
+        const targetHeight = typeof data.targetHeight === 'number' && Number.isFinite(data.targetHeight)
+          ? data.targetHeight
+          : 0;
         try {
           const iframe = iframeRef.current;
           const rect = iframe.getBoundingClientRect();
@@ -526,12 +529,21 @@ export function HtmlIframePreview({
           const containerRect = rootScroll ? null : scrollContainer?.getBoundingClientRect();
           const containerScrollTop = rootScroll ? (window.pageYOffset || document.documentElement.scrollTop || 0) : (scrollContainer?.scrollTop ?? 0);
           const headerOffset = rootScroll ? resolveHeaderOffset() : 0;
+          const viewportHeight = rootScroll
+            ? window.innerHeight
+            : (containerRect?.height ?? window.innerHeight);
+          const availableHeight = Math.max(0, viewportHeight - headerOffset);
+          // Center the section inside the visible viewport when it fits;
+          // otherwise align it just below the sticky header with a small gap.
+          const centeringOffset = targetHeight > 0 && targetHeight < availableHeight
+            ? Math.max(0, (availableHeight - targetHeight) / 2)
+            : 12;
           const top = Math.max(
             0,
             rect.top - (containerRect?.top ?? 0) + containerScrollTop
               + targetOffsetTop
               - headerOffset
-              - 12
+              - centeringOffset
           );
           if (scrollContainer) scrollContainer.scrollTo({ top, behavior: 'smooth' });
           else window.scrollTo({ top, behavior: 'smooth' });
