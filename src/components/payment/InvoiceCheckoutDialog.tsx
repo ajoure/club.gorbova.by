@@ -120,7 +120,7 @@ export function InvoiceCheckoutDialog({
 
   async function handleAddPayerSubmit(values: { data: Record<string, unknown>; is_default: boolean }) {
     try {
-      const created = await requisites.createLegalEntity.mutateAsync({
+      const created = await requisites.createLegalEntityRequisites({
         subject_type: "legal_entity",
         data: values.data,
         is_default: values.is_default,
@@ -186,7 +186,7 @@ export function InvoiceCheckoutDialog({
 
         {step === "payer" && !showAddForm && (
           <div className="space-y-4 pt-2">
-            {requisites.legalEntities.isLoading ? (
+            {isLoadingRequisites ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
@@ -245,7 +245,7 @@ export function InvoiceCheckoutDialog({
               subjectType="legal_entity"
               onSubmit={handleAddPayerSubmit}
               onCancel={() => setShowAddForm(false)}
-              isSubmitting={requisites.createLegalEntity.isPending}
+              isSubmitting={requisites.isMutating}
             />
           </div>
         )}
