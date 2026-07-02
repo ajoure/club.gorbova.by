@@ -596,7 +596,9 @@ Deno.serve(async (req) => {
 
       // Channel + payer type
       const succeededPayment = paymentsArr.find((p: any) => String(p.status).toLowerCase() === 'succeeded');
-      const channel = derivePaymentChannel(succeededPayment as any);
+      const channel = isInvoiceCheckout
+        ? 'bank_transfer'
+        : derivePaymentChannel(succeededPayment as any);
       const payerType = ((ordRow as any).payer_type as PayerType) || 'individual';
       const docStatus = isOfferDocumentEnabled(resolvedOfferMeta, { payerType, paymentChannel: channel });
 
