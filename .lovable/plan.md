@@ -1,58 +1,77 @@
 План:
 
 1. **Проблема**
-   - Сейчас в редакторе сценариев документов можно одновременно отметить `Банковский перевод` вместе с картой, ЕРИП, Apple Pay и Google Pay.
-   - Из-за этого оффер не становится строго `invoice-only`: публичная кнопка может продолжать идти в обычный `PaymentDialog` / эквайринг, хотя банковский перевод должен означать только выставление счёта.
+   - В счёте для ЮЛ заполняется заказчик, но не заполняются исполнитель и параметры услуги: наименование, единица, количество, сроки и суммы из кнопки/тарифа.
+   - Создавать новый механизм не нужно: надо переиспользовать уже существующий canonical pipeline генерации актов/документов по покупкам.
 
 2. **Диагностика**
-   - `src/components/admin/product/OfferDocumentScenariosCard.tsx` сейчас хранит `payment_channels` как обычный мультивыбор без взаимного исключения.
-   - `src/lib/invoiceCheckout.ts` считает оффер `invoice-only` только если все включённые сценарии — `legal_entity` и все выбранные каналы равны `bank_transfer`.
-   - `src/pages/SitePageBySlug.tsx` уже умеет открывать `InvoiceCheckoutDialog`, но это срабатывает только при успешном `detectInvoiceOnlyOffer`.
-   - Значит, корень дефекта — админский UI не приводит сценарий `Юрлицо + банковский перевод` к строгому состоянию “только банковский перевод”.
+   - Существующий рабочий источник данных для актов — `snapshotOrderDocumentData` в `supabase/functions/_shared/document-data-snapshot.ts`.
+   - `canonical-document-generate-strict` уже вызывает этот snapshot перед генерацией и умеет брать:
+     - `tariff_offers.meta.document_scenarios[]` → `template_id`, `executor_id`;
+     - `tariff_offers.meta.document_defaults` → `service_name`, `unit`, `quantity`, `unit_price`, `payment_due_days`, `execution_days`;
+     - `executors` → данные исполнителя.
+   - Фактическая причина: `invoice-checkout-issue` создаёт заказ со `status='draft'`, а `snapshotOrderDocumentData` жёстко пропускает все заказы не в `paid`. Поэтому snapshot не пересобирается, и в документ попадает только частичный `meta.document_data._provenance.customer_legal_details_id`, без полей исполнителя и услуги.
+   - Дополнительная причина: внутри snapshot канал оплаты для invoice-only вычисляется из `payments_v2`; платежа ещё нет, значит канал `null`, сценарий `legal_entity + bank_transfer` не матчится. Даже если убрать paid-guard, без подсказки invoice-канала сценарий может не выбрать `executor_id`.
+   - Ещё найден риск: в snapshot сейчас `payer_type` сводится к `legal_entity | individual`, из-за чего `entrepreneur` может терять свой сценарий. Это лучше поправить тем же каноническим способом.
 
 3. **Предлагаемое решение**
-   - В `OfferDocumentScenariosCard` сделать `bank_transfer` взаимоисключающим каналом:
-     - если выбирают `Банковский перевод`, автоматически убрать `Карта`, `ЕРИП`, `Apple Pay`, `Google Pay`;
-     - пока выбран `Банковский перевод`, остальные каналы показать disabled;
-     - если пытаются выбрать обычный канал, `Банковский перевод` должен быть снят;
-     - визуально оставить текущий дизайн, только добавить блокировку и понятную подпись.
-   - Дополнительно усилить `detectInvoiceOnlyOffer`, чтобы он корректно распознавал сценарий `legal_entity + bank_transfer` как счёт без эквайринга и не зависел от случайных пустых/выключенных сценариев, если они не должны участвовать.
-   - Публичный путь оставить существующим: invoice-only оффер открывает `InvoiceCheckoutDialog`, а не `PaymentDialog`.
+   - Не создавать новую функцию генерации.
+   - Расширить существующий `snapshotOrderDocumentData` опцией для pre-payment invoice:
+     - разрешить rebuild для заказа `meta.checkout_kind='invoice'` и `meta.awaits_payment=true` даже при `status='draft'`;
+     - для такого заказа принудительно использовать `paymentChannel='bank_transfer'`;
+     - сохранить текущий paid-only guard для всех остальных документов.
+   - В `canonical-document-generate-strict` передавать эту опцию в уже существующий вызов `snapshotOrderDocumentData`, когда активен `pre_payment_invoice`.
+   - При необходимости поправить `payer_type` resolver в snapshot, чтобы он поддерживал `entrepreneur`, а не превращал его в `individual`.
+   - После этого invoice-only счёт будет идти через тот же snapshot/strict pipeline, что и акты по покупкам, и подтянет уже настроенные данные из кнопки/тарифа/продукта/исполнителя.
 
 4. **Изменяемые компоненты**
-   - UI: `src/components/admin/product/OfferDocumentScenariosCard.tsx`.
-   - Логика определения invoice-only: `src/lib/invoiceCheckout.ts`.
-   - Проверка маршрутизации: `src/pages/SitePageBySlug.tsx` без изменения, если текущий вызов уже корректен.
-   - Таблицы, RPC, миграции, новые edge functions не нужны.
+   - Edge/shared logic:
+     - `supabase/functions/_shared/document-data-snapshot.ts`
+     - `supabase/functions/canonical-document-generate-strict/index.ts`
+   - Возможно только комментарии/минимальная корректировка в:
+     - `supabase/functions/invoice-checkout-issue/index.ts`
+   - Таблицы, RPC, новые edge functions, UI-компоненты, enum, cron jobs не создаются.
 
 5. **Что не будет изменено**
-   - Не создаю новые тумблеры оплаты для юрлица.
-   - Не создаю новые таблицы/поля/enum.
-   - Не трогаю BePaid-интеграцию и обычные сценарии оплаты картой/ЕРИП.
-   - Не меняю `InvoiceCheckoutDialog` с реквизитами ЮЛ/ИП, если он уже открывается по invoice-only.
+   - Не будет нового workflow документов.
+   - Не будет новой таблицы, RPC или дублирующей edge function.
+   - Не будет ручного заполнения исполнителя в invoice function.
+   - Не будет изменения шаблонов DOCX и настроек тарифов, если текущие настройки уже валидны.
+   - Не будет массового исправления старых заказов без отдельного dry-run/repair-плана.
 
 6. **Dry-run**
-   - До изменения проверить по коду, что `PAYMENT_CHANNEL_OPTIONS` содержит все каналы и что сохранение оффера пишет `meta.document_scenarios.payment_channels`.
-   - Проверить, что изменение мультивыбора не ломает сценарии без банковского перевода.
+   - Проверить на последнем invoice-order, что:
+     - `tariff_offers.meta.document_scenarios` содержит сценарий `legal_entity + bank_transfer` с `executor_id` и `template_id`;
+     - `tariff_offers.meta.document_defaults` содержит `service_name`, `unit`, `quantity`, `unit_price`, сроки;
+     - default/exact executor существует и активен.
+   - После кода выполнить точечную генерацию/проверку через существующий edge flow на одном заказе или новом тестовом счёте.
 
 7. **Execute**
-   - Внести точечные правки в `OfferDocumentScenariosCard`:
-     - добавить список каналов, несовместимых с `bank_transfer`;
-     - изменить `toggleChannel` на нормализацию взаимоисключающих значений;
-     - добавить `disabled` для чекбоксов обычных каналов при выбранном банковском переводе.
-   - При необходимости скорректировать `detectInvoiceOnlyOffer`, чтобы invoice-only = включённый сценарий `legal_entity` с единственным каналом `bank_transfer`.
+   - Добавить опцию `allowPrePaymentInvoice`/аналог в `snapshotOrderDocumentData`.
+   - В snapshot:
+     - не возвращать `skipped_not_paid` для invoice draft с `checkout_kind='invoice'` и `awaits_payment=true`;
+     - для такого режима использовать `bank_transfer` как канал сценария;
+     - записывать provenance, чтобы было видно, что snapshot собран как pre-payment invoice.
+   - В strict generator передавать эту опцию только когда `isInvoiceCheckout=true`.
+   - Сохранить старое поведение для оплаченных актов и документов по покупкам.
 
 8. **STOP-guards**
-   - Остановиться, если обнаружится отдельный source of truth для каналов оплаты вне `meta.document_scenarios`.
-   - Остановиться, если публичная кнопка использует не `open-offer`, а другой маршрут для этих офферов.
-   - Не выполнять миграции и массовые изменения данных.
+   - Остановиться, если заказ не имеет `meta.checkout_kind='invoice'` и `meta.awaits_payment=true`.
+   - Остановиться, если `offer_id` не связан с тарифом/продуктом заказа.
+   - Остановиться, если сценарий invoice-only не даёт `template_id`, а fallback тоже пустой.
+   - Остановиться, если исполнитель не найден ни по сценарию, ни по default executor — не подставлять фиктивные данные.
+   - Не выполнять массовый UPDATE старых документов в рамках этого патча.
 
 9. **DoD**
-   - В админке при выборе `Банковский перевод` остальные способы оплаты становятся недоступны и не сохраняются в массиве каналов.
-   - При выборе карты/ЕРИП/Apple Pay/Google Pay банковский перевод снимается.
-   - Для сценария `Юрлицо + только банковский перевод` публичная кнопка открывает выставление счёта, а не эквайринг.
-   - Проверка подтверждает, что payload оффера содержит только `payment_channels: ['bank_transfer']` для такого сценария.
+   - Новый счёт ЮЛ формируется через `canonical-document-generate-strict` без отдельной новой логики.
+   - В `orders_v2.meta.document_data` после генерации есть:
+     - `template_id`, `executor_id`, `executor_source`;
+     - `service_name`, `unit`, `quantity`, `unit_price`, `amount`;
+     - `_provenance.scenario.payment_channel='bank_transfer'`.
+   - В PDF подтягиваются данные исполнителя и услуги из уже настроенных кнопок/тарифов/продукта.
+   - Генерация актов по обычным оплаченным покупкам не меняет поведение.
 
 10. **Риски и зависимости**
-   - Если в базе уже есть старые офферы с `bank_transfer` вместе с другими каналами, новый UI исправит их при следующем сохранении; массово переписывать существующие данные без отдельного согласованного PATCH не буду.
-   - Если нужен авто-repair старых офферов, это отдельная безопасная задача с dry-run и rowcount guard.
+   - Старые уже созданные PDF не изменятся автоматически; для них нужен отдельный repair/regenerate шаг, если потребуется.
+   - Если в конкретной кнопке несколько сценариев `legal_entity + bank_transfer`, будет использован существующий порядок resolver-а; это уже текущий SOT.
+   - Если шаблон использует не те FLD-токены, данные могут быть в snapshot, но не отображаться в PDF — это проверяется отдельно по source_trace/field_ids.
