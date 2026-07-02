@@ -17,7 +17,9 @@ import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetch
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
+import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
