@@ -1102,10 +1102,11 @@ Deno.serve(async (req) => {
         // One-time confirmation to a brand-new guest so they know the team will reply
         if (justCreatedGuest && botToken) {
           try {
+            const botDisplayName = (bot?.bot_name || '').trim() || 'команды';
             await sendMessage(
               botToken,
               chatId,
-              'Спасибо, ваше сообщение получено! Мы ответим в ближайшее время.'
+              `Спасибо! Ваше сообщение получено, ${botDisplayName === 'команды' ? 'команда' : 'команда ' + botDisplayName} ответит в ближайшее время.`
             );
           } catch (ackErr) {
             console.error('[WEBHOOK] Guest ack send failed:', ackErr);
