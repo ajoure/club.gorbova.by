@@ -1,77 +1,67 @@
-План:
+# План: гостевые диалоги во всех Telegram-ботах
 
-1. **Проблема**
-   - В счёте для ЮЛ заполняется заказчик, но не заполняются исполнитель и параметры услуги: наименование, единица, количество, сроки и суммы из кнопки/тарифа.
-   - Создавать новый механизм не нужно: надо переиспользовать уже существующий canonical pipeline генерации актов/документов по покупкам.
+## Отчет discovery
 
-2. **Диагностика**
-   - Существующий рабочий источник данных для актов — `snapshotOrderDocumentData` в `supabase/functions/_shared/document-data-snapshot.ts`.
-   - `canonical-document-generate-strict` уже вызывает этот snapshot перед генерацией и умеет брать:
-     - `tariff_offers.meta.document_scenarios[]` → `template_id`, `executor_id`;
-     - `tariff_offers.meta.document_defaults` → `service_name`, `unit`, `quantity`, `unit_price`, `payment_due_days`, `execution_days`;
-     - `executors` → данные исполнителя.
-   - Фактическая причина: `invoice-checkout-issue` создаёт заказ со `status='draft'`, а `snapshotOrderDocumentData` жёстко пропускает все заказы не в `paid`. Поэтому snapshot не пересобирается, и в документ попадает только частичный `meta.document_data._provenance.customer_legal_details_id`, без полей исполнителя и услуги.
-   - Дополнительная причина: внутри snapshot канал оплаты для invoice-only вычисляется из `payments_v2`; платежа ещё нет, значит канал `null`, сценарий `legal_entity + bank_transfer` не матчится. Даже если убрать paid-guard, без подсказки invoice-канала сценарий может не выбрать `executor_id`.
-   - Ещё найден риск: в snapshot сейчас `payer_type` сводится к `legal_entity | individual`, из-за чего `entrepreneur` может терять свой сценарий. Это лучше поправить тем же каноническим способом.
+Как это работает сейчас (сценарий поддержки — gorbovabybot):
+- Единая edge function `telegram-webhook` принимает апдейты по URL `.../telegram-webhook?bot_id=<UUID>`.
+- Если написал незнакомец, создаётся «гостевой» профиль (`profiles.user_id = NULL`, `source='telegram_bot'`, заполнены `telegram_user_id`, `telegram_username`, имя), сообщение пишется в `telegram_messages` c `user_id = profile.id` (синтетический ключ), гостю уходит ACK «Спасибо, ваше сообщение получено…».
+- `get_inbox_dialogs_v1` (миграция 20260630210004) уже включает гостей — фильтр по `profiles.user_id OR profiles.id`, диалоги видно в контакт-центре, `last_bot_id/username/name` возвращаются.
+- Ответ админа идёт через `telegram-admin-chat` → берётся токен бота в порядке: явный `bot_id` из UI → `profile.telegram_link_bot_id` → `is_primary=true` → любой активный.
 
-3. **Предлагаемое решение**
-   - Не создавать новую функцию генерации.
-   - Расширить существующий `snapshotOrderDocumentData` опцией для pre-payment invoice:
-     - разрешить rebuild для заказа `meta.checkout_kind='invoice'` и `meta.awaits_payment=true` даже при `status='draft'`;
-     - для такого заказа принудительно использовать `paymentChannel='bank_transfer'`;
-     - сохранить текущий paid-only guard для всех остальных документов.
-   - В `canonical-document-generate-strict` передавать эту опцию в уже существующий вызов `snapshotOrderDocumentData`, когда активен `pre_payment_invoice`.
-   - При необходимости поправить `payer_type` resolver в snapshot, чтобы он поддерживал `entrepreneur`, а не превращал его в `individual`.
-   - После этого invoice-only счёт будет идти через тот же snapshot/strict pipeline, что и акты по покупкам, и подтянет уже настроенные данные из кнопки/тарифа/продукта/исполнителя.
+Что уже настроено у остальных ботов (проверено через Telegram `getWebhookInfo`):
+- `gorbovabybot` (support, primary) — webhook на `telegram-webhook?bot_id=1a56…` ✅
+- `Gorbova_club_bot` — webhook на `telegram-webhook?bot_id=f20f…` ✅
+- `gorbova_bot` — webhook на `telegram-webhook?bot_id=6d96…` ✅
+- `gorbova_gc_bot` (GetCourse) — **webhook не установлен** ❌
 
-4. **Изменяемые компоненты**
-   - Edge/shared logic:
-     - `supabase/functions/_shared/document-data-snapshot.ts`
-     - `supabase/functions/canonical-document-generate-strict/index.ts`
-   - Возможно только комментарии/минимальная корректировка в:
-     - `supabase/functions/invoice-checkout-issue/index.ts`
-   - Таблицы, RPC, новые edge functions, UI-компоненты, enum, cron jobs не создаются.
+## Реальные пробелы
 
-5. **Что не будет изменено**
-   - Не будет нового workflow документов.
-   - Не будет новой таблицы, RPC или дублирующей edge function.
-   - Не будет ручного заполнения исполнителя в invoice function.
-   - Не будет изменения шаблонов DOCX и настроек тарифов, если текущие настройки уже валидны.
-   - Не будет массового исправления старых заказов без отдельного dry-run/repair-плана.
+1. **GetCourse-бот без webhook** — входящие в контакт-центр не попадают, пока URL не зарегистрирован.
+2. **Ответ гостю уходит не через тот бот, в который он написал.** Для гостя `telegram_link_bot_id` пустой, поэтому `telegram-admin-chat` падает в fallback на primary (support-бот). Support-бот физически не может доставить сообщение пользователю, который писал, например, в `Gorbova_club_bot` → доставка проваливается с 403 «bot was blocked/chat not found», хотя в UI диалог выглядит рабочим. Именно это ощущение «на других ботах не работает».
+3. **`/start` welcome-текст жёстко про «клуб Буква закона»** — приходит на все боты одинаково. Для guest-ACK и welcome стоит подставлять `bot_name` из `telegram_bots`.
 
-6. **Dry-run**
-   - Проверить на последнем invoice-order, что:
-     - `tariff_offers.meta.document_scenarios` содержит сценарий `legal_entity + bank_transfer` с `executor_id` и `template_id`;
-     - `tariff_offers.meta.document_defaults` содержит `service_name`, `unit`, `quantity`, `unit_price`, сроки;
-     - default/exact executor существует и активен.
-   - После кода выполнить точечную генерацию/проверку через существующий edge flow на одном заказе или новом тестовом счёте.
+## Изменения (add-only, никаких новых сущностей)
 
-7. **Execute**
-   - Добавить опцию `allowPrePaymentInvoice`/аналог в `snapshotOrderDocumentData`.
-   - В snapshot:
-     - не возвращать `skipped_not_paid` для invoice draft с `checkout_kind='invoice'` и `awaits_payment=true`;
-     - для такого режима использовать `bank_transfer` как канал сценария;
-     - записывать provenance, чтобы было видно, что snapshot собран как pre-payment invoice.
-   - В strict generator передавать эту опцию только когда `isInvoiceCheckout=true`.
-   - Сохранить старое поведение для оплаченных актов и документов по покупкам.
+### 1. Зарегистрировать webhook для GetCourse-бота
+Одноразовый вызов `telegram-bot-actions` action `set_webhook` для `bot_id = 2a676ae6-71f1-49f6-9fe4-f7ec7ce46c01`. URL будет `.../telegram-webhook?bot_id=2a67…`. После этого гости в GetCourse-боте начнут попадать в инбокс тем же путём, что и сейчас в support.
 
-8. **STOP-guards**
-   - Остановиться, если заказ не имеет `meta.checkout_kind='invoice'` и `meta.awaits_payment=true`.
-   - Остановиться, если `offer_id` не связан с тарифом/продуктом заказа.
-   - Остановиться, если сценарий invoice-only не даёт `template_id`, а fallback тоже пустой.
-   - Остановиться, если исполнитель не найден ни по сценарию, ни по default executor — не подставлять фиктивные данные.
-   - Не выполнять массовый UPDATE старых документов в рамках этого патча.
+### 2. Запоминать «бот входящего» для гостей
+В `telegram-webhook` при создании гостевого профиля (обе ветки: `/start` без токена и обычное private-сообщение) дополнительно писать:
+- `telegram_link_bot_id = botId` — тот бот, через который пришло первое сообщение.
+- `telegram_link_status = 'guest'` (новое значение семантики — гостевой диалог, не активная привязка настоящего аккаунта). Значение свободно-текстовое, конфликтов с существующей логикой нет: реальные привязки ставят `'active'`, отвязки `'unlinked'`.
 
-9. **DoD**
-   - Новый счёт ЮЛ формируется через `canonical-document-generate-strict` без отдельной новой логики.
-   - В `orders_v2.meta.document_data` после генерации есть:
-     - `template_id`, `executor_id`, `executor_source`;
-     - `service_name`, `unit`, `quantity`, `unit_price`, `amount`;
-     - `_provenance.scenario.payment_channel='bank_transfer'`.
-   - В PDF подтягиваются данные исполнителя и услуги из уже настроенных кнопок/тарифов/продукта.
-   - Генерация актов по обычным оплаченным покупкам не меняет поведение.
+Это гарантирует, что при первом же ответе админа `telegram-admin-chat` возьмёт токен именно этого бота, а не свалится в support.
 
-10. **Риски и зависимости**
-   - Старые уже созданные PDF не изменятся автоматически; для них нужен отдельный repair/regenerate шаг, если потребуется.
-   - Если в конкретной кнопке несколько сценариев `legal_entity + bank_transfer`, будет использован существующий порядок resolver-а; это уже текущий SOT.
-   - Если шаблон использует не те FLD-токены, данные могут быть в snapshot, но не отображаться в PDF — это проверяется отдельно по source_trace/field_ids.
+### 3. Резолвер бота у `telegram-admin-chat`: fallback по последнему сообщению
+Расширить порядок выбора бота в `telegram-admin-chat` (одна ветка `messages/send`):
+- явный `bot_id` из UI → `profile.telegram_link_bot_id` → **новый шаг: `last_bot_id` из последнего входящего `telegram_messages` для этого диалога** → `is_primary` → любой активный.
+
+Это страховка на случай гостей, которые уже успели написать до релиза шага 2, а также для будущих кросс-бот сценариев (гость написал в один бот, потом в другой).
+
+### 4. Guest-ACK и welcome с именем бота
+В обеих ветках создания гостя вместо жёсткого «Спасибо, ваше сообщение получено…» и welcome про «клуб Буква закона» — брать `bot_name` из уже загруженной строки `telegram_bots` (в webhook она есть в `botRow`). Тексты:
+- ACK: `«Спасибо! Ваше сообщение получено, команда {bot_name} ответит в ближайшее время.»`
+- `/start` без токена: короткое приветствие без клубной айдентики, если бот не является клубным (простая проверка: `is_primary` или отсутствие `telegram_clubs.bot_id = tb.id` → нейтральный текст; иначе оставить текущий клубный welcome).
+
+Без создания новых таблиц, RPC, edge functions, cron, UI-компонентов.
+
+## Что НЕ меняем
+- `get_inbox_dialogs_v1` — уже поддерживает гостей и мульти-бот.
+- Логика ticket-bridge, AI-support, push-уведомлений админам — остаётся `!isGuestProfile` (гости не создают тикетов и не триггерят AI, как и раньше в support).
+- Формат `telegram_messages.user_id` (для гостей — `profile.id`).
+- Схема `profiles`/`telegram_bots`.
+
+## Тех. детали
+
+Файлы:
+- `supabase/functions/telegram-webhook/index.ts` — блоки создания гостя в `/start` (≈975) и в обработчике private-сообщения (≈1069): добавить `telegram_link_bot_id: botId, telegram_link_status: 'guest'` в insert; заменить хардкод ACK/welcome на подстановку `botRow.bot_name` + branch по клубности.
+- `supabase/functions/telegram-admin-chat/index.ts` — секция `messages/send` (строки 510–575): между шагами `telegram_link_bot_id` и `is_primary` добавить SELECT последнего `telegram_messages.bot_id` по `user_id = <входящий user_id>` (`direction='incoming'`, `order by created_at desc limit 1`) и, если найден активный бот, использовать его токен.
+- Регистрация webhook у GetCourse: одноразовый вызов `telegram-bot-actions` (существующая функция, action `set_webhook`) из админки/скриптом.
+
+Дeploy: `telegram-webhook`, `telegram-admin-chat`.
+
+## DoD
+- Запись «гость» появляется в контакт-центре одинаково для всех четырёх ботов после первого сообщения.
+- Ответ админа доставляется через тот бот, в который гость написал (проверить в `audit_logs` `webhook_message_received` + успешный `telegram_messages` `direction='outgoing'` с ожидаемым `bot_id`).
+- `getWebhookInfo` у всех четырёх ботов возвращает URL на `telegram-webhook?bot_id=<их UUID>`, `last_error_message` пусто.
+- Существующие сценарии (реальные привязанные пользователи, AI-support, ticket-bridge, push) продолжают работать без изменений.
