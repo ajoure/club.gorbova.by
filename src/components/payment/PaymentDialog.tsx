@@ -793,7 +793,7 @@ export function PaymentDialog({
           customerFirstName: formData.firstName,
           customerLastName: formData.lastName,
           existingUserId,
-          description: productName,
+          description: paymentDescription,
           tariffCode,
           offerId,
           isTrial,
