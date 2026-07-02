@@ -65,6 +65,12 @@ export interface SnapshotOptions {
    * canonical-deal-document-overrides on payer_type/template/executor change.
    */
   mode?: 'create' | 'rebuild';
+  /**
+   * Разрешает собрать document_data для invoice-only заказа до оплаты.
+   * Используется только strict-generator при pre_payment_invoice=true и
+   * только если сам заказ помечен meta.checkout_kind='invoice' + awaits_payment.
+   */
+  allowPrePaymentInvoice?: boolean;
 }
 
 /**
@@ -91,7 +97,12 @@ export async function snapshotOrderDocumentData(
     }
     if (!order) return { status: 'skipped_no_order' };
 
-    const existing = (order.meta as any)?.document_data;
+    const orderMetaAny: any = order.meta || {};
+    const isPrePaymentInvoice = opts.allowPrePaymentInvoice === true
+      && orderMetaAny.checkout_kind === 'invoice'
+      && orderMetaAny.awaits_payment === true;
+
+    const existing = orderMetaAny?.document_data;
     const payerTypeBefore = (existing as any)?._provenance?.customer_resolution?.payer_type ?? null;
     if (existing && typeof existing === 'object' && mode !== 'rebuild') {
       await safeAudit(supabase, 'document_data.snapshot_skipped_exists', {
@@ -101,7 +112,7 @@ export async function snapshotOrderDocumentData(
       return { status: 'skipped_exists' };
     }
 
-    if (order.status !== 'paid') {
+    if (order.status !== 'paid' && !isPrePaymentInvoice) {
       return { status: 'skipped_not_paid', reason: `order_status_${order.status}` };
     }
 
@@ -120,7 +131,6 @@ export async function snapshotOrderDocumentData(
     //   3) tariff_pay_now_fallback — для REBILL/legacy заказов без offer_id
     //      выбираем активный pay_now-оффер этого тарифа (не trial), чтобы
     //      подхватить offer-level document_defaults (service_name и пр.).
-    const orderMetaAny: any = order.meta || {};
     const offerIdFromMeta = typeof orderMetaAny.offer_id === 'string' ? orderMetaAny.offer_id : null;
     let resolvedOfferId: string | null = order.offer_id || offerIdFromMeta;
     let offerIdSource: 'order' | 'order_meta' | 'tariff_pay_now_fallback' | 'none' =
@@ -201,7 +211,10 @@ export async function snapshotOrderDocumentData(
     let customerRow: any = null;
     let customerResolutionSource = 'none';
     const orderPayerTypeForCustomer: PayerType = (order as any).payer_type === 'legal_entity'
-      ? 'legal_entity' : 'individual';
+      ? 'legal_entity'
+      : (order as any).payer_type === 'entrepreneur'
+        ? 'entrepreneur'
+        : 'individual';
     if (order.profile_id) {
       const { data: cohort, error: cohortErr } = await supabase
         .from('client_legal_details')
@@ -303,7 +316,10 @@ export async function snapshotOrderDocumentData(
 
     // payer_type: SOT-колонка orders_v2.payer_type, fallback 'individual'.
     const orderPayerType: PayerType = (order as any).payer_type === 'legal_entity'
-      ? 'legal_entity' : 'individual';
+      ? 'legal_entity'
+      : (order as any).payer_type === 'entrepreneur'
+        ? 'entrepreneur'
+        : 'individual';
 
     // Определяем канал по последнему succeeded платежу (read-only).
     // Sprint A: расширенный select для payment.* namespace в renderer.
@@ -314,7 +330,9 @@ export async function snapshotOrderDocumentData(
       .order('paid_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
     const succPay = (paysForChannel || []).find((p: any) => p.status === 'succeeded') || null;
-    const paymentChannel = derivePaymentChannel(succPay as any);
+    const paymentChannel = isPrePaymentInvoice
+      ? 'bank_transfer'
+      : derivePaymentChannel(succPay as any);
 
     // Sprint A — payment.* snapshot block.
     // SOT: последний succeeded payment по order_id. Не пишем ничего в payments_v2.
@@ -472,6 +490,7 @@ export async function snapshotOrderDocumentData(
         product_id: order.product_id || null,
         order_paid_at: paidAt,
         order_currency: liveCurrencyRaw,
+        pre_payment_invoice: isPrePaymentInvoice,
         // Sprint 12 — scenario resolution snapshot.
         scenario: {
           source: scenarioResolved.source,
