@@ -158,6 +158,11 @@ export function useReassignCrmTask() {
         _assignee: args.assigneeUserId,
       });
       if (error) throw error;
+      try {
+        await supabase.functions.invoke("crm-task-notify-worker", { body: {} });
+      } catch (e) {
+        console.warn("[useReassignCrmTask] notify worker kick failed", e);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["crm-tasks"] });
