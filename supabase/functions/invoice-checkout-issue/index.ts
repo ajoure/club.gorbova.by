@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
     );
     const strictJson = await strictResp.json().catch(() => ({}));
     if (strictResp.ok) {
-      pdfUrl = strictJson.pdf_url ?? strictJson.file_url ?? null;
+      pdfUrl = strictJson.pdf_url ?? strictJson.file_url ?? strictJson.download_url ?? null;
       emailSent = !!strictJson.email_sent;
       telegramSent = !!strictJson.telegram_sent;
     } else {
