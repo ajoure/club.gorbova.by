@@ -532,18 +532,28 @@ Deno.serve(async (req) => {
     const guardWarnings: string[] = [];
     const guardSkipped: string[] = [];
 
+    // Invoice pre-payment bypass — валидируем по meta заказа.
+    const orderMetaSafe = ((ordRow as any)?.meta ?? {}) as Record<string, unknown>;
+    const isInvoiceCheckout =
+      prePaymentInvoiceFlag &&
+      orderMetaSafe.checkout_kind === 'invoice' &&
+      orderMetaSafe.awaits_payment === true;
+
     // Guard 1: real succeeded payment
     const hasPayment = hasRealSucceededPayment(paymentsArr);
     if (!hasPayment) {
-      if (!(isAdmin && adminForce)) {
+      if (isInvoiceCheckout) {
+        guardSkipped.push('no_real_payment:pre_payment_invoice');
+      } else if (!(isAdmin && adminForce)) {
         await supabase.from('audit_logs').insert({
           actor_user_id: userId, actor_type: isAdmin ? 'admin' : 'user',
           action: 'document.generate_blocked_no_payment',
           meta: { order_id: orderId },
         });
         return json({ error: 'no_real_payment' }, 403);
+      } else {
+        guardSkipped.push('no_real_payment');
       }
-      guardSkipped.push('no_real_payment');
     }
 
     // Guard 2/3: offer resolution + document enabled (только для self-service ветки)
