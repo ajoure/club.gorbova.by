@@ -1611,7 +1611,7 @@ export function PaymentDialog({
                 {getStepTitle()}
               </DialogTitle>
               <DialogDescription>
-                {productName} — {price}
+                {productName}{tariffName ? ` · ${tariffName}` : ""} — {price} {displayCurrency}
               </DialogDescription>
             </DialogHeader>
           </div>
