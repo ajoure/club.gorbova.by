@@ -1529,7 +1529,7 @@ export function PaymentDialog({
                   <CreditCard className="mr-2 h-4 w-4 shrink-0" />
                 )}
                 <span className="whitespace-normal leading-tight">
-                  {isTrial ? "Активировать демо-доступ" : `Оплатить ${price}`}
+                  {isTrial ? "Активировать демо-доступ" : "Оплатить"}
                 </span>
               </Button>
             </div>
