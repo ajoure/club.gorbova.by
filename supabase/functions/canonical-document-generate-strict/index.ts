@@ -370,6 +370,10 @@ Deno.serve(async (req) => {
     let orderId: string | null = body?.order_id || null;
     let templateId: string | null = body?.template_id || null;
     const adminForce: boolean = body?.admin_force === true;
+    // pre_payment_invoice: разрешено только если заказ в meta.awaits_payment=true
+    // и meta.checkout_kind='invoice' (проставляется invoice-checkout-issue).
+    // Даёт байпас guard `no_real_payment`, чтобы выписать счёт до оплаты.
+    const prePaymentInvoiceFlag: boolean = body?.pre_payment_invoice === true;
     type PackageCtx = {
       template_id: string;
       package_session_id: string;
@@ -528,18 +532,28 @@ Deno.serve(async (req) => {
     const guardWarnings: string[] = [];
     const guardSkipped: string[] = [];
 
+    // Invoice pre-payment bypass — валидируем по meta заказа.
+    const orderMetaSafe = ((ordRow as any)?.meta ?? {}) as Record<string, unknown>;
+    const isInvoiceCheckout =
+      prePaymentInvoiceFlag &&
+      orderMetaSafe.checkout_kind === 'invoice' &&
+      orderMetaSafe.awaits_payment === true;
+
     // Guard 1: real succeeded payment
     const hasPayment = hasRealSucceededPayment(paymentsArr);
     if (!hasPayment) {
-      if (!(isAdmin && adminForce)) {
+      if (isInvoiceCheckout) {
+        guardSkipped.push('no_real_payment:pre_payment_invoice');
+      } else if (!(isAdmin && adminForce)) {
         await supabase.from('audit_logs').insert({
           actor_user_id: userId, actor_type: isAdmin ? 'admin' : 'user',
           action: 'document.generate_blocked_no_payment',
           meta: { order_id: orderId },
         });
         return json({ error: 'no_real_payment' }, 403);
+      } else {
+        guardSkipped.push('no_real_payment');
       }
-      guardSkipped.push('no_real_payment');
     }
 
     // Guard 2/3: offer resolution + document enabled (только для self-service ветки)
@@ -582,7 +596,9 @@ Deno.serve(async (req) => {
 
       // Channel + payer type
       const succeededPayment = paymentsArr.find((p: any) => String(p.status).toLowerCase() === 'succeeded');
-      const channel = derivePaymentChannel(succeededPayment as any);
+      const channel = isInvoiceCheckout
+        ? 'bank_transfer'
+        : derivePaymentChannel(succeededPayment as any);
       const payerType = ((ordRow as any).payer_type as PayerType) || 'individual';
       const docStatus = isOfferDocumentEnabled(resolvedOfferMeta, { payerType, paymentChannel: channel });
 
@@ -676,7 +692,7 @@ Deno.serve(async (req) => {
       // here: any change to payer_type, payment, customer card, template/executor
       // override, scenario must reflect in the generated document.
       // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
-      if (order.status === 'paid') {
+      if (order.status === 'paid' || isInvoiceCheckout) {
         const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
         if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
           const { data: reloaded } = await supabase
