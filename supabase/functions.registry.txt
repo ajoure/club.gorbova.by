@@ -88,6 +88,7 @@ manychat-discover-pages
 erip-reconcile-pending
 grp-lookup
 public-checkout
+invoice-checkout-issue
 ai-generate-corporate-package
 gorbova-ai-chat
 split-multi-module-orders
