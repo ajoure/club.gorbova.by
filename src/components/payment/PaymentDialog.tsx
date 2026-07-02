@@ -39,6 +39,8 @@ interface PaymentDialogProps {
   productId: string;
   productName: string;
   price: string;
+  tariffName?: string;
+  currency?: string;
   tariffCode?: string;
   offerId?: string;
   isTrial?: boolean;
