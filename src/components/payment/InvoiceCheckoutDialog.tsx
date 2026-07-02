@@ -8,13 +8,15 @@
  *   3. Подтверждение — сводка «продукт · тариф · плательщик · сумма».
  *   4. Успех — счёт выписан, PDF выгружен, копии ушли на email и в Telegram.
  *
- * Никаких новых полей в настройках оффера не создаём — визард поднимается,
- * когда SitePageBySlug детектит invoice-only оффер (см. src/lib/invoiceCheckout.ts).
+ * Дизайн формы полностью переиспользует OrganizationDetailsForm из настроек
+ * (Настройки → Реквизиты для документов). Ничего своего не рисуем — тот же
+ * автозаполнитель по УНП через useGrpLookup, тот же StructuredAddressBlock.
+ * Физлица здесь исключены — счёт возможен только для ЮЛ/ИП.
  */
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useRequisitesV2, LegalEntityRequisitesRow } from "@/hooks/useRequisitesV2";
+import { useLegalDetails, ClientLegalDetails } from "@/hooks/useLegalDetails";
 import {
   Dialog,
   DialogContent,
@@ -25,11 +27,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
-import { Loader2, CheckCircle2, FileText, Plus, ArrowLeft, Building2, Download } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Loader2,
+  CheckCircle2,
+  FileText,
+  Plus,
+  ArrowLeft,
+  Building2,
+  Download,
+  Star,
+} from "lucide-react";
 import { toast } from "sonner";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
-import { LegalEntityRequisitesForm } from "@/components/requisites-v2/LegalEntityRequisitesForm";
+import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 
 export interface InvoiceCheckoutDialogProps {
   open: boolean;
@@ -52,12 +63,20 @@ interface InvoiceResult {
   telegram_sent: boolean;
 }
 
-function payerLabel(row: LegalEntityRequisitesRow): string {
-  const d = (row.data ?? {}) as Record<string, string | undefined>;
-  const name = d.short_name || d.name || "Без названия";
-  const unp = d.unp ? ` · УНП ${d.unp}` : "";
-  const kind = row.subject_type === "entrepreneur" ? "ИП" : "ЮЛ";
-  return `${kind}: ${name}${unp}`;
+/** Название плательщика для карточки/сводки (в стиле settings/legal-details) */
+function getDisplayName(d: ClientLegalDetails): string {
+  if (d.client_type === "entrepreneur") {
+    return d.ent_name ? `ИП ${d.ent_name}` : "ИП";
+  }
+  if (d.client_type === "legal_entity") {
+    if (d.leg_org_form && d.leg_name) return `${d.leg_org_form} «${d.leg_name}»`;
+    return d.leg_name || "Юрлицо";
+  }
+  return "Плательщик";
+}
+
+function getUnp(d: ClientLegalDetails): string | null {
+  return d.client_type === "entrepreneur" ? d.ent_unp : d.leg_unp;
 }
 
 export function InvoiceCheckoutDialog({
@@ -77,9 +96,21 @@ export function InvoiceCheckoutDialog({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<InvoiceResult | null>(null);
 
-  const requisites = useRequisitesV2({ scope: "user_requisites" });
-  const legalRows = (requisites.legalEntities ?? []) as LegalEntityRequisitesRow[];
-  const isLoadingRequisites = requisites.isLoading;
+  const {
+    legalDetails,
+    isLoading: isLoadingLegal,
+    createDetails,
+    isCreating,
+  } = useLegalDetails();
+
+  // Только ЮЛ/ИП — физлица счёт получить не могут.
+  const payers = useMemo<ClientLegalDetails[]>(
+    () =>
+      (legalDetails ?? []).filter(
+        (d) => d.client_type === "legal_entity" || d.client_type === "entrepreneur",
+      ),
+    [legalDetails],
+  );
 
   // Инициализация шага в зависимости от auth.
   useEffect(() => {
@@ -94,22 +125,24 @@ export function InvoiceCheckoutDialog({
 
   // Автовыбор default/первого плательщика.
   useEffect(() => {
-    if (!legalRows.length) return;
-    if (selectedPayerId && legalRows.find((r) => r.id === selectedPayerId)) return;
-    const def = legalRows.find((r) => r.is_default) ?? legalRows[0];
+    if (!payers.length) {
+      setSelectedPayerId(null);
+      return;
+    }
+    if (selectedPayerId && payers.find((r) => r.id === selectedPayerId)) return;
+    const def = payers.find((r) => r.is_default) ?? payers[0];
     setSelectedPayerId(def?.id ?? null);
-  }, [legalRows, selectedPayerId]);
+  }, [payers, selectedPayerId]);
 
   const selectedPayer = useMemo(
-    () => legalRows.find((r) => r.id === selectedPayerId) ?? null,
-    [legalRows, selectedPayerId],
+    () => payers.find((r) => r.id === selectedPayerId) ?? null,
+    [payers, selectedPayerId],
   );
 
   function handleClose(v: boolean) {
     if (submitting) return;
     onOpenChange(v);
     if (!v) {
-      // сброс состояния
       setTimeout(() => {
         setStep(user ? "payer" : "auth");
         setShowAddForm(false);
@@ -118,17 +151,16 @@ export function InvoiceCheckoutDialog({
     }
   }
 
-  async function handleAddPayerSubmit(values: { data: Record<string, unknown>; is_default: boolean }) {
+  async function handleAddPayerSubmit(data: Partial<ClientLegalDetails>) {
     try {
-      const created = await requisites.createLegalEntityRequisites({
-        subject_type: "legal_entity",
-        data: values.data,
-        is_default: values.is_default,
-      });
+      // OrganizationDetailsForm сама выставляет client_type (legal_entity/entrepreneur),
+      // так что фильтр списка увидит новую запись сразу.
+      const created = await createDetails(data);
       setShowAddForm(false);
       if (created?.id) setSelectedPayerId(created.id);
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось сохранить реквизиты");
+      // toast уже показан в useLegalDetails; на всякий случай логируем
+      console.error("[InvoiceCheckoutDialog] create legal details failed", e);
     }
   }
 
@@ -143,7 +175,7 @@ export function InvoiceCheckoutDialog({
         body: {
           product_id: productId,
           offer_id: offerId,
-          requisites_id: selectedPayer.id,
+          legal_details_id: selectedPayer.id,
         },
       });
       if (error) throw error;
@@ -163,7 +195,7 @@ export function InvoiceCheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[720px] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
@@ -171,7 +203,7 @@ export function InvoiceCheckoutDialog({
             {tariffName ? ` · ${tariffName}` : ""}
           </DialogTitle>
           <DialogDescription>
-            Оплата по банковскому реквизиту для юридического лица
+            Оплата по банковскому реквизиту для юридического лица или ИП
           </DialogDescription>
         </DialogHeader>
 
@@ -186,67 +218,99 @@ export function InvoiceCheckoutDialog({
 
         {step === "payer" && !showAddForm && (
           <div className="space-y-4 pt-2">
-            {isLoadingRequisites ? (
+            {isLoadingLegal ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
-            ) : legalRows.length === 0 ? (
-              <Card className="p-4 text-sm text-muted-foreground">
-                У вас пока нет сохранённых реквизитов юрлица. Добавьте их, чтобы
-                выписать счёт.
+            ) : payers.length === 0 ? (
+              <Card className="p-6 text-center space-y-3">
+                <Building2 className="h-10 w-10 mx-auto text-muted-foreground opacity-60" />
+                <div className="text-sm">
+                  У вас пока нет реквизитов для выставления счёта. Добавьте
+                  организацию или ИП — данные подтянутся автоматически по УНП.
+                </div>
+                <Button onClick={() => setShowAddForm(true)} className="gap-2">
+                  <Plus className="h-4 w-4" /> Добавить организацию или ИП
+                </Button>
               </Card>
             ) : (
-              <RadioGroup
-                value={selectedPayerId ?? ""}
-                onValueChange={(v) => setSelectedPayerId(v)}
-                className="space-y-2"
-              >
-                {legalRows.map((row) => (
-                  <Card key={row.id} className="p-3">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <RadioGroupItem value={row.id} className="mt-1" />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 font-medium">
-                          <Building2 className="h-4 w-4" />
-                          {payerLabel(row)}
-                        </div>
-                        {row.is_default && (
-                          <div className="text-xs text-muted-foreground mt-1">по умолчанию</div>
-                        )}
-                      </div>
-                    </label>
-                  </Card>
-                ))}
-              </RadioGroup>
-            )}
+              <>
+                <RadioGroup
+                  value={selectedPayerId ?? ""}
+                  onValueChange={(v) => setSelectedPayerId(v)}
+                  className="space-y-2"
+                >
+                  {payers.map((row) => {
+                    const unp = getUnp(row);
+                    return (
+                      <Card key={row.id} className="p-3">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <RadioGroupItem value={row.id} className="mt-1" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 font-medium">
+                              <Building2 className="h-4 w-4 shrink-0" />
+                              <span className="truncate">{getDisplayName(row)}</span>
+                              {row.is_default && (
+                                <Badge variant="secondary" className="gap-1">
+                                  <Star className="h-3 w-3" /> Основной
+                                </Badge>
+                              )}
+                              <Badge variant="outline">
+                                {row.client_type === "entrepreneur" ? "ИП" : "Юрлицо"}
+                              </Badge>
+                            </div>
+                            {unp && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                УНП {unp}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      </Card>
+                    );
+                  })}
+                </RadioGroup>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button variant="outline" onClick={() => setShowAddForm(true)}>
-                <Plus className="h-4 w-4 mr-1" /> Добавить реквизиты
-              </Button>
-              <Button
-                className="ml-auto"
-                disabled={!selectedPayerId}
-                onClick={() => setStep("confirm")}
-              >
-                Далее
-              </Button>
-            </div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setShowAddForm(true)}>
+                    <Plus className="h-4 w-4 mr-1" /> Добавить организацию или ИП
+                  </Button>
+                  <Button
+                    className="ml-auto"
+                    disabled={!selectedPayerId}
+                    onClick={() => setStep("confirm")}
+                  >
+                    Далее
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
         {step === "payer" && showAddForm && (
           <div className="space-y-4 pt-2">
-            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>
-              <ArrowLeft className="h-4 w-4 mr-1" /> Назад к выбору
-            </Button>
-            <LegalEntityRequisitesForm
-              scope="user_requisites"
-              subjectType="legal_entity"
-              onSubmit={handleAddPayerSubmit}
-              onCancel={() => setShowAddForm(false)}
-              isSubmitting={requisites.isMutating}
-            />
+            <div className="flex items-center justify-between">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAddForm(false)}
+                disabled={isCreating}
+              >
+                <ArrowLeft className="h-4 w-4 mr-1" /> Назад к выбору
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                Добавить организацию или ИП
+              </div>
+            </div>
+            <Card className="p-4">
+              <OrganizationDetailsForm
+                initialData={null}
+                onSubmit={handleAddPayerSubmit}
+                isSubmitting={isCreating}
+                showDemoOnEmpty
+              />
+            </Card>
           </div>
         )}
 
@@ -262,7 +326,12 @@ export function InvoiceCheckoutDialog({
               </div>
               <div className="text-sm">
                 <div className="text-muted-foreground">Плательщик</div>
-                <div className="font-medium">{payerLabel(selectedPayer)}</div>
+                <div className="font-medium">{getDisplayName(selectedPayer)}</div>
+                {getUnp(selectedPayer) && (
+                  <div className="text-xs text-muted-foreground">
+                    УНП {getUnp(selectedPayer)}
+                  </div>
+                )}
               </div>
               <div className="text-sm">
                 <div className="text-muted-foreground">К оплате</div>
@@ -307,9 +376,13 @@ export function InvoiceCheckoutDialog({
               <CheckCircle2 className="h-12 w-12 text-green-600" />
             </div>
             <div>
-              <div className="text-lg font-semibold">Счёт № {result.invoice_number} выписан</div>
+              <div className="text-lg font-semibold">
+                Счёт № {result.invoice_number} выписан
+              </div>
               <div className="text-sm text-muted-foreground mt-1">
-                {result.email_sent ? "Копия отправлена на email." : "Email не отправлен — проверьте адрес."}{" "}
+                {result.email_sent
+                  ? "Копия отправлена на email."
+                  : "Email не отправлен — проверьте адрес."}{" "}
                 {result.telegram_sent ? "Также ушла в Telegram." : ""}
               </div>
             </div>
