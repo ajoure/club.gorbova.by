@@ -4208,10 +4208,12 @@ export type Database = {
       }
       crm_task_notifications: {
         Row: {
+          attempts: number
           channel: string
           created_at: string
           error: string | null
           id: string
+          last_attempt_at: string | null
           metadata: Json
           notification_type: string
           recipient_user_id: string | null
@@ -4222,10 +4224,12 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          attempts?: number
           channel: string
           created_at?: string
           error?: string | null
           id?: string
+          last_attempt_at?: string | null
           metadata?: Json
           notification_type: string
           recipient_user_id?: string | null
@@ -4236,10 +4240,12 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          attempts?: number
           channel?: string
           created_at?: string
           error?: string | null
           id?: string
+          last_attempt_at?: string | null
           metadata?: Json
           notification_type?: string
           recipient_user_id?: string | null
