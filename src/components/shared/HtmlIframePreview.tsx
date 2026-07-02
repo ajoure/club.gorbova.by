@@ -361,11 +361,13 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     Element.prototype.scrollIntoView = function(arg) {
       try {
         if (this && this.getBoundingClientRect && this.ownerDocument === document) {
-          var top = this.getBoundingClientRect().top
+          var rect = this.getBoundingClientRect();
+          var top = rect.top
             + (window.pageYOffset || document.documentElement.scrollTop || 0);
           parent.postMessage({
             type: 'iframe-scroll-to-element',
             targetOffsetTop: top,
+            targetHeight: rect.height,
             block: (arg && typeof arg === 'object' && arg.block) ? arg.block : 'start'
           }, '*');
           return;
