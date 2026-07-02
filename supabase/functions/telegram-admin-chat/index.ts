@@ -546,6 +546,32 @@ Deno.serve(async (req) => {
           }
         }
 
+        // Fallback: use bot from the last incoming message in this dialog.
+        // Covers guests without telegram_link_bot_id and cross-bot dialogs.
+        if (!botToken) {
+          const { data: lastIncoming } = await supabase
+            .from("telegram_messages")
+            .select("bot_id")
+            .eq("user_id", user_id)
+            .eq("direction", "incoming")
+            .not("bot_id", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (lastIncoming?.bot_id) {
+            const { data: bot } = await supabase
+              .from("telegram_bots")
+              .select("id, bot_token_encrypted")
+              .eq("id", lastIncoming.bot_id)
+              .eq("status", "active")
+              .maybeSingle();
+            if (bot?.bot_token_encrypted) {
+              botToken = bot.bot_token_encrypted;
+              usedBotId = bot.id;
+            }
+          }
+        }
+
         // Fallback to primary active bot
         if (!botToken) {
           const { data: primaryBots } = await supabase
