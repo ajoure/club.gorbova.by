@@ -146,7 +146,9 @@ export function UniversalPricingSection({
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
           productId={selectedOffer.productId}
-          productName={selectedOffer.tariff.name}
+          productName={product.public_title || product.name}
+          tariffName={selectedOffer.tariff.name}
+          currency={product.currency || "BYN"}
           price={String(selectedOffer.offer.amount)}
           tariffCode={selectedOffer.tariff.code}
           offerId={selectedOffer.offer.id}
