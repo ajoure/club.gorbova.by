@@ -1,193 +1,49 @@
-## ## План
-
-### 1. Переделать пикер сделки `DealPickerDialog.tsx`)
-
-Сейчас карточка сделки в поиске = «REBILL-… • 250 BYN • paid • Бухгалтерия как бизнес». По ТЗ пользователя: заголовок = контакт (ФИО), под ним мелко и не жирным — продукт/тариф, ещё ниже неброско — короткий ID сделки. Сумма/статус — справа.
-
-- Расширить SELECT в `handleSearch`: подтянуть контакт через FK `profile:profiles!orders_v2_profile_id_fkey ( id, full_name, email, phone )`).
-
-- Расширить `PickedDeal`: `contact_name`, `contact_id`.
-
-- Ветка «поиск по контакту» — если `searchTerm` не UUID и не совпадает с шаблоном номера `ORD-`, `REBILL-`, `INV-`…): выполнить два запроса и объединить —
-
-  1. `orders_v2` по `order_number ilike %term%`;
-
-  2. `profiles` (по `full_name/email/phone ilike %term%`) → взять id → `orders_v2.in('profile_id', ids)`.
-
-  Дедуп по `id`, сортировка по `created_at desc`, лимит 50.
-
-- Карточка результата:
-
-  - строка 1 (крупно, жирным): `full_name` контакта, при пустом — fallback на email/phone/«Без контакта»;
-
-  - строка 2 (обычный текст, muted): продукт `product_name`) + статус-бейдж;
-
-  - строка 3 (ещё мельче, muted, `font-mono`): `order_number` или короткий `id.slice(0,8)` + дата;
-
-  - справа: сумма + валюта.
-
-### 2. Починить «сделка выбирается, но не сохраняется»
-
-DIAGNOSE (первый шаг перед патчем):
-
-- Через `psql` посмотреть последнюю задачу пользователя в `crm_tasks`: сохранился ли `deal_idcontact_id` после save.
-
-- Проверить RLS UPDATE-политику `crm_tasks` — не блокирует ли она изменение колонок `deal_id/contact_id` (у нас update идёт напрямую через `.from('crm_tasks').update(...)`).
-
-- Проверить сериализацию: в `TaskRelationsField` `onChangeDeal(picked.id)` → `setDealId` в EditDialog. Убедиться, что при следующем открытии диалога `task.deal_id` действительно перезаписывается новым значением (мог остаться устаревший кэш `crm-tasks`).
-
-FIX:
-
-- Если проблема в кэше `useTaskRelations` — использовать данные, пришедшие из пикера `picked.public_id/contact_name`) как оптимистичный кэш, чтобы на кнопке мгновенно отображалось «Контакт · продукт», а не «Выбрать сделку…».
-
-- Если проблема в RLS/RPC — перевести редактирование `deal_id/contact_id` через отдельный SECURITY DEFINER RPC `crm_task_set_relations(_task_id, _deal_id, _contact_id)` с проверкой роли staff.
-
-### 3. Симметричный layout «Сделка / Контакт»
-
-В `TaskRelationsField.tsx` заголовки колонок разной высоты (у «Сделки» справа кнопка X, у «Контакта» её нет пока не выбран) → визуально «Контакт ниже». Исправить:
-
-- Обёрнутый заголовок с фиксированной высотой `h-6`) в обеих колонках, чтобы placeholder-X всегда занимал место (renderить disabled/невидимую кнопку когда нечего очищать).
-
-- Одинаковая высота кнопки-триггера `h-9`) и padding.
-
-- В `CreateCrmTaskDialog.tsx` вынести `TaskRelationsField` в тот же `TASK_DIALOG_SECTION`, что и «Дедлайн/Напомнить», чтобы визуальный ритм совпадал с редактированием.
-
-### 4. Уведомление ответственному при создании
-
-DIAGNOSE:
-
-- `psql`: `SELECT * FROM public.crm_task_notifications WHERE task_id='<последняя задача>'` — создалась ли строка `notification_type='assigned'`.
-
-- Проверить триггер `trg_crm_tasks_notify_assigned`: `pg_trigger` + определение функции. Возможные причины отсутствия:
-
-  a) триггер повесили только на `AFTER UPDATE OF assignee_user_id`, но не на `AFTER INSERT`;
-
-  b) в `INSERT` условие `OLD IS NOT DISTINCT FROM NEW` вычисляется некорректно (OLD = NULL при INSERT);
-
-  c) индекс`ON CONFLICT` глотает вставку.
-
-- Проверить, тикнул ли `crm-task-notify-worker` (edge-func logs) и увидел ли строку.
-
-FIX:
-
-- Пересобрать триггер: `AFTER INSERT OR UPDATE OF assignee_user_id` — на INSERT ставить `assigned`, если `NEW.assignee_user_id IS NOT NULL`; на UPDATE — если `NEW.assignee_user_id IS DISTINCT FROM OLD.assignee_user_id AND NEW.assignee_user_id IS NOT NULL`.
-
-- Добавить `RAISE LOG` внутри триггера, чтобы в следующем прогоне видеть исполнение.
-
-- Дернуть воркер вручную `supabase.functions.invoke('crm-task-notify-worker')`) для очистки скопившегося outbox и подтвердить доставку.
-
-### 5. Кнопки внизу редактирования задачи — одна ровная строка
-
-Сейчас в `EditCrmTaskDialog.tsx` футер: `flex flex-row flex-wrap` с «Отмена» слева и группой из 4 кнопок справа `ml-auto`). При узком контенте кнопки уходят на 2 строки, «Готово» висит отдельно, «Отмена» отрывается вверх (видно на скрине).
-
-- Заменить `DialogFooter` на один горизонтальный ряд: слева — «Отмена» (ghost), справа группа `[Отменить задачу] [В работу] [Сохранить] [Готово]`.
-
-- Убрать `flex-wrap`; вместо этого укоротить лейблы («Отменить», «В работу», «Готово», «Сохранить») и использовать `size="sm"` фиксированной высоты `h-9`, `gap-2`.
-
-- Расширить `max-w` диалога до `max-w-xl`, чтобы 5 кнопок гарантированно влезали на десктопе; на мобильной ширине разрешить перенос, но группами: `flex-wrap justify-end` только для правой группы.
-
-- Проверить одинаковый вертикальный ритм (все кнопки одинаковой высоты, иконки `h-3.5 w-3.5`).
-
-### Технические детали
-
-- Файлы: `src/components/admin/shared/pickers/DealPickerDialog.tsx`, `src/components/admin/tasks/TaskRelationsField.tsx`, `src/components/admin/tasks/EditCrmTaskDialog.tsx`, `src/components/admin/tasks/CreateCrmTaskDialog.tsx`, `src/hooks/useTaskRelations.ts` (расширить `TaskDealLite` полями `contact_name`, `product_name`), возможно новая миграция для триггера уведомлений и/или RPC `crm_task_set_relations`.
-
-- Никаких изменений схемы `orders_v2profiles`.
-
-- DoD: (1) при вводе фамилии в пикер выдаются сделки этого контакта; (2) карточка сделки показывает ФИО крупно, продукт мелко, id мелко; (3) выбранная сделка сохраняется — после закрытия/повторного открытия диалога поле заполнено; (4) в `crm_task_notifications` появляется `assigned` сразу после создания задачи и в Telegram приходит сообщение; (5) 4–5 кнопок в футере редактирования лежат одной ровной строкой без переносов на десктопе.
-
-### Порядок работ
-
-1. DIAGNOSE «не сохраняется» + «не приходит уведомление» через psql (не меняя ничего).
-
-2. Патч пикера сделки (поиск по контакту + новая карточка).
-
-3. Симметричный layout relations + фикс сохранения (если найден баг).
-
-4. Триггер/воркер уведомлений (миграция при необходимости).
-
-5. Новый футер EditCrmTaskDialog.
-
-6. VERIFY: создать тестовую задачу, изменить связку, поменять ответственного, дождаться уведомления в TG.
-
-&nbsp;
-
-План
-
-### 1. Переделать пикер сделки (`DealPickerDialog.tsx`)
-
-Сейчас карточка сделки в поиске = «REBILL-… • 250 BYN • paid • Бухгалтерия как бизнес». По ТЗ пользователя: заголовок = контакт (ФИО), под ним мелко и не жирным — продукт/тариф, ещё ниже неброско — короткий ID сделки. Сумма/статус — справа.
-
-- Расширить SELECT в `handleSearch`: подтянуть контакт через FK (`profile:profiles!orders_v2_profile_id_fkey ( id, full_name, email, phone )`).
-- Расширить `PickedDeal`: `contact_name`, `contact_id`.
-- Ветка «поиск по контакту» — если `searchTerm` не UUID и не совпадает с шаблоном номера (`ORD-`, `REBILL-`, `INV-`…): выполнить два запроса и объединить —
-  1. `orders_v2` по `order_number ilike %term%`;
-  2. `profiles` (по `full_name/email/phone ilike %term%`) → взять id → `orders_v2.in('profile_id', ids)`.
-  Дедуп по `id`, сортировка по `created_at desc`, лимит 50.
-- Карточка результата:
-  - строка 1 (крупно, жирным): `full_name` контакта, при пустом — fallback на email/phone/«Без контакта»;
-  - строка 2 (обычный текст, muted): продукт (`product_name`) + статус-бейдж;
-  - строка 3 (ещё мельче, muted, `font-mono`): `order_number` или короткий `id.slice(0,8)` + дата;
-  - справа: сумма + валюта.
-
-### 2. Починить «сделка выбирается, но не сохраняется»
-
-DIAGNOSE (первый шаг перед патчем):
-
-- Через `psql` посмотреть последнюю задачу пользователя в `crm_tasks`: сохранился ли `deal_id`/`contact_id` после save.
-- Проверить RLS UPDATE-политику `crm_tasks` — не блокирует ли она изменение колонок `deal_id/contact_id` (у нас update идёт напрямую через `.from('crm_tasks').update(...)`).
-- Проверить сериализацию: в `TaskRelationsField` `onChangeDeal(picked.id)` → `setDealId` в EditDialog. Убедиться, что при следующем открытии диалога `task.deal_id` действительно перезаписывается новым значением (мог остаться устаревший кэш `crm-tasks`).
-
-FIX:
-
-- Если проблема в кэше `useTaskRelations` — использовать данные, пришедшие из пикера (`picked.public_id/contact_name`) как оптимистичный кэш, чтобы на кнопке мгновенно отображалось «Контакт · продукт», а не «Выбрать сделку…».
-- Если проблема в RLS/RPC — перевести редактирование `deal_id/contact_id` через отдельный SECURITY DEFINER RPC `crm_task_set_relations(_task_id, _deal_id, _contact_id)` с проверкой роли staff.
-
-### 3. Симметричный layout «Сделка / Контакт»
-
-В `TaskRelationsField.tsx` заголовки колонок разной высоты (у «Сделки» справа кнопка X, у «Контакта» её нет пока не выбран) → визуально «Контакт ниже». Исправить:
-
-- Обёрнутый заголовок с фиксированной высотой (`h-6`) в обеих колонках, чтобы placeholder-X всегда занимал место (renderить disabled/невидимую кнопку когда нечего очищать).
-- Одинаковая высота кнопки-триггера (`h-9`) и padding.
-- В `CreateCrmTaskDialog.tsx` вынести `TaskRelationsField` в тот же `TASK_DIALOG_SECTION`, что и «Дедлайн/Напомнить», чтобы визуальный ритм совпадал с редактированием.
-
-### 4. Уведомление ответственному при создании
-
-DIAGNOSE:
-
-- `psql`: `SELECT * FROM public.crm_task_notifications WHERE task_id='<последняя задача>'` — создалась ли строка `notification_type='assigned'`.
-- Проверить триггер `trg_crm_tasks_notify_assigned`: `pg_trigger` + определение функции. Возможные причины отсутствия:
-a) триггер повесили только на `AFTER UPDATE OF assignee_user_id`, но не на `AFTER INSERT`;
-b) в `INSERT` условие `OLD IS NOT DISTINCT FROM NEW` вычисляется некорректно (OLD = NULL при INSERT);
-c) индекс/`ON CONFLICT` глотает вставку.
-- Проверить, тикнул ли `crm-task-notify-worker` (edge-func logs) и увидел ли строку.
-
-FIX:
-
-- Пересобрать триггер: `AFTER INSERT OR UPDATE OF assignee_user_id` — на INSERT ставить `assigned`, если `NEW.assignee_user_id IS NOT NULL`; на UPDATE — если `NEW.assignee_user_id IS DISTINCT FROM OLD.assignee_user_id AND NEW.assignee_user_id IS NOT NULL`.
-- Добавить `RAISE LOG` внутри триггера, чтобы в следующем прогоне видеть исполнение.
-- Дернуть воркер вручную (`supabase.functions.invoke('crm-task-notify-worker')`) для очистки скопившегося outbox и подтвердить доставку.
-
-### 5. Кнопки внизу редактирования задачи — одна ровная строка
-
-Сейчас в `EditCrmTaskDialog.tsx` футер: `flex flex-row flex-wrap` с «Отмена» слева и группой из 4 кнопок справа (`ml-auto`). При узком контенте кнопки уходят на 2 строки, «Готово» висит отдельно, «Отмена» отрывается вверх (видно на скрине).
-
-- Заменить `DialogFooter` на один горизонтальный ряд: слева — «Отмена» (ghost), справа группа `[Отменить задачу] [В работу] [Сохранить] [Готово]`.
-- Убрать `flex-wrap`; вместо этого укоротить лейблы («Отменить», «В работу», «Готово», «Сохранить») и использовать `size="sm"` фиксированной высоты `h-9`, `gap-2`.
-- Расширить `max-w` диалога до `max-w-xl`, чтобы 5 кнопок гарантированно влезали на десктопе; на мобильной ширине разрешить перенос, но группами: `flex-wrap justify-end` только для правой группы.
-- Проверить одинаковый вертикальный ритм (все кнопки одинаковой высоты, иконки `h-3.5 w-3.5`).
-
-### Технические детали
-
-- Файлы: `src/components/admin/shared/pickers/DealPickerDialog.tsx`, `src/components/admin/tasks/TaskRelationsField.tsx`, `src/components/admin/tasks/EditCrmTaskDialog.tsx`, `src/components/admin/tasks/CreateCrmTaskDialog.tsx`, `src/hooks/useTaskRelations.ts` (расширить `TaskDealLite` полями `contact_name`, `product_name`), возможно новая миграция для триггера уведомлений и/или RPC `crm_task_set_relations`.
-- Никаких изменений схемы `orders_v2`/`profiles`.
-- DoD: (1) при вводе фамилии в пикер выдаются сделки этого контакта; (2) карточка сделки показывает ФИО крупно, продукт мелко, id мелко; (3) выбранная сделка сохраняется — после закрытия/повторного открытия диалога поле заполнено; (4) в `crm_task_notifications` появляется `assigned` сразу после создания задачи и в Telegram приходит сообщение; (5) 4–5 кнопок в футере редактирования лежат одной ровной строкой без переносов на десктопе.
-
-### Порядок работ
-
-1. DIAGNOSE «не сохраняется» + «не приходит уведомление» через psql (не меняя ничего).
-2. Патч пикера сделки (поиск по контакту + новая карточка).
-3. Симметричный layout relations + фикс сохранения (если найден баг).
-4. Триггер/воркер уведомлений (миграция при необходимости).
-5. Новый футер EditCrmTaskDialog.
-6. VERIFY: создать тестовую задачу, изменить связку, поменять ответственного, дождаться уведомления в TG.
+# План: динамические тарифы на странице «Идеологическая работа»
+
+## Что делаем
+Заменяем статичный блок «Способы оплаты» на странице `ideologicheskaya-rabota` (page_id `7e672fed-13f1-4ff1-8786-71a228a0c011`) на **динамический**, который тянет тарифы и офферы из уже существующего продукта `Gorbova Club — идеология` (`3ea08f79-afe8-4361-81fe-4c0f318f9a2b`). Никаких новых таблиц/сущностей не создаём — используем существующую Edge-функцию `public-product` и уже работающий `lovable:site-action` bridge из `HtmlIframePreview.tsx`.
+
+## Что уже готово в системе (проверено)
+- В админке тарифы продукта настроены:
+  - `КОРПОРАТИВНОЙ КАРТОЙ` → offer `pay_now`, 350 BYN, кнопка «Оплатить картой».
+  - `ПО СЧЁТУ` → offer `pay_now`, 375 BYN, кнопка «Оплатить».
+  - `ИНДИВИДУАЛЬНЫЙ ДОГОВОР` → offer `preregistration`, 0 BYN, кнопка «Хочу премиальные условия».
+  - (Также есть `Доступ к +600 ответов` — trial, к оплатам не относится, в новом блоке отфильтровывается.)
+- Edge-функция `public-product?product_id=…` уже возвращает `{ product, tariffs: [{ …, offers:[…] }] }`.
+- Мост `HtmlIframePreview.BRIDGE_SCRIPT` уже перехватывает клики `data-lovable-action="open-offer" data-product-id=… data-offer-id=…` и открывает `PaymentDialog` через `SitePageBySlug`. `open-preregistration` открывает `PreregistrationDialog`. Никакой доработки моста не нужно.
+
+## Изменения (единственный файл — HTML-блок страницы в БД)
+
+Пишем в блоке `3b63835a-f510-4cc8-992b-2de33b2b3f8c` страницы `7e672fed-13f1-4ff1-8786-71a228a0c011` (поле `blocks[0].content.code`) SQL-миграцией:
+
+1. **Заменить секцию `<section id="payment">…</section>` (строки 1487–1566 текущего HTML)** на новый блок:
+   - Тот же дизайн-шелл (заголовок «Способы оплаты» + описание, grid 3 колонки, карточка «премиум» в burgundy-фоне).
+   - Внутри — контейнер `<div id="ir-tariff-cards" data-product-id="3ea08f79-…">` с плейсхолдером-лоадером.
+   - Инлайновый `<script>` в конце секции:
+     - Фетчит `SUPABASE_URL/functions/v1/public-product?product_id=…` (публичный ключ анон).
+     - Определяет «слот» карточки по имени тарифа: `card` (КАРТ), `invoice` (СЧЁТ), `premium` (ИНДИВИД/ПРЕМИ).
+     - Рендерит карточку под слот: иконка (`fa-credit-card`, `fa-file-invoice`, `fa-gem`), цвета (burgundy/coolgray/premium-burgundy-900), цена из `offer.amount` («350 BYN / месяц»), кнопка с `offer.button_label`.
+     - Список «Плюсов» берётся из `tariffs.features` (jsonb-массив) или `tariffs.description`, если админ их заполнит; иначе показываются те же буллеты, что в текущей вёрстке (fallback, чтобы дизайн не «поплыл»).
+     - Кнопка карточки — `<button data-lovable-action="open-offer|open-preregistration" data-product-id data-offer-id>` (для preregistration используется `open-preregistration`). Мост в `SitePageBySlug` уже валидирует UUID и открывает соответствующий диалог.
+     - XSS-safe: значения из БД экранируются локальной `esc()`; в DOM пишутся только через контролируемые шаблоны.
+     - Graceful fallback: если EF недоступна — показать сообщение «Тарифы временно недоступны. Обновите страницу».
+2. **CTA-кнопки «Настроить идеологическую работу»** (шапка сайта, hero, финальный CTA) переводятся с `onclick="openModal('setup')"` на плавный скролл к `#payment`:
+   `onclick="var el=document.getElementById('payment'); if(el){el.scrollIntoView({behavior:'smooth',block:'start'});} return false;"`.
+   Мост `HtmlIframePreview` уже перехватывает `scrollIntoView` и корректно скроллит родительскую страницу.
+3. Модалка `openModal('setup')` в HTML не удаляется — она остаётся для потенциального переиспользования, просто CTA к ней больше не ведут (изоляция изменений: минимальный риск сломать соседние блоки).
+
+## Что НЕ трогаем
+- Схема БД, миграции, RLS.
+- Компоненты фронта (`SitePageBySlug.tsx`, `HtmlIframePreview.tsx`, `PaymentDialog.tsx`, `PreregistrationDialog.tsx`) — их поведение уже подходит.
+- Остальной контент страницы (hero, база знаний, тайминги, футер).
+
+## Как проверить
+- Открыть `/ideologicheskaya-rabota`, дождаться подгрузки карточек (≤ 1 сек).
+- Кликнуть «Оплатить картой» → должен открыться `PaymentDialog` для 350 BYN.
+- Кликнуть «Оплатить» на «По счёту» → `PaymentDialog` для 375 BYN.
+- Кликнуть «Хочу премиальные условия» → `PreregistrationDialog`.
+- Изменить в админке продукта `КОРПОРАТИВНОЙ КАРТОЙ` цену/лейбл кнопки → перезагрузить страницу → карточка обновилась без правок HTML.
+- CTA «Настроить идеологическую работу» (в шапке, hero и финальном CTA) — плавный скролл до блока «Способы оплаты».
+
+## Готов выполнить
+План минимально-инвазивный: одна SQL-правка HTML-блока страницы, ничего в коде фронта/БД/EF не меняем. Переключите режим в build — и я применю миграцию.
