@@ -692,7 +692,7 @@ Deno.serve(async (req) => {
       // here: any change to payer_type, payment, customer card, template/executor
       // override, scenario must reflect in the generated document.
       // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
-      if (order.status === 'paid') {
+      if (order.status === 'paid' || isInvoiceCheckout) {
         const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
         if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
           const { data: reloaded } = await supabase
