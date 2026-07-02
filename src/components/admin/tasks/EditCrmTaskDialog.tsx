@@ -292,16 +292,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           </div>
         </div>
 
-        <DialogFooter className="flex flex-row flex-wrap items-center gap-2 pt-3 mt-2 border-t border-white/40">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-            disabled={isPending}
-            className="h-9 px-3 text-xs shrink-0 mr-auto"
-          >
-            Отмена
-          </Button>
+        <DialogFooter className="flex flex-row flex-nowrap items-center justify-end gap-2 pt-3 mt-2 border-t border-white/40 overflow-x-auto">
           {showCancel && (
             <Button
               size="sm"
