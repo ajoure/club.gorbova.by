@@ -600,7 +600,7 @@ export function PaymentDialog({
             offer_id: offerId || null,
             expected_amount,
             currency: 'BYN',
-            description: productName,
+            description: paymentDescription,
           },
         }
       );
