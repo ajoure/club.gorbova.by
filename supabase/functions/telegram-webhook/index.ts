@@ -982,6 +982,9 @@ Deno.serve(async (req) => {
               first_name: tgFirst,
               last_name: tgLast,
               full_name: fullName,
+              telegram_link_bot_id: botId,
+              telegram_link_status: 'guest',
+              telegram_linked_at: new Date().toISOString(),
             })
             .select('id')
             .single();
