@@ -370,6 +370,10 @@ Deno.serve(async (req) => {
     let orderId: string | null = body?.order_id || null;
     let templateId: string | null = body?.template_id || null;
     const adminForce: boolean = body?.admin_force === true;
+    // pre_payment_invoice: разрешено только если заказ в meta.awaits_payment=true
+    // и meta.checkout_kind='invoice' (проставляется invoice-checkout-issue).
+    // Даёт байпас guard `no_real_payment`, чтобы выписать счёт до оплаты.
+    const prePaymentInvoiceFlag: boolean = body?.pre_payment_invoice === true;
     type PackageCtx = {
       template_id: string;
       package_session_id: string;
