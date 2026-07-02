@@ -78,7 +78,8 @@ export function InvoiceCheckoutDialog({
   const [result, setResult] = useState<InvoiceResult | null>(null);
 
   const requisites = useRequisitesV2({ scope: "user_requisites" });
-  const legalRows = (requisites.legalEntities.data ?? []) as LegalEntityRequisitesRow[];
+  const legalRows = (requisites.legalEntities ?? []) as LegalEntityRequisitesRow[];
+  const isLoadingRequisites = requisites.isLoading;
 
   // Инициализация шага в зависимости от auth.
   useEffect(() => {
