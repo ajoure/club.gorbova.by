@@ -44,6 +44,8 @@ const PAYER_LABEL: Record<DocumentScenarioPayerType, string> = {
   legal_entity: 'Юрлицо',
 };
 
+const ACQUIRING_CHANNELS: PaymentChannel[] = ['card', 'apple_pay', 'google_pay', 'erip'];
+
 function uid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `scn_${Math.random().toString(36).slice(2, 10)}`;
@@ -149,7 +151,21 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
     const row = rows.find((r) => r.id === id);
     if (!row) return;
     const set = new Set<string>(row.payment_channels);
-    if (checked) set.add(channel); else set.delete(channel);
+
+    if (checked && channel === 'bank_transfer') {
+      update(id, { payment_channels: ['bank_transfer'] as OfferDocumentScenario['payment_channels'] });
+      return;
+    }
+
+    if (checked && ACQUIRING_CHANNELS.includes(channel)) {
+      set.delete('bank_transfer');
+      set.add(channel);
+    } else if (checked) {
+      set.add(channel);
+    } else {
+      set.delete(channel);
+    }
+
     update(id, { payment_channels: Array.from(set) as OfferDocumentScenario['payment_channels'] });
   };
   const addExtra = (payer: DocumentScenarioPayerType) => {
@@ -198,6 +214,7 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
               .slice(0, idx)
               .filter((r) => r.payer_type === row.payer_type).length;
             const isExtra = dupIndex > 0;
+            const bankTransferSelected = (row.payment_channels as string[]).includes('bank_transfer');
             return (
               <div
                 key={row.id}
@@ -238,13 +255,15 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {PAYMENT_CHANNEL_OPTIONS.map((opt) => {
                       const checked = (row.payment_channels as string[]).includes(opt.value);
+                      const disabledByBankTransfer = bankTransferSelected && opt.value !== 'bank_transfer';
                       return (
                         <label
                           key={opt.value}
-                          className="flex items-center gap-2 text-xs cursor-pointer"
+                          className={`flex items-center gap-2 text-xs ${disabledByBankTransfer ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                         >
                           <Checkbox
                             checked={checked}
+                            disabled={disabledByBankTransfer}
                             onCheckedChange={(c) => toggleChannel(row.id, opt.value, c === true)}
                           />
                           <span>{opt.label}</span>
@@ -253,8 +272,9 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                     })}
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    Если не отмечено ни одного — сценарий применяется для любого канала
-                    того же типа плательщика.
+                    {bankTransferSelected
+                      ? 'Банковский перевод используется только для выставления счёта — эквайринг по этому сценарию недоступен.'
+                      : 'Если не отмечено ни одного — сценарий применяется для любого канала того же типа плательщика.'}
                   </p>
                 </div>
 
