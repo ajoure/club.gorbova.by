@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
   // 3. Оффер + тариф + продукт.
   const { data: offer } = await admin
     .from("tariff_offers")
-    .select("id, tariff_id, base_price, final_price, is_active, meta")
+    .select("id, tariff_id, amount, is_active, meta")
     .eq("id", body.offer_id)
     .maybeSingle();
   if (!offer || !offer.is_active) return json({ error: "offer_not_available" }, 404);
@@ -219,8 +219,8 @@ Deno.serve(async (req) => {
     product_id: product.id,
     tariff_id: tariff.id,
     offer_id: offer.id,
-    base_price: offer.base_price ?? 0,
-    final_price: offer.final_price ?? 0,
+    base_price: offer.amount ?? 0,
+    final_price: offer.amount ?? 0,
     currency: product.currency || "BYN",
     status: "draft",
     payer_type: payerType,
