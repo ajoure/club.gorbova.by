@@ -1,28 +1,33 @@
 /**
  * invoice-checkout-issue
  * ────────────────────────────────────────────────────────────────────────────
- * Атомарная выписка счёта для сценария legal_entity + bank_transfer.
+ * Атомарная выписка счёта для сценария legal_entity / entrepreneur +
+ * bank_transfer. Источник реквизитов — public.client_legal_details
+ * (та же таблица, что используется в Настройки → Реквизиты для документов
+ * и canonical-document-generate-strict).
  *
  * Что делает:
- *   1. Проверяет auth (JWT пользователя) и валидность оффера/продукта/реквизитов.
- *   2. Ресолвит CRM-роутинг оффера (pipeline_id + stage_on_pending) через
- *      _shared/crm-routing.ts.
- *   3. Создаёт запись в orders_v2:
- *        - payer_type = 'legal_entity'
+ *   1. Проверяет auth (JWT пользователя) и валидность оффера/продукта.
+ *   2. Загружает запись из client_legal_details, проверяет ownership и
+ *      что client_type ∈ (legal_entity, entrepreneur).
+ *   3. Ресолвит CRM-роутинг оффера (pipeline_id + stage_on_pending).
+ *   4. Создаёт запись в orders_v2:
+ *        - payer_type — из client_type (legal_entity | entrepreneur)
  *        - status = 'draft'
  *        - pipeline_id / pipeline_stage_id = stage_on_pending
  *        - meta.checkout_kind = 'invoice'
  *        - meta.awaits_payment = true
- *        - meta.requisites_id = <ссылка на legal_entities_requisites>
- *        - meta.purchase_snapshot = snapshot реквизитов
- *   4. Присваивает order.meta.invoice_number (совпадает с order_number для
- *      простоты сверки от банка).
+ *        - meta.invoice_number
+ *        - meta.legal_details_id
+ *        - meta.purchase_snapshot — whitelisted snapshot (leg_*/ent_* + банк)
+ *        - meta.document_data._provenance.customer_legal_details_id — чтобы
+ *          canonical-document-generate-strict взял именно эту запись.
  *   5. Вызывает canonical-document-generate-strict с флагом
  *      pre_payment_invoice: true — PDF-счёт формируется до оплаты.
- *   6. Возвращает { order_id, invoice_number, pdf_url, email_sent, telegram_sent }.
  *
- * Сверка входящих банковских платежей и авто-перевод в stage_on_paid — в
- * отдельной задаче (см. roadmap).
+ * Обратная совместимость: тело запроса может нести `requisites_id` вместо
+ * `legal_details_id` — legacy alias на переходный период (клиент шлёт только
+ * legal_details_id).
  */
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { resolveOfferRouting } from "../_shared/crm-routing.ts";
@@ -44,7 +49,44 @@ function json(body: unknown, status = 200) {
 interface IssueBody {
   product_id: string;
   offer_id: string;
-  requisites_id: string;
+  legal_details_id?: string;
+  requisites_id?: string; // legacy alias
+}
+
+/** Whitelist snapshot полей реквизитов для orders_v2.meta.purchase_snapshot. */
+function buildRequisitesSnapshot(row: Record<string, unknown>) {
+  const keys = [
+    "client_type",
+    // legal entity
+    "leg_org_form",
+    "leg_name",
+    "leg_unp",
+    "leg_address",
+    "leg_address_structured",
+    "leg_director_position",
+    "leg_director_name",
+    "leg_acts_on_basis",
+    // entrepreneur
+    "ent_name",
+    "ent_unp",
+    "ent_address",
+    "ent_address_structured",
+    "ent_acts_on_basis",
+    // shared
+    "bank_account",
+    "bank_name",
+    "bank_code",
+    "phone",
+    "email",
+    // GRP registry stamp
+    "grp_registration_date",
+    "grp_status_name",
+    "grp_tax_office_name",
+    "grp_last_fetched_at",
+  ] as const;
+  const snap: Record<string, unknown> = {};
+  for (const k of keys) if (row[k] !== undefined) snap[k] = row[k];
+  return snap;
 }
 
 Deno.serve(async (req) => {
@@ -75,33 +117,33 @@ Deno.serve(async (req) => {
   } catch {
     return json({ error: "bad_json" }, 400);
   }
-  if (!body?.product_id || !body?.offer_id || !body?.requisites_id) {
+  const legalDetailsId = body.legal_details_id || body.requisites_id;
+  if (!body?.product_id || !body?.offer_id || !legalDetailsId) {
     return json({ error: "missing_fields" }, 400);
   }
 
-  // 1. Профиль пользователя
+  // 1. Профиль пользователя (profiles.user_id = auth.user.id).
   const { data: profile } = await admin
     .from("profiles")
     .select("id, email, full_name")
-    .eq("id", user.id)
+    .eq("user_id", user.id)
     .maybeSingle();
   if (!profile) return json({ error: "profile_not_found" }, 404);
 
-  // 2. Реквизиты — принадлежат этому пользователю?
-  const { data: req_row } = await admin
-    .from("legal_entities_requisites")
-    .select("id, profile_id, subject_type, data, is_default")
-    .eq("id", body.requisites_id)
+  // 2. Реквизиты из client_legal_details — принадлежат этому профилю?
+  const { data: ld } = await admin
+    .from("client_legal_details")
+    .select("*")
+    .eq("id", legalDetailsId)
     .maybeSingle();
-  if (!req_row || req_row.profile_id !== profile.id) {
+  if (!ld || ld.profile_id !== profile.id) {
     return json({ error: "requisites_forbidden" }, 403);
   }
-  if (req_row.subject_type !== "legal_entity" &&
-      req_row.subject_type !== "entrepreneur") {
+  if (ld.client_type !== "legal_entity" && ld.client_type !== "entrepreneur") {
     return json({ error: "requisites_wrong_type" }, 400);
   }
 
-  // 3. Оффер + тариф + продукт
+  // 3. Оффер + тариф + продукт.
   const { data: offer } = await admin
     .from("tariff_offers")
     .select("id, tariff_id, base_price, final_price, is_active, meta")
@@ -125,11 +167,11 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!product) return json({ error: "product_not_found" }, 404);
 
-  // 4. CRM routing
+  // 4. CRM routing.
   const routing = await resolveOfferRouting(admin, offer.id);
   const routingSnapshot = routing.ok ? routing.snapshot : null;
 
-  // 5. Order number
+  // 5. Order number → invoice number.
   const { data: numData, error: numErr } = await admin.rpc(
     "generate_order_number",
   );
@@ -137,19 +179,32 @@ Deno.serve(async (req) => {
     return json({ error: "generate_order_number_failed", message: numErr?.message }, 500);
   }
   const orderNumber = numData as string;
-  const invoiceNumber = orderNumber; // используем order_number как № счёта
+  const invoiceNumber = orderNumber;
 
-  // 6. Create order
+  // 6. Create order.
+  const payerType: "legal_entity" | "entrepreneur" =
+    ld.client_type === "entrepreneur" ? "entrepreneur" : "legal_entity";
+
+  const requisitesSnapshot = buildRequisitesSnapshot(ld);
+
   const orderMeta: Record<string, unknown> = {
     source: "invoice_checkout",
     checkout_kind: "invoice",
     awaits_payment: true,
     invoice_number: invoiceNumber,
-    requisites_id: req_row.id,
+    legal_details_id: ld.id,
     purchase_snapshot: {
-      requisites: req_row.data,
-      subject_type: req_row.subject_type,
+      client_type: ld.client_type,
+      requisites: requisitesSnapshot,
       captured_at: new Date().toISOString(),
+    },
+    // Подсказка для canonical-document-generate-strict: он умеет брать
+    // client_legal_details по _provenance.customer_legal_details_id.
+    document_data: {
+      _provenance: {
+        customer_legal_details_id: ld.id,
+        source: "invoice_checkout",
+      },
     },
   };
   if (routingSnapshot) orderMeta.crm_routing_snapshot = routingSnapshot;
@@ -165,7 +220,7 @@ Deno.serve(async (req) => {
     final_price: offer.final_price ?? 0,
     currency: product.currency || "BYN",
     status: "draft",
-    payer_type: "legal_entity",
+    payer_type: payerType,
     customer_email: profile.email,
     reconcile_source: "invoice_checkout",
     meta: orderMeta,
@@ -184,7 +239,7 @@ Deno.serve(async (req) => {
     return json({ error: "create_order_failed", message: orderErr?.message }, 500);
   }
 
-  // 7. Аудит
+  // 7. Аудит.
   await admin.from("audit_logs").insert({
     actor_user_id: user.id,
     actor_type: "user",
@@ -195,14 +250,14 @@ Deno.serve(async (req) => {
       invoice_number: invoiceNumber,
       offer_id: offer.id,
       product_id: product.id,
-      requisites_id: req_row.id,
+      legal_details_id: ld.id,
+      payer_type: payerType,
       routing_ok: routing.ok,
       routing_reason: routing.ok ? null : (routing as any).reason,
     },
   });
 
-  // 8. Сгенерировать PDF счёта — вызываем strict с флагом pre_payment_invoice.
-  //    Передаём JWT пользователя, чтобы strict видел owner-а заказа.
+  // 8. PDF счёта — strict с флагом pre_payment_invoice.
   let pdfUrl: string | null = null;
   let emailSent = false;
   let telegramSent = false;
