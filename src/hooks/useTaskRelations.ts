@@ -7,6 +7,8 @@ export interface TaskDealLite {
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
   status: string | null;
+  contact_name?: string | null;
+  product_name?: string | null;
 }
 
 export interface TaskContactLite {
@@ -28,11 +30,27 @@ export function useTaskRelations(dealIds: string[], contactIds: string[]) {
       const ids = Array.from(new Set(dealIds));
       const { data, error } = await (supabase as any)
         .from("orders_v2")
-        .select("id, public_id, pipeline_id, pipeline_stage_id, status")
+        .select(
+          `id, public_id, pipeline_id, pipeline_stage_id, status,
+           product:products_v2(name),
+           tariff:tariffs(name),
+           profile:profiles!orders_v2_profile_id_fkey(full_name, email, phone)`,
+        )
         .in("id", ids);
       if (error) throw error;
       const map: Record<string, TaskDealLite> = {};
-      for (const r of data ?? []) map[r.id] = r as TaskDealLite;
+      for (const r of (data ?? []) as any[]) {
+        map[r.id] = {
+          id: r.id,
+          public_id: r.public_id,
+          pipeline_id: r.pipeline_id,
+          pipeline_stage_id: r.pipeline_stage_id,
+          status: r.status,
+          product_name: r.product?.name || r.tariff?.name || null,
+          contact_name:
+            r.profile?.full_name || r.profile?.email || r.profile?.phone || null,
+        };
+      }
       return map;
     },
     staleTime: 60_000,
