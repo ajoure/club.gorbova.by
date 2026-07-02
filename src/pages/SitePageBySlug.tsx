@@ -148,31 +148,51 @@ export default function SitePageBySlug() {
         pricingData={pricingData}
         pageId={page.id}
       />
-      {resolved && (
-        <PaymentDialog
-          open={paymentOpen}
-          onOpenChange={(v) => {
-            setPaymentOpen(v);
-            if (!v) setPending(null);
-          }}
-          productId={resolved.product.id}
-          productName={resolved.product.public_title || resolved.product.name}
-          tariffName={resolved.tariff.name}
-          currency={resolved.product.currency || "BYN"}
-          price={String(resolved.offer.amount)}
-          tariffCode={resolved.tariff.code}
-          offerId={resolved.offer.id}
-          isTrial={resolved.offer.offer_type === "trial"}
-          trialDays={resolved.offer.trial_days ?? undefined}
-          isClubProduct={!!resolved.product.telegram_club_id}
-          isSubscription={
-            !!resolved.offer.requires_card_tokenization &&
-            resolved.offer.payment_method !== "internal_installment"
-          }
-          paymentMethod={resolved.offer.payment_method}
-          installmentCount={resolved.offer.installment_count ?? null}
-        />
-      )}
+      {resolved && (() => {
+        const invoiceDetect = detectInvoiceOnlyOffer(resolved.offer);
+        if (invoiceDetect.isInvoiceOnly) {
+          return (
+            <InvoiceCheckoutDialog
+              open={paymentOpen}
+              onOpenChange={(v) => {
+                setPaymentOpen(v);
+                if (!v) setPending(null);
+              }}
+              productId={resolved.product.id}
+              productName={resolved.product.public_title || resolved.product.name}
+              tariffName={resolved.tariff.name}
+              offerId={resolved.offer.id}
+              amount={resolved.offer.amount}
+              currency={resolved.product.currency || "BYN"}
+            />
+          );
+        }
+        return (
+          <PaymentDialog
+            open={paymentOpen}
+            onOpenChange={(v) => {
+              setPaymentOpen(v);
+              if (!v) setPending(null);
+            }}
+            productId={resolved.product.id}
+            productName={resolved.product.public_title || resolved.product.name}
+            tariffName={resolved.tariff.name}
+            currency={resolved.product.currency || "BYN"}
+            price={String(resolved.offer.amount)}
+            tariffCode={resolved.tariff.code}
+            offerId={resolved.offer.id}
+            isTrial={resolved.offer.offer_type === "trial"}
+            trialDays={resolved.offer.trial_days ?? undefined}
+            isClubProduct={!!resolved.product.telegram_club_id}
+            isSubscription={
+              !!resolved.offer.requires_card_tokenization &&
+              resolved.offer.payment_method !== "internal_installment"
+            }
+            paymentMethod={resolved.offer.payment_method}
+            installmentCount={resolved.offer.installment_count ?? null}
+          />
+        );
+      })()}
       {preregOfferId && (
         <PreregistrationDialog
           open={preregOpen}
