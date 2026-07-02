@@ -206,7 +206,7 @@ export function DealPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[580px]">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-[580px] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Layers className="h-5 w-5 text-indigo-500" />
@@ -240,13 +240,13 @@ export function DealPickerDialog({
             </p>
           ) : null}
 
-          <ScrollArea className="h-[360px] border rounded-md overflow-auto">
+          <ScrollArea className="h-[360px] w-full max-w-full border rounded-md overflow-hidden">
             {results.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground text-sm">
                 {loading ? "Поиск..." : emptyStateExtras ?? <p>Нет сделок</p>}
               </div>
             ) : (
-              <div className="p-2 space-y-1">
+              <div className="p-2 space-y-1 max-w-full overflow-hidden">
                 {results.map((order) => {
                   const isSel = selected?.id === order.id;
                   const shortId = order.order_number || order.id.substring(0, 8);
@@ -254,41 +254,41 @@ export function DealPickerDialog({
                     <button
                       key={order.id}
                       onClick={() => setSelected(order)}
-                      className={`w-full text-left p-3 rounded-md transition-colors ${
+                      className={`block w-full max-w-full overflow-hidden text-left p-3 rounded-md transition-colors ${
                         isSel
                           ? "bg-primary/10 border border-primary"
                           : "hover:bg-muted border border-transparent"
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
+                      <div className="grid grid-cols-[minmax(0,1fr)_88px] sm:grid-cols-[minmax(0,1fr)_104px] gap-3 items-start max-w-full overflow-hidden">
+                        <div className="min-w-0 overflow-hidden">
                           {/* Row 1: contact as headline */}
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-sm truncate">
+                          <div className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden">
+                            <span className="min-w-0 truncate font-semibold text-sm">
                               {order.contact_name || "Без контакта"}
                             </span>
                             {order.status && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                              <Badge variant="outline" className="shrink-0 max-w-[92px] truncate text-[10px] px-1.5 py-0 font-normal">
                                 {orderStatusRu(order.status)}
                               </Badge>
                             )}
                           </div>
                           {/* Row 2: product, small non-bold */}
                           {order.product_name && (
-                            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1 truncate">
+                            <div className="min-w-0 max-w-full overflow-hidden text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                               <ProductCategoryBadge category={order.product_category as any} />
-                              <span className="truncate">{order.product_name}</span>
+                              <span className="min-w-0 truncate">{order.product_name}</span>
                             </div>
                           )}
                           {/* Row 3: id + date, muted mono tiny */}
-                          <div className="text-[11px] text-muted-foreground/80 mt-0.5 font-mono flex items-center gap-2">
-                            <span>{shortId}</span>
+                          <div className="min-w-0 max-w-full overflow-hidden text-[11px] text-muted-foreground/80 mt-0.5 font-mono flex items-center gap-2">
+                            <span className="min-w-0 truncate">{shortId}</span>
                             <span>·</span>
-                            <span>{format(new Date(order.created_at), "dd.MM.yy", { locale: ru })}</span>
+                            <span className="shrink-0">{format(new Date(order.created_at), "dd.MM.yy", { locale: ru })}</span>
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-1 shrink-0">
-                          <span className="text-sm font-medium whitespace-nowrap">
+                        <div className="min-w-0 flex flex-col items-end gap-1 overflow-hidden">
+                          <span className="max-w-full truncate text-sm font-medium whitespace-nowrap">
                             {order.final_price} {order.currency}
                           </span>
                           {isSel && <Check className="h-4 w-4 text-primary" />}
