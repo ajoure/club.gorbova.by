@@ -276,6 +276,7 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({
           order_id: newOrder.id,
+          mode: "generate",
           pre_payment_invoice: true,
           send_email: true,
           send_telegram: true,
