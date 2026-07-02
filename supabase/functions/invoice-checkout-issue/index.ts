@@ -19,7 +19,7 @@
  *        - meta.awaits_payment = true
  *        - meta.invoice_number
  *        - meta.legal_details_id
- *        - meta.purchase_snapshot — whitelisted snapshot (leg_*/ent_* + банк)
+ *        - meta.purchase_snapshot — whitelisted snapshot (leg_/ent_ prefixes + банк)
  *        - meta.document_data._provenance.customer_legal_details_id — чтобы
  *          canonical-document-generate-strict взял именно эту запись.
  *   5. Вызывает canonical-document-generate-strict с флагом
