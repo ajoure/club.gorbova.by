@@ -112,6 +112,13 @@ export function useCreateCrmTask() {
         payload,
       });
       if (error) throw error;
+      // Kick the notify worker immediately so the assignee receives the Telegram
+      // ping without waiting up to a minute for the next cron tick.
+      try {
+        await supabase.functions.invoke("crm-task-notify-worker", { body: {} });
+      } catch (e) {
+        console.warn("[useCreateCrmTask] notify worker kick failed", e);
+      }
       return data as string;
     },
     onSuccess: () => {
