@@ -140,6 +140,7 @@ import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
+import { useCrmTasks } from "@/hooks/useCrmTasks";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
@@ -420,6 +421,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     staleTime: 0,         // PATCH: всегда считать данные устаревшими
     refetchOnMount: true, // PATCH: перезапрашивать при каждом открытии карточки
   });
+
+  // Open tasks count for the tab badge (Задачи • N)
+  const { data: openTasksForContact } = useCrmTasks(
+    contact?.id
+      ? { contact_id: contact.id, status: ["open", "in_progress"] as any }
+      : ({} as any),
+  );
+  const openTasksCount = contact?.id ? (openTasksForContact?.length ?? 0) : 0;
 
   // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
   // Deals = successful transactions. Payment attempts go to Payments tab.
@@ -1776,7 +1785,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
-                Задачи
+                Задачи {openTasksCount > 0 && <Badge variant="secondary" className="ml-1 text-xs">{openTasksCount}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <CreditCard className="w-3 h-3 mr-1" />

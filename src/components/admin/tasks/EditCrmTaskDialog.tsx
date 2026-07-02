@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, PlayCircle, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   Dialog,
@@ -129,11 +130,14 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
     if (!canSave) return;
     const requiresComment = next === "done" || next === "canceled";
     if (requiresComment && !result.trim()) {
-      setCommentError(
+      const msg =
         next === "done"
           ? "Укажите результат — что сделано."
-          : "Укажите причину отмены задачи.",
-      );
+          : "Укажите причину отмены задачи.";
+      setCommentError(msg);
+      toast.error(msg);
+      // scroll to the comment field so the user sees where to type
+      document.getElementById("crm-task-result-field")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     setCommentError(null);
@@ -154,20 +158,20 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-w-lg", TASK_DIALOG_GLASS)}>
-        <DialogHeader>
-          <div className="flex items-center justify-between gap-3 pr-6">
-            <DialogTitle>Редактировать задачу</DialogTitle>
+      <DialogContent className={cn("max-w-xl", TASK_DIALOG_GLASS)}>
+        <DialogHeader className="pr-10">
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <span>Редактировать задачу</span>
             <Badge
               variant="outline"
               className={cn(
-                "text-[11px] backdrop-blur-sm",
+                "text-[11px] font-normal backdrop-blur-sm",
                 TASK_STATUS_BADGE[currentStatus],
               )}
             >
               {TASK_STATUS_LABEL[currentStatus]}
             </Badge>
-          </div>
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -260,7 +264,7 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
 
 
 
-          <div className={TASK_DIALOG_SECTION}>
+          <div className={TASK_DIALOG_SECTION} id="crm-task-result-field">
             <div className="space-y-1">
               <Label>
                 Результат / комментарий{" "}
@@ -288,59 +292,57 @@ export function EditCrmTaskDialog({ open, onOpenChange, task }: Props) {
           </div>
         </div>
 
-        <DialogFooter className="flex flex-row items-center gap-2 pt-2 w-full sm:justify-between border-t border-white/40 mt-2">
+        <DialogFooter className="flex flex-row flex-wrap items-center gap-2 pt-3 mt-2 border-t border-white/40">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => onOpenChange(false)}
             disabled={isPending}
-            className="h-9 px-3 text-xs shrink-0"
+            className="h-9 px-3 text-xs shrink-0 mr-auto"
           >
             Отмена
           </Button>
-          <div className="flex flex-row items-center gap-1.5 flex-nowrap overflow-x-auto">
-            {showCancel && (
-              <Button
-                size="sm"
-                onClick={() => handleStatusTransition("canceled")}
-                disabled={!canSave}
-                className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_CANCEL_CTA)}
-              >
-                <XCircle className="h-3.5 w-3.5 mr-1" />
-                Отменить
-              </Button>
-            )}
-            {showInProgress && (
-              <Button
-                size="sm"
-                onClick={() => handleStatusTransition("in_progress")}
-                disabled={!canSave}
-                className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_INPROGRESS_CTA)}
-              >
-                <PlayCircle className="h-3.5 w-3.5 mr-1" />
-                В работу
-              </Button>
-            )}
+          {showCancel && (
             <Button
               size="sm"
-              onClick={handleSave}
+              onClick={() => handleStatusTransition("canceled")}
               disabled={!canSave}
-              className={cn("h-9 px-3 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_SAVE_CTA)}
+              className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_CANCEL_CTA)}
             >
-              Сохранить
+              <XCircle className="h-3.5 w-3.5 mr-1" />
+              Отменить
             </Button>
-            {showDone && (
-              <Button
-                size="sm"
-                onClick={() => handleStatusTransition("done")}
-                disabled={!canSave}
-                className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_DONE_CTA)}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                Готово
-              </Button>
-            )}
-          </div>
+          )}
+          {showInProgress && (
+            <Button
+              size="sm"
+              onClick={() => handleStatusTransition("in_progress")}
+              disabled={!canSave}
+              className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_INPROGRESS_CTA)}
+            >
+              <PlayCircle className="h-3.5 w-3.5 mr-1" />
+              В работу
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!canSave}
+            className={cn("h-9 px-3 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_SAVE_CTA)}
+          >
+            Сохранить
+          </Button>
+          {showDone && (
+            <Button
+              size="sm"
+              onClick={() => handleStatusTransition("done")}
+              disabled={!canSave}
+              className={cn("h-9 px-2.5 text-xs font-medium rounded-lg shrink-0", TASK_DIALOG_DONE_CTA)}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+              Готово
+            </Button>
+          )}
         </DialogFooter>
 
       </DialogContent>
