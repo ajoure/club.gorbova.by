@@ -115,80 +115,92 @@ export function TaskRelationsField({
     setContactPickerOpen(false);
   };
 
-  const renderClearButton = (visible: boolean, onClick: () => void, title: string) => (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className={cn(
-        "h-6 w-6 p-0 text-muted-foreground hover:text-rose-600",
-        !visible && "invisible pointer-events-none",
-      )}
-      onClick={visible ? onClick : undefined}
-      tabIndex={visible ? 0 : -1}
-      title={title}
-    >
-      <X className="h-3.5 w-3.5" />
-    </Button>
-  );
+  const renderInlineClear = (visible: boolean, onClick: () => void, title: string) =>
+    visible ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        title={title}
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 h-6 w-6 grid place-items-center rounded-md text-muted-foreground hover:text-rose-600 hover:bg-muted/60 z-10"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    ) : null;
 
   return (
-    <div className={cn(TASK_DIALOG_SECTION, "grid grid-cols-1 sm:grid-cols-2 gap-3")}>
+    <div className={cn(TASK_DIALOG_SECTION, "grid grid-cols-1 sm:grid-cols-2 gap-3 items-start")}>
       {/* Deal */}
       <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2 h-6">
+        <div className="flex items-center gap-2 h-6">
           <span className="text-sm font-medium flex items-center gap-1.5">
             <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
             Сделка
           </span>
-          {renderClearButton(!!dealId && !lockDeal, () => onChangeDeal(null), "Отвязать сделку")}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full h-9 justify-start bg-white/80 font-normal px-2"
-          onClick={() => setDealPickerOpen(true)}
-          disabled={lockDeal}
-        >
-          {dealDisplay ? (
-            <span className="flex flex-col items-start min-w-0 max-w-full leading-tight text-left">
-              <span className="text-xs font-medium truncate max-w-full">
-                {dealDisplay.contact_name || "Без контакта"}
+        <div className="relative">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(
+              "w-full h-9 justify-start bg-white/80 font-normal px-2",
+              !!dealId && !lockDeal && "pr-8",
+            )}
+            onClick={() => setDealPickerOpen(true)}
+            disabled={lockDeal}
+          >
+            {dealDisplay ? (
+              <span className="flex flex-col items-start min-w-0 max-w-full leading-tight text-left">
+                <span className="text-xs font-medium truncate max-w-full">
+                  {dealDisplay.contact_name || "Без контакта"}
+                </span>
+                <span className="text-[10px] text-muted-foreground truncate max-w-full">
+                  {dealDisplay.product_name || dealDisplay.short_id}
+                </span>
               </span>
-              <span className="text-[10px] text-muted-foreground truncate max-w-full">
-                {dealDisplay.product_name || dealDisplay.short_id}
-              </span>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">Выбрать сделку…</span>
-          )}
-        </Button>
+            ) : (
+              <span className="text-muted-foreground">Выбрать сделку…</span>
+            )}
+          </Button>
+          {renderInlineClear(!!dealId && !lockDeal, () => onChangeDeal(null), "Отвязать сделку")}
+        </div>
       </div>
 
       {/* Contact */}
       <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2 h-6">
+        <div className="flex items-center gap-2 h-6">
           <span className="text-sm font-medium flex items-center gap-1.5">
             <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
             Контакт
           </span>
-          {renderClearButton(!!contactId && !lockContact, () => onChangeContact(null), "Отвязать контакт")}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full h-9 justify-start bg-white/80 font-normal px-2"
-          onClick={() => setContactPickerOpen(true)}
-          disabled={lockContact}
-        >
-          {contactDisplay ? (
-            <span className="truncate text-xs">{contactDisplay.name}</span>
-          ) : (
-            <span className="text-muted-foreground">Выбрать контакт…</span>
+        <div className="relative">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(
+              "w-full h-9 justify-start bg-white/80 font-normal px-2",
+              !!contactId && !lockContact && "pr-8",
+            )}
+            onClick={() => setContactPickerOpen(true)}
+            disabled={lockContact}
+          >
+            {contactDisplay ? (
+              <span className="truncate text-xs">{contactDisplay.name}</span>
+            ) : (
+              <span className="text-muted-foreground">Выбрать контакт…</span>
+            )}
+          </Button>
+          {renderInlineClear(
+            !!contactId && !lockContact,
+            () => onChangeContact(null),
+            "Отвязать контакт",
           )}
-        </Button>
+        </div>
       </div>
 
       <DealPickerDialog
