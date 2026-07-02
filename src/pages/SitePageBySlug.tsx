@@ -154,7 +154,9 @@ export default function SitePageBySlug() {
             if (!v) setPending(null);
           }}
           productId={resolved.product.id}
-          productName={resolved.tariff.name}
+          productName={resolved.product.public_title || resolved.product.name}
+          tariffName={resolved.tariff.name}
+          currency={resolved.product.currency || "BYN"}
           price={String(resolved.offer.amount)}
           tariffCode={resolved.tariff.code}
           offerId={resolved.offer.id}
