@@ -171,14 +171,39 @@ export function InvoiceCheckoutDialog({
     }
     setSubmitting(true);
     try {
-      const { data, error } = await supabase.functions.invoke("invoice-checkout-issue", {
-        body: {
-          product_id: productId,
-          offer_id: offerId,
-          legal_details_id: selectedPayer.id,
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        throw new Error(
+          "Сессия не найдена. Войдите заново и повторите выпуск счёта.",
+        );
+      }
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invoice-checkout-issue`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            offer_id: offerId,
+            legal_details_id: selectedPayer.id,
+          }),
         },
-      });
-      if (error) throw error;
+      );
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          data?.message ||
+            data?.error ||
+            `Не удалось выписать счёт (${response.status})`,
+        );
+      }
       if (!data || (data as any).error) {
         throw new Error((data as any)?.error ?? "invoice_issue_failed");
       }
