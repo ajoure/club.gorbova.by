@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
   }
 
   const { data: product } = await admin
-    .from("products")
+    .from("products_v2")
     .select("id, name, public_title, currency")
     .eq("id", body.product_id)
     .maybeSingle();
