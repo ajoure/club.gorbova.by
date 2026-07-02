@@ -131,6 +131,8 @@ export function PaymentDialog({
   productId,
   productName,
   price,
+  tariffName,
+  currency,
   tariffCode,
   offerId,
   isTrial,
@@ -141,6 +143,8 @@ export function PaymentDialog({
   installmentCount,
   subscriptionMessage,
 }: PaymentDialogProps) {
+  const displayCurrency = currency || "BYN";
+  const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
   const [step, setStep] = useState<Step>("email");
