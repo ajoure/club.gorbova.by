@@ -499,6 +499,8 @@ Deno.serve(async (req) => {
     let b97LiveCustomer: any = null;
     let b97LiveExecutor: any = null;
 
+    let isInvoiceCheckout = false;
+
     if (generationContext === 'order') {
     // ── PATCH-A: load order для общих проверок (hard-stop guards) ─────────
     const { data: ordRow } = await supabase
@@ -534,7 +536,7 @@ Deno.serve(async (req) => {
 
     // Invoice pre-payment bypass — валидируем по meta заказа.
     const orderMetaSafe = ((ordRow as any)?.meta ?? {}) as Record<string, unknown>;
-    const isInvoiceCheckout =
+    isInvoiceCheckout =
       prePaymentInvoiceFlag &&
       orderMetaSafe.checkout_kind === 'invoice' &&
       orderMetaSafe.awaits_payment === true;
