@@ -97,8 +97,9 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     // Realtime
     useEffect(() => {
+      const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
       const channel = supabase
-        .channel(`live-questions-${liveEventId}`)
+        .channel(`live-questions-${liveEventId}-${uniq}`)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "live_event_questions", filter: `live_event_id=eq.${liveEventId}` },

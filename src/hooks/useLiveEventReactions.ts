@@ -59,8 +59,9 @@ export function useLiveEventReactions(eventId: string | null | undefined, enable
 
   useEffect(() => {
     if (!eventId || !enabled) return;
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`live-event-reactions:${eventId}`)
+      .channel(`live-event-reactions:${eventId}:${uniq}`)
       .on(
         "postgres_changes",
         {
