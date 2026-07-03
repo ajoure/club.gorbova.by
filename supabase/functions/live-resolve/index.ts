@@ -216,7 +216,19 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (!tariffSub) {
-              productOk = false;
+              // Legacy fallback: allow if user has an active entitlement on the same product
+              const { data: tariffEnt } = await supabase
+                .from('entitlements')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('product_id', rule.product_id)
+                .eq('status', 'active')
+                .limit(1)
+                .maybeSingle();
+
+              if (!tariffEnt) {
+                productOk = false;
+              }
             }
           }
 
