@@ -402,11 +402,10 @@ export function PaymentsTabContent() {
       {/* 1. Stats Panel - PATCH-2: uses filteredPayments for unified source */}
       <div className="pt-1">
         <PaymentsStatsPanel 
-          dateRange={dateFilter}
+          payments={scopePayments}
           isTableLoading={isLoading}
           activeFilter={statsFilter}
           onFilterChange={setStatsFilter}
-          provider={filters.provider}
         />
       </div>
       
