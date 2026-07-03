@@ -231,11 +231,13 @@ export function PaymentsTabContent() {
       // Status filter (only if stats filter is not active)
       if (!statsFilter && filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
+          // Единая семантика с верхней карточкой «Успешные»:
+          // только чистые успешные платежи, без возвратов/отмен/отрицательных сумм.
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
           const isRefundStatus = ['refund', 'refunded'].includes(p.status_normalized);
           const isRefundType = normalizeType(p.transaction_type) === 'refund';
-          const isNegativeAmount = p.amount < 0;
-          if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
+          const isCancelled = isCancelledTransaction(p);
+          if (!isSuccessful || isRefundStatus || isRefundType || isCancelled || Number(p.amount) <= 0) return false;
         } else if (filters.status === "cancelled") {
           if (!isCancelledTransaction(p)) return false;
         } else if (filters.status === "processing") {
