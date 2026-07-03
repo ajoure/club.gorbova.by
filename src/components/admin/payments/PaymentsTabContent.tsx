@@ -197,42 +197,19 @@ export function PaymentsTabContent() {
   // P0-guard: Debounce search input (150ms) to prevent lag during typing
   const debouncedSearch = useDebouncedValue(filters.search, 150);
 
-  // Apply filters to payments (including stats filter)
-  const filteredPayments = useMemo(() => {
+  // PATCH-STATS-PARITY: split filters into two stages so top stats panel
+  // aggregates over EXACTLY the same rows the table sees (minus stats-card click).
+  // scopePayments = period + all sidebar/pill/search filters, WITHOUT stats-card click.
+  const scopePayments = useMemo(() => {
     return payments.filter(p => {
-      // Stats panel filter (from clickable cards)
-      if (statsFilter) {
-        const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
-        const isRefund = normalizeType(p.transaction_type) === 'refund' || ['refund', 'refunded'].includes(p.status_normalized) || p.amount < 0;
-        const isCancelled = isCancelledTransaction(p);
-        const isFailed = ['failed', 'declined', 'expired', 'error', 'incomplete'].includes(p.status_normalized) && !isCancelled;
-        
-        switch (statsFilter) {
-          case 'successful':
-            if (!isSuccessful || isRefund || isCancelled) return false;
-            break;
-          case 'refunded':
-            if (!isRefund) return false;
-            break;
-          case 'cancelled':
-            if (!isCancelled) return false;
-            break;
-          case 'failed':
-            if (!isFailed) return false;
-            break;
-        }
-      }
-
-      // Search filter - P0-guard: use pre-built search_index with debounced value
+      // Search filter
       if (debouncedSearch) {
         if (!matchSearchIndex(debouncedSearch, p.search_index)) return false;
       }
 
-      // Status filter (only if stats filter is not active)
-      if (!statsFilter && filters.status !== "all") {
+      // Status pill filter
+      if (filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
-          // Единая семантика с верхней карточкой «Успешные»:
-          // только чистые успешные платежи, без возвратов/отмен/отрицательных сумм.
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
           const isRefundStatus = ['refund', 'refunded'].includes(p.status_normalized);
           const isRefundType = normalizeType(p.transaction_type) === 'refund';
@@ -241,7 +218,6 @@ export function PaymentsTabContent() {
         } else if (filters.status === "cancelled") {
           if (!isCancelledTransaction(p)) return false;
         } else if (filters.status === "processing") {
-          // PATCH-C3: Filter for processing/pending transactions
           const processingStatuses = ['processing', 'pending', 'incomplete', 'pending_3ds'];
           if (!processingStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status === "failed") {
@@ -292,14 +268,14 @@ export function PaymentsTabContent() {
       // Source filter
       if (filters.source !== "all" && p.source !== filters.source) return false;
 
-      // F1+F4: Origin filter (p.origin — bepaid/statement_sync/other)
+      // Origin filter
       if (filters.origin !== "all") {
         if (filters.origin === "statement_sync" && p.origin !== "statement_sync") return false;
         if (filters.origin === "bepaid" && p.origin !== "bepaid") return false;
         if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
       }
 
-      // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
+      // Provider filter
       if (filters.provider !== "all") {
         const prov = (p as { provider?: string | null }).provider ?? "bepaid";
         if (filters.provider !== prov) return false;
@@ -307,7 +283,32 @@ export function PaymentsTabContent() {
 
       return true;
     });
-  }, [payments, debouncedSearch, statsFilter, filters]);
+  }, [payments, debouncedSearch, filters]);
+
+  // filteredPayments = scopePayments + stats-card click (top cards act as sub-filter)
+  const filteredPayments = useMemo(() => {
+    if (!statsFilter) return scopePayments;
+    return scopePayments.filter(p => {
+      const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
+      const isRefund = normalizeType(p.transaction_type) === 'refund' || ['refund', 'refunded'].includes(p.status_normalized) || p.amount < 0;
+      const isCancelled = isCancelledTransaction(p);
+      const isFailed = ['failed', 'declined', 'expired', 'error', 'incomplete'].includes(p.status_normalized) && !isCancelled;
+
+      switch (statsFilter) {
+        case 'successful':
+          return isSuccessful && !isRefund && !isCancelled && Number(p.amount) > 0;
+        case 'refunded':
+          return isRefund;
+        case 'cancelled':
+          return isCancelled;
+        case 'failed':
+          return isFailed;
+        default:
+          return true;
+      }
+    });
+  }, [scopePayments, statsFilter]);
+
 
   // P0-guard: Aggregate sums via useMemo (no recalc on every render)
   const { scopeSum, matchedSum } = useMemo(() => {
