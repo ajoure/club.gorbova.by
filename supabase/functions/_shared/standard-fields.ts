@@ -198,15 +198,21 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000371': pay?.paid_at ? ruWordsDate(pay.paid_at) : '',                                 // payment.paid_at_long → «21» мая 2026 года
     // payment.amount — ТОЛЬКО число без валюты ("100,00"). Валюта рядом — FLD-000265.
     // Сумма прописью с валютой — отдельный FLD-000370 (payment.amount_words).
-    'FLD-000264': pay?.amount != null ? Number(pay.amount).toFixed(2).replace('.', ',') : '',   // payment.amount → "100,00"
-    'FLD-000265': (pay?.currency || '').toString().toUpperCase(),                               // payment.currency
-    'FLD-000266': pay?.provider_transaction_id || '',                                           // payment.provider_transaction_id
-    'FLD-000267': pay?.external_reference || '',                                                // payment.external_reference
+    // Для invoice-only (pre-payment): платежа ещё нет, но сумма счёта уже известна —
+    // fallback на order amount/currency, чтобы таблица цен в счёте-акте не была пустой.
+    'FLD-000264': pay?.amount != null
+      ? Number(pay.amount).toFixed(2).replace('.', ',')
+      : (amount != null ? Number(amount).toFixed(2).replace('.', ',') : ''),                     // payment.amount → "100,00"
+    'FLD-000265': ((pay?.currency || currency || '') as string).toUpperCase(),                   // payment.currency
+    'FLD-000266': pay?.provider_transaction_id || '',                                            // payment.provider_transaction_id
+    'FLD-000267': pay?.external_reference || '',                                                 // payment.external_reference
     // payment.amount_words — сумма платежа прописью с учётом валюты платежа.
     // Источник currency: payments_v2.currency → fallback на order currency → 'BYN' (warning внутри formatter).
     'FLD-000370': pay?.amount != null
       ? formatAmountWithWordsByRublesAndKopecks(Number(pay.amount), pay?.currency || currency || 'BYN')
-      : '',                                                                                     // payment.amount_words
+      : (amount != null
+        ? formatAmountWithWordsByRublesAndKopecks(Number(amount), currency || 'BYN')
+        : ''),                                                                                   // payment.amount_words
   };
 
   return v;
