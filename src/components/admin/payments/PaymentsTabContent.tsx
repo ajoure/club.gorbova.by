@@ -403,6 +403,7 @@ export function PaymentsTabContent() {
           isTableLoading={isLoading}
           activeFilter={statsFilter}
           onFilterChange={setStatsFilter}
+          provider={filters.provider}
         />
       </div>
       
