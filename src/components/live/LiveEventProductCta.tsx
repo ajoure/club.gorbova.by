@@ -119,8 +119,13 @@ export function LiveEventProductCta({ liveEventId, position, displayContext, eve
 
   // Subscribe to realtime runtime events
   useEffect(() => {
+    // Уникальное имя канала на экземпляр компонента — LiveEventProductCta
+    // рендерится в двух местах (under_video + sidebar) с одним liveEventId,
+    // и общий channel(name) возвращал уже subscribed-канал → добавление .on()
+    // после .subscribe() бросало ошибку и роняло страницу эфира.
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`cta-runtime-${liveEventId}`)
+      .channel(`cta-runtime-${liveEventId}-${uniq}`)
       .on("postgres_changes", {
         event: "INSERT",
         schema: "public",
