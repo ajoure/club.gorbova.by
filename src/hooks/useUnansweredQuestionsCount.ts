@@ -41,8 +41,9 @@ export function useUnansweredQuestionsCount(
 
   useEffect(() => {
     if (!liveEventId || !enabled) return;
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`live-questions-count-${liveEventId}`)
+      .channel(`live-questions-count-${liveEventId}-${uniq}`)
       .on(
         "postgres_changes",
         {

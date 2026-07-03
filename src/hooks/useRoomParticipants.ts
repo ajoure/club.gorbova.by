@@ -47,8 +47,9 @@ export function useRoomParticipants(eventId: string | null | undefined, enabled 
 
   useEffect(() => {
     if (!eventId || !enabled) return;
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`room-participants:${eventId}`)
+      .channel(`room-participants:${eventId}:${uniq}`)
       .on(
         "postgres_changes",
         {

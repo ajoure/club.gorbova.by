@@ -95,8 +95,9 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
 
   // Realtime subscription
   useEffect(() => {
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`live-comments-${liveEventId}`)
+      .channel(`live-comments-${liveEventId}-${uniq}`)
       .on(
         "postgres_changes",
         {

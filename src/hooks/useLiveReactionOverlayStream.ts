@@ -50,8 +50,9 @@ export function useLiveReactionOverlayStream(
 
   useEffect(() => {
     if (!eventId || !enabled) return;
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`live-reactions-overlay:${eventId}`)
+      .channel(`live-reactions-overlay:${eventId}:${uniq}`)
       .on(
         "postgres_changes",
         {

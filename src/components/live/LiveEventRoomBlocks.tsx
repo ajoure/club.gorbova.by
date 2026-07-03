@@ -46,8 +46,9 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
   // Любое изменение → invalidate, фильтрация active+position происходит в queryFn.
   useEffect(() => {
     if (!liveEventId) return;
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`room-blocks:${liveEventId}:${position}`)
+      .channel(`room-blocks:${liveEventId}:${position}:${uniq}`)
       .on(
         "postgres_changes",
         {

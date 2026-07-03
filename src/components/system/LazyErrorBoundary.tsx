@@ -1,5 +1,6 @@
 import { Component, ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   children: ReactNode;
@@ -7,6 +8,8 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  isChunkError: boolean;
+  message: string;
 }
 
 const RELOAD_FLAG = "__lazy_chunk_reloaded__";
@@ -23,18 +26,21 @@ const RELOAD_FLAG = "__lazy_chunk_reloaded__";
  * - Re-throws any other error so the regular error path is unaffected.
  */
 export class LazyErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, isChunkError: false, message: "" };
 
   static getDerivedStateFromError(error: Error): State {
-    if (LazyErrorBoundary.isChunkLoadError(error)) {
-      return { hasError: true };
-    }
-    // Not a chunk error → let it bubble to a real error boundary
-    throw error;
+    return {
+      hasError: true,
+      isChunkError: LazyErrorBoundary.isChunkLoadError(error),
+      message: error?.message || "Unknown route error",
+    };
   }
 
   componentDidCatch(error: Error) {
-    if (!LazyErrorBoundary.isChunkLoadError(error)) return;
+    if (!LazyErrorBoundary.isChunkLoadError(error)) {
+      console.error("[LazyErrorBoundary] route render failed:", error);
+      return;
+    }
 
     let alreadyReloaded = false;
     try {
@@ -73,10 +79,22 @@ export class LazyErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    if (this.state.hasError) {
+    if (this.state.hasError && this.state.isChunkError) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-background">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      );
+    }
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4 text-center">
+          <AlertTriangle className="h-14 w-14 text-destructive" />
+          <h1 className="text-xl font-semibold text-foreground">Страница не загрузилась</h1>
+          <p className="text-sm text-muted-foreground max-w-md">
+            Произошла ошибка интерфейса. Обновите страницу — если проблема повторится, мы увидим её в логах.
+          </p>
+          <Button onClick={() => window.location.reload()}>Обновить</Button>
         </div>
       );
     }
