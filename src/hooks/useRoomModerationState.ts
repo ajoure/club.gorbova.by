@@ -66,8 +66,14 @@ export function useRoomModerationState(
   // Realtime: react to moderator actions in other sessions immediately.
   useEffect(() => {
     if (!enabled) return;
+    // Unique channel name per hook instance — несколько компонентов монтируют этот
+    // хук с одной и той же парой (liveEventId, userId). supabase.channel(sameName)
+    // возвращает уже существующий (и уже subscribed) канал; попытка добавить ещё
+    // один .on() на subscribed-канал бросает исключение и раньше "убивала" экран
+    // эфира (пустой белый лист вместо комнаты).
+    const uniq = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
     const channel = supabase
-      .channel(`mod-state-${liveEventId}-${userId}`)
+      .channel(`mod-state-${liveEventId}-${userId}-${uniq}`)
       .on(
         "postgres_changes",
         {
