@@ -11,6 +11,7 @@ interface PaymentsStatsPanelProps {
   isTableLoading?: boolean;
   activeFilter?: StatsFilterType;
   onFilterChange?: (filter: StatsFilterType) => void;
+  provider?: string;
 }
 
  const formatAmount = (amount: number) => {
@@ -25,9 +26,10 @@ export default function PaymentsStatsPanel({
   isTableLoading,
   activeFilter,
   onFilterChange,
+  provider = 'all',
 }: PaymentsStatsPanelProps) {
-  // Fetch server-side stats for the entire date range
-  const { data: serverStats, isLoading: statsLoading } = usePaymentsServerStats(dateRange);
+  // Fetch server-side stats for the entire date range (filtered by provider)
+  const { data: serverStats, isLoading: statsLoading } = usePaymentsServerStats(dateRange, provider);
   
   const isLoading = isTableLoading || statsLoading;
   
