@@ -301,6 +301,21 @@ Deno.serve(async (req) => {
     console.error("[invoice-checkout-issue] strict exception", e);
   }
 
+  // Достаём document_number из ai_generated_documents (это реальный номер счёта,
+  // например 0407/4 — отличается от orderNumber ORD-26-00254).
+  let documentNumber: string | null = null;
+  let documentIssuedAt: string | null = null;
+  if (documentId) {
+    const { data: docRow } = await admin
+      .from("ai_generated_documents")
+      .select("document_number, created_at")
+      .eq("id", documentId)
+      .maybeSingle();
+    documentNumber = docRow?.document_number ?? null;
+    documentIssuedAt = docRow?.created_at ?? null;
+  }
+
+
   // 9. Отправка счёта на email/telegram — через canonical-document-send.
   // Fire-and-forget: SMTP-отправка PDF-вложения может тянуться до 2 минут
   // (Yandex тайм-аут после DATA), что раньше подвешивало диалог «Выписываем
@@ -365,8 +380,11 @@ Deno.serve(async (req) => {
     order_number: newOrder.order_number,
     invoice_number: invoiceNumber,
     document_id: documentId,
+    document_number: documentNumber,
+    document_issued_at: documentIssuedAt,
     pdf_url: pdfUrl,
     email_sent: emailSent,
     telegram_sent: telegramSent,
   });
 });
+

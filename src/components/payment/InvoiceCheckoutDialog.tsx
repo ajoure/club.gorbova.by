@@ -37,8 +37,10 @@ import {
   Building2,
   Download,
   Star,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
+
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
@@ -58,12 +60,15 @@ type Step = "auth" | "payer" | "confirm" | "success";
 
 interface InvoiceResult {
   invoice_number: string;
+  document_number: string | null;
+  document_issued_at: string | null;
   order_id: string;
   document_id: string | null;
   pdf_url: string | null;
   email_sent: boolean;
   telegram_sent: boolean;
 }
+
 
 /** Название плательщика для карточки/сводки (в стиле settings/legal-details) */
 function getDisplayName(d: ClientLegalDetails): string {
@@ -220,13 +225,14 @@ export function InvoiceCheckoutDialog({
     }
   }
 
-  /** Формат даты для назначения платежа: DD.MM.YYYY */
-  function formatToday(): string {
-    const d = new Date();
+  /** DD.MM.YYYY из ISO строки, либо сегодня. */
+  function formatDate(iso?: string | null): string {
+    const d = iso ? new Date(iso) : new Date();
     const dd = String(d.getDate()).padStart(2, "0");
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     return `${dd}.${mm}.${d.getFullYear()}`;
   }
+
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -405,48 +411,73 @@ export function InvoiceCheckoutDialog({
           </div>
         )}
 
-        {step === "success" && result && (
-          <div className="space-y-4 pt-2 text-center">
-            <div className="flex justify-center">
-              <CheckCircle2 className="h-12 w-12 text-green-600" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold">
-                Счёт № {result.invoice_number} сформирован
+        {step === "success" && result && (() => {
+          const displayNumber = result.document_number ?? result.invoice_number;
+          const displayDate = formatDate(result.document_issued_at);
+          const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
+          return (
+            <div className="space-y-4 pt-2 text-center">
+              <div className="flex justify-center">
+                <CheckCircle2 className="h-12 w-12 text-green-600" />
               </div>
-              <div className="text-sm text-muted-foreground mt-1">
-                Отправка на email и в Telegram запущена и придёт в течение
-                нескольких минут. Также PDF можно скачать сразу.
+              <div>
+                <div className="text-lg font-semibold">
+                  Счёт № {displayNumber} сформирован
+                </div>
+                <div className="text-sm text-muted-foreground mt-1">
+                  Отправка на email и в Telegram запущена и придёт в течение
+                  нескольких минут. Также PDF можно скачать сразу.
+                </div>
               </div>
-            </div>
-            <Card className="p-3 text-left text-sm bg-muted/40">
-              <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
-                При оплате в назначении платежа укажите
-              </div>
-              <div className="font-medium break-words">
-                «Оплата по счёту №{result.invoice_number} от {formatToday()}»
-              </div>
-            </Card>
-            {result.document_id && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  const r = await downloadDocumentBlob(result.document_id!, "pdf");
-                  if (r.ok === false) {
-                    toast.error(r.message);
-                  } else {
-                    toast.success("Скачивание началось");
-                  }
-                }}
-              >
-                <Download className="h-4 w-4 mr-1" /> Скачать PDF
+              <Card className="p-3 text-left text-sm bg-muted/40">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
+                      При оплате в назначении платежа укажите
+                    </div>
+                    <div className="font-medium break-words select-all">
+                      {purposeText}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(purposeText);
+                        toast.success("Скопировано");
+                      } catch {
+                        toast.error("Не удалось скопировать");
+                      }
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </Card>
+              {result.document_id && (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    const r = await downloadDocumentBlob(result.document_id!, "pdf");
+                    if (r.ok === false) {
+                      toast.error(r.message);
+                    } else {
+                      toast.success("Скачивание началось");
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-1" /> Скачать PDF
+                </Button>
+              )}
+              <Button className="w-full" onClick={() => handleClose(false)}>
+                Готово
               </Button>
-            )}
-            <Button className="w-full" onClick={() => handleClose(false)}>
-              Готово
-            </Button>
-          </div>
-        )}
+            </div>
+          );
+        })()}
+
       </DialogContent>
     </Dialog>
   );
