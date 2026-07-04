@@ -37,8 +37,10 @@ import {
   Building2,
   Download,
   Star,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
+
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
