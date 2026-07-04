@@ -80,8 +80,8 @@ export interface UnifiedDialog {
 }
 
 const TG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
-const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: false, canMarkRead: true };
-const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: false, canFavorite: true, canMarkRead: true };
+const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
+const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
 
 
 const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
