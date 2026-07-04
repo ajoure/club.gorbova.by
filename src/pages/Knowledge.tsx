@@ -386,11 +386,13 @@ const Knowledge = () => {
             const standaloneLessonsRaw = containerData?.lessons || [];
             const containerModuleSlug = containerData?.moduleSlug || "";
             
-            // Sort lessons based on videoSortOrder
+            // Sort lessons based on videoSortOrder.
+            // Convention: в админке drag-and-drop назначает sort_order = i*10,
+            // поэтому меньший sort_order = «выше» = новее. "newest" = ASC.
             const standaloneLessons = [...standaloneLessonsRaw].sort((a, b) => {
               const orderA = a.sort_order ?? 0;
               const orderB = b.sort_order ?? 0;
-              return videoSortOrder === "newest" ? orderB - orderA : orderA - orderB;
+              return videoSortOrder === "newest" ? orderA - orderB : orderB - orderA;
             });
             
             // Check if any container lessons have no access
