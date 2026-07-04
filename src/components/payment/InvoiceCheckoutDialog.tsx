@@ -387,10 +387,10 @@ export function InvoiceCheckoutDialog({
               >
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Выписываем счёт…
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Формируем счёт…
                   </>
                 ) : (
-                  "Выписать счёт"
+                  "Сформировать счёт"
                 )}
               </Button>
             </div>
