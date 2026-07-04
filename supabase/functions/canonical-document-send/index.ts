@@ -461,12 +461,25 @@ Deno.serve(async (req) => {
           if (!botToken) {
             results.telegram_error = "bot_not_configured";
           } else {
-            const baseCaption = doc.document_number
-              ? `📄 ${escapeHtml(doc.title || "Документ")} № ${escapeHtml(doc.document_number)}`
-              : `📄 ${escapeHtml(doc.title || "Документ")}`;
-            const caption = paymentPurposeText
-              ? `${baseCaption}\n\n<b>При оплате в назначении платежа укажите:</b>\n«${escapeHtml(paymentPurposeText)}»`
-              : baseCaption;
+            const captionTitle = escapeHtml(filename.replace(/\.pdf$/i, ""));
+            const captionLines: string[] = [`📄 <b>${captionTitle}</b>`];
+            if (orderInfo.product_name) {
+              captionLines.push(
+                `Продукт: ${escapeHtml(orderInfo.product_name)}${orderInfo.tariff_name ? ` · ${escapeHtml(orderInfo.tariff_name)}` : ""}`,
+              );
+            }
+            if (orderInfo.final_price != null) {
+              captionLines.push(
+                `Сумма: <b>${formatAmount(orderInfo.final_price)} ${escapeHtml(orderInfo.currency || "BYN")}</b>`,
+              );
+            }
+            if (paymentPurposeText) {
+              captionLines.push("");
+              captionLines.push("<b>При оплате укажите назначение платежа:</b>");
+              captionLines.push(`<code>${escapeHtml(paymentPurposeText)}</code>`);
+            }
+            const caption = captionLines.join("\n");
+
             const r = await tgSendDocument(botToken, chatId, pdfBytes, filename, caption);
             if (!r.ok) {
               results.telegram_error = r.error || "telegram_send_failed";
