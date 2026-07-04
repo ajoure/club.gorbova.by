@@ -45,7 +45,8 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [readState, setReadState] = useState<"all" | "unread">("all");
+  type FilterKind = "all" | "unread" | "favorite" | "pinned";
+  const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const [panelSize] = useState<number>(() => {
