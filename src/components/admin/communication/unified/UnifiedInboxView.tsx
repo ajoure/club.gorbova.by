@@ -181,6 +181,19 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     setLastSelectedSourceKey(selected.channels[source]!.key);
   };
 
+  // После создания тикета: как только support-канал появится в grouped row
+  // ждущего profile, переключаем правую панель на 'support' и снимаем pending.
+  useEffect(() => {
+    if (!pendingSupportForProfileId) return;
+    const row = contactRows.find((r) => r.profileId === pendingSupportForProfileId);
+    if (row && row.channels.support) {
+      setActiveSourceByKey((prev) => ({ ...prev, [row.key]: "support" }));
+      setSelectedKey(row.key);
+      setLastSelectedSourceKey(row.channels.support!.key);
+      setPendingSupportForProfileId(null);
+    }
+  }, [contactRows, pendingSupportForProfileId]);
+
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
