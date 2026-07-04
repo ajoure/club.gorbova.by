@@ -39,7 +39,11 @@ export interface UnifiedDialog {
   isFavorite: boolean;
   /** Технические поля источника, нужные правой панели. */
   meta: {
+    /** profiles.user_id (UUID) — используется как chat key и передаётся как `userId` в ContactTelegramChat. */
     telegramUserId?: string;
+    /** profiles.telegram_user_id (числовой Telegram ID) — обязателен для ContactTelegramChat, иначе он показывает «Telegram не привязан». */
+    telegramNumericId?: number | null;
+    telegramUsername?: string | null;
     telegramBotId?: string | null;
     telegramBotUsername?: string | null;
     telegramBotName?: string | null;
@@ -113,7 +117,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, user_id, full_name, email, avatar_url")
+        .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
         .or(`user_id.in.(${tgUserIds.join(",")}),id.in.(${tgUserIds.join(",")})`);
       if (error) throw error;
       return (data || []) as any[];
@@ -256,6 +260,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isFavorite: pref?.is_favorite || false,
         meta: {
           telegramUserId: d.user_id,
+          telegramNumericId: p?.telegram_user_id ?? null,
+          telegramUsername: p?.telegram_username ?? null,
           telegramBotId: d.last_bot_id || null,
           telegramBotUsername: d.last_bot_username || null,
           telegramBotName: d.last_bot_name || null,
