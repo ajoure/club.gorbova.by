@@ -386,6 +386,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: unread > 0,
         isPinned: false,
         isFavorite: !!t.is_starred,
+        capabilities: SUPPORT_CAPS,
         meta: {
           profileId: t.profile_id ?? null,
           ticketId: t.id,
