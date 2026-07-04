@@ -152,6 +152,7 @@ import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { WebinarActivitySection } from "./contact/WebinarActivitySection";
 import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
+import { ContactChannelsSection } from "./ContactChannelsSection";
 
 // formatContactName imported from @/lib/nameUtils
 
