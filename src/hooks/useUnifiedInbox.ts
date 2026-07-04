@@ -90,6 +90,58 @@ const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
   support: 2,
 };
 
+/**
+ * V3-PROFILE-GROUPING (2026-07-04):
+ * Одна строка ленты = один контакт. Каналы (TG/IG/Support) сгруппированы
+ * внутри карточки. См. docs/audit/2026-07-04-unified-inbox-v3-profile-grouping.md.
+ */
+export interface SourceChannelRef {
+  /** Стабильный ключ source-row (`tg:<id>` / `ig:<acc>:<thread>` / `support:<id>`). */
+  key: string;
+  source: UnifiedSource;
+  /** Полный source-row — правая панель и row actions работают через него. */
+  sourceRow: UnifiedDialog;
+  unread: number;
+  pinned: boolean;
+  favorite: boolean;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+}
+
+export interface UnifiedContactRow {
+  /** `profile:<id>` для grouped, `source:<src>:<key>` для одиноких. */
+  key: string;
+  profileId: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  channels: Partial<Record<UnifiedSource, SourceChannelRef>>;
+  availableSources: UnifiedSource[];
+  /** Канал последнего сообщения — default для activeSource и для preview в списке. */
+  defaultActiveSource: UnifiedSource;
+  lastMessageAt: string;
+  lastMessageSource: UnifiedSource;
+  lastMessagePreview: string;
+  totalUnread: number;
+  isUnanswered: boolean;
+  isPinned: boolean;
+  isFavorite: boolean;
+}
+
+/** Backward-compat alias. */
+export type UnifiedInboxRow = UnifiedContactRow;
+
+/**
+ * Достать SourceChannelRef активного канала для правой панели / row actions.
+ * Fallback: если запрошенный source отсутствует — defaultActiveSource.
+ */
+export function getActiveChannel(
+  row: UnifiedContactRow,
+  activeSource: UnifiedSource | null | undefined,
+): SourceChannelRef | null {
+  const src = activeSource && row.channels[activeSource] ? activeSource : row.defaultActiveSource;
+  return row.channels[src] ?? null;
+}
+
 interface Options {
   enabled: boolean;
   perSourceLimit?: number;
