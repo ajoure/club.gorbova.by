@@ -61,6 +61,7 @@ export interface CreateTicketData {
   subject: string;
   description: string;
   category?: string;
+  attachments?: TicketAttachment[];
 }
 
 export interface CreateMessageData {
@@ -341,11 +342,12 @@ export function useCreateTicket() {
 
   return useMutation({
     mutationFn: async (data: CreateTicketData) => {
-      // Используем серверную функцию для атомарного создания тикета
+      // Атомарное создание или append в существующий активный тикет (dedupe по profile_id)
       const { data: result, error } = await supabase.rpc('create_support_ticket', {
         p_subject: data.subject,
         p_description: data.description,
         p_category: data.category || null,
+        p_attachments: (data.attachments ?? []) as any,
       });
 
       if (error) {
@@ -358,32 +360,46 @@ export function useCreateTicket() {
         throw error;
       }
 
-      // Функция возвращает JSONB с success/error
-      const response = result as { success: boolean; ticket_id?: string; ticket_number?: string; error?: string; error_code?: string };
-      
+      const response = result as {
+        success: boolean;
+        ticket_id?: string;
+        ticket_number?: string;
+        message_id?: string;
+        status?: string;
+        created_new?: boolean;
+        error?: string;
+        error_code?: string;
+      };
+
       if (!response.success) {
         console.error('[useCreateTicket] Server error:', response);
-        
-        // Преобразуем серверные ошибки в понятные сообщения
         let userMessage = 'Не удалось создать обращение';
-        if (response.error?.includes('not_authenticated')) {
-          userMessage = 'Необходимо войти в аккаунт';
-        } else if (response.error?.includes('profile_not_found')) {
-          userMessage = 'Профиль не найден. Попробуйте перезайти в аккаунт.';
-        } else if (response.error) {
-          userMessage = response.error;
-        }
-        
+        if (response.error_code === 'not_authenticated') userMessage = 'Необходимо войти в аккаунт';
+        else if (response.error_code === 'profile_not_found') userMessage = 'Профиль не найден. Попробуйте перезайти в аккаунт.';
+        else if (response.error_code === 'description_required') userMessage = 'Текст обращения обязателен';
+        else if (response.error_code === 'subject_required') userMessage = 'Тема обращения обязательна';
+        else if (response.error_code === 'attachments_invalid') userMessage = 'Некорректные вложения';
+        else if (response.error) userMessage = response.error;
         throw new Error(userMessage);
       }
 
-      return { id: response.ticket_id, ticket_number: response.ticket_number };
+      return {
+        id: response.ticket_id!,
+        ticket_number: response.ticket_number!,
+        created_new: response.created_new ?? true,
+        status: response.status ?? 'open',
+      };
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["ticket-messages", res.id] });
+      queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["unified-inbox"] });
       toast({
-        title: "Обращение создано",
-        description: "Мы ответим в ближайшее время",
+        title: res.created_new ? "Обращение создано" : "Сообщение добавлено",
+        description: res.created_new
+          ? "Мы ответим в ближайшее время"
+          : `Ваше сообщение добавлено в существующее обращение #${res.ticket_number}`,
       });
     },
     onError: (error: Error) => {

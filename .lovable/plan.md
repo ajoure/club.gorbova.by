@@ -1,385 +1,378 @@
 да, согласен, с учетом правок:
 
-1. **План слишком большой и содержит опасную DB-логику. Разделить на 3 патча.**
+1. **План в целом правильный: явный RPC вместо trigger — принимается.**  
+Главный запрет соблюдён:
+2. **Но это не новый RPC, а переписывание существующего** `create_support_ticket`**.**  
+Это допустимо, потому что discovery подтвердил: frontend уже вызывает RPC и читает `ticket_id` из JSONB. Но в proof обязательно показать:
+  - старая сигнатура совместима;
+  - старые вызовы с 3 параметрами работают;
+  - новый `p_attachments` с default не ломает существующий `rpc()`.
+3. **Проверить имя генератора номера тикета.**  
+В схеме указано default `generate_ticket_number()`, а в SQL-плане используется:
   &nbsp;
-  Нельзя одновременно делать:
-  - новые поля pin/fav;
-  - фильтры;
-  - физический анти-дубль тикетов;
-  - админское создание тикета;
-  - изменение клиентского `useCreateTicket`;
-  - trigger, который отменяет INSERT.
-  Утверждённый порядок:
-  ```text
-  PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
-  PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
-  PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
+  ```sql
+  generate_ticket_number_atomic()
   ```
-  Сначала — безопасные unified-фильтры и pin/fav. Потом отдельно — dedupe тикетов. Потом отдельно — админ инициирует тикет.
-2. **В текущем патче выполнять только filters/actions.**
-  Первый патч:
-  ```text
-  PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
-  ```
-  Scope:
-  - `instagram_dialog_preferences.is_favorite`;
-  - `support_tickets.is_pinned`;
-  - capabilities all three sources;
-  - hover actions all three sources;
-  - фильтры `Все / Новые / Избранное / Закреплённые`;
-  - counters;
-  - persistence after refresh;
-  - no support dedupe;
-  - no admin-created ticket.
-3. **Физический анти-дубль тикетов через UNIQUE INDEX + trigger НЕ принимать в этом виде.**
+  Перед миграцией подтвердить, какая функция реально существует и какая используется старой `create_support_ticket`.
+  Если старая RPC уже использовала `generate_ticket_number_atomic()` — оставить.  
+  Если нет — использовать существующий механизм без смены поведения.
+4. `FOR UPDATE` **в текущем SELECT не защищает от гонки, если активного тикета ещё нет.**  
+При двух параллельных запросах, когда open ticket отсутствует, оба могут не найти строку и оба создать новый тикет.
   &nbsp;
-  Особенно опасный пункт:
-  ```text
-  BEFORE INSERT trigger возвращает NULL и вставляет ticket_messages
+  В этом патче можно не делать unique index, но нужно добавить advisory lock на пользователя:
+  ```sql
+  PERFORM pg_advisory_xact_lock(hashtext(v_user_id::text));
   ```
-  Это рискованно, потому что:
-  - frontend может ожидать созданную строку тикета;
-  - Supabase `.insert().select().single()` может сломаться;
-  - будет неочевидное поведение “создали тикет, но insert отменён”;
-  - trigger начнёт писать сообщения от имени пользователя при любой вставке тикета;
-  - можно получить дубль/гонку при параллельных вставках;
-  - можно сломать существующий `/support`.
-  Для dedupe нужен отдельный discovery и отдельный RPC, а не скрытый trigger.
-4. **Support dedupe делать отдельной задачей через явный RPC, не trigger.**
-  Следующий патч должен быть:
-  ```text
-  PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
-  ```
-  Предпочтительная модель:
-  - новый RPC `create_or_append_support_ticket(...)`;
-  - клиентский `/support` вызывает RPC вместо прямого insert;
-  - RPC внутри транзакции ищет open ticket;
-  - если open есть — добавляет `ticket_message`;
-  - если open нет — создаёт ticket + first message;
-  - всегда возвращает `ticket_id`, `created_new boolean`, `message_id`;
-  - frontend не получает “0 rows”.
-  Не делать dedupe скрытым триггером.
-5. **Partial unique index на** `support_tickets(user_id)` **опасен.**
-  Проверить перед любыми индексами:
-  - есть ли `support_tickets.profile_id`;
-  - есть ли тикеты без `user_id`;
-  - может ли один `profile_id` иметь несколько `user_id`;
-  - какие статусы реально существуют;
-  - какие тикеты сейчас открыты;
-  - есть ли уже дубли open по одному user/profile.
-  Если уже есть дубли, unique index не создастся. Нужен migration plan с cleanup/merge strategy, а не “CREATE UNIQUE INDEX”.
-6. **Не менять клиентский** `/support` **в этом патче.**
-  `useCreateTicket` и `/support` не трогать в filters/actions. Это отдельный риск и отдельный regression-gate.
-7. **Админское создание тикета — отдельный патч.**
-  Третий патч:
-  ```text
-  PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
-  ```
-  В нём отдельно согласовать:
-  - кто может создавать;
-  - какой `author_type`;
-  - какие допустимые значения enum/check;
-  - как клиент уведомляется;
-  - `has_unread_user`;
-  - subject/category/status;
-  - открытие тикета в unified после создания;
-  - audit.
-8. **Role-check для admin_create_or_get_support_ticket нельзя писать наугад.**
+  Сразу после определения `v_user_id`, до поиска активного тикета.
+  Это даст атомарность без unique index и без trigger.
+5. **Искать активный тикет лучше по** `profile_id` **или по** `user_id` **— нужно зафиксировать.**  
+В плане цель — “один активный тикет на клиента”. Если `support_tickets.profile_id NOT NULL`, а `user_id nullable`, безопаснее искать так:
   &nbsp;
-  В плане указано:
-  ```text
-  has_role(auth.uid(),'admin'|'moderator'|'support')
+  ```sql
+  WHERE profile_id = v_profile_id
+    AND status IN (...)
   ```
-  Нужно discovery:
-  - какие роли реально есть в `app_role`;
-  - есть ли `moderator`;
-  - есть ли `support`;
-  - как проверяются сотрудники контакт-центра;
-  - можно ли использовать `useSectionAccess("communication")` на backend или нужен role mapping.
-  Не писать RPC с несуществующими ролями.
-9. **IG favorite миграция — допустима, но проверить existing table/index/RLS.**
+  Либо по обоим:
+  ```sql
+  WHERE profile_id = v_profile_id
+     OR user_id = v_user_id
+  ```
+  Но `OR` может дать чужие/старые связи, если данные кривые. Рекомендация:
+  ```text
+  канон dedupe = profile_id
+  user_id используется как дополнительное поле создаваемого тикета
+  ```
+  Перед реализацией подтвердить по существующему коду `/support`, что у клиента всегда есть `profiles.id`.
+6. **Если у пользователя уже есть 4 открытых тикета, append должен идти в самый свежий, но proof должен это явно показать.**  
+Сейчас план выбирает:
   &nbsp;
-  Перед миграцией read-only:
-  - структура `instagram_dialog_preferences`;
-  - existing unique index;
-  - есть ли `admin_user_id`;
-  - как mono-IG делает pin;
-  - RLS/GRANT на update/upsert.
-  Если RLS покрывает `is_pinned`, скорее всего покроет `is_favorite`, но это надо доказать.
-10. **Support pin миграция — допустима, но проверить RLS и существующие поля.**
+  ```sql
+  ORDER BY updated_at DESC LIMIT 1
+  ```
+  Это нормально, потому что старые дубли не merge-им. В proof указать:
+7. `p_subject` **тоже нужно валидировать только при создании нового тикета.**  
+Для append-ветки subject может быть пустым или новым, но тикет уже существует. Логика:
+  - `p_description` обязателен всегда;
+  - `p_subject` обязателен только если создаётся новый тикет;
+  - если append — subject можно игнорировать или сохранить в message metadata не надо.
+  Если frontend CreateTicketDialog всегда требует subject, можно оставить, но RPC лучше не падать на пустом subject при append.
+8. `p_attachments` **нужно валидировать как массив.**  
+Добавить guard:
+9. **Не проглатывать все ошибки как** `database_error` **без логирования.**  
+Возврат JSON можно оставить, но в proof/коде желательно не скрывать диагностику полностью. Минимум:
+  &nbsp;
+  ```sql
+  'error', SQLERRM
+  ```
+  уже есть. При наличии audit/log-инфраструктуры — не обязательно, но можно не добавлять.
+10. `has_unread_user` **при append от клиента не должен становиться true.**  
+В плане это не меняется — правильно. Для клиента его же сообщение не должно создавать unread для клиента.
 
-Перед миграцией:
-
-- структура `support_tickets`;
-- есть ли `is_starred`;
-- кто может update `is_starred`;
-- есть ли RLS для admin update;
-- не конфликтует ли `is_pinned` с existing order.
-
-11. **Для новых колонок добавить timestamps правильно.**
-
-Для IG:
+Для append:
 
 ```sql
-is_favorite boolean not null default false,
-favorited_at timestamptz
+has_unread_admin = true
+has_unread_user — не менять
 ```
 
-Для Support:
+11. `is_read` **для сообщения клиента проверить по текущей семантике.**  
+В плане `is_read=false`. Если текущая функция уже создаёт первое сообщение клиента с `is_read=false`, оставить. Если иначе — сохранить существующее поведение.
+12. **Frontend toast должен быть аккуратным.**  
+Для `created_new=false`:
+
+```text
+Сообщение добавлено в существующее обращение #...
+```
+
+Это хорошо. Но не писать пользователю “тикет не создан”, чтобы не было ощущения ошибки.
+
+13. `useCreateTicket` **должен возвращать реальный** `ticket_id`**, а не объект старой формы.**  
+В proof показать:
+
+- первый запрос → `created_new=true`, `ticket_id=A`;
+- второй запрос → `created_new=false`, `ticket_id=A`;
+- UI открывает `A`.
+
+14. **Инвалидации расширить ещё на support unified/query keys.**  
+Помимо:
+
+```text
+["user-tickets"]
+["ticket-messages", ticket_id]
+["unified-support-tickets"]
+```
+
+проверить реальные query keys в проекте. Если mono-support использует другие ключи — инвалидировать их тоже.
+
+15. **Realtime не считать достаточным proof.**  
+Даже если подписки есть, после RPC нужно делать invalidate вручную. Realtime может прийти с задержкой или не прийти в Preview.
+16. **В DoD “unified показывает одну строку на клиента” уточнить.**  
+Так как старые 4 открытых тикета не merge-ятся, unified может всё ещё показывать несколько старых строк для проблемного пользователя.
+
+Корректная формулировка:
+
+```text
+Для новых повторных обращений не создаётся новая строка; сообщение добавляется в выбранный существующий активный тикет.
+```
+
+Не обещать, что старые дубли исчезнут.
+
+17. **Проверить поведение resolved/closed.**  
+Для клиента с только `resolved/closed` должен создаваться новый тикет. В proof показать SQL/скрин.
+18. **Проверить RLS/SECURITY DEFINER.**  
+Функция `SECURITY DEFINER`, но должна:
+
+- использовать `auth.uid()`;
+- не принимать `user_id` с фронта;
+- не позволять клиенту писать в чужой тикет;
+- искать profile только по `profiles.user_id = auth.uid()`.
+
+Это в плане есть — сохранить.
+
+19. **Rollback обязательно добавить.**  
+Так как это `CREATE OR REPLACE FUNCTION`, rollback — вернуть предыдущую версию `create_support_ticket`.
+
+В audit указать:
+
+- файл миграции;
+- rollback SQL / ссылка на previous function;
+- что данных migration не меняет.
+
+20. **Proof по отсутствию триггеров/unique index.**  
+В proof добавить:
 
 ```sql
-is_pinned boolean not null default false,
-pinned_at timestamptz
+SELECT trigger_name
+FROM information_schema.triggers
+WHERE event_object_table='support_tickets';
+
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename='support_tickets'
+  AND indexdef ILIKE '%status IN%';
 ```
 
-При toggle:
+И показать, что новых forbidden-механизмов нет.
 
-- true → `*_at = now()`;
-- false → `*_at = null`.
-
-12. **Индексы делать безопасно.**
-
-Для новых индексов:
-
-- `CREATE INDEX IF NOT EXISTS`;
-- preferably partial;
-- без блокировки больших таблиц, если проект использует обычные миграции Supabase — указать размер таблиц.
-
-Для support dedupe unique index — не в этом патче.
-
-13. **Фильтр “Новые” уточнить.**
-
-В UI “Новые” должен соответствовать текущей логике:
+21. **Название отчёта:**
 
 ```text
-unread / unanswered
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
 ```
 
-Для источников:
-
-- Telegram: `unread_count > 0`;
-- Instagram: `unread_count > 0`;
-- Support: `has_unread_admin` или текущий `is_unanswered` после discovery.
-
-Не смешивать `waiting_admin`, если текущая модель read/unread уже есть.
-
-14. **Счётчики фильтров должны считаться по текущему normalized rows.**
-
-Чипсы:
+22. **Финальный статус после успешного proof:**
 
 ```text
-Все = rows.length
-Новые = rows.filter(r => r.isUnanswered).length
-Избранное = rows.filter(r => r.isFavorite).length
-Закреплённые = rows.filter(r => r.isPinned).length
+Support ticket deduplication — PASS
+Existing duplicate tickets — not merged
+New duplicate client requests — append to latest active ticket
+Hidden triggers / unique index — not used
 ```
 
-15. **Pin/favorite сортировку не менять — но явно показать это в UI/proof.**
-
-Если pin не поднимает строку вверх, это может быть неожиданно. В proof указать:
-
-```text
-Pinned/favorite filters and indicators are implemented.
-Global sorting by pinned remains unchanged/deferred.
-```
-
-Либо, если уже есть сортировка по `is_pinned`, не менять её без отдельного подтверждения.
-
-16. **Hover actions должны быть доступны не только на hover.**
-
-На мобильных hover нет. Нужно обеспечить:
-
-- кнопки видны/доступны на mobile;
-- или открываются через `⋯`;
-- или всегда видны в компактном виде.
-
-Иначе row actions будут недоступны на iPhone/iPad.
-
-17. **Добавить loading/error states для row actions.**
-
-Для каждой мутации:
-
-- disabled во время запроса;
-- optimistic или invalidate после success;
-- toast при ошибке;
-- rollback optimistic state при ошибке.
-
-18. **Mark read показывать только при unread.**
-
-`Check`:
-
-- показывать только если `unread_count > 0` / `isUnanswered=true`;
-- после mark-read иконка исчезает;
-- счётчик “Новые” уменьшается.
-
-19. **Telegram mark-read boundary обязательно сохранить.**
-
-Использовать тот же self-mark coordinator / observed boundary, который уже был отлажен. Не упрощать.
-
-20. **Telegram preference key ещё раз сверить.**
-
-В плане было `contact_user_id: row.meta.telegramUserId`. Перед реализацией proof:
-
-- mono-Telegram использует этот же id;
-- это не `profile.id`;
-- это не `profiles.user_id`;
-- это не `telegram_user_id` другого типа.
-
-Ошибка здесь снова сломает pin/favorite.
-
-21. **IG preference upsert должен использовать тот же ключ, что mono-IG.**
-
-Сверить:
-
-- `account_id`;
-- `thread_key`;
-- `admin_user_id`;
-- unique index.
-
-22. **Support favorite/pin должны не менять business status.**
-
-Нельзя менять:
-
-- `status`;
-- `assigned_to`;
-- `has_unread_user`;
-- `has_unread_admin`, кроме mark-read.
-
-23. **Unified opt-in не трогать.**
-
-План говорит, что opt-in остаётся как есть — правильно. Добавить regression:
-
-- opt-in ON показывает unified;
-- opt-in OFF скрывает unified;
-- оператор без opt-in не видит “Все”.
-
-24. **Proof-файл для первого патча:**
-
-```text
-docs/audit/2026-07-04-unified-inbox-v2-filters-and-actions.md
-```
-
-25. **Итоговый отчёт первого патча:**
-
-```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
-```
-
-26. **DoD первого патча:**
-
-- 4 чипса работают;
-- Telegram pin/fav/read работают;
-- Instagram pin/fav/read работают;
-- Support pin/fav/read работают;
-- unsupported actions больше не unsupported после добавления колонок;
-- state сохраняется после refresh;
-- mobile доступность actions решена;
-- mono TG/IG/Support/Email без регресса;
-- IG merge / headers / short badges без регресса;
-- typecheck clean;
-- proof создан.
-
-27. **Support dedupe DoD перенести во второй патч.**
-
-Не включать в текущий DoD:
-
-- клиент не может создать второй open ticket;
-- сообщение дописывается в существующий;
-- `useCreateTicket` обрабатывает 0 rows.
-
-Это отдельная задача.
-
-28. **Admin-start-ticket DoD перенести в третий патч.**
-
-Не включать в текущий DoD:
-
-- админ из ContactDetailSheet создаёт тикет;
-- клиент видит его в `/support`.
-
-29. **Новый утверждённый порядок:**
-
-```text
-1. PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
-   - IG favorite
-   - Support pin
-   - all-source pin/fav/read
-   - chips filters
-
-2. PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
-   - discovery
-   - explicit RPC create_or_append
-   - no hidden trigger returning NULL
-
-3. PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
-   - admin creates/opens support ticket from ContactDetailSheet
-   - separate RPC and UI
-```
-
-30. **Стартуем сейчас только пункт 1.**
-
-Всё, что касается dedupe тикетов и админского создания тикета, пока не выполнять.
+После этих правок план утверждён. Выполнять только этот патч, не начинать `ADMIN-START-SUPPORT-TICKET`.
 
 &nbsp;
 
-План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-SUPPORT-MERGE-AND-FILTERS
+План: PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
 
-Diagnose
+## Цель
 
-- Клиент может писать в поддержку (`/support` → CreateTicketDialog → useCreateTicket), но:
-  1. Оператор не может инициировать тикет другому контакту из unified inbox.
-  2. Один контакт может завести 3–4 open-тикета — каждый становится отдельной строкой в unified.
-  3. Действия разнятся: IG — только pin+read, Support — только fav+read, TG — все три.
-  4. Фильтры только «Все / Неотвеченные»; нет «Избранное / Закреплённые / Новые».
+Один активный тикет на клиента. Если у пользователя уже есть open/in_progress/waiting_user тикет — новый запрос дописывается сообщением в существующий. Никаких BEFORE INSERT триггеров, отменяющих вставку, никаких unique index'ов, никакого merge истории.
 
-Plan (5 задач)
+## Итоги discovery
 
-1. Schema-миграция (одна)
-  - `ALTER TABLE public.instagram_dialog_preferences ADD COLUMN IF NOT EXISTS is_favorite boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS favorited_at timestamptz;`
-  - `ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS is_pinned boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS pinned_at timestamptz;`
-  - Партиальные индексы `WHERE is_favorite = true` / `WHERE is_pinned = true`.
-  - RLS/GRANT не трогаем — существующие политики покрывают.
-  - Физический анти-дубль тикета: `CREATE UNIQUE INDEX IF NOT EXISTS uniq_support_open_ticket_per_user ON public.support_tickets (user_id) WHERE status IN ('open','in_progress','waiting_user');`
-  Плюс BEFORE INSERT trigger `support_tickets_dedupe_open`: если у пользователя уже есть открытый тикет — не создавать новый, а вернуть NULL и попытаться дописать description как ticket_message. Реализация: trigger вызывает функцию, которая при найденном existing open вставляет в `ticket_messages` (author_type='user', author_id=NEW.user_id, message=NEW.description) и возвращает NULL, отменяя INSERT. Уже открытый тикет получает `updated_at=now(), has_unread_admin=true`. Клиентский `useCreateTicket` обрабатывает 0 rows → инвалидирует `user-tickets` и открывает найденный существующий тикет (SELECT open по user_id).
-2. useUnifiedInbox: capabilities + фильтры-поля
-  - `IG_CAPS = { canPin: true, canFavorite: true, canMarkRead: true }`.
-  - `SUPPORT_CAPS = { canPin: true, canFavorite: true, canMarkRead: true }`.
-  - IG: подтягивать `is_favorite` из instagram_dialog_preferences (join по admin_user_id + account_id + thread_key) при сборке строки.
-  - Support: `isPinned = !!t.is_pinned`.
-  - Оставить остальную нормализацию как есть (никакого нового объединения TG/IG/Support в одну карточку — user выбрал вариант 2, физическая нормализация тикета).
-3. UnifiedInboxView: расширенные действия + фильтры
-  - Добавить ветки для `instagram + is_favorite` и `support + is_pinned` в `togglePinFavorite`, используя те же таблицы (instagram_dialog_preferences.upsert, support_tickets.update).
-  - Заменить дуальный tab «Все / Неотвеченные» на группу чипсов: `Все | Новые | Избранное | Закреплённые` (state `filter: 'all'|'unread'|'favorite'|'pinned'`). Каждая чипса — счётчик (unread count / favorite count / pinned count).
-  - `filtered = rows.filter(...)`: `favorite → r.isFavorite`, `pinned → r.isPinned`, `unread → r.isUnanswered`.
-  - Realtime: `useInboxRealtimeInvalidation` уже слушает support_tickets + instagram_messages → достаточно.
-4. Админ инициирует тикет любому контакту
-  - В `ContactDetailSheet` (используется unified для клика на имя): добавить кнопку «Написать в техподдержку» (появляется, если у контакта нет open-тикета; иначе — «Открыть тикет»).
-  - Новый серверный контракт: RPC `admin_create_or_get_support_ticket(p_profile_id uuid, p_subject text, p_initial_message text)` SECURITY DEFINER:
-    - Проверяет `has_role(auth.uid(),'admin'|'moderator'|'support')` (существующая функция).
-    - Если у профиля есть открытый тикет — возвращает его id и добавляет initial_message как ticket_message (author_type='support').
-    - Иначе создаёт новый тикет (profile_id=p_profile_id, user_id=profile.user_id, category='general', status='open', has_unread_user=true) + первый ticket_message.
-  - На фронте: диалог в стиле CreateTicketDialog, вызов RPC → navigate на unified с выбранным `support:<id>` или открытие внутри unified.
-  - Клиент увидит новый тикет автоматически через `useUserTickets` realtime-подписку по `user_id=eq.<self>`.
-5. Аудит + regression-gate
-  - `docs/audit/2026-07-04-unified-inbox-v2-support-merge-and-filters.md`: DDL, RPC-контракт, матрица capabilities, поведение dedupe, regression-checklist.
-  - Regression-gate (Playwright под superadmin с opt-in ON):
-    - unified: чипсы Все/Новые/Избранное/Закреплённые фильтруют корректно;
-    - IG hover-star тогглит is_favorite + строка появляется в фильтре «Избранное»;
-    - Support hover-pin тогглит is_pinned + попадает в «Закреплённые»;
-    - попытка клиента создать второй open-тикет → сообщение допишется в существующий, unified показывает одну строку;
-    - админ из ContactDetailSheet создаёт тикет контакту без тикета → появляется open-тикет, клиент видит его в /support;
-    - mono-TG / IG merge / headers / short badges — без регресса.
+### 1. `support_tickets` — реальная схема
 
-Технические детали
+Ключевые поля: `id`, `ticket_number` (default `generate_ticket_number()`), `profile_id NOT NULL`, `user_id` nullable, `subject NOT NULL`, `description NOT NULL`, `category` default `'general'`, `status NOT NULL` default `'open'`, `priority` default `'normal'`, `has_unread_admin/has_unread_user`, `is_starred`, `is_pinned/pinned_at` (из V2-FILTERS-AND-ACTIONS), `assigned_to`, `first_response_at/resolved_at/closed_at`, `telegram_bridge_enabled/telegram_user_id`.
 
-- Файлы: `src/hooks/useUnifiedInbox.ts`, `src/components/admin/communication/unified/UnifiedInboxView.tsx`, `src/components/admin/communication/ContactDetailSheet.tsx` (+ новый `AdminStartTicketDialog.tsx`), `src/hooks/useTickets.ts` (обработка 0-rows insert), новая миграция + RPC.
-- Kill-switch / opt-in остаются как есть; фичи включены в тот же V2-контур.
-- Никаких новых bridge-таблиц, никаких изменений profiles/instagram_contacts.
+Check-constraint: `status ∈ {open, in_progress, waiting_user, resolved, closed}` — «активными» считаем `open, in_progress, waiting_user`.
 
-DoD
+Триггеры на таблице: только `update_support_tickets_updated_at BEFORE UPDATE`. Никаких BEFORE INSERT — запрет плана не нарушается ничем существующим.
 
-- 4 чипсы-фильтра работают.
-- pin/fav/read доступны на всех трёх источниках.
-- Клиент не может создать второй open-тикет (сообщение дописывается).
-- Админ из карточки контакта может начать тикет; клиент видит его.
-- Regression-gate зелёный; консольные ошибки отсутствуют; typecheck clean.
-- Аудит-документ создан.
+### 2. `ticket_messages` — реальная схема
+
+`id`, `ticket_id NOT NULL`, `author_id`, `author_type NOT NULL` (check: `user | support | system`), `author_name`, `message NOT NULL`, `attachments jsonb default '[]'`, `is_internal`, `is_read`, `created_at`, `display_user_id`.
+
+RLS:
+
+- клиент вставляет только `author_type='user'` и только в свой тикет (EXISTS по `support_tickets.user_id = auth.uid()`);
+- support вставляет при `has_permission('support.manage'|'admins.manage')`.
+
+Дополнительных триггеров нет.
+
+### 3. Статусы в БД
+
+`resolved` 105, `closed` 72, `open` 6. `in_progress` и `waiting_user` не используются, но код и check-constraint их допускают — включаем в набор «активные».
+
+### 4. Дубли на сегодня
+
+Активных тикетов с 2+ на одного `user_id`: **1 пользователь (4 открытых тикета)**. Проблема реальна, но не массовая — миграция данных не требуется (пункт «merge старых дублей» запрещён), дедуп применяется только к новым входящим запросам.
+
+### 5. Текущая точка создания
+
+`src/pages/Support.tsx` → `CreateTicketDialog` → `useCreateTicket` (`src/hooks/useTickets.ts:338-398`) → RPC `create_support_ticket(p_subject, p_description, p_category)` (SECURITY DEFINER, возвращает `jsonb`).
+
+Существующий RPC уже:
+
+- проверяет `auth.uid()` и `profile_id`;
+- атомарно создаёт `support_tickets` + первое `ticket_messages`;
+- возвращает `{success, ticket_id, ticket_number}` или `{success:false, error, error_code}`.
+
+Frontend НЕ ждёт INSERT-RETURNING 0 rows — он читает `response.ticket_id` из jsonb. Значит замена SQL внутри функции безопасна: контракт `{success, ticket_id, ticket_number}` можно расширить полем `created_new`, а frontend доработать точечно.
+
+`useSendMessage` (client add message) уже пишет в `ticket_messages` через прямой INSERT — трогать его не нужно, он используется на «открытом тикете», у которого уже есть `ticket_id`.
+
+### 6. Регистрируемые эффекты, которые нужно сохранить в append-ветке
+
+- `updated_at = now()` — иначе unified/mono сортировка сломается;
+- `has_unread_admin = true` — иначе оператор не увидит новое сообщение как непрочитанное;
+- если тикет был `waiting_user` — вернуть его в `open` (клиент снова активен). `in_progress`/`open` оставляем как есть, `closed/resolved` в append не попадают вообще.
+
+## Реализация
+
+### Шаг 1. Миграция: переписать `create_support_ticket`
+
+Единственный SQL-контракт, без hidden trigger, без unique index, без merge истории.
+
+```
+CREATE OR REPLACE FUNCTION public.create_support_ticket(
+  p_subject text,
+  p_description text,
+  p_category text DEFAULT NULL,
+  p_attachments jsonb DEFAULT '[]'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_profile_id uuid;
+  v_existing_id uuid;
+  v_existing_number text;
+  v_existing_status text;
+  v_ticket_id uuid;
+  v_ticket_number text;
+  v_message_id uuid;
+  v_body text := NULLIF(trim(p_description), '');
+  v_created_new boolean := false;
+BEGIN
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error_code', 'not_authenticated');
+  END IF;
+  SELECT id INTO v_profile_id FROM profiles WHERE user_id = v_user_id;
+  IF v_profile_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error_code', 'profile_not_found');
+  END IF;
+  IF v_body IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error_code', 'description_required');
+  END IF;
+
+  -- Ищем самый свежий активный тикет пользователя
+  SELECT id, ticket_number, status
+    INTO v_existing_id, v_existing_number, v_existing_status
+  FROM support_tickets
+  WHERE user_id = v_user_id
+    AND status IN ('open','in_progress','waiting_user')
+  ORDER BY updated_at DESC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF v_existing_id IS NOT NULL THEN
+    -- Append: дописываем сообщение в существующий тикет
+    INSERT INTO ticket_messages (ticket_id, author_id, author_type, message, attachments, is_internal, is_read)
+    VALUES (v_existing_id, v_user_id, 'user', v_body, COALESCE(p_attachments,'[]'::jsonb), false, false)
+    RETURNING id INTO v_message_id;
+
+    UPDATE support_tickets
+    SET has_unread_admin = true,
+        status = CASE WHEN status = 'waiting_user' THEN 'open' ELSE status END,
+        updated_at = now()
+    WHERE id = v_existing_id
+    RETURNING status INTO v_existing_status;
+
+    v_ticket_id := v_existing_id;
+    v_ticket_number := v_existing_number;
+  ELSE
+    -- Создаём новый тикет + первое сообщение (как раньше)
+    v_ticket_number := generate_ticket_number_atomic();
+    INSERT INTO support_tickets (user_id, profile_id, subject, description, category,
+      ticket_number, status, priority, has_unread_admin, has_unread_user, updated_at)
+    VALUES (v_user_id, v_profile_id, p_subject, v_body, COALESCE(p_category,'general'),
+      v_ticket_number, 'open', 'normal', true, false, now())
+    RETURNING id INTO v_ticket_id;
+
+    INSERT INTO ticket_messages (ticket_id, author_id, author_type, message, attachments, is_internal, is_read)
+    VALUES (v_ticket_id, v_user_id, 'user', v_body, COALESCE(p_attachments,'[]'::jsonb), false, false)
+    RETURNING id INTO v_message_id;
+
+    v_created_new := true;
+    v_existing_status := 'open';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'ticket_id', v_ticket_id,
+    'ticket_number', v_ticket_number,
+    'message_id', v_message_id,
+    'status', v_existing_status,
+    'created_new', v_created_new
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'error_code', 'database_error');
+END; $$;
+```
+
+Что НЕ меняется: сигнатура (три первых параметра совпадают, `p_attachments` — новый с дефолтом, старые вызовы работают), тип возврата (`jsonb`), базовые ключи `success/ticket_id/ticket_number`. Никаких unique index'ов, никаких триггеров.
+
+### Шаг 2. Frontend `useCreateTicket` (`src/hooks/useTickets.ts`)
+
+- добавить в `CreateTicketData` опциональный `attachments?: any[]` и пробросить в RPC;
+- расширить обработчик ответа: читать `response.created_new`, `response.status`;
+- вернуть из мутации `{ id, ticket_number, created_new }`;
+- в `onSuccess` инвалидацию расширить: `["user-tickets"]`, `["ticket-messages", response.ticket_id]`, `["unified-support-tickets"]`;
+- тост: `created_new ? "Обращение создано" : "Сообщение добавлено в существующий тикет #<number>"`.
+
+### Шаг 3. `CreateTicketDialog` + `Support.tsx`
+
+- после успеха диалога навигировать на `?ticket=<returned ticket_id>` (уже так и делается — просто убедиться, что открывается `ticket_id` из RPC-ответа, а не сгенерированный клиентом);
+- если `created_new=false` — не пересоздавать subject/category в UI: просто закрыть диалог и открыть существующий тикет с приложенным сообщением.
+
+### Шаг 4. Проверки без модификаций
+
+- `useSendMessage` — не трогаем; он и так append.
+- Unified `useUnifiedInbox` — не трогаем; append приводит к `updated_at=now()` и `has_unread_admin=true`, что уже поднимает строку в топ и пересчитывает `Новые`.
+- Realtime — существующие подписки `useInboxRealtimeInvalidation` уже слушают `support_tickets` и `ticket_messages`.
+
+## Что запрещено (закрепляем)
+
+- BEFORE INSERT trigger, отменяющий INSERT (RETURN NULL) — **не делаем**.
+- unique index на `(user_id) WHERE status IN (...)` — **не делаем**.
+- Merge/слияние существующих дублей у пользователя `e296da5b-...` — **не делаем**, только для новых запросов.
+- Админский путь «создать тикет за клиента» — **вне этого патча**.
+
+## Регрессия
+
+- клиент без активного тикета → создаётся новый (`created_new=true`);
+- клиент с активным тикетом → сообщение добавляется в него (`created_new=false`), `updated_at`/`has_unread_admin` обновились, `waiting_user → open`;
+- клиент с только `resolved/closed` → создаётся новый;
+- frontend навигирует на возвращённый `ticket_id`;
+- unified показывает одну строку на клиента;
+- mono `/support` работает (список тикетов, открытие, отправка);
+- typecheck по `useTickets.ts`, `CreateTicketDialog.tsx`, `Support.tsx` — чисто;
+- в консоли нет ошибок.
+
+## Proof
+
+`docs/audit/2026-07-04-support-ticket-deduplication.md` — SQL diff RPC, скриншоты «до/после» на тестовом клиенте (без активного → создание; повторный запрос → append в тот же ticket_id), выборка `SELECT count(*) ... GROUP BY user_id HAVING count>1` до и после (для новых запросов дубли не должны появляться).
+
+## DoD
+
+- Клиент без open → новый тикет.
+- Клиент с open → сообщение в существующий.
+- Frontend открывает вернувшийся `ticket_id`.
+- Unified показывает одну строку.
+- Оператор видит новое сообщение и `has_unread_admin=true`.
+- Mono `/support` работает.
+- Unified Support работает.
+- Статусы не ломаются (`waiting_user → open`, остальное без изменений).
+- Typecheck clean.
+- Никаких новых триггеров, unique index'ов и hidden отмен INSERT.
