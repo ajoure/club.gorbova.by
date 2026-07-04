@@ -1,0 +1,363 @@
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
+import { useAuth } from "@/contexts/AuthContext";
+
+/**
+ * useUnifiedInbox — фронтенд-нормализация трёх источников
+ * (Telegram / Instagram / Техподдержка) в единый список UnifiedDialog.
+ *
+ * НЕ меняет схему БД. Использует существующие источники:
+ *   - Telegram: RPC get_inbox_dialogs_v1 (тот же ключ INBOX_DIALOGS_QK, что и моно-лента,
+ *     благодаря чему React Query-дедупликация работает и в unified, и в моно).
+ *   - Instagram: RPC get_instagram_dialogs_v1 по всем активным аккаунтам.
+ *   - Support: таблица support_tickets (не closed/resolved).
+ *
+ * Preferences (pin/favorite) остаются в трёх разных таблицах и мутируются
+ * своими API — здесь только чтение.
+ */
+
+export type UnifiedSource = "telegram" | "instagram" | "support";
+
+export interface UnifiedDialog {
+  /** Стабильный ключ строки для React key и mark-read. */
+  key: string;
+  source: UnifiedSource;
+  /** Технический ID внутри источника (user_id / `${account}:${thread_key}` / ticket_id). */
+  sourceId: string;
+  /** Дополнительный ярлык источника: имя бота / @аккаунт IG / null для support. */
+  sourceLabel: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  lastMessage: string;
+  lastMessageAt: string;
+  unreadCount: number;
+  /** Есть ли неотвеченное входящее (для сортировки). */
+  isUnanswered: boolean;
+  isPinned: boolean;
+  isFavorite: boolean;
+  /** Технические поля источника, нужные правой панели. */
+  meta: {
+    telegramUserId?: string;
+    telegramBotId?: string | null;
+    telegramBotUsername?: string | null;
+    telegramBotName?: string | null;
+    instagramAccountId?: string;
+    instagramThreadKey?: string;
+    instagramPeerId?: string;
+    instagramSenderName?: string | null;
+    ticketId?: string;
+    ticketStatus?: string;
+    ticketProfileId?: string | null;
+    ticketUserId?: string | null;
+  };
+}
+
+const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
+  telegram: 0,
+  instagram: 1,
+  support: 2,
+};
+
+interface Options {
+  enabled: boolean;
+  perSourceLimit?: number;
+}
+
+export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
+  const { user } = useAuth();
+
+  // --- Telegram ---
+  const tg = useQuery({
+    queryKey: INBOX_DIALOGS_QK,
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_inbox_dialogs_v1", {
+        p_limit: perSourceLimit,
+        p_offset: 0,
+        p_search: null,
+      });
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---
+  const tgPrefs = useQuery({
+    queryKey: ["chat-preferences", user?.id],
+    enabled: enabled && !!user?.id,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("chat_preferences")
+        .select("contact_user_id, is_pinned, is_favorite")
+        .eq("admin_user_id", user!.id);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  // --- Telegram profile enrichment (avatar/name) для user_id, которых нет в telegram_messages payload ---
+  const tgUserIds = useMemo(
+    () => (tg.data || []).map((d: any) => d.user_id),
+    [tg.data],
+  );
+  const tgProfiles = useQuery({
+    queryKey: ["unified-tg-profiles", tgUserIds],
+    enabled: enabled && tgUserIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, user_id, full_name, email, avatar_url")
+        .or(`user_id.in.(${tgUserIds.join(",")}),id.in.(${tgUserIds.join(",")})`);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  // --- Instagram: аккаунты + диалоги по каждому активному аккаунту ---
+  const igAccounts = useQuery({
+    queryKey: ["unified-ig-accounts"],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("instagram-admin-chat", {
+        body: { action: "get_accounts" },
+      });
+      if (error) throw error;
+      const all = (data?.accounts || []) as any[];
+      return all.filter((a) => a.is_active !== false && a.status !== "error");
+    },
+  });
+
+  const igAccountIds = useMemo(
+    () => (igAccounts.data || []).map((a: any) => a.id),
+    [igAccounts.data],
+  );
+
+  const igDialogs = useQuery({
+    queryKey: ["unified-ig-dialogs", igAccountIds],
+    enabled: enabled && igAccountIds.length > 0,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const results = await Promise.all(
+        igAccountIds.map(async (accountId: string) => {
+          const { data, error } = await supabase.rpc("get_instagram_dialogs_v1", {
+            p_account_id: accountId,
+          });
+          if (error) return [] as any[];
+          return ((data || []) as any[]).map((d) => ({ ...d, __accountId: accountId }));
+        }),
+      );
+      return results.flat();
+    },
+  });
+
+  const igAccountLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    (igAccounts.data || []).forEach((a: any) => {
+      const name = a.display_name || a.account_name || a.instagram_page_id || a.id;
+      map.set(a.id, name);
+    });
+    return map;
+  }, [igAccounts.data]);
+
+  // --- Support: тикеты, отсортированные по last_activity ---
+  const support = useQuery({
+    queryKey: ["unified-support-tickets"],
+    enabled,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .select(
+          "id, ticket_number, subject, status, has_unread_admin, is_starred, updated_at, user_id, profile_id",
+        )
+        .not("status", "in", "(closed,resolved)")
+        .order("updated_at", { ascending: false })
+        .limit(perSourceLimit);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  const supportProfileIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (support.data || [])
+            .map((t: any) => t.profile_id)
+            .filter((x: any): x is string => !!x),
+        ),
+      ),
+    [support.data],
+  );
+
+  const supportProfiles = useQuery({
+    queryKey: ["unified-support-profiles", supportProfileIds],
+    enabled: enabled && supportProfileIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, avatar_url")
+        .in("id", supportProfileIds as string[]);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  // --- Normalize + merge + sort ---
+  const rows = useMemo<UnifiedDialog[]>(() => {
+    if (!enabled) return [];
+
+    const tgProfileMap = new Map<string, any>();
+    (tgProfiles.data || []).forEach((p: any) => {
+      if (p.user_id) tgProfileMap.set(p.user_id, p);
+      if (p.id) tgProfileMap.set(p.id, p);
+    });
+    const tgPrefMap = new Map<string, { is_pinned: boolean; is_favorite: boolean }>();
+    (tgPrefs.data || []).forEach((p: any) =>
+      tgPrefMap.set(p.contact_user_id, {
+        is_pinned: !!p.is_pinned,
+        is_favorite: !!p.is_favorite,
+      }),
+    );
+    const supportProfileMap = new Map<string, any>();
+    (supportProfiles.data || []).forEach((p: any) => supportProfileMap.set(p.id, p));
+
+    const out: UnifiedDialog[] = [];
+
+    // Telegram
+    for (const d of tg.data || []) {
+      const p = tgProfileMap.get(d.user_id);
+      const pref = tgPrefMap.get(d.user_id);
+      out.push({
+        key: `tg:${d.user_id}`,
+        source: "telegram",
+        sourceId: d.user_id,
+        sourceLabel: d.last_bot_name || d.last_bot_username || null,
+        displayName: p?.full_name || p?.email || "Без имени",
+        avatarUrl: p?.avatar_url || null,
+        lastMessage: d.last_message_text || (d.last_message_type ? `[${d.last_message_type}]` : ""),
+        lastMessageAt: d.last_message_at,
+        unreadCount: Number(d.unread_count) || 0,
+        isUnanswered: (Number(d.unread_count) || 0) > 0,
+        isPinned: pref?.is_pinned || false,
+        isFavorite: pref?.is_favorite || false,
+        meta: {
+          telegramUserId: d.user_id,
+          telegramBotId: d.last_bot_id || null,
+          telegramBotUsername: d.last_bot_username || null,
+          telegramBotName: d.last_bot_name || null,
+        },
+      });
+    }
+
+    // Instagram
+    for (const d of igDialogs.data || []) {
+      const accountLabel = igAccountLabel.get(d.__accountId) || null;
+      const unread = Number(d.unread_count) || 0;
+      out.push({
+        key: `ig:${d.__accountId}:${d.thread_key || d.peer_id}`,
+        source: "instagram",
+        sourceId: `${d.__accountId}:${d.thread_key || d.peer_id}`,
+        sourceLabel: accountLabel ? `@${accountLabel}` : null,
+        displayName: d.full_name || d.sender_name || d.instagram_username || "Instagram",
+        avatarUrl: d.avatar_url || null,
+        lastMessage: d.last_message || (d.last_media_url ? "[медиа]" : ""),
+        lastMessageAt: d.last_at,
+        unreadCount: unread,
+        isUnanswered: unread > 0,
+        isPinned: !!d.is_pinned,
+        isFavorite: false,
+        meta: {
+          instagramAccountId: d.__accountId,
+          instagramThreadKey: d.thread_key,
+          instagramPeerId: d.peer_id,
+          instagramSenderName: d.sender_name,
+        },
+      });
+    }
+
+    // Support
+    for (const t of support.data || []) {
+      const p = t.profile_id ? supportProfileMap.get(t.profile_id) : null;
+      const unread = t.has_unread_admin ? 1 : 0;
+      out.push({
+        key: `support:${t.id}`,
+        source: "support",
+        sourceId: t.id,
+        sourceLabel: null,
+        displayName: p?.full_name || p?.email || `Тикет #${t.ticket_number || t.id.slice(0, 6)}`,
+        avatarUrl: p?.avatar_url || null,
+        lastMessage: t.subject || "",
+        lastMessageAt: t.updated_at,
+        unreadCount: unread,
+        isUnanswered: unread > 0,
+        isPinned: false,
+        isFavorite: !!t.is_starred,
+        meta: {
+          ticketId: t.id,
+          ticketStatus: t.status,
+          ticketProfileId: t.profile_id,
+          ticketUserId: t.user_id,
+        },
+      });
+    }
+
+    // Строгая сортировка с tie-breaker'ами, чтобы порядок не прыгал.
+    out.sort((a, b) => {
+      if (a.isUnanswered !== b.isUnanswered) return a.isUnanswered ? -1 : 1;
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      const bt = new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+      if (bt !== 0) return bt;
+      const sp = SOURCE_PRIORITY[a.source] - SOURCE_PRIORITY[b.source];
+      if (sp !== 0) return sp;
+      return a.key.localeCompare(b.key);
+    });
+
+    return out;
+  }, [
+    enabled,
+    tg.data,
+    tgProfiles.data,
+    tgPrefs.data,
+    igDialogs.data,
+    igAccountLabel,
+    support.data,
+    supportProfiles.data,
+  ]);
+
+  return {
+    rows,
+    isLoading:
+      enabled &&
+      (tg.isLoading || igDialogs.isLoading || support.isLoading),
+    errors: {
+      telegram: tg.error as Error | null,
+      instagram: igDialogs.error as Error | null,
+      support: support.error as Error | null,
+    },
+    counts: {
+      telegramUnread: (tg.data || []).reduce(
+        (s: number, d: any) => s + (Number(d.unread_count) || 0),
+        0,
+      ),
+      instagramUnread: (igDialogs.data || []).reduce(
+        (s: number, d: any) => s + (Number(d.unread_count) || 0),
+        0,
+      ),
+      supportUnread: (support.data || []).filter((t: any) => t.has_unread_admin).length,
+    },
+  };
+}
