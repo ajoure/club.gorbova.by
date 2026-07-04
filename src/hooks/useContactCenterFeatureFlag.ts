@@ -1,43 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 
 /**
- * Feature flag: единая лента «Сообщения» (Telegram + Instagram + Support).
- * Хранится в localStorage. По умолчанию ВЫКЛЮЧЕН — старое поведение моно-лент
- * не меняется, пока оператор явно не включит тумблер в настройках контакт-центра.
+ * KILL-SWITCH (2026-07-04): Unified inbox отключён после регрессии моно-ленты
+ * Telegram. Флаг форсированно возвращает `false`, setter — no-op. Сохранённое
+ * ранее значение localStorage чистится один раз при первом монтировании, чтобы
+ * при будущем восстановлении фичи не всплыло старое «включено» у операторов.
  *
- * НЕ управляется миграцией и не хранится в БД — это чисто пользовательский
- * UI-preference на устройство.
+ * НЕ восстанавливать поведение без proof, что Telegram mono-list открывает
+ * историю сообщений (не «Telegram не привязан») и unified контракт
+ * ContactTelegramChat починен.
  */
 const KEY = "contact_center_unified_inbox";
 const EVENT = "contact_center_unified_inbox_changed";
 
-function readFlag(): boolean {
+function clearStoredFlag(): void {
   try {
-    return localStorage.getItem(KEY) === "1";
-  } catch {
-    return false;
-  }
+    if (localStorage.getItem(KEY) !== null) {
+      localStorage.removeItem(KEY);
+    }
+  } catch {}
 }
 
 export function useUnifiedInboxFlag(): [boolean, (next: boolean) => void] {
-  const [enabled, setEnabled] = useState<boolean>(readFlag);
-
   useEffect(() => {
-    const onChange = () => setEnabled(readFlag());
-    window.addEventListener(EVENT, onChange);
-    window.addEventListener("storage", onChange);
-    return () => {
-      window.removeEventListener(EVENT, onChange);
-      window.removeEventListener("storage", onChange);
-    };
+    clearStoredFlag();
+    // Разбудим возможных слушателей, чтобы they снялись со старого «true».
+    try { window.dispatchEvent(new Event(EVENT)); } catch {}
   }, []);
-
-  const set = useCallback((next: boolean) => {
-    try {
-      localStorage.setItem(KEY, next ? "1" : "0");
-    } catch {}
-    window.dispatchEvent(new Event(EVENT));
-  }, []);
-
-  return [enabled, set];
+  return [false, () => {}];
 }

@@ -33,11 +33,13 @@ const tabs = [
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [unifiedEnabled] = useUnifiedInboxFlag();
+  // KILL-SWITCH 2026-07-04: unified inbox отключён — регрессия mono-Telegram.
+  // Хук возвращает false, но здесь дублируем константой для defense-in-depth,
+  // чтобы точно не было ветки UnifiedInboxView и пункта «Все».
+  useUnifiedInboxFlag();
+  const unifiedEnabled = false;
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
-  const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">(
-    unifiedEnabled ? "all" : "telegram",
-  );
+  const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">("telegram");
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();
