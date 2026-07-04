@@ -357,7 +357,7 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
       <ContactInstagramChat
         accountId={row.meta.instagramAccountId!}
         senderId={row.meta.instagramPeerId!}
-        threadId={row.meta.instagramThreadKey || null}
+        threadId={row.meta.instagramThreadId ?? null}
         senderName={row.displayName}
         avatarUrl={row.avatarUrl}
         accountName={row.sourceLabel}

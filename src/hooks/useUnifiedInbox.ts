@@ -48,7 +48,10 @@ export interface UnifiedDialog {
     telegramBotUsername?: string | null;
     telegramBotName?: string | null;
     instagramAccountId?: string;
+    /** thread_key из RPC get_instagram_dialogs_v1 — стабильный ключ строки/mark_read. */
     instagramThreadKey?: string;
+    /** ig_thread_id из RPC — тот же, что ждёт instagram-admin-chat/get_history. Может быть null для новых диалогов. */
+    instagramThreadId?: string | null;
     instagramPeerId?: string;
     instagramSenderName?: string | null;
     ticketId?: string;
@@ -289,6 +292,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         meta: {
           instagramAccountId: d.__accountId,
           instagramThreadKey: d.thread_key,
+          instagramThreadId: d.ig_thread_id ?? null,
           instagramPeerId: d.peer_id,
           instagramSenderName: d.sender_name,
         },
