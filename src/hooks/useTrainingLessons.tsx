@@ -186,29 +186,54 @@ export function useTrainingLessons(moduleId?: string) {
     });
   }, [lessons, monthGateMap]);
 
+  // Нормализуем payload: пустые строки в nullable-полях → null,
+  // чтобы не падать на CHECK-констрейнтах (content_month) и невалидных URL/timestamp.
+  const normalizeLessonPayload = <T extends Partial<TrainingLessonFormData>>(data: T): T => {
+    const nullableStringFields: Array<keyof TrainingLessonFormData> = [
+      "description",
+      "content",
+      "video_url",
+      "audio_url",
+      "thumbnail_url",
+      "content_month",
+      "published_at",
+    ];
+    const out: any = { ...data };
+    for (const f of nullableStringFields) {
+      const v = out[f];
+      if (typeof v === "string" && v.trim() === "") {
+        out[f] = null;
+      }
+    }
+    return out as T;
+  };
+
   const createLesson = async (data: TrainingLessonFormData): Promise<boolean> => {
     try {
+      const payload = normalizeLessonPayload(data);
       const { error } = await supabase
         .from("training_lessons")
-        .insert(data);
+        .insert(payload);
 
       if (error) throw error;
 
       toast.success("Урок создан");
       await fetchLessons();
       return true;
-    } catch (error) {
-      console.error("Error creating lesson:", error);
-      toast.error("Ошибка создания урока");
+    } catch (error: any) {
+      console.error("[createLesson] ERROR:", { error, payload: data });
+      const msg = error?.message || error?.details || error?.hint || "неизвестная ошибка";
+      toast.error(`Ошибка создания урока: ${msg}`);
       return false;
     }
   };
 
   const updateLesson = async (id: string, data: Partial<TrainingLessonFormData>): Promise<boolean> => {
     try {
+      const payload = normalizeLessonPayload(data);
       const { error } = await supabase
         .from("training_lessons")
-        .update(data)
+        .update(payload)
         .eq("id", id);
 
       if (error) throw error;
@@ -216,9 +241,10 @@ export function useTrainingLessons(moduleId?: string) {
       toast.success("Урок обновлён");
       await fetchLessons();
       return true;
-    } catch (error) {
-      console.error("Error updating lesson:", error);
-      toast.error("Ошибка обновления урока");
+    } catch (error: any) {
+      console.error("[updateLesson] ERROR:", { error, id, payload: data });
+      const msg = error?.message || error?.details || error?.hint || "неизвестная ошибка";
+      toast.error(`Ошибка обновления урока: ${msg}`);
       return false;
     }
   };
