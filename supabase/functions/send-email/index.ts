@@ -270,6 +270,20 @@ async function sendEmailViaSMTP(params: {
     conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
   }
 
+  // Write ALL bytes — Deno's conn.write is not guaranteed to write everything
+  // in one call, especially over TLS with large payloads (PDF attachments).
+  // Partial writes were the root cause of "peer closed connection without
+  // sending TLS close_notify" — server dropped the socket because the client
+  // stopped mid-message.
+  async function writeAll(data: Uint8Array): Promise<void> {
+    let offset = 0;
+    while (offset < data.byteLength) {
+      const n = await conn.write(data.subarray(offset));
+      if (n <= 0) throw new Error("SMTP write returned 0 bytes (peer closed?)");
+      offset += n;
+    }
+  }
+
   async function readResponse(): Promise<string> {
     let out = "";
     const buf = new Uint8Array(4096);
@@ -288,7 +302,7 @@ async function sendEmailViaSMTP(params: {
                     ? cmd.substring(0, 50) + "..." : cmd;
     console.log(`SMTP > ${safeCmd}`);
 
-    await conn.write(encoder.encode(cmd + "\r\n"));
+    await writeAll(encoder.encode(cmd + "\r\n"));
     const response = await readResponse();
     console.log(`SMTP < ${response.trim()}`);
 
