@@ -478,9 +478,9 @@ Deno.serve(async (req) => {
       null;
     if (apiKey) {
       try {
-        const subIdNum = /^\d+$/.test(String(normalized.sender_id))
-          ? Number(normalized.sender_id)
-          : normalized.sender_id;
+        const subIdNum = /^\d+$/.test(String(normalized.subscriber_id))
+          ? Number(normalized.subscriber_id)
+          : normalized.subscriber_id;
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 4000);
         const resp = await fetch(
@@ -510,9 +510,9 @@ Deno.serve(async (req) => {
   try {
     const contactPayload: Record<string, unknown> = {
       instagram_account_id: accountId!,
-      instagram_user_id: normalized.sender_id,
-      instagram_username: normalized.sender_name,
-      full_name: normalized.sender_name,
+      instagram_user_id: normalized.subscriber_id,
+      instagram_username: normalized.subscriber_name,
+      full_name: normalized.subscriber_name,
       provider_kind: "manychat",
       updated_at: new Date().toISOString(),
     };
@@ -530,6 +530,8 @@ Deno.serve(async (req) => {
   }
 
   // 7) Insert message with idempotency on UNIQUE(account_id, external_message_id)
+  // peer_id is always the Instagram contact (subscriber), regardless of direction —
+  // that's how the inbox groups messages into a dialog.
   const { error: msgErr, data: inserted } = await supabase
     .from("instagram_messages")
     .insert({
@@ -538,20 +540,22 @@ Deno.serve(async (req) => {
       provider_message_id: normalized.external_message_id,
       sender_id: normalized.sender_id,
       sender_name: normalized.sender_name,
-      peer_id: normalized.sender_id,
+      peer_id: normalized.subscriber_id,
+      recipient_id: normalized.direction === "outbound" ? normalized.subscriber_id : null,
       ig_thread_id: normalized.ig_thread_id,
       thread_key: normalized.thread_key,
-      direction: "inbound",
+      direction: normalized.direction,
       message_text: normalized.message_text,
       media_url: normalized.media_url,
       media_type: normalized.media_type,
       raw_payload: rawBody,
-      is_read: false,
+      is_read: normalized.direction === "outbound" ? true : false,
       provider_kind: "manychat",
-      status: "received",
+      status: normalized.direction === "outbound" ? "sent" : "received",
     })
     .select("id")
     .maybeSingle();
+
 
   if (msgErr) {
     // Soft-dedup on unique violation
