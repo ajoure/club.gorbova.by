@@ -304,42 +304,63 @@ Deno.serve(async (req) => {
   }
 
   // 9. Отправка счёта на email/telegram — через canonical-document-send.
-  // Для invoice-only ЮЛ/ИП payment-guard в send'е пропускает pre-payment счёт.
+  // Fire-and-forget: SMTP-отправка PDF-вложения может тянуться до 2 минут
+  // (Yandex тайм-аут после DATA), что раньше подвешивало диалог «Выписываем
+  // счёт…». Клиенту важен только факт формирования счёта; результат отправки
+  // писем/Telegram фиксируется в audit_logs асинхронно.
   if (documentId) {
-    try {
-      const sendResp = await fetch(
-        `${url}/functions/v1/canonical-document-send`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: authHeader,
-            apikey: anon,
+    const sendPromise = (async () => {
+      try {
+        const sendResp = await fetch(
+          `${url}/functions/v1/canonical-document-send`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: authHeader,
+              apikey: anon,
+            },
+            body: JSON.stringify({
+              document_id: documentId,
+              send_email: true,
+              send_telegram: true,
+            }),
           },
-          body: JSON.stringify({
-            document_id: documentId,
-            send_email: true,
-            send_telegram: true,
-          }),
-        },
-      );
-      const sendJson = await sendResp.json().catch(() => ({}));
-      if (sendResp.ok) {
-        emailSent = !!sendJson?.results?.email_sent;
-        telegramSent = !!sendJson?.results?.telegram_sent;
-      } else {
-        console.error("[invoice-checkout-issue] send failed", sendResp.status, sendJson);
-        await admin.from("audit_logs").insert({
-          actor_user_id: user.id,
-          actor_type: "user",
-          action: "invoice_checkout.document_send_failed",
-          meta: { order_id: newOrder.id, document_id: documentId, status: sendResp.status, response: sendJson },
-        });
+        );
+        const sendJson = await sendResp.json().catch(() => ({}));
+        if (!sendResp.ok) {
+          console.error("[invoice-checkout-issue] send failed", sendResp.status, sendJson);
+          await admin.from("audit_logs").insert({
+            actor_user_id: user.id,
+            actor_type: "user",
+            action: "invoice_checkout.document_send_failed",
+            meta: { order_id: newOrder.id, document_id: documentId, status: sendResp.status, response: sendJson },
+          });
+        } else {
+          await admin.from("audit_logs").insert({
+            actor_user_id: user.id,
+            actor_type: "user",
+            action: "invoice_checkout.document_send_completed",
+            meta: { order_id: newOrder.id, document_id: documentId, results: sendJson?.results ?? null },
+          });
+        }
+      } catch (e) {
+        console.error("[invoice-checkout-issue] send exception", e);
       }
-    } catch (e) {
-      console.error("[invoice-checkout-issue] send exception", e);
+    })();
+    // @ts-ignore — EdgeRuntime доступен в Deno Deploy / Supabase Edge Runtime.
+    if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any)?.waitUntil) {
+      // @ts-ignore
+      (EdgeRuntime as any).waitUntil(sendPromise);
     }
+    // Иначе просто не ждём — ответ уходит клиенту сразу.
   }
+
+  // Email/Telegram отправляются в фоне. В ответе помечаем как «в процессе»,
+  // клиент показывает нейтральный текст без обещания доставки.
+  const emailSent = false;
+  const telegramSent = false;
+
 
   return json({
     order_id: newOrder.id,
