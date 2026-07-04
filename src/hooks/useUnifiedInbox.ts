@@ -355,6 +355,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: unread > 0,
         isPinned: !!d.is_pinned,
         isFavorite: false,
+        capabilities: IG_CAPS,
         meta: {
           profileId: (igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.profile_id) ?? d.profile_id ?? null,
           instagramAccountId: d.__accountId,
