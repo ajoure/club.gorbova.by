@@ -292,6 +292,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const rightPanel = selected ? (
     <div className="h-full flex flex-col">
+      {selected.source === "instagram" && <IgContactHeader row={selected} />}
       <ChannelPicker currentRow={selected} allRows={rows} onSelect={setSelectedKey} />
       <div className="flex-1 min-h-0">
         <ChatPanel row={selected} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
