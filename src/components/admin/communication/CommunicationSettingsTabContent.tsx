@@ -638,29 +638,27 @@ export function CommunicationSettingsTabContent() {
 }
 
 function UnifiedInboxToggleCard() {
-  const [enabled, setEnabled] = useUnifiedInboxFlag();
+  // KILL-SWITCH 2026-07-04: тумблер disabled после регрессии mono-Telegram.
+  // Хук вызываем, чтобы очистить сохранённое localStorage-значение.
+  useUnifiedInboxFlag();
   return (
-    <GlassCard className="p-6">
+    <GlassCard className="p-6 opacity-80">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <MessageSquare className="w-5 h-5 text-primary" />
+            <MessageSquare className="w-5 h-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold">Единая лента «Сообщения»</h2>
-            <Badge variant="outline" className="text-[10px]">beta</Badge>
+            <Badge variant="outline" className="text-[10px]">temporarily disabled</Badge>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Показывает в одной ленте Telegram, Instagram и Техподдержку. Неотвеченные — сверху,
-            каждая строка с бейджем источника. Email остаётся отдельным пунктом в дропдауне.
-            Моно-ленты продолжают работать как раньше.
+            Временно отключено (rollback 2026-07-04): в бете единой ленты
+            сломался базовый сценарий Telegram — история сообщений не
+            открывалась. Моно-ленты Telegram/Instagram/Техподдержка работают
+            как раньше. Включение вернём после proof исправления контракта
+            ContactTelegramChat.
           </p>
         </div>
-        <Switch
-          checked={enabled}
-          onCheckedChange={(v) => {
-            setEnabled(v);
-            toast.success(v ? "Единая лента включена" : "Единая лента выключена");
-          }}
-        />
+        <Switch checked={false} disabled onCheckedChange={() => {}} />
       </div>
     </GlassCard>
   );
