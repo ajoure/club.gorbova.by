@@ -1,142 +1,315 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **P4 нельзя формулировать как “нужен ваш UI-verify” без собственного proof.**  
-Исполнитель должен сам приложить максимум автоматического/ручного proof из Preview/Playwright. Мой UI-check может быть финальным подтверждением, но не заменяет его regression-gate.
+1. **Opt-in для всех сотрудников контакт-центра — да, но не называть это production rollout.**
   &nbsp;
-  Добавить:
-2. **BADGES-SHORT не должен быть единственной правкой, если P0/P1/P2 read-only найдёт несоответствие.**  
-В плане правильно сказано “если не совпадает — стоп”, но нужно уточнить:
-  &nbsp;
+  Формулировка должна быть:
   ```text
-  Если P0/P1/P2 failed — сначала исправить failed block, потом BADGES-SHORT.
+  Unified inbox V2 — personal opt-in for contact-center users
+  Full production rollout by default — still deferred
   ```
-  Иначе он может снова сделать только badge и проигнорировать регрессию.
-3. **Roadmap не должен закрывать HOTFIX / HEADERS / CHANNELS до regression-gate.**  
-Формулировка корректная, но добавить явный запрет:
-4. **В P0 добавить проверку фактического runtime результата profile fetch.**  
-Кодовая проверка `.in()` недостаточна. Нужно в proof показать:
-5. **В P3 SourceBadge оставить доступность.**  
-Если убирается `label`, полный источник можно оставить в `title` / `aria-label`, чтобы при наведении было понятно, какой бот/аккаунт скрыт:
+  То есть фича доступна для включения сотрудником, но не включается всем автоматически.
+2. **Проверку доступа через** `useSectionAccess("communication")` **сначала подтвердить discovery.**
   &nbsp;
+  Перед правкой хука проверить:
+  - как именно сейчас гейтится `/admin/communication`;
+  - есть ли `useSectionAccess("communication")`;
+  - что он возвращает: boolean / object / loading;
+  - как ведёт себя при loading;
+  - не вызовет ли это мигание пункта «Все».
+  Если access ещё `loading`, хук должен возвращать:
   ```text
-  visible text = base
-  title/aria-label = sourceLabel, если передан
+  enabled=false
+  source="default-off"
+  isLoading=true
   ```
-  Это не должно возвращать длинный текст в UI.
-6. **В P5 добавить proof по ошибке привязки, которая была на скрине.**  
-Отдельно показать:
-  &nbsp;
+  или аналогично безопасно скрывать unified до завершения проверки.
+3. **Не удалять все старые ключи без миграции состояния.**
+  Правильно:
+  - `contact_center_unified_inbox_v2_test=1` → один раз мигрировать в `contact_center_unified_inbox_optin=1`;
+  - `contact_center_unified_inbox_kill` → удалить;
+  - legacy `contact_center_unified_inbox` → удалить/игнорировать;
+  - после миграции старые ключи удалить.
+  В proof показать, что старый `v2_test` больше не управляет фичей напрямую.
+4. **Superadmin/admin больше не auto-ON — принять.**
+  Это нормальное упрощение: все включают через один switch.
+  Но в Settings-карточке для superadmin не писать «включено по роли». Только:
+5. **Switch должен быть disabled, если нет доступа к контакт-центру или access loading.**
+  Для пользователя без доступа:
+  - карточку лучше вообще не показывать;
+  - если показывается — switch disabled и текст «Нет доступа к контакт-центру».
+  Но обычный пользователь без доступа не должен получить пункт «Все» через localStorage opt-in.
+6. **LocalStorage opt-in — per-browser, не per-user.**
+  В плане написано “per-user, per-browser”, но localStorage сам по себе не per-user. Если в одном браузере сменить аккаунт, ключ останется.
+  Поэтому обязательно namespace ключа по user id:
   ```text
-  До: audit_logs_actor_type_check error
-  После: link succeeds, no red toast, audit row exists
+  contact_center_unified_inbox_optin:<user_id>
   ```
-  Если before-скрин только пользовательский — сослаться на него как external proof.
-7. **В финальном отчёте добавить “known limitation”.**  
-Обязательно указать:
-  &nbsp;
+  Либо хранить JSON map:
+  ```json
+  { "<user_id>": true }
+  ```
+  Без этого один сотрудник может включить unified, выйти, другой войдёт в том же браузере и тоже увидит unified.
+7. **Settings-card должна читать/писать user-scoped key.**
+  Не использовать общий:
   ```text
-  Unified enabled only for superadmin. This is not full production rollout.
+  contact_center_unified_inbox_optin
   ```
-  Иначе опять будет выглядеть как будто задача закрыта для всех операторов.
-8. **В P4 добавить проверку refresh после merge.**  
-Нужно проверить не только обновление без reload, но и после hard refresh:
-9. **В P4 добавить проверку unlink после refresh.**
-10. **Финальный статус использовать строго так:**
+  Использовать user-scoped storage. Это обязательная правка.
+8. **Убрать kill-switch можно, но оставить code rollback path.**
+  В proof указать:
+9. **Hover actions нужно изолировать от выбора строки.**
+  Для каждой иконки:
+  - `event.stopPropagation()`;
+  - `event.preventDefault()`;
+  - disabled/loading state на время mutation;
+  - optimistic update либо invalidate после success;
+  - error toast при ошибке.
+10. **Telegram pin/favorite: проверить ключ** `contact_user_id`**.**
+
+В плане указано:
 
 ```text
-Unified inbox V2 — PASS for superadmin rollout
-Operators — old UI by default
-Full production rollout — NOT STARTED / deferred
+contact_user_id: row.meta.telegramUserId
 ```
 
-После этих правок план утверждён. Выполнять единым финальным проходом.
+Это потенциально опасно. Нужно сверить с mono-Telegram.
+
+Если `chat_preferences.contact_user_id` в mono использует:
+
+- `profiles.user_id` — использовать его;
+- numeric `telegram_user_id` — использовать его;
+- другой id — использовать ровно тот же контракт.
+
+Не угадывать. Перед реализацией сделать grep по `InboxTabContent`.
+
+11. **Telegram mark-read должен использовать тот же boundary, что mono.**
+
+В прошлых патчах уже была проблема с mark-read boundary. Для unified mark-read нельзя просто вызвать `mark_dialog_read_v2` без правильных параметров.
+
+Проверить mono-вызов:
+
+- `contact_user_id`;
+- `bot_id`;
+- `last_message_at` / boundary;
+- observed boundary перед отправкой.
+
+Использовать тот же контракт.
+
+12. **Instagram pin: проверить реальный unique/upsert contract.**
+
+Перед upsert в `instagram_dialog_preferences` проверить:
+
+- имя полей;
+- unique index;
+- нужен ли `admin_user_id`;
+- `account_id`;
+- `thread_key`;
+- текущая реализация в `InstagramInboxView`.
+
+Использовать ровно тот же код/хук, что mono-IG, если возможно.
+
+13. **Instagram favorite не показывать вообще, не disabled.**
+
+Раз поля нет — лучше не показывать иконку `Star` для IG, чтобы не плодить шум.
+
+Tooltip “не поддерживается” допустим только если пользователь явно ожидает кнопку, но в unified-строке лучше чище: нет функции — нет иконки.
+
+14. **Support pin не показывать вообще.**
+
+Аналогично: нет поля — нет иконки.
+
+15. **Support mark-read уточнить.**
+
+В плане:
+
+```text
+has_unread_admin=false
+```
+
+Нужно проверить mono-Support, как именно он помечает прочитанным:
+
+- mutation;
+- RPC;
+- status;
+- `read_at`;
+- `has_unread_admin`.
+
+Не менять статус тикета. Только read-flag, если он уже есть и используется.
+
+16. **Support favorite через** `is_starred` **— да, но проверить права/RLS.**
+
+Использовать тот же mutation, что `SupportTabContent`, чтобы не получить 403/RLS.
+
+17. `useUnifiedInbox` **должен отдавать capabilities для строки.**
+
+Чтобы UI не гадал, лучше добавить normalized capabilities:
+
+```ts
+row.capabilities = {
+  canPin: boolean,
+  canFavorite: boolean,
+  canMarkRead: boolean
+}
+```
+
+Или локально вычислить в компоненте, но по одной таблице правил.
+
+18. **Mark-read иконку показывать только если есть unread.**
+
+Если `unread_count=0` и `is_unanswered=false`, `Check` лучше скрыть или disabled. Иначе оператор будет нажимать действие без эффекта.
+
+19. **После pin/favorite нужно проверить визуальный результат.**
+
+Сейчас сортировка не меняется — это допустимо. Но индикатор должен обновиться:
+
+- pin badge;
+- star badge;
+- состояние иконки active/inactive;
+- сохранение после refresh.
+
+20. **В DoD добавить проверку persistence после hard refresh.**
+
+Для каждого источника:
+
+- Telegram pin/favorite сохраняется после refresh;
+- IG pin сохраняется после refresh;
+- Support star сохраняется после refresh;
+- mark-read сохраняется после refresh.
+
+21. **Не менять сортировку сейчас — согласен.**
+
+Но в proof явно указать:
+
+```text
+Pin/favorite indicators implemented; sorting by pin/favorite remains deferred.
+```
+
+Иначе пользователь может ожидать, что pin поднимет строку вверх.
+
+22. **Добавить proof по отсутствию регрессии opt-in.**
+
+Проверить:
+
+- user A включает opt-in;
+- user B в том же браузере не получает opt-in, если ключ user-scoped;
+- access denied user не включает unified через localStorage.
+
+Если невозможно проверить B через UI — сделать unit/hook proof или кодовый proof.
+
+23. **Название патча.**
+
+Использовать единый отчёт:
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-OPTIN-AND-ROW-ACTIONS
+```
+
+24. **Proof-файл:**
+
+```text
+docs/audit/2026-07-04-unified-inbox-v2-optin-and-row-actions.md
+```
+
+25. **В итоговом статусе указать:**
+
+```text
+Unified inbox V2 — available as personal opt-in for contact-center users
+Default for all users — OFF
+Full forced production rollout — deferred
+Row actions — implemented per source capability
+```
+
+26. **Если окажется, что существующих preferences/RPC не хватает — остановиться, не делать миграции.**
+
+Особенно для:
+
+- IG favorite;
+- Support pin;
+- Telegram preference source separation.
+
+В этом патче запрещены новые таблицы/миграции, значит неподдерживаемые действия скрываются, а не реализуются костылём.
+
+После этих правок план утверждён. Выполнять одним проходом.
 
 &nbsp;
 
-PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2 — final stabilization
+План:
 
-Единый финальный проход. BADGES-SHORT — только один пункт из шести, не заменяет остальные.
+## Область изменений
 
-## P0. Подтвердить hotfix (код + БД, без правок)
+Три отдельных, независимых пункта из последнего сообщения. Backend-схему не трогаем — используем уже существующие таблицы preferences и RPC. Никаких новых edge-функций, миграций и bridge-таблиц.
 
-Читаемая верификация без изменений:
+## Задача 1. Единая лента — opt-in для всех сотрудников контакт-центра
 
-- `src/components/admin/communication/InboxTabContent.tsx` и `src/hooks/useUnifiedInbox.ts` — блок `tgProfiles` разведён на два `.in()` + де-дуп; ошибки логируются, не проглатываются.
-- `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='audit_logs_actor_type_check'` — `{user, system}`.
-- Тело `link_instagram_contact_to_profile` / `unlink_instagram_contact_from_profile` пишет `actor_type='user'`; сохранён guard `has_role(admin|superadmin)` → 42501.
+**Изменение модели rollout** в `src/hooks/useContactCenterFeatureFlag.ts`:
 
-Если что-то не совпадает — стоп, чиним до косметики.
+- Ключ localStorage `contact_center_unified_inbox_optin` (per-user, per-browser). Значение `1` = «сотрудник сам включил». Дефолт — выключено.
+- Право включать = у пользователя есть доступ в контакт-центр (проверяем через уже существующий `useSectionAccess("communication")` / текущий gate раздела; не роль). Superadmin/admin право сохраняют по умолчанию.
+- Матрица включения (новая):
+  - `optin=1` && есть доступ в контакт-центр → `enabled=true`, `source="user-optin"`
+  - Иначе → `enabled=false`, `source="default-off"`
+- Убираем ветки `superadmin` (роль больше не даёт авто-ON — если superadmin хочет unified, он тоже включает opt-in; это единообразно и предсказуемо) и `qa-override` (больше не нужны). Совместимость: старый `contact_center_unified_inbox_v2_test` мигрируем на `_optin` при первом монтировании, `_kill` вычищаем (см. Задача 2).
+- Тип `UnifiedInboxFlagSource` = `"user-optin" | "default-off"`. Оставляем `useUnifiedInboxFlag()` (совместимость).
 
-## P1. Подтвердить HEADERS (код)
+**UI карточки в Settings** — `src/components/admin/communication/CommunicationSettingsTabContent.tsx`, компонент `UnifiedInboxToggleCard`:
 
-- `UnifiedInboxView` рендерит `UnifiedChatHeader` для всех трёх источников.
-- `ContactInstagramChat` вызывается с `hideHeader` — дубля нет.
-- `UnifiedChatHeader`: clickable name/avatar → `ContactDetailSheet` (in-place Sheet), для IG без profileId — icon-кнопка `Link2` + tooltip; для TG/Support без profileId — только `Link2Off`+tooltip, без кнопки.
-- `AttachProfileDialog.onSuccess` инвалидирует `unified-ig-dialogs / unified-ig-contacts / profile-channels` → header обновляется без reload.
+- Заголовок: «Единая лента «Сообщения»» (без «controlled rollout»).
+- Основной элемент — `Switch` с подписью «Включить единую ленту для меня». Управляет `optin`. Виден всем, у кого есть доступ в контакт-центр.
+- Пояснение: «Личная настройка. Работает только в этом браузере. Не влияет на других сотрудников.»
+- Badge статуса: ON / OFF, без `source=...`.
 
-## P2. Подтвердить CHANNELS / ChannelPicker (код)
+## Задача 2. Убрать «Аварийно выключить (этот браузер)»
 
-- `ChannelPicker` — только read-only переключатель существующих каналов профиля; не создаёт thread/ticket/composer.
-- TG bot-selector остаётся внутри `ContactTelegramChat`.
-- `ChannelPicker` не должен появляться, когда unified недоступен пользователю (гейт через тот же rollout-флаг).
+- В `UnifiedInboxToggleCard` удаляем блок с кнопками `setKill(true/false)` и с индикацией `killActive`.
+- В `useContactCenterFeatureFlag.ts` убираем `KILL_KEY`, `killActive`, `setKill`, `canManageKill` из публичного API типа; при инициализации хука вычищаем старый ключ `contact_center_unified_inbox_kill` из localStorage (совместимость).
+- Проверить, что kill-switch нигде больше не читается. Если находим ссылки — удаляем/приводим к opt-in.
 
-## P3. Реализовать BADGES-SHORT (единственная правка кода в этом патче)
+## Задача 3. Действия на строке (pin / favorite / mark read) для всех источников
 
-Файл: `src/components/admin/communication/unified/SourceBadge.tsx`
+В `src/components/admin/communication/unified/UnifiedInboxView.tsx` добавляем hover-действия справа от строки, единообразно для всех трёх источников. Иконки как в моно-Telegram: `Pin`, `Star`, `Check` (mark read). Появляются на hover (`opacity-0 group-hover:opacity-100`), не сдвигают лейаут, каждая с `title` и `stopPropagation`.
 
-- `label` остаётся в props (обратная совместимость), помечается `@deprecated`.
-- В render игнорировать `label` — всегда рендерить только `base` (`Telegram` / `Instagram` / `Техподдержка`).
-- Цвета/иконки/классы не меняем; `max-w-[140px]` можно оставить.
-- `row.sourceLabel` в `useUnifiedInbox` **не трогаем** — используется в поиске (`filter`) и в per-message метаданных внутри чат-панелей.
+**Backend-мутации по источникам (без новых таблиц):**
 
-Никаких других файлов: `UnifiedInboxView` (desktop list + mobile top-bar), `UnifiedChatHeader` уже вызывают `<SourceBadge source label=…/>` — с новой реализацией отобразят только базовое имя автоматически.
+- **Telegram** — таблица `chat_preferences` (уже используется в `InboxTabContent`): upsert `{admin_user_id: user.id, contact_user_id: row.meta.telegramUserId, is_pinned|is_favorite: next}`; mark-read через RPC `mark_dialog_read_v2` (та же, что уже вызывается в моно). Инвалидация `["chat-preferences", user.id]` и `INBOX_DIALOGS_QK`.
+- **Instagram** — таблица `instagram_dialog_preferences` (уже используется в `InstagramInboxView`): upsert `is_pinned` по (account_id, thread_key). Favorite для IG в существующей схеме нет — иконку fav для IG не показываем (или показываем `disabled` с tooltip). Mark-read через уже существующий вызов `instagram-admin-chat / mark_read` (уже реализован в `markRead`). Инвалидация `["unified-ig-dialogs"]`.
+- **Support** — колонка `support_tickets.is_starred` (уже используется в `SupportTabContent`): update по ticket_id для «favorite». Pin для тикетов в схеме отсутствует — иконку pin для support не показываем. Mark-read — уже реализован (`has_unread_admin=false`).
 
-## P4. Финальный regression-gate (superadmin UI)
+**Правила показа иконок в строке:**
 
-Полный чек-лист из вашего сообщения — mono TG / unified «Все» / IG merge / mono IG · Support · Email · TG / rollout & access (kill-switch, ordinary operator, QA override, superadmin).
 
-## P5. Consolidated proof
+| Источник  | Pin | Favorite | Mark read |
+| --------- | --- | -------- | --------- |
+| Telegram  | ✓   | ✓        | ✓         |
+| Instagram | ✓   | —        | ✓ (уже)   |
+| Support   | —   | ✓ (star) | ✓ (уже)   |
 
-Создать `docs/audit/2026-07-04-unified-inbox-v2-final-stabilization.md`:
 
-- Список патчей и статус по каждому блоку.
-- Screenshots: mono TG restored; unified TG/IG/Support; короткий SourceBadge; IG attach dialog; ContactDetailSheet in-place.
-- SQL proof: `audit_logs` link/unlink записи; RPC non-admin → 42501.
-- Kill-switch OFF / ordinary operator OFF proof.
-- Список изменённых файлов (включая новый `SourceBadge.tsx` diff).
-- Deferred Phase 2 (общий composer, bulk actions, автолинковка, server-side rollout, bridge-таблицы).
+Никаких новых полей в БД. Если пользователь захочет расширить (IG favorite, Support pin) — это отдельная задача с миграцией, не в этом патче.
 
-## P6. Consolidated final report
+**Индикаторы в строке:** уже отрисовываются `row.isPinned` и `row.isFavorite`. `useUnifiedInbox` для Support сейчас не отдаёт `is_starred` в `isFavorite` — правим: `isFavorite: !!t.is_starred`.
 
-Один отчёт «PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2 — final stabilization» с построчным статусом:
+**Сортировка/фильтрация:** оставляем как есть (не расширяем скоуп — pin/fav сейчас показываются только как метки; отдельная задача — добавить sort-by-pin).
 
-```
-MONO-AND-MERGE-HOTFIX — PASS
-HEADERS — PASS
-CHANNELS — PASS under superadmin rollout
-BADGES-SHORT — PASS
-Unified inbox V2 — enabled for superadmin only
-Operators — old UI by default
-Kill-switch — available
-Phase 2 — deferred
-```
+## Файлы, которые будут изменены
 
-Если хоть один блок regression-gate падает — вместо PASS: `PARTIAL / failed block: <название>`.
+- `src/hooks/useContactCenterFeatureFlag.ts` — новая матрица opt-in, удалить kill.
+- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — UI карточки: Switch, убрать kill-кнопку.
+- `src/components/admin/communication/unified/UnifiedInboxView.tsx` — hover-иконки pin/fav/mark-read + мутации.
+- `src/hooks/useUnifiedInbox.ts` — `isFavorite` для support из `is_starred`.
+- Если найдётся использование `killActive`/`canManageKill` вне Settings — почистить.
+
+## Definition of Done
+
+1. Любой сотрудник с доступом в контакт-центр видит в «Настройки → Единая лента» переключатель, включает — «Все» появляется в списке табов; выключает — исчезает.
+2. Superadmin/admin ведут себя так же (opt-in через тот же switch), без авто-ON по роли.
+3. Кнопка «Аварийно выключить (этот браузер)» удалена; ссылок на `setKill`/`killActive` в коде не осталось.
+4. На каждой строке unified-ленты при hover доступны иконки согласно таблице выше; клик по иконке не открывает диалог; статус (закреплено/избранное) сохраняется и виден после `refetch`.
+5. Существующие блоки MONO-TG / IG merge / headers / channels / badges не регрессируют (проверка Playwright: mono-TG имена/история; unified «Все» открывается; IG merge без красной ошибки; бейджи короткие).
 
 ## Что НЕ делаем
 
-Общий composer, bulk-actions, автолинковка, server-side rollout-флаг, новые IG/support разговоры, bridge-таблицы, замена `instagram_contacts.profile_id`, правки Email, `get_*_dialogs_v1`, edge-функций, включение unified обычным операторам.
-
-## Порядок исполнения в build-режиме
-
-1. P0/P1/P2 — read-only верификация (grep/psql/чтение файлов), фиксируется в proof.
-2. P3 — единственная правка кода: `SourceBadge.tsx`.
-3. Typecheck.
-4. P4 — regression-gate под superadmin (нужен ваш UI-verify; я могу дополнительно прогнать Playwright по mono TG / unified list / attach flow как автопроверку).
-5. P5 — создать consolidated proof.
-6. P6 — вернуть consolidated final report.
-
-## Roadmap
-
-- Создать `PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-BADGES-SHORT` и `PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FINAL-STABILIZATION`.
-- Существующие HOTFIX / HEADERS / CHANNELS перевести в PASS только после успешного regression-gate; иначе — PARTIAL с указанием failed block.
+- Не создаём новые таблицы/RPC/edge-функции.
+- Не добавляем IG-favorite и Support-pin (нет полей в схеме).
+- Не меняем сортировку/фильтрацию по pin/fav (отдельная задача при необходимости).
+- Не открываем unified обычным операторам «по умолчанию» — только через их собственный opt-in.
+- Не трогаем production rollout флаг (остаётся deferred).
