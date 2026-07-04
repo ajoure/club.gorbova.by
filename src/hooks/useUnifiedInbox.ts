@@ -296,6 +296,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
         meta: {
+          profileId: p?.id ?? null,
           telegramUserId: d.user_id,
           telegramNumericId: p?.telegram_user_id ?? null,
           telegramUsername: p?.telegram_username ?? null,
