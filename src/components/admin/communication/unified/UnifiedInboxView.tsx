@@ -70,6 +70,10 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
    */
   const [lastSelectedSourceKey, setLastSelectedSourceKey] = useState<string | null>(null);
 
+  // PATCH-ADMIN-INITIATE-SUPPORT-TICKET: диалог создания обращения из карточки контакта.
+  const [initiateFor, setInitiateFor] = useState<UnifiedContactRow | null>(null);
+  const [pendingSupportForProfileId, setPendingSupportForProfileId] = useState<string | null>(null);
+
   const [panelSize] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(PANEL_KEY);
