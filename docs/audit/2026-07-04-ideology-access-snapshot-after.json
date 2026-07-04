@@ -1,0 +1,530 @@
+[
+    {
+        "id": "e125b5fc-4553-4a23-a6bb-7352af99b318",
+        "notes": "\n[2026-07-04] deactivated: split into per-tariff rules for product Ideology",
+        "priority": 0,
+        "is_active": false,
+        "tariff_id": null,
+        "conditions": null,
+        "created_at": "2026-07-02T10:39:41.128744+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "fa547c41-3a84-4c4f-904a-427332a0506e",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Gorbova Club (чат + канал)",
+        "duration_days": null,
+        "grant_target_type": "club"
+    },
+    {
+        "id": "01e6b2da-3362-4f04-8106-1abff3308063",
+        "notes": "\n[2026-07-04] deactivated: split into per-tariff rules for product Ideology",
+        "priority": 0,
+        "is_active": false,
+        "tariff_id": null,
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_package_ids": [
+                "06068dcf-6943-425c-aa6b-8bfaa550cfd2"
+            ]
+        },
+        "created_at": "2026-07-02T10:27:17.472621+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "document_generation",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Пакет: Идеология",
+        "duration_days": null,
+        "grant_target_type": "document_generation"
+    },
+    {
+        "id": "5f965559-5e6d-429d-9ba7-696d37722ca5",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": null,
+        "conditions": {
+            "match_mode": "per_product",
+            "rule_purpose": "bonus",
+            "condition_type": "prior_purchase",
+            "target_product_ids": [
+                "4fc18564-774e-43dd-9444-26681c9b40a0"
+            ],
+            "required_product_id": "4fc18564-774e-43dd-9444-26681c9b40a0",
+            "required_product_ids": [
+                "4fc18564-774e-43dd-9444-26681c9b40a0"
+            ]
+        },
+        "created_at": "2026-07-02T10:26:28.148496+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "4fc18564-774e-43dd-9444-26681c9b40a0",
+        "updated_at": "2026-07-02T10:26:28.148496+00:00",
+        "updated_by": null,
+        "target_label": "Подоходный налог с физлиц",
+        "duration_days": null,
+        "grant_target_type": "product_access"
+    },
+    {
+        "id": "6edb71b4-cf23-4908-a589-d73829711a1d",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": null,
+        "conditions": {
+            "match_mode": "per_product",
+            "rule_purpose": "bonus",
+            "condition_type": "prior_purchase",
+            "target_product_ids": [
+                "64d9f812-617c-41a8-b3dc-bb113156d6f3",
+                "7101ed3c-7839-4a74-ad95-aa0660369b22",
+                "d7effaf4-9be0-4ce2-971b-e02fe2a85a9a",
+                "9187db54-8f57-42eb-bbcb-d7103d2459a9",
+                "99f1f156-f384-417e-bdf8-9203eb3c9d42",
+                "abee24cd-5c8b-4111-a6cb-7dee7acf168c",
+                "064dd768-de8b-40db-89bc-f8d4a7e442ba",
+                "f833c846-a78d-4096-9dac-b8417d588371",
+                "ea98d043-e852-443f-8807-6e77de6a5e1f"
+            ],
+            "required_product_ids": [
+                "64d9f812-617c-41a8-b3dc-bb113156d6f3",
+                "7101ed3c-7839-4a74-ad95-aa0660369b22",
+                "d7effaf4-9be0-4ce2-971b-e02fe2a85a9a",
+                "9187db54-8f57-42eb-bbcb-d7103d2459a9",
+                "99f1f156-f384-417e-bdf8-9203eb3c9d42",
+                "abee24cd-5c8b-4111-a6cb-7dee7acf168c",
+                "064dd768-de8b-40db-89bc-f8d4a7e442ba",
+                "f833c846-a78d-4096-9dac-b8417d588371",
+                "ea98d043-e852-443f-8807-6e77de6a5e1f"
+            ]
+        },
+        "created_at": "2026-07-02T10:25:40.443094+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "64d9f812-617c-41a8-b3dc-bb113156d6f3",
+        "updated_at": "2026-07-02T10:25:40.443094+00:00",
+        "updated_by": null,
+        "target_label": "9 продуктов: Ценный бухгалтер | 1 ступень 2.0 | Модуль: Грузо- и пассажироперевозки, Ценный бухгалтер | 1 ступень 2.0 и ещё 7",
+        "duration_days": null,
+        "grant_target_type": "product_access"
+    },
+    {
+        "id": "117caed9-3411-4235-a35c-68acdc218039",
+        "notes": "\n[2026-07-04] deactivated: split into per-tariff rules for product Ideology",
+        "priority": 0,
+        "is_active": false,
+        "tariff_id": null,
+        "conditions": {
+            "rule_purpose": "additional"
+        },
+        "created_at": "2026-07-02T10:28:33.703316+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "d0136a5c-7b7b-4991-b1cf-1755e2c684a4",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Нейросеть",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "aa75a2bc-7e03-4804-8baf-e5827362f835",
+        "notes": "\n[2026-07-04] deactivated: split into per-tariff rules for product Ideology",
+        "priority": 0,
+        "is_active": false,
+        "tariff_id": null,
+        "conditions": null,
+        "created_at": "2026-07-02T10:38:55.957191+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "93448ee2-1f9c-423e-b5d5-56ba9d74fe41",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "be85cbdd-3f3a-4c96-b319-4ca28ebfc9f7",
+        "notes": "\n[2026-07-04] deactivated: split into per-tariff rules for product Ideology",
+        "priority": 0,
+        "is_active": false,
+        "tariff_id": null,
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_lesson_ids": [
+            ],
+            "allowed_module_ids": [
+                "f5dc3e63-4cfd-40ba-9ce6-cee3b8790630",
+                "81cf626a-798e-4a17-aa14-8d55314b588d"
+            ],
+            "match_purchase_month": true,
+            "auto_include_new_modules": false
+        },
+        "created_at": "2026-06-30T22:44:37.05646+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "8b1fb03e-8743-4654-a07f-b6c03ca7517b",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "training_content"
+    },
+    {
+        "id": "89edea29-ff77-42a8-a93a-a6608ac8b794",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "19638a82-0438-47ea-a134-0793a0abf614",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "fa547c41-3a84-4c4f-904a-427332a0506e",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Gorbova Club (чат + канал)",
+        "duration_days": null,
+        "grant_target_type": "club"
+    },
+    {
+        "id": "b3b899f4-873a-43e0-9455-23d3588ebbaa",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "19638a82-0438-47ea-a134-0793a0abf614",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_package_ids": [
+                "06068dcf-6943-425c-aa6b-8bfaa550cfd2"
+            ]
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "document_generation",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Пакет: Идеология",
+        "duration_days": null,
+        "grant_target_type": "document_generation"
+    },
+    {
+        "id": "65afadc9-0125-4cbc-8975-833243cadb36",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "19638a82-0438-47ea-a134-0793a0abf614",
+        "conditions": {
+            "rule_purpose": "additional"
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "d0136a5c-7b7b-4991-b1cf-1755e2c684a4",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Нейросеть",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "5a360550-96bf-478b-b33a-d6c3e3ff6219",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "19638a82-0438-47ea-a134-0793a0abf614",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "93448ee2-1f9c-423e-b5d5-56ba9d74fe41",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "0f3bb197-31a7-4286-9f69-9a76d6c5359f",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "19638a82-0438-47ea-a134-0793a0abf614",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_lesson_ids": [
+            ],
+            "allowed_module_ids": [
+                "f5dc3e63-4cfd-40ba-9ce6-cee3b8790630",
+                "81cf626a-798e-4a17-aa14-8d55314b588d"
+            ],
+            "match_purchase_month": true,
+            "auto_include_new_modules": false
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "8b1fb03e-8743-4654-a07f-b6c03ca7517b",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний — Видеоответы + Итоги (за оплаченный месяц)",
+        "duration_days": null,
+        "grant_target_type": "training_content"
+    },
+    {
+        "id": "c002fc37-95e7-48f7-98f5-63262d971e37",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "6ff1769e-2103-42ab-ab70-c77dff2c2ed5",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "fa547c41-3a84-4c4f-904a-427332a0506e",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Gorbova Club (чат + канал)",
+        "duration_days": null,
+        "grant_target_type": "club"
+    },
+    {
+        "id": "a5857a7e-1d4b-4343-903b-5b8134b354e3",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "6ff1769e-2103-42ab-ab70-c77dff2c2ed5",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_package_ids": [
+                "06068dcf-6943-425c-aa6b-8bfaa550cfd2"
+            ]
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "document_generation",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Пакет: Идеология",
+        "duration_days": null,
+        "grant_target_type": "document_generation"
+    },
+    {
+        "id": "b009c3f9-a27a-44bc-80f7-0fe3e1bd6de6",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "6ff1769e-2103-42ab-ab70-c77dff2c2ed5",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "93448ee2-1f9c-423e-b5d5-56ba9d74fe41",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "6e0018ca-81ec-4c56-98b6-0ae9c5154f47",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "6ff1769e-2103-42ab-ab70-c77dff2c2ed5",
+        "conditions": {
+            "rule_purpose": "additional"
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "d0136a5c-7b7b-4991-b1cf-1755e2c684a4",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Нейросеть",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "15a7e104-5c29-4e76-90a7-16ce6b85b522",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "6ff1769e-2103-42ab-ab70-c77dff2c2ed5",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_lesson_ids": [
+            ],
+            "allowed_module_ids": [
+                "f5dc3e63-4cfd-40ba-9ce6-cee3b8790630",
+                "81cf626a-798e-4a17-aa14-8d55314b588d"
+            ],
+            "match_purchase_month": true,
+            "auto_include_new_modules": false
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "8b1fb03e-8743-4654-a07f-b6c03ca7517b",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний — Видеоответы + Итоги (за оплаченный месяц)",
+        "duration_days": null,
+        "grant_target_type": "training_content"
+    },
+    {
+        "id": "5f19be94-11ea-4b6b-84ce-fb96561ea046",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "85863b4b-c5e4-4f43-884d-2bdbe48d3914",
+        "conditions": null,
+        "created_at": "2026-06-26T12:01:44.520097+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "93448ee2-1f9c-423e-b5d5-56ba9d74fe41",
+        "updated_at": "2026-06-26T12:03:41.393794+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "c24ccddd-53f1-4ecc-b429-ebcf172b1ab5",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "85863b4b-c5e4-4f43-884d-2bdbe48d3914",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_lesson_ids": [
+            ],
+            "allowed_module_ids": [
+                "f5dc3e63-4cfd-40ba-9ce6-cee3b8790630"
+            ],
+            "match_purchase_month": false,
+            "auto_include_new_modules": false
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "8b1fb03e-8743-4654-a07f-b6c03ca7517b",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний — только Видеоответы",
+        "duration_days": null,
+        "grant_target_type": "training_content"
+    },
+    {
+        "id": "7fafbb6e-8112-4bd6-8961-4b5dc9bf1c6b",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "b7d458d6-bdb9-4f7a-a3b0-8bdf3a1113f5",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "fa547c41-3a84-4c4f-904a-427332a0506e",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Gorbova Club (чат + канал)",
+        "duration_days": null,
+        "grant_target_type": "club"
+    },
+    {
+        "id": "d6838bca-b7cf-4d02-880e-e8801c4440a8",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "b7d458d6-bdb9-4f7a-a3b0-8bdf3a1113f5",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_package_ids": [
+                "06068dcf-6943-425c-aa6b-8bfaa550cfd2"
+            ]
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "document_generation",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Пакет: Идеология",
+        "duration_days": null,
+        "grant_target_type": "document_generation"
+    },
+    {
+        "id": "48855cd6-f272-4f8f-9c8c-afccb72550da",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "b7d458d6-bdb9-4f7a-a3b0-8bdf3a1113f5",
+        "conditions": {
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "93448ee2-1f9c-423e-b5d5-56ba9d74fe41",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "abae3917-d763-4d5b-bdaf-80792429f11b",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "b7d458d6-bdb9-4f7a-a3b0-8bdf3a1113f5",
+        "conditions": {
+            "rule_purpose": "additional"
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "d0136a5c-7b7b-4991-b1cf-1755e2c684a4",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "Нейросеть",
+        "duration_days": null,
+        "grant_target_type": "section_access"
+    },
+    {
+        "id": "ff47e27e-8d24-495b-a2ff-7f5f7b7500e2",
+        "notes": null,
+        "priority": 0,
+        "is_active": true,
+        "tariff_id": "b7d458d6-bdb9-4f7a-a3b0-8bdf3a1113f5",
+        "conditions": {
+            "access_mode": "partial",
+            "allowed_lesson_ids": [
+            ],
+            "allowed_module_ids": [
+                "f5dc3e63-4cfd-40ba-9ce6-cee3b8790630",
+                "81cf626a-798e-4a17-aa14-8d55314b588d"
+            ],
+            "match_purchase_month": true,
+            "auto_include_new_modules": false
+        },
+        "created_at": "2026-07-04T13:26:03.597068+00:00",
+        "created_by": null,
+        "product_id": "3ea08f79-afe8-4361-81fe-4c0f318f9a2b",
+        "target_ref": "8b1fb03e-8743-4654-a07f-b6c03ca7517b",
+        "updated_at": "2026-07-04T13:26:03.597068+00:00",
+        "updated_by": null,
+        "target_label": "База знаний — Видеоответы + Итоги (за оплаченный месяц)",
+        "duration_days": null,
+        "grant_target_type": "training_content"
+    }
+]
