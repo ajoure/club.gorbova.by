@@ -638,30 +638,89 @@ export function CommunicationSettingsTabContent() {
   );
 }
 
+function sourceLabel(source: UnifiedInboxFlagSource): string {
+  switch (source) {
+    case "superadmin":
+      return "Включено для вас (роль superadmin)";
+    case "qa-override":
+      return "QA test override (localStorage)";
+    case "kill":
+      return "Аварийно выключено (kill-switch в этом браузере)";
+    default:
+      return "Отключено (обычный оператор)";
+  }
+}
+
 function UnifiedInboxToggleCard() {
-  // KILL-SWITCH 2026-07-04: тумблер disabled после регрессии mono-Telegram.
-  // Хук вызываем, чтобы очистить сохранённое localStorage-значение.
-  useUnifiedInboxFlag();
+  const status = useUnifiedInboxRolloutStatus();
+  const { enabled, source, canManageKill, killActive, setKill } = status;
+
+  const badgeClass = enabled
+    ? "bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30"
+    : source === "kill"
+      ? "bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30"
+      : "bg-muted text-muted-foreground border-border/30";
+
+  const Icon =
+    source === "superadmin"
+      ? ShieldCheck
+      : source === "qa-override"
+        ? TestTube2
+        : source === "kill"
+          ? PowerOff
+          : Power;
+
   return (
-    <GlassCard className="p-6 opacity-80">
+    <GlassCard className="p-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <MessageSquare className="w-5 h-5 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">Единая лента «Сообщения»</h2>
-            <Badge variant="outline" className="text-[10px]">temporarily disabled</Badge>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">
+              Единая лента «Сообщения» — controlled rollout
+            </h2>
+            <Badge variant="outline" className={cn("text-[10px]", badgeClass)}>
+              <Icon className="w-3 h-3 mr-1" />
+              {enabled ? "ON" : "OFF"} · source={source}
+            </Badge>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Временно отключено (rollback 2026-07-04): в бете единой ленты
-            сломался базовый сценарий Telegram — история сообщений не
-            открывалась. Моно-ленты Telegram/Instagram/Техподдержка работают
-            как раньше. Включение вернём после proof исправления контракта
-            ContactTelegramChat.
+            {sourceLabel(source)}. Единая лента включена только для superadmin
+            (controlled rollout V2). Обычные операторы видят прежний Telegram/
+            Instagram/Техподдержка/Email по отдельности. Kill-switch —
+            локальный, действует только в текущем браузере.
           </p>
         </div>
-        <Switch checked={false} disabled onCheckedChange={() => {}} />
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          {canManageKill ? (
+            killActive ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setKill(false)}
+              >
+                <Power className="w-4 h-4 mr-1" />
+                Снять аварийное выключение
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setKill(true)}
+              >
+                <PowerOff className="w-4 h-4 mr-1" />
+                Аварийно выключить (этот браузер)
+              </Button>
+            )
+          ) : (
+            <Badge variant="outline" className="text-[10px]">
+              read-only
+            </Badge>
+          )}
+        </div>
       </div>
     </GlassCard>
   );
 }
+
 
