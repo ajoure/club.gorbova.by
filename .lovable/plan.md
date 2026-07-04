@@ -1,315 +1,385 @@
 да, согласен, с учетом правок:
 
-1. **Opt-in для всех сотрудников контакт-центра — да, но не называть это production rollout.**
+1. **План слишком большой и содержит опасную DB-логику. Разделить на 3 патча.**
   &nbsp;
-  Формулировка должна быть:
+  Нельзя одновременно делать:
+  - новые поля pin/fav;
+  - фильтры;
+  - физический анти-дубль тикетов;
+  - админское создание тикета;
+  - изменение клиентского `useCreateTicket`;
+  - trigger, который отменяет INSERT.
+  Утверждённый порядок:
   ```text
-  Unified inbox V2 — personal opt-in for contact-center users
-  Full production rollout by default — still deferred
+  PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
+  PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
+  PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
   ```
-  То есть фича доступна для включения сотрудником, но не включается всем автоматически.
-2. **Проверку доступа через** `useSectionAccess("communication")` **сначала подтвердить discovery.**
+  Сначала — безопасные unified-фильтры и pin/fav. Потом отдельно — dedupe тикетов. Потом отдельно — админ инициирует тикет.
+2. **В текущем патче выполнять только filters/actions.**
+  Первый патч:
+  ```text
+  PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
+  ```
+  Scope:
+  - `instagram_dialog_preferences.is_favorite`;
+  - `support_tickets.is_pinned`;
+  - capabilities all three sources;
+  - hover actions all three sources;
+  - фильтры `Все / Новые / Избранное / Закреплённые`;
+  - counters;
+  - persistence after refresh;
+  - no support dedupe;
+  - no admin-created ticket.
+3. **Физический анти-дубль тикетов через UNIQUE INDEX + trigger НЕ принимать в этом виде.**
   &nbsp;
-  Перед правкой хука проверить:
-  - как именно сейчас гейтится `/admin/communication`;
-  - есть ли `useSectionAccess("communication")`;
-  - что он возвращает: boolean / object / loading;
-  - как ведёт себя при loading;
-  - не вызовет ли это мигание пункта «Все».
-  Если access ещё `loading`, хук должен возвращать:
+  Особенно опасный пункт:
   ```text
-  enabled=false
-  source="default-off"
-  isLoading=true
+  BEFORE INSERT trigger возвращает NULL и вставляет ticket_messages
   ```
-  или аналогично безопасно скрывать unified до завершения проверки.
-3. **Не удалять все старые ключи без миграции состояния.**
-  Правильно:
-  - `contact_center_unified_inbox_v2_test=1` → один раз мигрировать в `contact_center_unified_inbox_optin=1`;
-  - `contact_center_unified_inbox_kill` → удалить;
-  - legacy `contact_center_unified_inbox` → удалить/игнорировать;
-  - после миграции старые ключи удалить.
-  В proof показать, что старый `v2_test` больше не управляет фичей напрямую.
-4. **Superadmin/admin больше не auto-ON — принять.**
-  Это нормальное упрощение: все включают через один switch.
-  Но в Settings-карточке для superadmin не писать «включено по роли». Только:
-5. **Switch должен быть disabled, если нет доступа к контакт-центру или access loading.**
-  Для пользователя без доступа:
-  - карточку лучше вообще не показывать;
-  - если показывается — switch disabled и текст «Нет доступа к контакт-центру».
-  Но обычный пользователь без доступа не должен получить пункт «Все» через localStorage opt-in.
-6. **LocalStorage opt-in — per-browser, не per-user.**
-  В плане написано “per-user, per-browser”, но localStorage сам по себе не per-user. Если в одном браузере сменить аккаунт, ключ останется.
-  Поэтому обязательно namespace ключа по user id:
+  Это рискованно, потому что:
+  - frontend может ожидать созданную строку тикета;
+  - Supabase `.insert().select().single()` может сломаться;
+  - будет неочевидное поведение “создали тикет, но insert отменён”;
+  - trigger начнёт писать сообщения от имени пользователя при любой вставке тикета;
+  - можно получить дубль/гонку при параллельных вставках;
+  - можно сломать существующий `/support`.
+  Для dedupe нужен отдельный discovery и отдельный RPC, а не скрытый trigger.
+4. **Support dedupe делать отдельной задачей через явный RPC, не trigger.**
+  Следующий патч должен быть:
   ```text
-  contact_center_unified_inbox_optin:<user_id>
+  PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
   ```
-  Либо хранить JSON map:
-  ```json
-  { "<user_id>": true }
-  ```
-  Без этого один сотрудник может включить unified, выйти, другой войдёт в том же браузере и тоже увидит unified.
-7. **Settings-card должна читать/писать user-scoped key.**
-  Не использовать общий:
+  Предпочтительная модель:
+  - новый RPC `create_or_append_support_ticket(...)`;
+  - клиентский `/support` вызывает RPC вместо прямого insert;
+  - RPC внутри транзакции ищет open ticket;
+  - если open есть — добавляет `ticket_message`;
+  - если open нет — создаёт ticket + first message;
+  - всегда возвращает `ticket_id`, `created_new boolean`, `message_id`;
+  - frontend не получает “0 rows”.
+  Не делать dedupe скрытым триггером.
+5. **Partial unique index на** `support_tickets(user_id)` **опасен.**
+  Проверить перед любыми индексами:
+  - есть ли `support_tickets.profile_id`;
+  - есть ли тикеты без `user_id`;
+  - может ли один `profile_id` иметь несколько `user_id`;
+  - какие статусы реально существуют;
+  - какие тикеты сейчас открыты;
+  - есть ли уже дубли open по одному user/profile.
+  Если уже есть дубли, unique index не создастся. Нужен migration plan с cleanup/merge strategy, а не “CREATE UNIQUE INDEX”.
+6. **Не менять клиентский** `/support` **в этом патче.**
+  `useCreateTicket` и `/support` не трогать в filters/actions. Это отдельный риск и отдельный regression-gate.
+7. **Админское создание тикета — отдельный патч.**
+  Третий патч:
   ```text
-  contact_center_unified_inbox_optin
+  PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
   ```
-  Использовать user-scoped storage. Это обязательная правка.
-8. **Убрать kill-switch можно, но оставить code rollback path.**
-  В proof указать:
-9. **Hover actions нужно изолировать от выбора строки.**
-  Для каждой иконки:
-  - `event.stopPropagation()`;
-  - `event.preventDefault()`;
-  - disabled/loading state на время mutation;
-  - optimistic update либо invalidate после success;
-  - error toast при ошибке.
-10. **Telegram pin/favorite: проверить ключ** `contact_user_id`**.**
+  В нём отдельно согласовать:
+  - кто может создавать;
+  - какой `author_type`;
+  - какие допустимые значения enum/check;
+  - как клиент уведомляется;
+  - `has_unread_user`;
+  - subject/category/status;
+  - открытие тикета в unified после создания;
+  - audit.
+8. **Role-check для admin_create_or_get_support_ticket нельзя писать наугад.**
+  &nbsp;
+  В плане указано:
+  ```text
+  has_role(auth.uid(),'admin'|'moderator'|'support')
+  ```
+  Нужно discovery:
+  - какие роли реально есть в `app_role`;
+  - есть ли `moderator`;
+  - есть ли `support`;
+  - как проверяются сотрудники контакт-центра;
+  - можно ли использовать `useSectionAccess("communication")` на backend или нужен role mapping.
+  Не писать RPC с несуществующими ролями.
+9. **IG favorite миграция — допустима, но проверить existing table/index/RLS.**
+  &nbsp;
+  Перед миграцией read-only:
+  - структура `instagram_dialog_preferences`;
+  - existing unique index;
+  - есть ли `admin_user_id`;
+  - как mono-IG делает pin;
+  - RLS/GRANT на update/upsert.
+  Если RLS покрывает `is_pinned`, скорее всего покроет `is_favorite`, но это надо доказать.
+10. **Support pin миграция — допустима, но проверить RLS и существующие поля.**
 
-В плане указано:
+Перед миграцией:
 
-```text
-contact_user_id: row.meta.telegramUserId
+- структура `support_tickets`;
+- есть ли `is_starred`;
+- кто может update `is_starred`;
+- есть ли RLS для admin update;
+- не конфликтует ли `is_pinned` с existing order.
+
+11. **Для новых колонок добавить timestamps правильно.**
+
+Для IG:
+
+```sql
+is_favorite boolean not null default false,
+favorited_at timestamptz
 ```
 
-Это потенциально опасно. Нужно сверить с mono-Telegram.
+Для Support:
 
-Если `chat_preferences.contact_user_id` в mono использует:
+```sql
+is_pinned boolean not null default false,
+pinned_at timestamptz
+```
 
-- `profiles.user_id` — использовать его;
-- numeric `telegram_user_id` — использовать его;
-- другой id — использовать ровно тот же контракт.
+При toggle:
 
-Не угадывать. Перед реализацией сделать grep по `InboxTabContent`.
+- true → `*_at = now()`;
+- false → `*_at = null`.
 
-11. **Telegram mark-read должен использовать тот же boundary, что mono.**
+12. **Индексы делать безопасно.**
 
-В прошлых патчах уже была проблема с mark-read boundary. Для unified mark-read нельзя просто вызвать `mark_dialog_read_v2` без правильных параметров.
+Для новых индексов:
 
-Проверить mono-вызов:
+- `CREATE INDEX IF NOT EXISTS`;
+- preferably partial;
+- без блокировки больших таблиц, если проект использует обычные миграции Supabase — указать размер таблиц.
 
-- `contact_user_id`;
-- `bot_id`;
-- `last_message_at` / boundary;
-- observed boundary перед отправкой.
+Для support dedupe unique index — не в этом патче.
 
-Использовать тот же контракт.
+13. **Фильтр “Новые” уточнить.**
 
-12. **Instagram pin: проверить реальный unique/upsert contract.**
+В UI “Новые” должен соответствовать текущей логике:
 
-Перед upsert в `instagram_dialog_preferences` проверить:
+```text
+unread / unanswered
+```
 
-- имя полей;
-- unique index;
-- нужен ли `admin_user_id`;
+Для источников:
+
+- Telegram: `unread_count > 0`;
+- Instagram: `unread_count > 0`;
+- Support: `has_unread_admin` или текущий `is_unanswered` после discovery.
+
+Не смешивать `waiting_admin`, если текущая модель read/unread уже есть.
+
+14. **Счётчики фильтров должны считаться по текущему normalized rows.**
+
+Чипсы:
+
+```text
+Все = rows.length
+Новые = rows.filter(r => r.isUnanswered).length
+Избранное = rows.filter(r => r.isFavorite).length
+Закреплённые = rows.filter(r => r.isPinned).length
+```
+
+15. **Pin/favorite сортировку не менять — но явно показать это в UI/proof.**
+
+Если pin не поднимает строку вверх, это может быть неожиданно. В proof указать:
+
+```text
+Pinned/favorite filters and indicators are implemented.
+Global sorting by pinned remains unchanged/deferred.
+```
+
+Либо, если уже есть сортировка по `is_pinned`, не менять её без отдельного подтверждения.
+
+16. **Hover actions должны быть доступны не только на hover.**
+
+На мобильных hover нет. Нужно обеспечить:
+
+- кнопки видны/доступны на mobile;
+- или открываются через `⋯`;
+- или всегда видны в компактном виде.
+
+Иначе row actions будут недоступны на iPhone/iPad.
+
+17. **Добавить loading/error states для row actions.**
+
+Для каждой мутации:
+
+- disabled во время запроса;
+- optimistic или invalidate после success;
+- toast при ошибке;
+- rollback optimistic state при ошибке.
+
+18. **Mark read показывать только при unread.**
+
+`Check`:
+
+- показывать только если `unread_count > 0` / `isUnanswered=true`;
+- после mark-read иконка исчезает;
+- счётчик “Новые” уменьшается.
+
+19. **Telegram mark-read boundary обязательно сохранить.**
+
+Использовать тот же self-mark coordinator / observed boundary, который уже был отлажен. Не упрощать.
+
+20. **Telegram preference key ещё раз сверить.**
+
+В плане было `contact_user_id: row.meta.telegramUserId`. Перед реализацией proof:
+
+- mono-Telegram использует этот же id;
+- это не `profile.id`;
+- это не `profiles.user_id`;
+- это не `telegram_user_id` другого типа.
+
+Ошибка здесь снова сломает pin/favorite.
+
+21. **IG preference upsert должен использовать тот же ключ, что mono-IG.**
+
+Сверить:
+
 - `account_id`;
 - `thread_key`;
-- текущая реализация в `InstagramInboxView`.
+- `admin_user_id`;
+- unique index.
 
-Использовать ровно тот же код/хук, что mono-IG, если возможно.
+22. **Support favorite/pin должны не менять business status.**
 
-13. **Instagram favorite не показывать вообще, не disabled.**
+Нельзя менять:
 
-Раз поля нет — лучше не показывать иконку `Star` для IG, чтобы не плодить шум.
+- `status`;
+- `assigned_to`;
+- `has_unread_user`;
+- `has_unread_admin`, кроме mark-read.
 
-Tooltip “не поддерживается” допустим только если пользователь явно ожидает кнопку, но в unified-строке лучше чище: нет функции — нет иконки.
+23. **Unified opt-in не трогать.**
 
-14. **Support pin не показывать вообще.**
+План говорит, что opt-in остаётся как есть — правильно. Добавить regression:
 
-Аналогично: нет поля — нет иконки.
+- opt-in ON показывает unified;
+- opt-in OFF скрывает unified;
+- оператор без opt-in не видит “Все”.
 
-15. **Support mark-read уточнить.**
-
-В плане:
-
-```text
-has_unread_admin=false
-```
-
-Нужно проверить mono-Support, как именно он помечает прочитанным:
-
-- mutation;
-- RPC;
-- status;
-- `read_at`;
-- `has_unread_admin`.
-
-Не менять статус тикета. Только read-flag, если он уже есть и используется.
-
-16. **Support favorite через** `is_starred` **— да, но проверить права/RLS.**
-
-Использовать тот же mutation, что `SupportTabContent`, чтобы не получить 403/RLS.
-
-17. `useUnifiedInbox` **должен отдавать capabilities для строки.**
-
-Чтобы UI не гадал, лучше добавить normalized capabilities:
-
-```ts
-row.capabilities = {
-  canPin: boolean,
-  canFavorite: boolean,
-  canMarkRead: boolean
-}
-```
-
-Или локально вычислить в компоненте, но по одной таблице правил.
-
-18. **Mark-read иконку показывать только если есть unread.**
-
-Если `unread_count=0` и `is_unanswered=false`, `Check` лучше скрыть или disabled. Иначе оператор будет нажимать действие без эффекта.
-
-19. **После pin/favorite нужно проверить визуальный результат.**
-
-Сейчас сортировка не меняется — это допустимо. Но индикатор должен обновиться:
-
-- pin badge;
-- star badge;
-- состояние иконки active/inactive;
-- сохранение после refresh.
-
-20. **В DoD добавить проверку persistence после hard refresh.**
-
-Для каждого источника:
-
-- Telegram pin/favorite сохраняется после refresh;
-- IG pin сохраняется после refresh;
-- Support star сохраняется после refresh;
-- mark-read сохраняется после refresh.
-
-21. **Не менять сортировку сейчас — согласен.**
-
-Но в proof явно указать:
+24. **Proof-файл для первого патча:**
 
 ```text
-Pin/favorite indicators implemented; sorting by pin/favorite remains deferred.
+docs/audit/2026-07-04-unified-inbox-v2-filters-and-actions.md
 ```
 
-Иначе пользователь может ожидать, что pin поднимет строку вверх.
-
-22. **Добавить proof по отсутствию регрессии opt-in.**
-
-Проверить:
-
-- user A включает opt-in;
-- user B в том же браузере не получает opt-in, если ключ user-scoped;
-- access denied user не включает unified через localStorage.
-
-Если невозможно проверить B через UI — сделать unit/hook proof или кодовый proof.
-
-23. **Название патча.**
-
-Использовать единый отчёт:
+25. **Итоговый отчёт первого патча:**
 
 ```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-OPTIN-AND-ROW-ACTIONS
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
 ```
 
-24. **Proof-файл:**
+26. **DoD первого патча:**
+
+- 4 чипса работают;
+- Telegram pin/fav/read работают;
+- Instagram pin/fav/read работают;
+- Support pin/fav/read работают;
+- unsupported actions больше не unsupported после добавления колонок;
+- state сохраняется после refresh;
+- mobile доступность actions решена;
+- mono TG/IG/Support/Email без регресса;
+- IG merge / headers / short badges без регресса;
+- typecheck clean;
+- proof создан.
+
+27. **Support dedupe DoD перенести во второй патч.**
+
+Не включать в текущий DoD:
+
+- клиент не может создать второй open ticket;
+- сообщение дописывается в существующий;
+- `useCreateTicket` обрабатывает 0 rows.
+
+Это отдельная задача.
+
+28. **Admin-start-ticket DoD перенести в третий патч.**
+
+Не включать в текущий DoD:
+
+- админ из ContactDetailSheet создаёт тикет;
+- клиент видит его в `/support`.
+
+29. **Новый утверждённый порядок:**
 
 ```text
-docs/audit/2026-07-04-unified-inbox-v2-optin-and-row-actions.md
+1. PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-FILTERS-AND-ACTIONS
+   - IG favorite
+   - Support pin
+   - all-source pin/fav/read
+   - chips filters
+
+2. PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
+   - discovery
+   - explicit RPC create_or_append
+   - no hidden trigger returning NULL
+
+3. PATCH-CONTACT-CENTER-ADMIN-START-SUPPORT-TICKET
+   - admin creates/opens support ticket from ContactDetailSheet
+   - separate RPC and UI
 ```
 
-25. **В итоговом статусе указать:**
+30. **Стартуем сейчас только пункт 1.**
 
-```text
-Unified inbox V2 — available as personal opt-in for contact-center users
-Default for all users — OFF
-Full forced production rollout — deferred
-Row actions — implemented per source capability
-```
-
-26. **Если окажется, что существующих preferences/RPC не хватает — остановиться, не делать миграции.**
-
-Особенно для:
-
-- IG favorite;
-- Support pin;
-- Telegram preference source separation.
-
-В этом патче запрещены новые таблицы/миграции, значит неподдерживаемые действия скрываются, а не реализуются костылём.
-
-После этих правок план утверждён. Выполнять одним проходом.
+Всё, что касается dedupe тикетов и админского создания тикета, пока не выполнять.
 
 &nbsp;
 
-План:
+План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-SUPPORT-MERGE-AND-FILTERS
 
-## Область изменений
+Diagnose
 
-Три отдельных, независимых пункта из последнего сообщения. Backend-схему не трогаем — используем уже существующие таблицы preferences и RPC. Никаких новых edge-функций, миграций и bridge-таблиц.
+- Клиент может писать в поддержку (`/support` → CreateTicketDialog → useCreateTicket), но:
+  1. Оператор не может инициировать тикет другому контакту из unified inbox.
+  2. Один контакт может завести 3–4 open-тикета — каждый становится отдельной строкой в unified.
+  3. Действия разнятся: IG — только pin+read, Support — только fav+read, TG — все три.
+  4. Фильтры только «Все / Неотвеченные»; нет «Избранное / Закреплённые / Новые».
 
-## Задача 1. Единая лента — opt-in для всех сотрудников контакт-центра
+Plan (5 задач)
 
-**Изменение модели rollout** в `src/hooks/useContactCenterFeatureFlag.ts`:
+1. Schema-миграция (одна)
+  - `ALTER TABLE public.instagram_dialog_preferences ADD COLUMN IF NOT EXISTS is_favorite boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS favorited_at timestamptz;`
+  - `ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS is_pinned boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS pinned_at timestamptz;`
+  - Партиальные индексы `WHERE is_favorite = true` / `WHERE is_pinned = true`.
+  - RLS/GRANT не трогаем — существующие политики покрывают.
+  - Физический анти-дубль тикета: `CREATE UNIQUE INDEX IF NOT EXISTS uniq_support_open_ticket_per_user ON public.support_tickets (user_id) WHERE status IN ('open','in_progress','waiting_user');`
+  Плюс BEFORE INSERT trigger `support_tickets_dedupe_open`: если у пользователя уже есть открытый тикет — не создавать новый, а вернуть NULL и попытаться дописать description как ticket_message. Реализация: trigger вызывает функцию, которая при найденном existing open вставляет в `ticket_messages` (author_type='user', author_id=NEW.user_id, message=NEW.description) и возвращает NULL, отменяя INSERT. Уже открытый тикет получает `updated_at=now(), has_unread_admin=true`. Клиентский `useCreateTicket` обрабатывает 0 rows → инвалидирует `user-tickets` и открывает найденный существующий тикет (SELECT open по user_id).
+2. useUnifiedInbox: capabilities + фильтры-поля
+  - `IG_CAPS = { canPin: true, canFavorite: true, canMarkRead: true }`.
+  - `SUPPORT_CAPS = { canPin: true, canFavorite: true, canMarkRead: true }`.
+  - IG: подтягивать `is_favorite` из instagram_dialog_preferences (join по admin_user_id + account_id + thread_key) при сборке строки.
+  - Support: `isPinned = !!t.is_pinned`.
+  - Оставить остальную нормализацию как есть (никакого нового объединения TG/IG/Support в одну карточку — user выбрал вариант 2, физическая нормализация тикета).
+3. UnifiedInboxView: расширенные действия + фильтры
+  - Добавить ветки для `instagram + is_favorite` и `support + is_pinned` в `togglePinFavorite`, используя те же таблицы (instagram_dialog_preferences.upsert, support_tickets.update).
+  - Заменить дуальный tab «Все / Неотвеченные» на группу чипсов: `Все | Новые | Избранное | Закреплённые` (state `filter: 'all'|'unread'|'favorite'|'pinned'`). Каждая чипса — счётчик (unread count / favorite count / pinned count).
+  - `filtered = rows.filter(...)`: `favorite → r.isFavorite`, `pinned → r.isPinned`, `unread → r.isUnanswered`.
+  - Realtime: `useInboxRealtimeInvalidation` уже слушает support_tickets + instagram_messages → достаточно.
+4. Админ инициирует тикет любому контакту
+  - В `ContactDetailSheet` (используется unified для клика на имя): добавить кнопку «Написать в техподдержку» (появляется, если у контакта нет open-тикета; иначе — «Открыть тикет»).
+  - Новый серверный контракт: RPC `admin_create_or_get_support_ticket(p_profile_id uuid, p_subject text, p_initial_message text)` SECURITY DEFINER:
+    - Проверяет `has_role(auth.uid(),'admin'|'moderator'|'support')` (существующая функция).
+    - Если у профиля есть открытый тикет — возвращает его id и добавляет initial_message как ticket_message (author_type='support').
+    - Иначе создаёт новый тикет (profile_id=p_profile_id, user_id=profile.user_id, category='general', status='open', has_unread_user=true) + первый ticket_message.
+  - На фронте: диалог в стиле CreateTicketDialog, вызов RPC → navigate на unified с выбранным `support:<id>` или открытие внутри unified.
+  - Клиент увидит новый тикет автоматически через `useUserTickets` realtime-подписку по `user_id=eq.<self>`.
+5. Аудит + regression-gate
+  - `docs/audit/2026-07-04-unified-inbox-v2-support-merge-and-filters.md`: DDL, RPC-контракт, матрица capabilities, поведение dedupe, regression-checklist.
+  - Regression-gate (Playwright под superadmin с opt-in ON):
+    - unified: чипсы Все/Новые/Избранное/Закреплённые фильтруют корректно;
+    - IG hover-star тогглит is_favorite + строка появляется в фильтре «Избранное»;
+    - Support hover-pin тогглит is_pinned + попадает в «Закреплённые»;
+    - попытка клиента создать второй open-тикет → сообщение допишется в существующий, unified показывает одну строку;
+    - админ из ContactDetailSheet создаёт тикет контакту без тикета → появляется open-тикет, клиент видит его в /support;
+    - mono-TG / IG merge / headers / short badges — без регресса.
 
-- Ключ localStorage `contact_center_unified_inbox_optin` (per-user, per-browser). Значение `1` = «сотрудник сам включил». Дефолт — выключено.
-- Право включать = у пользователя есть доступ в контакт-центр (проверяем через уже существующий `useSectionAccess("communication")` / текущий gate раздела; не роль). Superadmin/admin право сохраняют по умолчанию.
-- Матрица включения (новая):
-  - `optin=1` && есть доступ в контакт-центр → `enabled=true`, `source="user-optin"`
-  - Иначе → `enabled=false`, `source="default-off"`
-- Убираем ветки `superadmin` (роль больше не даёт авто-ON — если superadmin хочет unified, он тоже включает opt-in; это единообразно и предсказуемо) и `qa-override` (больше не нужны). Совместимость: старый `contact_center_unified_inbox_v2_test` мигрируем на `_optin` при первом монтировании, `_kill` вычищаем (см. Задача 2).
-- Тип `UnifiedInboxFlagSource` = `"user-optin" | "default-off"`. Оставляем `useUnifiedInboxFlag()` (совместимость).
+Технические детали
 
-**UI карточки в Settings** — `src/components/admin/communication/CommunicationSettingsTabContent.tsx`, компонент `UnifiedInboxToggleCard`:
+- Файлы: `src/hooks/useUnifiedInbox.ts`, `src/components/admin/communication/unified/UnifiedInboxView.tsx`, `src/components/admin/communication/ContactDetailSheet.tsx` (+ новый `AdminStartTicketDialog.tsx`), `src/hooks/useTickets.ts` (обработка 0-rows insert), новая миграция + RPC.
+- Kill-switch / opt-in остаются как есть; фичи включены в тот же V2-контур.
+- Никаких новых bridge-таблиц, никаких изменений profiles/instagram_contacts.
 
-- Заголовок: «Единая лента «Сообщения»» (без «controlled rollout»).
-- Основной элемент — `Switch` с подписью «Включить единую ленту для меня». Управляет `optin`. Виден всем, у кого есть доступ в контакт-центр.
-- Пояснение: «Личная настройка. Работает только в этом браузере. Не влияет на других сотрудников.»
-- Badge статуса: ON / OFF, без `source=...`.
+DoD
 
-## Задача 2. Убрать «Аварийно выключить (этот браузер)»
-
-- В `UnifiedInboxToggleCard` удаляем блок с кнопками `setKill(true/false)` и с индикацией `killActive`.
-- В `useContactCenterFeatureFlag.ts` убираем `KILL_KEY`, `killActive`, `setKill`, `canManageKill` из публичного API типа; при инициализации хука вычищаем старый ключ `contact_center_unified_inbox_kill` из localStorage (совместимость).
-- Проверить, что kill-switch нигде больше не читается. Если находим ссылки — удаляем/приводим к opt-in.
-
-## Задача 3. Действия на строке (pin / favorite / mark read) для всех источников
-
-В `src/components/admin/communication/unified/UnifiedInboxView.tsx` добавляем hover-действия справа от строки, единообразно для всех трёх источников. Иконки как в моно-Telegram: `Pin`, `Star`, `Check` (mark read). Появляются на hover (`opacity-0 group-hover:opacity-100`), не сдвигают лейаут, каждая с `title` и `stopPropagation`.
-
-**Backend-мутации по источникам (без новых таблиц):**
-
-- **Telegram** — таблица `chat_preferences` (уже используется в `InboxTabContent`): upsert `{admin_user_id: user.id, contact_user_id: row.meta.telegramUserId, is_pinned|is_favorite: next}`; mark-read через RPC `mark_dialog_read_v2` (та же, что уже вызывается в моно). Инвалидация `["chat-preferences", user.id]` и `INBOX_DIALOGS_QK`.
-- **Instagram** — таблица `instagram_dialog_preferences` (уже используется в `InstagramInboxView`): upsert `is_pinned` по (account_id, thread_key). Favorite для IG в существующей схеме нет — иконку fav для IG не показываем (или показываем `disabled` с tooltip). Mark-read через уже существующий вызов `instagram-admin-chat / mark_read` (уже реализован в `markRead`). Инвалидация `["unified-ig-dialogs"]`.
-- **Support** — колонка `support_tickets.is_starred` (уже используется в `SupportTabContent`): update по ticket_id для «favorite». Pin для тикетов в схеме отсутствует — иконку pin для support не показываем. Mark-read — уже реализован (`has_unread_admin=false`).
-
-**Правила показа иконок в строке:**
-
-
-| Источник  | Pin | Favorite | Mark read |
-| --------- | --- | -------- | --------- |
-| Telegram  | ✓   | ✓        | ✓         |
-| Instagram | ✓   | —        | ✓ (уже)   |
-| Support   | —   | ✓ (star) | ✓ (уже)   |
-
-
-Никаких новых полей в БД. Если пользователь захочет расширить (IG favorite, Support pin) — это отдельная задача с миграцией, не в этом патче.
-
-**Индикаторы в строке:** уже отрисовываются `row.isPinned` и `row.isFavorite`. `useUnifiedInbox` для Support сейчас не отдаёт `is_starred` в `isFavorite` — правим: `isFavorite: !!t.is_starred`.
-
-**Сортировка/фильтрация:** оставляем как есть (не расширяем скоуп — pin/fav сейчас показываются только как метки; отдельная задача — добавить sort-by-pin).
-
-## Файлы, которые будут изменены
-
-- `src/hooks/useContactCenterFeatureFlag.ts` — новая матрица opt-in, удалить kill.
-- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — UI карточки: Switch, убрать kill-кнопку.
-- `src/components/admin/communication/unified/UnifiedInboxView.tsx` — hover-иконки pin/fav/mark-read + мутации.
-- `src/hooks/useUnifiedInbox.ts` — `isFavorite` для support из `is_starred`.
-- Если найдётся использование `killActive`/`canManageKill` вне Settings — почистить.
-
-## Definition of Done
-
-1. Любой сотрудник с доступом в контакт-центр видит в «Настройки → Единая лента» переключатель, включает — «Все» появляется в списке табов; выключает — исчезает.
-2. Superadmin/admin ведут себя так же (opt-in через тот же switch), без авто-ON по роли.
-3. Кнопка «Аварийно выключить (этот браузер)» удалена; ссылок на `setKill`/`killActive` в коде не осталось.
-4. На каждой строке unified-ленты при hover доступны иконки согласно таблице выше; клик по иконке не открывает диалог; статус (закреплено/избранное) сохраняется и виден после `refetch`.
-5. Существующие блоки MONO-TG / IG merge / headers / channels / badges не регрессируют (проверка Playwright: mono-TG имена/история; unified «Все» открывается; IG merge без красной ошибки; бейджи короткие).
-
-## Что НЕ делаем
-
-- Не создаём новые таблицы/RPC/edge-функции.
-- Не добавляем IG-favorite и Support-pin (нет полей в схеме).
-- Не меняем сортировку/фильтрацию по pin/fav (отдельная задача при необходимости).
-- Не открываем unified обычным операторам «по умолчанию» — только через их собственный opt-in.
-- Не трогаем production rollout флаг (остаётся deferred).
+- 4 чипсы-фильтра работают.
+- pin/fav/read доступны на всех трёх источниках.
+- Клиент не может создать второй open-тикет (сообщение дописывается).
+- Админ из карточки контакта может начать тикет; клиент видит его.
+- Regression-gate зелёный; консольные ошибки отсутствуют; typecheck clean.
+- Аудит-документ создан.

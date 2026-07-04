@@ -80,8 +80,8 @@ export interface UnifiedDialog {
 }
 
 const TG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
-const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: false, canMarkRead: true };
-const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: false, canFavorite: true, canMarkRead: true };
+const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
+const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
 
 
 const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
@@ -240,6 +240,33 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     return m;
   }, [igContacts.data]);
 
+  // --- Instagram: personal prefs (pin/fav) для текущего оператора ---
+  const igPrefs = useQuery({
+    queryKey: ["unified-ig-prefs", user?.id, igAccountIds],
+    enabled: enabled && !!user?.id && igAccountIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("instagram_dialog_preferences")
+        .select("instagram_account_id, thread_key, is_pinned, is_favorite")
+        .eq("admin_user_id", user!.id)
+        .in("instagram_account_id", igAccountIds as string[]);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  const igPrefMap = useMemo(() => {
+    const m = new Map<string, { is_pinned: boolean; is_favorite: boolean }>();
+    (igPrefs.data || []).forEach((p: any) => {
+      m.set(`${p.instagram_account_id}:${p.thread_key}`, {
+        is_pinned: !!p.is_pinned,
+        is_favorite: !!p.is_favorite,
+      });
+    });
+    return m;
+  }, [igPrefs.data]);
+
   // --- Support: тикеты, отсортированные по last_activity ---
   const support = useQuery({
     queryKey: ["unified-support-tickets"],
@@ -342,6 +369,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     for (const d of igDialogs.data || []) {
       const accountLabel = igAccountLabel.get(d.__accountId) || null;
       const unread = Number(d.unread_count) || 0;
+      const prefKey = `${d.__accountId}:${d.thread_key || d.peer_id}`;
+      const pref = igPrefMap.get(prefKey);
       out.push({
         key: `ig:${d.__accountId}:${d.thread_key || d.peer_id}`,
         source: "instagram",
@@ -353,8 +382,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         lastMessageAt: d.last_at,
         unreadCount: unread,
         isUnanswered: unread > 0,
-        isPinned: !!d.is_pinned,
-        isFavorite: false,
+        isPinned: pref?.is_pinned ?? !!d.is_pinned,
+        isFavorite: pref?.is_favorite ?? false,
         capabilities: IG_CAPS,
         meta: {
           profileId: (igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.profile_id) ?? d.profile_id ?? null,
@@ -384,7 +413,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         lastMessageAt: t.updated_at,
         unreadCount: unread,
         isUnanswered: unread > 0,
-        isPinned: false,
+        isPinned: !!t.is_pinned,
         isFavorite: !!t.is_starred,
         capabilities: SUPPORT_CAPS,
         meta: {
@@ -417,6 +446,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     igDialogs.data,
     igAccountLabel,
     igContactMap,
+    igPrefMap,
     support.data,
     supportProfiles.data,
   ]);

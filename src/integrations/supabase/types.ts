@@ -7400,8 +7400,10 @@ export type Database = {
         Row: {
           admin_user_id: string
           created_at: string
+          favorited_at: string | null
           id: string
           instagram_account_id: string
+          is_favorite: boolean
           is_pinned: boolean
           pinned_at: string | null
           thread_key: string
@@ -7410,8 +7412,10 @@ export type Database = {
         Insert: {
           admin_user_id: string
           created_at?: string
+          favorited_at?: string | null
           id?: string
           instagram_account_id: string
+          is_favorite?: boolean
           is_pinned?: boolean
           pinned_at?: string | null
           thread_key: string
@@ -7420,8 +7424,10 @@ export type Database = {
         Update: {
           admin_user_id?: string
           created_at?: string
+          favorited_at?: string | null
           id?: string
           instagram_account_id?: string
+          is_favorite?: boolean
           is_pinned?: boolean
           pinned_at?: string | null
           thread_key?: string
@@ -14005,7 +14011,9 @@ export type Database = {
           has_unread_admin: boolean | null
           has_unread_user: boolean | null
           id: string
+          is_pinned: boolean
           is_starred: boolean | null
+          pinned_at: string | null
           priority: string | null
           profile_id: string
           resolved_at: string | null
@@ -14027,7 +14035,9 @@ export type Database = {
           has_unread_admin?: boolean | null
           has_unread_user?: boolean | null
           id?: string
+          is_pinned?: boolean
           is_starred?: boolean | null
+          pinned_at?: string | null
           priority?: string | null
           profile_id: string
           resolved_at?: string | null
@@ -14049,7 +14059,9 @@ export type Database = {
           has_unread_admin?: boolean | null
           has_unread_user?: boolean | null
           id?: string
+          is_pinned?: boolean
           is_starred?: boolean | null
+          pinned_at?: string | null
           priority?: string | null
           profile_id?: string
           resolved_at?: string | null

@@ -45,7 +45,8 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [readState, setReadState] = useState<"all" | "unread">("all");
+  type FilterKind = "all" | "unread" | "favorite" | "pinned";
+  const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const [panelSize] = useState<number>(() => {
@@ -64,7 +65,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (sourceFilter !== "all" && r.source !== sourceFilter) return false;
-      if (readState === "unread" && !r.isUnanswered) return false;
+      if (filterKind === "unread" && !r.isUnanswered) return false;
+      if (filterKind === "favorite" && !r.isFavorite) return false;
+      if (filterKind === "pinned" && !r.isPinned) return false;
       if (search) {
         const q = search.toLowerCase();
         if (
@@ -77,7 +80,18 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       }
       return true;
     });
-  }, [rows, sourceFilter, readState, search]);
+  }, [rows, sourceFilter, filterKind, search]);
+
+  const counts2 = useMemo(() => {
+    let unread = 0, fav = 0, pinned = 0;
+    for (const r of rows) {
+      if (sourceFilter !== "all" && r.source !== sourceFilter) continue;
+      if (r.isUnanswered) unread++;
+      if (r.isFavorite) fav++;
+      if (r.isPinned) pinned++;
+    }
+    return { all: rows.filter(r => sourceFilter === "all" || r.source === sourceFilter).length, unread, fav, pinned };
+  }, [rows, sourceFilter]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -136,27 +150,34 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         }
         queryClient.invalidateQueries({ queryKey: ["chat-preferences", user.id] });
         queryClient.invalidateQueries({ queryKey: ["chat-preferences"] });
-      } else if (row.source === "instagram" && field === "is_pinned") {
+      } else if (row.source === "instagram" && (field === "is_pinned" || field === "is_favorite")) {
         if (!user?.id) throw new Error("Не авторизован");
-        const nextPinned = !row.isPinned;
+        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const nowIso = new Date().toISOString();
+        const patch: Record<string, any> = {
+          admin_user_id: user.id,
+          instagram_account_id: row.meta.instagramAccountId!,
+          thread_key: row.meta.instagramThreadKey!,
+          [field]: nextValue,
+        };
+        if (field === "is_pinned") patch.pinned_at = nextValue ? nowIso : null;
+        if (field === "is_favorite") patch.favorited_at = nextValue ? nowIso : null;
         const { error } = await supabase
           .from("instagram_dialog_preferences")
-          .upsert(
-            {
-              admin_user_id: user.id,
-              instagram_account_id: row.meta.instagramAccountId!,
-              thread_key: row.meta.instagramThreadKey!,
-              is_pinned: nextPinned,
-              pinned_at: nextPinned ? new Date().toISOString() : null,
-            },
-            { onConflict: "admin_user_id,instagram_account_id,thread_key" },
-          );
+          .upsert(patch, { onConflict: "admin_user_id,instagram_account_id,thread_key" });
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
-      } else if (row.source === "support" && field === "is_favorite") {
+        queryClient.invalidateQueries({ queryKey: ["unified-ig-prefs"] });
+      } else if (row.source === "support" && (field === "is_pinned" || field === "is_favorite")) {
+        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const nowIso = new Date().toISOString();
+        const patch: Record<string, any> =
+          field === "is_pinned"
+            ? { is_pinned: nextValue, pinned_at: nextValue ? nowIso : null }
+            : { is_starred: nextValue };
         const { error } = await supabase
           .from("support_tickets")
-          .update({ is_starred: !row.isFavorite } as any)
+          .update(patch as any)
           .eq("id", row.meta.ticketId!);
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
@@ -279,33 +300,29 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             className="pl-9 h-9 bg-card/80 border-border/30 rounded-xl"
           />
         </div>
-        <div className="flex gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 px-2.5 text-xs rounded-full",
-              readState === "all"
-                ? "bg-primary text-primary-foreground shadow-md"
-                : "bg-card/60 text-muted-foreground",
-            )}
-            onClick={() => setReadState("all")}
-          >
-            Все
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 px-2.5 text-xs rounded-full",
-              readState === "unread"
-                ? "bg-primary text-primary-foreground shadow-md"
-                : "bg-card/60 text-muted-foreground",
-            )}
-            onClick={() => setReadState("unread")}
-          >
-            Неотвеченные{totalUnread > 0 ? ` · ${totalUnread}` : ""}
-          </Button>
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            { key: "all", label: "Все", count: counts2.all },
+            { key: "unread", label: "Новые", count: counts2.unread },
+            { key: "favorite", label: "Избранное", count: counts2.fav },
+            { key: "pinned", label: "Закреплённые", count: counts2.pinned },
+          ] as { key: FilterKind; label: string; count: number }[]).map((chip) => (
+            <Button
+              key={chip.key}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 px-2.5 text-xs rounded-full",
+                filterKind === chip.key
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-card/60 text-muted-foreground",
+              )}
+              onClick={() => setFilterKind(chip.key)}
+            >
+              {chip.label}
+              {chip.count > 0 ? ` · ${chip.count}` : ""}
+            </Button>
+          ))}
         </div>
         {(errors.telegram || errors.instagram || errors.support) && (
           <div className="text-[10px] text-destructive px-1">
@@ -378,7 +395,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           : ""}
                       </span>
                       <div
-                        className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                        className="flex items-center gap-0.5 opacity-60 md:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
                       >
                         {row.capabilities.canPin && (
                           <IconAction
