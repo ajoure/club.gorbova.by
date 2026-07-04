@@ -325,10 +325,13 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: !!d.is_pinned,
         isFavorite: false,
         meta: {
+          profileId: (igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.profile_id) ?? d.profile_id ?? null,
           instagramAccountId: d.__accountId,
           instagramThreadKey: d.thread_key,
           instagramThreadId: d.ig_thread_id ?? null,
           instagramPeerId: d.peer_id,
+          instagramUserId: d.peer_id,
+          instagramContactId: igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.id ?? null,
           instagramSenderName: d.sender_name,
         },
       });
