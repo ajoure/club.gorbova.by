@@ -407,10 +407,8 @@ export function InvoiceCheckoutDialog({
                 Счёт № {result.invoice_number} выписан
               </div>
               <div className="text-sm text-muted-foreground mt-1">
-                {result.email_sent
-                  ? "Копия отправлена на email."
-                  : "Email не отправлен — проверьте адрес."}{" "}
-                {result.telegram_sent ? "Также ушла в Telegram." : ""}
+                Отправка на email и в Telegram запущена и придёт в течение
+                нескольких минут. Также PDF можно скачать сразу.
               </div>
             </div>
             {result.document_id && (
