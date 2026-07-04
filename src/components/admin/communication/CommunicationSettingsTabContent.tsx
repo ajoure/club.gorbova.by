@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { OlegSettingsSection } from "./OlegSettingsSection";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 interface EmailTemplate {
   id: string;
@@ -237,6 +238,8 @@ export function CommunicationSettingsTabContent() {
   return (
     <ScrollArea className="h-full">
       <div className="p-4 md:p-6 space-y-6">
+        <UnifiedInboxToggleCard />
+
         {/* Email Templates Section */}
         <GlassCard className="p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -633,3 +636,33 @@ export function CommunicationSettingsTabContent() {
     </ScrollArea>
   );
 }
+
+function UnifiedInboxToggleCard() {
+  const [enabled, setEnabled] = useUnifiedInboxFlag();
+  return (
+    <GlassCard className="p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">Единая лента «Сообщения»</h2>
+            <Badge variant="outline" className="text-[10px]">beta</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Показывает в одной ленте Telegram, Instagram и Техподдержку. Неотвеченные — сверху,
+            каждая строка с бейджем источника. Email остаётся отдельным пунктом в дропдауне.
+            Моно-ленты продолжают работать как раньше.
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => {
+            setEnabled(v);
+            toast.success(v ? "Единая лента включена" : "Единая лента выключена");
+          }}
+        />
+      </div>
+    </GlassCard>
+  );
+}
+

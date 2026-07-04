@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 /**
  * Global hook: plays a notification sound when a new incoming telegram message arrives.
@@ -26,6 +27,8 @@ export function useIncomingMessageAlert() {
     };
   }, []);
 
+  const [unifiedEnabled] = useUnifiedInboxFlag();
+
   useEffect(() => {
     const channel = supabase
       .channel("global-incoming-alert")
@@ -38,7 +41,7 @@ export function useIncomingMessageAlert() {
           filter: "direction=eq.incoming",
         },
         (payload) => {
-          console.log("[Alert] New incoming message detected:", payload.new?.id);
+          console.log("[Alert] New incoming Telegram message:", payload.new?.id);
           playNotificationSound();
         }
       )
@@ -46,10 +49,44 @@ export function useIncomingMessageAlert() {
         console.log("[Alert] Global incoming alert channel:", status);
       });
 
+    // Extra звук для unified inbox: Instagram incoming + новые сообщения тикетов
+    // (клиент пишет админу). Только при включённом флаге — не задваивает звук
+    // моно-лент, у которых своего звука нет.
+    const unifiedChannel = unifiedEnabled
+      ? supabase
+          .channel("global-incoming-alert-unified")
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "instagram_messages",
+              filter: "direction=eq.incoming",
+            },
+            (payload) => {
+              console.log("[Alert] New incoming Instagram message:", payload.new?.id);
+              playNotificationSound();
+            },
+          )
+          .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "ticket_messages" },
+            (payload) => {
+              // Звук только если это НЕ внутренняя админская заметка.
+              const row = payload.new as { is_internal?: boolean } | null;
+              if (row?.is_internal) return;
+              console.log("[Alert] New ticket_message:", (payload.new as any)?.id);
+              playNotificationSound();
+            },
+          )
+          .subscribe()
+      : null;
+
     return () => {
       supabase.removeChannel(channel);
+      if (unifiedChannel) supabase.removeChannel(unifiedChannel);
     };
-  }, []);
+  }, [unifiedEnabled]);
 
   async function playNotificationSound() {
     try {

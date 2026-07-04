@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram } from "lucide-react";
+import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram, Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -17,6 +17,8 @@ import { SupportTabContent } from "@/components/admin/communication/SupportTabCo
 import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
 import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
 import { CommunicationSettingsTabContent } from "@/components/admin/communication/CommunicationSettingsTabContent";
+import { UnifiedInboxView } from "@/components/admin/communication/unified/UnifiedInboxView";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 // Import unread hooks
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
@@ -31,8 +33,11 @@ const tabs = [
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [unifiedEnabled] = useUnifiedInboxFlag();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
-  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email" | "support" | "instagram">("telegram");
+  const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">(
+    unifiedEnabled ? "all" : "telegram",
+  );
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();
@@ -108,6 +113,23 @@ export default function AdminCommunication() {
                       align="start"
                       className="min-w-[160px] bg-background/80 backdrop-blur-xl border border-border/30 shadow-lg rounded-lg"
                     >
+                      {unifiedEnabled && (
+                        <DropdownMenuItem 
+                          onClick={() => { handleTabChange("inbox"); setInboxChannel("all"); }}
+                          className={cn(
+                            "flex items-center gap-2 text-xs cursor-pointer rounded-md",
+                            inboxChannel === "all" && activeTab === "inbox" && "bg-muted"
+                          )}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                          Все
+                          {inboxUnread > 0 && (
+                            <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
+                              {inboxUnread}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem 
                         onClick={() => { handleTabChange("inbox"); setInboxChannel("telegram"); }}
                         className={cn(
@@ -202,7 +224,11 @@ export default function AdminCommunication() {
 
         {/* Tab Content */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {activeTab === "inbox" && <InboxTabContent defaultChannel={inboxChannel} />}
+          {activeTab === "inbox" && (
+            inboxChannel === "all" && unifiedEnabled
+              ? <UnifiedInboxView sourceFilter="all" />
+              : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
+          )}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}
           {activeTab === "settings" && <CommunicationSettingsTabContent />}
         </div>
