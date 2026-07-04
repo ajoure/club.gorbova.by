@@ -1,269 +1,148 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Ответы на открытые вопросы зафиксировать сразу:**
-  - Один контакт с Telegram и Instagram — **показывать отдельными строками по источникам**, ключ `source:sourceId`. Не объединять в одну строку по `profile_id` в этой фазе.
-  - Push-уведомления для IG/техподдержки — **вынести из спринта**. В этом спринте только realtime-инвалидация, счётчики и звук в админке.
-2. **Разбить задачу на Diagnose → Plan уточнение → Build.**  
-Перед реализацией сделать короткий discovery:
-  - какие таблицы реально используются для Instagram;
-  - как сейчас устроены unread/read для IG;
-  - как support определяет `waiting_admin`;
-  - какие chat preferences уже есть;
-  - где сейчас хранятся pin/favorite;
-  - какие query keys и realtime channels уже существуют;
-  - какие компоненты чата можно переиспользовать без переписывания.
-3. **Не называть модель** `frontend-only`**, если добавляется миграция** `chat_preferences.source`**.**  
-План сейчас противоречивый: модель строки frontend-only, но есть изменение БД. Нужно разделить:
-  - `UnifiedDialog` — frontend normalization;
-  - `chat_preferences.source` — отдельная DB migration для pin/favorite.
-4. **Миграцию** `chat_preferences.source` **расписать безопасно:**
-  - проверить текущие unique indexes;
-  - backfill существующих строк `source='telegram'`;
-  - не сломать старые Telegram preferences;
-  - добавить уникальный индекс без конфликта с существующими данными;
-  - предусмотреть rollback;
-  - проверить RLS/permissions;
-  - добавить proof, что старые pin/favorite Telegram сохранились.
-5. **Support “прочитано” не приравнивать автоматически к** `status → in_progress`**.**  
-Это может изменить бизнес-смысл тикета. Нужно отдельно доказать текущую модель:
+1. **Сначала kill-switch, потом диагностика.**  
+Правильно: приоритет — восстановить Telegram mono-path. Unified не чинить в этом патче.
+2. **Не делать** `setter = no-op` **без явного сброса сохранённого состояния.**  
+Нужно также очистить/игнорировать старый localStorage flag, иначе после будущего восстановления флага он может внезапно снова включиться у операторов.
   &nbsp;
+  Добавить:
+3. **В** `AdminCommunication.tsx` **не только скрыть пункт “Все”, но и обработать существующий URL/state.**  
+Если пользователь уже находится в unified/all state, при загрузке должно быть принудительное перенаправление/переключение на Telegram.
   &nbsp;
-  - `waiting_admin`;
-  - `read_at`;
-  - кто и когда меняет статус;
-  - что означает «прочитано» для support.  
-  Если статуса `read_at` нет или он не используется — не менять статус тикета без отдельного согласования.
-6. **Composer с выбором канала — отложить или сделать только как UI-shell.**  
-В этой фазе правая панель должна сначала стабильно открывать чат выбранного источника. Переключатель «Ответ через» добавлять только если:
-  - у контакта действительно есть несколько каналов;
-  - каждый канал имеет валидный `sourceId`;
-  - переход между каналами не теряет draft;
-  - понятно, какой backend-send вызывается.  
-  Не пытаться в одном спринте унифицировать отправку Telegram/IG/support медиа полностью.
-7. **Медиа-возможности не обещать одинаковыми для всех источников.**  
-Telegram поддерживает фото/видео/voice/video note/document. Instagram и support могут иметь другие ограничения. В UI нужно показывать capability matrix:
-  - Telegram: полный набор;
-  - Instagram: только реально поддерживаемые типы;
-  - Support: только реально поддерживаемые типы.  
-  Нельзя показывать кнопку видеокружка/voice для источника, если backend этого источника не поддерживает.
-8. **UnifiedInboxView должен быть feature-flagged.**  
-Добавить флаг, например:
-  &nbsp;
-  ```text
-  contact_center_unified_inbox
-  ```
-  Пока флаг выключен — старое поведение без изменений. Это важно, потому что задача затрагивает главный рабочий экран операторов.
-9. **Сортировку зафиксировать строго:**
-  &nbsp;
-  ```text
-  is_unanswered DESC
-  is_pinned DESC
-  last_message_at DESC
-  source_priority
-  key ASC
-  ```
-  Добавить tie-breaker, чтобы порядок не прыгал при одинаковом `last_message_at`.
-10. **Pagination/performance нельзя делать простым merge “всех массивов”.**  
-Нужно явно ограничить выборки:
+  Проверить:
+  - `?tab=inbox`;
+  - сохранённый selected source;
+  - local state dropdown;
+  - refresh страницы.
+4. **Realtime unified-ветки должны быть гарантированно неактивны.**  
+В proof показать, что после kill-switch не создаются:
+  - IG/support realtime subscriptions, добавленные unified;
+  - unified sound listener;
+  - unified invalidation branch.
+5. **Шаг 2 должен проверять не только текст/voice/video note, но и старые медиа.**  
+Добавить smoke:
+  - фото;
+  - документ;
+  - audio-file;
+  - входящий voice;
+  - исходящий voice;
+  - video note.
+6. **Шаг 3 “полный revert” должен быть не условным ручным списком, а готовым fallback.**  
+В отчёте указать commit/files diff и точный revert plan. Если Шаг 2 не проходит — не «пытаться чинить», а сразу выполнять revert.
+7. **Диагностику root cause не привязывать только к трём props.**  
+Добавить проверку:
+  - `profile.id` vs `profile.user_id`;
+  - `telegram_user_id`;
+  - `bot_id`;
+  - `chat_id`;
+  - `selectedBot`;
+  - `contact` object shape;
+  - query key `["telegram-messages", userId]`;
+  - какие данные получает edge `telegram-admin-chat get_messages`.
+8. **Для proof добавить before/after скриншоты.**  
+Нужно показать:
+  - до hotfix: «Telegram не привязан» / пустая история;
+  - после hotfix: тот же диалог открывается с историей.
+  Если before уже есть только из пользовательского скрина — сослаться на него как external proof.
+9. **Тумблер в настройках должен быть не просто disabled, а объяснять причину.**  
+Текст:
+10. **Roadmap-часть корректна, но не смешивать с runtime hotfix.**  
+Обновление roadmap можно сделать после восстановления Telegram. Не блокировать hotfix roadmap-изменениями.
+11. **Финальный отчёт должен называться:**
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V1 — emergency rollback/hotfix
+```
+
+12. **Статус после успешного hotfix:**
+
+```text
+Telegram mono — RESTORED / PASS
+Unified inbox V1 — DISABLED
+Unified inbox V2 — TODO
+```
+
+После этих правок план утверждён. Выполнять сразу, без промежуточного согласования.
 
 &nbsp;
 
-- Telegram limit;
-- Instagram limit;
-- Support limit;
-- общий visible limit.  
-Иначе при росте тикетов/IG unified list снова станет тяжёлым.
+План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V1 — emergency rollback / hotfix
 
-11. **SourceBadge не должен полностью заменять Telegram bot badge.**  
-Для Telegram нужно сохранить информацию о боте:
+## Цель
 
-- `Telegram · gorbova support`;
-- `Telegram · Gorbova BOT`.  
-Для Instagram:
-- `Instagram · @account`.  
-Для Support:
-- `Техподдержка`.
+Немедленно вернуть рабочий контакт-центр Telegram (mono-lента). Unified inbox выключить по умолчанию и полностью изолировать от моно-режима до отдельного proof.
 
-12. **Unread semantics описать по источникам:**
+## Порядок работ (Diagnose → Plan → Dry run → Execute → Verify)
 
-- Telegram: `unread_count`;
-- Instagram: конкретное поле/логика после discovery;
-- Support: `waiting_admin` или read model после discovery.  
-Без этой таблицы нельзя делать общий `is_unanswered`.
+### Шаг 1. Kill-switch: unified inbox всегда OFF
 
-13. **Realtime расширять аккуратно.**  
-Не превращать `useInboxRealtimeInvalidation` в большой шумный подписчик на все таблицы. Нужно:
+- `src/hooks/useContactCenterFeatureFlag.ts` — форсировать `enabled = false` (игнорировать localStorage), setter превращается в no-op, `[false, () => {}]`. Это глобально гасит все ветки `unifiedEnabled` без правки каждого потребителя (AdminCommunication, useInboxRealtimeInvalidation, useIncomingMessageAlert).
+- В `CommunicationSettingsTabContent.tsx` — тумблер unified inbox пометить `disabled` + подпись "временно отключено (rollback)".
+- Дополнительно в `AdminCommunication.tsx` захардкодить `unifiedEnabled = false` на уровне рендера (defense in depth): дефолт вкладки `"telegram"`, пункт "Все" в dropdown не показывать, ветку `<UnifiedInboxView />` не рендерить. Импорты оставить, чтобы minimize diff.
 
-- отдельная event matrix по источникам;
-- debounce/dedup;
-- фильтры по релевантным INSERT/UPDATE;
-- доказать, что один event не вызывает лавину refetch;
-- cleanup каналов.
+Итог: моно-Telegram рендерится ровно старым путём `InboxTabContent` → `ContactTelegramChat`, без прохождения через unified-normalization. Никакие подписки/каналы `-unified` не создаются.
 
-14. **Звук новых входящих — тоже через event matrix.**  
-Звук должен быть только на реальные входящие от клиента:
+### Шаг 2. Верификация вручную (после kill-switch)
 
-- Telegram incoming;
-- Instagram incoming;
-- support message от пользователя.  
-Не играть звук на исходящие, системные обновления, read-status, pin/favorite.
+Матрица чеков в `/admin/communication?tab=inbox`, dropdown = Telegram:
 
-15. **Сайдбар-счётчик уточнить:**
+1. Список Telegram-диалогов загружается.
+2. Клик по диалогу → справа открывается история сообщений (не «Telegram не привязан»).
+3. Отправка текста.
+4. Отправка voice.
+5. Отправка video note.
+6. Mark read (счётчик unread уменьшается, sidebar обновляется).
+7. Refresh страницы — состояние восстанавливается.
+8. Realtime: входящее сообщение появляется без ручного refetch.
 
-- «Сообщения» unified badge = Telegram + Instagram + Support, **без Email**;
-- Email badge остаётся внутри dropdown/отдельного пункта;
-- не смешивать старую сумму `tg+email+support` с новой unified-логикой.
+Если хотя бы один пункт падает — Шаг 3.
 
-16. **Моно-ленты должны остаться regression-gate.**  
-После внедрения проверить отдельно:
+### Шаг 3. Fallback: полный revert файлов патча (только если Шаг 2 не прошёл)
 
-- Telegram mono;
-- Instagram mono;
-- Support mono;
-- Email mono;
-- Broadcasts;
-- Settings.  
-Нельзя ломать старые вкладки ради unified view.
+Откатить целиком:
 
-17. **Bulk-действия в объединённой ленте лучше вынести в Phase 2.**  
-Для первого релиза достаточно single-row actions:
+- `src/hooks/useContactCenterFeatureFlag.ts` — удалить
+- `src/hooks/useUnifiedInbox.ts` — удалить
+- `src/components/admin/communication/unified/*` — удалить
+- `src/pages/admin/AdminCommunication.tsx` — вернуть версию до патча (dropdown без "Все", без импортов unified)
+- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — убрать тумблер unified
+- `src/hooks/useInboxRealtimeInvalidation.ts` — убрать `unifiedEnabled`, ветку `inbox-realtime-bus-unified`, IG/support pending refs
+- `src/hooks/useIncomingMessageAlert.ts` — убрать `global-incoming-alert-unified` и зависимость от флага
 
-- открыть;
-- pin;
-- favorite;
-- mark read.  
-Bulk по разным источникам усложняет rollback и proof. Если оставлять bulk, нужно расписать per-source transaction/result matrix.
+DB-миграций патч не создавал — откат чисто фронтовый.
 
-18. **Добавить empty/error/loading states по каждому источнику.**  
-Unified list должен показывать:
+### Шаг 4. Диагностика (read-only, после восстановления Telegram)
 
-- Telegram loaded/error;
-- Instagram loaded/error;
-- Support loaded/error.  
-Если Instagram упал, Telegram и Support не должны исчезать.
+Собрать mapping-таблицу контрактов в `.lovable/proofs/contact_center_unified_rollback_2026-07-04.md`:
 
-19. **Добавить clear DoD по безопасности данных:**
 
-- не менять реальные сообщения;
-- не отправлять тестовые ответы клиентам;
-- UAT только на тестовых Telegram/IG/support сущностях;
-- не менять billing/access/CRM/broadcasts.
+| Prop, ожидаемый `ContactTelegramChat`       | Значение в mono (InboxTabContent)      | Значение в UnifiedInboxView                                              | Совпадает / потерян / неверный тип |
+| ------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
+| `selectedUserId` (telegram profile user_id) | dialog.user_id из get_inbox_dialogs_v1 | ? (подозрение: selectedDialog.key вида `tg:<id>` или contact.profile_id) | —                                  |
+| `bot_id`                                    | last_bot_id                            | ?                                                                        | —                                  |
+| `bot_username`                              | last_bot_username                      | ?                                                                        | —                                  |
 
-20. **Финальный proof-файл:**
 
-```text
-.lovable/proofs/contact_center_unified_inbox_2026-06-14.md
-```
+Зафиксировать точный ID, который передавался ошибочно, и почему `ContactTelegramChat` отрисовал «Telegram не привязан».
 
-В отчёте показать:
+### Шаг 5. Приёмка (DoD)
 
-- discovery по трём источникам;
-- mapping таблиц/query keys/components;
-- изменённые файлы;
-- миграции;
-- before/after скриншоты;
-- сортировку;
-- realtime event count;
-- счётчики;
-- regression mono-лент;
-- список deferred.
+- Флаг unified inbox форсированно `false`; тумблер disabled.
+- Скриншот-proof (Playwright) моно-Telegram: список → открытый диалог с историей → успешная отправка текста.
+- В коде Telegram mono-path не проходит через unified-normalization (grep: в цепочке `InboxTabContent` → `ContactTelegramChat` нет импортов из `unified/`).
+- Отчёт `docs/audit/2026-07-04-unified-inbox-rollback.md`: что откачено/выключено, затронутые файлы, root cause (после Шага 4), какой ID передавался и какой должен, статус unified (disabled behind forced-off flag / fully reverted), что остаётся на Phase 2.
+- Roadmap: три `done` пункта unified inbox V1 → `more_work_needed` с логом-регрессией; новый `todo` "Unified inbox V2 — root-cause fix Telegram contract, включение только после proof".
 
-21. **Финальный заголовок отчёта:**
+## Что НЕ делается в этом патче
 
-```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V1
-```
+- Никаких доработок unified (composer, bulk, cross-channel).
+- Никаких изменений схемы БД, RPC, RLS.
+- Не трогаем Email, `get_inbox_dialogs_v1`, `mark_dialog_read_v2`, звук моно-Telegram.
 
-Минимальный рекомендуемый scope V1: **единая лента + source badges + открытие правильной правой панели + счётчики + single-row read/pin/favorite**. Унификация композеров, bulk-действия и полноценный cross-channel reply picker лучше делать Phase 2 после стабильного V1.
+## Технические файлы к правке (Шаг 1, минимальный hotfix)
 
-&nbsp;
+- `src/hooks/useContactCenterFeatureFlag.ts`
+- `src/pages/admin/AdminCommunication.tsx`
+- `src/components/admin/communication/CommunicationSettingsTabContent.tsx`
 
-План: единая лента «Сообщения» в контакт-центре
-
-Цель
-
-- Во вкладке «Сообщения» показывать в одной ленте все входящие каналы: Telegram, Техподдержка (in-app тикеты), Instagram. Email — не входит (остаётся отдельной опцией в дропдауне).
-- Неотвеченные (unread > 0 / статус тикета waiting_admin) всегда наверху.
-- У каждой строки — бейдж источника, аналогично текущей плашке бота («gorbova support», «Gorbova BOT»): «Техподдержка», «Instagram · @account», «Telegram · <бот>».
-- Дропдаун «Сообщения» сохраняется: All / Telegram / Email / Техподдержка / Instagram.
-- Правая панель ответа работает единообразно (медиа, файлы, видеокружки, аудио — как в Telegram). Для Instagram и Техподдержки используем существующие чат-компоненты, но приводим тулбар композера и UX к общему виду.
-- В композере — селектор канала ответа: Telegram / Instagram / Техподдержка. По умолчанию — тот источник, из которого пришло последнее сообщение в выбранной строке.
-- Избранное, закреп, «прочитано» — работают одинаково для всех трёх источников.
-
-Что уже есть (переиспользуем, без дубликатов)
-
-- Ленты по источникам: `InboxTabContent` (Telegram), `InstagramInboxView`, `SupportTabContent`.
-- RPC `get_inbox_dialogs_v1` (Telegram), запросы Instagram (edge-функция instagram-admin-chat) и `useAdminTickets` (техподдержка).
-- Bus реалтайма `useInboxRealtimeInvalidation` для Telegram — расширяем на IG/тикеты.
-- Звук новых входящих: `useIncomingMessageAlert` (Telegram) — добавим ветки IG и тикетов.
-- Бейджи: `chat-preferences` (pin/favorite), `mark_dialog_read_v2` (Telegram), read-флаги IG и статус тикетов — приводим к общему UI-контракту.
-
-Технический план
-
-1. Каноническая модель строки ленты (frontend-only, без изменения БД):
-
-```
-UnifiedDialog {
-  key: `${source}:${sourceId}`   // source ∈ tg|ig|support
-  source: 'telegram' | 'instagram' | 'support'
-  source_label: string           // "Telegram · Gorbova BOT" | "Instagram · @club" | "Техподдержка"
-  contact: { user_id?, profile_id?, display_name, avatar_url, username? }
-  last_message_text, last_message_at
-  unread_count, is_unanswered   // ticket: waiting_admin; ig/tg: unread_count>0
-  is_pinned, is_favorite
-}
-```
-
-Строим объединённый массив во фронте из трёх источников; сортировка: `is_unanswered DESC, is_pinned DESC, last_message_at DESC`.
-
-2. UI-изменения
-
-- `AdminCommunication.tsx`: пункт «All» в дропдауне «Сообщения» (по умолчанию), Email остаётся отдельным пунктом (лента — только tg/ig/support).
-- Новый компонент `UnifiedInboxView` рядом с `InboxTabContent` — рендерит объединённую ленту, делегируя правую панель:
-  - `telegram` → существующий `ContactTelegramChat`
-  - `instagram` → `ContactInstagramChat`
-  - `support` → `TicketChat`
-- Бейдж источника в карточке строки — единый компонент `SourceBadge` (иконка + текст), заменяет текущую плашку бота у Telegram.
-- Фильтр «Все / Новые / Избранные / Закреплённые» и селектор бота остаются; добавляем `SourceFilter` (multi) внутри «All».
-
-3. Композер с выбором канала
-
-- Внутри правой панели показываем компактный `ChannelPicker` со значениями: Telegram / Instagram / Техподдержка (доступны только те каналы, у которых есть открытая переписка с этим контактом).
-- По умолчанию выбран источник строки. При переключении подгружается соответствующий чат (те же компоненты, что и в моно-лентах).
-- Единый тулбар (кнопки медиа/файла/аудио/видеокружка) — общий wrapper над существующими композерами; для IG показываем ограничения провайдера предупреждением (не блокируем UI).
-
-4. Единые действия по строке
-
-- Избранное/Закреп: расширяем `chat_preferences` через составной ключ `contact_user_id + source` (миграция: добавить nullable `source text default 'telegram'` + уникальный индекс `(admin_user_id, contact_user_id, source)`), UI-хук общий.
-- «Прочитано»: для IG — существующий mark-read edge, для тикетов — mutation status→in_progress и `read_at`, для Telegram — `mark_dialog_read_v2` как сейчас.
-- Bulk-действия (checkbox-режим) — работают в объединённой ленте по одному контракту, каждый источник вызывает свой RPC.
-
-5. Реалтайм и звук
-
-- `useInboxRealtimeInvalidation`: добавить каналы `instagram_messages` и `support_tickets/support_ticket_messages` с той же debounce-логикой; инвалидируем ключи `INBOX_DIALOGS_QK`, IG и тикетов.
-- `useIncomingMessageAlert`: слушать INSERT direction=incoming для IG и новых сообщений тикетов (auth от пользователя), тем же двутональным звуком.
-- Push-уведомления (техподдержка/IG остаются немыми) — планируется отдельной задачей, вне этого спринта; здесь только реалтайм-инвалидация и звук.
-
-6. Счётчик в сайдбаре
-
-- В `AdminCommunication` badge для «Сообщения» уже суммирует tg+email+support. Добавляем IG-unread; для «Все» показываем сумму без email.
-
-Что НЕ меняем
-
-- Email (`EmailInboxView`) — только отдельный пункт дропдауна, не входит в общую ленту.
-- Схемы данных Telegram/IG/тикетов, RPC логика, права/RLS.
-- Функционал бродкастов и настроек.
-
-DoD
-
-- Открываем «Сообщения» → по умолчанию видно объединённую ленту с бейджами источника; неотвеченные вверху; сортировка стабильна.
-- Селектор в дропдауне переключает на моно-ленту (Telegram/Email/Техподдержка/Instagram) — старое поведение сохранено.
-- Открытие строки любого источника показывает соответствующий чат с полным набором действий (медиа/файл/аудио/видеокружок — там, где источник поддерживает).
-- Переключение канала ответа в правой панели работает и очевидно отражается в UI («Ответ через: Instagram»).
-- Пин/избранное/прочитано работают одинаково; счётчики обновляются реалтаймом без ручного refetch; звук приходит на новые входящие любого из трёх источников.
-- Регрессия: моно-ленты Telegram/IG/Support работают как раньше; email отдельно, без ломки.
-
-Открытые вопросы (ответьте перед стартом, если хотите скорректировать)
-
-1. Один контакт с Telegram и Instagram — показывать одной строкой (объединять по profile_id) или отдельными строками по источникам? Предложение по умолчанию: отдельными строками (проще, соответствует «выбираем источник внутри»).
-2. Push-уведомления для техподдержки/IG — включаем в этот же спринт или выносим (сейчас в плане только реалтайм + звук)?
+Все остальные unified-файлы остаются в репо мёртвым кодом до Phase 2 (или удаляются на Шаге 3, если понадобится полный revert).
