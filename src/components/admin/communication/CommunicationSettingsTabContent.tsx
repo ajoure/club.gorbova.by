@@ -41,8 +41,8 @@ import {
 } from "lucide-react";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { OlegSettingsSection } from "./OlegSettingsSection";
-import { useUnifiedInboxRolloutStatus, type UnifiedInboxFlagSource } from "@/hooks/useContactCenterFeatureFlag";
-import { Power, PowerOff, ShieldCheck, TestTube2 } from "lucide-react";
+import { useUnifiedInboxRolloutStatus } from "@/hooks/useContactCenterFeatureFlag";
+import { Power, PowerOff } from "lucide-react";
 
 interface EmailTemplate {
   id: string;
