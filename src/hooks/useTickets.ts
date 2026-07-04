@@ -61,6 +61,7 @@ export interface CreateTicketData {
   subject: string;
   description: string;
   category?: string;
+  attachments?: TicketAttachment[];
 }
 
 export interface CreateMessageData {
