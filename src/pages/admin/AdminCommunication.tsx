@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram } from "lucide-react";
+import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram, Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -17,6 +17,8 @@ import { SupportTabContent } from "@/components/admin/communication/SupportTabCo
 import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
 import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
 import { CommunicationSettingsTabContent } from "@/components/admin/communication/CommunicationSettingsTabContent";
+import { UnifiedInboxView } from "@/components/admin/communication/unified/UnifiedInboxView";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 // Import unread hooks
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
@@ -31,8 +33,11 @@ const tabs = [
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [unifiedEnabled] = useUnifiedInboxFlag();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
-  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email" | "support" | "instagram">("telegram");
+  const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">(
+    unifiedEnabled ? "all" : "telegram",
+  );
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();
