@@ -301,6 +301,7 @@ Deno.serve(async (req) => {
               <p style="margin:0 0 16px 0;">Здравствуйте${docProfile?.full_name ? `, ${escapeHtml(docProfile.full_name)}` : ""}!</p>
               <p style="margin:0 0 16px 0;">Направляем вам документ во вложении (PDF).</p>
               ${doc.document_number ? `<p style="margin:0 0 8px 0;color:#666;">Номер документа: <b>${escapeHtml(doc.document_number)}</b></p>` : ""}
+              ${paymentPurposeText ? `<div style="margin-top:16px;padding:12px 14px;background:#f4f6fa;border-radius:8px;border:1px solid #e2e6ee;"><div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">При оплате в назначении платежа укажите</div><div style="font-weight:600;">«${escapeHtml(paymentPurposeText)}»</div></div>` : ""}
             </div>
           `;
           const base64Pdf = uint8ToBase64(pdfBytes);
