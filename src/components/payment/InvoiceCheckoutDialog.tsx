@@ -203,7 +203,7 @@ export function InvoiceCheckoutDialog({
         throw new Error(
           data?.message ||
             data?.error ||
-            `Не удалось выписать счёт (${response.status})`,
+            `Не удалось сформировать счёт (${response.status})`,
         );
       }
       if (!data || (data as any).error) {
@@ -211,13 +211,21 @@ export function InvoiceCheckoutDialog({
       }
       setResult(data as InvoiceResult);
       setStep("success");
-      toast.success("Счёт выписан");
+      toast.success("Счёт сформирован");
     } catch (e: any) {
       console.error("[InvoiceCheckoutDialog] issue failed", e);
-      toast.error(e?.message ?? "Не удалось выписать счёт");
+      toast.error(e?.message ?? "Не удалось сформировать счёт");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** Формат даты для назначения платежа: DD.MM.YYYY */
+  function formatToday(): string {
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}.${mm}.${d.getFullYear()}`;
   }
 
   return (
