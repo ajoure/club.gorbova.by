@@ -20,6 +20,12 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export type UnifiedSource = "telegram" | "instagram" | "support";
 
+export interface UnifiedRowCapabilities {
+  canPin: boolean;
+  canFavorite: boolean;
+  canMarkRead: boolean;
+}
+
 export interface UnifiedDialog {
   /** Стабильный ключ строки для React key и mark-read. */
   key: string;
@@ -37,6 +43,12 @@ export interface UnifiedDialog {
   isUnanswered: boolean;
   isPinned: boolean;
   isFavorite: boolean;
+  /**
+   * Возможности источника для hover-действий строки.
+   * Backend-схема не расширяется — если поля/таблицы нет, capability=false и
+   * иконка в UI просто не показывается (см. UnifiedInboxView).
+   */
+  capabilities: UnifiedRowCapabilities;
   /** Технические поля источника, нужные правой панели. */
   meta: {
     /** profiles.id — общий канон для ChannelPicker (V2-CHANNELS). */
@@ -66,6 +78,11 @@ export interface UnifiedDialog {
     ticketUserId?: string | null;
   };
 }
+
+const TG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
+const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: false, canMarkRead: true };
+const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: false, canFavorite: true, canMarkRead: true };
+
 
 const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
   telegram: 0,
