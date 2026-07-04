@@ -1,5 +1,14 @@
 # Отчет о выполненной работе: PATCH-IG-MESSAGES-DIAGNOSIS
 
+> **Superseded only for non-text/media completeness** файлом
+> `docs/audit/2026-07-04-ig-media-and-admin-echo-discovery.md` (2026-07-04).
+> Раздел A ("non-text не приходят") снят: image/video приходят через
+> подстановку CDN URL в `last_input_text`. Раздел B (admin replies из
+> мобильного Instagram отсутствуют в БД) still valid unless new evidence
+> disproves it.
+
+
+
 Дата: 2026-07-04
 Тип: read-only диагностика. Изменений в коде и БД не производилось.
 
