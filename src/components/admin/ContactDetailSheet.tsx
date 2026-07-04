@@ -152,6 +152,7 @@ import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { WebinarActivitySection } from "./contact/WebinarActivitySection";
 import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
+import { ContactChannelsSection } from "./ContactChannelsSection";
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -2008,6 +2009,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           >
             <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
             <TabsContent value="profile" className="m-0 space-y-4">
+              {contact.id && (
+                <ContactChannelsSection
+                  profileId={contact.id}
+                  profileName={contact.full_name}
+                  profileEmail={contact.email}
+                />
+              )}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm text-muted-foreground">Контактные данные</CardTitle>

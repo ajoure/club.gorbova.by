@@ -25,6 +25,8 @@ import { SourceBadge } from "./SourceBadge";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { ContactInstagramChat } from "@/components/admin/communication/instagram/ContactInstagramChat";
 import { TicketChat } from "@/components/support/TicketChat";
+import { ChannelPicker } from "./ChannelPicker";
+import { IgContactHeader } from "./IgContactHeader";
 
 const PANEL_KEY = "unified-inbox-panel-sizes";
 
@@ -289,7 +291,13 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   );
 
   const rightPanel = selected ? (
-    <ChatPanel row={selected} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
+    <div className="h-full flex flex-col">
+      {selected.source === "instagram" && <IgContactHeader row={selected} />}
+      <ChannelPicker currentRow={selected} allRows={rows} onSelect={setSelectedKey} />
+      <div className="flex-1 min-h-0">
+        <ChatPanel row={selected} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
+      </div>
+    </div>
   ) : (
     <div className="h-full flex items-center justify-center p-8 text-center">
       <div>

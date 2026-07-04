@@ -18518,6 +18518,14 @@ export type Database = {
         Args: { _club_id: string; _tg_id: number }
         Returns: boolean
       }
+      link_instagram_contact_to_profile: {
+        Args: {
+          p_instagram_contact_id: string
+          p_overwrite?: boolean
+          p_profile_id: string
+        }
+        Returns: Json
+      }
       log_document_package_event: {
         Args: { _action: string; _meta?: Json; _package_id: string }
         Returns: string
@@ -18846,6 +18854,10 @@ export type Database = {
       tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
       trigger_card_verification: { Args: never; Returns: undefined }
       try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
+      unlink_instagram_contact_from_profile: {
+        Args: { p_instagram_contact_id: string }
+        Returns: Json
+      }
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number

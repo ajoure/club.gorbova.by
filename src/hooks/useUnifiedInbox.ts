@@ -39,6 +39,8 @@ export interface UnifiedDialog {
   isFavorite: boolean;
   /** Технические поля источника, нужные правой панели. */
   meta: {
+    /** profiles.id — общий канон для ChannelPicker (V2-CHANNELS). */
+    profileId?: string | null;
     /** profiles.user_id (UUID) — используется как chat key и передаётся как `userId` в ContactTelegramChat. */
     telegramUserId?: string;
     /** profiles.telegram_user_id (числовой Telegram ID) — обязателен для ContactTelegramChat, иначе он показывает «Telegram не привязан». */
@@ -53,6 +55,10 @@ export interface UnifiedDialog {
     /** ig_thread_id из RPC — тот же, что ждёт instagram-admin-chat/get_history. Может быть null для новых диалогов. */
     instagramThreadId?: string | null;
     instagramPeerId?: string;
+    /** instagram_contacts.instagram_user_id — IG-side peer id (== peer_id). */
+    instagramUserId?: string;
+    /** instagram_contacts.id — нужен для link/unlink RPC (V2-CHANNELS P2). */
+    instagramContactId?: string | null;
     instagramSenderName?: string | null;
     ticketId?: string;
     ticketStatus?: string;
@@ -176,6 +182,34 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     return map;
   }, [igAccounts.data]);
 
+  // Загружаем instagram_contacts для видимых аккаунтов — источник canonical
+  // profile_id и instagram_contacts.id (нужны для ChannelPicker и link RPC).
+  // RPC уже возвращает profile_id, но не отдаёт contact.id.
+  const igContacts = useQuery({
+    queryKey: ["unified-ig-contacts", igAccountIds],
+    enabled: enabled && igAccountIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("instagram_contacts")
+        .select("id, instagram_account_id, instagram_user_id, profile_id, instagram_username, full_name")
+        .in("instagram_account_id", igAccountIds as string[]);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  const igContactMap = useMemo(() => {
+    const m = new Map<string, { id: string; profile_id: string | null }>();
+    (igContacts.data || []).forEach((c: any) => {
+      m.set(`${c.instagram_account_id}:${c.instagram_user_id}`, {
+        id: c.id,
+        profile_id: c.profile_id ?? null,
+      });
+    });
+    return m;
+  }, [igContacts.data]);
+
   // --- Support: тикеты, отсортированные по last_activity ---
   const support = useQuery({
     queryKey: ["unified-support-tickets"],
@@ -262,6 +296,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
         meta: {
+          profileId: p?.id ?? null,
           telegramUserId: d.user_id,
           telegramNumericId: p?.telegram_user_id ?? null,
           telegramUsername: p?.telegram_username ?? null,
@@ -290,10 +325,13 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: !!d.is_pinned,
         isFavorite: false,
         meta: {
+          profileId: (igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.profile_id) ?? d.profile_id ?? null,
           instagramAccountId: d.__accountId,
           instagramThreadKey: d.thread_key,
           instagramThreadId: d.ig_thread_id ?? null,
           instagramPeerId: d.peer_id,
+          instagramUserId: d.peer_id,
+          instagramContactId: igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.id ?? null,
           instagramSenderName: d.sender_name,
         },
       });
@@ -317,6 +355,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: false,
         isFavorite: !!t.is_starred,
         meta: {
+          profileId: t.profile_id ?? null,
           ticketId: t.id,
           ticketStatus: t.status,
           ticketProfileId: t.profile_id,
@@ -344,6 +383,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     tgPrefs.data,
     igDialogs.data,
     igAccountLabel,
+    igContactMap,
     support.data,
     supportProfiles.data,
   ]);
