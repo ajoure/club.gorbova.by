@@ -25,6 +25,7 @@ import { SourceBadge } from "./SourceBadge";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { ContactInstagramChat } from "@/components/admin/communication/instagram/ContactInstagramChat";
 import { TicketChat } from "@/components/support/TicketChat";
+import { ChannelPicker } from "./ChannelPicker";
 
 const PANEL_KEY = "unified-inbox-panel-sizes";
 
