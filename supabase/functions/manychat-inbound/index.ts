@@ -117,24 +117,55 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
   const subscriber = body.subscriber || body.user || {};
   const lastInput = body.last_input_text ?? body.last_user_input ?? null;
 
-  const sender_id = pickString(
-    body.sender_id,
-    body.user_id,
-    body.subscriber_id,
+  // Direction detection: ManyChat may fire an External Request on team-member
+  // replies (Live Chat / Instagram app synced via ManyChat). Support a few
+  // flag aliases so the Flow author can pick the most convenient one.
+  const directionRaw = pickString(body.direction, body.event_type, body.event);
+  const isOutbound =
+    body.is_outbound === true ||
+    body.is_outgoing === true ||
+    body.outbound === true ||
+    (typeof directionRaw === "string" &&
+      /^(outbound|outgoing|team_reply|team_member_reply|agent_reply|admin_reply|message_sent)$/i.test(
+        directionRaw,
+      ));
+  const direction: "inbound" | "outbound" = isOutbound ? "outbound" : "inbound";
+
+  // Subscriber = the Instagram contact. Resolve from subscriber.* first so
+  // outbound events (where body.sender_id may be the agent) still link to the
+  // right contact.
+  const subscriber_id = pickString(
     subscriber?.id,
     subscriber?.user_ref,
+    body.subscriber_id,
+    body.contact_id,
     body.peer_id,
+    // Fall back to top-level sender_id only for inbound events; for outbound
+    // the top-level sender_id typically refers to the team member.
+    isOutbound ? null : body.sender_id,
+    isOutbound ? null : body.user_id,
   );
 
-  if (!sender_id) {
-    return { error: "missing_sender_id" };
+  if (!subscriber_id) {
+    return { error: "missing_subscriber_id" };
   }
+
+  const subscriber_name = pickString(
+    subscriber?.name,
+    subscriber?.first_name && subscriber?.last_name
+      ? `${subscriber.first_name} ${subscriber.last_name}`
+      : null,
+    subscriber?.first_name,
+    subscriber?.username,
+    body.subscriber_name,
+  );
 
   const rawText = pickString(
     body.message_text,
     body.text,
-    lastInput,
     body.message?.text,
+    // last_input_text is meaningful only for inbound (user's last message).
+    isOutbound ? null : lastInput,
   );
 
   let media_url = pickString(
@@ -150,21 +181,18 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
 
   let message_text: string | null = rawText;
 
-  // P1: если media_url не пришёл явно, но last_input_text — это URL вложения (lookaside/cdn),
-  // лечим: text → media_url, message_text=null (media-only сообщение).
   if (!media_url && rawText && isLikelyMediaUrl(rawText)) {
     media_url = rawText;
     message_text = null;
   }
 
-  // Классификация: быстрый pattern → optional HEAD enrichment.
   if (media_url && !media_type) {
     media_type = classifyMediaUrlFast(media_url);
-    if (!media_type || media_type === 'file') {
+    if (!media_type || media_type === "file") {
       const probed = await probeMimeOptional(media_url);
       if (probed) media_type = probed;
     }
-    if (!media_type) media_type = 'file';
+    if (!media_type) media_type = "file";
   }
 
   let external_message_id = pickString(
@@ -176,21 +204,44 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
 
   if (!external_message_id) {
     const ts = pickString(body.timestamp, body.created_at) ?? String(Date.now());
-    external_message_id = `mc:${sender_id}:${ts}`;
+    external_message_id = `${isOutbound ? "mc_out" : "mc"}:${subscriber_id}:${ts}`;
+  } else if (isOutbound && !/^mc_out:/i.test(external_message_id)) {
+    // Prefix outbound IDs to guarantee no collision with inbound ones sharing
+    // the same UNIQUE(account, external_message_id) index.
+    external_message_id = `mc_out:${external_message_id}`;
   }
 
-  const sender_name = pickString(
-    body.sender_name,
-    body.full_name,
-    subscriber?.name,
-    subscriber?.first_name && subscriber?.last_name
-      ? `${subscriber.first_name} ${subscriber.last_name}`
-      : null,
-    subscriber?.first_name,
-    subscriber?.username,
-  );
+  // sender_* — author of THIS message.
+  let sender_id: string;
+  let sender_name: string | null;
+  if (isOutbound) {
+    sender_id =
+      pickString(
+        body.agent_id,
+        body.team_member_id,
+        body.admin_id,
+        body.sender_id,
+        body.page_id,
+        body.manychat_page_id,
+      ) || "manychat_team";
+    sender_name = pickString(
+      body.agent_name,
+      body.team_member_name,
+      body.admin_name,
+      body.sender_name,
+      body.full_name,
+      body.page?.name,
+      body.page_name,
+    );
+  } else {
+    sender_id = subscriber_id;
+    sender_name = pickString(
+      body.sender_name,
+      body.full_name,
+      subscriber_name,
+    );
+  }
 
-  // Avatar: ManyChat присылает в `subscriber.profile_pic`. Безопасно — пишем только если URL валидный.
   const rawAvatar = pickString(
     subscriber?.profile_pic,
     subscriber?.profile_pic_url,
@@ -200,7 +251,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
   const avatar_url = rawAvatar && /^https?:\/\//i.test(rawAvatar) ? rawAvatar : null;
 
   const ig_thread_id = pickString(body.ig_thread_id, body.thread_id);
-  const thread_key = pickString(body.thread_key, ig_thread_id, sender_id);
+  const thread_key = pickString(body.thread_key, ig_thread_id, subscriber_id);
 
   const manychat_page_id = pickString(
     body.manychat_page_id,
@@ -217,9 +268,12 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
 
   return {
     external_message_id,
+    subscriber_id,
+    subscriber_name,
+    avatar_url,
+    direction,
     sender_id,
     sender_name,
-    avatar_url,
     message_text,
     media_url,
     media_type,
@@ -229,6 +283,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     manychat_page_name,
   };
 }
+
 
 async function logIntegrationEvent(
   supabase: any,
