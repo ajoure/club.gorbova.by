@@ -1,34 +1,181 @@
-План:
+## да, согласен, с учетом правок:
 
-## Диагноз
-Ошибка `permission denied for table training_lessons` из скриншота — это ошибка уровня GRANT (PostgREST), а не RLS.
+```text
+1. План правильный: отдельные access_rules создавать не нужно, потому что модуль “Итоги месяца” является дочерним root “База знаний”, а rule `6f81ef7e` уже покрывает root с `match_purchase_month=true`.
 
-Проверил в БД:
-- У роли `authenticated` на `public.training_lessons` есть только `SELECT`, но нет `INSERT`/`UPDATE`/`DELETE`.
-- То же самое на `public.training_modules`.
-- RLS-политика `Admins can manage lessons` корректная (разрешает admin/super_admin через `has_role_v2`), но до неё запрос не доходит — GRANT срезает раньше.
-- Ирина Гаринова (auth uid `f1a79dd0-…`, вход с `irenessa@yandex.ru` подтверждён в auth-логах) имеет роль `admin` в `user_roles_v2`, то есть RLS её пропустит, как только появятся GRANT'ы.
+2. По июню 2026:
+не создавать пустой урок сейчас.
+Пока верхним должен быть “Май 2026”.
+Июнь создавать только когда будет реальный контент или отдельное решение.
 
-Соседние таблицы (`lesson_blocks`, `lesson_attachments`) уже имеют полные GRANT'ы — расхождение подтверждает, что на `training_lessons`/`training_modules` GRANT'ы просто забыли выдать при создании.
+3. Тестовый пользователь:
+роль client / обычный пользователь — ок.
+Но тестовые orders/entitlements нужно пометить явно:
+- meta.test_run = 'monthgate_itogi_2026_05'
+- order_number с префиксом TEST-
+- cleanup обязателен.
+Не оставлять тестовые записи в БД.
 
-## Исправление (одна миграция)
+4. Перед UPDATE уроков обязательно сделать read-only preflight:
+- список всех 16 уроков;
+- slug;
+- текущий content_month;
+- текущий is_active;
+- текущий sort_order;
+- calculated content_month from slug.
+STOP, если:
+- slug не парсится;
+- найдено не 16 уроков;
+- есть дубль content_month;
+- есть урок без slug `IM-MM.YYYY`.
 
-```sql
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.training_lessons TO authenticated;
-GRANT ALL ON public.training_lessons TO service_role;
+5. Backup нужен не только в /tmp, но и в proof:
+добавить таблицу before/after в `.lovable/proofs/itogi_mesyaca_monthgate_content_fix_2026_05.md`.
+`/tmp/monthgate-backup.sql` можно оставить как технический rollback, но proof должен содержать snapshot.
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.training_modules TO authenticated;
-GRANT ALL ON public.training_modules TO service_role;
+6. UPDATE делать идемпотентно:
+- content_month только если отличается;
+- is_active=true только если false;
+- sort_order только если отличается от расчётного.
+Записать audit_logs:
+`itogi_mesyaca_monthgate_content_fix`.
+
+7. Проверить сортировку не только в клиентском `/library/itogi-mesyaca`, но и в админке.
+Если админка не использует sort_order, править только read-query/sort, без изменения модели данных.
+
+8. Playwright verify:
+обязательно проверить не только “Начать”, но и что locked карточки не дают открыть урок прямым кликом/URL, если такой route доступен.
+
+9. Проверить, что Webinars не сломались:
+для того же тестового пользователя месяц 2025-04 и 2026-03 открыт и в “Итогах”, и в “Вебинарах”; другие месяцы закрыты.
+
+10. После cleanup тестовых данных:
+сделать SQL-проверку:
+- 0 TEST-orders;
+- 0 test entitlements;
+- auth user удалён;
+- реальные 16 lessons остались изменёнными.
 ```
 
-RLS не трогаем — доступ к записи остаётся у admin/super_admin, как и было задумано.
+Итоговая команда:
 
-## Verify (DoD)
-1. После применения миграции — повторный запрос `has_table_privilege('authenticated', 'public.training_lessons', 'INSERT')` должен вернуть `true`.
-2. Открыть в preview `/admin/live-events` под учёткой Ирины (или под тест-админом), создать урок «Тест GRANT» в модуле «Итоги месяца» — должен создаться без тоста «permission denied». Затем удалить тестовый урок.
-3. Проверить в логах Postgres/edge, что ошибок permission denied по этим таблицам больше нет.
+```text
+План принимаю.
 
-## Что НЕ делаем
-- Не меняем RLS-политики.
-- Не трогаем роли пользователей (у Ирины уже admin).
-- Не выдаём `anon` — таблицы админские.
+Ответы на открытые вопросы:
+1. Июнь 2026 сейчас НЕ создавать. Верхним остаётся Май 2026.
+2. Тестовый пользователь — обычный client, ок.
+
+Approve на build-mode:
+
+PATCH-ITOGI-MESYACA-MONTHGATE-CONTENT-FIX-2026-05
+
+Scope:
+- только `training_lessons` модуля `81cf626a`;
+- заполнить `content_month` из slug `IM-MM.YYYY`;
+- активировать существующие уроки;
+- выставить sort_order по `content_month DESC`;
+- если нужно — поправить read-sort в admin/client на sort_order;
+- access_rules не менять.
+
+Запрещено:
+- создавать июньский пустой урок;
+- менять access_rules;
+- менять orders/subscriptions/entitlements реальных пользователей;
+- менять root “База знаний”;
+- менять вебинарные модули;
+- оставлять тестового пользователя/тестовые заказы после проверки.
+
+Verify:
+- 16 уроков active;
+- content_month корректен;
+- порядок Май 2026 → Январь 2025;
+- тестовый client с order month 2025-04 и 2026-03 видит только эти месяцы;
+- остальные месяцы залочены;
+- вебинары по тем же месяцам тоже работают;
+- прямое открытие locked lesson не проходит;
+- тестовые данные удалены.
+
+Proof:
+.lovable/proofs/itogi_mesyaca_monthgate_content_fix_2026_05.md
+Скриншоты:
+`/tmp/browser/monthgate/`
+
+Что я выяснил
+```
+
+### Как это работает в «Вебинарах» (референс)
+
+- Модуль «Вебинары» (`8c7fd507`) — контейнер, у каждого **месяца свой sub-module** с заполненным `training_modules.content_month` (`2025-01`, `2025-02`, … `2026-05`).
+- Родитель для гейта — «База знаний» (`8b1fb03e`), это **root**.
+- В `access_rules` на root'е висит правило `6f81ef7e`:
+  - `grant_target_type = training_content`
+  - `target_ref = 8b1fb03e` (root «База знаний»)
+  - `tariff_id = b018e9be` (тариф **ИДЕОЛОГИЯ**), `product_id = 11c9f1b8` (**Gorbova Club**)
+  - `conditions = { access_mode: "full", match_purchase_month: true }`
+  - `is_active = true`
+- RPC `has_month_purchase_bulk` смотрит в `orders_v2`: `status='paid' AND tariff_id=<tariff> AND meta->>'deal_month' = 'YYYY-MM'`. То есть месяц покупки в сделке хранится в `orders_v2.meta.deal_month` (`YYYY-MM`).
+
+### Что с «Итогами месяца»
+
+- Модуль `81cf626a` **тоже прямой ребёнок root'а «База знаний»** (`parent_module_id = 8b1fb03e`). Значит **правило `6f81ef7e` уже покрывает и его** — отдельное правило не нужно.
+- Уроки в нём — плоские (не sub-modules). Хук `useMonthGate` работает по `training_lessons.content_month` так же, как по `training_modules.content_month` — механика одинаковая.
+- Сейчас `content_month` заполнено только у «Май 2026»; 12 уроков 2025 + «Январь 2026» лежат с `is_active=false` — поэтому никто их не видит.
+
+Итог: логика гейта уже правильная и общая с «Вебинарами». Нужно только починить данные и порядок.
+
+## План (в build-mode, после аппрува)
+
+### Шаг 1. Бэкфилл `content_month` у 16 уроков модуля
+
+Парсим slug `IM-MM.YYYY` → `YYYY-MM` и записываем в `training_lessons.content_month`. Идемпотентно, только для уроков `module_id = 81cf626a`, только если `content_month IS NULL` или не совпадает.
+
+### Шаг 2. Активация всех уроков модуля
+
+`UPDATE training_lessons SET is_active = true WHERE module_id = 81cf626a AND is_active = false` — 13 уроков.
+
+### Шаг 3. Сортировка «новые сверху»
+
+Проставить `sort_order` по убыванию `content_month`, чтобы сверху был самый свежий месяц (сейчас — Май 2026, Апрель 2026, Март 2026, …, Январь 2025). Формула: `sort_order = 9999 - row_number()` в порядке `content_month DESC`. Работает и для админки, и для клиента — оба используют `sort_order`.
+
+Проверю, что admin/library-страницы этого модуля уже сортируют по `sort_order` (а не по `created_at`) — если нет, поправлю запрос **только** в чтении данных для этого модуля.
+
+### Шаг 4. Правила доступа
+
+Ничего создавать не нужно. Правило `6f81ef7e` уже даёт «полный доступ + match_purchase_month» на весь root «База знаний» для тарифа ИДЕОЛОГИЯ. Значит:
+
+- Клиент с оплаченной сделкой ИДЕОЛОГИЯ за месяц X увидит и вебинар месяца X, и урок «Итоги месяца. X».
+- За другие месяцы урок будет показан с бейджем «Контент за MM.YYYY» и заблокирован — тот же UX, что и у вебинаров.
+
+### Шаг 5. Проверка с тестовым аккаунтом
+
+1. Через `supabase.auth.admin` (edge/psql) создам тестового пользователя `test-monthgate-<ts>@gorbova.test` с паролем, залогинюсь под ним в Playwright (dev-пароль 123456 в форме Login as Developer + затем email/пароль).
+2. Через `insert` в `orders_v2` создам 2 тестовые «сделки»:
+  - `tariff_id=b018e9be` (ИДЕОЛОГИЯ), `status='paid'`, `meta.deal_month='2025-04'`, `user_id=<test>`
+  - Ещё одну `meta.deal_month='2026-03'`
+  - Плюс entitlement на продукт Gorbova Club, чтобы модуль был вообще доступен (проверю, нужен ли — возможно, `training_content`-правило само даёт доступ).
+3. Открою в Playwright `/library/itogi-mesyaca` под тестовым:
+  - Урок «Итоги месяца. Апрель 2025» — доступен, кнопка «Начать».
+  - Урок «Итоги месяца. Март 2026» — доступен.
+  - Урок «Итоги месяца. Май 2026» — залочен, бейдж «Контент за 05.2026».
+  - Урок «Итоги месяца. Январь 2025» — залочен, бейдж «Контент за 01.2025».
+4. Открою `/library/knowledge-webinars` под тем же пользователем — проверю, что вебинары апреля 2025 и марта 2026 тоже открыты (та же логика, тот же rule).
+5. Скриншоты каждого шага сохраню в `/tmp/browser/monthgate/` и приложу.
+6. **Cleanup:** удалю тестовые `orders_v2`, entitlement и самого тестового пользователя (через `auth.admin.deleteUser`). Оставлю только те данные, которые правил в шагах 1–3 (реальный контент).
+
+### Шаг 6. Обратимость
+
+Перед шагом 1 сохраню снапшот `id, is_active, content_month, sort_order` всех 16 уроков в `/tmp/monthgate-backup.sql` — чтобы откатить точечно, если что-то пойдёт не так.
+
+## Definition of Done
+
+- У всех 16 уроков модуля `81cf626a` `content_month` = месяц из слага, `is_active = true`.
+- В списке уроков (admin и клиентский `/library/itogi-mesyaca`) порядок: **сверху самый свежий месяц (Май 2026), снизу — Январь 2025.**
+- Тестовый пользователь с paid-сделкой ИДЕОЛОГИЯ за месяц X видит именно свой урок «Итоги месяца. X» открытым и все остальные — с бейджем «Контент за MM.YYYY». То же самое подтверждено для «Вебинаров».
+- Скриншоты Playwright подтверждают открытые и закрытые уроки.
+- Тестовые сделки и тестовый аккаунт удалены; в БД остались только реальные данные.
+
+## Открытые вопросы (жду ответа перед стартом)
+
+1. **Пусто пока по июню 2026** — вы упомянули «первый должен быть июнь 2026-го». Урока за июнь 2026 сейчас в модуле нет. Создать пустой урок «Итоги месяца. Июнь 2026» (`IM-06.2026`, `content_month=2026-06`, `is_active=false` до наполнения) или пока не трогаем и оставляем самым верхним «Май 2026»? По умолчанию — не создаю, чтобы не плодить пустой контент.
+2. Тестовому пользователю дать роль `client` (по умолчанию) — ок?
