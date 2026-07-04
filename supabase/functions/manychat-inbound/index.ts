@@ -39,9 +39,17 @@ function pickString(...vals: unknown[]): string | null {
 
 interface NormalizedInbound {
   external_message_id: string;
+  // Identity of the Instagram user (the contact) — used to resolve contact
+  // for BOTH inbound and outbound events.
+  subscriber_id: string;
+  subscriber_name: string | null;
+  avatar_url: string | null;
+  // direction === "outbound" for team-member replies coming back from ManyChat.
+  direction: "inbound" | "outbound";
+  // sender_* describes who authored THIS message. For inbound == subscriber.
+  // For outbound == the team member (Katerina / manager name from ManyChat).
   sender_id: string;
   sender_name: string | null;
-  avatar_url: string | null;
   message_text: string | null;
   media_url: string | null;
   media_type: string | null;
