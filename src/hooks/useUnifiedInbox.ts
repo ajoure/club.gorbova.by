@@ -240,6 +240,33 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     return m;
   }, [igContacts.data]);
 
+  // --- Instagram: personal prefs (pin/fav) для текущего оператора ---
+  const igPrefs = useQuery({
+    queryKey: ["unified-ig-prefs", user?.id, igAccountIds],
+    enabled: enabled && !!user?.id && igAccountIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("instagram_dialog_preferences")
+        .select("instagram_account_id, thread_key, is_pinned, is_favorite")
+        .eq("admin_user_id", user!.id)
+        .in("instagram_account_id", igAccountIds as string[]);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  const igPrefMap = useMemo(() => {
+    const m = new Map<string, { is_pinned: boolean; is_favorite: boolean }>();
+    (igPrefs.data || []).forEach((p: any) => {
+      m.set(`${p.instagram_account_id}:${p.thread_key}`, {
+        is_pinned: !!p.is_pinned,
+        is_favorite: !!p.is_favorite,
+      });
+    });
+    return m;
+  }, [igPrefs.data]);
+
   // --- Support: тикеты, отсортированные по last_activity ---
   const support = useQuery({
     queryKey: ["unified-support-tickets"],
