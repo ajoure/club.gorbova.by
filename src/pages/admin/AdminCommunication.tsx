@@ -33,13 +33,21 @@ const tabs = [
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
-  // Unified inbox: по умолчанию OFF (хук всегда false), включается только через
-  // ручной V2-test override в localStorage. См. useContactCenterFeatureFlag.
+  // Unified inbox: controlled rollout — включено только для superadmin (или QA-override),
+  // мгновенно отключается через kill-switch. См. useContactCenterFeatureFlag.
   const [unifiedEnabled] = useUnifiedInboxFlag();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
   const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">(
     unifiedEnabled ? "all" : "telegram",
   );
+
+  // Если unified внезапно отключился (kill-switch / потеря роли), а пользователь был в «Все» —
+  // мягко переключаем на Telegram, чтобы не оставлять UI в невалидном состоянии.
+  useEffect(() => {
+    if (!unifiedEnabled && inboxChannel === "all") {
+      setInboxChannel("telegram");
+    }
+  }, [unifiedEnabled, inboxChannel]);
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();

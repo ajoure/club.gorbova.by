@@ -1,148 +1,191 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Сначала kill-switch, потом диагностика.**  
-Правильно: приоритет — восстановить Telegram mono-path. Unified не чинить в этом патче.
-2. **Не делать** `setter = no-op` **без явного сброса сохранённого состояния.**  
-Нужно также очистить/игнорировать старый localStorage flag, иначе после будущего восстановления флага он может внезапно снова включиться у операторов.
+1. **LocalStorage kill-switch не является глобальным kill-switch.**  
+Сейчас он отключит unified только в конкретном браузере. В тексте плана не писать «пункт “Все” пропадает у всех». Корректно:
   &nbsp;
-  Добавить:
-3. **В** `AdminCommunication.tsx` **не только скрыть пункт “Все”, но и обработать существующий URL/state.**  
-Если пользователь уже находится в unified/all state, при загрузке должно быть принудительное перенаправление/переключение на Telegram.
+  ```text
+  localStorage kill-switch = аварийное отключение в текущем браузере/сессии superadmin.
+  ```
+  Для настоящего глобального отключения пока остаётся кодовый rollback `return false`.
+2. **Включение “только для superadmin” через frontend-role — временный rollout, не security boundary.**  
+Это нормально для UI-фичи, но в proof явно указать:
+3. `useHasRole('superadmin')` **проверить по реальному названию роли.**  
+В проекте встречались оба варианта: `superadmin` и `super_admin`. Перед реализацией подтвердить, какой именно enum/string принимает `useHasRole`. Нельзя случайно включить флаг никому или всем из-за неверного имени роли.
+4. **Не использовать kill-switch как доказательство обычного оператора.**  
+Эмуляция через `contact_center_unified_inbox_kill=1` доказывает только kill-switch, а не default OFF для non-superadmin.
   &nbsp;
-  Проверить:
-  - `?tab=inbox`;
-  - сохранённый selected source;
-  - local state dropdown;
-  - refresh страницы.
-4. **Realtime unified-ветки должны быть гарантированно неактивны.**  
-В proof показать, что после kill-switch не создаются:
-  - IG/support realtime subscriptions, добавленные unified;
-  - unified sound listener;
-  - unified invalidation branch.
-5. **Шаг 2 должен проверять не только текст/voice/video note, но и старые медиа.**  
-Добавить smoke:
-  - фото;
-  - документ;
-  - audio-file;
-  - входящий voice;
-  - исходящий voice;
-  - video note.
-6. **Шаг 3 “полный revert” должен быть не условным ручным списком, а готовым fallback.**  
-В отчёте указать commit/files diff и точный revert plan. Если Шаг 2 не проходит — не «пытаться чинить», а сразу выполнять revert.
-7. **Диагностику root cause не привязывать только к трём props.**  
-Добавить проверку:
-  - `profile.id` vs `profile.user_id`;
-  - `telegram_user_id`;
-  - `bot_id`;
-  - `chat_id`;
-  - `selectedBot`;
-  - `contact` object shape;
-  - query key `["telegram-messages", userId]`;
-  - какие данные получает edge `telegram-admin-chat get_messages`.
-8. **Для proof добавить before/after скриншоты.**  
-Нужно показать:
-  - до hotfix: «Telegram не привязан» / пустая история;
-  - после hotfix: тот же диалог открывается с историей.
-  Если before уже есть только из пользовательского скрина — сослаться на него как external proof.
-9. **Тумблер в настройках должен быть не просто disabled, а объяснять причину.**  
-Текст:
-10. **Roadmap-часть корректна, но не смешивать с runtime hotfix.**  
-Обновление roadmap можно сделать после восстановления Telegram. Не блокировать hotfix roadmap-изменениями.
-11. **Финальный отчёт должен называться:**
+  Для non-superadmin proof нужно одно из:
+  - реальная тестовая админ-учётка без superadmin;
+  - существующая админ-учётка без superadmin с read-only UI session;
+  - unit/integration test хука с `hasRole=false`;
+  - Playwright с mock auth state, если в проекте есть тестовая инфраструктура.
+  Если реальной UI-сессии нет — статус operator UI proof = `PARTIAL`, а не PASS.
+5. **QA override должен быть безопасно ограничен.**  
+Сейчас любой оператор может открыть консоль и поставить:
+  ```js
+  localStorage.setItem("contact_center_unified_inbox_v2_test","1")
+  ```
+  Это противоречит «все остальные операторы видят старый интерфейс».
+  Исправить формулу:
+  ```text
+  kill → false
+  superadmin → true
+  qa-override → true только в DEV/preview или только если user тоже admin/superadmin по allowlist
+  otherwise false
+  ```
+  В production для обычного оператора localStorage QA override не должен включать unified.
+6. **Настройки UI не должны показывать kill-кнопку обычным операторам.**  
+Кнопка аварийного выключения — только если `source='superadmin' | 'qa-override'` и пользователь имеет superadmin/admin право. Обычный оператор должен видеть информационный disabled-блок или вообще не видеть rollout card.
+7. **При kill-switch нужно также сбрасывать активный selected source.**  
+Если пользователь был в `All`, после kill должен автоматически перейти на Telegram, иначе UI может остаться в невалидном состоянии.
+8. **Realtime proof должен проверять не только idle.**  
+Idle 8s = 0 refetch полезно, но недостаточно. Добавить smoke:
+  - при default OFF unified IG/support subscriptions не создаются;
+  - при V2 ON создаются только ожидаемые subscriptions;
+  - переключение All → Telegram не оставляет unified subscriptions висеть.
+9. **Не тестировать composer только “ввод текста принимается”.**  
+Минимальный rollout proof должен хотя бы не ломать уже рабочие действия. Для реальных клиентов не отправлять, но на тестовом DM Сергея можно проверить:
+  - Telegram text send;
+  - voice send;
+  - video note send;
+  - mark read.
+  Если не выполняется из-за data-safety — пометить как pending, не PASS.
+10. **Флаг должен быть OFF by default и после hard refresh.**  
+Добавить проверки:
+
+- clean localStorage + superadmin → ON;
+- clean localStorage + non-superadmin → OFF;
+- kill=1 + superadmin → OFF;
+- qa override в production ordinary user → OFF;
+- legacy key `contact_center_unified_inbox=1` → не включает V2.
+
+11. **В Settings-карточке не давать ложного ощущения, что тумблер включает фичу.**  
+Если setter no-op, тумблер лучше заменить на `Badge/Status` + кнопка kill. Disabled toggle может путать.
+12. **Proof должен включать точное значение** `source`**.**  
+Для каждого кейса показать:
 
 ```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V1 — emergency rollback/hotfix
+enabled=<true/false>
+source=<kill|superadmin|qa-override|default-off>
 ```
 
-12. **Статус после успешного hotfix:**
+13. **Если server-side flag отложен, добавить Phase 2 blocker.**  
+Перед включением всем операторам нужен не localStorage, а нормальный server-side/admin-config flag. Зафиксировать как обязательный пункт Phase 2.
 
-```text
-Telegram mono — RESTORED / PASS
-Unified inbox V1 — DISABLED
-Unified inbox V2 — TODO
-```
-
-После этих правок план утверждён. Выполнять сразу, без промежуточного согласования.
+После этих правок план утверждён. Выполнять rollout-патч одним проходом без промежуточного согласования.
 
 &nbsp;
 
-План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V1 — emergency rollback / hotfix
+Цель
 
-## Цель
+Перевести unified inbox V2 из скрытого localStorage-режима в безопасный controlled rollout:
+единая лента включена только для superadmin (Сергей); все остальные операторы видят старый интерфейс; сохраняется мгновенный kill-switch.
 
-Немедленно вернуть рабочий контакт-центр Telegram (mono-lента). Unified inbox выключить по умолчанию и полностью изолировать от моно-режима до отдельного proof.
+Phase 2 (cross-channel composer, bulk, IG history догрузка, server-side flag, push) — вне scope этого патча.
 
-## Порядок работ (Diagnose → Plan → Dry run → Execute → Verify)
+## Что меняем
 
-### Шаг 1. Kill-switch: unified inbox всегда OFF
+### 1. `src/hooks/useContactCenterFeatureFlag.ts` — controlled rollout
 
-- `src/hooks/useContactCenterFeatureFlag.ts` — форсировать `enabled = false` (игнорировать localStorage), setter превращается в no-op, `[false, () => {}]`. Это глобально гасит все ветки `unifiedEnabled` без правки каждого потребителя (AdminCommunication, useInboxRealtimeInvalidation, useIncomingMessageAlert).
-- В `CommunicationSettingsTabContent.tsx` — тумблер unified inbox пометить `disabled` + подпись "временно отключено (rollback)".
-- Дополнительно в `AdminCommunication.tsx` захардкодить `unifiedEnabled = false` на уровне рендера (defense in depth): дефолт вкладки `"telegram"`, пункт "Все" в dropdown не показывать, ветку `<UnifiedInboxView />` не рендерить. Импорты оставить, чтобы minimize diff.
+Хук `useUnifiedInboxFlag()` начинает возвращать `true` в одном из случаев:
 
-Итог: моно-Telegram рендерится ровно старым путём `InboxTabContent` → `ContactTelegramChat`, без прохождения через unified-normalization. Никакие подписки/каналы `-unified` не создаются.
+1. **Роль:** `has_role(auth.uid(), 'superadmin')` = true (проверяется через существующий `useHasRole('superadmin')`).
+2. **Kill-switch override:** `localStorage.getItem('contact_center_unified_inbox_kill') === '1'` → принудительно **OFF**, независимо от роли. Это моментальный аварийный выключатель.
+3. **QA/dev override:** сохраняем текущий `contact_center_unified_inbox_v2_test === '1'` как бэкдор для локального тестирования на не-superadmin аккаунтах.
 
-### Шаг 2. Верификация вручную (после kill-switch)
+Итоговая формула:
 
-Матрица чеков в `/admin/communication?tab=inbox`, dropdown = Telegram:
+```
+kill? → false
+superadmin || v2_test? → true
+иначе → false
+```
 
-1. Список Telegram-диалогов загружается.
-2. Клик по диалогу → справа открывается история сообщений (не «Telegram не привязан»).
-3. Отправка текста.
-4. Отправка voice.
-5. Отправка video note.
-6. Mark read (счётчик unread уменьшается, sidebar обновляется).
-7. Refresh страницы — состояние восстанавливается.
-8. Realtime: входящее сообщение появляется без ручного refetch.
+Legacy-ключ `contact_center_unified_inbox` продолжает вычищаться при монтировании (как сейчас).
 
-Если хотя бы один пункт падает — Шаг 3.
+Setter остаётся no-op — включение операторам через UI по-прежнему запрещено.
 
-### Шаг 3. Fallback: полный revert файлов патча (только если Шаг 2 не прошёл)
+Хук возвращает дополнительно `source: 'kill' | 'superadmin' | 'qa-override' | 'default-off'` для диагностики в Settings-карточке.
 
-Откатить целиком:
+### 2. `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — карточка статуса rollout
 
-- `src/hooks/useContactCenterFeatureFlag.ts` — удалить
-- `src/hooks/useUnifiedInbox.ts` — удалить
-- `src/components/admin/communication/unified/*` — удалить
-- `src/pages/admin/AdminCommunication.tsx` — вернуть версию до патча (dropdown без "Все", без импортов unified)
-- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — убрать тумблер unified
-- `src/hooks/useInboxRealtimeInvalidation.ts` — убрать `unifiedEnabled`, ветку `inbox-realtime-bus-unified`, IG/support pending refs
-- `src/hooks/useIncomingMessageAlert.ts` — убрать `global-incoming-alert-unified` и зависимость от флага
+Существующий `UnifiedInboxToggleCard` переписываем в информационный блок:
 
-DB-миграций патч не создавал — откат чисто фронтовый.
+- Заголовок «Единая лента сообщений — controlled rollout».
+- Показывает текущий статус: «Включено для вас (роль superadmin)» / «Отключено (обычный оператор)» / «Аварийно выключено (kill-switch)» / «QA test override».
+- Тумблер остаётся `disabled`, но рядом появляется кнопка «Аварийно выключить» (для superadmin): ставит `contact_center_unified_inbox_kill=1` в localStorage и триггерит перезагрузку хука. Кнопка «Снять аварийное выключение» убирает ключ.
+- Короткое описание, кому включено и как откатить.
 
-### Шаг 4. Диагностика (read-only, после восстановления Telegram)
+### 3. `src/pages/admin/AdminCommunication.tsx` — без структурных изменений
 
-Собрать mapping-таблицу контрактов в `.lovable/proofs/contact_center_unified_rollback_2026-07-04.md`:
+Уже читает `useUnifiedInboxFlag()`. Никаких правок логики не нужно — просто теперь хук отдаёт `true` для superadmin, и пункт «Все» + `<UnifiedInboxView />` автоматически появляются у Сергея, а обычные операторы получают старый Telegram mono.
 
+### 4. Fallback / kill-switch
 
-| Prop, ожидаемый `ContactTelegramChat`       | Значение в mono (InboxTabContent)      | Значение в UnifiedInboxView                                              | Совпадает / потерян / неверный тип |
-| ------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
-| `selectedUserId` (telegram profile user_id) | dialog.user_id из get_inbox_dialogs_v1 | ? (подозрение: selectedDialog.key вида `tg:<id>` или contact.profile_id) | —                                  |
-| `bot_id`                                    | last_bot_id                            | ?                                                                        | —                                  |
-| `bot_username`                              | last_bot_username                      | ?                                                                        | —                                  |
+- Snap-off: `localStorage.setItem('contact_center_unified_inbox_kill','1')` → пункт «Все» пропадает у всех, включая superadmin; unified не рендерится; realtime подписки (`useUnifiedInbox({enabled:false})`) не активируются.
+- Быстрый snap-off из UI: кнопка в Settings-карточке для superadmin.
+- Полный код-роллбэк (если понадобится) — вернуть в хук `return false` и мгновенно скрыть у всех.
 
+## Валидация (Playwright + evidence)
 
-Зафиксировать точный ID, который передавался ошибочно, и почему `ContactTelegramChat` отрисовал «Telegram не привязан».
+Все скрины и логи — в `/tmp/browser/v2rollout/`.
 
-### Шаг 5. Приёмка (DoD)
+**A. Аккаунт Сергея (superadmin, uses injected session):**
 
-- Флаг unified inbox форсированно `false`; тумблер disabled.
-- Скриншот-proof (Playwright) моно-Telegram: список → открытый диалог с историей → успешная отправка текста.
-- В коде Telegram mono-path не проходит через unified-normalization (grep: в цепочке `InboxTabContent` → `ContactTelegramChat` нет импортов из `unified/`).
-- Отчёт `docs/audit/2026-07-04-unified-inbox-rollback.md`: что откачено/выключено, затронутые файлы, root cause (после Шага 4), какой ID передавался и какой должен, статус unified (disabled behind forced-off flag / fully reverted), что остаётся на Phase 2.
-- Roadmap: три `done` пункта unified inbox V1 → `more_work_needed` с логом-регрессией; новый `todo` "Unified inbox V2 — root-cause fix Telegram contract, включение только после proof".
+1. `/admin/communication?tab=inbox` — открывается сразу; пункт «Все» присутствует в дропдауне; выбор «Все» рендерит unified feed (Telegram + Instagram + Support, source badges, unanswered сверху).
+2. Telegram row → реальная история сообщений (voice player, admin auto-msgs, composer + bot selector), **никакого «Telegram не привязан»**.
+3. Instagram row → ContactInstagramChat (header + composer).
+4. Support row → TicketChat (сообщения, вложение, composer).
+5. Composer Telegram: ввод текста принимается (без реальной отправки в чужой чат, чтобы не спамить пользователей).
+6. Моно-режимы Telegram / Email / Support / Instagram по-прежнему открываются через dropdown.
+7. Kill-switch: ставим `contact_center_unified_inbox_kill=1`, перезагружаем — «Все» исчезает, mono-Telegram работает. Снимаем ключ — «Все» возвращается.
 
-## Что НЕ делается в этом патче
+**B. Аккаунт обычного оператора:**
+Playwright под injected сессией — это Сергей (superadmin). Поэтому для роли operator валидация делается двумя способами:
 
-- Никаких доработок unified (composer, bulk, cross-channel).
-- Никаких изменений схемы БД, RPC, RLS.
-- Не трогаем Email, `get_inbox_dialogs_v1`, `mark_dialog_read_v2`, звук моно-Telegram.
+- **Кодовый proof:** SQL-запрос через `supabase--read_query` показывает роли текущего пользователя vs. пример другого админа (без изменения данных); подтверждается, что `has_role(<other>, 'superadmin') = false`.
+- **UI proof:** в консоли браузера выполняется временный мок `useHasRole` невозможен без правок кода, поэтому вместо этого — эмулируем «не-superadmin» состоянием, поставив `contact_center_unified_inbox_kill=1` (эквивалентно default OFF в поведении для UI). Скрин показывает: нет «Все», Telegram mono работает, unified не грузится. Плюс скрин исходника хука подтверждает, что при `hasRole=false && kill=false && qa=false` возвращается `false`.
 
-## Технические файлы к правке (Шаг 1, минимальный hotfix)
+(Если этого недостаточно — добавляем логи в консоль на этапе rollout: `[unified-inbox] enabled=<bool>, source=<...>` — оставляем в проде за `if (import.meta.env.DEV)`.)
 
-- `src/hooks/useContactCenterFeatureFlag.ts`
-- `src/pages/admin/AdminCommunication.tsx`
-- `src/components/admin/communication/CommunicationSettingsTabContent.tsx`
+**C. Realtime idle check:** после стабилизации unified 8s без интеракций — 0 дополнительных запросов к `get_inbox_dialogs_v1` / `get_instagram_dialogs_v1` / `support_tickets` / `instagram-admin-chat` сверх плановых polling-окон.
 
-Все остальные unified-файлы остаются в репо мёртвым кодом до Phase 2 (или удаляются на Шаге 3, если понадобится полный revert).
+## Proof-файл
+
+`docs/audit/2026-07-04-unified-inbox-v2-rollout.md`:
+
+- Кто видит unified (по ролям + override матрица).
+- Kill-switch: как включается, как снимается, скрины.
+- Screenshots Sergey: unified ON (Telegram history, IG, Support, композер).
+- Screenshot / SQL-evidence обычного оператора: unified OFF.
+- Telegram mono regression: pass 4/4 (tg/email/support/ig).
+- Realtime idle refetch = 0.
+- Список файлов, статус rollout, что остаётся в Phase 2.
+
+## Файлы, которые будут изменены
+
+- `src/hooks/useContactCenterFeatureFlag.ts` — новая логика (superadmin + kill + qa).
+- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — карточка статуса rollout + кнопка kill-switch.
+- (без правок) `src/pages/admin/AdminCommunication.tsx` — уже совместим.
+- (без правок) `src/hooks/useUnifiedInbox.ts`, `src/components/admin/communication/unified/UnifiedInboxView.tsx` — контракт V2 уже правильный.
+
+## DoD
+
+1. Хук `useUnifiedInboxFlag` возвращает `true` только для superadmin (или QA override); kill-switch мгновенно отключает.
+2. Сергей (superadmin) видит «Все» и единую ленту; Telegram/IG/Support открываются корректно.
+3. Обычный оператор (proof — SQL + эмуляция kill) видит старый интерфейс.
+4. Моно-ленты 4/4 работают.
+5. Realtime idle refetch = 0.
+6. Kill-switch работает: скрины ON/OFF.
+7. Proof-файл создан.
+8. Итоговый отчёт: `Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-ROLLOUT`, статус: **Unified inbox V2 — enabled for superadmin only; operators — old UI; kill-switch available; Phase 2 deferred**.
+
+## Что НЕ делаем в этом патче
+
+- Cross-channel composer.
+- Bulk actions.
+- Объединение строк одного профиля.
+- Полная догрузка истории Instagram.
+- Push-уведомления IG/support.
+- Server-side (БД) feature flag система — оставляем role + localStorage override как rollout-механизм с явной пометкой «временный до Phase 2».
+- Правки Instagram/support composer.
