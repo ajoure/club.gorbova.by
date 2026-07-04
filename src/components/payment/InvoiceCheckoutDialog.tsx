@@ -41,6 +41,7 @@ import {
 import { toast } from "sonner";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
 export interface InvoiceCheckoutDialogProps {
   open: boolean;
