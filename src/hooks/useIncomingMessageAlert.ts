@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 /**
  * Global hook: plays a notification sound when a new incoming telegram message arrives.
