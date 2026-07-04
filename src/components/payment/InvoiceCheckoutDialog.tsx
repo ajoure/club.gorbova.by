@@ -412,13 +412,21 @@ export function InvoiceCheckoutDialog({
             </div>
             <div>
               <div className="text-lg font-semibold">
-                Счёт № {result.invoice_number} выписан
+                Счёт № {result.invoice_number} сформирован
               </div>
               <div className="text-sm text-muted-foreground mt-1">
                 Отправка на email и в Telegram запущена и придёт в течение
                 нескольких минут. Также PDF можно скачать сразу.
               </div>
             </div>
+            <Card className="p-3 text-left text-sm bg-muted/40">
+              <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
+                При оплате в назначении платежа укажите
+              </div>
+              <div className="font-medium break-words">
+                «Оплата по счёту №{result.invoice_number} от {formatToday()}»
+              </div>
+            </Card>
             {result.document_id && (
               <Button
                 variant="outline"
