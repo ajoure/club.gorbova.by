@@ -208,22 +208,40 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     // ---- Payment guard ------------------------------------------------------
-    // Документы доступны только при наличии оплаченного order'а.
+    // По умолчанию: документы доступны только по оплаченным order'ам.
+    // Исключение — invoice-only счёт ЮЛ/ИП (checkout_kind='invoice',
+    // awaits_payment=true, payer_type in legal_entity/entrepreneur):
+    // сам счёт на оплату по определению выписывается ДО оплаты, и его
+    // разрешено отправить на email/telegram плательщика.
+    // Физлица без оплаты — по-прежнему заблокированы.
     if (doc.context_type === "order" && doc.context_id) {
       const { data: order } = await admin
         .from("orders_v2")
-        .select("id, status, customer_email, payments_v2(status)")
+        .select("id, status, customer_email, payer_type, meta, payments_v2(status)")
         .eq("id", doc.context_id)
         .maybeSingle();
       const hasPayment =
         order?.status === "paid" &&
         Array.isArray(order?.payments_v2) &&
         order.payments_v2.some((p: any) => String(p.status).toLowerCase() === "succeeded");
-      if (!hasPayment) {
+      const orderMeta = (order?.meta ?? {}) as Record<string, unknown>;
+      const isPrePaymentInvoice =
+        !hasPayment &&
+        orderMeta?.checkout_kind === "invoice" &&
+        orderMeta?.awaits_payment === true &&
+        (order?.payer_type === "legal_entity" || order?.payer_type === "entrepreneur");
+      if (!hasPayment && !isPrePaymentInvoice) {
         await writeAudit(admin, "document.send_blocked_no_payment", doc.id, userId, {
           context_id: doc.context_id,
+          payer_type: order?.payer_type ?? null,
         });
         return json(422, { error: "no_paid_payment" });
+      }
+      if (isPrePaymentInvoice) {
+        await writeAudit(admin, "document.send_pre_payment_invoice", doc.id, userId, {
+          context_id: doc.context_id,
+          payer_type: order?.payer_type,
+        });
       }
     }
 
