@@ -1,166 +1,285 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Диагноз принимать как read-only, но не как финальный root cause без ManyChat proof.**
+1. **Не утверждать “voice приходит”, пока нет SQL-примера voice/audio.**
   &nbsp;
-  Сейчас доказано:
+  В плане правильно добавлено:
   ```text
-  наша система получила 133 webhook и записала их без ошибок
+  Если voice нет — честно записать «voice в БД не подтверждён».
   ```
-  Но формулировку «потери на стороне ManyChat/ApiX» нужно сделать аккуратнее:
+  Но в D5 сейчас снова написано:
   ```text
-  потерь на стороне нашего webhook за полученные события не видно; неполнота возникает до попадания события в наш webhook — на уровне ManyChat/ApiX flow/configuration или Meta→ManyChat доставки.
+  Media/voice приходят через ManyChat External Request...
   ```
-  То есть не обвинять ManyChat окончательно, пока не проверены flow logs / Live Chat / trigger history.
-2. **Добавить обязательный proof из ManyChat.**
+  Исправить на:
+2. **Разделить** `image/video` **и** `voice/audio`**.**
   &nbsp;
-  Перед любым патчем нужно попросить/снять:
-  - скрин flow, где стоит External Request;
-  - какие trigger-и включены;
-  - стоит ли User Input перед External Request;
-  - есть ли фильтры/conditions;
-  - есть ли Live Chat triggers;
-  - есть ли история выполнения External Request;
-  - что именно отправляет ApiX/ManyChat payload.
-3. `last_input_text` **— подтвердить payload samples.**
-  &nbsp;
-  В proof добавить 3–5 обезличенных raw payload samples:
+  Для каждого типа отдельно:
   ```text
-  subscriber
-  last_input_text
-  absence of attachments/media/story/reels fields
+  image — confirmed / not confirmed
+  video — confirmed / not confirmed
+  audio/voice — confirmed / not confirmed
+  story/reels — confirmed / not confirmed
   ```
-  Это нужно, чтобы не спорить потом, что «медиа было, но мы не сохранили».
-4. **Разделить “не все входящие” на два независимых риска.**
+  Не объединять всё словом “media”.
+3. `last_input_text = CDN URL` **— проверить, не ломается ли text search/history.**
   &nbsp;
-  В плане сейчас всё сведено к `last_input_text`, но есть два слоя:
-  - **text burst loss** — несколько текстовых сообщений подряд могут перезаписывать/схлопываться в `last_input_text`;
-  - **non-text unsupported** — медиа/story/reels вообще не попадают в текущий payload.
-  Для каждого нужен отдельный DoD в будущем патче.
-5. **Для** `PATCH-IG-INGEST-COMPLETENESS` **сначала сделать ManyChat-config patch, потом code patch.**
-  &nbsp;
-  Не начинать с кода, пока не понятно, какие payload-и ManyChat реально может прислать.
-  Правильный порядок:
-6. **Не обещать “batch”, пока ManyChat не подтвердил batch payload.**
-  &nbsp;
-  Формулировку заменить:
+  В discovery добавить вопрос:
   ```text
-  webhook должен уметь принять как одиночное сообщение, так и массив attachments/messages, если ManyChat/ApiX реально присылает такой формат.
+  Если media хранится как URL в message_text/last_input_text, что показывается оператору в UI и ContactFeed?
   ```
-  Не проектировать batch вслепую.
-7. **Для** `PATCH-IG-ADMIN-ECHO` **добавить третий вариант: отказаться от IG-app replies как источника истины.**
+  Нужно понять:
+  - `message_text` остаётся URL или пустой;
+  - UI рендерит по `media_url`;
+  - поиск по ленте не засоряется CDN-ссылками.
+4. **Проверить срок жизни CDN URL.**
   &nbsp;
-  Варианты должны быть:
-  - **A. ManyChat Live Chat echo** — если доступен и отдаёт admin outbound webhook.
-  - **B. Direct Meta Graph API message_echoes** — полноценная интеграция.
-  - **C. Операционная политика** — все операторы отвечают только из нашей платформы, тогда исходящие гарантированно пишутся через `instagram-admin-chat`.
-  Вариант C дешевле и может быть достаточным, если не хочется строить Meta App.
-8. **Вариант Meta Graph API требует отдельного Discovery.**
+  `lookaside.fbsbx.com/ig_messaging_cdn` ссылки часто временные. Раз уже есть rehost в `telegram-media/instagram-inbound`, нужно доказать:
+  - rehost происходит успешно;
+  - UI использует `rehosted_media_url` или signed storage URL, а не протухший CDN;
+  - failed rehost логируется.
+5. **D1: брать не только 5 media messages, а минимум по одному на каждый найденный** `media_type`**.**
   &nbsp;
-  Не писать сразу как “следующий патч”. Сначала:
-  - есть ли Meta Business Manager;
-  - кто владеет IG account/page;
-  - есть ли app;
-  - есть ли permissions;
-  - нужна ли Business Verification;
-  - можно ли получить `instagram_manage_messages`;
-  - не конфликтует ли это с ManyChat.
-  Это отдельная большая фаза.
-9. **Для ответов Екатерины из мобильного IG уточнить ограничение.**
+  Сначала:
+  ```sql
+  SELECT media_type, count(*)
+  FROM instagram_messages
+  WHERE created_at > now() - interval '30 days'
+  GROUP BY media_type;
+  ```
+  Потом примеры по каждому типу.
+6. **D1: проверить** `external_message_id` **/ dedup.**
   &nbsp;
-  Правильнее:
+  Для admin echo это важно. Добавить:
+  ```sql
+  SELECT external_message_id, count(*)
+  FROM instagram_messages
+  WHERE external_message_id IS NOT NULL
+  GROUP BY external_message_id
+  HAVING count(*) > 1;
+  ```
+  Нужно понять, можно ли безопасно дедуплицировать будущие echo-события.
+7. **D2: найти все insert/update в** `instagram_messages`**, не только функции по именам.**
+  &nbsp;
+  Добавить grep:
+  ```bash
+  rg -n "from\\('instagram_messages'\\)|instagram_messages|insert\\(|update\\(" supabase/functions src
+  ```
+  Цель — не пропустить worker/helper, который пишет rehost или media.
+8. **D2: подтвердить, кто именно ставит** `provider_kind='manychat'`**.**
+  &nbsp;
+  В audit указать:
+  - где выставляется `provider_kind`;
+  - какие ещё provider_kind бывают;
+  - есть ли ApiX как отдельный provider.
+9. **D3:** `secrets--fetch_secrets` **не использовать без необходимости.**
+  &nbsp;
+  Для read-only discovery достаточно:
+  - grep по названиям секретов;
+  - существующие docs/probe findings;
+  - проверка, какие переменные используются в коде.
+  Не вытаскивать реальные секреты в отчёт. Если нужно подтвердить наличие — писать только:
   ```text
-  ответы, отправленные напрямую из Instagram app, сейчас не попадают в нашу БД, потому что текущая интеграция сохраняет только outbound, отправленный через нашу платформу, и inbound, пришедший через ManyChat webhook.
+  secret exists / missing
   ```
-  Не писать категорично «никогда не попадали» без проверки старых outbound 19.04.2026 — там были тесты платформы, но это тоже нужно указать.
-10. **Добавить краткий бизнес-вывод.**
+  без значения.
+10. **D3: не делать новых API probe-вызовов — верно.**
 
-Для пользователя важно:
+Но если в существующих docs нет ответа по history endpoint, статус должен быть:
 
 ```text
-Если хотите полную историю Instagram в контакт-центре, нельзя параллельно отвечать из Instagram app без echo-интеграции. Иначе история в нашей системе будет неполной.
+not found in existing probes
 ```
 
-11. **Следующий утверждённый порядок.**
-
-После этого диагностического отчёта запускать так:
+А не категорично:
 
 ```text
-1. PATCH-IG-MANYCHAT-FLOW-AUDIT
-   read-only / screenshots / payload samples
-
-2. PATCH-IG-INGEST-COMPLETENESS
-   только после samples
-
-3. PATCH-IG-ADMIN-ECHO-DISCOVERY
-   выбрать ManyChat Live Chat vs Meta Graph API vs policy “reply only from platform”
+ManyChat Public API не предоставляет endpoint
 ```
 
-12. **Итоговый отчёт по диагностике назвать отдельно.**
+Категорично можно писать только при ссылке на официальный API/docs или уже выполненный probe.
+
+11. **D4B: тариф** `is_pro` **не доказывает наличие Live Chat admin trigger.**
+
+`is_pro=true` только означает, что аккаунт Pro. Наличие trigger-а нужно подтверждать:
+
+- UI-скрином из ManyChat;
+- официальной документацией;
+- или existing API/probe.
+
+12. **D4C: “конфликт с ManyChat как единственным получателем webhook” сформулировать осторожно.**
+
+Meta может отправлять webhook нескольким apps/подпискам в зависимости от конфигурации, но могут быть ограничения по permissions/ownership. Написать:
 
 ```text
-Отчет о выполненной работе: PATCH-IG-MESSAGES-DIAGNOSIS
+проверить, можно ли параллельно подключить own Meta App, не ломая ManyChat.
 ```
 
-Статус:
+Не утверждать конфликт заранее.
+
+13. **Добавить вариант E: Instagram app replies невозможно восстановить задним числом.**
+
+Даже если echo подключим завтра, старые ответы Екатерины из IG app, скорее всего, не появятся в нашей БД, если нет history API.
+
+В audit указать:
 
 ```text
-Our webhook ingestion for received events — PASS
-Missing inbound messages — upstream/config gap, requires ManyChat flow proof
-Admin replies from Instagram app — not ingested by current architecture
-Code changes — none
+historical backfill of admin replies: possible / impossible / unknown
 ```
 
-С этими правками диагноз можно принять. Следующий шаг — не код, а **аудит ManyChat flow с payload samples**.
+14. **Рекомендация должна быть не “один из четырёх вариантов”, а decision tree.**
+
+В итоговой таблице:
+
+```text
+Если ManyChat/ApiX history returns outbound → PATCH-IG-ADMIN-ECHO-APIX-HISTORY
+Если есть Live Chat admin trigger → PATCH-IG-ADMIN-ECHO-MANYCHAT
+Если нет → operational policy or Meta Graph discovery
+```
+
+15. **В DoD заменить “доступен ли admin echo” на “что доказано”.**
+
+Для каждого варианта:
+
+```text
+supported / not supported / not proven
+proof
+blocker
+next action
+```
+
+16. **Не смешивать** `manychat-inbound` **и** `instagram-webhook` **без точного ответа.**
+
+На скринах URL ведёт в:
+
+```text
+/functions/v1/manychat-inbound?instance_id=...
+```
+
+Поэтому в отчёте нужно точно указать, какая функция реально принимает этот flow и дальше куда роутит.
+
+17. **Добавить проверку** `raw_payload.rehosted_*` **по свежим media.**
+
+SQL:
+
+```sql
+SELECT
+  raw_payload ? 'rehosted_media_url',
+  raw_payload ? 'rehosted_storage_path',
+  raw_payload->>'rehosted_content_type',
+  raw_payload->>'rehosted_at'
+FROM instagram_messages
+WHERE media_type IS NOT NULL
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+18. **Старый audit пометить superseded только частично.**
+
+Формулировка:
+
+```text
+Superseded only for non-text/media completeness.
+Still valid for admin replies gap unless new evidence disproves it.
+```
+
+19. **Итоговый отчёт:**
+
+```text
+Отчет о выполненной работе: PATCH-IG-MEDIA-AND-ADMIN-ECHO-DISCOVERY
+```
+
+20. **После discovery не начинать код без отдельного approval.**
+
+Даже если найдётся Live Chat trigger/API endpoint, следующий шаг — отдельный план, не реализация сразу.
+
+После этих правок план утверждён. Выполнять строго read-only.
 
 &nbsp;
 
-План: Диагноз проблем Instagram (без правок кода)
+План: PATCH-IG-MEDIA-AND-ADMIN-ECHO-DISCOVERY (read-only)
 
-Задача — только диагностика. Ничего не меняем, пока не согласуем починку отдельным патчем.
+## Контекст и корректировка прошлого диагноза
 
-## Что проверил (факты из БД и кода)
+Предыдущий вывод «non-text не форвардятся и их нет в БД» — **неверный**. Быстрая проверка `instagram_messages` показывает: за 2026-07-04 приходят входящие с `media_type IN ('image','video')`, `provider_kind='manychat'`, и:
 
-1. `instagram_messages`: за последние 14 дней — 133 входящих, 0 исходящих. Всего outbound за всё время — 10 (все от 19.04.2026, тесты из платформы).
-2. Все входящие приходят через `instagram-webhook` из ApiX/ManyChat. В `raw_payload` только ключи `subscriber` и `last_input_text` — то есть один триггер = одно «последнее сообщение подписчика».
-3. `integration_logs` за 2 дня: 133 успеха, 0 ошибок. Отвергнутых webhook'ов нет — значит потери не на нашей стороне приёма, они на стороне ManyChat/ApiX (что именно оттуда прилетает).
-4. В `supabase/functions/instagram-webhook/index.ts:394` `direction` захардкожен в `'inbound'`. Обработчика исходящих (echo от оператора) в webhook нет вообще.
-5. Outbound-записи создаёт только `instagram-admin-chat` action `send_message` — когда админ пишет из нашей платформы. Ответы Екатерины из мобильного приложения Instagram в БД не попадают в принципе.
+- В `raw_payload` — тот же самый ManyChat External Request body формата `{subscriber, last_input_text}`.
+- Но при медиа-сообщении `last_input_text` содержит **CDN-URL** `https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=…&signature=…` — ManyChat сам подставляет URL актива вместо текста.
+- Наш обработчик распознаёт этот URL, ставит `media_type`, и затем через media-worker перезаливает файл в bucket `telegram-media/instagram-inbound/…`, дописывая `rehosted_media_url`, `rehosted_storage_path`, `rehosted_content_type`, `rehosted_at` обратно в `raw_payload`.
 
-## Root cause
+То есть механизм — **тот же External Request**, никакой отдельной ManyChat/ApiX History API-подкачки нет (по крайней мере на этих примерах). Это принципиально меняет вывод про admin echo: тот же трюк «подставить URL в last_input_text» **не поможет** для сообщений оператора из мобильного Instagram, потому что ManyChat не триггерит External Request на исходящие оператора в стандартном тарифе/flow.
 
-### A. «Приходят не все сообщения»
+Цель патча — read-only подтвердить эту гипотезу до конца и сформулировать реальные варианты для admin echo.
 
-Триггер ManyChat External Request отдаёт только `last_input_text` — это одно последнее текстовое сообщение подписчика на момент срабатывания flow. Из этого следует три класса потерь, которые совпадают с симптомом:
+## Что делаем (read-only, ничего не меняем)
 
-1. Если клиент шлёт несколько сообщений подряд быстрее, чем ManyChat успевает дойти до шага External Request (или до User Input), новые сообщения перезаписывают `last_input_text` — часть теряется.
-2. Медиа-сообщения (voice, фото, reels-reply, story-reply, share) не попадают в `last_input_text`. Для них в ManyChat нужен отдельный триггер (Media, Story Mention/Reply, Reels Share) с отдельным flow, который тоже дёргает наш webhook. Сейчас такого триггера нет — все non-text сообщения в БД отсутствуют.
-3. Если во flow есть условие/фильтр (тег, сегмент, время), сообщения не проходящие фильтр не доезжают до webhook.
+### D1. Trace media ingestion path
 
-### B. «Нет ответов Екатерины из её директа»
+- Взять 5 свежих `instagram_messages` c `media_type IS NOT NULL` (разные типы: image, video, voice/audio если есть).
+- Для каждого зафиксировать: `id, created_at, direction, message_text, media_type, media_url, external_message_id, provider_kind, thread_key, peer_id, ig_thread_id, instagram_account_id, полный raw_payload`.
+- Сопоставить с `integration_logs` (± 30 сек по `created_at`) — какой webhook создал запись, есть ли рядом «второй» вызов (indicator external API lookup).
+- Отдельно проверить наличие voice/audio: `SELECT DISTINCT media_type FROM instagram_messages WHERE created_at > now()-interval '30 days'`. Если voice нет — честно записать «voice в БД не подтверждён; пользователь видел voice в UI ManyChat, но у нас в БД примеров нет».
 
-Наш `instagram-webhook` жёстко ставит `direction='inbound'`. Обработки исходящих echo нет. ManyChat в стандартном flow-триггере тоже не шлёт исходящие оператора — Instagram Graph API отдаёт их только через отдельную подписку `message_echoes` (для этого нужен собственный Meta App с page-token, что сейчас не подключено), либо через Live Chat webhook (если тариф ManyChat это поддерживает и включён отдельный триггер «Live Chat message sent by admin»).
+### D2. Code trace (без правок)
 
-Итог: ответы, которые Екатерина пишет с телефона в IG-приложении, физически не доходят ни до ManyChat External Request, ни до нашего webhook. В БД их нет, поэтому в ленте пусто. В самом ManyChat они видны, потому что ManyChat ведёт свою историю через Graph API напрямую.
+Прочитать и задокументировать:
 
-## Что показать пользователю (без правок)
+- `supabase/functions/instagram-webhook/index.ts` — как определяется `media_type`/`media_url`, есть ли ветка распознавания `lookaside.fbsbx.com`, есть ли исходящий HTTP к ManyChat/ApiX.
+- `supabase/functions/manychat-inbound/index.ts` (если существует) — тот же вопрос.
+- `supabase/functions/instagram-admin-chat/index.ts` — где пишется outbound (`direction='outbound'`), какие поля устанавливаются.
+- Media-worker (`telegram-media-worker*` или аналог для IG) — как rehost попадает в `raw_payload.rehosted_*` и bucket `telegram-media/instagram-inbound`.
+- Поиск по репо: `rg -n 'lookaside|ig_messaging_cdn|instagram-inbound|rehosted_media_url|history|conversations' supabase/functions`.
 
-- Подтвердить: сервер приёма работает, все 133 полученных за 2 дня записались, ошибок 0. Значит «пропажа» — на стороне ManyChat flow, не у нас.
-- Подтвердить: исходящие Екатерины никогда и не попадали в БД для сообщений вне платформы — это архитектурный gap, а не регресс.
+Ответить письменно:
 
-## Что предложить сделать следующим патчем (после апрува)
+1. Какая функция создаёт inbound `instagram_messages` для IG/ManyChat?
+2. Где вычисляется `media_type` / `media_url` (по URL-паттерну из `last_input_text` или из отдельных полей payload)?
+3. Есть ли исходящий вызов ManyChat/ApiX API после получения `subscriber.id`? Если да — endpoint, credentials, что возвращает.
+4. Есть ли где-либо fetching «conversation history» / «contact messages»?
+5. Почему media/voice приходит: подстановкой URL в `last_input_text` (гипотеза), отдельным API-вызовом, или ещё чем.
+6. Есть ли аналогичный endpoint, способный вернуть outbound admin messages?
 
-Два независимых направления, каждое — отдельный патч. Ничего сейчас не трогаем.
+### D3. ManyChat capability discovery (без записи, без включения новых trigger'ов)
 
-1. **PATCH-IG-INGEST-COMPLETENESS** (закрывает A):
-  - В ManyChat добавить отдельные External Request триггеры для: Media (image/video/audio/voice), Story Reply, Story Mention, Reels Share, Shared Post.
-  - Убедиться, что основной триггер стоит на «New Message» без блокирующего User Input перед External Request (иначе теряются «догоняющие» сообщения).
-  - На стороне webhook принять `attachments[]` (не только `media_url` одиночный) и уметь писать несколько `instagram_messages` за один вызов, если ManyChat пришлёт batch.
-2. **PATCH-IG-ADMIN-ECHO** (закрывает B): выбрать один из двух путей и согласовать с пользователем:
-  - Вариант 1 (ManyChat Live Chat): включить в ManyChat триггер «Live Chat: message sent by admin» → External Request → наш webhook расширить: если payload помечен как исходящий, писать `direction='outbound'`, `sent_by_admin=<оператор>`. Просто, но требует платного Live Chat плана ManyChat.
-  - Вариант 2 (Meta Graph API напрямую): подключить собственный Meta App, подписаться на `messages` + `message_echoes` через Graph API, вести приём в новой edge-функции; ManyChat остаётся для автоответчиков. Полноценно, но требует Business Verification и Advanced Access для `instagram_manage_messages`.
+- `secrets--fetch_secrets` → какие ManyChat/ApiX ключи сохранены и где используются (grep).
+- Список endpoint'ов ManyChat уже задокументирован в `docs/integrations/manychat/api-probe-findings.md`. Сверить: `getSubscriberInfo`, `findByCustomField`, есть ли probe для history/conversation. Если есть публичный endpoint истории — зафиксировать; если нет (по нашей probe-матрице сейчас его нет) — явно написать «ManyChat Public API не предоставляет endpoint для чтения истории сообщений подписчика».
+- Если по коду выяснится, что в webhook есть outbound HTTP к ManyChat/ApiX (D2 п.3), — задокументировать endpoint и его возможности. Никаких новых probe-вызовов без отдельного approval.
 
-## DoD плана (не задачи)
+### D4. Admin echo — три варианта, оценка каждого
 
-- Пользователь понимает: потери входящих — из-за конфигурации ManyChat (last_input_text), не из-за нашего кода.
-- Пользователь понимает: ответы из личного директа Екатерины архитектурно не могут попасть к нам без Live Chat-триггера ManyChat или прямого Graph API.
-- Пользователь выбирает, какое из двух направлений (или оба) запускать патчем.
+На основе фактов D1–D3 заполнить таблицу:
+
+- **A. ManyChat/ApiX history API** — доступен ли, возвращает ли outbound, есть ли admin identity, timestamps, message_ids, media. Если такого endpoint нет — зафиксировать.
+- **B. ManyChat Live Chat trigger** — по докам/API-матрице проверить наличие «message sent by admin»/«Live Chat» trigger в тарифе аккаунта (`getInfo → is_pro`). Скрин UI ManyChat запрашивается у пользователя отдельно — сами в UI не лезем.
+- **C. Meta Graph API `message_echoes**` — зафиксировать требования (Business Manager, own Meta App, Business Verification, Advanced Access `instagram_manage_messages`, конфликт с ManyChat как единственным получателем webhook'а).
+- **D. Операционная политика** — все ответы только через нашу платформу (`instagram-admin-chat.send_message`).
+
+### D5. Обновить audit
+
+Создать `docs/audit/2026-07-04-ig-media-and-admin-echo-discovery.md`:
+
+- Явный дисклеймер: предыдущий вывод «non-text не приходят / отсутствуют» — **снят**. Media/voice приходят через ManyChat External Request с CDN-URL в `last_input_text`, затем rehost в наш storage.
+- Единственный подтверждённый gap: **outbound admin replies из мобильного Instagram** в нашу БД не попадают.
+- Итоговая таблица вопрос/ответ/proof.
+- Рекомендация: какой из патчей (A/B/C/D) двигать дальше.
+
+Прошлый файл `docs/audit/2026-07-04-ig-messages-diagnosis.md` не удаляем — добавим ссылку на новый audit с пометкой «superseded в части non-text».
+
+## Границы (что НЕ делаем)
+
+- Не меняем ManyChat flow, External Request body, trigger'ы.
+- Не меняем `instagram-webhook`, `instagram-admin-chat`, media-worker.
+- Не пишем миграции, не трогаем `instagram_messages`.
+- Не подключаем Meta Graph API.
+- Не делаем probe-вызовов к ManyChat API сверх уже задокументированных.
+
+## DoD
+
+- Файл `docs/audit/2026-07-04-ig-media-and-admin-echo-discovery.md` создан с секциями D1–D5 и итоговой таблицей.
+- Явно указано: как именно media/voice попадают в БД (с SQL/код-цитатами и line refs).
+- Явно указано, доступен ли admin echo через (A) ManyChat API, (B) Live Chat trigger, (C) Meta Graph API; для каждого — цена/риск/blocker.
+- Рекомендация «следующий патч» с одним из четырёх вариантов.
+- Ноль изменений в коде, БД, конфиге, edge functions.
+
+## Rollback
+
+Не применимо — read-only.
