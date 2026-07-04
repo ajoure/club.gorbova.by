@@ -41,6 +41,7 @@ import {
 import { toast } from "sonner";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
 export interface InvoiceCheckoutDialogProps {
   open: boolean;
@@ -58,6 +59,7 @@ type Step = "auth" | "payer" | "confirm" | "success";
 interface InvoiceResult {
   invoice_number: string;
   order_id: string;
+  document_id: string | null;
   pdf_url: string | null;
   email_sent: boolean;
   telegram_sent: boolean;
@@ -411,11 +413,19 @@ export function InvoiceCheckoutDialog({
                 {result.telegram_sent ? "Также ушла в Telegram." : ""}
               </div>
             </div>
-            {result.pdf_url && (
-              <Button asChild variant="outline">
-                <a href={result.pdf_url} target="_blank" rel="noreferrer">
-                  <Download className="h-4 w-4 mr-1" /> Скачать PDF
-                </a>
+            {result.document_id && (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const r = await downloadDocumentBlob(result.document_id!, "pdf");
+                  if (r.ok === false) {
+                    toast.error(r.message);
+                  } else {
+                    toast.success("Скачивание началось");
+                  }
+                }}
+              >
+                <Download className="h-4 w-4 mr-1" /> Скачать PDF
               </Button>
             )}
             <Button className="w-full" onClick={() => handleClose(false)}>
