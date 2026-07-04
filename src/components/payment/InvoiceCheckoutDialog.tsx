@@ -411,48 +411,73 @@ export function InvoiceCheckoutDialog({
           </div>
         )}
 
-        {step === "success" && result && (
-          <div className="space-y-4 pt-2 text-center">
-            <div className="flex justify-center">
-              <CheckCircle2 className="h-12 w-12 text-green-600" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold">
-                Счёт № {result.invoice_number} сформирован
+        {step === "success" && result && (() => {
+          const displayNumber = result.document_number ?? result.invoice_number;
+          const displayDate = formatDate(result.document_issued_at);
+          const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
+          return (
+            <div className="space-y-4 pt-2 text-center">
+              <div className="flex justify-center">
+                <CheckCircle2 className="h-12 w-12 text-green-600" />
               </div>
-              <div className="text-sm text-muted-foreground mt-1">
-                Отправка на email и в Telegram запущена и придёт в течение
-                нескольких минут. Также PDF можно скачать сразу.
+              <div>
+                <div className="text-lg font-semibold">
+                  Счёт № {displayNumber} сформирован
+                </div>
+                <div className="text-sm text-muted-foreground mt-1">
+                  Отправка на email и в Telegram запущена и придёт в течение
+                  нескольких минут. Также PDF можно скачать сразу.
+                </div>
               </div>
-            </div>
-            <Card className="p-3 text-left text-sm bg-muted/40">
-              <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
-                При оплате в назначении платежа укажите
-              </div>
-              <div className="font-medium break-words">
-                «Оплата по счёту №{result.invoice_number} от {formatToday()}»
-              </div>
-            </Card>
-            {result.document_id && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  const r = await downloadDocumentBlob(result.document_id!, "pdf");
-                  if (r.ok === false) {
-                    toast.error(r.message);
-                  } else {
-                    toast.success("Скачивание началось");
-                  }
-                }}
-              >
-                <Download className="h-4 w-4 mr-1" /> Скачать PDF
+              <Card className="p-3 text-left text-sm bg-muted/40">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
+                      При оплате в назначении платежа укажите
+                    </div>
+                    <div className="font-medium break-words select-all">
+                      {purposeText}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(purposeText);
+                        toast.success("Скопировано");
+                      } catch {
+                        toast.error("Не удалось скопировать");
+                      }
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </Card>
+              {result.document_id && (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    const r = await downloadDocumentBlob(result.document_id!, "pdf");
+                    if (r.ok === false) {
+                      toast.error(r.message);
+                    } else {
+                      toast.success("Скачивание началось");
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-1" /> Скачать PDF
+                </Button>
+              )}
+              <Button className="w-full" onClick={() => handleClose(false)}>
+                Готово
               </Button>
-            )}
-            <Button className="w-full" onClick={() => handleClose(false)}>
-              Готово
-            </Button>
-          </div>
-        )}
+            </div>
+          );
+        })()}
+
       </DialogContent>
     </Dialog>
   );
