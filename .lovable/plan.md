@@ -1,191 +1,306 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **LocalStorage kill-switch не является глобальным kill-switch.**  
-Сейчас он отключит unified только в конкретном браузере. В тексте плана не писать «пункт “Все” пропадает у всех». Корректно:
+1. **План слишком большой для одного безопасного патча. Разделить на 2 патча.**
   &nbsp;
-  ```text
-  localStorage kill-switch = аварийное отключение в текущем браузере/сессии superadmin.
-  ```
-  Для настоящего глобального отключения пока остаётся кодовый rollback `return false`.
-2. **Включение “только для superadmin” через frontend-role — временный rollout, не security boundary.**  
-Это нормально для UI-фичи, но в proof явно указать:
-3. `useHasRole('superadmin')` **проверить по реальному названию роли.**  
-В проекте встречались оба варианта: `superadmin` и `super_admin`. Перед реализацией подтвердить, какой именно enum/string принимает `useHasRole`. Нельзя случайно включить флаг никому или всем из-за неверного имени роли.
-4. **Не использовать kill-switch как доказательство обычного оператора.**  
-Эмуляция через `contact_center_unified_inbox_kill=1` доказывает только kill-switch, а не default OFF для non-superadmin.
+  Сейчас в одном плане смешаны:
+  - P0 — багфикс Instagram history;
+  - P1 — channel picker;
+  - P2 — новая таблица, RPC, RLS, merge/ unlink;
+  - P3 — карточка контакта по IG.
+  Риск высокий: можно снова сломать уже восстановленный unified. Делать так:
+2. **P0 выполнить первым и отдельно.**
+  Это реальный баг: unified передаёт `thread_key`, а `ContactInstagramChat` ждёт `ig_thread_id`.
+  Минимальный scope P0:
+  - `useUnifiedInbox.ts` добавить `instagramThreadId = d.ig_thread_id`;
+  - `UnifiedInboxView.tsx` передавать `threadId={row.meta.instagramThreadId}`;
+  - `instagramThreadKey` оставить для mark_read/unread;
+  - не трогать picker, merge, ContactDetailSheet, БД.
+  Proof P0:
+  - Катерина Коток — история IG грузится;
+  - ещё один IG-контакт — история грузится;
+  - mark_read работает;
+  - mono-IG не сломан;
+  - Telegram unified не сломан;
+  - kill-switch не тронут.
+3. **P1 ChannelPicker не должен обещать “писать в любой канал”, если нет открытого диалога.**
   &nbsp;
-  Для non-superadmin proof нужно одно из:
-  - реальная тестовая админ-учётка без superadmin;
-  - существующая админ-учётка без superadmin с read-only UI session;
-  - unit/integration test хука с `hasRole=false`;
-  - Playwright с mock auth state, если в проекте есть тестовая инфраструктура.
-  Если реальной UI-сессии нет — статус operator UI proof = `PARTIAL`, а не PASS.
-5. **QA override должен быть безопасно ограничен.**  
-Сейчас любой оператор может открыть консоль и поставить:
-  ```js
-  localStorage.setItem("contact_center_unified_inbox_v2_test","1")
-  ```
-  Это противоречит «все остальные операторы видят старый интерфейс».
-  Исправить формулу:
+  Формулировку заменить:
   ```text
-  kill → false
-  superadmin → true
-  qa-override → true только в DEV/preview или только если user тоже admin/superadmin по allowlist
-  otherwise false
+  ChannelPicker V1 переключает правую панель между уже существующими доступными каналами контакта.
   ```
-  В production для обычного оператора localStorage QA override не должен включать unified.
-6. **Настройки UI не должны показывать kill-кнопку обычным операторам.**  
-Кнопка аварийного выключения — только если `source='superadmin' | 'qa-override'` и пользователь имеет superadmin/admin право. Обычный оператор должен видеть информационный disabled-блок или вообще не видеть rollout card.
-7. **При kill-switch нужно также сбрасывать активный selected source.**  
-Если пользователь был в `All`, после kill должен автоматически перейти на Telegram, иначе UI может остаться в невалидном состоянии.
-8. **Realtime proof должен проверять не только idle.**  
-Idle 8s = 0 refetch полезно, но недостаточно. Добавить smoke:
-  - при default OFF unified IG/support subscriptions не создаются;
-  - при V2 ON создаются только ожидаемые subscriptions;
-  - переключение All → Telegram не оставляет unified subscriptions висеть.
-9. **Не тестировать composer только “ввод текста принимается”.**  
-Минимальный rollout proof должен хотя бы не ломать уже рабочие действия. Для реальных клиентов не отправлять, но на тестовом DM Сергея можно проверить:
-  - Telegram text send;
-  - voice send;
-  - video note send;
-  - mark read.
-  Если не выполняется из-за data-safety — пометить как pending, не PASS.
-10. **Флаг должен быть OFF by default и после hard refresh.**  
-Добавить проверки:
+  Не делать в этой фазе:
+  - создание нового IG-разговора;
+  - создание нового support ticket из picker;
+  - отправку в канал, где нет существующего thread/ticket;
+  - общий composer поверх всех источников.
+  Иначе это уже cross-channel composer, который сам же указан как Phase 2/deferred.
+4. **Опцию “Создать новый тикет” вынести из P1.**
+  &nbsp;
+  Это отдельная бизнес-операция с новым lifecycle:
+  - тема тикета;
+  - статус;
+  - первый комментарий;
+  - исполнитель;
+  - уведомления;
+  - read/unread;
+  - audit.
+  В текущем патче максимум: показать `Support` enabled, если есть открытый тикет; disabled, если нет.
+5. **Не трогать существующие composer-компоненты.**
+  &nbsp;
+  Пункт:
+  ```text
+  Композер в правой панели unified становится общим
+  ```
+  убрать из этой фазы.
+  Правильно:
+  ```text
+  Правая панель продолжает рендерить существующий компонент выбранного канала:
+  Telegram → ContactTelegramChat
+  Instagram → ContactInstagramChat
+  Support → TicketChat
+  ```
+  ChannelPicker только меняет выбранный dialog/channel, а не унифицирует composer.
+6. **P2 Merge через новую таблицу — принять, но только после отдельного DB discovery.**
+  &nbsp;
+  Перед миграцией обязательно проверить, нет ли уже существующих связей:
+  - `instagram_contacts.profile_id`;
+  - `instagram_contacts.user_id`;
+  - `profiles.instagram_*`;
+  - `contact_id`;
+  - любые bridge-таблицы;
+  - текущая логика `ContactDetailSheet`.
+  Нельзя создавать `contact_channel_links`, если уже есть каноническое поле связи.
+7. **Если** `instagram_contacts.profile_id` **уже существует — не дублировать связь новой таблицей.**
+  &nbsp;
+  Тогда правильнее:
+  - использовать существующее поле;
+  - добавить UI для привязки/отвязки через существующую модель;
+  - не плодить параллельную truth source.
+  Новая таблица допустима только если discovery докажет, что нормальной связи IG → profile сейчас нет.
+8. **RLS для** `contact_channel_links` **расписать точнее.**
+  &nbsp;
+  Недостаточно:
+  ```text
+  has_role(auth.uid(),'admin' | 'superadmin')
+  ```
+  Нужно использовать реальный формат проекта, вероятно отдельно:
+  ```sql
+  public.has_role(auth.uid(), 'admin') OR public.has_role(auth.uid(), 'superadmin')
+  ```
+  И проверить фактическое имя роли `super_admin` vs `superadmin`, как уже было с rollout.
+9. **Unique constraint** `unique(channel, external_id)` **может быть недостаточен.**
+  &nbsp;
+  Для Instagram `external_id` может быть не глобален, а зависеть от account/page. Лучше заранее заложить:
+  ```text
+  unique(channel, account_id, external_id)
+  ```
+  или хранить `external_id` в формате:
+  ```text
+  instagram:<account_id>:<peer_id>
+  ```
+  Иначе один и тот же peer id в разных IG-аккаунтах может конфликтовать.
+10. **Telegram merge через** `contact_channel_links` **сейчас не делать.**
 
-- clean localStorage + superadmin → ON;
-- clean localStorage + non-superadmin → OFF;
-- kill=1 + superadmin → OFF;
-- qa override в production ordinary user → OFF;
-- legacy key `contact_center_unified_inbox=1` → не включает V2.
+В профиле уже есть `profiles.telegram_user_id`. Не вводить вторую связь Telegram → profile.
 
-11. **В Settings-карточке не давать ложного ощущения, что тумблер включает фичу.**  
-Если setter no-op, тумблер лучше заменить на `Badge/Status` + кнопка kill. Disabled toggle может путать.
-12. **Proof должен включать точное значение** `source`**.**  
-Для каждого кейса показать:
+P2 V1:
+
+- показывать Telegram как read-only existing binding из `profiles.telegram_user_id`;
+- link/unlink делать только для Instagram;
+- Support пока не линковать через новую таблицу.
+
+11. **ContactDetailSheet нельзя превращать в источник регрессии.**
+
+Секцию «Каналы связи» добавлять изолированно:
+
+- если запрос IG links упал — карточка контакта всё равно открывается;
+- Telegram-данные карточки не ломаются;
+- редактирование профиля не меняется;
+- все старые действия карточки остаются.
+
+12. **P3 клик по имени в IG-строке не должен конфликтовать с кликом по строке.**
+
+Нужно разделить поведение:
+
+- клик по строке = открыть чат;
+- клик по имени/иконке контакта = открыть `ContactDetailSheet`;
+- `event.stopPropagation()` обязателен;
+- если `profile_id` нет — показать tooltip/иконку “не привязан”, но не мешать открытию чата.
+
+13. **P1/P2/P3 должны оставаться под rollout-флагом.**
+
+Не только unified view, но и:
+
+- ChannelPicker;
+- новые query-хуки;
+- merge UI в `ContactDetailSheet`, если он доступен из unified.
+
+Если `ContactDetailSheet` открывается и из mono Telegram, новая секция должна быть безопасной для всех, либо скрытой за тем же флагом.
+
+14. **В DoD добавить rollback для миграции.**
+
+Для P2 нужен:
+
+- SQL rollback;
+- proof, что удаление/отключение новой таблицы не ломает Telegram;
+- отсутствие влияния на старые mono-ленты.
+
+15. **Нельзя помечать “обычные операторы не видят” только через kill/роль.**
+
+После P1–P3 опять проверить:
+
+- обычный оператор не видит пункт «Все»;
+- обычный оператор не видит ChannelPicker;
+- обычный оператор не видит/не может использовать новые link/unlink controls, если они не должны быть доступны.
+
+16. **Proof-файлы разделить.**
+
+Для P0:
 
 ```text
-enabled=<true/false>
-source=<kill|superadmin|qa-override|default-off>
+docs/audit/2026-07-04-unified-inbox-v2-ig-history.md
 ```
 
-13. **Если server-side flag отложен, добавить Phase 2 blocker.**  
-Перед включением всем операторам нужен не localStorage, а нормальный server-side/admin-config flag. Зафиксировать как обязательный пункт Phase 2.
+Для P1–P3:
 
-После этих правок план утверждён. Выполнять rollout-патч одним проходом без промежуточного согласования.
+```text
+docs/audit/2026-07-04-unified-inbox-v2-channels.md
+```
+
+17. **Финальные отчёты разделить.**
+
+Сначала вернуть:
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-IG-HISTORY
+```
+
+Только после PASS — стартовать:
+
+```text
+PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-CHANNELS
+```
+
+## **Утверждённый порядок**
+
+```text
+1. Выполнить P0 отдельно.
+2. Получить PASS по IG history.
+3. Сделать DB discovery по связям IG ↔ profile.
+4. После этого финализировать P1–P3.
+5. Не трогать общий composer и создание новых тикетов/IG-разговоров в этом патче.
+```
+
+Сейчас выполняем только P0.
 
 &nbsp;
 
-Цель
+План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-CHANNELS
 
-Перевести unified inbox V2 из скрытого localStorage-режима в безопасный controlled rollout:
-единая лента включена только для superadmin (Сергей); все остальные операторы видят старый интерфейс; сохраняется мгновенный kill-switch.
+Порядок Diagnose → Plan → Dry run → Execute → Verify. Все изменения — под тем же rollout-флагом (superadmin only), продакшн-операторов не касается. Всё делится на 4 подзадачи, идут строго последовательно.
 
-Phase 2 (cross-channel composer, bulk, IG history догрузка, server-side flag, push) — вне scope этого патча.
+## P0 — Fix: Instagram история в unified не грузится
 
-## Что меняем
+Диагноз. Моно-IG передаёт в `ContactInstagramChat` `threadId={selectedDialog.ig_thread_id}` (реальный IG thread id из БД, нужный edge-функции `instagram-admin-chat/get_history`). Unified передаёт `threadId={row.meta.instagramThreadKey}`, куда пишется `d.thread_key` из RPC `get_instagram_dialogs_v1`. Это разные поля — в результате `get_history` получает не то, и возвращает пустую историю → «Нет сообщений».
 
-### 1. `src/hooks/useContactCenterFeatureFlag.ts` — controlled rollout
+Правки:
 
-Хук `useUnifiedInboxFlag()` начинает возвращать `true` в одном из случаев:
+- `src/hooks/useUnifiedInbox.ts`: в normalize IG добавить `instagramThreadId: d.ig_thread_id` (и оставить `instagramThreadKey` как ключ для mark_read/сортировки). Обновить тип `UnifiedDialog.meta`.
+- `src/components/admin/communication/unified/UnifiedInboxView.tsx`: в `ChatPanel` для `source === "instagram"` передавать `threadId={row.meta.instagramThreadId ?? null}`.
+- Ключ `unread` mark_read остаётся на `thread_key` (как в edge-функции instagram-admin-chat action `mark_read`).
 
-1. **Роль:** `has_role(auth.uid(), 'superadmin')` = true (проверяется через существующий `useHasRole('superadmin')`).
-2. **Kill-switch override:** `localStorage.getItem('contact_center_unified_inbox_kill') === '1'` → принудительно **OFF**, независимо от роли. Это моментальный аварийный выключатель.
-3. **QA/dev override:** сохраняем текущий `contact_center_unified_inbox_v2_test === '1'` как бэкдор для локального тестирования на не-superadmin аккаунтах.
+Verify: под superadmin открыть IG-строку Катерины Коток → история сообщений появляется, аудио/медиа рендерятся, отправка/приём работают, mark_read по-прежнему работает.
 
-Итоговая формула:
+## P1 — Dropdown «Куда писать» (per-контакт channel picker)
 
-```
-kill? → false
-superadmin || v2_test? → true
-иначе → false
-```
+Цель. В правой панели unified, рядом с composer'ом (там где сейчас выпадает «Я / gorbova support / Gorbova BOT / Gorbova Club / GetCourse»), сделать выбор канала доставки: любой Telegram-бот, любой Instagram-аккаунт, Support (создать/дописать в тикет). Недоступные — disabled с подсказкой почему.
 
-Legacy-ключ `contact_center_unified_inbox` продолжает вычищаться при монтировании (как сейчас).
+Новый компонент: `src/components/admin/communication/unified/ChannelPicker.tsx`
 
-Setter остаётся no-op — включение операторам через UI по-прежнему запрещено.
+- Пропсы: `contactProfileId | null`, `linkedTelegramUserId | null`, `linkedInstagramPeerIds: { accountId, peerId, threadId }[]`, `openSupportTickets: { ticketId, subject }[]`, `value: ChannelSelection`, `onChange`.
+- Тип `ChannelSelection = { kind: 'telegram', botId }| { kind: 'instagram', accountId, peerId, threadId }| { kind: 'support', ticketId? }`.
+- Внутри — `Popover` + список секций: «Telegram», «Instagram», «Техподдержка». Каждая опция активна только если у контакта есть привязка/тикет; иначе disabled + tooltip «Контакт не найден в этом канале — привяжите через карточку контакта».
 
-Хук возвращает дополнительно `source: 'kill' | 'superadmin' | 'qa-override' | 'default-off'` для диагностики в Settings-карточке.
+Композер в правой панели unified становится общим:
 
-### 2. `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — карточка статуса rollout
+- Если выбранный канал = текущий чат (тот же bot / IG-account / ticket), пишем через существующий соответствующий компонент (не ломаем `ContactTelegramChat`/`ContactInstagramChat`/`TicketChat`).
+- Если пользователь выбрал другой канал, чем текущий открытый диалог, правая панель переключает `selectedKey` на соответствующий диалог того канала (если он есть) или показывает inline «пустое состояние с composer» для нового IG/Support-разговора — это следует существующим `send`-путям соответствующих компонентов.
 
-Существующий `UnifiedInboxToggleCard` переписываем в информационный блок:
+Данные для picker:
 
-- Заголовок «Единая лента сообщений — controlled rollout».
-- Показывает текущий статус: «Включено для вас (роль superadmin)» / «Отключено (обычный оператор)» / «Аварийно выключено (kill-switch)» / «QA test override».
-- Тумблер остаётся `disabled`, но рядом появляется кнопка «Аварийно выключить» (для superadmin): ставит `contact_center_unified_inbox_kill=1` в localStorage и триггерит перезагрузку хука. Кнопка «Снять аварийное выключение» убирает ключ.
-- Короткое описание, кому включено и как откатить.
+- Telegram-боты: `telegram_bots` + `telegram_access_grants` (или уже используемое место для «от чьего имени писать», см. `src/components/admin/ContactTelegramChat.tsx` — переиспользовать существующий список).
+- Instagram: список `instagram_accounts` (активные) + `instagram_contacts` для контакта; активность опции по факту существования пары `(account_id, peer_id)` в `instagram_contacts` или `instagram_messages`.
+- Support: `support_tickets` по `profile_id`/`user_id` контакта со статусом не в (closed, resolved). Плюс опция «Создать новый тикет» (только если у контакта есть `profile_id`).
 
-### 3. `src/pages/admin/AdminCommunication.tsx` — без структурных изменений
+Изменяемые файлы:
 
-Уже читает `useUnifiedInboxFlag()`. Никаких правок логики не нужно — просто теперь хук отдаёт `true` для superadmin, и пункт «Все» + `<UnifiedInboxView />` автоматически появляются у Сергея, а обычные операторы получают старый Telegram mono.
+- новый `src/components/admin/communication/unified/ChannelPicker.tsx`;
+- новый `src/hooks/useContactChannels.ts` — единый источник «какие каналы доступны для этого контакта»;
+- `src/components/admin/communication/unified/UnifiedInboxView.tsx` — `ChatPanel` берёт `ChannelPicker` и рендерит соответствующий чат-компонент по выбранному каналу.
 
-### 4. Fallback / kill-switch
+БД-миграций не требуется.
 
-- Snap-off: `localStorage.setItem('contact_center_unified_inbox_kill','1')` → пункт «Все» пропадает у всех, включая superadmin; unified не рендерится; realtime подписки (`useUnifiedInbox({enabled:false})`) не активируются.
-- Быстрый snap-off из UI: кнопка в Settings-карточке для superadmin.
-- Полный код-роллбэк (если понадобится) — вернуть в хук `return false` и мгновенно скрыть у всех.
+Verify: у Катерины Коток picker показывает Telegram-боты (её текущий) + Instagram (её IG-аккаунт активен) + «Создать тикет техподдержки». У контакта без TG/IG — нужные опции disabled с tooltip. Переключение канала перерисовывает правую панель через существующий компонент канала.
 
-## Валидация (Playwright + evidence)
+## P2 — Ручное объединение контактов (Merge)
 
-Все скрины и логи — в `/tmp/browser/v2rollout/`.
+Цель. Оператор из карточки контакта (существующий `ContactDetailSheet`) может привязать/отвязать Instagram-контакт и Telegram-контакт к профилю. Никаких авто-склеек.
 
-**A. Аккаунт Сергея (superadmin, uses injected session):**
+Миграция (один файл):
 
-1. `/admin/communication?tab=inbox` — открывается сразу; пункт «Все» присутствует в дропдауне; выбор «Все» рендерит unified feed (Telegram + Instagram + Support, source badges, unanswered сверху).
-2. Telegram row → реальная история сообщений (voice player, admin auto-msgs, composer + bot selector), **никакого «Telegram не привязан»**.
-3. Instagram row → ContactInstagramChat (header + composer).
-4. Support row → TicketChat (сообщения, вложение, composer).
-5. Composer Telegram: ввод текста принимается (без реальной отправки в чужой чат, чтобы не спамить пользователей).
-6. Моно-режимы Telegram / Email / Support / Instagram по-прежнему открываются через dropdown.
-7. Kill-switch: ставим `contact_center_unified_inbox_kill=1`, перезагружаем — «Все» исчезает, mono-Telegram работает. Снимаем ключ — «Все» возвращается.
+- Таблица `contact_channel_links (id, profile_id uuid FK profiles.id, channel text CHECK IN ('telegram','instagram'), external_id text, external_meta jsonb, linked_by uuid, linked_at timestamptz, unique(channel, external_id))`.
+- GRANT SELECT, INSERT, UPDATE, DELETE ... TO authenticated; GRANT ALL ... TO service_role.
+- RLS: чтение/запись только для `has_role(auth.uid(),'admin' | 'superadmin')` (те же проверки, что у других admin-only таблиц контакт-центра).
 
-**B. Аккаунт обычного оператора:**
-Playwright под injected сессией — это Сергей (superadmin). Поэтому для роли operator валидация делается двумя способами:
+Backend helpers:
 
-- **Кодовый proof:** SQL-запрос через `supabase--read_query` показывает роли текущего пользователя vs. пример другого админа (без изменения данных); подтверждается, что `has_role(<other>, 'superadmin') = false`.
-- **UI proof:** в консоли браузера выполняется временный мок `useHasRole` невозможен без правок кода, поэтому вместо этого — эмулируем «не-superadmin» состоянием, поставив `contact_center_unified_inbox_kill=1` (эквивалентно default OFF в поведении для UI). Скрин показывает: нет «Все», Telegram mono работает, unified не грузится. Плюс скрин исходника хука подтверждает, что при `hasRole=false && kill=false && qa=false` возвращается `false`.
+- RPC `link_contact_channel(p_profile_id, p_channel, p_external_id, p_meta jsonb)` и `unlink_contact_channel(p_link_id)` — security definer, проверка `has_role` внутри.
 
-(Если этого недостаточно — добавляем логи в консоль на этапе rollout: `[unified-inbox] enabled=<bool>, source=<...>` — оставляем в проде за `if (import.meta.env.DEV)`.)
+UI:
 
-**C. Realtime idle check:** после стабилизации unified 8s без интеракций — 0 дополнительных запросов к `get_inbox_dialogs_v1` / `get_instagram_dialogs_v1` / `support_tickets` / `instagram-admin-chat` сверх плановых polling-окон.
+- В `ContactDetailSheet`: секция «Каналы связи» — список привязанных TG (`profiles.telegram_user_id` — авто-показ) + IG-линков из `contact_channel_links`. Кнопка «Привязать Instagram» открывает диалог со списком IG-контактов без `profile_id` (поиск по имени/username), «Привязать» вызывает RPC.
+- В `useUnifiedInbox.ts` при нормализации IG-диалогов подтягивать `contact_channel_links` для активных `instagram_contacts.peer_id → profile_id`, чтобы клик по имени в IG-строке открывал существующий `ContactDetailSheet` (см. P3).
 
-## Proof-файл
+Verify: привязать IG-контакт Катерины к её profile → в unified у IG-строки клик по имени открывает ту же карточку, что и в Telegram. Отвязать — карточка перестаёт открываться.
 
-`docs/audit/2026-07-04-unified-inbox-v2-rollout.md`:
+## P3 — Клик по имени в IG-строке → карточка контакта
 
-- Кто видит unified (по ролям + override матрица).
-- Kill-switch: как включается, как снимается, скрины.
-- Screenshots Sergey: unified ON (Telegram history, IG, Support, композер).
-- Screenshot / SQL-evidence обычного оператора: unified OFF.
-- Telegram mono regression: pass 4/4 (tg/email/support/ig).
-- Realtime idle refetch = 0.
-- Список файлов, статус rollout, что остаётся в Phase 2.
+Правки:
 
-## Файлы, которые будут изменены
+- `UnifiedInboxView.tsx`: header правой панели IG-чата (сейчас находится внутри `ContactInstagramChat`, но нам нужен клик по имени в списке слева) — сделать имя контакта в строке кликабельным, если для этого IG-контакта известен `profile_id` (из `contact_channel_links` или `instagram_contacts.profile_id`).
+- Открывать существующий `ContactDetailSheet` через уже используемый в проекте механизм (тот же путь, что для Telegram-строк — см. `src/components/admin/communication/InboxTabContent.tsx` для образца).
+- Если `profile_id` нет — обычный клик по строке (без карточки) + tooltip «Не привязан к профилю».
 
-- `src/hooks/useContactCenterFeatureFlag.ts` — новая логика (superadmin + kill + qa).
-- `src/components/admin/communication/CommunicationSettingsTabContent.tsx` — карточка статуса rollout + кнопка kill-switch.
-- (без правок) `src/pages/admin/AdminCommunication.tsx` — уже совместим.
-- (без правок) `src/hooks/useUnifiedInbox.ts`, `src/components/admin/communication/unified/UnifiedInboxView.tsx` — контракт V2 уже правильный.
+Verify: у Катерины (после P2) клик по имени в IG-строке открывает ContactDetailSheet; у неизвестного IG-контакта карточка не открывается.
 
-## DoD
+## Rollout / kill-switch
 
-1. Хук `useUnifiedInboxFlag` возвращает `true` только для superadmin (или QA override); kill-switch мгновенно отключает.
-2. Сергей (superadmin) видит «Все» и единую ленту; Telegram/IG/Support открываются корректно.
-3. Обычный оператор (proof — SQL + эмуляция kill) видит старый интерфейс.
-4. Моно-ленты 4/4 работают.
-5. Realtime idle refetch = 0.
-6. Kill-switch работает: скрины ON/OFF.
-7. Proof-файл создан.
-8. Итоговый отчёт: `Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-ROLLOUT`, статус: **Unified inbox V2 — enabled for superadmin only; operators — old UI; kill-switch available; Phase 2 deferred**.
+Изменений в `useContactCenterFeatureFlag.ts` нет: unified V2 остаётся включённым только для superadmin, kill-switch продолжает работать. Никаких новых feature-флагов.
 
-## Что НЕ делаем в этом патче
+## DoD (обязательный)
 
-- Cross-channel composer.
-- Bulk actions.
-- Объединение строк одного профиля.
-- Полная догрузка истории Instagram.
-- Push-уведомления IG/support.
-- Server-side (БД) feature flag система — оставляем role + localStorage override как rollout-механизм с явной пометкой «временный до Phase 2».
-- Правки Instagram/support composer.
+1. IG-история грузится в unified для Катерины Коток и хотя бы ещё одного IG-контакта; отправка/приём/mark_read работают.
+2. `ChannelPicker` показывает корректный набор каналов и disabled-состояния для 2+ контактов; переключение канала перерисовывает правую панель.
+3. Merge: RPC `link_contact_channel` / `unlink_contact_channel` работает; UI-секция «Каналы связи» в ContactDetailSheet линкует/отвязывает IG-контакт; changes видны в unified.
+4. Клик по имени в IG-строке открывает ContactDetailSheet у слинкованного контакта.
+5. Регрессия моно-лент (Telegram / Instagram / Support / Email) — без изменений: скрин-проверка.
+6. Обычные операторы (не-superadmin) unified V2 не видят (kill-switch/роль не тронуты).
+7. Proof-файл `docs/audit/2026-07-04-unified-inbox-v2-channels.md` со скриншотами всех 4 шагов, списком файлов и статусом флага.
+
+## Файлы к изменению (сводно)
+
+- `src/hooks/useUnifiedInbox.ts` — добавить `instagramThreadId`, слить `contact_channel_links`.
+- `src/components/admin/communication/unified/UnifiedInboxView.tsx` — прокидка `threadId`, интеграция `ChannelPicker`, кликабельное имя IG.
+- новый `src/components/admin/communication/unified/ChannelPicker.tsx`.
+- новый `src/hooks/useContactChannels.ts`.
+- `src/components/admin/ContactDetailSheet.tsx` — секция «Каналы связи» + диалог привязки IG.
+- новая миграция: таблица `contact_channel_links` + RPC `link_contact_channel` / `unlink_contact_channel` + RLS + GRANT.
+- `docs/audit/2026-07-04-unified-inbox-v2-channels.md`.
+
+## Что НЕ делаем в этой задаче
+
+- Cross-channel bulk-actions, объединение историй разных каналов в один тред.
+- Авто-склейка по email/phone/username.
+- Общий Unified ContactCard (пере-используем существующую Telegram-карточку `ContactDetailSheet`).
+- Server-side feature flag / раскатка на всех операторов.
+- Push/звук для новых IG-каналов, помимо уже имеющегося.
