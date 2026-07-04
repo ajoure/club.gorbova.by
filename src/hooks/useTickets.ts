@@ -86,6 +86,7 @@ export function useUserTickets(status?: string, excludeCategory?: string) {
         .from("support_tickets")
         .select("*")
         .eq("user_id", user!.id)
+        .is("merged_into_ticket_id", null)
         .order("updated_at", { ascending: false });
 
       if (status === "open") {
@@ -157,6 +158,7 @@ export function useAdminTickets(filters?: {
             avatar_url
           )
         `)
+        .is("merged_into_ticket_id", null)
         .order("updated_at", { ascending: false });
 
       if (filters?.status === "open") {

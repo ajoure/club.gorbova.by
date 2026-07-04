@@ -281,6 +281,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
           "id, ticket_number, subject, status, has_unread_admin, is_starred, updated_at, user_id, profile_id",
         )
         .not("status", "in", "(closed,resolved)")
+        .is("merged_into_ticket_id", null)
         .order("updated_at", { ascending: false })
         .limit(perSourceLimit);
       if (error) throw error;

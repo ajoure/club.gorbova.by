@@ -57,6 +57,7 @@ export function useProfileChannels(profileId: string | null | undefined) {
           .select("id, ticket_number, subject, status, updated_at")
           .eq("profile_id", pid)
           .not("status", "in", "(closed,resolved)")
+          .is("merged_into_ticket_id", null)
           .order("updated_at", { ascending: false })
           .limit(20),
       ]);

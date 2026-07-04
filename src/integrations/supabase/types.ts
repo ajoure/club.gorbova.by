@@ -14013,6 +14013,8 @@ export type Database = {
           id: string
           is_pinned: boolean
           is_starred: boolean | null
+          merged_at: string | null
+          merged_into_ticket_id: string | null
           pinned_at: string | null
           priority: string | null
           profile_id: string
@@ -14037,6 +14039,8 @@ export type Database = {
           id?: string
           is_pinned?: boolean
           is_starred?: boolean | null
+          merged_at?: string | null
+          merged_into_ticket_id?: string | null
           pinned_at?: string | null
           priority?: string | null
           profile_id: string
@@ -14061,6 +14065,8 @@ export type Database = {
           id?: string
           is_pinned?: boolean
           is_starred?: boolean | null
+          merged_at?: string | null
+          merged_into_ticket_id?: string | null
           pinned_at?: string | null
           priority?: string | null
           profile_id?: string
@@ -14074,6 +14080,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "support_tickets_merged_into_ticket_id_fkey"
+            columns: ["merged_into_ticket_id"]
+            isOneToOne: false
+            referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "support_tickets_profile_id_fkey"
             columns: ["profile_id"]
@@ -17414,6 +17427,10 @@ export type Database = {
           p_phone?: string
           p_telegram_username?: string
         }
+        Returns: Json
+      }
+      admin_merge_support_tickets: {
+        Args: { p_source_ticket_ids: string[]; p_target_ticket_id: string }
         Returns: Json
       }
       admin_override_document_number: {

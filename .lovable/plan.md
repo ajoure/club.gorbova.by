@@ -1,378 +1,398 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **План в целом правильный: явный RPC вместо trigger — принимается.**  
-Главный запрет соблюдён:
-2. **Но это не новый RPC, а переписывание существующего** `create_support_ticket`**.**  
-Это допустимо, потому что discovery подтвердил: frontend уже вызывает RPC и читает `ticket_id` из JSONB. Но в proof обязательно показать:
-  - старая сигнатура совместима;
-  - старые вызовы с 3 параметрами работают;
-  - новый `p_attachments` с default не ломает существующий `rpc()`.
-3. **Проверить имя генератора номера тикета.**  
-В схеме указано default `generate_ticket_number()`, а в SQL-плане используется:
+1. **PATCH A нельзя начинать сразу с backfill. Сначала отдельный dry-run отчёт.**
   &nbsp;
-  ```sql
-  generate_ticket_number_atomic()
-  ```
-  Перед миграцией подтвердить, какая функция реально существует и какая используется старой `create_support_ticket`.
-  Если старая RPC уже использовала `generate_ticket_number_atomic()` — оставить.  
-  Если нет — использовать существующий механизм без смены поведения.
-4. `FOR UPDATE` **в текущем SELECT не защищает от гонки, если активного тикета ещё нет.**  
-При двух параллельных запросах, когда open ticket отсутствует, оба могут не найти строку и оба создать новый тикет.
-  &nbsp;
-  В этом патче можно не делать unique index, но нужно добавить advisory lock на пользователя:
-  ```sql
-  PERFORM pg_advisory_xact_lock(hashtext(v_user_id::text));
-  ```
-  Сразу после определения `v_user_id`, до поиска активного тикета.
-  Это даст атомарность без unique index и без trigger.
-5. **Искать активный тикет лучше по** `profile_id` **или по** `user_id` **— нужно зафиксировать.**  
-В плане цель — “один активный тикет на клиента”. Если `support_tickets.profile_id NOT NULL`, а `user_id nullable`, безопаснее искать так:
-  &nbsp;
-  ```sql
-  WHERE profile_id = v_profile_id
-    AND status IN (...)
-  ```
-  Либо по обоим:
-  ```sql
-  WHERE profile_id = v_profile_id
-     OR user_id = v_user_id
-  ```
-  Но `OR` может дать чужие/старые связи, если данные кривые. Рекомендация:
+  Перед миграцией/merge сделать read-only dry-run:
   ```text
-  канон dedupe = profile_id
-  user_id используется как дополнительное поле создаваемого тикета
+  PATCH-CONTACT-CENTER-SUPPORT-TICKET-BACKFILL-MERGE — dry-run
   ```
-  Перед реализацией подтвердить по существующему коду `/support`, что у клиента всегда есть `profiles.id`.
-6. **Если у пользователя уже есть 4 открытых тикета, append должен идти в самый свежий, но proof должен это явно показать.**  
-Сейчас план выбирает:
-  &nbsp;
+  Должен показать:
+  - список `profile_id` с 2+ активными тикетами;
+  - для каждого: target ticket, source tickets;
+  - сколько `ticket_messages` будет перенесено;
+  - какие ticket_number будут закрыты;
+  - какие статусы сейчас;
+  - есть ли вложения;
+  - есть ли internal notes;
+  - есть ли assigned_to/priority различия;
+  - есть ли тикеты с разными `user_id` внутри одного `profile_id`.
+  Без dry-run merge существующих данных не запускать.
+2. **Target ticket: “самый ранний” — не всегда лучший.**
+  Для истории можно выбрать самый ранний, но для операционного состояния лучше безопаснее:
+  ```text
+  target = самый свежий активный тикет по updated_at DESC
+  ```
+  Причина: именно в нём, вероятнее всего, актуальный статус, назначение, priority, последние сообщения.
+  Если пользователь ожидает “история с начала” — сообщения всё равно будут перенесены и отсортированы по `created_at`.
+  Рекомендация:
+3. **Не терять метаданные source tickets при merge.**
+  При закрытии source tickets сохранить:
+  - `merged_into_ticket_id`;
+  - `merged_at`;
+  - `closed_at`;
+  - `status='closed'`;
+  - желательно `resolution_note` / `internal note`, если есть поле;
+  - system-message в target со списком source ticket numbers.
+  Если `support_tickets` имеет поля `resolved_at`, `closed_reason`, `resolution`, `updated_by` — discovery должен их перечислить до миграции.
+4. **Перенос** `ticket_messages` **может потерять связь с исходным ticket_number в UI.**
+  После `UPDATE ticket_messages SET ticket_id = target` сообщения физически станут частью target. Чтобы в истории было понятно, откуда они пришли, system-message обязателен.
+  Дополнительно лучше перед переносом вставлять system-message:
+  ```text
+  Далее перенесены сообщения из обращения #TKT-...
+  ```
+  Или один summary-message со списком source tickets. Минимум — один summary-message.
+5. **Хронология сообщений после merge должна быть проверена.**
+  В proof обязательно:
   ```sql
-  ORDER BY updated_at DESC LIMIT 1
+  SELECT created_at, author_type, message
+  FROM ticket_messages
+  WHERE ticket_id = <target>
+  ORDER BY created_at ASC;
   ```
-  Это нормально, потому что старые дубли не merge-им. В proof указать:
-7. `p_subject` **тоже нужно валидировать только при создании нового тикета.**  
-Для append-ветки subject может быть пустым или новым, но тикет уже существует. Логика:
-  - `p_description` обязателен всегда;
-  - `p_subject` обязателен только если создаётся новый тикет;
-  - если append — subject можно игнорировать или сохранить в message metadata не надо.
-  Если frontend CreateTicketDialog всегда требует subject, можно оставить, но RPC лучше не падать на пустом subject при append.
-8. `p_attachments` **нужно валидировать как массив.**  
-Добавить guard:
-9. **Не проглатывать все ошибки как** `database_error` **без логирования.**  
-Возврат JSON можно оставить, но в proof/коде желательно не скрывать диагностику полностью. Минимум:
+  Проверить, что порядок читаемый, а system-message не ломает историю.
+6. **PATCH A должен не только скрывать merged tickets во frontend, но и backend/query paths проверить.**
+  Если mono `/support`, unified, админская support-лента и клиентский `/support` используют разные запросы, фильтр `merged_into_ticket_id IS NULL` нужно добавить во все соответствующие query:
+  - unified support rows;
+  - admin mono support list;
+  - client `/support` list;
+  - возможные counters/badges.
+  Нельзя скрыть только в `useUnifiedInbox`.
+7. `create_support_ticket` **после merge должен append именно в target.**
+  Текущий dedupe выбирает активный тикет по `profile_id`. После PATCH A source tickets будут `closed`, target active. Это должно работать автоматически, но proof обязателен:
+  - клиент Ольги создаёт новое обращение;
+  - новый ticket не создаётся;
+  - сообщение append в target;
+  - source merged tickets остаются closed.
+8. **PATCH A RPC role-check через** `has_permission('support.manage')` **проверить.**
   &nbsp;
-  ```sql
-  'error', SQLERRM
-  ```
-  уже есть. При наличии audit/log-инфраструктуры — не обязательно, но можно не добавлять.
-10. `has_unread_user` **при append от клиента не должен становиться true.**  
-В плане это не меняется — правильно. Для клиента его же сообщение не должно создавать unread для клиента.
+  До миграции подтвердить, что:
+  - такая permission существует;
+  - текущий superadmin/support staff её имеет;
+  - функция работает в SECURITY DEFINER;
+  - non-support получает отказ.
+  Если `has_permission` требует другой формат — использовать существующий контракт проекта.
+9. **Backfill DO-блок не должен зависеть от** `auth.uid()`**.**
+  &nbsp;
+  Если DO-блок вызывает SECURITY DEFINER RPC с role-check через `auth.uid()`, в миграции `auth.uid()` может быть `NULL`, и вызов упадёт.
+  Варианты:
+  - backfill делает отдельная internal function без `auth.uid()` только внутри миграции;
+  - или DO-блок выполняет merge SQL напрямую;
+  - или RPC имеет optional internal bypass только для service_role — но это опаснее.
+  Обязательно описать, как backfill пройдет в migration context.
+10. **PATCH A rollback обязателен.**
 
-Для append:
+Merge данных плохо откатывается, потому что сообщения уже перенесены. Поэтому нужен не “revert миграции”, а explicit rollback strategy:
 
-```sql
-has_unread_admin = true
-has_unread_user — не менять
-```
+- schema rollback возможен только если не нужен audit;
+- data rollback сложный;
+- перед backfill сохранить snapshot в audit JSON/SQL;
+- proof должен содержать before snapshot.
 
-11. `is_read` **для сообщения клиента проверить по текущей семантике.**  
-В плане `is_read=false`. Если текущая функция уже создаёт первое сообщение клиента с `is_read=false`, оставить. Если иначе — сохранить существующее поведение.
-12. **Frontend toast должен быть аккуратным.**  
-Для `created_new=false`:
-
-```text
-Сообщение добавлено в существующее обращение #...
-```
-
-Это хорошо. Но не писать пользователю “тикет не создан”, чтобы не было ощущения ошибки.
-
-13. `useCreateTicket` **должен возвращать реальный** `ticket_id`**, а не объект старой формы.**  
-В proof показать:
-
-- первый запрос → `created_new=true`, `ticket_id=A`;
-- второй запрос → `created_new=false`, `ticket_id=A`;
-- UI открывает `A`.
-
-14. **Инвалидации расширить ещё на support unified/query keys.**  
-Помимо:
+Минимум:
 
 ```text
-["user-tickets"]
-["ticket-messages", ticket_id]
-["unified-support-tickets"]
+docs/audit/... содержит before snapshot по всем affected tickets/messages.
 ```
 
-проверить реальные query keys в проекте. Если mono-support использует другие ключи — инвалидировать их тоже.
+11. **PATCH B не привязывать к гипотезе про** `telegram_dialogs`**, пока не прочитан код.**
 
-15. **Realtime не считать достаточным proof.**  
-Даже если подписки есть, после RPC нужно делать invalidate вручную. Realtime может прийти с задержкой или не прийти в Preview.
-16. **В DoD “unified показывает одну строку на клиента” уточнить.**  
-Так как старые 4 открытых тикета не merge-ятся, unified может всё ещё показывать несколько старых строк для проблемного пользователя.
+В предыдущих отчётах уже было, что mono TG использует `get_inbox_dialogs_v1` и profile enrichment. План B пишет “прямой SELECT telegram_dialogs” — это может быть неверно.
 
-Корректная формулировка:
+Исправить wording:
 
 ```text
-Для новых повторных обращений не создаётся новая строка; сообщение добавляется в выбранный существующий активный тикет.
+Сначала фактически определить источник данных InboxTabContent: RPC get_inbox_dialogs_v1 или direct SELECT.
 ```
 
-Не обещать, что старые дубли исчезнут.
+12. **PATCH B должен проверить не только имя, но и** `telegramUserId`**.**
 
-17. **Проверить поведение resolved/closed.**  
-Для клиента с только `resolved/closed` должен создаваться новый тикет. В proof показать SQL/скрин.
-18. **Проверить RLS/SECURITY DEFINER.**  
-Функция `SECURITY DEFINER`, но должна:
-
-- использовать `auth.uid()`;
-- не принимать `user_id` с фронта;
-- не позволять клиенту писать в чужой тикет;
-- искать profile только по `profiles.user_id = auth.uid()`.
-
-Это в плане есть — сохранить.
-
-19. **Rollback обязательно добавить.**  
-Так как это `CREATE OR REPLACE FUNCTION`, rollback — вернуть предыдущую версию `create_support_ticket`.
-
-В audit указать:
-
-- файл миграции;
-- rollback SQL / ссылка на previous function;
-- что данных migration не меняет.
-
-20. **Proof по отсутствию триггеров/unique index.**  
-В proof добавить:
-
-```sql
-SELECT trigger_name
-FROM information_schema.triggers
-WHERE event_object_table='support_tickets';
-
-SELECT indexname, indexdef
-FROM pg_indexes
-WHERE tablename='support_tickets'
-  AND indexdef ILIKE '%status IN%';
-```
-
-И показать, что новых forbidden-механизмов нет.
-
-21. **Название отчёта:**
+Симптом “Telegram не привязан” означает, что в `ContactTelegramChat` ушёл `telegramUserId=null` или неправильный id. Поэтому обязательная mapping-таблица:
 
 ```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
+RPC row user_id
+profiles.id
+profiles.user_id
+profiles.telegram_user_id
+selected dialog id
+ContactTelegramChat.telegramUserId
+ContactTelegramChat.profileId/contact
 ```
 
-22. **Финальный статус после успешного proof:**
+13. **PATCH B проверить PostgREST URL limit ещё раз.**
+
+Поскольку ранее root cause был длинный `.or(...in...)`, нужно доказать:
+
+- текущий код действительно на 2×`.in()`;
+- в runtime profile query не падает;
+- `profileMap.size > 0`;
+- для выбранного диалога найден profile.
+
+14. **PATCH B должен быть первым после PATCH A только если PATCH A нужен прямо сейчас.**
+
+Но если mono Telegram сейчас сломан, это более критично для операторов, чем merge старых support-дублей.
+
+Рекомендованный порядок:
 
 ```text
-Support ticket deduplication — PASS
-Existing duplicate tickets — not merged
-New duplicate client requests — append to latest active ticket
-Hidden triggers / unique index — not used
+1. PATCH B — mono Telegram regression fix
+2. PATCH A — support backfill merge
+3. PATCH C — support composer
 ```
 
-После этих правок план утверждён. Выполнять только этот патч, не начинать `ADMIN-START-SUPPORT-TICKET`.
+Причина: Telegram — основной рабочий канал. Нельзя оставлять его сломанным ради merge support.
+
+15. **PATCH C формулировка “у любого профиля кнопка Техподдержка кликабельна” слишком широкая.**
+
+Нужно ограничить:
+
+```text
+кнопка активна, если есть profile_id и у профиля есть user_id / platform account
+```
+
+Если у profile нет `user_id`, внутренний кабинетный тикет клиенту доставить нельзя.
+
+16. **PATCH C: “пишем в личку клиента внутри платформы” — это не просто открыть тикет.**
+
+Нужно определить UX:
+
+- создаётся тикет без первого сообщения?
+- или сразу создаётся первое support-сообщение?
+- если сразу сообщение — где оператор вводит текст?
+- если только тикет — почему `has_unread_user=true`, если сообщения ещё нет?
+
+Рекомендация:
+
+```text
+admin_open_support_thread только создаёт/открывает тикет, но не ставит has_unread_user=true до отправки первого сообщения оператором.
+```
+
+`has_unread_user=true` должен выставляться при фактическом сообщении от support, а не при пустом создании.
+
+17. **PATCH C должен переиспользовать dedupe RPC/логику.**
+
+Если есть активный support ticket — вернуть его. Если нет — создать. Но не создавать дубль.
+
+Для этого RPC:
+
+```text
+admin_open_support_thread(p_profile_id)
+```
+
+должен использовать advisory lock по `profile_id`, как клиентский `create_support_ticket`.
+
+18. **PATCH C role-check не писать через несуществующие роли.**
+
+Использовать permission, подтверждённую discovery:
+
+```text
+has_permission(auth.uid(), 'support.manage') OR has_permission(auth.uid(), 'admins.manage')
+```
+
+Только если эти permissions реально существуют.
+
+19. **PATCH C нужен отдельный контракт сообщений.**
+
+Открыть тикет и “написать клиенту” — разные действия. Если после создания тикета оператор пишет через существующий `TicketChat`, тогда:
+
+- `admin_open_support_thread` создаёт ticket;
+- `TicketChat` отправляет message;
+- unread для клиента выставляет существующая send-message логика.
+
+Не дублировать отправку сообщения в `admin_open_support_thread`, если это уже делает `TicketChat`.
+
+20. **PATCH C не должен вызывать клиентский** `create_support_ticket` **от имени клиента.**
+
+План это уже запрещает — оставить.
+
+21. **PATCH C должен работать с тикетом, которого нет в current** `allRows`**, но лучше сначала refetch, а не отдельный параллельный** `useTicketById`**.**
+
+Безопаснее:
+
+- RPC возвращает `ticket_id`;
+- invalidate `unified-support-tickets`;
+- после refetch строка появляется;
+- selectedKey = `support:<ticket_id>`.
+
+`useTicketById` нужен только если refetch не успевает. Не усложнять без необходимости.
+
+22. **Каждый патч — отдельный PASS, но порядок изменить.**
+
+Новый рекомендуемый порядок:
+
+```text
+PATCH B — inbox-tab-telegram-regression-fix
+PATCH A — support-ticket-backfill-merge
+PATCH C — channel-picker-support-composer
+```
+
+Если пользователь критично хочет сначала убрать 4 строки Ольги — можно A перед B, но технически mono-TG важнее.
+
+23. **Для PATCH A добавить запрет на массовый merge без dry-run approval.**
+
+После dry-run исполнитель должен вернуть список affected profiles. Только после подтверждения запускать data-changing merge.
+
+Формат:
+
+```text
+Dry-run found:
+- profile Ольга Мацкевич: target TKT-..., sources [...]
+- ...
+Waiting for approval to execute backfill.
+```
+
+24. **PATCH A не закрывать, пока не проверено вручную у Ольги.**
+
+DoD по Ольге:
+
+- unified показывает 1 support row;
+- mono support показывает 1 active row;
+- client `/support` показывает 1 active row;
+- все старые сообщения доступны в target;
+- source tickets closed + merged_into set.
+
+25. **PATCH B proof должен включать скрин “до/после”.**
+
+Если before только пользовательский скрин — сослаться на него как external proof.
+
+26. **PATCH C proof должен проверить клиента.**
+
+Клиент должен видеть созданный тикет/сообщение в `/support` только после реального support message. Не утверждать “доставлено”, если был только пустой тикет.
+
+27. **Итоговые proof-файлы:**
+
+```text
+docs/audit/2026-07-04-inbox-mono-telegram-regression.md
+docs/audit/2026-07-04-support-ticket-backfill-merge.md
+docs/audit/2026-07-04-channel-picker-support-composer.md
+```
+
+28. **Финальные отчёты:**
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-INBOX-MONO-TELEGRAM-REGRESSION-FIX
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-SUPPORT-TICKET-BACKFILL-MERGE
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-CHANNEL-PICKER-SUPPORT-COMPOSER
+```
+
+29. **Сейчас стартовать с PATCH B, если mono Telegram всё ещё сломан.**
+
+Не продолжать A/C, пока основной Telegram не восстановлен.
+
+Итог: план принимается по сути, но порядок меняем: **сначала восстановить mono Telegram**, затем **dry-run и только после approval merge старых support-дублей**, затем **Support-кнопка в ChannelPicker**.
 
 &nbsp;
 
-План: PATCH-CONTACT-CENTER-SUPPORT-TICKET-DEDUPLICATION
+План: три отдельных исправления по контакт-центру
 
-## Цель
+Пользователь сообщает три разных дефекта. Разбиваем на три независимые задачи, чтобы каждую можно было принять/откатить по отдельности. Ко второй и третьей приступаем только после PASS первой.
 
-Один активный тикет на клиента. Если у пользователя уже есть open/in_progress/waiting_user тикет — новый запрос дописывается сообщением в существующий. Никаких BEFORE INSERT триггеров, отменяющих вставку, никаких unique index'ов, никакого merge истории.
+## Что подтверждено discovery
 
-## Итоги discovery
+- **Ольга Мацкевич (profile `3c148831-…`)** в БД имеет **4 открытых тикета** (`TKT-26180`, `26179`, `26177`, `26173`) — плюс закрытые. Патч дедупликации от 2026-07-04 применялся **только к новым `create_support_ticket**`, existing duplicates он не трогает (это было явное `Forbidden: merging existing duplicates`). Поэтому unified inbox честно рисует 4 строки — регресса патча нет, но **пользователь ожидает, что они уже объединены**. Нужен отдельный merge-этап.
+- **Mono Telegram (`InboxTabContent`)** на скриншоте 2: все строки показаны как «gorbova support» с `?`-аватаром, без текста последнего сообщения. Это регресс отдельного legacy-компонента, не unified. Второй патч (`SUPPORT-TICKET-DEDUPLICATION`) mono TG не трогал — значит регресс пришёл раньше или из соседней миграции. Нужна изолированная диагностика.
+- **Кнопка «Техподдержка»** в `ChannelPicker` (`src/components/admin/communication/unified/ChannelPicker.tsx`) сейчас disabled, если у профиля нет открытого тикета (`data.support.length === 0` → tooltip «Нет открытых обращений»). Аналогично, если тикет есть, но не в текущей ленте. Пользователь хочет: «через техподдержку можем писать в личку сообщения внутри платформы» — то есть кнопка должна создавать/открывать тикет и переключать в него, даже когда открытого нет.
 
-### 1. `support_tickets` — реальная схема
+---
 
-Ключевые поля: `id`, `ticket_number` (default `generate_ticket_number()`), `profile_id NOT NULL`, `user_id` nullable, `subject NOT NULL`, `description NOT NULL`, `category` default `'general'`, `status NOT NULL` default `'open'`, `priority` default `'normal'`, `has_unread_admin/has_unread_user`, `is_starred`, `is_pinned/pinned_at` (из V2-FILTERS-AND-ACTIONS), `assigned_to`, `first_response_at/resolved_at/closed_at`, `telegram_bridge_enabled/telegram_user_id`.
+## PATCH A — Слияние существующих открытых тикетов Support (`support-ticket-backfill-merge`)
 
-Check-constraint: `status ∈ {open, in_progress, waiting_user, resolved, closed}` — «активными» считаем `open, in_progress, waiting_user`.
+**Цель.** Для каждого `profile_id` оставить **один активный тикет** (самый ранний `open/in_progress/waiting_user`), остальные активные — merge в него: перенести `ticket_messages`, закрыть исходники как `merged_into`.
 
-Триггеры на таблице: только `update_support_tickets_updated_at BEFORE UPDATE`. Никаких BEFORE INSERT — запрет плана не нарушается ничем существующим.
+**Изменения в БД (одна миграция):**
 
-### 2. `ticket_messages` — реальная схема
+1. Добавить в `support_tickets`: `merged_into_ticket_id uuid null references support_tickets(id)`, `merged_at timestamptz null`. Индекс `idx_support_tickets_merged_into (merged_into_ticket_id) where merged_into_ticket_id is not null`.
+2. RPC `merge_support_tickets(p_target_ticket_id uuid, p_source_ticket_ids uuid[])` SECURITY DEFINER:
+  - проверка `has_permission(auth.uid(), 'support.manage')`;
+  - `pg_advisory_xact_lock(hashtext(p_target_ticket_id::text))`;
+  - все `ticket_messages` источников → `UPDATE set ticket_id = target`;
+  - target: `has_unread_admin = true`, `updated_at = now()`, если был `waiting_user` → `open`;
+  - источники: `status = 'closed'`, `merged_into_ticket_id = target`, `merged_at = now()`, `closed_at = now()`;
+  - insert system-`ticket_message` в target: «Объединено N обращений: #NUMBER, #NUMBER…»;
+  - вернуть `{success, target_ticket_id, merged_count, moved_messages}`.
+3. **Backfill-миграция**: одноразовый DO-блок, который для каждого `profile_id` с ≥2 активными тикетами вызывает `merge_support_tickets`, выбирая target = самый ранний по `created_at`. Никаких новых триггеров, никаких unique-индексов на `(profile_id, status)` — иначе дальше упадёт `create_support_ticket`.
 
-`id`, `ticket_id NOT NULL`, `author_id`, `author_type NOT NULL` (check: `user | support | system`), `author_name`, `message NOT NULL`, `attachments jsonb default '[]'`, `is_internal`, `is_read`, `created_at`, `display_user_id`.
+**Frontend:**
 
-RLS:
+- `useUnifiedInbox` — исключать `support_tickets` с `merged_into_ticket_id is not null` из выборки (в фильтре). Mono `/support` — то же самое.
+- `useTickets` (список у клиента) — не показывать merged.
+- Никаких изменений в `create_support_ticket` — она уже дедуплицирует новые сообщения.
 
-- клиент вставляет только `author_type='user'` и только в свой тикет (EXISTS по `support_tickets.user_id = auth.uid()`);
-- support вставляет при `has_permission('support.manage'|'admins.manage')`.
+**Proof:** `docs/audit/2026-07-04-support-ticket-backfill-merge.md` — before/after: 4 строки Ольги → 1, все сообщения читаются в цепочке, mono/unified.
 
-Дополнительных триггеров нет.
+**DoD:**
 
-### 3. Статусы в БД
+- у Ольги в unified 1 строка `Техподдержка` вместо 4;
+- history сообщений собрана хронологически;
+- закрытые/resolved тикеты не тронуты;
+- `create_support_ticket` продолжает работать (клиент пишет — уходит в active target);
+- typecheck clean, консольных ошибок нет.
 
-`resolved` 105, `closed` 72, `open` 6. `in_progress` и `waiting_user` не используются, но код и check-constraint их допускают — включаем в набор «активные».
+---
 
-### 4. Дубли на сегодня
+## PATCH B — Регресс mono Telegram (`inbox-tab-telegram-regression-fix`)
 
-Активных тикетов с 2+ на одного `user_id`: **1 пользователь (4 открытых тикета)**. Проблема реальна, но не массовая — миграция данных не требуется (пункт «merge старых дублей» запрещён), дедуп применяется только к новым входящим запросам.
+**Гипотеза (проверить discovery-запросом первым шагом):** `InboxTabContent.tsx` строит список через прямой SELECT `telegram_dialogs` + join с `profiles`; на скриншоте у всех строк counterpart = «gorbova support» (это имя бота). Это значит либо:
 
-### 5. Текущая точка создания
+- (a) join развернулся в обратную сторону (dialog.bot_profile вместо dialog.contact_profile);
+- (b) фильтр `direction`/`role` пропал и теперь берётся любая сторона диалога;
+- (c) один из последних patch'ей поменял поле, из которого читается `full_name` в `d.` map.
 
-`src/pages/Support.tsx` → `CreateTicketDialog` → `useCreateTicket` (`src/hooks/useTickets.ts:338-398`) → RPC `create_support_ticket(p_subject, p_description, p_category)` (SECURITY DEFINER, возвращает `jsonb`).
+**План работ:**
 
-Существующий RPC уже:
+1. Прочитать `src/components/admin/communication/InboxTabContent.tsx` 250–380 и найти, откуда берётся `contact_name`/аватар после последнего изменения.
+2. Сверить с рабочей веткой git blame через шелл — какая строка поменялась в последние 3 суток.
+3. Точечно вернуть корректный источник имени контакта (profiles по `contact_user_id`, не `bot_profile_id`).
+4. Убедиться, что `last_message_text` снова приходит (возможно проблема та же — поле переименовано в SELECT).
 
-- проверяет `auth.uid()` и `profile_id`;
-- атомарно создаёт `support_tickets` + первое `ticket_messages`;
-- возвращает `{success, ticket_id, ticket_number}` или `{success:false, error, error_code}`.
+**Не трогаем:** unified inbox, ChannelPicker, RPCs.
 
-Frontend НЕ ждёт INSERT-RETURNING 0 rows — он читает `response.ticket_id` из jsonb. Значит замена SQL внутри функции безопасна: контракт `{success, ticket_id, ticket_number}` можно расширить полем `created_new`, а frontend доработать точечно.
+**Proof:** `docs/audit/2026-07-04-inbox-mono-telegram-regression.md` + скрин mono TG до/после.
 
-`useSendMessage` (client add message) уже пишет в `ticket_messages` через прямой INSERT — трогать его не нужно, он используется на «открытом тикете», у которого уже есть `ticket_id`.
+**DoD:**
 
-### 6. Регистрируемые эффекты, которые нужно сохранить в append-ветке
+- у диалогов реальные имена контактов и аватары;
+- виден текст последнего сообщения / плейсхолдер типа сообщения;
+- нет 400/500 в консоли;
+- unified TG не сломан.
 
-- `updated_at = now()` — иначе unified/mono сортировка сломается;
-- `has_unread_admin = true` — иначе оператор не увидит новое сообщение как непрочитанное;
-- если тикет был `waiting_user` — вернуть его в `open` (клиент снова активен). `in_progress`/`open` оставляем как есть, `closed/resolved` в append не попадают вообще.
+---
 
-## Реализация
+## PATCH C — Кнопка «Техподдержка» в ChannelPicker должна писать в личку клиента (`channel-picker-support-composer`)
 
-### Шаг 1. Миграция: переписать `create_support_ticket`
+**Цель.** Кнопка Support активна, если у профиля есть хоть какой-то канал доставки (Telegram bridged, IG linked или сам факт наличия профиля с `user_id` → внутренние уведомления платформы). При клике:
 
-Единственный SQL-контракт, без hidden trigger, без unique index, без merge истории.
+- если у профиля уже есть активный тикет и он в ленте — переключаем на него (текущее поведение);
+- если активный тикет есть, но его нет в ленте — грузим его в правую панель через `ticketId` (тот же путь, что мono `/support`);
+- если активного тикета **нет** — вызываем существующий `create_support_ticket` от имени клиента? **нет**: тикет создаёт клиент, а не оператор. Вместо этого добавляем новый SECURITY DEFINER RPC `admin_open_support_thread(p_profile_id uuid, p_subject text default 'Диалог с поддержкой')`, который создаёт тикет с `status='open'`, `has_unread_user=true` (это уведомление клиенту внутри платформы, как обычное сообщение техподдержки), возвращает `ticket_id`. Затем фронт переключает правую панель на новый тикет и фокусирует композер.
 
-```
-CREATE OR REPLACE FUNCTION public.create_support_ticket(
-  p_subject text,
-  p_description text,
-  p_category text DEFAULT NULL,
-  p_attachments jsonb DEFAULT '[]'::jsonb
-) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=public
-AS $$
-DECLARE
-  v_user_id uuid := auth.uid();
-  v_profile_id uuid;
-  v_existing_id uuid;
-  v_existing_number text;
-  v_existing_status text;
-  v_ticket_id uuid;
-  v_ticket_number text;
-  v_message_id uuid;
-  v_body text := NULLIF(trim(p_description), '');
-  v_created_new boolean := false;
-BEGIN
-  IF v_user_id IS NULL THEN
-    RETURN jsonb_build_object('success', false, 'error_code', 'not_authenticated');
-  END IF;
-  SELECT id INTO v_profile_id FROM profiles WHERE user_id = v_user_id;
-  IF v_profile_id IS NULL THEN
-    RETURN jsonb_build_object('success', false, 'error_code', 'profile_not_found');
-  END IF;
-  IF v_body IS NULL THEN
-    RETURN jsonb_build_object('success', false, 'error_code', 'description_required');
-  END IF;
+**Изменения:**
 
-  -- Ищем самый свежий активный тикет пользователя
-  SELECT id, ticket_number, status
-    INTO v_existing_id, v_existing_number, v_existing_status
-  FROM support_tickets
-  WHERE user_id = v_user_id
-    AND status IN ('open','in_progress','waiting_user')
-  ORDER BY updated_at DESC
-  LIMIT 1
-  FOR UPDATE;
+1. Миграция: RPC `admin_open_support_thread` с проверкой `has_permission(auth.uid(), 'support.manage'|'admins.manage')`, race-lock, использует `generate_ticket_number_atomic()`.
+2. `src/hooks/useAdminOpenSupportThread.ts` — новый мутирующий хук + инвалидация `unified-inbox`, `unified-support-tickets`.
+3. `ChannelPicker.tsx`:
+  - support-кнопка disabled только если `!profileId`;
+  - клик: если `supportRow.targetKey` — `onSelect(targetKey)`; иначе `admin_open_support_thread` → навигация в новый тикет;
+  - tooltip: «Написать в техподдержку клиенту» / «Открыть обращение».
+4. Правая панель unified должна уметь принять переключение на `ticketId`, которого нет в текущей `allRows` (fetch on demand через `useTicketById`).
 
-  IF v_existing_id IS NOT NULL THEN
-    -- Append: дописываем сообщение в существующий тикет
-    INSERT INTO ticket_messages (ticket_id, author_id, author_type, message, attachments, is_internal, is_read)
-    VALUES (v_existing_id, v_user_id, 'user', v_body, COALESCE(p_attachments,'[]'::jsonb), false, false)
-    RETURNING id INTO v_message_id;
+**Не трогаем:** `create_support_ticket` (это клиентский путь), моно `/support`.
 
-    UPDATE support_tickets
-    SET has_unread_admin = true,
-        status = CASE WHEN status = 'waiting_user' THEN 'open' ELSE status END,
-        updated_at = now()
-    WHERE id = v_existing_id
-    RETURNING status INTO v_existing_status;
+**Proof:** `docs/audit/2026-07-04-channel-picker-support-composer.md` со сценариями: нет тикета → создали → сообщение доставлено клиенту (виден `has_unread_user`), unified показывает 1 строку.
 
-    v_ticket_id := v_existing_id;
-    v_ticket_number := v_existing_number;
-  ELSE
-    -- Создаём новый тикет + первое сообщение (как раньше)
-    v_ticket_number := generate_ticket_number_atomic();
-    INSERT INTO support_tickets (user_id, profile_id, subject, description, category,
-      ticket_number, status, priority, has_unread_admin, has_unread_user, updated_at)
-    VALUES (v_user_id, v_profile_id, p_subject, v_body, COALESCE(p_category,'general'),
-      v_ticket_number, 'open', 'normal', true, false, now())
-    RETURNING id INTO v_ticket_id;
+**DoD:**
 
-    INSERT INTO ticket_messages (ticket_id, author_id, author_type, message, attachments, is_internal, is_read)
-    VALUES (v_ticket_id, v_user_id, 'user', v_body, COALESCE(p_attachments,'[]'::jsonb), false, false)
-    RETURNING id INTO v_message_id;
+- у любого профиля кнопка «Техподдержка» кликабельна;
+- клик без активного тикета создаёт новый и открывает композер;
+- клик при существующем тикете открывает его (не создаёт дубль — работает дедупликация из PATCH A);
+- клиент видит сообщение в своём `/cabinet/support`;
+- typecheck clean.
 
-    v_created_new := true;
-    v_existing_status := 'open';
-  END IF;
+---
 
-  RETURN jsonb_build_object(
-    'success', true,
-    'ticket_id', v_ticket_id,
-    'ticket_number', v_ticket_number,
-    'message_id', v_message_id,
-    'status', v_existing_status,
-    'created_new', v_created_new
-  );
-EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'error_code', 'database_error');
-END; $$;
-```
+## Порядок исполнения и regression-gate
 
-Что НЕ меняется: сигнатура (три первых параметра совпадают, `p_attachments` — новый с дефолтом, старые вызовы работают), тип возврата (`jsonb`), базовые ключи `success/ticket_id/ticket_number`. Никаких unique index'ов, никаких триггеров.
+1. **PATCH A** → миграция + backfill → ручной regression (Ольга 4→1, новые append работают) → PASS.
+2. **PATCH B** → diagnose → fix → скриншот mono TG → PASS.
+3. **PATCH C** → миграция RPC + фронт → regression по DoD → PASS.
 
-### Шаг 2. Frontend `useCreateTicket` (`src/hooks/useTickets.ts`)
-
-- добавить в `CreateTicketData` опциональный `attachments?: any[]` и пробросить в RPC;
-- расширить обработчик ответа: читать `response.created_new`, `response.status`;
-- вернуть из мутации `{ id, ticket_number, created_new }`;
-- в `onSuccess` инвалидацию расширить: `["user-tickets"]`, `["ticket-messages", response.ticket_id]`, `["unified-support-tickets"]`;
-- тост: `created_new ? "Обращение создано" : "Сообщение добавлено в существующий тикет #<number>"`.
-
-### Шаг 3. `CreateTicketDialog` + `Support.tsx`
-
-- после успеха диалога навигировать на `?ticket=<returned ticket_id>` (уже так и делается — просто убедиться, что открывается `ticket_id` из RPC-ответа, а не сгенерированный клиентом);
-- если `created_new=false` — не пересоздавать subject/category в UI: просто закрыть диалог и открыть существующий тикет с приложенным сообщением.
-
-### Шаг 4. Проверки без модификаций
-
-- `useSendMessage` — не трогаем; он и так append.
-- Unified `useUnifiedInbox` — не трогаем; append приводит к `updated_at=now()` и `has_unread_admin=true`, что уже поднимает строку в топ и пересчитывает `Новые`.
-- Realtime — существующие подписки `useInboxRealtimeInvalidation` уже слушают `support_tickets` и `ticket_messages`.
-
-## Что запрещено (закрепляем)
-
-- BEFORE INSERT trigger, отменяющий INSERT (RETURN NULL) — **не делаем**.
-- unique index на `(user_id) WHERE status IN (...)` — **не делаем**.
-- Merge/слияние существующих дублей у пользователя `e296da5b-...` — **не делаем**, только для новых запросов.
-- Админский путь «создать тикет за клиента» — **вне этого патча**.
-
-## Регрессия
-
-- клиент без активного тикета → создаётся новый (`created_new=true`);
-- клиент с активным тикетом → сообщение добавляется в него (`created_new=false`), `updated_at`/`has_unread_admin` обновились, `waiting_user → open`;
-- клиент с только `resolved/closed` → создаётся новый;
-- frontend навигирует на возвращённый `ticket_id`;
-- unified показывает одну строку на клиента;
-- mono `/support` работает (список тикетов, открытие, отправка);
-- typecheck по `useTickets.ts`, `CreateTicketDialog.tsx`, `Support.tsx` — чисто;
-- в консоли нет ошибок.
-
-## Proof
-
-`docs/audit/2026-07-04-support-ticket-deduplication.md` — SQL diff RPC, скриншоты «до/после» на тестовом клиенте (без активного → создание; повторный запрос → append в тот же ticket_id), выборка `SELECT count(*) ... GROUP BY user_id HAVING count>1` до и после (для новых запросов дубли не должны появляться).
-
-## DoD
-
-- Клиент без open → новый тикет.
-- Клиент с open → сообщение в существующий.
-- Frontend открывает вернувшийся `ticket_id`.
-- Unified показывает одну строку.
-- Оператор видит новое сообщение и `has_unread_admin=true`.
-- Mono `/support` работает.
-- Unified Support работает.
-- Статусы не ломаются (`waiting_user → open`, остальное без изменений).
-- Typecheck clean.
-- Никаких новых триггеров, unique index'ов и hidden отмен INSERT.
+Между патчами — не смешивать. Каждый закрывается отдельным audit-документом. Второй/третий не начинаем без PASS предыдущего.
