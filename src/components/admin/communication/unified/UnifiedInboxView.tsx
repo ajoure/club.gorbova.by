@@ -395,7 +395,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           : ""}
                       </span>
                       <div
-                        className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                        className="flex items-center gap-0.5 opacity-60 md:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
                       >
                         {row.capabilities.canPin && (
                           <IconAction
