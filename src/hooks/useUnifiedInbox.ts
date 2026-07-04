@@ -182,6 +182,34 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     return map;
   }, [igAccounts.data]);
 
+  // Загружаем instagram_contacts для видимых аккаунтов — источник canonical
+  // profile_id и instagram_contacts.id (нужны для ChannelPicker и link RPC).
+  // RPC уже возвращает profile_id, но не отдаёт contact.id.
+  const igContacts = useQuery({
+    queryKey: ["unified-ig-contacts", igAccountIds],
+    enabled: enabled && igAccountIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("instagram_contacts")
+        .select("id, instagram_account_id, instagram_user_id, profile_id, instagram_username, full_name")
+        .in("instagram_account_id", igAccountIds as string[]);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  const igContactMap = useMemo(() => {
+    const m = new Map<string, { id: string; profile_id: string | null }>();
+    (igContacts.data || []).forEach((c: any) => {
+      m.set(`${c.instagram_account_id}:${c.instagram_user_id}`, {
+        id: c.id,
+        profile_id: c.profile_id ?? null,
+      });
+    });
+    return m;
+  }, [igContacts.data]);
+
   // --- Support: тикеты, отсортированные по last_activity ---
   const support = useQuery({
     queryKey: ["unified-support-tickets"],
