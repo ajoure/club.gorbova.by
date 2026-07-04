@@ -43,7 +43,6 @@ const EMAIL_TEMPLATES: Record<string, React.ComponentType<any>> = {
 
 // Конфигурация отправителя.
 const SITE_NAME = 'Gorbova Club'
-const ROOT_DOMAIN = 'gorbova.by'
 const FROM_EMAIL = 'noreply@gorbova.by'
 const SMTP_HOST = 'smtp.yandex.ru'
 const SMTP_PORT = 465
