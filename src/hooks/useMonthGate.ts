@@ -172,15 +172,16 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id
         );
 
-        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1 (+ tariff scoping, + product-level month-gate)
-        // Explicit product-grant bypass: rule must be active, training_content,
-        // target_ref ∈ rootModuleIds, have product_id и непустой allowlist.
-        // Дополнительно:
-        //  - если у правила задан tariff_id — bypass только при активной подписке на этот тариф;
-        //  - если у правила conditions.match_purchase_month === true — это НЕ чистый bypass,
-        //    а gate по месяцам покупки: для каждого разрешённого модуля/урока строим
-        //    payload по всем активным тарифам product_id (или указанному tariff_id).
+        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1 (+ tariff scoping)
+        // Bypass ТОЛЬКО для partial-правил без match_purchase_month:
+        //  - правило активно, training_content, target_ref ∈ rootModuleIds,
+        //  - есть product_id и непустой allowlist,
+        //  - если задан tariff_id — bypass только при активной подписке на этот тариф,
+        //  - у пользователя есть активный entitlement по product_id.
+        // Правила с match_purchase_month=true — НЕ bypass; они обрабатываются
+        // основной веткой ниже строго по tariff_id (никакого product-level fanout).
         const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
+          if (r?.conditions?.match_purchase_month === true) return false;
           const am = r?.conditions?.allowed_module_ids;
           const al = r?.conditions?.allowed_lesson_ids;
           const hasAllow =
@@ -193,12 +194,6 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         );
         const bypassModuleIds = new Set<string>();
         const bypassLessonIds = new Set<string>();
-        // Product-level month-gate: per-product allow-lists и активные тарифы этого продукта.
-        // productId -> { allowedModuleIds, allowedLessonIds, tariffIds (whitelist из активных тарифов продукта; если у правила задан tariff_id — только он) }
-        const productMonthGate = new Map<
-          string,
-          { allowedModuleIds: Set<string>; allowedLessonIds: Set<string>; tariffIds: Set<string> }
-        >();
         if (bypassProductIds.length > 0) {
           const { data: entRows } = await supabase
             .from("entitlements")
@@ -226,73 +221,19 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
             (subRows || []).map((s: any) => s.tariff_id).filter(Boolean)
           );
 
-          // Активные тарифы всех продуктов, у которых есть month-gate bypass-правила —
-          // строго с фильтром по product_id (не тянем весь справочник).
-          const monthGateProductIds = Array.from(
-            new Set(
-              bypassCandidateRules
-                .filter((r: any) => r?.conditions?.match_purchase_month === true)
-                .map((r: any) => r.product_id as string)
-            )
-          );
-          const productTariffs = new Map<string, string[]>();
-          if (monthGateProductIds.length > 0) {
-            const { data: tariffRows } = await supabase
-              .from("tariffs")
-              .select("id, product_id, is_active")
-              .in("product_id", monthGateProductIds)
-              .eq("is_active", true);
-            for (const t of tariffRows || []) {
-              const pid = (t as any).product_id as string;
-              if (!productTariffs.has(pid)) productTariffs.set(pid, []);
-              productTariffs.get(pid)!.push((t as any).id as string);
-            }
-          }
-
           for (const r of bypassCandidateRules) {
             if (!activeProductIds.has(r.product_id)) continue;
-            // Tariff-scope bypass — только для подписчиков указанного тарифа.
             if (r.tariff_id && !userTariffIds.has(r.tariff_id)) continue;
-
             const cond = r.conditions as any;
             const allowMods: string[] = (cond.allowed_module_ids as string[] | undefined) || [];
             const allowLess: string[] = (cond.allowed_lesson_ids as string[] | undefined) || [];
-
-            if (cond?.match_purchase_month === true) {
-              // Product-level month-gate: НЕ добавляем в чистый bypass.
-              // Определяем множество тарифов, по покупке которых будет разрешён месяц.
-              let tariffPool: string[] = [];
-              if (r.tariff_id) {
-                tariffPool = [r.tariff_id as string];
-              } else {
-                tariffPool = productTariffs.get(r.product_id as string) || [];
-              }
-              // Если у продукта нет активных тарифов — доступ не открываем bypass-ом.
-              // Урок останется gated (закрытым), пока админ не настроит тарифы.
-              if (tariffPool.length === 0) continue;
-
-              const bucket =
-                productMonthGate.get(r.product_id as string) || {
-                  allowedModuleIds: new Set<string>(),
-                  allowedLessonIds: new Set<string>(),
-                  tariffIds: new Set<string>(),
-                };
-              for (const mid of allowMods) bucket.allowedModuleIds.add(mid);
-              for (const lid of allowLess) bucket.allowedLessonIds.add(lid);
-              for (const tid of tariffPool) bucket.tariffIds.add(tid);
-              productMonthGate.set(r.product_id as string, bucket);
-            } else {
-              // Обычный bypass — как раньше.
-              for (const mid of allowMods) bypassModuleIds.add(mid);
-              for (const lid of allowLess) bypassLessonIds.add(lid);
-            }
+            for (const mid of allowMods) bypassModuleIds.add(mid);
+            for (const lid of allowLess) bypassLessonIds.add(lid);
           }
         }
 
         // Основной набор правил (tariff-scoped, match_purchase_month=true) — сохраняем прежнее поведение.
-        // Если основных правил нет, но есть product-level month-gate — идём дальше, чтобы построить payload.
-        const hasProductMonthGate = productMonthGate.size > 0;
-        if (rules.length === 0 && !hasProductMonthGate) {
+        if (rules.length === 0) {
           if (!cancelled) setMap(result);
           return;
         }
@@ -328,30 +269,10 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         >();
 
         for (const c of candidates) {
-          // Полный bypass по чистым partial-правилам (без match_purchase_month) — как раньше.
+          // Полный bypass по чистым partial-правилам (без match_purchase_month).
           if (bypassLessonIds.has(c.lesson_id) || bypassModuleIds.has(c.module_id)) continue;
           if (!c.content_month) continue;
 
-          // Product-level month-gate: для каждого продукта, чей allowlist покрывает урок,
-          // порождаем payload по всем его тарифам.
-          for (const [productId, bucket] of productMonthGate.entries()) {
-            if (
-              !bucket.allowedLessonIds.has(c.lesson_id) &&
-              !bucket.allowedModuleIds.has(c.module_id)
-            ) continue;
-            for (const tId of bucket.tariffIds) {
-              const syntheticKey = `${c.lesson_id}::${tId}::p:${productId}`;
-              pushPayload(c.lesson_id, syntheticKey, tId, c.content_month);
-              if (!lessonTuples.has(c.lesson_id)) lessonTuples.set(c.lesson_id, []);
-              lessonTuples.get(c.lesson_id)!.push({
-                syntheticKey,
-                tariff_id: tId,
-                content_month: c.content_month,
-              });
-            }
-          }
-
-          // Основные (tariff-scoped) правила месяц-гейта — как раньше.
           const rootMod = lessonRootModule.get(c.lesson_id);
           if (!rootMod) continue;
           const candidateRules = rulesByRootModule.get(rootMod) || [];
@@ -374,6 +295,7 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
             });
           }
         }
+
 
 
         if (payload.length === 0) {
