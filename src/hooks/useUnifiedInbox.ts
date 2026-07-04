@@ -383,6 +383,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     tgPrefs.data,
     igDialogs.data,
     igAccountLabel,
+    igContactMap,
     support.data,
     supportProfiles.data,
   ]);
