@@ -380,8 +380,11 @@ Deno.serve(async (req) => {
     order_number: newOrder.order_number,
     invoice_number: invoiceNumber,
     document_id: documentId,
+    document_number: documentNumber,
+    document_issued_at: documentIssuedAt,
     pdf_url: pdfUrl,
     email_sent: emailSent,
     telegram_sent: telegramSent,
   });
 });
+
