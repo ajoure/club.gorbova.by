@@ -32,6 +32,7 @@ import {
   Phone, MessageCircle, Mail, Send, ClipboardList, StickyNote,
   Paperclip, Search, Trash2, Download, Plus, Activity, Handshake,
   Smile, Mic, Square, Sparkles, Play, Pause, X, AlertTriangle, RefreshCw,
+  Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
@@ -42,7 +43,8 @@ import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionEr
 
 type FeedKind =
   | "call" | "sms" | "email" | "telegram" | "task" | "note"
-  | "file" | "voice_note" | "deal" | "event";
+  | "file" | "voice_note" | "deal" | "event"
+  | "instagram" | "support";
 
 interface FeedEvent {
   id: string;
@@ -61,6 +63,8 @@ const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; icon
   sms:        { label: "SMS",      icon: MessageCircle, tint: "bg-green-500/10 border-green-500/20",     iconColor: "text-green-600 bg-green-500/15" },
   email:      { label: "Письмо",   icon: Mail,          tint: "bg-violet-500/10 border-violet-500/20",   iconColor: "text-violet-600 bg-violet-500/15" },
   telegram:   { label: "Telegram", icon: Send,          tint: "bg-sky-500/10 border-sky-500/20",         iconColor: "text-sky-600 bg-sky-500/15" },
+  instagram:  { label: "Instagram",icon: Instagram,     tint: "bg-pink-500/10 border-pink-500/20",       iconColor: "text-pink-600 bg-pink-500/15" },
+  support:    { label: "Техподдержка", icon: LifeBuoy,  tint: "bg-teal-500/10 border-teal-500/20",       iconColor: "text-teal-600 bg-teal-500/15" },
   task:       { label: "Задача",   icon: ClipboardList, tint: "bg-amber-500/10 border-amber-500/20",     iconColor: "text-amber-600 bg-amber-500/15" },
   note:       { label: "Заметка",  icon: StickyNote,    tint: "bg-rose-400/10 border-rose-400/20",       iconColor: "text-rose-600 bg-rose-400/15" },
   file:       { label: "Файл",     icon: Paperclip,     tint: "bg-orange-500/10 border-orange-500/20",   iconColor: "text-orange-600 bg-orange-500/15" },
@@ -69,7 +73,7 @@ const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; icon
   event:      { label: "Событие",  icon: Activity,      tint: "bg-indigo-500/10 border-indigo-500/20",   iconColor: "text-indigo-600 bg-indigo-500/15" },
 };
 
-const ALL_TYPES: FeedKind[] = ["call", "sms", "email", "telegram", "task", "note", "file", "voice_note", "deal", "event"];
+const ALL_TYPES: FeedKind[] = ["call", "sms", "email", "telegram", "instagram", "support", "task", "note", "file", "voice_note", "deal", "event"];
 
 const EMOJIS = ["😀","😁","😂","🤣","😊","😍","🥰","😎","🤔","👍","👌","🙏","🔥","❤️","💯","🎉","✅","❌","⚠️","💡","📌","🚀","💪","👏","🤝","😅","😢","😡","🙌","✨"];
 
