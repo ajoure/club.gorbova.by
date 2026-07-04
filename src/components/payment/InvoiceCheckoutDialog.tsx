@@ -59,6 +59,7 @@ type Step = "auth" | "payer" | "confirm" | "success";
 interface InvoiceResult {
   invoice_number: string;
   order_id: string;
+  document_id: string | null;
   pdf_url: string | null;
   email_sent: boolean;
   telegram_sent: boolean;
