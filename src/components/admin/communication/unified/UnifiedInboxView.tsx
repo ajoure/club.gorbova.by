@@ -136,27 +136,34 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         }
         queryClient.invalidateQueries({ queryKey: ["chat-preferences", user.id] });
         queryClient.invalidateQueries({ queryKey: ["chat-preferences"] });
-      } else if (row.source === "instagram" && field === "is_pinned") {
+      } else if (row.source === "instagram" && (field === "is_pinned" || field === "is_favorite")) {
         if (!user?.id) throw new Error("Не авторизован");
-        const nextPinned = !row.isPinned;
+        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const nowIso = new Date().toISOString();
+        const patch: Record<string, any> = {
+          admin_user_id: user.id,
+          instagram_account_id: row.meta.instagramAccountId!,
+          thread_key: row.meta.instagramThreadKey!,
+          [field]: nextValue,
+        };
+        if (field === "is_pinned") patch.pinned_at = nextValue ? nowIso : null;
+        if (field === "is_favorite") patch.favorited_at = nextValue ? nowIso : null;
         const { error } = await supabase
           .from("instagram_dialog_preferences")
-          .upsert(
-            {
-              admin_user_id: user.id,
-              instagram_account_id: row.meta.instagramAccountId!,
-              thread_key: row.meta.instagramThreadKey!,
-              is_pinned: nextPinned,
-              pinned_at: nextPinned ? new Date().toISOString() : null,
-            },
-            { onConflict: "admin_user_id,instagram_account_id,thread_key" },
-          );
+          .upsert(patch, { onConflict: "admin_user_id,instagram_account_id,thread_key" });
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
-      } else if (row.source === "support" && field === "is_favorite") {
+        queryClient.invalidateQueries({ queryKey: ["unified-ig-prefs"] });
+      } else if (row.source === "support" && (field === "is_pinned" || field === "is_favorite")) {
+        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const nowIso = new Date().toISOString();
+        const patch: Record<string, any> =
+          field === "is_pinned"
+            ? { is_pinned: nextValue, pinned_at: nextValue ? nowIso : null }
+            : { is_starred: nextValue };
         const { error } = await supabase
           .from("support_tickets")
-          .update({ is_starred: !row.isFavorite } as any)
+          .update(patch as any)
           .eq("id", row.meta.ticketId!);
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
