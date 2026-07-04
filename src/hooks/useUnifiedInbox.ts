@@ -355,6 +355,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isPinned: false,
         isFavorite: !!t.is_starred,
         meta: {
+          profileId: t.profile_id ?? null,
           ticketId: t.id,
           ticketStatus: t.status,
           ticketProfileId: t.profile_id,
