@@ -16,6 +16,8 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { renderBrandedEmail, type BrandedEmailSection } from "../_shared/branded-email-shell.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
