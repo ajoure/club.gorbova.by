@@ -33,6 +33,7 @@ import { ContactInstagramChat } from "@/components/admin/communication/instagram
 import { TicketChat } from "@/components/support/TicketChat";
 import { ChannelPicker } from "./ChannelPicker";
 import { UnifiedChatHeader } from "./UnifiedChatHeader";
+import { AdminInitiateTicketDialog } from "./AdminInitiateTicketDialog";
 
 const PANEL_KEY = "unified-inbox-panel-sizes";
 
@@ -68,6 +69,10 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
    * новую grouped row, содержащую тот же source key.
    */
   const [lastSelectedSourceKey, setLastSelectedSourceKey] = useState<string | null>(null);
+
+  // PATCH-ADMIN-INITIATE-SUPPORT-TICKET: диалог создания обращения из карточки контакта.
+  const [initiateFor, setInitiateFor] = useState<UnifiedContactRow | null>(null);
+  const [pendingSupportForProfileId, setPendingSupportForProfileId] = useState<string | null>(null);
 
   const [panelSize] = useState<number>(() => {
     try {
@@ -175,6 +180,19 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     setActiveSourceByKey((prev) => ({ ...prev, [selected.key]: source }));
     setLastSelectedSourceKey(selected.channels[source]!.key);
   };
+
+  // После создания тикета: как только support-канал появится в grouped row
+  // ждущего profile, переключаем правую панель на 'support' и снимаем pending.
+  useEffect(() => {
+    if (!pendingSupportForProfileId) return;
+    const row = contactRows.find((r) => r.profileId === pendingSupportForProfileId);
+    if (row && row.channels.support) {
+      setActiveSourceByKey((prev) => ({ ...prev, [row.key]: "support" }));
+      setSelectedKey(row.key);
+      setLastSelectedSourceKey(row.channels.support!.key);
+      setPendingSupportForProfileId(null);
+    }
+  }, [contactRows, pendingSupportForProfileId]);
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
@@ -542,7 +560,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const rightPanel = selected && activeChannel ? (
     <div className="h-full flex flex-col">
       <UnifiedChatHeader contact={selected} activeSource={activeSource} />
-      <ChannelPicker contact={selected} activeSource={activeSource} onChange={changeActiveSource} />
+      <ChannelPicker
+        contact={selected}
+        activeSource={activeSource}
+        onChange={changeActiveSource}
+        onRequestCreateSupport={(c) => setInitiateFor(c)}
+      />
       <div className="flex-1 min-h-0">
         <ChatPanel channel={activeChannel} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
       </div>
@@ -556,6 +579,23 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       </div>
     </div>
   );
+  const initiateDialog = (
+    <AdminInitiateTicketDialog
+      open={!!initiateFor}
+      onOpenChange={(v) => {
+        if (!v) setInitiateFor(null);
+      }}
+      profileId={initiateFor?.profileId ?? null}
+      displayName={initiateFor?.displayName ?? ""}
+      onCreated={(_ticketId, _createdNew) => {
+        if (initiateFor?.profileId) {
+          setPendingSupportForProfileId(initiateFor.profileId);
+        }
+        setInitiateFor(null);
+      }}
+    />
+  );
+
 
   if (isMobile) {
     return (
@@ -576,20 +616,24 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         ) : (
           dialogList
         )}
+        {initiateDialog}
       </div>
     );
   }
 
   return (
-    <ResizablePanelGroup direction="horizontal" onLayout={savePanel} className="h-full">
-      <ResizablePanel defaultSize={panelSize} minSize={25} maxSize={60}>
-        {dialogList}
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel defaultSize={100 - panelSize} minSize={40}>
-        {rightPanel}
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    <>
+      <ResizablePanelGroup direction="horizontal" onLayout={savePanel} className="h-full">
+        <ResizablePanel defaultSize={panelSize} minSize={25} maxSize={60}>
+          {dialogList}
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={100 - panelSize} minSize={40}>
+          {rightPanel}
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      {initiateDialog}
+    </>
   );
 }
 

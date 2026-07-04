@@ -1,4 +1,4 @@
-import { Send, Instagram, LifeBuoy } from "lucide-react";
+import { Send, Instagram, LifeBuoy, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -10,18 +10,19 @@ import { cn } from "@/lib/utils";
 import type { UnifiedContactRow, UnifiedSource } from "@/hooks/useUnifiedInbox";
 
 /**
- * ChannelPicker V3 (PATCH-UNIFIED-INBOX-V3-PROFILE-GROUPING).
+ * ChannelPicker V3 (PATCH-UNIFIED-INBOX-V3-PROFILE-GROUPING +
+ * PATCH-CONTACT-CENTER-ADMIN-INITIATE-SUPPORT-TICKET).
  *
- * Больше НЕ переключает выбранную строку ленты. Меняет только activeSource
- * внутри уже выбранного grouped-контакта: selectedKey остаётся `profile:<id>`,
- * а правая панель перерисовывается на соответствующий канал.
- *
- * disabled — если канал у контакта отсутствует.
+ * Support-канал: если у контакта есть profileId, но нет активного support-канала,
+ * кнопка «Техподдержка» переходит в состояние «Создать» — по клику вызывает
+ * onRequestCreateSupport(contact). Telegram/Instagram остаются disabled, если
+ * канал у контакта отсутствует.
  */
 interface Props {
   contact: UnifiedContactRow;
   activeSource: UnifiedSource;
   onChange: (source: UnifiedSource) => void;
+  onRequestCreateSupport?: (contact: UnifiedContactRow) => void;
 }
 
 const OPTIONS: { source: UnifiedSource; label: string; Icon: typeof Send }[] = [
@@ -30,7 +31,10 @@ const OPTIONS: { source: UnifiedSource; label: string; Icon: typeof Send }[] = [
   { source: "support", label: "Техподдержка", Icon: LifeBuoy },
 ];
 
-export function ChannelPicker({ contact, activeSource, onChange }: Props) {
+export function ChannelPicker({ contact, activeSource, onChange, onRequestCreateSupport }: Props) {
+  // Support-canCreate: есть profileId, но support-канала пока нет.
+  const canCreateSupport = !!contact.profileId && !contact.channels.support && !!onRequestCreateSupport;
+
   // Одинокая source-строка (без profileId) — переключать нечего, скрываем.
   if (!contact.profileId && contact.availableSources.length <= 1) return null;
 
@@ -42,6 +46,9 @@ export function ChannelPicker({ contact, activeSource, onChange }: Props) {
           const present = !!contact.channels[source];
           const isActive = source === activeSource;
           const ch = contact.channels[source];
+          const isCreate = source === "support" && !present && canCreateSupport;
+          const disabled = !present && !isCreate;
+
           const btn = (
             <Button
               key={source}
@@ -51,13 +58,21 @@ export function ChannelPicker({ contact, activeSource, onChange }: Props) {
               className={cn(
                 "h-6 px-2 text-[11px] rounded-full gap-1",
                 isActive && "bg-primary/15 text-primary",
-                !present && "opacity-40",
+                disabled && "opacity-40",
+                isCreate && "border border-dashed border-primary/40 text-primary/80 hover:bg-primary/10",
               )}
-              disabled={!present}
-              onClick={() => present && !isActive && onChange(source)}
+              disabled={disabled}
+              onClick={() => {
+                if (isCreate) {
+                  onRequestCreateSupport?.(contact);
+                  return;
+                }
+                if (present && !isActive) onChange(source);
+              }}
             >
               <Icon className="h-3 w-3" />
               {label}
+              {isCreate && <Plus className="h-3 w-3 ml-0.5" />}
               {ch && ch.unread > 0 && (
                 <span className="ml-0.5 inline-flex items-center justify-center min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
                   {ch.unread > 99 ? "99+" : ch.unread}
@@ -65,15 +80,16 @@ export function ChannelPicker({ contact, activeSource, onChange }: Props) {
               )}
             </Button>
           );
-          return present ? (
-            btn
-          ) : (
+
+          if (present) return btn;
+
+          return (
             <Tooltip key={source}>
               <TooltipTrigger asChild>
                 <span>{btn}</span>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-[11px]">
-                Канал не привязан к контакту
+                {isCreate ? "Создать обращение в техподдержку" : "Канал не привязан к контакту"}
               </TooltipContent>
             </Tooltip>
           );

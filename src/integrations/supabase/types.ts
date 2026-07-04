@@ -17357,6 +17357,16 @@ export type Database = {
         }
         Returns: string
       }
+      admin_create_or_get_support_ticket_for_profile: {
+        Args: {
+          p_attachments?: Json
+          p_category?: string
+          p_description: string
+          p_profile_id: string
+          p_subject: string
+        }
+        Returns: Json
+      }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
