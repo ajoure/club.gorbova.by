@@ -214,10 +214,12 @@ Deno.serve(async (req) => {
     // сам счёт на оплату по определению выписывается ДО оплаты, и его
     // разрешено отправить на email/telegram плательщика.
     // Физлица без оплаты — по-прежнему заблокированы.
+    let isPrePaymentInvoice = false;
+    let orderCreatedAt: string | null = null;
     if (doc.context_type === "order" && doc.context_id) {
       const { data: order } = await admin
         .from("orders_v2")
-        .select("id, status, customer_email, payer_type, meta, payments_v2(status)")
+        .select("id, status, customer_email, payer_type, meta, created_at, payments_v2(status)")
         .eq("id", doc.context_id)
         .maybeSingle();
       const hasPayment =
@@ -225,11 +227,12 @@ Deno.serve(async (req) => {
         Array.isArray(order?.payments_v2) &&
         order.payments_v2.some((p: any) => String(p.status).toLowerCase() === "succeeded");
       const orderMeta = (order?.meta ?? {}) as Record<string, unknown>;
-      const isPrePaymentInvoice =
+      isPrePaymentInvoice =
         !hasPayment &&
         orderMeta?.checkout_kind === "invoice" &&
         orderMeta?.awaits_payment === true &&
         (order?.payer_type === "legal_entity" || order?.payer_type === "entrepreneur");
+      orderCreatedAt = (order?.created_at as string) ?? null;
       if (!hasPayment && !isPrePaymentInvoice) {
         await writeAudit(admin, "document.send_blocked_no_payment", doc.id, userId, {
           context_id: doc.context_id,
@@ -244,6 +247,16 @@ Deno.serve(async (req) => {
         });
       }
     }
+
+    /** «Оплата по счёту №X от DD.MM.YYYY» — только для pre-payment invoice */
+    const paymentPurposeText: string | null = (() => {
+      if (!isPrePaymentInvoice || !doc.document_number) return null;
+      const d = orderCreatedAt ? new Date(orderCreatedAt) : new Date();
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yy = d.getFullYear();
+      return `Оплата по счёту №${doc.document_number} от ${dd}.${mm}.${yy}`;
+    })();
 
     // ---- Download PDF from storage -----------------------------------------
     const bucket = doc.storage_bucket || "documents";
@@ -288,6 +301,7 @@ Deno.serve(async (req) => {
               <p style="margin:0 0 16px 0;">Здравствуйте${docProfile?.full_name ? `, ${escapeHtml(docProfile.full_name)}` : ""}!</p>
               <p style="margin:0 0 16px 0;">Направляем вам документ во вложении (PDF).</p>
               ${doc.document_number ? `<p style="margin:0 0 8px 0;color:#666;">Номер документа: <b>${escapeHtml(doc.document_number)}</b></p>` : ""}
+              ${paymentPurposeText ? `<div style="margin-top:16px;padding:12px 14px;background:#f4f6fa;border-radius:8px;border:1px solid #e2e6ee;"><div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">При оплате в назначении платежа укажите</div><div style="font-weight:600;">«${escapeHtml(paymentPurposeText)}»</div></div>` : ""}
             </div>
           `;
           const base64Pdf = uint8ToBase64(pdfBytes);
@@ -350,9 +364,12 @@ Deno.serve(async (req) => {
           if (!botToken) {
             results.telegram_error = "bot_not_configured";
           } else {
-            const caption = doc.document_number
+            const baseCaption = doc.document_number
               ? `📄 ${escapeHtml(doc.title || "Документ")} № ${escapeHtml(doc.document_number)}`
               : `📄 ${escapeHtml(doc.title || "Документ")}`;
+            const caption = paymentPurposeText
+              ? `${baseCaption}\n\n<b>При оплате в назначении платежа укажите:</b>\n«${escapeHtml(paymentPurposeText)}»`
+              : baseCaption;
             const r = await tgSendDocument(botToken, chatId, pdfBytes, filename, caption);
             if (!r.ok) {
               results.telegram_error = r.error || "telegram_send_failed";

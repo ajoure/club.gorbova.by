@@ -203,7 +203,7 @@ export function InvoiceCheckoutDialog({
         throw new Error(
           data?.message ||
             data?.error ||
-            `Не удалось выписать счёт (${response.status})`,
+            `Не удалось сформировать счёт (${response.status})`,
         );
       }
       if (!data || (data as any).error) {
@@ -211,13 +211,21 @@ export function InvoiceCheckoutDialog({
       }
       setResult(data as InvoiceResult);
       setStep("success");
-      toast.success("Счёт выписан");
+      toast.success("Счёт сформирован");
     } catch (e: any) {
       console.error("[InvoiceCheckoutDialog] issue failed", e);
-      toast.error(e?.message ?? "Не удалось выписать счёт");
+      toast.error(e?.message ?? "Не удалось сформировать счёт");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** Формат даты для назначения платежа: DD.MM.YYYY */
+  function formatToday(): string {
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}.${mm}.${d.getFullYear()}`;
   }
 
   return (
@@ -404,13 +412,21 @@ export function InvoiceCheckoutDialog({
             </div>
             <div>
               <div className="text-lg font-semibold">
-                Счёт № {result.invoice_number} выписан
+                Счёт № {result.invoice_number} сформирован
               </div>
               <div className="text-sm text-muted-foreground mt-1">
                 Отправка на email и в Telegram запущена и придёт в течение
                 нескольких минут. Также PDF можно скачать сразу.
               </div>
             </div>
+            <Card className="p-3 text-left text-sm bg-muted/40">
+              <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
+                При оплате в назначении платежа укажите
+              </div>
+              <div className="font-medium break-words">
+                «Оплата по счёту №{result.invoice_number} от {formatToday()}»
+              </div>
+            </Card>
             {result.document_id && (
               <Button
                 variant="outline"
