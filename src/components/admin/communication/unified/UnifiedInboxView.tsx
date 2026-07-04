@@ -65,7 +65,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (sourceFilter !== "all" && r.source !== sourceFilter) return false;
-      if (readState === "unread" && !r.isUnanswered) return false;
+      if (filterKind === "unread" && !r.isUnanswered) return false;
+      if (filterKind === "favorite" && !r.isFavorite) return false;
+      if (filterKind === "pinned" && !r.isPinned) return false;
       if (search) {
         const q = search.toLowerCase();
         if (
@@ -78,7 +80,18 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       }
       return true;
     });
-  }, [rows, sourceFilter, readState, search]);
+  }, [rows, sourceFilter, filterKind, search]);
+
+  const counts2 = useMemo(() => {
+    let unread = 0, fav = 0, pinned = 0;
+    for (const r of rows) {
+      if (sourceFilter !== "all" && r.source !== sourceFilter) continue;
+      if (r.isUnanswered) unread++;
+      if (r.isFavorite) fav++;
+      if (r.isPinned) pinned++;
+    }
+    return { all: rows.filter(r => sourceFilter === "all" || r.source === sourceFilter).length, unread, fav, pinned };
+  }, [rows, sourceFilter]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
