@@ -504,7 +504,115 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     supportProfiles.data,
   ]);
 
+  // --- V3 profile grouping ---
+  const contactRows = useMemo<UnifiedContactRow[]>(() => {
+    if (!enabled) return [];
+
+    // profileId -> aggregate
+    const byKey = new Map<string, UnifiedContactRow>();
+    // For deterministic displayName/avatar: prefer profile-linked TG row (уже enriched
+    // by profile). Затем IG. Затем support. Fallback — most-recent channel.
+    const namePriority: UnifiedSource[] = ["telegram", "instagram", "support"];
+
+    for (const r of rows) {
+      const groupKey = r.meta.profileId
+        ? `profile:${r.meta.profileId}`
+        : `source:${r.source}:${r.sourceId}`;
+
+      const ref: SourceChannelRef = {
+        key: r.key,
+        source: r.source,
+        sourceRow: r,
+        unread: r.unreadCount,
+        pinned: r.isPinned,
+        favorite: r.isFavorite,
+        lastMessageAt: r.lastMessageAt,
+        lastMessagePreview: r.lastMessage,
+      };
+
+      const existing = byKey.get(groupKey);
+      if (!existing) {
+        byKey.set(groupKey, {
+          key: groupKey,
+          profileId: r.meta.profileId ?? null,
+          displayName: r.displayName,
+          avatarUrl: r.avatarUrl,
+          channels: { [r.source]: ref } as any,
+          availableSources: [r.source],
+          defaultActiveSource: r.source,
+          lastMessageAt: r.lastMessageAt,
+          lastMessageSource: r.source,
+          lastMessagePreview: r.lastMessage,
+          totalUnread: r.unreadCount,
+          isUnanswered: r.isUnanswered,
+          isPinned: r.isPinned,
+          isFavorite: r.isFavorite,
+        });
+        continue;
+      }
+
+      // Support-дубли: если тот же profileId и уже есть support-канал —
+      // берём тот, у кого lastMessageAt свежее (визуальная группировка,
+      // не data-merge).
+      if (existing.channels[r.source]) {
+        const prev = existing.channels[r.source]!;
+        if (new Date(r.lastMessageAt).getTime() > new Date(prev.lastMessageAt).getTime()) {
+          existing.channels[r.source] = ref;
+        } else {
+          // старый канал — не заменяем; но unread всё равно суммируем ниже? Нет:
+          // это тот же source (например два support ticket) — оставляем только
+          // самый свежий, чтобы не двоить unread.
+          continue;
+        }
+      } else {
+        existing.channels[r.source] = ref;
+        existing.availableSources.push(r.source);
+      }
+
+      existing.totalUnread += r.unreadCount;
+      existing.isUnanswered = existing.isUnanswered || r.isUnanswered;
+      existing.isPinned = existing.isPinned || r.isPinned;
+      existing.isFavorite = existing.isFavorite || r.isFavorite;
+
+      if (new Date(r.lastMessageAt).getTime() > new Date(existing.lastMessageAt).getTime()) {
+        existing.lastMessageAt = r.lastMessageAt;
+        existing.lastMessageSource = r.source;
+        existing.lastMessagePreview = r.lastMessage;
+        existing.defaultActiveSource = r.source;
+      }
+    }
+
+    // Детерминированный displayName/avatar для grouped rows.
+    for (const c of byKey.values()) {
+      if (!c.profileId) continue;
+      for (const src of namePriority) {
+        const ch = c.channels[src];
+        if (ch && ch.sourceRow.displayName && ch.sourceRow.displayName !== "Instagram" && !ch.sourceRow.displayName.startsWith("Тикет #")) {
+          c.displayName = ch.sourceRow.displayName;
+          c.avatarUrl = ch.sourceRow.avatarUrl ?? c.avatarUrl;
+          break;
+        }
+      }
+    }
+
+    const list = Array.from(byKey.values());
+
+    // Стабильная сортировка после группировки.
+    list.sort((a, b) => {
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      if (a.isUnanswered !== b.isUnanswered) return a.isUnanswered ? -1 : 1;
+      const bt = new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+      if (bt !== 0) return bt;
+      return a.displayName.localeCompare(b.displayName) || a.key.localeCompare(b.key);
+    });
+
+    return list;
+  }, [enabled, rows]);
+
   return {
+    /** V3 API: одна строка на контакт. */
+    contactRows,
+    /** Внутренний source-level список (для legacy/debug). */
     rows,
     isLoading:
       enabled &&
