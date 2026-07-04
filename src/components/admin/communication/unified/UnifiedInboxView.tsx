@@ -377,27 +377,39 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           ? formatDistanceToNow(new Date(row.lastMessageAt), { locale: ru, addSuffix: false })
                           : ""}
                       </span>
-                      {row.unreadCount > 0 && row.source !== "telegram" && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            markRead(row);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              markRead(row);
-                            }
-                          }}
-                          className="h-5 w-5 rounded-full opacity-0 group-hover:opacity-100 inline-flex items-center justify-center hover:bg-primary/10 cursor-pointer"
-                          title="Отметить прочитанным"
-                        >
-                          <Check className="h-3 w-3" />
-                        </span>
-                      )}
+                      <div
+                        className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                      >
+                        {row.capabilities.canPin && (
+                          <IconAction
+                            title={row.isPinned ? "Открепить" : "Закрепить"}
+                            disabled={busyKey === row.key}
+                            active={row.isPinned}
+                            onActivate={() => togglePinFavorite(row, "is_pinned")}
+                          >
+                            <Pin className={cn("h-3 w-3", row.isPinned && "fill-current text-primary")} />
+                          </IconAction>
+                        )}
+                        {row.capabilities.canFavorite && (
+                          <IconAction
+                            title={row.isFavorite ? "Убрать из избранного" : "В избранное"}
+                            disabled={busyKey === row.key}
+                            active={row.isFavorite}
+                            onActivate={() => togglePinFavorite(row, "is_favorite")}
+                          >
+                            <Star className={cn("h-3 w-3", row.isFavorite && "fill-amber-500 text-amber-500")} />
+                          </IconAction>
+                        )}
+                        {row.capabilities.canMarkRead && row.unreadCount > 0 && (
+                          <IconAction
+                            title="Отметить прочитанным"
+                            disabled={busyKey === row.key}
+                            onActivate={() => markRead(row)}
+                          >
+                            <Check className="h-3 w-3" />
+                          </IconAction>
+                        )}
+                      </div>
                     </div>
                   </button>
                 </div>
