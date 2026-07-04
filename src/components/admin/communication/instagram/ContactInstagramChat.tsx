@@ -39,6 +39,8 @@ interface ContactInstagramChatProps {
   avatarUrl?: string | null;
   accountName?: string | null;
   onBack?: () => void;
+  /** V2-HEADERS: скрывает встроенный header, когда снаружи отрисован UnifiedChatHeader. */
+  hideHeader?: boolean;
 }
 
 export function ContactInstagramChat({
@@ -49,6 +51,7 @@ export function ContactInstagramChat({
   avatarUrl,
   accountName,
   onBack,
+  hideHeader = false,
 }: ContactInstagramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
