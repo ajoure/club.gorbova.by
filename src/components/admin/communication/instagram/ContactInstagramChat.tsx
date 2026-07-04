@@ -39,6 +39,8 @@ interface ContactInstagramChatProps {
   avatarUrl?: string | null;
   accountName?: string | null;
   onBack?: () => void;
+  /** V2-HEADERS: скрывает встроенный header, когда снаружи отрисован UnifiedChatHeader. */
+  hideHeader?: boolean;
 }
 
 export function ContactInstagramChat({
@@ -49,6 +51,7 @@ export function ContactInstagramChat({
   avatarUrl,
   accountName,
   onBack,
+  hideHeader = false,
 }: ContactInstagramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -208,33 +211,35 @@ export function ContactInstagramChat({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3 shrink-0">
-        {onBack && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-full shrink-0"
-            onClick={onBack}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        )}
-        <Avatar className="h-10 w-10 ring-2 ring-border/20">
-          <AvatarImage src={avatarUrl || undefined} />
-          <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-sm font-semibold">
-            {senderName[0]?.toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold truncate">{senderName}</p>
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1 truncate">
-            <Instagram className="h-3 w-3 shrink-0" />
-            <span className="truncate">
-              {resolveInstagramSourceLabel({ display_name: accountName, account_name: accountName })}
-            </span>
-          </p>
+      {!hideHeader && (
+        <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3 shrink-0">
+          {onBack && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full shrink-0"
+              onClick={onBack}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          )}
+          <Avatar className="h-10 w-10 ring-2 ring-border/20">
+            <AvatarImage src={avatarUrl || undefined} />
+            <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-sm font-semibold">
+              {senderName[0]?.toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold truncate">{senderName}</p>
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1 truncate">
+              <Instagram className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {resolveInstagramSourceLabel({ display_name: accountName, account_name: accountName })}
+              </span>
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">

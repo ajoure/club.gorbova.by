@@ -1,16 +1,14 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -22,152 +20,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { Link2, Link2Off, Search } from "lucide-react";
-import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
-import type { UnifiedDialog } from "@/hooks/useUnifiedInbox";
+import { Search } from "lucide-react";
 
 /**
- * IgContactHeader (PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-CHANNELS P3)
- *
- * Компактный заголовок над IG-чатом в unified inbox с кликабельным
- * именем/аватаром:
- *   - если instagram_contacts.profile_id есть → клик открывает существующий
- *     ContactDetailSheet (переиспользуемый механизм из AdminContacts);
- *   - если нет → tooltip «не привязан к профилю» + действие
- *     «Привязать к профилю…» (поиск profiles, RPC link_instagram_contact_to_profile).
- *
- * stopPropagation внутри уже отдельного header'а не нужен — это отдельный
- * layout над ChatPanel; клик по строке диалога живёт в другом компоненте.
+ * AttachProfileDialog (V2-HEADERS) — вынесен из IgContactHeader
+ * для переиспользования в UnifiedChatHeader.
+ * Поиск profiles + link_instagram_contact_to_profile.
  */
 interface Props {
-  row: UnifiedDialog;
-}
-
-export function IgContactHeader({ row }: Props) {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [attachOpen, setAttachOpen] = useState(false);
-  const profileId = row.meta.profileId ?? null;
-  const igContactId = row.meta.instagramContactId ?? null;
-
-  const profileQ = useQuery({
-    queryKey: ["ig-header-profile", profileId],
-    enabled: !!profileId && sheetOpen,
-    staleTime: 60_000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", profileId as string)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const linked = !!profileId;
-
-  return (
-    <TooltipProvider delayDuration={200}>
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border/10 bg-background/60">
-        <button
-          type="button"
-          disabled={!linked}
-          onClick={() => linked && setSheetOpen(true)}
-          className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-md p-1 -m-1 hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
-          title={linked ? "Открыть карточку контакта" : undefined}
-        >
-          <Avatar className="h-7 w-7 ring-1 ring-border/20">
-            <AvatarImage src={row.avatarUrl || undefined} />
-            <AvatarFallback className="text-[10px]">
-              {row.displayName[0]?.toUpperCase() || "?"}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-xs font-semibold truncate">
-              {row.displayName}
-              {!linked && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Link2Off className="h-3 w-3 text-muted-foreground" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-[11px]">
-                    Не привязан к профилю
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-            {row.sourceLabel && (
-              <div className="text-[10px] text-muted-foreground truncate">{row.sourceLabel}</div>
-            )}
-          </div>
-        </button>
-
-        {!linked && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 text-[11px]"
-            onClick={() => setAttachOpen(true)}
-            disabled={!igContactId}
-          >
-            <Link2 className="h-3 w-3 mr-1" />
-            Привязать к профилю…
-          </Button>
-        )}
-      </div>
-
-      {linked && (
-        <ContactDetailSheet
-          contact={profileQ.data as any}
-          open={sheetOpen && !!profileQ.data}
-          onOpenChange={setSheetOpen}
-        />
-      )}
-
-      {igContactId && (
-        <AttachProfileDialog
-          open={attachOpen}
-          onOpenChange={setAttachOpen}
-          instagramContactId={igContactId}
-          igLabel={row.displayName}
-        />
-      )}
-    </TooltipProvider>
-  );
-}
-
-// ============================================================
-// AttachProfileDialog: поиск profiles по name/email/phone,
-// клик = link (с confirm при overwrite не требуется — IG-контакт
-// в момент отсутствия связи ещё не привязан).
-// ============================================================
-function AttachProfileDialog({
-  open,
-  onOpenChange,
-  instagramContactId,
-  igLabel,
-}: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   instagramContactId: string;
   igLabel: string;
-}) {
+}
+
+export function AttachProfileDialog({ open, onOpenChange, instagramContactId, igLabel }: Props) {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
-  const [confirmTarget, setConfirmTarget] = useState<{
-    profileId: string;
-    label: string;
-  } | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<{ profileId: string; label: string } | null>(
+    null,
+  );
 
   const search = useQuery({
     queryKey: ["attach-profile-search", q],
@@ -242,10 +115,7 @@ function AttachProfileDialog({
               search.data.map((p: any) => {
                 const label = p.full_name || p.email || p.id;
                 return (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between gap-2 p-2 text-xs"
-                  >
+                  <div key={p.id} className="flex items-center justify-between gap-2 p-2 text-xs">
                     <div className="min-w-0">
                       <div className="font-medium truncate">{label}</div>
                       <div className="text-[10px] text-muted-foreground truncate">
@@ -275,10 +145,7 @@ function AttachProfileDialog({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
-        open={!!confirmTarget}
-        onOpenChange={(v) => !v && setConfirmTarget(null)}
-      >
+      <AlertDialog open={!!confirmTarget} onOpenChange={(v) => !v && setConfirmTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Привязать Instagram к профилю?</AlertDialogTitle>
