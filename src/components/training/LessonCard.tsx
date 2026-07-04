@@ -54,10 +54,16 @@ export function LessonCard({
   const scheduledDate = isScheduled ? new Date(lesson.published_at!) : null;
 
   const handleClick = () => {
-    // Block navigation when locked by month-gate (non-admin only)
-    if (isMonthLocked) return;
-    // If scheduled and not admin - don't navigate
+    // Заблокировано месяц-гейтом — объясняем причину, а не молчим.
+    if (isMonthLocked) {
+      const monthLabel = lesson.locked_month ? formatLockedMonth(lesson.locked_month) : "этот месяц";
+      toast.info(`Контент за ${monthLabel} доступен покупателям тарифа BUSINESS. Оформите доступ, чтобы открыть материалы.`);
+      return;
+    }
+    // Запланировано на будущее — обычным пользователям не даём открыть.
     if (isScheduled && !isAdmin) {
+      const when = scheduledDate ? format(scheduledDate, "d MMMM 'в' HH:mm", { locale: ru }) : "позже";
+      toast.info(`Урок откроется ${when}.`);
       return;
     }
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
