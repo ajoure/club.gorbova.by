@@ -1,427 +1,328 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **“Только один файл” нереалистично.**
+1. **Статусы активного тикета должны соответствовать реальной схеме.**
+  &nbsp;
+  В предыдущем discovery по `support_tickets.status` было:
+  ```text
+  open, in_progress, waiting_user, resolved, closed
+  ```
+  В плане сейчас указано:
+  ```text
+  open, pending, in_progress
+  ```
+  `pending` может не существовать. Нужно использовать фактический набор:
+  ```sql
+  status IN ('open', 'in_progress', 'waiting_user')
+  ```
+  Перед миграцией подтвердить `CHECK constraint` ещё раз.
+2. **Dedupe должен идти по** `profile_id`**, не по** `user_id`**.**
+  &nbsp;
+  В предыдущем патче dedupe уже был утверждён как канон по `profile_id`, потому что `support_tickets.profile_id NOT NULL`, а `user_id` nullable.
+  Для RPC:
+  ```sql
+  WHERE profile_id = p_profile_id
+    AND status IN ('open', 'in_progress', 'waiting_user')
+    AND merged_into_ticket_id IS NULL
+  ORDER BY updated_at DESC
+  LIMIT 1
+  ```
+  `profiles.user_id` нужен для доставки клиенту и создания тикета, но не как основной ключ dedupe.
+3. **При найденном активном тикете не вставлять сообщение — согласен.**
+  &nbsp;
+  Это правильно: если тикет уже есть, кнопка должна просто открыть существующий `TicketChat`. Первое сообщение администратора должно отправляться уже через стандартный composer тикета, а не скрыто внутри RPC.
+  Но тогда `p_description` не должен быть обязательным при `created_new=false`.
+4. **При создании нового тикета лучше создать системный/начальный тикет без сообщения администратора или с первым сообщением? Нужно выбрать один UX.**
   &nbsp;
   В плане написано:
   ```text
-  Только фронт, в одном файле: src/hooks/useUnifiedInbox.ts
+  создаёт support_tickets + первый ticket_messages от имени админа
   ```
-  Но дальше сам план требует адаптации:
-  - списка;
-  - правой панели;
-  - `ChannelPicker`;
-  - row actions;
-  - filters;
-  - selected state.
-  Значит правки будут минимум в:
+  Это означает, что клиент сразу увидит первое сообщение. Это допустимо, но тогда dialog должен требовать `p_description`.
+  Если UX — “создать тикет и сразу писать в composer”, тогда RPC не должен создавать первое сообщение и не должен ставить `has_unread_user=true` до отправки.
+  Рекомендую для V1:
   ```text
-  src/hooks/useUnifiedInbox.ts
-  src/components/admin/communication/unified/UnifiedInboxView.tsx
-  src/components/admin/communication/unified/ChannelPicker.tsx
-  src/components/admin/communication/unified/UnifiedChatHeader.tsx
+  Dialog требует тему + первое сообщение.
+  RPC создаёт тикет + первое публичное сообщение от support.
+  has_unread_user=true.
   ```
-  Не ограничивать искусственно одним файлом. Ограничение должно быть: **front-only, без DB/RPC/edge**.
-2. **Сначала ввести адаптер совместимости, чтобы не сломать чаты.**
-  Старые компоненты ожидают source-row. Новая строка — contact-row. Поэтому нужен явный helper:
-  ```ts
-  getActiveChannel(row, activeSource): SourceChannelRef | null
-  ```
-  Правая панель должна получать старый source-specific payload из `channels[activeSource]`.
-3. **Сохранить старый source key внутри каждого channel.**
-  Для каждого канала хранить полный старый объект или достаточный ref:
-  ```ts
-  channels.telegram.sourceRow
-  channels.instagram.sourceRow
-  channels.support.sourceRow
-  ```
-  Не только `key/unread/pinned/favorite`, иначе `ContactTelegramChat`, `ContactInstagramChat`, `TicketChat`, mark-read, pin/fav потеряют нужные meta-поля.
-  Минимально:
-4. `selectedKey` **должен быть contact key, а** `activeSourceByKey` **— отдельный state.**
-  В `UnifiedInboxView` сделать:
-  ```ts
-  selectedKey = "profile:<id>" | "source:<...>"
-  activeSourceByKey: Record<string, UnifiedSource>
-  ```
-  При выборе строки:
-  - если для `selectedKey` ещё нет override → использовать `row.activeSource`;
-  - если оператор переключил канал → сохранить override;
-  - если пришло новое более свежее сообщение в другой канал — аккуратно решить, перезаписывать ли override.
-  Для V1:
-5. **Source filter должен влиять на default active source, но не уничтожать другие каналы.**
-  Если фильтр Instagram включён:
-  - строка показывается, если есть `channels.instagram`;
-  - activeSource при первом открытии = `instagram`;
-  - но header всё равно показывает Telegram/Support, если они есть.
-6. **Правило** `displayName/avatar` **должно быть детерминированным.**
+  То есть админ действительно “пишет клиенту”, а не просто создаёт пустую карточку.
+5. `author_type` **в** `ticket_messages` **должен быть валидным.**
   &nbsp;
-  Для grouped profile row:
+  В discovery было:
   ```text
-  приоритет displayName/avatar:
-  1. profiles.full_name/avatar_url, если есть;
-  2. самый свежий channel displayName/avatar;
-  3. fallback source displayName.
+  ticket_messages.author_type CHECK: user | support | system
   ```
-  Иначе при разных каналах имя может прыгать.
-7. **Last message preview должен быть от lastMessageSource, а не от activeSource.**
-  &nbsp;
-  В списке:
-  ```text
-  Последнее: Instagram · привет
+  Для первого сообщения админа использовать:
+  ```sql
+  author_type = 'support'
+  author_id = auth.uid()
+  author_name = profile/full name админа, если есть доступный источник
+  is_internal = false
+  is_read = false
   ```
-  должно всегда показывать канал последнего сообщения. Если оператор переключил activeSource на Telegram, preview в списке не должен стать Telegram.
-8. **Unread count должен быть суммой, но mark-read должен инвалидировать агрегат.**
+  Не использовать `admin` как `author_type`.
+6. **Permission check уточнить по реальному backend-контракту.**
   &nbsp;
-  После mark read activeSource:
-  - перезапросить соответствующий source query;
-  - пересчитать grouped row;
-  - если другие каналы unread, строка остаётся в “Новые”.
-9. **Pin/favorite action activeSource — принять, но в UI надо показать, к какому каналу применяется действие.**
-  &nbsp;
-  Иначе оператор видит одну строку контакта и может думать, что закрепляет весь контакт.
-  Tooltip:
-  ```text
-  Закрепить текущий канал: Instagram
-  В избранное текущий канал: Telegram
+  В плане:
+  ```sql
+  has_role(auth.uid(), 'admin') OR has_permission(auth.uid(), 'support.manage')
   ```
-  Или в action aria-label добавить канал.
-10. **Фильтр “Закреплённые/Избранное” должен показывать контакт, если pinned/favorite в любом канале.**
+  Нужно проверить, что `has_role` принимает именно текущий enum/string. В проекте уже всплывали различия `superadmin` / `super_admin`.
+  Безопаснее использовать существующий паттерн из support/admin RPC:
+  ```sql
+  has_permission(auth.uid(), 'support.manage')
+  OR has_permission(auth.uid(), 'admins.manage')
+  ```
+  Если `has_role('admin')` реально используется в проекте — можно оставить, но только после grep/proof.
+7. **Нужен advisory lock по** `profile_id`**.**
+  &nbsp;
+  Чтобы два админа одновременно не создали два тикета:
+  ```sql
+  PERFORM pg_advisory_xact_lock(hashtext(p_profile_id::text));
+  ```
+  До поиска активного тикета.
+8. **Валидация** `p_attachments`**.**
+  &nbsp;
+  Как в клиентском `create_support_ticket`:
+9. **Валидация** `p_subject` **и** `p_description`**.**
+  &nbsp;
+  Для создания нового тикета:
+  - `subject` обязателен;
+  - `description` / first message обязателен;
+  - category default `general`.
+  Для существующего тикета:
+  - `subject/description` можно игнорировать, если UX открывает существующий тикет без отправки нового сообщения;
+  - либо если dialog always sends first message, то при existing нужно не создавать тикет, но можно добавить message в существующий. Однако план говорит “никаких INSERT в ticket_messages” при existing.
+  Нужно зафиксировать:
+10. `has_unread_user=true` **ставить только если создано первое публичное сообщение.**
 
-Но если оператор в такой строке нажимает unpin, действие применяется к activeSource. Если pinned был в другом канале, строка останется в фильтре. Это нужно указать в proof как expected.
+Для new ticket с первым сообщением админа:
 
-11. **Support-дубли: визуальная группировка может скрыть проблему.**
+```sql
+has_unread_user = true
+has_unread_admin = false
+```
 
-Принять для V3, но в proof явно:
+Для existing ticket без нового сообщения:
+
+- unread flags не менять.
+
+11. `AdminInitiateTicketDialog` **должен менять текст кнопки при existing ticket.**
+
+Если канал support уже существует:
+
+- не показывать dialog;
+- ChannelPicker просто переключает на Support.
+
+Если канала нет:
+
+- показывать dialog “Создать обращение в техподдержку”;
+- после submit создаётся тикет и первое сообщение.
+
+12. **ChannelPicker должен различать три состояния Support.**
 
 ```text
-Multiple active support tickets under one profile are visually collapsed to latest active support channel only.
-Data-level merge/backfill remains separate.
+support exists in grouped row → enabled, opens active support channel
+support exists for profile but absent in current source filter/list → enabled, refetch/select support
+no active support but profileId + userId exists → enabled create
+no profileId or no userId → disabled
 ```
 
-И показывать оператору только latest support ticket. Старые дубли не должны исчезнуть из БД.
+Сейчас план говорит только “если profileId есть”. Нужно добавить проверку `profile.user_id`, иначе клиент не увидит кабинетный тикет.
 
-12. **Не потерять row actions.**
+13. **Не использовать** `useUnifiedInbox` **как единственный источник active ticket.**
 
-`IconAction` сейчас, вероятно, принимает source row. Нужно адаптировать:
+После V3 grouping и source filters support-channel может быть не в текущей строке из-за фильтра или stale cache. Для кнопки Support нужен `useProfileChannels` / отдельный lightweight query, который проверяет открытый тикет по `profile_id`.
 
-- actions вызываются на `activeChannel.sourceRow`;
-- capabilities берутся из `activeChannel`;
-- counters/indicators — агрегированные.
+14. **После создания тикета нужно правильно встроить его в grouped row.**
 
-13. **Непривязанный IG после link должен слиться с profile row.**
+`onCreated(ticketId)` должен:
 
-Для этого после `AttachProfileDialog.onSuccess` invalidate должен включать:
+- invalidate `unified-support-tickets`;
+- invalidate `unified inbox`;
+- invalidate `profile-channels`;
+- после refetch найти grouped row `profile:<profileId>`;
+- установить `activeSourceByKey[profile:<id>] = 'support'`;
+- не создавать отдельную строку `support:<ticketId>`.
 
-- IG contacts/prefs;
-- unified inbox;
-- profile channels;
-- selected row resolution.
+15. **Если refetch не успел, нужен temporary pending support channel или loader.**
 
-Если `selectedKey` был `source:instagram:<thread>` и после link стал `profile:<id>`, нужно перевыбрать новую строку, иначе выбранный key исчезнет.
-
-14. **Empty selected state обработать.**
-
-После regroup может исчезнуть выбранный source key. Нужно fallback:
+После RPC пользователь должен сразу видеть понятное состояние:
 
 ```text
-если selectedKey больше не существует → выбрать новую grouped row, содержащую прежний sourceRow.key, либо первую строку.
+Создаём обращение...
+Загружаем чат техподдержки...
 ```
 
-15. **Search должен работать по всем каналам контакта.**
+Не оставлять правую панель пустой, если `support` ещё не появился в grouped row.
 
-Если в строке объединены TG+IG, поиск должен находить по:
+16. `TicketChat` **должен открываться по** `ticketId`**, даже если строка ещё не пришла.**
 
-- profile name;
-- telegram username/name;
-- instagram username/name;
-- support subject/last message;
-- last previews всех каналов.
-
-Не только по агрегированному `displayName`.
-
-16. **Счётчики фильтров считать после группировки.**
-
-Сейчас counts могут считаться по source rows. После V3:
+Если существующая архитектура требует `sourceRow`, добавить адаптер:
 
 ```text
-Все = contactRows.length
-Новые = grouped rows with totalUnread > 0
-Избранное = grouped rows with any favorite
-Закреплённые = grouped rows with any pinned
+activeSource=support + pendingTicketId → render TicketChat(ticketId)
 ```
 
-17. **Sorting после grouping.**
+Без отдельного `useTicketById` можно попробовать через refetch, но fallback должен быть описан.
 
-Сортировать grouped rows:
+17. **Нужен audit/log для admin-created ticket.**
+
+Если есть `audit_logs`, записать:
 
 ```text
-isPinned DESC
-isUnanswered DESC / totalUnread DESC
-lastMessageAt DESC
-displayName ASC
-key ASC
+support_ticket.admin_opened
+profile_id
+ticket_id
+created_new
+admin_user_id
 ```
 
-Если текущий порядок другой — не менять резко без необходимости, но tie-breaker должен быть стабильным.
+Если audit инфраструктуру не используем — явно указать `audit deferred`, но лучше добавить, так как это действие от имени администратора.
 
-18. **Не ломать “source-only” строки.**
+18. **Не смешивать с клиентским** `create_support_ticket`**.**
 
-Для rows без `profileId`:
+Новый RPC не должен менять существующий клиентский путь. Клиентский `create_support_ticket` уже дедуплицирует новые обращения — не трогать.
 
-- key остаётся `source:<source>:<sourceKey>`;
-- channels содержит один source;
-- activeSource = source;
-- header работает как раньше;
-- attach IG может превратить её в profile row.
+19. **Frontend toast.**
 
-19. **Type names не должны ломать существующих потребителей.**
+- New: `Обращение создано, первое сообщение отправлено клиенту`
+- Existing: `Открыто существующее обращение #...`
 
-Можно не переименовывать внешний тип резко. Если много кода ждёт `UnifiedDialog`, сделать:
+Не писать “создано”, если `created_new=false`.
 
-```ts
-type UnifiedInboxRow = UnifiedContactRow
+20. **Proof должен включать SQL-проверку.**
+
+В audit добавить:
+
+```sql
+SELECT id, ticket_number, profile_id, user_id, status, has_unread_user, has_unread_admin
+FROM support_tickets
+WHERE profile_id = '<profile_id>'
+ORDER BY created_at DESC;
+
+SELECT author_type, author_id, message, is_internal
+FROM ticket_messages
+WHERE ticket_id = '<ticket_id>'
+ORDER BY created_at ASC;
 ```
 
-или сохранить совместимость через adapter.
+21. **Non-admin test должен быть реальным.**
 
-20. **Proof добавить по row actions после grouping.**
+Если нет UI-сессии non-admin, сделать SQL/RPC proof через JWT/role test. Если невозможно — статус `PARTIAL`, не PASS.
 
-Проверить:
+22. **Проверить, что клиент реально видит новый тикет.**
 
-- pin Telegram внутри grouped Сергей;
-- переключить на Instagram, favorite Instagram;
-- фильтр Избранное показывает Сергея;
-- mark-read Instagram не читает Telegram;
-- hard refresh сохраняет.
+DoD “клиент видит сообщение” обязателен:
 
-21. **Proof добавить по source filter + activeSource.**
+- `/support` клиента показывает тикет;
+- первое сообщение видно;
+- unread для клиента выставлен.
 
-Проверить:
+Если нет доступа к клиентской сессии — сделать DB proof + отметить UI client proof pending.
 
-- source filter Instagram → Сергей одна строка, activeSource Instagram;
-- source filter Telegram → Сергей одна строка, activeSource Telegram;
-- снятие source filter → activeSource по last message или сохранённый override.
+23. **Feature flag / opt-in.**
 
-22. **В план добавить “before/after row count”.**
+UI-кнопка живёт только в unified inbox, значит она доступна только при opt-in/unified. Это ок. Но RPC backend не должен зависеть от frontend flag; он должен защищаться permission-check.
 
-Для конкретного профиля:
+24. **Proof-файл:**
 
 ```text
-before: Sergey = 2 rows
-after: Sergey = 1 row, channels = [telegram, instagram]
+docs/audit/2026-07-04-admin-initiate-support-ticket.md
 ```
 
-23. **В regression добавить opt-in.**
-
-Проверить:
-
-- opt-in ON — V3 grouping работает;
-- opt-in OFF — unified скрыт;
-- mono-ленты без регресса.
-
-24. **Финальный статус должен быть точнее:**
+25. **Итоговый отчёт:**
 
 ```text
-Unified inbox V3 profile grouping — PASS
-One profile = one row
-Channels remain separate chat panels
-Cross-channel merged timeline — deferred
-Contact-level pin/favorite/read-all — deferred
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-ADMIN-INITIATE-SUPPORT-TICKET
 ```
 
-После этих правок план утверждён. Выполнять front-only без DB/RPC/edge.
+26. **Финальный статус:**
+
+```text
+Admin can initiate support ticket from unified contact row — PASS
+Existing active ticket — reused
+New ticket — created with first support message
+Client visibility — PASS / pending proof
+Telegram/Instagram unchanged
+```
+
+После этих правок план утверждён. Выполнять отдельно, не трогая Telegram/Instagram и клиентский `create_support_ticket`.
 
 &nbsp;
 
-План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V3-PROFILE-GROUPING
+Проблема
 
-Одна строка = один человек. Telegram / Instagram / Техподдержка — это **каналы внутри карточки контакта**, а не отдельные строки ленты.
+В карточке контакта (unified inbox) кнопка «Техподдержка» задизейблена с тултипом «Канал не привязан к контакту», даже когда у контакта есть `profileId`. У администратора нет способа инициировать обращение техподдержки на клиента из контакт-центра.
+
+Причина: `ChannelPicker` считает канал «отсутствующим», если у контакта нет ни одного `support_ticket`, и просто блокирует переключение. RPC `create_support_ticket` создаёт тикет только для `auth.uid()` — то есть от имени текущего пользователя, а не для выбранного контакта.
+
+## Что нужно сделать
+
+Позволить админу из карточки контакта в контакт-центре открыть/создать support-тикет на этого клиента и сразу писать во внутренний чат тикета — так же, как в Telegram/Instagram.
 
 ## Scope
 
-**В scope этого патча — только Problem 2** (дубли строк одного человека в ленте).
+Только Support-канал в unified inbox для админов с правом `support.manage`. Telegram/Instagram/moderation-политики/24h-окно/UX-текст «3031» — вне scope.
 
-**Problem 1 (отправка Instagram) — вне scope.** Отправка через платформу работает; ошибка «не отправляется» была ожидаемой — закрыто 24-часовое окно Meta/ManyChat. После нового входящего от клиента отправка снова прошла. Отдельной задачей позже сделать UX-улучшение: если ManyChat возвращает 24h-window error (`code 3031`), показывать понятный текст:
+## План
 
-> «Нельзя отправить сообщение: клиент не писал в Instagram за последние 24 часа. Дождитесь нового входящего сообщения.»
+### 1. RPC `admin_create_or_get_support_ticket_for_profile`
 
-Сейчас это не blocker и не часть текущего патча.
+Новая SQL-функция (security definer):
 
-## Цель
+- Параметры: `p_profile_id uuid`, `p_subject text`, `p_description text`, `p_category text default 'general'`, `p_attachments jsonb default '[]'`.
+- Проверка: `has_role(auth.uid(), 'admin') OR has_permission(auth.uid(), 'support.manage')`, иначе `error_code='forbidden'`.
+- Резолвит `v_user_id := profiles.user_id where id = p_profile_id`; если пусто — `error_code='profile_has_no_user'`.
+- Dedupe: если у `v_user_id` есть активный (status in ('open','pending','in_progress')) тикет — возвращает его (`created_new=false`), никаких `INSERT` в `ticket_messages`.
+- Иначе создаёт `support_tickets` + первый `ticket_messages` от имени `auth.uid()` (админа) с `is_internal=false`, помечает `has_unread_user=true`.
+- Возвращает `{ success, ticket_id, ticket_number, created_new, status }`. GRANT EXECUTE TO authenticated.
+- Миграция + GRANT в одном файле по правилам public-schema.
 
-Если Telegram и Instagram (и/или Support) привязаны к одному `profiles.id`, в ленте отображается **одна строка**:
+### 2. UI: `ChannelPicker`
 
-```
-Сергей Федорчук
-[Telegram] [Instagram]
-Последнее: Instagram · привет
-```
+- Для source `support`: если `contact.profileId` есть и канала нет — кнопка НЕ disabled, а с состоянием «create»: тултип «Создать обращение техподдержки», onClick → открыть `AdminInitiateTicketDialog`.
+- Для telegram/instagram поведение прежнее (disabled + «Канал не привязан»).
+- Одинокая строка без `profileId` — support-опция остаётся скрытой (как сейчас).
 
-А не две строки (одна Telegram, одна Instagram) как сейчас.
+### 3. Компонент `AdminInitiateTicketDialog`
 
-## Правило группировки
+Новый файл `src/components/admin/communication/unified/AdminInitiateTicketDialog.tsx`:
 
-В `useUnifiedInbox.ts`, после получения source rows и до отдачи наружу, группируем:
+- Props: `open`, `onOpenChange`, `profileId`, `displayName`, `onCreated(ticketId)`.
+- Поля: категория (те же 8, что в `CreateTicketDialog`), тема, первое сообщение.
+- Submit → `supabase.rpc('admin_create_or_get_support_ticket_for_profile', {...})`.
+- onSuccess → toast «Обращение создано / открыто существующее #N» → `invalidateQueries(['unified-inbox'])` + `['unified-support-tickets']` + `['admin-tickets']` → `onCreated(ticketId)`.
 
-```
-groupKey =
-  profileId exists → "profile:" + profileId
-  else             → "source:" + source + ":" + sourceKey
-```
+### 4. Интеграция в `UnifiedInboxView`
 
-Три строки — TG(profile=X), IG(profile=X), Support(profile=X) — становятся **одной** unified row. Если `profileId` нет — строка остаётся отдельной, как сейчас.
+- Прокинуть в `ChannelPicker` колбэк `onRequestCreateSupport(contact)`.
+- Внутри `UnifiedInboxView` держать локальный state `initiateFor: UnifiedContactRow | null`, рендерить `AdminInitiateTicketDialog`.
+- В `onCreated(ticketId)`: после инвалидации выставить `activeSourceByKey[contact.groupKey] = 'support'`, чтобы правая панель сразу переключилась на новый `TicketChat`.
 
-## Модель новой строки
+### 5. Proof (`docs/audit/2026-07-04-admin-initiate-support-ticket.md`)
 
-```ts
-interface UnifiedContactRow {
-  key: string;                 // "profile:<id>" | "source:<src>:<key>"
-  profileId: string | null;
-  displayName: string;
-  avatarUrl: string | null;
-  channels: {
-    telegram?: SourceChannelRef;
-    instagram?: SourceChannelRef;
-    support?: SourceChannelRef;
-  };
-  activeSource: UnifiedSource; // по умолчанию — источник последнего сообщения
-  lastMessageAt: string;       // max по каналам
-  lastMessageSource: UnifiedSource;
-  lastMessagePreview: string;
-  totalUnread: number;         // сумма по каналам
-  isPinned: boolean;           // OR по каналам
-  isFavorite: boolean;         // OR по каналам
-}
+- Скрин: кнопка «Техподдержка» активна с тултипом «Создать обращение».
+- Скрин: диалог, отправка, тост «Обращение создано».
+- Скрин: правая панель = `TicketChat` нового тикета, бейдж «Техподдержка» появился в шапке.
+- Скрин: повторный клик у того же контакта → «открыто существующее #N», TicketChat тот же.
+- DoD:
+  - Админ может инициировать support-тикет из карточки любого контакта с `profileId`.
+  - Dedupe: активный тикет не задваивается.
+  - Non-admin не может дёрнуть RPC (`forbidden`).
+  - Telegram/Instagram кнопки и остальной инбокс не изменились.
+  - Типизация/сборка проходят.
 
-interface SourceChannelRef {
-  key: string;                 // старый source-key (для роутинга правой панели)
-  unread: number;
-  pinned: boolean;
-  favorite: boolean;
-  lastMessageAt: string;
-  lastMessagePreview: string;
-}
-```
+## Технические детали
 
-## Выбор activeSource
+- RPC пишется по правилу public-schema (CREATE TABLE-стилю не подходит, но GRANT EXECUTE обязателен). RLS `support_tickets`/`ticket_messages` не меняются — RPC security definer.
+- `profiles.user_id` — источник владельца тикета (единственно верное поле).
+- Никаких изменений в `useUnifiedInbox`: как только появится строка `support_tickets` для этого `user_id`, следующий рефетч `unified-support-tickets` подтянет канал внутрь того же `profile:<id>` группового ряда автоматически.
+- Feature flag не нужен — фича живёт под уже включённым `useUnifiedInboxRolloutStatus`.
 
-По умолчанию `activeSource = channel with max(lastMessageAt)`. Пример: TG 10 мин назад, IG 2 мин назад → строка одна, справа открывается Instagram.
+## Вне scope
 
-## ChannelPicker
-
-Больше **не переключает выбранную строку ленты**. Он меняет только `activeSource` внутри уже выбранного контакта:
-
-```
-selectedKey = "profile:<id>"     // не меняется
-activeSource = telegram | instagram | support   // меняется
-```
-
-Запрещено внутри одного `profile:<id>`:
-
-```
-setSelectedKey("instagram:<thread>")
-setSelectedKey("telegram:<dialog>")
-```
-
-## Правая панель
-
-- `UnifiedChatHeader` — имя/аватар профиля + бейджи доступных каналов `[Telegram] [Instagram]`.
-- Ниже — `ChannelPicker` (`Канал: Telegram | Instagram | Техподдержка`), disabled для отсутствующих каналов.
-- Ниже — чат-компонент соответствующего `activeSource` (`ContactTelegramChat` / `InstagramChat` / `SupportTicketChat`) — без изменений в их внутренностях.
-
-## Бейдж в строке списка
-
-```
-Сергей Федорчук
-[Telegram] [Instagram]
-Последнее: Instagram · привет
-```
-
-Формат: имя, аватар, набор доступных каналов маленькими бейджами (`SourceBadge`), отдельная строка «Последнее: &nbsp; · &nbsp;».
-
-## Unread
-
-- `totalUnread = telegramUnread + instagramUnread + supportUnread` — один общий бейдж на строке.
-- При переключении каналов unread не теряется (per-channel unread хранится в `channels.*.unread`).
-
-## Mark read (V1 безопасный)
-
-- Клик «отметить прочитанным» на строке → отмечает прочитанным **только `activeSource**`.
-- Если в другом канале контакта тоже есть unread — строка остаётся в фильтре «Новые».
-- V2 (mark read всех каналов сразу) — отдельной задачей.
-
-## Pin / Favorite
-
-- `isPinned = OR по каналам`, `isFavorite = OR по каналам`.
-- Клик применяется **к `activeSource**`, а не ко всем каналам сразу.
-- «Закрепить весь контакт» одним действием — отдельной задачей.
-
-## Фильтры
-
-Работают по объединённым контактам:
-
-- **Все** — все contact rows.
-- **Новые** — если unread ≥ 1 хотя бы в одном канале.
-- **Избранное** — если favorite хотя бы в одном канале.
-- **Закреплённые** — если pinned хотя бы в одном канале.
-
-## Source filter
-
-Фильтр по Instagram → показываем контакты, у которых есть IG-канал; `activeSource` по умолчанию = Instagram; но строка одна, не отдельная IG-строка. Аналогично Telegram / Support.
-
-## Непривязанные IG
-
-IG без `profileId` → остаётся отдельной строкой `source:instagram:<thread>`. После ручной привязки через `AttachProfileDialog` — invalidate `INBOX_DIALOGS_QK`, строка сливается с существующим profile row без reload.
-
-## Support-дубли
-
-Profile grouping визуально объединит старые support-дубли одного `profile_id`, но это **не заменяет** backfill merge. Правила:
-
-- В `channels.support` выбираем активный тикет по `updated_at DESC` (не merged).
-- Старые тикеты того же `profile_id` не рендерим как отдельные строки.
-- В proof отметить: **visual grouping ≠ data merge**.
-
-## Где реализовывать
-
-Только фронт, в одном файле:
-
-- `src/hooks/useUnifiedInbox.ts` — после получения source rows: нормализация → группировка по `profileId` → возврат `UnifiedContactRow[]`.
-- Компоненты списка и правой панели адаптируются под новую модель (row.key = `profile:<id>`, activeSource state).
-- `ChannelPicker` — переписать под изменение `activeSource`, а не `selectedKey`.
-
-**Без SQL / RPC / миграций.** `get_inbox_dialogs_v2` не создаём.
-
-## Что НЕ делаем
-
-- Не меняем БД, RPC, ManyChat, `instagram_messages`, Meta Graph.
-- Не делаем общий composer (кросс-канальную отправку).
-- Не объединяем истории TG+IG в один timeline.
-- Не делаем auto-link профилей.
-- Не делаем source-wide pin/favorite/mark-read.
-- Не включаем всем без opt-in — работает под тем же feature flag `useUnifiedInboxRolloutStatus`.
-
-## Proof
-
-`docs/audit/2026-07-04-unified-inbox-v3-profile-grouping.md`. Скриншоты + описания:
-
-1. **До**: Сергей Федорчук двумя строками (TG + IG).
-2. **После**: Сергей одной строкой с бейджами `[Telegram] [Instagram]`.
-3. Последний канал определяется по `max(lastMessageAt)`.
-4. ChannelPicker переключает правую панель, `selectedKey` не меняется.
-5. Unread суммируется в один бейдж.
-6. Фильтр Instagram — Сергей одной строкой.
-7. Фильтр Telegram — Сергей одной строкой.
-8. Непривязанный IG (без profileId) — остаётся отдельной строкой.
-9. После привязки IG к profile — строка сливается (invalidate, без reload).
-10. Mono Telegram/Instagram/Support/Email — без регресса.
-
-## DoD (финальный статус в отчёте)
-
-```
-Profile-linked channels        — grouped into one contact row
-Active channel                 — selected inside row
-Duplicate profile rows         — removed
-Source-specific chats          — preserved
-Full cross-channel merged chat history — deferred
-```
-
-Отчёт: `Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V3-PROFILE-GROUPING`.
+- IG 24h-окно и UX-текст ошибки 3031.
+- Массовые/шаблонные обращения, категории сверх текущих 8.
+- Изменения политики RLS support-таблиц.
+- Cross-channel merged history.
