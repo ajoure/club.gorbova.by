@@ -514,7 +514,10 @@ Deno.serve(async (req) => {
       success: results.email_sent || results.telegram_sent,
       results,
       document_id: doc.id,
+      document_number: doc.document_number,
+      payment_purpose: paymentPurposeText,
     });
+
   } catch (e) {
     console.error("[canonical-document-send] fatal", e);
     return json(500, { error: "internal_error", detail: e instanceof Error ? e.message : String(e) });
