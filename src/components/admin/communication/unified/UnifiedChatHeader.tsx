@@ -13,27 +13,28 @@ import { Link2, Link2Off } from "lucide-react";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { AttachProfileDialog } from "./AttachProfileDialog";
 import { SourceBadge } from "./SourceBadge";
-import type { UnifiedDialog } from "@/hooks/useUnifiedInbox";
+import type { UnifiedContactRow, UnifiedSource } from "@/hooks/useUnifiedInbox";
 
 /**
- * UnifiedChatHeader (V2-HEADERS)
- * Единый заголовок над правой панелью для TG/IG/Support:
- *   - имя/аватар → ContactDetailSheet in-place (без перехода на новую страницу)
- *     когда profileId привязан;
- *   - IG без profileId → компактная icon-кнопка Link2 (tooltip «Привязать к профилю»)
- *     открывает AttachProfileDialog;
- *   - TG/Support без profileId → tooltip «Не привязан к профилю», без ошибок.
+ * UnifiedChatHeader (V3 profile-grouping).
+ * Показывает единого «человека» + доступные каналы бейджами.
+ * Клик по имени — ContactDetailSheet (если привязан profile).
+ * Если у контакта есть IG-канал без profileId — иконка «Привязать».
  */
 interface Props {
-  row: UnifiedDialog;
+  contact: UnifiedContactRow;
+  activeSource: UnifiedSource;
 }
 
-export function UnifiedChatHeader({ row }: Props) {
+export function UnifiedChatHeader({ contact, activeSource }: Props) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
-  const profileId = row.meta.profileId ?? null;
-  const igContactId = row.meta.instagramContactId ?? null;
+  const profileId = contact.profileId;
   const linked = !!profileId;
+
+  // Единственный сценарий attach: одинокая IG-строка без profile.
+  const igChannel = contact.channels.instagram;
+  const igContactId = !linked && igChannel ? igChannel.sourceRow.meta.instagramContactId ?? null : null;
 
   const profileQ = useQuery({
     queryKey: ["unified-header-profile", profileId],
@@ -50,6 +51,8 @@ export function UnifiedChatHeader({ row }: Props) {
     },
   });
 
+  const availableSources = contact.availableSources;
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/10 bg-background/60 shrink-0">
@@ -61,14 +64,14 @@ export function UnifiedChatHeader({ row }: Props) {
           title={linked ? "Открыть карточку контакта" : undefined}
         >
           <Avatar className="h-8 w-8 ring-1 ring-border/20">
-            <AvatarImage src={row.avatarUrl || undefined} />
+            <AvatarImage src={contact.avatarUrl || undefined} />
             <AvatarFallback className="text-[11px]">
-              {row.displayName[0]?.toUpperCase() || "?"}
+              {contact.displayName[0]?.toUpperCase() || "?"}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-sm font-semibold truncate">
-              <span className="truncate">{row.displayName}</span>
+              <span className="truncate">{contact.displayName}</span>
               {!linked && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -82,13 +85,20 @@ export function UnifiedChatHeader({ row }: Props) {
                 </Tooltip>
               )}
             </div>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <SourceBadge source={row.source} label={row.sourceLabel} />
+            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+              {availableSources.map((src) => (
+                <SourceBadge
+                  key={src}
+                  source={src}
+                  label={contact.channels[src]?.sourceRow.sourceLabel ?? null}
+                  className={src === activeSource ? "ring-1 ring-primary/40" : "opacity-70"}
+                />
+              ))}
             </div>
           </div>
         </button>
 
-        {!linked && row.source === "instagram" && igContactId && (
+        {igContactId && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -117,12 +127,12 @@ export function UnifiedChatHeader({ row }: Props) {
         />
       )}
 
-      {row.source === "instagram" && igContactId && (
+      {igContactId && (
         <AttachProfileDialog
           open={attachOpen}
           onOpenChange={setAttachOpen}
           instagramContactId={igContactId}
-          igLabel={row.displayName}
+          igLabel={igChannel?.sourceRow.displayName ?? contact.displayName}
         />
       )}
     </TooltipProvider>
