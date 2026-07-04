@@ -113,6 +113,23 @@ export default function AdminCommunication() {
                       align="start"
                       className="min-w-[160px] bg-background/80 backdrop-blur-xl border border-border/30 shadow-lg rounded-lg"
                     >
+                      {unifiedEnabled && (
+                        <DropdownMenuItem 
+                          onClick={() => { handleTabChange("inbox"); setInboxChannel("all"); }}
+                          className={cn(
+                            "flex items-center gap-2 text-xs cursor-pointer rounded-md",
+                            inboxChannel === "all" && activeTab === "inbox" && "bg-muted"
+                          )}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                          Все
+                          {inboxUnread > 0 && (
+                            <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
+                              {inboxUnread}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem 
                         onClick={() => { handleTabChange("inbox"); setInboxChannel("telegram"); }}
                         className={cn(
