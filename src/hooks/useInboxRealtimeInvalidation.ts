@@ -6,6 +6,7 @@ import {
   UNREAD_MESSAGES_COUNT_QK,
 } from "@/constants/inboxQueryKeys";
 import { isSelfMarkActive } from "@/hooks/inboxMarkReadCoordinator";
+import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 /**
  * useInboxRealtimeInvalidation
