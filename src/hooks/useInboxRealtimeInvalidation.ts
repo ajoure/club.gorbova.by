@@ -93,6 +93,14 @@ export function useInboxRealtimeInvalidation(): void {
       unreadPendingRef.current = true;
       schedule();
     };
+    const markIg = () => {
+      igPendingRef.current = true;
+      schedule();
+    };
+    const markSupport = () => {
+      supportPendingRef.current = true;
+      schedule();
+    };
 
     const channel = supabase
       .channel("inbox-realtime-bus")
@@ -148,6 +156,34 @@ export function useInboxRealtimeInvalidation(): void {
         }
       });
 
+    // Extra подписки для unified inbox (IG + support). Не задваивают
+    // моно-логику, а инвалидируют только unified-ключи. Активны только
+    // когда включён feature-flag; иначе Realtime трафик не расходуется.
+    const unifiedChannel = unifiedEnabled
+      ? supabase
+          .channel("inbox-realtime-bus-unified")
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "instagram_messages" },
+            () => markIg(),
+          )
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "support_tickets" },
+            () => markSupport(),
+          )
+          .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "ticket_messages" },
+            () => markSupport(),
+          )
+          .subscribe((status) => {
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+              console.warn("[inbox-realtime-bus-unified] channel status:", status);
+            }
+          })
+      : null;
+
     return () => {
       // Flush ожидающих инвалидаций, чтобы последний invalidate не потерялся
       // при unmount/route-change.
@@ -157,6 +193,7 @@ export function useInboxRealtimeInvalidation(): void {
         flush();
       }
       supabase.removeChannel(channel);
+      if (unifiedChannel) supabase.removeChannel(unifiedChannel);
     };
   }, [queryClient]);
 }
