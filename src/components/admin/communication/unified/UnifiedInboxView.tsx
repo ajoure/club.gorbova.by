@@ -616,20 +616,24 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         ) : (
           dialogList
         )}
+        {initiateDialog}
       </div>
     );
   }
 
   return (
-    <ResizablePanelGroup direction="horizontal" onLayout={savePanel} className="h-full">
-      <ResizablePanel defaultSize={panelSize} minSize={25} maxSize={60}>
-        {dialogList}
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel defaultSize={100 - panelSize} minSize={40}>
-        {rightPanel}
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    <>
+      <ResizablePanelGroup direction="horizontal" onLayout={savePanel} className="h-full">
+        <ResizablePanel defaultSize={panelSize} minSize={25} maxSize={60}>
+          {dialogList}
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={100 - panelSize} minSize={40}>
+          {rightPanel}
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      {initiateDialog}
+    </>
   );
 }
 
