@@ -579,6 +579,23 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       </div>
     </div>
   );
+  const initiateDialog = (
+    <AdminInitiateTicketDialog
+      open={!!initiateFor}
+      onOpenChange={(v) => {
+        if (!v) setInitiateFor(null);
+      }}
+      profileId={initiateFor?.profileId ?? null}
+      displayName={initiateFor?.displayName ?? ""}
+      onCreated={(_ticketId, _createdNew) => {
+        if (initiateFor?.profileId) {
+          setPendingSupportForProfileId(initiateFor.profileId);
+        }
+        setInitiateFor(null);
+      }}
+    />
+  );
+
 
   if (isMobile) {
     return (
