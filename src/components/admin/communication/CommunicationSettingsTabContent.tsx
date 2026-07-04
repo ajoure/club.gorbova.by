@@ -638,37 +638,14 @@ export function CommunicationSettingsTabContent() {
   );
 }
 
-function sourceLabel(source: UnifiedInboxFlagSource): string {
-  switch (source) {
-    case "superadmin":
-      return "Включено для вас (роль superadmin)";
-    case "qa-override":
-      return "QA test override (localStorage)";
-    case "kill":
-      return "Аварийно выключено (kill-switch в этом браузере)";
-    default:
-      return "Отключено (обычный оператор)";
-  }
-}
-
 function UnifiedInboxToggleCard() {
-  const status = useUnifiedInboxRolloutStatus();
-  const { enabled, source, canManageKill, killActive, setKill } = status;
+  const { enabled, source, isLoading, optin, setOptin } = useUnifiedInboxRolloutStatus();
 
   const badgeClass = enabled
     ? "bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30"
-    : source === "kill"
-      ? "bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30"
-      : "bg-muted text-muted-foreground border-border/30";
+    : "bg-muted text-muted-foreground border-border/30";
 
-  const Icon =
-    source === "superadmin"
-      ? ShieldCheck
-      : source === "qa-override"
-        ? TestTube2
-        : source === "kill"
-          ? PowerOff
-          : Power;
+  const Icon = enabled ? Power : PowerOff;
 
   return (
     <GlassCard className="p-6">
@@ -677,50 +654,43 @@ function UnifiedInboxToggleCard() {
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <MessageSquare className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">
-              Единая лента «Сообщения» — controlled rollout
+              Единая лента «Сообщения»
             </h2>
             <Badge variant="outline" className={cn("text-[10px]", badgeClass)}>
               <Icon className="w-3 h-3 mr-1" />
-              {enabled ? "ON" : "OFF"} · source={source}
+              {enabled ? "ON" : "OFF"}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            {sourceLabel(source)}. Единая лента включена только для superadmin
-            (controlled rollout V2). Обычные операторы видят прежний Telegram/
-            Instagram/Техподдержка/Email по отдельности. Kill-switch —
-            локальный, действует только в текущем браузере.
+            Личная настройка. Включает единую ленту «Все» (Telegram / Instagram /
+            Техподдержка) в разделе «Сообщения» — только в этом браузере и только
+            для вас. Не влияет на других сотрудников. По умолчанию для всех
+            выключено; production rollout по умолчанию — отложен (deferred).
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          {canManageKill ? (
-            killActive ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setKill(false)}
-              >
-                <Power className="w-4 h-4 mr-1" />
-                Снять аварийное выключение
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setKill(true)}
-              >
-                <PowerOff className="w-4 h-4 mr-1" />
-                Аварийно выключить (этот браузер)
-              </Button>
-            )
-          ) : (
-            <Badge variant="outline" className="text-[10px]">
-              read-only
-            </Badge>
-          )}
+        <div className="flex items-center gap-2 shrink-0">
+          <Label htmlFor="unified-inbox-optin" className="text-sm text-muted-foreground">
+            {optin ? "Включена" : "Выключена"}
+          </Label>
+          <Switch
+            id="unified-inbox-optin"
+            checked={optin}
+            disabled={isLoading}
+            onCheckedChange={(v) => setOptin(!!v)}
+            aria-label="Включить единую ленту «Сообщения» для меня"
+          />
         </div>
       </div>
+      {source === "user-optin" && (
+        <p className="text-xs text-muted-foreground mt-3">
+          Настройка синхронизируется только в этом браузере. При очистке
+          localStorage выключится автоматически.
+        </p>
+      )}
     </GlassCard>
   );
 }
+
+
 
 
