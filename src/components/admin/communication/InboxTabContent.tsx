@@ -265,12 +265,22 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       // Fetch profiles, orders, subscriptions IN PARALLEL (not sequentially).
       // Dialog "user_id" from RPC may actually be profile.id (guest contacts without auth user),
       // so we look profiles up by user_id OR by id.
-      
-      const [profilesRes, ordersRes, subsRes] = await Promise.all([
+      //
+      // HOTFIX (V2-MONO-AND-MERGE-HOTFIX): with 100+ dialogs the previous
+      // `.or(user_id.in.(...),id.in.(...))` produced a URL > 8 KB and PostgREST
+      // returned an error that we swallowed silently → profileMap was empty →
+      // list showed "Неизвестный" / "?" for every row and right panel said
+      // "Telegram не привязан". Split into two `.in()` queries (URL-safe) and
+      // surface any failure via console.error so future regressions don't hide.
+      const [profilesByUserIdRes, profilesByIdRes, ordersRes, subsRes] = await Promise.all([
         supabase
           .from("profiles")
           .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
-          .or(`user_id.in.(${userIds.join(',')}),id.in.(${userIds.join(',')})`),
+          .in("user_id", userIds),
+        supabase
+          .from("profiles")
+          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
+          .in("id", userIds),
         supabase
           .from("orders_v2")
           .select("id, user_id, order_number, status, products_v2(name)")
@@ -283,7 +293,18 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           .limit(500)
       ]);
 
-      const profiles = profilesRes.data || [];
+      if (profilesByUserIdRes.error) {
+        console.error("[Inbox] profiles by user_id query failed:", profilesByUserIdRes.error);
+      }
+      if (profilesByIdRes.error) {
+        console.error("[Inbox] profiles by id query failed:", profilesByIdRes.error);
+      }
+
+      // De-dup by profile.id (a profile может совпасть в обоих запросах).
+      const profilesMap0 = new Map<string, any>();
+      (profilesByUserIdRes.data || []).forEach((p: any) => profilesMap0.set(p.id, p));
+      (profilesByIdRes.data || []).forEach((p: any) => profilesMap0.set(p.id, p));
+      const profiles = Array.from(profilesMap0.values());
       const orders = ordersRes.data || [];
       const subscriptions = subsRes.data || [];
 
