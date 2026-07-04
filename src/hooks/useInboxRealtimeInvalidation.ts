@@ -195,5 +195,5 @@ export function useInboxRealtimeInvalidation(): void {
       supabase.removeChannel(channel);
       if (unifiedChannel) supabase.removeChannel(unifiedChannel);
     };
-  }, [queryClient]);
+  }, [queryClient, unifiedEnabled]);
 }
