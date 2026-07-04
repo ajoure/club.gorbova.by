@@ -1,82 +1,97 @@
 import { useEffect, useMemo, useState } from "react";
-import { useHasRole } from "./useHasRole";
+import { useAuth } from "@/contexts/AuthContext";
 
 /**
- * CONTROLLED ROLLOUT (2026-07-04, V2-ROLLOUT):
+ * PATCH-CONTACT-CENTER-UNIFIED-INBOX-V2-OPTIN (2026-07-04):
  *
- * Unified inbox V2 включается только для superadmin. Обычные операторы видят
- * старый интерфейс. Kill-switch — локальный (per browser/session) аварийный
- * выключатель для быстрого «снять фичу с себя»; глобальное отключение —
- * только код-роллбэк (см. return в самом низу хука).
+ * Personal opt-in для единой ленты «Сообщения». Ранее фича включалась
+ * автоматически для роли superadmin (controlled rollout V2) — сейчас доступна
+ * ЛЮБОМУ сотруднику с доступом в контакт-центр через переключатель в
+ * «Настройки → Единая лента». Дефолт для всех — OFF. Full production rollout
+ * (принудительно для всех) — по-прежнему deferred.
  *
  * Матрица включения:
- *   kill=1 (localStorage)               → false, source='kill'
- *   иначе, superadmin                   → true,  source='superadmin'
- *   иначе, qa-override && (admin|DEV)   → true,  source='qa-override'
- *   иначе                               → false, source='default-off'
+ *   optin[user_id]=1 → enabled=true,  source='user-optin'
+ *   иначе            → enabled=false, source='default-off'
  *
- * QA-override НЕ работает для обычного оператора в production —
- * это отсекает ситуацию «оператор открыл консоль и включил себе фичу».
+ * ХРАНИЛИЩЕ (per-user, per-browser):
+ *   localStorage.contact_center_unified_inbox_optin =
+ *     JSON.stringify({ [user_id]: true })
+ *
+ * Namespace по user_id критичен: без него сотрудник, включивший opt-in, и
+ * следующий залогинившийся в том же браузере — увидели бы одну и ту же ленту.
+ *
+ * MIGRATION (one-shot):
+ *   contact_center_unified_inbox_v2_test=1 → optin[current user]=true
+ *   contact_center_unified_inbox_kill      → просто удаляется (kill убран)
+ *   contact_center_unified_inbox (legacy)  → просто удаляется
+ *
+ * ROLLBACK PATH:
+ *   Если что-то пойдёт не так — код-роллбэк этого файла возвращает V2 в
+ *   controlled-rollout режим (superadmin-only). Никакие kill-switch в UI
+ *   больше не поддерживаются.
  */
 const LEGACY_KEY = "contact_center_unified_inbox";
-const V2_TEST_KEY = "contact_center_unified_inbox_v2_test";
-const KILL_KEY = "contact_center_unified_inbox_kill";
+const LEGACY_KILL_KEY = "contact_center_unified_inbox_kill";
+const LEGACY_V2_TEST_KEY = "contact_center_unified_inbox_v2_test";
+const OPTIN_KEY = "contact_center_unified_inbox_optin";
 const EVENT = "contact_center_unified_inbox_changed";
 
-export type UnifiedInboxFlagSource =
-  | "kill"
-  | "superadmin"
-  | "qa-override"
-  | "default-off";
+export type UnifiedInboxFlagSource = "user-optin" | "default-off";
 
 export interface UnifiedInboxRolloutStatus {
   enabled: boolean;
   source: UnifiedInboxFlagSource;
-  isSuperadmin: boolean;
-  isAdmin: boolean;
-  killActive: boolean;
-  qaOverrideActive: boolean;
-  /** true, если пользователь имеет право видеть кнопку kill-switch в Settings. */
-  canManageKill: boolean;
-  setKill: (next: boolean) => void;
+  /** true, пока идёт первичная загрузка сессии (user?.id ещё не определён). */
+  isLoading: boolean;
+  /** Персональный флаг текущего пользователя (opt-in). */
+  optin: boolean;
+  /** Установить opt-in для текущего пользователя. */
+  setOptin: (next: boolean) => void;
 }
 
-function readLS(key: string): boolean {
+function readOptinMap(): Record<string, boolean> {
   try {
-    return localStorage.getItem(key) === "1";
+    const raw = localStorage.getItem(OPTIN_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed as Record<string, boolean>;
+    return {};
   } catch {
-    return false;
+    return {};
   }
 }
 
-function clearLegacy(): void {
+function writeOptinMap(map: Record<string, boolean>) {
   try {
-    if (localStorage.getItem(LEGACY_KEY) !== null) {
-      localStorage.removeItem(LEGACY_KEY);
-    }
+    localStorage.setItem(OPTIN_KEY, JSON.stringify(map));
   } catch {}
 }
 
-function useLocalFlags() {
-  const [killActive, setKillActive] = useState<boolean>(() => readLS(KILL_KEY));
-  const [qaOverrideActive, setQaOverride] = useState<boolean>(() => readLS(V2_TEST_KEY));
-
-  useEffect(() => {
-    clearLegacy();
-    const sync = () => {
-      setKillActive(readLS(KILL_KEY));
-      setQaOverride(readLS(V2_TEST_KEY));
-    };
-    sync();
-    window.addEventListener(EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
-
-  return { killActive, qaOverrideActive };
+function migrateLegacy(userId: string | undefined | null) {
+  try {
+    // Удаляем kill / legacy — они больше не поддерживаются.
+    if (localStorage.getItem(LEGACY_KILL_KEY) !== null) {
+      localStorage.removeItem(LEGACY_KILL_KEY);
+    }
+    if (localStorage.getItem(LEGACY_KEY) !== null) {
+      localStorage.removeItem(LEGACY_KEY);
+    }
+    // Один раз мигрируем `_v2_test=1` в opt-in текущего юзера, затем удаляем.
+    const legacyV2 = localStorage.getItem(LEGACY_V2_TEST_KEY);
+    if (legacyV2 === "1" && userId) {
+      const map = readOptinMap();
+      if (!map[userId]) {
+        map[userId] = true;
+        writeOptinMap(map);
+      }
+      localStorage.removeItem(LEGACY_V2_TEST_KEY);
+    } else if (legacyV2 !== null && !userId) {
+      // Юзер не определён — миграцию отложим до следующего монтирования.
+    } else if (legacyV2 !== null) {
+      localStorage.removeItem(LEGACY_V2_TEST_KEY);
+    }
+  } catch {}
 }
 
 function emitChange() {
@@ -86,56 +101,53 @@ function emitChange() {
 }
 
 export function useUnifiedInboxRolloutStatus(): UnifiedInboxRolloutStatus {
-  const { hasRole: isSuperadmin } = useHasRole("superadmin");
-  const { hasRole: isAdmin } = useHasRole("admin");
-  const { killActive, qaOverrideActive } = useLocalFlags();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
-  const isDev = import.meta.env.DEV;
-  const qaAllowed = qaOverrideActive && (isSuperadmin || isAdmin || isDev);
+  const [optinMap, setOptinMap] = useState<Record<string, boolean>>(() => readOptinMap());
 
-  const source: UnifiedInboxFlagSource = killActive
-    ? "kill"
-    : isSuperadmin
-      ? "superadmin"
-      : qaAllowed
-        ? "qa-override"
-        : "default-off";
+  useEffect(() => {
+    migrateLegacy(userId);
+    setOptinMap(readOptinMap());
+    const sync = () => setOptinMap(readOptinMap());
+    window.addEventListener(EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [userId]);
 
-  const enabled = source === "superadmin" || source === "qa-override";
+  const optin = !!(userId && optinMap[userId]);
+  const isLoading = !userId;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const setKill = useMemo(
+  const source: UnifiedInboxFlagSource = optin ? "user-optin" : "default-off";
+  const enabled = !isLoading && optin;
+
+  const setOptin = useMemo(
     () => (next: boolean) => {
-      try {
-        if (next) {
-          localStorage.setItem(KILL_KEY, "1");
-        } else {
-          localStorage.removeItem(KILL_KEY);
-        }
-      } catch {}
+      if (!userId) return;
+      const map = readOptinMap();
+      if (next) {
+        map[userId] = true;
+      } else {
+        delete map[userId];
+      }
+      writeOptinMap(map);
+      setOptinMap(map);
       emitChange();
     },
-    [],
+    [userId],
   );
 
-  return {
-    enabled,
-    source,
-    isSuperadmin,
-    isAdmin,
-    killActive,
-    qaOverrideActive: qaAllowed,
-    canManageKill: isSuperadmin || isAdmin,
-    setKill,
-  };
+  return { enabled, source, isLoading, optin, setOptin };
 }
 
 /**
- * Совместимость с существующими вызовами. Setter — no-op:
- * включение операторам через UI-тумблер запрещено, для управления
- * kill-switch используйте `useUnifiedInboxRolloutStatus().setKill`.
+ * Совместимость с существующими вызовами. Setter теперь — реальный
+ * пер-пользовательский opt-in.
  */
 export function useUnifiedInboxFlag(): [boolean, (next: boolean) => void] {
-  const { enabled } = useUnifiedInboxRolloutStatus();
-  return [enabled, () => {}];
+  const { enabled, setOptin } = useUnifiedInboxRolloutStatus();
+  return [enabled, setOptin];
 }

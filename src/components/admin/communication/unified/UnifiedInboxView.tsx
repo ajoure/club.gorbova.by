@@ -46,6 +46,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [readState, setReadState] = useState<"all" | "unread">("all");
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const [panelSize] = useState<number>(() => {
     try {
@@ -94,12 +95,127 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
   };
 
-  // Единый mark-read: делегируем существующим механизмам per-source.
-  const markRead = async (row: UnifiedDialog) => {
+  // ------- Hover-actions (pin / favorite / mark read) -------
+  // Все мутации используют СУЩЕСТВУЮЩИЕ таблицы и RPC:
+  //   TG:      chat_preferences (upsert), mark_dialog_read_v2 (тот же контракт, что моно-TG)
+  //   IG:      instagram_dialog_preferences (upsert), instagram-admin-chat/mark_read
+  //   Support: support_tickets.is_starred / has_unread_admin
+  // Никаких новых миграций/таблиц. Если capability отсутствует — иконка не рисуется.
+  const togglePinFavorite = async (
+    row: UnifiedDialog,
+    field: "is_pinned" | "is_favorite",
+  ) => {
+    if (busyKey) return;
+    setBusyKey(row.key);
     try {
       if (row.source === "telegram") {
-        // Требует observed boundary; открытие чата уже реализует mark_dialog_read_v2 внутри ContactTelegramChat.
-        toast.info("Откройте диалог, чтобы отметить прочитанным");
+        if (!user?.id) throw new Error("Не авторизован");
+        const contactUserId = row.meta.telegramUserId!;
+        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const { data: existing } = await supabase
+          .from("chat_preferences")
+          .select("id")
+          .eq("admin_user_id", user.id)
+          .eq("contact_user_id", contactUserId)
+          .maybeSingle();
+        if (existing) {
+          const { error } = await supabase
+            .from("chat_preferences")
+            .update({ [field]: nextValue, updated_at: new Date().toISOString() } as any)
+            .eq("id", existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase
+            .from("chat_preferences")
+            .insert({
+              admin_user_id: user.id,
+              contact_user_id: contactUserId,
+              [field]: nextValue,
+            } as any);
+          if (error) throw error;
+        }
+        queryClient.invalidateQueries({ queryKey: ["chat-preferences", user.id] });
+        queryClient.invalidateQueries({ queryKey: ["chat-preferences"] });
+      } else if (row.source === "instagram" && field === "is_pinned") {
+        if (!user?.id) throw new Error("Не авторизован");
+        const nextPinned = !row.isPinned;
+        const { error } = await supabase
+          .from("instagram_dialog_preferences")
+          .upsert(
+            {
+              admin_user_id: user.id,
+              instagram_account_id: row.meta.instagramAccountId!,
+              thread_key: row.meta.instagramThreadKey!,
+              is_pinned: nextPinned,
+              pinned_at: nextPinned ? new Date().toISOString() : null,
+            },
+            { onConflict: "admin_user_id,instagram_account_id,thread_key" },
+          );
+        if (error) throw error;
+        queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
+      } else if (row.source === "support" && field === "is_favorite") {
+        const { error } = await supabase
+          .from("support_tickets")
+          .update({ is_starred: !row.isFavorite } as any)
+          .eq("id", row.meta.ticketId!);
+        if (error) throw error;
+        queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
+        queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+      } else {
+        return;
+      }
+      toast.success(
+        field === "is_pinned"
+          ? row.isPinned ? "Открепить" : "Закреплено"
+          : row.isFavorite ? "Убрано из избранного" : "В избранном",
+      );
+    } catch (e: any) {
+      toast.error("Не удалось: " + (e?.message || "ошибка"));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  // Единый mark-read.
+  // Telegram: тот же контракт, что моно-TG (mark_dialog_read_v2 + observed boundary
+  // из локального кэша ["telegram-messages"] с fallback на last_message_at строки).
+  const markRead = async (row: UnifiedDialog) => {
+    if (busyKey) return;
+    setBusyKey(row.key);
+    try {
+      if (row.source === "telegram") {
+        const userId = row.meta.telegramUserId!;
+        // Observed boundary: точная граница из кэша чата, иначе last_message_at.
+        let boundary: string | null = null;
+        const msgs = queryClient.getQueryData<any[]>(["telegram-messages", userId]);
+        if (Array.isArray(msgs)) {
+          for (const m of msgs) {
+            if (m?.direction === "incoming" && typeof m?.created_at === "string") {
+              if (!boundary || m.created_at > boundary) boundary = m.created_at;
+            }
+          }
+        }
+        if (!boundary) boundary = row.lastMessageAt || null;
+        if (!boundary) throw new Error("нет observed boundary");
+        const { registerSelfMark, clearSelfMark } = await import(
+          "@/hooks/inboxMarkReadCoordinator"
+        );
+        registerSelfMark(userId, 2500);
+        try {
+          const { error } = await supabase.rpc("mark_dialog_read_v2" as any, {
+            p_user_id: userId,
+            p_boundary: boundary,
+          });
+          if (error) {
+            clearSelfMark(userId);
+            throw error;
+          }
+        } catch (e) {
+          clearSelfMark(userId);
+          throw e;
+        }
+        queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+        toast.success("Отмечено прочитанным");
         return;
       }
       if (row.source === "instagram") {
@@ -125,8 +241,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       }
     } catch (e: any) {
       toast.error("Не удалось отметить: " + (e?.message || "ошибка"));
+    } finally {
+      setBusyKey(null);
     }
   };
+
 
   const totalUnread = counts.telegramUnread + counts.instagramUnread + counts.supportUnread;
 
@@ -258,27 +377,39 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           ? formatDistanceToNow(new Date(row.lastMessageAt), { locale: ru, addSuffix: false })
                           : ""}
                       </span>
-                      {row.unreadCount > 0 && row.source !== "telegram" && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            markRead(row);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              markRead(row);
-                            }
-                          }}
-                          className="h-5 w-5 rounded-full opacity-0 group-hover:opacity-100 inline-flex items-center justify-center hover:bg-primary/10 cursor-pointer"
-                          title="Отметить прочитанным"
-                        >
-                          <Check className="h-3 w-3" />
-                        </span>
-                      )}
+                      <div
+                        className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                      >
+                        {row.capabilities.canPin && (
+                          <IconAction
+                            title={row.isPinned ? "Открепить" : "Закрепить"}
+                            disabled={busyKey === row.key}
+                            active={row.isPinned}
+                            onActivate={() => togglePinFavorite(row, "is_pinned")}
+                          >
+                            <Pin className={cn("h-3 w-3", row.isPinned && "fill-current text-primary")} />
+                          </IconAction>
+                        )}
+                        {row.capabilities.canFavorite && (
+                          <IconAction
+                            title={row.isFavorite ? "Убрать из избранного" : "В избранное"}
+                            disabled={busyKey === row.key}
+                            active={row.isFavorite}
+                            onActivate={() => togglePinFavorite(row, "is_favorite")}
+                          >
+                            <Star className={cn("h-3 w-3", row.isFavorite && "fill-amber-500 text-amber-500")} />
+                          </IconAction>
+                        )}
+                        {row.capabilities.canMarkRead && row.unreadCount > 0 && (
+                          <IconAction
+                            title="Отметить прочитанным"
+                            disabled={busyKey === row.key}
+                            onActivate={() => markRead(row)}
+                          >
+                            <Check className="h-3 w-3" />
+                          </IconAction>
+                        )}
+                      </div>
                     </div>
                   </button>
                 </div>
@@ -378,4 +509,53 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
     return <TicketChat ticketId={row.meta.ticketId!} isAdmin isClosed={false} />;
   }
   return null;
+}
+
+/**
+ * Иконка hover-действия строки. Изолирована от выбора строки
+ * (stopPropagation + preventDefault на click/keydown).
+ */
+function IconAction({
+  title,
+  disabled,
+  active,
+  onActivate,
+  children,
+}: {
+  title: string;
+  disabled?: boolean;
+  active?: boolean;
+  onActivate: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={title}
+      aria-pressed={active}
+      title={title}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!disabled) onActivate();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!disabled) onActivate();
+        }
+      }}
+      className={cn(
+        "h-5 w-5 rounded-full inline-flex items-center justify-center cursor-pointer transition-colors",
+        disabled
+          ? "opacity-50 cursor-not-allowed"
+          : "hover:bg-primary/10",
+        active && "text-primary",
+      )}
+    >
+      {children}
+    </span>
+  );
 }

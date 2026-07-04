@@ -20,6 +20,12 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export type UnifiedSource = "telegram" | "instagram" | "support";
 
+export interface UnifiedRowCapabilities {
+  canPin: boolean;
+  canFavorite: boolean;
+  canMarkRead: boolean;
+}
+
 export interface UnifiedDialog {
   /** Стабильный ключ строки для React key и mark-read. */
   key: string;
@@ -37,6 +43,12 @@ export interface UnifiedDialog {
   isUnanswered: boolean;
   isPinned: boolean;
   isFavorite: boolean;
+  /**
+   * Возможности источника для hover-действий строки.
+   * Backend-схема не расширяется — если поля/таблицы нет, capability=false и
+   * иконка в UI просто не показывается (см. UnifiedInboxView).
+   */
+  capabilities: UnifiedRowCapabilities;
   /** Технические поля источника, нужные правой панели. */
   meta: {
     /** profiles.id — общий канон для ChannelPicker (V2-CHANNELS). */
@@ -66,6 +78,11 @@ export interface UnifiedDialog {
     ticketUserId?: string | null;
   };
 }
+
+const TG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: true, canMarkRead: true };
+const IG_CAPS: UnifiedRowCapabilities = { canPin: true, canFavorite: false, canMarkRead: true };
+const SUPPORT_CAPS: UnifiedRowCapabilities = { canPin: false, canFavorite: true, canMarkRead: true };
+
 
 const SOURCE_PRIORITY: Record<UnifiedSource, number> = {
   telegram: 0,
@@ -308,6 +325,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: (Number(d.unread_count) || 0) > 0,
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
+        capabilities: TG_CAPS,
         meta: {
           profileId: p?.id ?? null,
           telegramUserId: d.user_id,
@@ -337,6 +355,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: unread > 0,
         isPinned: !!d.is_pinned,
         isFavorite: false,
+        capabilities: IG_CAPS,
         meta: {
           profileId: (igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.profile_id) ?? d.profile_id ?? null,
           instagramAccountId: d.__accountId,
@@ -367,6 +386,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: unread > 0,
         isPinned: false,
         isFavorite: !!t.is_starred,
+        capabilities: SUPPORT_CAPS,
         meta: {
           profileId: t.profile_id ?? null,
           ticketId: t.id,
