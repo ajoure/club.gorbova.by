@@ -214,10 +214,12 @@ Deno.serve(async (req) => {
     // сам счёт на оплату по определению выписывается ДО оплаты, и его
     // разрешено отправить на email/telegram плательщика.
     // Физлица без оплаты — по-прежнему заблокированы.
+    let isPrePaymentInvoice = false;
+    let orderCreatedAt: string | null = null;
     if (doc.context_type === "order" && doc.context_id) {
       const { data: order } = await admin
         .from("orders_v2")
-        .select("id, status, customer_email, payer_type, meta, payments_v2(status)")
+        .select("id, status, customer_email, payer_type, meta, created_at, payments_v2(status)")
         .eq("id", doc.context_id)
         .maybeSingle();
       const hasPayment =
@@ -225,11 +227,12 @@ Deno.serve(async (req) => {
         Array.isArray(order?.payments_v2) &&
         order.payments_v2.some((p: any) => String(p.status).toLowerCase() === "succeeded");
       const orderMeta = (order?.meta ?? {}) as Record<string, unknown>;
-      const isPrePaymentInvoice =
+      isPrePaymentInvoice =
         !hasPayment &&
         orderMeta?.checkout_kind === "invoice" &&
         orderMeta?.awaits_payment === true &&
         (order?.payer_type === "legal_entity" || order?.payer_type === "entrepreneur");
+      orderCreatedAt = (order?.created_at as string) ?? null;
       if (!hasPayment && !isPrePaymentInvoice) {
         await writeAudit(admin, "document.send_blocked_no_payment", doc.id, userId, {
           context_id: doc.context_id,
@@ -244,6 +247,16 @@ Deno.serve(async (req) => {
         });
       }
     }
+
+    /** «Оплата по счёту №X от DD.MM.YYYY» — только для pre-payment invoice */
+    const paymentPurposeText: string | null = (() => {
+      if (!isPrePaymentInvoice || !doc.document_number) return null;
+      const d = orderCreatedAt ? new Date(orderCreatedAt) : new Date();
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yy = d.getFullYear();
+      return `Оплата по счёту №${doc.document_number} от ${dd}.${mm}.${yy}`;
+    })();
 
     // ---- Download PDF from storage -----------------------------------------
     const bucket = doc.storage_bucket || "documents";
