@@ -33,6 +33,7 @@ import { ContactInstagramChat } from "@/components/admin/communication/instagram
 import { TicketChat } from "@/components/support/TicketChat";
 import { ChannelPicker } from "./ChannelPicker";
 import { UnifiedChatHeader } from "./UnifiedChatHeader";
+import { AdminInitiateTicketDialog } from "./AdminInitiateTicketDialog";
 
 const PANEL_KEY = "unified-inbox-panel-sizes";
 
