@@ -325,6 +325,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         isUnanswered: (Number(d.unread_count) || 0) > 0,
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
+        capabilities: TG_CAPS,
         meta: {
           profileId: p?.id ?? null,
           telegramUserId: d.user_id,
