@@ -4,16 +4,24 @@ import type { UnifiedSource } from "@/hooks/useUnifiedInbox";
 
 interface Props {
   source: UnifiedSource;
+  /**
+   * @deprecated V2-BADGES-SHORT: суффикс `· <bot>/@<account>` больше не
+   * отображается в списке/edge header — источник подписывается per-message
+   * внутри чат-панели. Значение сохраняется как `title`/`aria-label` для a11y,
+   * но не рендерится в тексте.
+   */
   label?: string | null;
   className?: string;
 }
 
 /**
- * Единый бейдж источника в строке ленты. Заменяет ad-hoc плашки бота/аккаунта
- * в unified-режиме. Формат:
- *   Telegram · <bot_name>
- *   Instagram · @<account>
+ * Единый бейдж источника в строке ленты / unified header.
+ * Формат (после V2-BADGES-SHORT):
+ *   Telegram
+ *   Instagram
  *   Техподдержка
+ * Полный `label` (имя бота/@аккаунта) остаётся доступным через title/aria-label
+ * при наведении, но не занимает место в UI.
  */
 export function SourceBadge({ source, label, className }: Props) {
   const config = {
@@ -35,7 +43,7 @@ export function SourceBadge({ source, label, className }: Props) {
   }[source];
 
   const { Icon, base, color } = config;
-  const text = label ? `${base} · ${label}` : base;
+  const a11y = label ? `${base} · ${label}` : base;
 
   return (
     <span
@@ -44,9 +52,11 @@ export function SourceBadge({ source, label, className }: Props) {
         color,
         className,
       )}
+      title={a11y}
+      aria-label={a11y}
     >
       <Icon className="h-2.5 w-2.5" />
-      <span className="truncate max-w-[140px]">{text}</span>
+      <span className="truncate max-w-[140px]">{base}</span>
     </span>
   );
 }
