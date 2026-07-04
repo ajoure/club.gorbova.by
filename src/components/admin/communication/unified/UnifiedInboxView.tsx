@@ -300,33 +300,29 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             className="pl-9 h-9 bg-card/80 border-border/30 rounded-xl"
           />
         </div>
-        <div className="flex gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 px-2.5 text-xs rounded-full",
-              readState === "all"
-                ? "bg-primary text-primary-foreground shadow-md"
-                : "bg-card/60 text-muted-foreground",
-            )}
-            onClick={() => setReadState("all")}
-          >
-            Все
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 px-2.5 text-xs rounded-full",
-              readState === "unread"
-                ? "bg-primary text-primary-foreground shadow-md"
-                : "bg-card/60 text-muted-foreground",
-            )}
-            onClick={() => setReadState("unread")}
-          >
-            Неотвеченные{totalUnread > 0 ? ` · ${totalUnread}` : ""}
-          </Button>
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            { key: "all", label: "Все", count: counts2.all },
+            { key: "unread", label: "Новые", count: counts2.unread },
+            { key: "favorite", label: "Избранное", count: counts2.fav },
+            { key: "pinned", label: "Закреплённые", count: counts2.pinned },
+          ] as { key: FilterKind; label: string; count: number }[]).map((chip) => (
+            <Button
+              key={chip.key}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 px-2.5 text-xs rounded-full",
+                filterKind === chip.key
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-card/60 text-muted-foreground",
+              )}
+              onClick={() => setFilterKind(chip.key)}
+            >
+              {chip.label}
+              {chip.count > 0 ? ` · ${chip.count}` : ""}
+            </Button>
+          ))}
         </div>
         {(errors.telegram || errors.instagram || errors.support) && (
           <div className="text-[10px] text-destructive px-1">
