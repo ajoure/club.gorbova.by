@@ -124,12 +124,25 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     enabled: enabled && tgUserIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
-        .or(`user_id.in.(${tgUserIds.join(",")}),id.in.(${tgUserIds.join(",")})`);
-      if (error) throw error;
-      return (data || []) as any[];
+      // HOTFIX: тот же баг, что в InboxTabContent — `.or(...)` с 100+ UUID
+      // превышал URL limit PostgREST. Разводим на два .in()-запроса и
+      // де-дублируем по profile.id.
+      const [byUserId, byId] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+          .in("user_id", tgUserIds as string[]),
+        supabase
+          .from("profiles")
+          .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+          .in("id", tgUserIds as string[]),
+      ]);
+      if (byUserId.error) console.error("[unified-tg-profiles] by user_id error:", byUserId.error);
+      if (byId.error) console.error("[unified-tg-profiles] by id error:", byId.error);
+      const m = new Map<string, any>();
+      (byUserId.data || []).forEach((p: any) => m.set(p.id, p));
+      (byId.data || []).forEach((p: any) => m.set(p.id, p));
+      return Array.from(m.values()) as any[];
     },
   });
 
