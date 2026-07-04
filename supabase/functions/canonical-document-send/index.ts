@@ -364,9 +364,12 @@ Deno.serve(async (req) => {
           if (!botToken) {
             results.telegram_error = "bot_not_configured";
           } else {
-            const caption = doc.document_number
+            const baseCaption = doc.document_number
               ? `📄 ${escapeHtml(doc.title || "Документ")} № ${escapeHtml(doc.document_number)}`
               : `📄 ${escapeHtml(doc.title || "Документ")}`;
+            const caption = paymentPurposeText
+              ? `${baseCaption}\n\n<b>При оплате в назначении платежа укажите:</b>\n«${escapeHtml(paymentPurposeText)}»`
+              : baseCaption;
             const r = await tgSendDocument(botToken, chatId, pdfBytes, filename, caption);
             if (!r.ok) {
               results.telegram_error = r.error || "telegram_send_failed";
