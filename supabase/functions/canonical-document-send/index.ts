@@ -324,24 +324,89 @@ Deno.serve(async (req) => {
         results.email_error = "no_recipient_email";
       } else {
         try {
-          const docTitle = doc.title || `Документ ${doc.document_number || ""}`.trim();
-          const subj = `${docTitle} от ${new Date().toLocaleDateString("ru-RU")}`;
-          const html = `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#222; max-width:560px; margin:auto;">
-              <h2 style="margin:0 0 12px 0;">${escapeHtml(docTitle)}</h2>
-              <p style="margin:0 0 16px 0;">Здравствуйте${docProfile?.full_name ? `, ${escapeHtml(docProfile.full_name)}` : ""}!</p>
-              <p style="margin:0 0 16px 0;">Направляем вам документ во вложении (PDF).</p>
-              ${doc.document_number ? `<p style="margin:0 0 8px 0;color:#666;">Номер документа: <b>${escapeHtml(doc.document_number)}</b></p>` : ""}
-              ${paymentPurposeText ? `<div style="margin-top:16px;padding:12px 14px;background:#f4f6fa;border-radius:8px;border:1px solid #e2e6ee;"><div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">При оплате в назначении платежа укажите</div><div style="font-weight:600;">«${escapeHtml(paymentPurposeText)}»</div></div>` : ""}
-            </div>
-          `;
+          // Заголовок письма = имя файла без .pdf (например
+          // «Счет-акт- АЖУР инкам - АЖУР инкам № 0407/4 от 04.07.2026»).
+          const displayTitle = filename.replace(/\.pdf$/i, "");
+          const subj = displayTitle;
+
+          const greetingName = docProfile?.full_name?.trim();
+          const greeting = greetingName
+            ? `Здравствуйте, ${escapeHtml(greetingName)}!`
+            : "Здравствуйте!";
+
+          const productLine = orderInfo.product_name
+            ? `Продукт: <b>${escapeHtml(orderInfo.product_name)}</b>${
+                orderInfo.tariff_name ? ` · тариф «${escapeHtml(orderInfo.tariff_name)}»` : ""
+              }`
+            : null;
+          const amountLine =
+            orderInfo.final_price != null
+              ? `Сумма к оплате: <b>${formatAmount(orderInfo.final_price)} ${escapeHtml(orderInfo.currency || "BYN")}</b>`
+              : null;
+          const numberLine = doc.document_number
+            ? `Номер счёта: <b>${escapeHtml(doc.document_number)}</b>`
+            : null;
+
+          const sections: BrandedEmailSection[] = [
+            {
+              paragraphs: [
+                "Счёт сформирован и прикреплён к письму в формате PDF. Оплатить его можно любым удобным способом через ваш банк.",
+              ],
+            },
+          ];
+          const summaryParas = [numberLine, productLine, amountLine].filter(Boolean) as string[];
+          if (summaryParas.length) {
+            sections.push({ heading: "Детали счёта", paragraphs: summaryParas });
+          }
+          if (paymentPurposeText) {
+            sections.push({
+              callout: {
+                label: "При оплате укажите назначение платежа",
+                text: escapeHtml(paymentPurposeText),
+                note: "Скопируйте эту строку в поле «Назначение платежа» вашего банка — так платёж будет автоматически сопоставлен со счётом.",
+              },
+            });
+          }
+
+          const html = renderBrandedEmail({
+            preheader: paymentPurposeText
+              ? escapeHtml(paymentPurposeText)
+              : escapeHtml(displayTitle),
+            title: escapeHtml(displayTitle),
+            greeting,
+            sections,
+            signature:
+              "С уважением,<br/>команда Gorbova Club<br/><span style=\"color:#94a3b8\">Это письмо отправлено автоматически. Если у вас есть вопросы — просто ответьте на него.</span>",
+          });
+
+          const textParts = [
+            displayTitle,
+            greetingName ? `Здравствуйте, ${greetingName}!` : "Здравствуйте!",
+            "Счёт сформирован и прикреплён во вложении (PDF).",
+          ];
+          if (doc.document_number) textParts.push(`Номер счёта: ${doc.document_number}`);
+          if (orderInfo.product_name) {
+            textParts.push(
+              `Продукт: ${orderInfo.product_name}${orderInfo.tariff_name ? ` — тариф «${orderInfo.tariff_name}»` : ""}`,
+            );
+          }
+          if (orderInfo.final_price != null) {
+            textParts.push(`Сумма: ${formatAmount(orderInfo.final_price)} ${orderInfo.currency || "BYN"}`);
+          }
+          if (paymentPurposeText) {
+            textParts.push("");
+            textParts.push("При оплате в назначении платежа укажите:");
+            textParts.push(paymentPurposeText);
+          }
+          const text = textParts.join("\n");
+
           const base64Pdf = uint8ToBase64(pdfBytes);
           const { error: emailErr } = await admin.functions.invoke("send-email", {
             body: {
               to: recipientEmail,
               subject: subj,
               html,
-              text: `${docTitle}. Документ во вложении PDF.`,
+              text,
               attachments: [
                 {
                   filename,
@@ -383,6 +448,7 @@ Deno.serve(async (req) => {
         { channel: "email", error: results.email_error },
       );
     }
+
 
     // ---- Send Telegram ------------------------------------------------------
     if (body.send_telegram) {
