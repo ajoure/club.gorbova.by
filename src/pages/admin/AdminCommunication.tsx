@@ -224,7 +224,11 @@ export default function AdminCommunication() {
 
         {/* Tab Content */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {activeTab === "inbox" && <InboxTabContent defaultChannel={inboxChannel} />}
+          {activeTab === "inbox" && (
+            inboxChannel === "all" && unifiedEnabled
+              ? <UnifiedInboxView sourceFilter="all" />
+              : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
+          )}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}
           {activeTab === "settings" && <CommunicationSettingsTabContent />}
         </div>
