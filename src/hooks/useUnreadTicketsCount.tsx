@@ -19,7 +19,8 @@ export function useUnreadTicketsCount() {
         .from("support_tickets")
         .select("*", { count: "exact", head: true })
         .eq("has_unread_admin", true)
-        .not("status", "in", '("closed","resolved")');
+        .not("status", "in", '("closed","resolved")')
+        .is("merged_into_ticket_id", null);
 
       if (error) return 0;
       return count || 0;
