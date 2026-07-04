@@ -1,285 +1,427 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Не утверждать “voice приходит”, пока нет SQL-примера voice/audio.**
+1. **“Только один файл” нереалистично.**
   &nbsp;
-  В плане правильно добавлено:
+  В плане написано:
   ```text
-  Если voice нет — честно записать «voice в БД не подтверждён».
+  Только фронт, в одном файле: src/hooks/useUnifiedInbox.ts
   ```
-  Но в D5 сейчас снова написано:
+  Но дальше сам план требует адаптации:
+  - списка;
+  - правой панели;
+  - `ChannelPicker`;
+  - row actions;
+  - filters;
+  - selected state.
+  Значит правки будут минимум в:
   ```text
-  Media/voice приходят через ManyChat External Request...
+  src/hooks/useUnifiedInbox.ts
+  src/components/admin/communication/unified/UnifiedInboxView.tsx
+  src/components/admin/communication/unified/ChannelPicker.tsx
+  src/components/admin/communication/unified/UnifiedChatHeader.tsx
   ```
-  Исправить на:
-2. **Разделить** `image/video` **и** `voice/audio`**.**
+  Не ограничивать искусственно одним файлом. Ограничение должно быть: **front-only, без DB/RPC/edge**.
+2. **Сначала ввести адаптер совместимости, чтобы не сломать чаты.**
+  Старые компоненты ожидают source-row. Новая строка — contact-row. Поэтому нужен явный helper:
+  ```ts
+  getActiveChannel(row, activeSource): SourceChannelRef | null
+  ```
+  Правая панель должна получать старый source-specific payload из `channels[activeSource]`.
+3. **Сохранить старый source key внутри каждого channel.**
+  Для каждого канала хранить полный старый объект или достаточный ref:
+  ```ts
+  channels.telegram.sourceRow
+  channels.instagram.sourceRow
+  channels.support.sourceRow
+  ```
+  Не только `key/unread/pinned/favorite`, иначе `ContactTelegramChat`, `ContactInstagramChat`, `TicketChat`, mark-read, pin/fav потеряют нужные meta-поля.
+  Минимально:
+4. `selectedKey` **должен быть contact key, а** `activeSourceByKey` **— отдельный state.**
+  В `UnifiedInboxView` сделать:
+  ```ts
+  selectedKey = "profile:<id>" | "source:<...>"
+  activeSourceByKey: Record<string, UnifiedSource>
+  ```
+  При выборе строки:
+  - если для `selectedKey` ещё нет override → использовать `row.activeSource`;
+  - если оператор переключил канал → сохранить override;
+  - если пришло новое более свежее сообщение в другой канал — аккуратно решить, перезаписывать ли override.
+  Для V1:
+5. **Source filter должен влиять на default active source, но не уничтожать другие каналы.**
+  Если фильтр Instagram включён:
+  - строка показывается, если есть `channels.instagram`;
+  - activeSource при первом открытии = `instagram`;
+  - но header всё равно показывает Telegram/Support, если они есть.
+6. **Правило** `displayName/avatar` **должно быть детерминированным.**
   &nbsp;
-  Для каждого типа отдельно:
+  Для grouped profile row:
   ```text
-  image — confirmed / not confirmed
-  video — confirmed / not confirmed
-  audio/voice — confirmed / not confirmed
-  story/reels — confirmed / not confirmed
+  приоритет displayName/avatar:
+  1. profiles.full_name/avatar_url, если есть;
+  2. самый свежий channel displayName/avatar;
+  3. fallback source displayName.
   ```
-  Не объединять всё словом “media”.
-3. `last_input_text = CDN URL` **— проверить, не ломается ли text search/history.**
+  Иначе при разных каналах имя может прыгать.
+7. **Last message preview должен быть от lastMessageSource, а не от activeSource.**
   &nbsp;
-  В discovery добавить вопрос:
+  В списке:
   ```text
-  Если media хранится как URL в message_text/last_input_text, что показывается оператору в UI и ContactFeed?
+  Последнее: Instagram · привет
   ```
-  Нужно понять:
-  - `message_text` остаётся URL или пустой;
-  - UI рендерит по `media_url`;
-  - поиск по ленте не засоряется CDN-ссылками.
-4. **Проверить срок жизни CDN URL.**
+  должно всегда показывать канал последнего сообщения. Если оператор переключил activeSource на Telegram, preview в списке не должен стать Telegram.
+8. **Unread count должен быть суммой, но mark-read должен инвалидировать агрегат.**
   &nbsp;
-  `lookaside.fbsbx.com/ig_messaging_cdn` ссылки часто временные. Раз уже есть rehost в `telegram-media/instagram-inbound`, нужно доказать:
-  - rehost происходит успешно;
-  - UI использует `rehosted_media_url` или signed storage URL, а не протухший CDN;
-  - failed rehost логируется.
-5. **D1: брать не только 5 media messages, а минимум по одному на каждый найденный** `media_type`**.**
+  После mark read activeSource:
+  - перезапросить соответствующий source query;
+  - пересчитать grouped row;
+  - если другие каналы unread, строка остаётся в “Новые”.
+9. **Pin/favorite action activeSource — принять, но в UI надо показать, к какому каналу применяется действие.**
   &nbsp;
-  Сначала:
-  ```sql
-  SELECT media_type, count(*)
-  FROM instagram_messages
-  WHERE created_at > now() - interval '30 days'
-  GROUP BY media_type;
-  ```
-  Потом примеры по каждому типу.
-6. **D1: проверить** `external_message_id` **/ dedup.**
-  &nbsp;
-  Для admin echo это важно. Добавить:
-  ```sql
-  SELECT external_message_id, count(*)
-  FROM instagram_messages
-  WHERE external_message_id IS NOT NULL
-  GROUP BY external_message_id
-  HAVING count(*) > 1;
-  ```
-  Нужно понять, можно ли безопасно дедуплицировать будущие echo-события.
-7. **D2: найти все insert/update в** `instagram_messages`**, не только функции по именам.**
-  &nbsp;
-  Добавить grep:
-  ```bash
-  rg -n "from\\('instagram_messages'\\)|instagram_messages|insert\\(|update\\(" supabase/functions src
-  ```
-  Цель — не пропустить worker/helper, который пишет rehost или media.
-8. **D2: подтвердить, кто именно ставит** `provider_kind='manychat'`**.**
-  &nbsp;
-  В audit указать:
-  - где выставляется `provider_kind`;
-  - какие ещё provider_kind бывают;
-  - есть ли ApiX как отдельный provider.
-9. **D3:** `secrets--fetch_secrets` **не использовать без необходимости.**
-  &nbsp;
-  Для read-only discovery достаточно:
-  - grep по названиям секретов;
-  - существующие docs/probe findings;
-  - проверка, какие переменные используются в коде.
-  Не вытаскивать реальные секреты в отчёт. Если нужно подтвердить наличие — писать только:
+  Иначе оператор видит одну строку контакта и может думать, что закрепляет весь контакт.
+  Tooltip:
   ```text
-  secret exists / missing
+  Закрепить текущий канал: Instagram
+  В избранное текущий канал: Telegram
   ```
-  без значения.
-10. **D3: не делать новых API probe-вызовов — верно.**
+  Или в action aria-label добавить канал.
+10. **Фильтр “Закреплённые/Избранное” должен показывать контакт, если pinned/favorite в любом канале.**
 
-Но если в существующих docs нет ответа по history endpoint, статус должен быть:
+Но если оператор в такой строке нажимает unpin, действие применяется к activeSource. Если pinned был в другом канале, строка останется в фильтре. Это нужно указать в proof как expected.
 
-```text
-not found in existing probes
-```
+11. **Support-дубли: визуальная группировка может скрыть проблему.**
 
-А не категорично:
+Принять для V3, но в proof явно:
 
 ```text
-ManyChat Public API не предоставляет endpoint
+Multiple active support tickets under one profile are visually collapsed to latest active support channel only.
+Data-level merge/backfill remains separate.
 ```
 
-Категорично можно писать только при ссылке на официальный API/docs или уже выполненный probe.
+И показывать оператору только latest support ticket. Старые дубли не должны исчезнуть из БД.
 
-11. **D4B: тариф** `is_pro` **не доказывает наличие Live Chat admin trigger.**
+12. **Не потерять row actions.**
 
-`is_pro=true` только означает, что аккаунт Pro. Наличие trigger-а нужно подтверждать:
+`IconAction` сейчас, вероятно, принимает source row. Нужно адаптировать:
 
-- UI-скрином из ManyChat;
-- официальной документацией;
-- или existing API/probe.
+- actions вызываются на `activeChannel.sourceRow`;
+- capabilities берутся из `activeChannel`;
+- counters/indicators — агрегированные.
 
-12. **D4C: “конфликт с ManyChat как единственным получателем webhook” сформулировать осторожно.**
+13. **Непривязанный IG после link должен слиться с profile row.**
 
-Meta может отправлять webhook нескольким apps/подпискам в зависимости от конфигурации, но могут быть ограничения по permissions/ownership. Написать:
+Для этого после `AttachProfileDialog.onSuccess` invalidate должен включать:
+
+- IG contacts/prefs;
+- unified inbox;
+- profile channels;
+- selected row resolution.
+
+Если `selectedKey` был `source:instagram:<thread>` и после link стал `profile:<id>`, нужно перевыбрать новую строку, иначе выбранный key исчезнет.
+
+14. **Empty selected state обработать.**
+
+После regroup может исчезнуть выбранный source key. Нужно fallback:
 
 ```text
-проверить, можно ли параллельно подключить own Meta App, не ломая ManyChat.
+если selectedKey больше не существует → выбрать новую grouped row, содержащую прежний sourceRow.key, либо первую строку.
 ```
 
-Не утверждать конфликт заранее.
+15. **Search должен работать по всем каналам контакта.**
 
-13. **Добавить вариант E: Instagram app replies невозможно восстановить задним числом.**
+Если в строке объединены TG+IG, поиск должен находить по:
 
-Даже если echo подключим завтра, старые ответы Екатерины из IG app, скорее всего, не появятся в нашей БД, если нет history API.
+- profile name;
+- telegram username/name;
+- instagram username/name;
+- support subject/last message;
+- last previews всех каналов.
 
-В audit указать:
+Не только по агрегированному `displayName`.
+
+16. **Счётчики фильтров считать после группировки.**
+
+Сейчас counts могут считаться по source rows. После V3:
 
 ```text
-historical backfill of admin replies: possible / impossible / unknown
+Все = contactRows.length
+Новые = grouped rows with totalUnread > 0
+Избранное = grouped rows with any favorite
+Закреплённые = grouped rows with any pinned
 ```
 
-14. **Рекомендация должна быть не “один из четырёх вариантов”, а decision tree.**
+17. **Sorting после grouping.**
 
-В итоговой таблице:
+Сортировать grouped rows:
 
 ```text
-Если ManyChat/ApiX history returns outbound → PATCH-IG-ADMIN-ECHO-APIX-HISTORY
-Если есть Live Chat admin trigger → PATCH-IG-ADMIN-ECHO-MANYCHAT
-Если нет → operational policy or Meta Graph discovery
+isPinned DESC
+isUnanswered DESC / totalUnread DESC
+lastMessageAt DESC
+displayName ASC
+key ASC
 ```
 
-15. **В DoD заменить “доступен ли admin echo” на “что доказано”.**
+Если текущий порядок другой — не менять резко без необходимости, но tie-breaker должен быть стабильным.
 
-Для каждого варианта:
+18. **Не ломать “source-only” строки.**
+
+Для rows без `profileId`:
+
+- key остаётся `source:<source>:<sourceKey>`;
+- channels содержит один source;
+- activeSource = source;
+- header работает как раньше;
+- attach IG может превратить её в profile row.
+
+19. **Type names не должны ломать существующих потребителей.**
+
+Можно не переименовывать внешний тип резко. Если много кода ждёт `UnifiedDialog`, сделать:
+
+```ts
+type UnifiedInboxRow = UnifiedContactRow
+```
+
+или сохранить совместимость через adapter.
+
+20. **Proof добавить по row actions после grouping.**
+
+Проверить:
+
+- pin Telegram внутри grouped Сергей;
+- переключить на Instagram, favorite Instagram;
+- фильтр Избранное показывает Сергея;
+- mark-read Instagram не читает Telegram;
+- hard refresh сохраняет.
+
+21. **Proof добавить по source filter + activeSource.**
+
+Проверить:
+
+- source filter Instagram → Сергей одна строка, activeSource Instagram;
+- source filter Telegram → Сергей одна строка, activeSource Telegram;
+- снятие source filter → activeSource по last message или сохранённый override.
+
+22. **В план добавить “before/after row count”.**
+
+Для конкретного профиля:
 
 ```text
-supported / not supported / not proven
-proof
-blocker
-next action
+before: Sergey = 2 rows
+after: Sergey = 1 row, channels = [telegram, instagram]
 ```
 
-16. **Не смешивать** `manychat-inbound` **и** `instagram-webhook` **без точного ответа.**
+23. **В regression добавить opt-in.**
 
-На скринах URL ведёт в:
+Проверить:
+
+- opt-in ON — V3 grouping работает;
+- opt-in OFF — unified скрыт;
+- mono-ленты без регресса.
+
+24. **Финальный статус должен быть точнее:**
 
 ```text
-/functions/v1/manychat-inbound?instance_id=...
+Unified inbox V3 profile grouping — PASS
+One profile = one row
+Channels remain separate chat panels
+Cross-channel merged timeline — deferred
+Contact-level pin/favorite/read-all — deferred
 ```
 
-Поэтому в отчёте нужно точно указать, какая функция реально принимает этот flow и дальше куда роутит.
-
-17. **Добавить проверку** `raw_payload.rehosted_*` **по свежим media.**
-
-SQL:
-
-```sql
-SELECT
-  raw_payload ? 'rehosted_media_url',
-  raw_payload ? 'rehosted_storage_path',
-  raw_payload->>'rehosted_content_type',
-  raw_payload->>'rehosted_at'
-FROM instagram_messages
-WHERE media_type IS NOT NULL
-ORDER BY created_at DESC
-LIMIT 10;
-```
-
-18. **Старый audit пометить superseded только частично.**
-
-Формулировка:
-
-```text
-Superseded only for non-text/media completeness.
-Still valid for admin replies gap unless new evidence disproves it.
-```
-
-19. **Итоговый отчёт:**
-
-```text
-Отчет о выполненной работе: PATCH-IG-MEDIA-AND-ADMIN-ECHO-DISCOVERY
-```
-
-20. **После discovery не начинать код без отдельного approval.**
-
-Даже если найдётся Live Chat trigger/API endpoint, следующий шаг — отдельный план, не реализация сразу.
-
-После этих правок план утверждён. Выполнять строго read-only.
+После этих правок план утверждён. Выполнять front-only без DB/RPC/edge.
 
 &nbsp;
 
-План: PATCH-IG-MEDIA-AND-ADMIN-ECHO-DISCOVERY (read-only)
+План: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V3-PROFILE-GROUPING
 
-## Контекст и корректировка прошлого диагноза
+Одна строка = один человек. Telegram / Instagram / Техподдержка — это **каналы внутри карточки контакта**, а не отдельные строки ленты.
 
-Предыдущий вывод «non-text не форвардятся и их нет в БД» — **неверный**. Быстрая проверка `instagram_messages` показывает: за 2026-07-04 приходят входящие с `media_type IN ('image','video')`, `provider_kind='manychat'`, и:
+## Scope
 
-- В `raw_payload` — тот же самый ManyChat External Request body формата `{subscriber, last_input_text}`.
-- Но при медиа-сообщении `last_input_text` содержит **CDN-URL** `https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=…&signature=…` — ManyChat сам подставляет URL актива вместо текста.
-- Наш обработчик распознаёт этот URL, ставит `media_type`, и затем через media-worker перезаливает файл в bucket `telegram-media/instagram-inbound/…`, дописывая `rehosted_media_url`, `rehosted_storage_path`, `rehosted_content_type`, `rehosted_at` обратно в `raw_payload`.
+**В scope этого патча — только Problem 2** (дубли строк одного человека в ленте).
 
-То есть механизм — **тот же External Request**, никакой отдельной ManyChat/ApiX History API-подкачки нет (по крайней мере на этих примерах). Это принципиально меняет вывод про admin echo: тот же трюк «подставить URL в last_input_text» **не поможет** для сообщений оператора из мобильного Instagram, потому что ManyChat не триггерит External Request на исходящие оператора в стандартном тарифе/flow.
+**Problem 1 (отправка Instagram) — вне scope.** Отправка через платформу работает; ошибка «не отправляется» была ожидаемой — закрыто 24-часовое окно Meta/ManyChat. После нового входящего от клиента отправка снова прошла. Отдельной задачей позже сделать UX-улучшение: если ManyChat возвращает 24h-window error (`code 3031`), показывать понятный текст:
 
-Цель патча — read-only подтвердить эту гипотезу до конца и сформулировать реальные варианты для admin echo.
+> «Нельзя отправить сообщение: клиент не писал в Instagram за последние 24 часа. Дождитесь нового входящего сообщения.»
 
-## Что делаем (read-only, ничего не меняем)
+Сейчас это не blocker и не часть текущего патча.
 
-### D1. Trace media ingestion path
+## Цель
 
-- Взять 5 свежих `instagram_messages` c `media_type IS NOT NULL` (разные типы: image, video, voice/audio если есть).
-- Для каждого зафиксировать: `id, created_at, direction, message_text, media_type, media_url, external_message_id, provider_kind, thread_key, peer_id, ig_thread_id, instagram_account_id, полный raw_payload`.
-- Сопоставить с `integration_logs` (± 30 сек по `created_at`) — какой webhook создал запись, есть ли рядом «второй» вызов (indicator external API lookup).
-- Отдельно проверить наличие voice/audio: `SELECT DISTINCT media_type FROM instagram_messages WHERE created_at > now()-interval '30 days'`. Если voice нет — честно записать «voice в БД не подтверждён; пользователь видел voice в UI ManyChat, но у нас в БД примеров нет».
+Если Telegram и Instagram (и/или Support) привязаны к одному `profiles.id`, в ленте отображается **одна строка**:
 
-### D2. Code trace (без правок)
+```
+Сергей Федорчук
+[Telegram] [Instagram]
+Последнее: Instagram · привет
+```
 
-Прочитать и задокументировать:
+А не две строки (одна Telegram, одна Instagram) как сейчас.
 
-- `supabase/functions/instagram-webhook/index.ts` — как определяется `media_type`/`media_url`, есть ли ветка распознавания `lookaside.fbsbx.com`, есть ли исходящий HTTP к ManyChat/ApiX.
-- `supabase/functions/manychat-inbound/index.ts` (если существует) — тот же вопрос.
-- `supabase/functions/instagram-admin-chat/index.ts` — где пишется outbound (`direction='outbound'`), какие поля устанавливаются.
-- Media-worker (`telegram-media-worker*` или аналог для IG) — как rehost попадает в `raw_payload.rehosted_*` и bucket `telegram-media/instagram-inbound`.
-- Поиск по репо: `rg -n 'lookaside|ig_messaging_cdn|instagram-inbound|rehosted_media_url|history|conversations' supabase/functions`.
+## Правило группировки
 
-Ответить письменно:
+В `useUnifiedInbox.ts`, после получения source rows и до отдачи наружу, группируем:
 
-1. Какая функция создаёт inbound `instagram_messages` для IG/ManyChat?
-2. Где вычисляется `media_type` / `media_url` (по URL-паттерну из `last_input_text` или из отдельных полей payload)?
-3. Есть ли исходящий вызов ManyChat/ApiX API после получения `subscriber.id`? Если да — endpoint, credentials, что возвращает.
-4. Есть ли где-либо fetching «conversation history» / «contact messages»?
-5. Почему media/voice приходит: подстановкой URL в `last_input_text` (гипотеза), отдельным API-вызовом, или ещё чем.
-6. Есть ли аналогичный endpoint, способный вернуть outbound admin messages?
+```
+groupKey =
+  profileId exists → "profile:" + profileId
+  else             → "source:" + source + ":" + sourceKey
+```
 
-### D3. ManyChat capability discovery (без записи, без включения новых trigger'ов)
+Три строки — TG(profile=X), IG(profile=X), Support(profile=X) — становятся **одной** unified row. Если `profileId` нет — строка остаётся отдельной, как сейчас.
 
-- `secrets--fetch_secrets` → какие ManyChat/ApiX ключи сохранены и где используются (grep).
-- Список endpoint'ов ManyChat уже задокументирован в `docs/integrations/manychat/api-probe-findings.md`. Сверить: `getSubscriberInfo`, `findByCustomField`, есть ли probe для history/conversation. Если есть публичный endpoint истории — зафиксировать; если нет (по нашей probe-матрице сейчас его нет) — явно написать «ManyChat Public API не предоставляет endpoint для чтения истории сообщений подписчика».
-- Если по коду выяснится, что в webhook есть outbound HTTP к ManyChat/ApiX (D2 п.3), — задокументировать endpoint и его возможности. Никаких новых probe-вызовов без отдельного approval.
+## Модель новой строки
 
-### D4. Admin echo — три варианта, оценка каждого
+```ts
+interface UnifiedContactRow {
+  key: string;                 // "profile:<id>" | "source:<src>:<key>"
+  profileId: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  channels: {
+    telegram?: SourceChannelRef;
+    instagram?: SourceChannelRef;
+    support?: SourceChannelRef;
+  };
+  activeSource: UnifiedSource; // по умолчанию — источник последнего сообщения
+  lastMessageAt: string;       // max по каналам
+  lastMessageSource: UnifiedSource;
+  lastMessagePreview: string;
+  totalUnread: number;         // сумма по каналам
+  isPinned: boolean;           // OR по каналам
+  isFavorite: boolean;         // OR по каналам
+}
 
-На основе фактов D1–D3 заполнить таблицу:
+interface SourceChannelRef {
+  key: string;                 // старый source-key (для роутинга правой панели)
+  unread: number;
+  pinned: boolean;
+  favorite: boolean;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+}
+```
 
-- **A. ManyChat/ApiX history API** — доступен ли, возвращает ли outbound, есть ли admin identity, timestamps, message_ids, media. Если такого endpoint нет — зафиксировать.
-- **B. ManyChat Live Chat trigger** — по докам/API-матрице проверить наличие «message sent by admin»/«Live Chat» trigger в тарифе аккаунта (`getInfo → is_pro`). Скрин UI ManyChat запрашивается у пользователя отдельно — сами в UI не лезем.
-- **C. Meta Graph API `message_echoes**` — зафиксировать требования (Business Manager, own Meta App, Business Verification, Advanced Access `instagram_manage_messages`, конфликт с ManyChat как единственным получателем webhook'а).
-- **D. Операционная политика** — все ответы только через нашу платформу (`instagram-admin-chat.send_message`).
+## Выбор activeSource
 
-### D5. Обновить audit
+По умолчанию `activeSource = channel with max(lastMessageAt)`. Пример: TG 10 мин назад, IG 2 мин назад → строка одна, справа открывается Instagram.
 
-Создать `docs/audit/2026-07-04-ig-media-and-admin-echo-discovery.md`:
+## ChannelPicker
 
-- Явный дисклеймер: предыдущий вывод «non-text не приходят / отсутствуют» — **снят**. Media/voice приходят через ManyChat External Request с CDN-URL в `last_input_text`, затем rehost в наш storage.
-- Единственный подтверждённый gap: **outbound admin replies из мобильного Instagram** в нашу БД не попадают.
-- Итоговая таблица вопрос/ответ/proof.
-- Рекомендация: какой из патчей (A/B/C/D) двигать дальше.
+Больше **не переключает выбранную строку ленты**. Он меняет только `activeSource` внутри уже выбранного контакта:
 
-Прошлый файл `docs/audit/2026-07-04-ig-messages-diagnosis.md` не удаляем — добавим ссылку на новый audit с пометкой «superseded в части non-text».
+```
+selectedKey = "profile:<id>"     // не меняется
+activeSource = telegram | instagram | support   // меняется
+```
 
-## Границы (что НЕ делаем)
+Запрещено внутри одного `profile:<id>`:
 
-- Не меняем ManyChat flow, External Request body, trigger'ы.
-- Не меняем `instagram-webhook`, `instagram-admin-chat`, media-worker.
-- Не пишем миграции, не трогаем `instagram_messages`.
-- Не подключаем Meta Graph API.
-- Не делаем probe-вызовов к ManyChat API сверх уже задокументированных.
+```
+setSelectedKey("instagram:<thread>")
+setSelectedKey("telegram:<dialog>")
+```
 
-## DoD
+## Правая панель
 
-- Файл `docs/audit/2026-07-04-ig-media-and-admin-echo-discovery.md` создан с секциями D1–D5 и итоговой таблицей.
-- Явно указано: как именно media/voice попадают в БД (с SQL/код-цитатами и line refs).
-- Явно указано, доступен ли admin echo через (A) ManyChat API, (B) Live Chat trigger, (C) Meta Graph API; для каждого — цена/риск/blocker.
-- Рекомендация «следующий патч» с одним из четырёх вариантов.
-- Ноль изменений в коде, БД, конфиге, edge functions.
+- `UnifiedChatHeader` — имя/аватар профиля + бейджи доступных каналов `[Telegram] [Instagram]`.
+- Ниже — `ChannelPicker` (`Канал: Telegram | Instagram | Техподдержка`), disabled для отсутствующих каналов.
+- Ниже — чат-компонент соответствующего `activeSource` (`ContactTelegramChat` / `InstagramChat` / `SupportTicketChat`) — без изменений в их внутренностях.
 
-## Rollback
+## Бейдж в строке списка
 
-Не применимо — read-only.
+```
+Сергей Федорчук
+[Telegram] [Instagram]
+Последнее: Instagram · привет
+```
+
+Формат: имя, аватар, набор доступных каналов маленькими бейджами (`SourceBadge`), отдельная строка «Последнее: &nbsp; · &nbsp;».
+
+## Unread
+
+- `totalUnread = telegramUnread + instagramUnread + supportUnread` — один общий бейдж на строке.
+- При переключении каналов unread не теряется (per-channel unread хранится в `channels.*.unread`).
+
+## Mark read (V1 безопасный)
+
+- Клик «отметить прочитанным» на строке → отмечает прочитанным **только `activeSource**`.
+- Если в другом канале контакта тоже есть unread — строка остаётся в фильтре «Новые».
+- V2 (mark read всех каналов сразу) — отдельной задачей.
+
+## Pin / Favorite
+
+- `isPinned = OR по каналам`, `isFavorite = OR по каналам`.
+- Клик применяется **к `activeSource**`, а не ко всем каналам сразу.
+- «Закрепить весь контакт» одним действием — отдельной задачей.
+
+## Фильтры
+
+Работают по объединённым контактам:
+
+- **Все** — все contact rows.
+- **Новые** — если unread ≥ 1 хотя бы в одном канале.
+- **Избранное** — если favorite хотя бы в одном канале.
+- **Закреплённые** — если pinned хотя бы в одном канале.
+
+## Source filter
+
+Фильтр по Instagram → показываем контакты, у которых есть IG-канал; `activeSource` по умолчанию = Instagram; но строка одна, не отдельная IG-строка. Аналогично Telegram / Support.
+
+## Непривязанные IG
+
+IG без `profileId` → остаётся отдельной строкой `source:instagram:<thread>`. После ручной привязки через `AttachProfileDialog` — invalidate `INBOX_DIALOGS_QK`, строка сливается с существующим profile row без reload.
+
+## Support-дубли
+
+Profile grouping визуально объединит старые support-дубли одного `profile_id`, но это **не заменяет** backfill merge. Правила:
+
+- В `channels.support` выбираем активный тикет по `updated_at DESC` (не merged).
+- Старые тикеты того же `profile_id` не рендерим как отдельные строки.
+- В proof отметить: **visual grouping ≠ data merge**.
+
+## Где реализовывать
+
+Только фронт, в одном файле:
+
+- `src/hooks/useUnifiedInbox.ts` — после получения source rows: нормализация → группировка по `profileId` → возврат `UnifiedContactRow[]`.
+- Компоненты списка и правой панели адаптируются под новую модель (row.key = `profile:<id>`, activeSource state).
+- `ChannelPicker` — переписать под изменение `activeSource`, а не `selectedKey`.
+
+**Без SQL / RPC / миграций.** `get_inbox_dialogs_v2` не создаём.
+
+## Что НЕ делаем
+
+- Не меняем БД, RPC, ManyChat, `instagram_messages`, Meta Graph.
+- Не делаем общий composer (кросс-канальную отправку).
+- Не объединяем истории TG+IG в один timeline.
+- Не делаем auto-link профилей.
+- Не делаем source-wide pin/favorite/mark-read.
+- Не включаем всем без opt-in — работает под тем же feature flag `useUnifiedInboxRolloutStatus`.
+
+## Proof
+
+`docs/audit/2026-07-04-unified-inbox-v3-profile-grouping.md`. Скриншоты + описания:
+
+1. **До**: Сергей Федорчук двумя строками (TG + IG).
+2. **После**: Сергей одной строкой с бейджами `[Telegram] [Instagram]`.
+3. Последний канал определяется по `max(lastMessageAt)`.
+4. ChannelPicker переключает правую панель, `selectedKey` не меняется.
+5. Unread суммируется в один бейдж.
+6. Фильтр Instagram — Сергей одной строкой.
+7. Фильтр Telegram — Сергей одной строкой.
+8. Непривязанный IG (без profileId) — остаётся отдельной строкой.
+9. После привязки IG к profile — строка сливается (invalidate, без reload).
+10. Mono Telegram/Instagram/Support/Email — без регресса.
+
+## DoD (финальный статус в отчёте)
+
+```
+Profile-linked channels        — grouped into one contact row
+Active channel                 — selected inside row
+Duplicate profile rows         — removed
+Source-specific chats          — preserved
+Full cross-channel merged chat history — deferred
+```
+
+Отчёт: `Отчет о выполненной работе: PATCH-CONTACT-CENTER-UNIFIED-INBOX-V3-PROFILE-GROUPING`.
