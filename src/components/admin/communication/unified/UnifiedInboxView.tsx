@@ -370,6 +370,7 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
         avatarUrl={row.avatarUrl}
         accountName={row.sourceLabel}
         onBack={onBack}
+        hideHeader
       />
     );
   }
