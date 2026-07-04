@@ -1,29 +1,43 @@
-## Что известно
+План:
 
-- Эфир `klub-itogi-mesyatsa-0726` в БД: опубликован, `room_state=opened`, `platform_status=scheduled`, `event_type=live_stream`, `scheduled_at=2026-07-03 11:00 UTC` (14:00 Минск), `kinescope_live_event_id` есть, `play_link=https://kinescope.io/0cBDVFJW2jqCt6A3orEfmC`.
-- В Telegram участники и админ пишут «просто грузит страничка», «картинка и чат не открываются». Проблема **у всех**, включая админа, с мобильных Telegram-браузеров iOS.
-- Публичная HTML-обёртка (`/live/...`) отдаётся 200 OK, значит SPA грузится, но остаётся в `state === "loading"` (бесконечный `<Loader2 />`).
-- `live-resolve` без токена корректно отвечает `401 { status: "auth_required" }`. С токеном — не проверено (нужен реальный аккаунт участника).
-- Session-injection в песочнице недоступен (`AUTH_STATUS=signed_out`), поэтому воспроизвести под реальным пользователем можно только через логин по email/паролю или через Playwright с сессией.
+## Diagnose
+Симптом (скрин): в админке модуля «Итоги месяца» после «Создать» вылезает toast «Ошибка создания урока». Форма заполнена только `Название` + `URL-slug` (`Итоги Июнь 2026` / `itogi-iyun-2026`), дата публикации не задана, месяц контента не задан.
 
-## Гипотезы, которые проверю в такой очерёдности
+Что уже проверено:
+- `useTrainingLessons.createLesson` делает прямой `insert` в `training_lessons`, ловит ошибку и пишет generic toast (без деталей).
+- RLS: `Admins can manage lessons` через `has_role_v2` — политика есть.
+- Unique-конфликта по `(module_id, slug)` для `itogi-iyun-2026` в модуле «Итоги месяца» нет.
+- В форме нет обязательных полей за пределами `title`/`slug`/`module_id` — они заполнены.
+- В postgres/edge логах явных ошибок по `training_lessons` за последние сутки не видно (могут не долетать из-за фильтра PostgREST).
+- Реальная причина 4xx/5xx от PostgREST не видна пользователю и не логируется — toast всегда одинаковый.
 
-1. **live-resolve падает под авторизованным пользователем** (например, ошибка в `resolveEffectiveProductAccess`, в проверке `is_user_removed_from_room`, во вьюхе `live_event_active_participants_v` или в чтении `event.metadata`). Симптом ровно тот, что описан: `resolve()` кидает исключение → `setState("error")` только если ещё нет `dataRef.current`, но у нас cold-start → всё же должен показать «error». Однако если `fetch` **виснет** (нет ответа), спиннер бесконечный. Проверю edge-логи `live-resolve` за окно жалоб, ищу таймауты/exceptions.
-2. **Regression в `LiveEvent.tsx`**: недавние правки могли зависеть от поля, которого нет в payload (например, room_settings/room_theme), из-за чего рендер валится в suspense/ошибку до `setState`. Проверю через Playwright: захвачу `console` и `pageerror` под залогиненным пользователем.
-3. **AuthContext на мобильном iOS Telegram in-app browser не выдаёт сессию** (`hasAccessToken=false` навсегда → `useEffect` вообще не запускает `resolve`, страница остаётся в `state=loading`). В консоли уже видно `Safety timeout — forcing loading=false`. Если это так — виноват `session persistence` в WebView (например, отсутствие storage/cookies) либо гварды в `main.tsx`. Проверю `useAuthSession`/`AuthContext` и iOS-специфичные ветки.
-4. **Проблема провайдера видео**: `platform_status=scheduled` (ещё не `live`), `room_state=opened` → фронт должен рендерить `room_open_waiting` (картинку ожидания + чат). Если ветка `room_open_waiting` рендерится, но что-то в дочерних компонентах (`RoomWaitingState`, `LiveEventComments`, `RoomParticipantsList`, `LiveRoomReactionsBar`) кидает и попадает в глобальный ErrorBoundary, который сам показывает спиннер — тоже даёт «бесконечно грузит». Проверю.
+Гипотезы, которые надо развести (в порядке вероятности):
+1. RLS-отказ: у текущего аккаунта проверка `has_role_v2` возвращает `false` (например, роль назначена только на `admin` в `user_roles`, но политика ждёт `super_admin`, или наоборот — фактически прав нет на этом клиенте). Симптом: `code 42501` / `new row violates row-level security`.
+2. CHECK-констрейнт `training_lessons_content_month_format_chk`: если из формы прилетает пустая строка `""` вместо `null` для `content_month`, чек упадёт (`~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`).
+3. Пустые строки в других nullable-полях (`video_url`, `audio_url`, `description`, `content`, `thumbnail_url`) сами по себе не ломают, но `published_at: ""` — сломает как невалидный timestamp; проверить, что в insert улетает `undefined`, а не `""`.
+4. `sort_order: lessons.length` при большом количестве уроков — не проблема; исключим по логу.
 
-## Порядок работы
+## Plan
+1. Воспроизвести на живом стенде под аккаунтом админа `7500084@gmail.com` через Playwright (логин через preview, dev-пароль `123456` при необходимости), открыть модуль «Итоги месяца», заполнить те же поля, что на скрине, кликнуть «Создать». Снять screenshot + перехватить сетевой ответ PostgREST (`POST /rest/v1/training_lessons`) — увидеть точный `code`/`message`/`hint`/`details`.
+2. Параллельно временно расширить обработчик в `src/hooks/useTrainingLessons.tsx` (`createLesson`): выводить `error.message`/`error.details` в toast (`toast.error(\`Ошибка: ${error.message}\`)`) и `console.error` с полным объектом, чтобы такие кейсы диагностировались моментально в будущем. Аналогично для `updateLesson`/`deleteLesson`.
+3. По результату шага 1 — точечный фикс. Ожидаемые ветки:
+   - **RLS**: проверить фактические роли админа в `user_roles`, при необходимости починить `has_role_v2` / политику `Admins can manage lessons` (миграция).
+   - **content_month check**: в `handleCreate`/`createLesson` нормализовать `content_month: formData.content_month?.trim() || null` (и то же для `description`, `content`, `video_url`, `audio_url`, `thumbnail_url` → пустая строка → `null`), а также гарантированно не отправлять `published_at: ""`.
+   - **другое**: закрыть по факту (по коду ошибки из шага 1).
+4. Regression-checks (dry run на копии данных не нужен, insert — идемпотентен по слагу, откатим тестовую строку):
+   - Создать урок с только `title`+`slug` → успех, дефолты применяются.
+   - Создать урок с датой публикации + временем → `published_at` корректный UTC.
+   - Создать урок с заданным `content_month` `2026-06` → успех; с мусорным `2026-6` → внятная ошибка в toast.
+   - Попытка создать второй урок с тем же slug в том же модуле → внятный toast про уникальность.
 
-1. **Edge-логи live-resolve за окно 09:00–12:30 UTC 2026-07-03**: посмотреть ошибки/5xx/таймауты; сравнить с успешными вызовами.
-2. **Прямой probe live-resolve с валидным JWT участника**: получить (через `supabase.auth.signInWithPassword` в edge-контексте или через админ-инжект) отклик на `?slug=klub-itogi-mesyatsa-0726`; убедиться, что `status=ok` и `room_phase=waiting`.
-3. **Playwright под тестовым аккаунтом** (эмуляция iPhone/Telegram UA): открыть `/live/klub-itogi-mesyatsa-0726`, залогиниться реальным email/паролем (нужно от тебя), собрать console + network + pageerror, сделать скриншоты «до» и «после 15 сек».
-4. **Прочитать ветку `room_open_waiting`** и её дочерние компоненты, найти любые обращения к полям, которых может не быть (`data.room_settings.*`, `data.presenter_user_id`), и обернуть в защитные проверки.
-5. По результату — точечная правка: либо в `live-resolve` (если бросает), либо в `LiveEvent.tsx`/`RoomWaitingState`/чат (если крашится дочерний компонент), либо в `AuthContext`/persistence (если сессия не восстанавливается в WebView).
-6. **Verify**: после правки — повтор Playwright-прогона; глазами открыть на iPhone через Telegram; убедиться, что видно «картинку и чат» до старта эфира и live-плеер после старта.
+## Verify (DoD)
+- В админке под аккаунтом `7500084@gmail.com` создаётся новый урок «Итоги Июнь 2026» / `itogi-iyun-2026` в модуле «Итоги месяца» без ошибок, урок появляется в списке (скриншот).
+- Тестовая запись удаляется после проверки.
+- В обработчиках `createLesson`/`updateLesson`/`deleteLesson` в toast и `console.error` выводится реальное сообщение ошибки Supabase.
+- Все 4 regression-кейса выше проходят.
+- Отчёт с точной первопричиной и списком изменённых файлов/миграций.
 
-## Что нужно от тебя, чтобы починить сегодня
-
-Дай, пожалуйста, **email/пароль тестового участника** (обычного пользователя с доступом к эфиру, не админа) — тогда я воспроизведу проблему один-в-один и починю без гаданий. Без реальной сессии я могу только чинить «по вероятной причине», что для прод-эфира рискованно.
-
-Пока жду данные — параллельно прочту edge-логи `live-resolve` и код `room_open_waiting`-ветки и найду очевидные регрессии.
+## Технические детали
+- Файлы под правку (минимум): `src/hooks/useTrainingLessons.tsx` (детализированные ошибки), опционально `src/pages/admin/AdminTrainingLessons.tsx` (нормализация пустых строк перед `createLesson`).
+- Возможная миграция: только если диагностика покажет проблему в RLS/`has_role_v2` — тогда отдельная migration с фиксом политики; иначе миграций не будет.
+- Никаких новых таблиц/RPC/edge-функций не создаём — используем существующий путь.
