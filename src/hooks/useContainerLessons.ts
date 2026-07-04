@@ -77,7 +77,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         `)
         .in("module_id", allModuleIds)
         .eq("is_active", true)
-        .order("sort_order", { ascending: false })
+        .order("sort_order", { ascending: true })
         .order("published_at", { ascending: false, nullsFirst: false })
         .order("created_at", { ascending: false });
 

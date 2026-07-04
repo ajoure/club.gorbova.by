@@ -172,11 +172,13 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id
         );
 
-        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
+        // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1 (+ tariff scoping)
         // Explicit product-grant bypass: rule must be active, training_content,
         // target_ref ∈ rootModuleIds, have product_id and a non-empty explicit
         // allowlist (allowed_module_ids OR allowed_lesson_ids).
-        // full/root rules with both allowlists empty DO NOT bypass.
+        // Additionally: если у правила задан tariff_id — bypass срабатывает только
+        // когда у пользователя есть активная/пробная подписка именно на этот тариф.
+        // Иначе месяц-гейт нормально ограничит доступ по месяцу покупки.
         const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
           const am = r?.conditions?.allowed_module_ids;
           const al = r?.conditions?.allowed_lesson_ids;
@@ -206,8 +208,21 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
               )
               .map((e: any) => e.product_id as string)
           );
+
+          // Активные тарифы пользователя — нужны для tariff-scoped bypass-правил.
+          const { data: subRows } = await supabase
+            .from("subscriptions_v2")
+            .select("tariff_id, status")
+            .eq("user_id", user.id)
+            .in("status", ["active", "trial"]);
+          const userTariffIds = new Set<string>(
+            (subRows || []).map((s: any) => s.tariff_id).filter(Boolean)
+          );
+
           for (const r of bypassCandidateRules) {
             if (!activeProductIds.has(r.product_id)) continue;
+            // Если правило указывает конкретный тариф — bypass только для его подписчиков.
+            if (r.tariff_id && !userTariffIds.has(r.tariff_id)) continue;
             const cond = r.conditions as any;
             for (const mid of (cond.allowed_module_ids as string[] | undefined) || []) {
               bypassModuleIds.add(mid);
