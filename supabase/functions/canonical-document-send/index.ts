@@ -216,10 +216,18 @@ Deno.serve(async (req) => {
     // Физлица без оплаты — по-прежнему заблокированы.
     let isPrePaymentInvoice = false;
     let orderCreatedAt: string | null = null;
+    let orderInfo: {
+      final_price: number | null;
+      currency: string | null;
+      product_name: string | null;
+      tariff_name: string | null;
+    } = { final_price: null, currency: null, product_name: null, tariff_name: null };
     if (doc.context_type === "order" && doc.context_id) {
       const { data: order } = await admin
         .from("orders_v2")
-        .select("id, status, customer_email, payer_type, meta, created_at, payments_v2(status)")
+        .select(
+          "id, status, customer_email, payer_type, meta, created_at, final_price, currency, product_id, tariff_id, payments_v2(status)",
+        )
         .eq("id", doc.context_id)
         .maybeSingle();
       const hasPayment =
@@ -233,6 +241,24 @@ Deno.serve(async (req) => {
         orderMeta?.awaits_payment === true &&
         (order?.payer_type === "legal_entity" || order?.payer_type === "entrepreneur");
       orderCreatedAt = (order?.created_at as string) ?? null;
+      orderInfo.final_price = order?.final_price ?? null;
+      orderInfo.currency = order?.currency ?? null;
+      if (order?.product_id) {
+        const { data: prod } = await admin
+          .from("products_v2")
+          .select("public_title, name")
+          .eq("id", order.product_id)
+          .maybeSingle();
+        orderInfo.product_name = prod?.public_title || prod?.name || null;
+      }
+      if (order?.tariff_id) {
+        const { data: tar } = await admin
+          .from("tariffs")
+          .select("name, public_title")
+          .eq("id", order.tariff_id)
+          .maybeSingle();
+        orderInfo.tariff_name = (tar as any)?.public_title || tar?.name || null;
+      }
       if (!hasPayment && !isPrePaymentInvoice) {
         await writeAudit(admin, "document.send_blocked_no_payment", doc.id, userId, {
           context_id: doc.context_id,
@@ -248,7 +274,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    /** «Оплата по счёту №X от DD.MM.YYYY» — только для pre-payment invoice */
+    /** «Оплата по счёту №X от DD.MM.YYYY» — только для pre-payment invoice.
+     *  Ту же строку возвращаем в JSON (payment_purpose), чтобы UI/Telegram/email
+     *  использовали ОДИН источник, без расхождений в дате. */
     const paymentPurposeText: string | null = (() => {
       if (!isPrePaymentInvoice || !doc.document_number) return null;
       const d = orderCreatedAt ? new Date(orderCreatedAt) : new Date();
@@ -257,6 +285,7 @@ Deno.serve(async (req) => {
       const yy = d.getFullYear();
       return `Оплата по счёту №${doc.document_number} от ${dd}.${mm}.${yy}`;
     })();
+
 
     // ---- Download PDF from storage -----------------------------------------
     const bucket = doc.storage_bucket || "documents";
