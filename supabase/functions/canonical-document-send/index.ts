@@ -517,6 +517,12 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function formatAmount(v: number | string): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!isFinite(n)) return String(v);
+  return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function uint8ToBase64(bytes: Uint8Array): string {
   // chunk-friendly conversion (avoid stack overflows on large PDFs)
   let binary = "";
@@ -526,3 +532,4 @@ function uint8ToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
