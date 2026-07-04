@@ -547,7 +547,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const rightPanel = selected && activeChannel ? (
     <div className="h-full flex flex-col">
       <UnifiedChatHeader contact={selected} activeSource={activeSource} />
-      <ChannelPicker contact={selected} activeSource={activeSource} onChange={changeActiveSource} />
+      <ChannelPicker
+        contact={selected}
+        activeSource={activeSource}
+        onChange={changeActiveSource}
+        onRequestCreateSupport={(c) => setInitiateFor(c)}
+      />
       <div className="flex-1 min-h-0">
         <ChatPanel channel={activeChannel} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
       </div>
