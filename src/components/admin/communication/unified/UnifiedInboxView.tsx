@@ -344,8 +344,8 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
     return (
       <ContactTelegramChat
         userId={row.meta.telegramUserId!}
-        telegramUserId={null}
-        telegramUsername={null}
+        telegramUserId={row.meta.telegramNumericId ?? null}
+        telegramUsername={row.meta.telegramUsername ?? null}
         clientName={row.displayName}
         avatarUrl={row.avatarUrl}
         isActive
