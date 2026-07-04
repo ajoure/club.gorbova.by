@@ -262,6 +262,7 @@ Deno.serve(async (req) => {
 
   // 8. PDF счёта — strict с флагом pre_payment_invoice.
   let pdfUrl: string | null = null;
+  let documentId: string | null = null;
   let emailSent = false;
   let telegramSent = false;
   try {
@@ -278,16 +279,13 @@ Deno.serve(async (req) => {
           order_id: newOrder.id,
           mode: "generate",
           pre_payment_invoice: true,
-          send_email: true,
-          send_telegram: true,
         }),
       },
     );
     const strictJson = await strictResp.json().catch(() => ({}));
     if (strictResp.ok) {
       pdfUrl = strictJson.pdf_url ?? strictJson.file_url ?? strictJson.download_url ?? null;
-      emailSent = !!strictJson.email_sent;
-      telegramSent = !!strictJson.telegram_sent;
+      documentId = strictJson.document_id ?? null;
     } else {
       console.error("[invoice-checkout-issue] strict failed", strictResp.status, strictJson);
       await admin.from("audit_logs").insert({
@@ -305,10 +303,49 @@ Deno.serve(async (req) => {
     console.error("[invoice-checkout-issue] strict exception", e);
   }
 
+  // 9. Отправка счёта на email/telegram — через canonical-document-send.
+  // Для invoice-only ЮЛ/ИП payment-guard в send'е пропускает pre-payment счёт.
+  if (documentId) {
+    try {
+      const sendResp = await fetch(
+        `${url}/functions/v1/canonical-document-send`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+            apikey: anon,
+          },
+          body: JSON.stringify({
+            document_id: documentId,
+            send_email: true,
+            send_telegram: true,
+          }),
+        },
+      );
+      const sendJson = await sendResp.json().catch(() => ({}));
+      if (sendResp.ok) {
+        emailSent = !!sendJson?.results?.email_sent;
+        telegramSent = !!sendJson?.results?.telegram_sent;
+      } else {
+        console.error("[invoice-checkout-issue] send failed", sendResp.status, sendJson);
+        await admin.from("audit_logs").insert({
+          actor_user_id: user.id,
+          actor_type: "user",
+          action: "invoice_checkout.document_send_failed",
+          meta: { order_id: newOrder.id, document_id: documentId, status: sendResp.status, response: sendJson },
+        });
+      }
+    } catch (e) {
+      console.error("[invoice-checkout-issue] send exception", e);
+    }
+  }
+
   return json({
     order_id: newOrder.id,
     order_number: newOrder.order_number,
     invoice_number: invoiceNumber,
+    document_id: documentId,
     pdf_url: pdfUrl,
     email_sent: emailSent,
     telegram_sent: telegramSent,
