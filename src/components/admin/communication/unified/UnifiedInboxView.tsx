@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,7 +20,13 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 
-import { useUnifiedInbox, type UnifiedDialog, type UnifiedSource } from "@/hooks/useUnifiedInbox";
+import {
+  useUnifiedInbox,
+  getActiveChannel,
+  type UnifiedContactRow,
+  type UnifiedSource,
+  type SourceChannelRef,
+} from "@/hooks/useUnifiedInbox";
 import { SourceBadge } from "./SourceBadge";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { ContactInstagramChat } from "@/components/admin/communication/instagram/ContactInstagramChat";
@@ -41,13 +47,27 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { rows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true });
+  const { contactRows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true });
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   type FilterKind = "all" | "unread" | "favorite" | "pinned";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  /**
+   * Per-contact override активного канала. Если override отсутствует —
+   * берётся defaultActiveSource (source последнего сообщения). Sourced
+   * from source filter при первом выборе строки.
+   */
+  const [activeSourceByKey, setActiveSourceByKey] = useState<Record<string, UnifiedSource>>({});
+
+  /**
+   * Track последнего выбранного sourceRow.key — если после regroup grouped
+   * row сменил ключ (attach IG → сливается в profile-row), fallback найдёт
+   * новую grouped row, содержащую тот же source key.
+   */
+  const [lastSelectedSourceKey, setLastSelectedSourceKey] = useState<string | null>(null);
 
   const [panelSize] = useState<number>(() => {
     try {
@@ -62,36 +82,41 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     } catch {}
   };
 
+  const matchesSearch = (r: UnifiedContactRow, q: string): boolean => {
+    if (!q) return true;
+    const lc = q.toLowerCase();
+    if (r.displayName.toLowerCase().includes(lc)) return true;
+    for (const src of r.availableSources) {
+      const ch = r.channels[src]!;
+      if (ch.lastMessagePreview.toLowerCase().includes(lc)) return true;
+      const sl = ch.sourceRow.sourceLabel || "";
+      if (sl.toLowerCase().includes(lc)) return true;
+    }
+    return false;
+  };
+
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      if (sourceFilter !== "all" && r.source !== sourceFilter) return false;
+    return contactRows.filter((r) => {
+      if (sourceFilter !== "all" && !r.channels[sourceFilter]) return false;
       if (filterKind === "unread" && !r.isUnanswered) return false;
       if (filterKind === "favorite" && !r.isFavorite) return false;
       if (filterKind === "pinned" && !r.isPinned) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (
-          !r.displayName.toLowerCase().includes(q) &&
-          !r.lastMessage.toLowerCase().includes(q) &&
-          !(r.sourceLabel || "").toLowerCase().includes(q)
-        ) {
-          return false;
-        }
-      }
+      if (!matchesSearch(r, search)) return false;
       return true;
     });
-  }, [rows, sourceFilter, filterKind, search]);
+  }, [contactRows, sourceFilter, filterKind, search]);
 
   const counts2 = useMemo(() => {
-    let unread = 0, fav = 0, pinned = 0;
-    for (const r of rows) {
-      if (sourceFilter !== "all" && r.source !== sourceFilter) continue;
+    let all = 0, unread = 0, fav = 0, pinned = 0;
+    for (const r of contactRows) {
+      if (sourceFilter !== "all" && !r.channels[sourceFilter]) continue;
+      all++;
       if (r.isUnanswered) unread++;
       if (r.isFavorite) fav++;
       if (r.isPinned) pinned++;
     }
-    return { all: rows.filter(r => sourceFilter === "all" || r.source === sourceFilter).length, unread, fav, pinned };
-  }, [rows, sourceFilter]);
+    return { all, unread, fav, pinned };
+  }, [contactRows, sourceFilter]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -101,31 +126,85 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     overscan: 5,
   });
 
-  const selected = filtered.find((r) => r.key === selectedKey) || rows.find((r) => r.key === selectedKey);
+  // Resolve selected: сначала пробуем текущий key; если исчез — ищем grouped
+  // row, содержащую lastSelectedSourceKey (обработка attach IG → merge).
+  const selected: UnifiedContactRow | null = useMemo(() => {
+    if (!selectedKey) return null;
+    const direct = contactRows.find((r) => r.key === selectedKey);
+    if (direct) return direct;
+    if (lastSelectedSourceKey) {
+      const fallback = contactRows.find((r) =>
+        r.availableSources.some((s) => r.channels[s]!.key === lastSelectedSourceKey),
+      );
+      if (fallback) return fallback;
+    }
+    return null;
+  }, [contactRows, selectedKey, lastSelectedSourceKey]);
+
+  // Если selected сменил key — обновим selectedKey (без мигания).
+  useEffect(() => {
+    if (selected && selected.key !== selectedKey) {
+      setSelectedKey(selected.key);
+    }
+  }, [selected, selectedKey]);
+
+  // Выбор активного source внутри selected-контакта.
+  const activeSource: UnifiedSource = useMemo(() => {
+    if (!selected) return "telegram";
+    const override = selected.key ? activeSourceByKey[selected.key] : undefined;
+    if (override && selected.channels[override]) return override;
+    // Source filter влияет на default active source (если канал есть у контакта).
+    if (sourceFilter !== "all" && selected.channels[sourceFilter]) return sourceFilter;
+    return selected.defaultActiveSource;
+  }, [selected, activeSourceByKey, sourceFilter]);
+
+  const activeChannel: SourceChannelRef | null = selected ? getActiveChannel(selected, activeSource) : null;
+
+  const selectContact = (row: UnifiedContactRow) => {
+    setSelectedKey(row.key);
+    const initialSource: UnifiedSource =
+      sourceFilter !== "all" && row.channels[sourceFilter]
+        ? sourceFilter
+        : row.defaultActiveSource;
+    const ch = row.channels[initialSource]!;
+    setLastSelectedSourceKey(ch.key);
+  };
+
+  const changeActiveSource = (source: UnifiedSource) => {
+    if (!selected || !selected.channels[source]) return;
+    setActiveSourceByKey((prev) => ({ ...prev, [selected.key]: source }));
+    setLastSelectedSourceKey(selected.channels[source]!.key);
+  };
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
+    queryClient.invalidateQueries({ queryKey: ["unified-ig-contacts"] });
     queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
+    queryClient.invalidateQueries({ queryKey: ["profile-channels"] });
   };
 
-  // ------- Hover-actions (pin / favorite / mark read) -------
-  // Все мутации используют СУЩЕСТВУЮЩИЕ таблицы и RPC:
-  //   TG:      chat_preferences (upsert), mark_dialog_read_v2 (тот же контракт, что моно-TG)
-  //   IG:      instagram_dialog_preferences (upsert), instagram-admin-chat/mark_read
-  //   Support: support_tickets.is_starred / has_unread_admin
-  // Никаких новых миграций/таблиц. Если capability отсутствует — иконка не рисуется.
-  const togglePinFavorite = async (
-    row: UnifiedDialog,
+  // ------- Row actions apply to activeChannel of the row (V1 safe) -------
+  const togglePinFavoriteOnRow = async (
+    row: UnifiedContactRow,
     field: "is_pinned" | "is_favorite",
   ) => {
     if (busyKey) return;
+    const src: UnifiedSource =
+      row.key === selected?.key
+        ? activeSource
+        : (activeSourceByKey[row.key] as UnifiedSource | undefined) ??
+          (sourceFilter !== "all" && row.channels[sourceFilter] ? sourceFilter : row.defaultActiveSource);
+    const ch = row.channels[src];
+    if (!ch) return;
+    const source = ch.source;
+    const sr = ch.sourceRow;
     setBusyKey(row.key);
     try {
-      if (row.source === "telegram") {
+      if (source === "telegram") {
         if (!user?.id) throw new Error("Не авторизован");
-        const contactUserId = row.meta.telegramUserId!;
-        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const contactUserId = sr.meta.telegramUserId!;
+        const nextValue = field === "is_pinned" ? !ch.pinned : !ch.favorite;
         const { data: existing } = await supabase
           .from("chat_preferences")
           .select("id")
@@ -150,14 +229,14 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         }
         queryClient.invalidateQueries({ queryKey: ["chat-preferences", user.id] });
         queryClient.invalidateQueries({ queryKey: ["chat-preferences"] });
-      } else if (row.source === "instagram" && (field === "is_pinned" || field === "is_favorite")) {
+      } else if (source === "instagram") {
         if (!user?.id) throw new Error("Не авторизован");
-        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+        const nextValue = field === "is_pinned" ? !ch.pinned : !ch.favorite;
         const nowIso = new Date().toISOString();
         const patch: Record<string, any> = {
           admin_user_id: user.id,
-          instagram_account_id: row.meta.instagramAccountId!,
-          thread_key: row.meta.instagramThreadKey!,
+          instagram_account_id: sr.meta.instagramAccountId!,
+          thread_key: sr.meta.instagramThreadKey!,
           [field]: nextValue,
         };
         if (field === "is_pinned") patch.pinned_at = nextValue ? nowIso : null;
@@ -168,8 +247,8 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
         queryClient.invalidateQueries({ queryKey: ["unified-ig-prefs"] });
-      } else if (row.source === "support" && (field === "is_pinned" || field === "is_favorite")) {
-        const nextValue = field === "is_pinned" ? !row.isPinned : !row.isFavorite;
+      } else if (source === "support") {
+        const nextValue = field === "is_pinned" ? !ch.pinned : !ch.favorite;
         const nowIso = new Date().toISOString();
         const patch: Record<string, any> =
           field === "is_pinned"
@@ -178,17 +257,14 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         const { error } = await supabase
           .from("support_tickets")
           .update(patch as any)
-          .eq("id", row.meta.ticketId!);
+          .eq("id", sr.meta.ticketId!);
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
         queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
-      } else {
-        return;
       }
+      const srcLabel = source === "telegram" ? "Telegram" : source === "instagram" ? "Instagram" : "Техподдержка";
       toast.success(
-        field === "is_pinned"
-          ? row.isPinned ? "Открепить" : "Закреплено"
-          : row.isFavorite ? "Убрано из избранного" : "В избранном",
+        `${field === "is_pinned" ? (ch.pinned ? "Открепить" : "Закреплено") : ch.favorite ? "Убрано из избранного" : "В избранном"} · ${srcLabel}`,
       );
     } catch (e: any) {
       toast.error("Не удалось: " + (e?.message || "ошибка"));
@@ -197,16 +273,20 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     }
   };
 
-  // Единый mark-read.
-  // Telegram: тот же контракт, что моно-TG (mark_dialog_read_v2 + observed boundary
-  // из локального кэша ["telegram-messages"] с fallback на last_message_at строки).
-  const markRead = async (row: UnifiedDialog) => {
+  const markReadOnRow = async (row: UnifiedContactRow) => {
     if (busyKey) return;
+    const src: UnifiedSource =
+      row.key === selected?.key
+        ? activeSource
+        : (activeSourceByKey[row.key] as UnifiedSource | undefined) ??
+          (sourceFilter !== "all" && row.channels[sourceFilter] ? sourceFilter : row.defaultActiveSource);
+    const ch = row.channels[src];
+    if (!ch) return;
+    const sr = ch.sourceRow;
     setBusyKey(row.key);
     try {
-      if (row.source === "telegram") {
-        const userId = row.meta.telegramUserId!;
-        // Observed boundary: точная граница из кэша чата, иначе last_message_at.
+      if (ch.source === "telegram") {
+        const userId = sr.meta.telegramUserId!;
         let boundary: string | null = null;
         const msgs = queryClient.getQueryData<any[]>(["telegram-messages", userId]);
         if (Array.isArray(msgs)) {
@@ -216,7 +296,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             }
           }
         }
-        if (!boundary) boundary = row.lastMessageAt || null;
+        if (!boundary) boundary = sr.lastMessageAt || null;
         if (!boundary) throw new Error("нет observed boundary");
         const { registerSelfMark, clearSelfMark } = await import(
           "@/hooks/inboxMarkReadCoordinator"
@@ -236,29 +316,29 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
           throw e;
         }
         queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
-        toast.success("Отмечено прочитанным");
+        toast.success("Отмечено прочитанным · Telegram");
         return;
       }
-      if (row.source === "instagram") {
+      if (ch.source === "instagram") {
         await supabase.functions.invoke("instagram-admin-chat", {
           body: {
             action: "mark_read",
-            account_id: row.meta.instagramAccountId,
-            thread_key: row.meta.instagramThreadKey,
+            account_id: sr.meta.instagramAccountId,
+            thread_key: sr.meta.instagramThreadKey,
           },
         });
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
-        toast.success("Отмечено прочитанным");
+        toast.success("Отмечено прочитанным · Instagram");
         return;
       }
-      if (row.source === "support") {
+      if (ch.source === "support") {
         const { error } = await supabase
           .from("support_tickets")
           .update({ has_unread_admin: false })
-          .eq("id", row.meta.ticketId!);
+          .eq("id", sr.meta.ticketId!);
         if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
-        toast.success("Отмечено прочитанным");
+        toast.success("Отмечено прочитанным · Техподдержка");
       }
     } catch (e: any) {
       toast.error("Не удалось отметить: " + (e?.message || "ошибка"));
@@ -270,6 +350,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const totalUnread = counts.telegramUnread + counts.instagramUnread + counts.supportUnread;
 
+  const sourceLabelByKey: Record<UnifiedSource, string> = {
+    telegram: "Telegram",
+    instagram: "Instagram",
+    support: "Техподдержка",
+  };
+
   const dialogList = (
     <div className="h-full flex flex-col">
       <div className="p-1.5 space-y-1.5 border-b border-border/10">
@@ -279,7 +365,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
               <MessageSquare className="h-3.5 w-3.5 text-primary" />
             </div>
             <h2 className="text-xs font-semibold">
-              {sourceFilter === "all" ? "Все сообщения" : sourceFilter}
+              {sourceFilter === "all" ? "Все сообщения" : sourceLabelByKey[sourceFilter]}
             </h2>
             {totalUnread > 0 && (
               <Badge className="bg-primary text-primary-foreground text-[10px] h-4 min-w-4 px-1 rounded-full">
@@ -348,6 +434,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
           <div className="relative p-1.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
             {virtualizer.getVirtualItems().map((vr) => {
               const row = filtered[vr.index];
+              const rowActiveSource: UnifiedSource =
+                row.key === selected?.key
+                  ? activeSource
+                  : (activeSourceByKey[row.key] as UnifiedSource | undefined) ??
+                    (sourceFilter !== "all" && row.channels[sourceFilter] ? sourceFilter : row.defaultActiveSource);
+              const rowActive = row.channels[rowActiveSource] ?? row.channels[row.defaultActiveSource]!;
               return (
                 <div
                   key={row.key}
@@ -356,7 +448,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 >
                   <button
                     type="button"
-                    onClick={() => setSelectedKey(row.key)}
+                    onClick={() => selectContact(row)}
                     className={cn(
                       "w-full text-left grid grid-cols-[auto_1fr_auto] items-start gap-2 p-1.5 rounded-lg border transition-colors duration-200 group",
                       selectedKey === row.key
@@ -371,9 +463,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           {row.displayName[0]?.toUpperCase() || "?"}
                         </AvatarFallback>
                       </Avatar>
-                      {row.unreadCount > 0 && (
+                      {row.totalUnread > 0 && (
                         <div className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
-                          {row.unreadCount > 99 ? "99+" : row.unreadCount}
+                          {row.totalUnread > 99 ? "99+" : row.totalUnread}
                         </div>
                       )}
                     </div>
@@ -383,10 +475,19 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                         {row.isPinned && <Pin className="h-2.5 w-2.5 text-primary shrink-0" />}
                         {row.isFavorite && <Star className="h-2.5 w-2.5 text-amber-500 shrink-0 fill-current" />}
                       </div>
-                      <div className="mt-0.5">
-                        <SourceBadge source={row.source} label={row.sourceLabel} />
+                      <div className="mt-0.5 flex items-center gap-1 flex-wrap">
+                        {row.availableSources.map((s) => (
+                          <SourceBadge
+                            key={s}
+                            source={s}
+                            label={row.channels[s]?.sourceRow.sourceLabel ?? null}
+                          />
+                        ))}
                       </div>
-                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">{row.lastMessage}</p>
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        <span className="opacity-70">{sourceLabelByKey[row.lastMessageSource]} · </span>
+                        {row.lastMessagePreview}
+                      </p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">
@@ -397,31 +498,31 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                       <div
                         className="flex items-center gap-0.5 opacity-60 md:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
                       >
-                        {row.capabilities.canPin && (
+                        {rowActive.sourceRow.capabilities.canPin && (
                           <IconAction
-                            title={row.isPinned ? "Открепить" : "Закрепить"}
+                            title={`${rowActive.pinned ? "Открепить" : "Закрепить"} · ${sourceLabelByKey[rowActive.source]}`}
                             disabled={busyKey === row.key}
-                            active={row.isPinned}
-                            onActivate={() => togglePinFavorite(row, "is_pinned")}
+                            active={rowActive.pinned}
+                            onActivate={() => togglePinFavoriteOnRow(row, "is_pinned")}
                           >
-                            <Pin className={cn("h-3 w-3", row.isPinned && "fill-current text-primary")} />
+                            <Pin className={cn("h-3 w-3", rowActive.pinned && "fill-current text-primary")} />
                           </IconAction>
                         )}
-                        {row.capabilities.canFavorite && (
+                        {rowActive.sourceRow.capabilities.canFavorite && (
                           <IconAction
-                            title={row.isFavorite ? "Убрать из избранного" : "В избранное"}
+                            title={`${rowActive.favorite ? "Убрать из избранного" : "В избранное"} · ${sourceLabelByKey[rowActive.source]}`}
                             disabled={busyKey === row.key}
-                            active={row.isFavorite}
-                            onActivate={() => togglePinFavorite(row, "is_favorite")}
+                            active={rowActive.favorite}
+                            onActivate={() => togglePinFavoriteOnRow(row, "is_favorite")}
                           >
-                            <Star className={cn("h-3 w-3", row.isFavorite && "fill-amber-500 text-amber-500")} />
+                            <Star className={cn("h-3 w-3", rowActive.favorite && "fill-amber-500 text-amber-500")} />
                           </IconAction>
                         )}
-                        {row.capabilities.canMarkRead && row.unreadCount > 0 && (
+                        {rowActive.sourceRow.capabilities.canMarkRead && rowActive.unread > 0 && (
                           <IconAction
-                            title="Отметить прочитанным"
+                            title={`Отметить прочитанным · ${sourceLabelByKey[rowActive.source]}`}
                             disabled={busyKey === row.key}
-                            onActivate={() => markRead(row)}
+                            onActivate={() => markReadOnRow(row)}
                           >
                             <Check className="h-3 w-3" />
                           </IconAction>
@@ -438,12 +539,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     </div>
   );
 
-  const rightPanel = selected ? (
+  const rightPanel = selected && activeChannel ? (
     <div className="h-full flex flex-col">
-      <UnifiedChatHeader row={selected} />
-      <ChannelPicker currentRow={selected} allRows={rows} onSelect={setSelectedKey} />
+      <UnifiedChatHeader contact={selected} activeSource={activeSource} />
+      <ChannelPicker contact={selected} activeSource={activeSource} onChange={changeActiveSource} />
       <div className="flex-1 min-h-0">
-        <ChatPanel row={selected} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
+        <ChatPanel channel={activeChannel} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
       </div>
     </div>
   ) : (
@@ -466,7 +567,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 <ArrowLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm font-semibold truncate">{selected.displayName}</span>
-              <SourceBadge source={selected.source} label={selected.sourceLabel} />
+              {selected.availableSources.map((s) => (
+                <SourceBadge key={s} source={s} label={selected.channels[s]?.sourceRow.sourceLabel ?? null} />
+              ))}
             </div>
             <div className="flex-1 min-h-0">{rightPanel}</div>
           </>
@@ -491,12 +594,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 }
 
 /**
- * Диспетчер правой панели: рендерит существующий per-source чат-компонент
- * с его полным функционалом (медиа/файлы/голос/видеокружки — где источник поддерживает).
- * Composer с cross-channel reply picker — Phase 2, здесь только delegation.
+ * Диспетчер правой панели: рендерит per-source чат по SourceChannelRef.
  */
-function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void }) {
-  if (row.source === "telegram") {
+function ChatPanel({ channel, onBack }: { channel: SourceChannelRef; onBack?: () => void }) {
+  const row = channel.sourceRow;
+  if (channel.source === "telegram") {
     return (
       <ContactTelegramChat
         userId={row.meta.telegramUserId!}
@@ -508,7 +610,7 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
       />
     );
   }
-  if (row.source === "instagram") {
+  if (channel.source === "instagram") {
     return (
       <ContactInstagramChat
         accountId={row.meta.instagramAccountId!}
@@ -522,15 +624,14 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
       />
     );
   }
-  if (row.source === "support") {
+  if (channel.source === "support") {
     return <TicketChat ticketId={row.meta.ticketId!} isAdmin isClosed={false} />;
   }
   return null;
 }
 
 /**
- * Иконка hover-действия строки. Изолирована от выбора строки
- * (stopPropagation + preventDefault на click/keydown).
+ * Иконка hover-действия строки. Изолирована от выбора строки.
  */
 function IconAction({
   title,
