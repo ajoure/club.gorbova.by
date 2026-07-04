@@ -1,181 +1,139 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
+
+1. **Не внедрять новый email-shell слишком широко.**  
+Новый `branded-email-shell.ts` использовать только для `canonical-document-send`. Auth-письма и другие отправки не трогать.
+2. `displayTitle` **не брать слепо из** `file_name`**.**  
+Нужно убрать `.pdf`, но также нормализовать:
+  - лишние пробелы;
+  - дефисы;
+  - пустую дату `от.pdf`;
+  - если дата не resolved — собрать title из `document_number + issued_at`.
+3. **Fallback даты делать только для pre-payment invoice.**  
+Не менять глобально `payment.paid_at` для всех документов. Условие:
+4. **Не ломать старый** `invoice_number`**.**  
+Верно: оставить `invoice_number = orderNumber`, добавить:
+  - `document_number`;
+  - `issued_at`;
+  - `payment_purpose`.
+5. **Payment purpose должен формироваться в одном месте.**  
+UI, email и Telegram должны получать одну и ту же строку из backend-ответа, а не собирать каждый по-своему.
+6. **Telegram error не должен ломать выпуск счёта.**  
+Если Telegram не привязан/не отправился:
+  - PDF и email считаются успешными;
+  - в ответе вернуть warning;
+  - в UI показать мягкое предупреждение, не ошибку всего процесса.
+7. **HTML email обязательно экранировать.**  
+Все значения из профиля, продукта, тарифа, назначения платежа, суммы — через `escapeHtml`.
+8. **Проверить mail-client fallback.**  
+`backdrop-filter` в письмах почти нигде не работает. Основной вид должен держаться на обычных inline `background/border/padding`.
+9. **PDF proof обязателен.**  
+В отчёте приложить скрин/текстовую проверку, что:
+  - дата появилась рядом с «г. Минск»;
+  - `file_name_warnings` больше не содержит `FLD-000263`.
+10. **Добавить regression для старых документов.**  
+Сгенерировать/отправить не только pre-payment invoice, но хотя бы один обычный документ или проверить, что fallback не меняет их даты.
+11. **DoD дополнить проверкой копирования.**  
+В UI проверить:
+
+- кнопка «Копировать» копирует точную строку;
+- кавычек нет;
+- toast появляется.
+
+12. **Отчёт Lovable строго на русском.**
 
 ```text
-1. План правильный: отдельные access_rules создавать не нужно, потому что модуль “Итоги месяца” является дочерним root “База знаний”, а rule `6f81ef7e` уже покрывает root с `match_purchase_month=true`.
+План должен быть составлен на русском языке.
+Отчет о выполненной работе должен быть составлен на русском языке.
+Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
 
-2. По июню 2026:
-не создавать пустой урок сейчас.
-Пока верхним должен быть “Май 2026”.
-Июнь создавать только когда будет реальный контент или отдельное решение.
-
-3. Тестовый пользователь:
-роль client / обычный пользователь — ок.
-Но тестовые orders/entitlements нужно пометить явно:
-- meta.test_run = 'monthgate_itogi_2026_05'
-- order_number с префиксом TEST-
-- cleanup обязателен.
-Не оставлять тестовые записи в БД.
-
-4. Перед UPDATE уроков обязательно сделать read-only preflight:
-- список всех 16 уроков;
-- slug;
-- текущий content_month;
-- текущий is_active;
-- текущий sort_order;
-- calculated content_month from slug.
-STOP, если:
-- slug не парсится;
-- найдено не 16 уроков;
-- есть дубль content_month;
-- есть урок без slug `IM-MM.YYYY`.
-
-5. Backup нужен не только в /tmp, но и в proof:
-добавить таблицу before/after в `.lovable/proofs/itogi_mesyaca_monthgate_content_fix_2026_05.md`.
-`/tmp/monthgate-backup.sql` можно оставить как технический rollback, но proof должен содержать snapshot.
-
-6. UPDATE делать идемпотентно:
-- content_month только если отличается;
-- is_active=true только если false;
-- sort_order только если отличается от расчётного.
-Записать audit_logs:
-`itogi_mesyaca_monthgate_content_fix`.
-
-7. Проверить сортировку не только в клиентском `/library/itogi-mesyaca`, но и в админке.
-Если админка не использует sort_order, править только read-query/sort, без изменения модели данных.
-
-8. Playwright verify:
-обязательно проверить не только “Начать”, но и что locked карточки не дают открыть урок прямым кликом/URL, если такой route доступен.
-
-9. Проверить, что Webinars не сломались:
-для того же тестового пользователя месяц 2025-04 и 2026-03 открыт и в “Итогах”, и в “Вебинарах”; другие месяцы закрыты.
-
-10. После cleanup тестовых данных:
-сделать SQL-проверку:
-- 0 TEST-orders;
-- 0 test entitlements;
-- auth user удалён;
-- реальные 16 lessons остались изменёнными.
+План: Красивое письмо со счётом, правильные заголовки/номер, дата в PDF, копируемое назначение платежа, Telegram
 ```
 
-Итоговая команда:
+## Диагноз (что нашёл в коде и данных)
 
-```text
-План принимаю.
+1. **Заголовок письма и «шаблон.» в теле** — в `supabase/functions/canonical-document-send/index.ts:296-306` тема и H2 берутся из `doc.title`, а `doc.title` в БД сохранён как `Шаблон. Счёт-акт на услуги ЮЛ - Исполнитель — ORD-26-00254` (записывается в `canonical-document-generate-strict/index.ts:1313-1315`: `${tpl.name} — ${order.order_number}`). Правильное имя уже лежит рядом в `doc.file_name` (`Счет-акт- АЖУР инкам - АЖУР инкам № 0407-4 от.pdf`).
+2. **Номер счёта в UI-диалоге** — `InvoiceCheckoutDialog.tsx:415/427` печатает `result.invoice_number`, а `invoice-checkout-issue/index.ts:184-185` присваивает `invoice_number = orderNumber` (= `ORD-26-00254`, это номер сделки). Реальный номер счёт-акта хранится в `ai_generated_documents.document_number` (`0407/4`).
+3. **Нет даты в PDF** — `ai_generated_documents.meta.file_name_warnings=[file_name_placeholder_unresolved:FLD-000263]`. `FLD-000263 = payment.paid_at` (проверил `fields_registry`), а оплаты ещё нет → значение null → дата пропадает и в PDF, и в имени файла. Нужен fallback: если pre-payment invoice — использовать `orders_v2.created_at`.
+4. **Кавычки «…» вокруг «Оплата по счёту»** — в UI (`InvoiceCheckoutDialog.tsx:427`), в email HTML (`canonical-document-send/index.ts:304`) и в Telegram-caption (`canonical-document-send/index.ts:371`) назначение платежа обёрнуто в `«…»`. Пользователь просит убрать кавычки и дать копирование.
+5. **Дата в назначении платежа расходится между UI и письмом** — UI использует `formatToday()`, письмо — `orderCreatedAt`. Могут быть разные строки.
+6. **Telegram** — по последнему счёту `sent_to_telegram=7766693832` фактически записан в meta; audit-логов ошибки нет. Проверим ещё раз после правки. Причина, если не пришло: `docProfile.telegram_user_id` не привязан у покупателя. Добавим явный `results.telegram_error='telegram_not_linked'` + подсказку в UI.
+7. **Стиль письма** — существующие auth-письма (`supabase/functions/_shared/email-templates/recovery.tsx` и т.д.) — React-Email компоненты. `canonical-document-send` — plain Deno-функция без React runtime. Проще всего вынести общий HTML-каркас в `supabase/functions/_shared/branded-email-shell.ts` (чистая строковая функция), стили-инлайн, палитра из `src/index.css` (тёмный/светлый фон карточки, стеклянная подложка, primary-акцент). Тот же каркас позже можно применить к остальным письмам без ломки существующих.
 
-Ответы на открытые вопросы:
-1. Июнь 2026 сейчас НЕ создавать. Верхним остаётся Май 2026.
-2. Тестовый пользователь — обычный client, ок.
+## Что делаем
 
-Approve на build-mode:
+### 1. `supabase/functions/_shared/branded-email-shell.ts` (новый)
 
-PATCH-ITOGI-MESYACA-MONTHGATE-CONTENT-FIX-2026-05
+Экспортирует `renderBrandedEmail({ preheader, greetingName, sections, footerNote })`, возвращает готовый HTML-строкой с:
 
-Scope:
-- только `training_lessons` модуля `81cf626a`;
-- заполнить `content_month` из slug `IM-MM.YYYY`;
-- активировать существующие уроки;
-- выставить sort_order по `content_month DESC`;
-- если нужно — поправить read-sort в admin/client на sort_order;
-- access_rules не менять.
+- инлайновыми стилями в фирменной палитре (белый Body, «стеклянная» карточка `background:rgba(255,255,255,0.7); backdrop-filter:blur(20px); border:1px solid rgba(15,23,42,0.06); border-radius:20px; box-shadow:0 20px 60px -20px rgba(15,23,42,0.15)`),
+- шапкой с названием бренда (Gorbova Club),
+- слотами: приветствие, произвольные секции (title/text/table/callout), CTA-кнопка (опционально), подпись.
+- Fallback на `background:#ffffff` для клиентов без `backdrop-filter` (Outlook/Gmail).
 
-Запрещено:
-- создавать июньский пустой урок;
-- менять access_rules;
-- менять orders/subscriptions/entitlements реальных пользователей;
-- менять root “База знаний”;
-- менять вебинарные модули;
-- оставлять тестового пользователя/тестовые заказы после проверки.
+### 2. `supabase/functions/canonical-document-send/index.ts`
 
-Verify:
-- 16 уроков active;
-- content_month корректен;
-- порядок Май 2026 → Январь 2025;
-- тестовый client с order month 2025-04 и 2026-03 видит только эти месяцы;
-- остальные месяцы залочены;
-- вебинары по тем же месяцам тоже работают;
-- прямое открытие locked lesson не проходит;
-- тестовые данные удалены.
+- Заменить `docTitle` источником: `displayTitle = (doc.file_name || '').replace(/\.pdf$/i,'').trim() || (doc.document_number ? \`Счёт-акт № ${doc.document_number} : 'Счёт-акт')`.
+- Тема письма = `displayTitle` (без слова «Шаблон»).
+- Собрать тело через `renderBrandedEmail` с содержимым:
+  - Приветствие: `Добрый день, {full_name}!` (fallback «Здравствуйте!»).
+  - Абзац: `Направляем вам счёт на оплату услуг «{product_name}»{, тариф {tariff_name}}. Сумма к оплате: {amount} {currency}.` Для этого в `canonical-document-send` подтянуть `orders_v2.final_price`, `orders_v2.currency`, join `products_v2.public_title` и `tariff_id → tariffs.name` (только те, что уже используются в диалоге, чтобы данные совпадали).
+  - Callout «При оплате в назначении платежа укажите» — БЕЗ кавычек, в виде selectable `<pre style="user-select:all;font-family:inherit;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:12px;padding:14px 16px;">Оплата по счёту №0407/4 от 04.07.2026</pre>` + подпись «Нажмите на текст, чтобы выделить и скопировать».
+  - Подпись: «С уважением, команда Gorbova Club».
+- `paymentPurposeText`: вернуть без внешних кавычек (уже так и генерируется, оставляем строку без обрамления).
+- В Telegram-caption заменить `«{purpose}»` на просто `<code>{purpose}</code>` (в Telegram HTML `<code>` даёт длинное нажатие → копирование).
+- Для Telegram: если `!chatId` — вернуть `results.telegram_error='telegram_not_linked'` и записать явный audit `document.send.telegram_skipped_no_link` (уже почти так). Убедиться, что фронт видит статус (передаём в ответе).
 
-Proof:
-.lovable/proofs/itogi_mesyaca_monthgate_content_fix_2026_05.md
-Скриншоты:
-`/tmp/browser/monthgate/`
+### 3. `supabase/functions/invoice-checkout-issue/index.ts`
 
-Что я выяснил
-```
+- После успешного strict-вызова прочитать `ai_generated_documents.document_number` по `documentId` и вернуть его в ответе как поле `document_number` (наряду с `invoice_number = orderNumber`, чтобы не ломать legacy-потребителей).
+- Не менять существующее поле `invoice_number`, но добавить `document_number` и `issued_at = order.created_at`.
 
-### Как это работает в «Вебинарах» (референс)
+### 4. `src/components/payment/InvoiceCheckoutDialog.tsx`
 
-- Модуль «Вебинары» (`8c7fd507`) — контейнер, у каждого **месяца свой sub-module** с заполненным `training_modules.content_month` (`2025-01`, `2025-02`, … `2026-05`).
-- Родитель для гейта — «База знаний» (`8b1fb03e`), это **root**.
-- В `access_rules` на root'е висит правило `6f81ef7e`:
-  - `grant_target_type = training_content`
-  - `target_ref = 8b1fb03e` (root «База знаний»)
-  - `tariff_id = b018e9be` (тариф **ИДЕОЛОГИЯ**), `product_id = 11c9f1b8` (**Gorbova Club**)
-  - `conditions = { access_mode: "full", match_purchase_month: true }`
-  - `is_active = true`
-- RPC `has_month_purchase_bulk` смотрит в `orders_v2`: `status='paid' AND tariff_id=<tariff> AND meta->>'deal_month' = 'YYYY-MM'`. То есть месяц покупки в сделке хранится в `orders_v2.meta.deal_month` (`YYYY-MM`).
+- Расширить тип `InvoiceResult` полями `document_number: string | null` и `issued_at: string | null`.
+- В экране «success» заменить строку заголовка на `Счёт № {result.document_number ?? result.invoice_number} сформирован`.
+- Форматировать дату из `result.issued_at` (fallback `formatToday()`), чтобы совпадала с PDF и письмом.
+- Убрать кавычки `«…»` вокруг «Оплата по счёту №…». Разместить строку в блоке с кнопкой «Копировать» (иконка `Copy` из lucide, `navigator.clipboard.writeText`, toast «Скопировано»). Сам текст сделать `select-all`.
+- Оставить кнопку «Скачать PDF» и «Готово» без изменений.
 
-### Что с «Итогами месяца»
+### 5. Fallback даты счёта в PDF/имени файла
 
-- Модуль `81cf626a` **тоже прямой ребёнок root'а «База знаний»** (`parent_module_id = 8b1fb03e`). Значит **правило `6f81ef7e` уже покрывает и его** — отдельное правило не нужно.
-- Уроки в нём — плоские (не sub-modules). Хук `useMonthGate` работает по `training_lessons.content_month` так же, как по `training_modules.content_month` — механика одинаковая.
-- Сейчас `content_month` заполнено только у «Май 2026»; 12 уроков 2025 + «Январь 2026» лежат с `is_active=false` — поэтому никто их не видит.
+- В резолвере `FLD-000263` (payment.paid_at) в `canonical-document-generate-strict` (найти в `document-data-snapshot.ts`/`typed-tokens-resolver.ts` — где именно, определим на месте) добавить fallback: если значение null И `pre_payment_invoice=true` (или `order.status='draft'` и нет `payments_v2.status='paid'`) — вернуть `order.created_at`. Формат — как для остальных дат (DD.MM.YYYY).
+- Проверить, что после правки `meta.file_name_warnings` больше не содержит `FLD-000263`, а в PDF рядом с «г. Минск» появляется дата справа.
 
-Итог: логика гейта уже правильная и общая с «Вебинарами». Нужно только починить данные и порядок.
+### 6. Верификация
 
-## План (в build-mode, после аппрува)
+- Сгенерировать тестовый счёт через preview (авторизация паролем `123456`), скачать PDF, открыть письмо в тестовом ящике и убедиться:
+  - Тема письма = `Счет-акт: АЖУР инкам - АЖУР инкам № 0407/5 от 04.07.2026`.
+  - В теле нет «Шаблон.» и повторного заголовка.
+  - Callout копируется, кавычек нет.
+  - В PDF рядом с «г. Минск» — дата.
+  - В UI-диалоге номер = `0407/5`, не `ORD-26-…`.
+  - Telegram: если чат привязан — приходит подпись без кавычек, purpose в `<code>`; если не привязан — фронт показывает `telegram_error`.
+- Скриншоты положить в `.lovable/proofs/invoice_email_polish_2026_07_04.md`.
 
-### Шаг 1. Бэкфилл `content_month` у 16 уроков модуля
+### 7. Роадмап
 
-Парсим slug `IM-MM.YYYY` → `YYYY-MM` и записываем в `training_lessons.content_month`. Идемпотентно, только для уроков `module_id = 81cf626a`, только если `content_month IS NULL` или не совпадает.
+Создать одну задачу «Красивое письмо-счёт: заголовок, номер 0407/x, дата в PDF, копируемое назначение, Telegram, HTML-стиль бренда», взять в `in_progress`, по завершении — `done` с логом.
 
-### Шаг 2. Активация всех уроков модуля
+## Технические детали
 
-`UPDATE training_lessons SET is_active = true WHERE module_id = 81cf626a AND is_active = false` — 13 уроков.
+Файлы, которые правим:
 
-### Шаг 3. Сортировка «новые сверху»
+- `supabase/functions/_shared/branded-email-shell.ts` — новый.
+- `supabase/functions/canonical-document-send/index.ts` — subject/HTML/telegram caption, подтяжка order+product+tariff, использование shell.
+- `supabase/functions/invoice-checkout-issue/index.ts` — вернуть `document_number` и `issued_at`.
+- `supabase/functions/canonical-document-generate-strict/index.ts` (или shared token resolver) — fallback `FLD-000263 → order.created_at` для pre-payment invoice.
+- `src/components/payment/InvoiceCheckoutDialog.tsx` — типы, отображение номера/даты, кнопка «Копировать», убранные кавычки.
 
-Проставить `sort_order` по убыванию `content_month`, чтобы сверху был самый свежий месяц (сейчас — Май 2026, Апрель 2026, Март 2026, …, Январь 2025). Формула: `sort_order = 9999 - row_number()` в порядке `content_month DESC`. Работает и для админки, и для клиента — оба используют `sort_order`.
+Обязательные проверки:
 
-Проверю, что admin/library-страницы этого модуля уже сортируют по `sort_order` (а не по `created_at`) — если нет, поправлю запрос **только** в чтении данных для этого модуля.
+- Grants/RLS не меняем (используем service role в edge-функциях).
+- Существующие потребители `invoice_number` не ломаются (поле остаётся).
+- Auth-письма (`_shared/email-templates/*.tsx`) не трогаем.
+- Telegram HTML-parse_mode: экранируем текст `escapeHtml`, оборачиваем purpose в `<code>...</code>`.
 
-### Шаг 4. Правила доступа
+Ограничения:
 
-Ничего создавать не нужно. Правило `6f81ef7e` уже даёт «полный доступ + match_purchase_month» на весь root «База знаний» для тарифа ИДЕОЛОГИЯ. Значит:
-
-- Клиент с оплаченной сделкой ИДЕОЛОГИЯ за месяц X увидит и вебинар месяца X, и урок «Итоги месяца. X».
-- За другие месяцы урок будет показан с бейджем «Контент за MM.YYYY» и заблокирован — тот же UX, что и у вебинаров.
-
-### Шаг 5. Проверка с тестовым аккаунтом
-
-1. Через `supabase.auth.admin` (edge/psql) создам тестового пользователя `test-monthgate-<ts>@gorbova.test` с паролем, залогинюсь под ним в Playwright (dev-пароль 123456 в форме Login as Developer + затем email/пароль).
-2. Через `insert` в `orders_v2` создам 2 тестовые «сделки»:
-  - `tariff_id=b018e9be` (ИДЕОЛОГИЯ), `status='paid'`, `meta.deal_month='2025-04'`, `user_id=<test>`
-  - Ещё одну `meta.deal_month='2026-03'`
-  - Плюс entitlement на продукт Gorbova Club, чтобы модуль был вообще доступен (проверю, нужен ли — возможно, `training_content`-правило само даёт доступ).
-3. Открою в Playwright `/library/itogi-mesyaca` под тестовым:
-  - Урок «Итоги месяца. Апрель 2025» — доступен, кнопка «Начать».
-  - Урок «Итоги месяца. Март 2026» — доступен.
-  - Урок «Итоги месяца. Май 2026» — залочен, бейдж «Контент за 05.2026».
-  - Урок «Итоги месяца. Январь 2025» — залочен, бейдж «Контент за 01.2025».
-4. Открою `/library/knowledge-webinars` под тем же пользователем — проверю, что вебинары апреля 2025 и марта 2026 тоже открыты (та же логика, тот же rule).
-5. Скриншоты каждого шага сохраню в `/tmp/browser/monthgate/` и приложу.
-6. **Cleanup:** удалю тестовые `orders_v2`, entitlement и самого тестового пользователя (через `auth.admin.deleteUser`). Оставлю только те данные, которые правил в шагах 1–3 (реальный контент).
-
-### Шаг 6. Обратимость
-
-Перед шагом 1 сохраню снапшот `id, is_active, content_month, sort_order` всех 16 уроков в `/tmp/monthgate-backup.sql` — чтобы откатить точечно, если что-то пойдёт не так.
-
-## Definition of Done
-
-- У всех 16 уроков модуля `81cf626a` `content_month` = месяц из слага, `is_active = true`.
-- В списке уроков (admin и клиентский `/library/itogi-mesyaca`) порядок: **сверху самый свежий месяц (Май 2026), снизу — Январь 2025.**
-- Тестовый пользователь с paid-сделкой ИДЕОЛОГИЯ за месяц X видит именно свой урок «Итоги месяца. X» открытым и все остальные — с бейджем «Контент за MM.YYYY». То же самое подтверждено для «Вебинаров».
-- Скриншоты Playwright подтверждают открытые и закрытые уроки.
-- Тестовые сделки и тестовый аккаунт удалены; в БД остались только реальные данные.
-
-## Открытые вопросы (жду ответа перед стартом)
-
-1. **Пусто пока по июню 2026** — вы упомянули «первый должен быть июнь 2026-го». Урока за июнь 2026 сейчас в модуле нет. Создать пустой урок «Итоги месяца. Июнь 2026» (`IM-06.2026`, `content_month=2026-06`, `is_active=false` до наполнения) или пока не трогаем и оставляем самым верхним «Май 2026»? По умолчанию — не создаю, чтобы не плодить пустой контент.
-2. Тестовому пользователю дать роль `client` (по умолчанию) — ок?
+- Переименовывать сам шаблон в `canonical_templates` не будем — правим только отображение при отправке.
+- Названия продукта/тарифа для письма берём из уже существующих таблиц; если каких-то полей нет — деградируем к тому, что есть, без падения.
