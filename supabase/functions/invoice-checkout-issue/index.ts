@@ -263,8 +263,6 @@ Deno.serve(async (req) => {
   // 8. PDF счёта — strict с флагом pre_payment_invoice.
   let pdfUrl: string | null = null;
   let documentId: string | null = null;
-  let emailSent = false;
-  let telegramSent = false;
   try {
     const strictResp = await fetch(
       `${url}/functions/v1/canonical-document-generate-strict`,
