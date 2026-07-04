@@ -292,6 +292,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
         meta: {
           instagramAccountId: d.__accountId,
           instagramThreadKey: d.thread_key,
+          instagramThreadId: d.ig_thread_id ?? null,
           instagramPeerId: d.peer_id,
           instagramSenderName: d.sender_name,
         },
