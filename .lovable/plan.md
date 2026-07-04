@@ -1,43 +1,34 @@
 План:
 
-## Diagnose
-Симптом (скрин): в админке модуля «Итоги месяца» после «Создать» вылезает toast «Ошибка создания урока». Форма заполнена только `Название` + `URL-slug` (`Итоги Июнь 2026` / `itogi-iyun-2026`), дата публикации не задана, месяц контента не задан.
+## Диагноз
+Ошибка `permission denied for table training_lessons` из скриншота — это ошибка уровня GRANT (PostgREST), а не RLS.
 
-Что уже проверено:
-- `useTrainingLessons.createLesson` делает прямой `insert` в `training_lessons`, ловит ошибку и пишет generic toast (без деталей).
-- RLS: `Admins can manage lessons` через `has_role_v2` — политика есть.
-- Unique-конфликта по `(module_id, slug)` для `itogi-iyun-2026` в модуле «Итоги месяца» нет.
-- В форме нет обязательных полей за пределами `title`/`slug`/`module_id` — они заполнены.
-- В postgres/edge логах явных ошибок по `training_lessons` за последние сутки не видно (могут не долетать из-за фильтра PostgREST).
-- Реальная причина 4xx/5xx от PostgREST не видна пользователю и не логируется — toast всегда одинаковый.
+Проверил в БД:
+- У роли `authenticated` на `public.training_lessons` есть только `SELECT`, но нет `INSERT`/`UPDATE`/`DELETE`.
+- То же самое на `public.training_modules`.
+- RLS-политика `Admins can manage lessons` корректная (разрешает admin/super_admin через `has_role_v2`), но до неё запрос не доходит — GRANT срезает раньше.
+- Ирина Гаринова (auth uid `f1a79dd0-…`, вход с `irenessa@yandex.ru` подтверждён в auth-логах) имеет роль `admin` в `user_roles_v2`, то есть RLS её пропустит, как только появятся GRANT'ы.
 
-Гипотезы, которые надо развести (в порядке вероятности):
-1. RLS-отказ: у текущего аккаунта проверка `has_role_v2` возвращает `false` (например, роль назначена только на `admin` в `user_roles`, но политика ждёт `super_admin`, или наоборот — фактически прав нет на этом клиенте). Симптом: `code 42501` / `new row violates row-level security`.
-2. CHECK-констрейнт `training_lessons_content_month_format_chk`: если из формы прилетает пустая строка `""` вместо `null` для `content_month`, чек упадёт (`~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`).
-3. Пустые строки в других nullable-полях (`video_url`, `audio_url`, `description`, `content`, `thumbnail_url`) сами по себе не ломают, но `published_at: ""` — сломает как невалидный timestamp; проверить, что в insert улетает `undefined`, а не `""`.
-4. `sort_order: lessons.length` при большом количестве уроков — не проблема; исключим по логу.
+Соседние таблицы (`lesson_blocks`, `lesson_attachments`) уже имеют полные GRANT'ы — расхождение подтверждает, что на `training_lessons`/`training_modules` GRANT'ы просто забыли выдать при создании.
 
-## Plan
-1. Воспроизвести на живом стенде под аккаунтом админа `7500084@gmail.com` через Playwright (логин через preview, dev-пароль `123456` при необходимости), открыть модуль «Итоги месяца», заполнить те же поля, что на скрине, кликнуть «Создать». Снять screenshot + перехватить сетевой ответ PostgREST (`POST /rest/v1/training_lessons`) — увидеть точный `code`/`message`/`hint`/`details`.
-2. Параллельно временно расширить обработчик в `src/hooks/useTrainingLessons.tsx` (`createLesson`): выводить `error.message`/`error.details` в toast (`toast.error(\`Ошибка: ${error.message}\`)`) и `console.error` с полным объектом, чтобы такие кейсы диагностировались моментально в будущем. Аналогично для `updateLesson`/`deleteLesson`.
-3. По результату шага 1 — точечный фикс. Ожидаемые ветки:
-   - **RLS**: проверить фактические роли админа в `user_roles`, при необходимости починить `has_role_v2` / политику `Admins can manage lessons` (миграция).
-   - **content_month check**: в `handleCreate`/`createLesson` нормализовать `content_month: formData.content_month?.trim() || null` (и то же для `description`, `content`, `video_url`, `audio_url`, `thumbnail_url` → пустая строка → `null`), а также гарантированно не отправлять `published_at: ""`.
-   - **другое**: закрыть по факту (по коду ошибки из шага 1).
-4. Regression-checks (dry run на копии данных не нужен, insert — идемпотентен по слагу, откатим тестовую строку):
-   - Создать урок с только `title`+`slug` → успех, дефолты применяются.
-   - Создать урок с датой публикации + временем → `published_at` корректный UTC.
-   - Создать урок с заданным `content_month` `2026-06` → успех; с мусорным `2026-6` → внятная ошибка в toast.
-   - Попытка создать второй урок с тем же slug в том же модуле → внятный toast про уникальность.
+## Исправление (одна миграция)
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.training_lessons TO authenticated;
+GRANT ALL ON public.training_lessons TO service_role;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.training_modules TO authenticated;
+GRANT ALL ON public.training_modules TO service_role;
+```
+
+RLS не трогаем — доступ к записи остаётся у admin/super_admin, как и было задумано.
 
 ## Verify (DoD)
-- В админке под аккаунтом `7500084@gmail.com` создаётся новый урок «Итоги Июнь 2026» / `itogi-iyun-2026` в модуле «Итоги месяца» без ошибок, урок появляется в списке (скриншот).
-- Тестовая запись удаляется после проверки.
-- В обработчиках `createLesson`/`updateLesson`/`deleteLesson` в toast и `console.error` выводится реальное сообщение ошибки Supabase.
-- Все 4 regression-кейса выше проходят.
-- Отчёт с точной первопричиной и списком изменённых файлов/миграций.
+1. После применения миграции — повторный запрос `has_table_privilege('authenticated', 'public.training_lessons', 'INSERT')` должен вернуть `true`.
+2. Открыть в preview `/admin/live-events` под учёткой Ирины (или под тест-админом), создать урок «Тест GRANT» в модуле «Итоги месяца» — должен создаться без тоста «permission denied». Затем удалить тестовый урок.
+3. Проверить в логах Postgres/edge, что ошибок permission denied по этим таблицам больше нет.
 
-## Технические детали
-- Файлы под правку (минимум): `src/hooks/useTrainingLessons.tsx` (детализированные ошибки), опционально `src/pages/admin/AdminTrainingLessons.tsx` (нормализация пустых строк перед `createLesson`).
-- Возможная миграция: только если диагностика покажет проблему в RLS/`has_role_v2` — тогда отдельная migration с фиксом политики; иначе миграций не будет.
-- Никаких новых таблиц/RPC/edge-функций не создаём — используем существующий путь.
+## Что НЕ делаем
+- Не меняем RLS-политики.
+- Не трогаем роли пользователей (у Ирины уже admin).
+- Не выдаём `anon` — таблицы админские.
