@@ -510,3 +510,52 @@ function ChatPanel({ row, onBack }: { row: UnifiedDialog; onBack?: () => void })
   }
   return null;
 }
+
+/**
+ * Иконка hover-действия строки. Изолирована от выбора строки
+ * (stopPropagation + preventDefault на click/keydown).
+ */
+function IconAction({
+  title,
+  disabled,
+  active,
+  onActivate,
+  children,
+}: {
+  title: string;
+  disabled?: boolean;
+  active?: boolean;
+  onActivate: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={title}
+      aria-pressed={active}
+      title={title}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!disabled) onActivate();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!disabled) onActivate();
+        }
+      }}
+      className={cn(
+        "h-5 w-5 rounded-full inline-flex items-center justify-center cursor-pointer transition-colors",
+        disabled
+          ? "opacity-50 cursor-not-allowed"
+          : "hover:bg-primary/10",
+        active && "text-primary",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
