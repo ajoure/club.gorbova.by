@@ -412,7 +412,7 @@ async function sendEmailViaSMTP(params: {
 
     const dataLines = lines.join("\r\n");
 
-    await conn.write(encoder.encode(dataLines + "\r\n"));
+    await writeAll(encoder.encode(dataLines + "\r\n"));
     const dataResp = await readResponse();
     console.log(`SMTP < ${dataResp.trim()}`);
     const dataCode = parseSmtpCode(dataResp);
