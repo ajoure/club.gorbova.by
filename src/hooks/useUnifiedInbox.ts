@@ -39,6 +39,8 @@ export interface UnifiedDialog {
   isFavorite: boolean;
   /** Технические поля источника, нужные правой панели. */
   meta: {
+    /** profiles.id — общий канон для ChannelPicker (V2-CHANNELS). */
+    profileId?: string | null;
     /** profiles.user_id (UUID) — используется как chat key и передаётся как `userId` в ContactTelegramChat. */
     telegramUserId?: string;
     /** profiles.telegram_user_id (числовой Telegram ID) — обязателен для ContactTelegramChat, иначе он показывает «Telegram не привязан». */
@@ -53,6 +55,10 @@ export interface UnifiedDialog {
     /** ig_thread_id из RPC — тот же, что ждёт instagram-admin-chat/get_history. Может быть null для новых диалогов. */
     instagramThreadId?: string | null;
     instagramPeerId?: string;
+    /** instagram_contacts.instagram_user_id — IG-side peer id (== peer_id). */
+    instagramUserId?: string;
+    /** instagram_contacts.id — нужен для link/unlink RPC (V2-CHANNELS P2). */
+    instagramContactId?: string | null;
     instagramSenderName?: string | null;
     ticketId?: string;
     ticketStatus?: string;
