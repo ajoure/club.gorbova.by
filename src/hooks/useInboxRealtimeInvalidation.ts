@@ -47,9 +47,12 @@ import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
  */
 export function useInboxRealtimeInvalidation(): void {
   const queryClient = useQueryClient();
+  const [unifiedEnabled] = useUnifiedInboxFlag();
   // refs не вызывают re-render и сохраняются между батчами событий
   const inboxPendingRef = useRef(false);
   const unreadPendingRef = useRef(false);
+  const igPendingRef = useRef(false);
+  const supportPendingRef = useRef(false);
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -57,13 +60,23 @@ export function useInboxRealtimeInvalidation(): void {
       timerRef.current = null;
       const flushInbox = inboxPendingRef.current;
       const flushUnread = unreadPendingRef.current;
+      const flushIg = igPendingRef.current;
+      const flushSupport = supportPendingRef.current;
       inboxPendingRef.current = false;
       unreadPendingRef.current = false;
+      igPendingRef.current = false;
+      supportPendingRef.current = false;
       if (flushInbox) {
         queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
       }
       if (flushUnread) {
         queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });
+      }
+      if (flushIg) {
+        queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
+      }
+      if (flushSupport) {
+        queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
       }
     };
 
