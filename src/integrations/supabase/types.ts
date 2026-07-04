@@ -17786,10 +17786,24 @@ export type Database = {
         }
         Returns: Json
       }
-      create_support_ticket: {
-        Args: { p_category?: string; p_description: string; p_subject: string }
-        Returns: Json
-      }
+      create_support_ticket:
+        | {
+            Args: {
+              p_category?: string
+              p_description: string
+              p_subject: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_attachments?: Json
+              p_category?: string
+              p_description: string
+              p_subject: string
+            }
+            Returns: Json
+          }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
