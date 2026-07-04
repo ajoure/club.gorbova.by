@@ -446,6 +446,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
     igDialogs.data,
     igAccountLabel,
     igContactMap,
+    igPrefMap,
     support.data,
     supportProfiles.data,
   ]);
