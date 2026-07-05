@@ -56,7 +56,7 @@ interface Replacement {
   original_text: string;
   field_public_id: string;
   status: 'accepted' | 'changed' | 'skipped' | 'manually_added';
-  format?: 'words' | 'text' | null;
+  format?: 'words' | 'text' | 'full' | 'short' | 'signature_short' | null;
   case_modifier?:
     | 'nominative' | 'genitive' | 'dative' | 'accusative'
     | 'instrumental' | 'prepositional' | null;
