@@ -1485,6 +1485,40 @@ Deno.serve(async (req) => {
       const dt = ((reg?.data_type as string) || '').toLowerCase();
       const regKey: string = ((reg?.key as string) || '').toLowerCase();
       const rawValue = entry?.value;
+
+      // PATCH-ROLE-PERSON-NAME-FLDS: биллинговые ролевые «Руководитель ФИО»
+      // (Исполнитель ЮЛ, Заказчик ЮЛ, Заказчик ИП) — маршрутизируем через
+      // formatPersonName для форматов full/short/signature_short + падеж.
+      // Ничего нового не создаём — переиспользуем ту же логику, что и для
+      // package.ul.FLD-000014 и ln-ролей (kind=name).
+      if (PERSON_NAME_FIELD_KEYS.has(regKey)) {
+        const fmtKey = (t.format ?? 'full') as PersonNameFormat;
+        const isPersonFmt = PERSON_NAME_FORMATS.has(fmtKey);
+        const cs = t.case_modifier as RuCase | null;
+        const rawStr = fmtVal(rawValue);
+        let outVal = rawStr;
+        let fmtApplied = false;
+        let caseApplied = false;
+        let caseReason: string | null = null;
+        if (isPersonFmt || cs) {
+          try {
+            outVal = formatPersonName(rawStr, {
+              format: isPersonFmt ? fmtKey : 'full',
+              case: cs ?? undefined,
+            });
+            if (t.format && isPersonFmt) fmtApplied = true;
+            if (cs) caseApplied = true;
+          } catch (e: any) {
+            caseReason = `person_name_format_failed:${e?.message || 'exception'}`;
+          }
+        }
+        resolved[t.raw_inside] = outVal;
+        appliedFormatByPlaceholder[t.raw_inside] = fmtApplied;
+        appliedCaseByPlaceholder[t.raw_inside] = caseApplied;
+        caseReasonByPlaceholder[t.raw_inside] = caseReason;
+        continue;
+      }
+
       const fmt = applyFormat(rawValue, dt, orderCurrency, t.format);
       let outVal = fmt.value;
       let fmtApplied = fmt.applied;
