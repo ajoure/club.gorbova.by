@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, Loader2, Send, MessageCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Send, MessageCircle, Mail } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import {
@@ -25,6 +25,12 @@ interface LeadRequestDialogProps {
   onOpenChange: (open: boolean) => void;
   offerId: string;
   offerLabel?: string;
+  /** Название продукта — показывается в подзаголовке шапки как контекст. */
+  productName?: string;
+  /** Название тарифа — показывается в подзаголовке. */
+  tariffName?: string;
+  /** Дополнительная ценовая метка (напр. "Бесплатно" или "по договорённости"). */
+  priceLabel?: string;
   commentPlaceholder?: string;
   successMessage?: string;
 }
