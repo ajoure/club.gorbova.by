@@ -313,20 +313,35 @@ Deno.serve(async (req) => {
       .replaceAll("{{phone}}", effectivePhone ?? "")
       .replaceAll("{{comment}}", comment ?? "");
 
-    // Safety net: if the rendered description doesn't contain the phone or
-    // email (e.g. legacy template without placeholders), prepend a contact
-    // block so the Telegram/CRM assignee always sees who to call.
-    const hasPhoneInDesc = effectivePhone && description.includes(effectivePhone);
-    const hasEmailInDesc = description.toLowerCase().includes(effectiveEmail.toLowerCase());
-    if (!hasPhoneInDesc && !hasEmailInDesc) {
-      const contactBlock =
-        `Клиент: ${effectiveName}\n` +
-        `Телефон: ${effectivePhone ?? "—"}\n` +
-        `Email: ${effectiveEmail}\n` +
-        (comment && comment.trim() ? `Комментарий: ${comment.trim()}\n` : "") +
-        `\n`;
-      description = contactBlock + description;
+    // Canonical source of client identity — task fields (contact_id, deal_id)
+    // + orders_v2.meta.contact_snapshot. Description should only carry the
+    // client's own free-form comment. Fallback contact block is added ONLY
+    // when contact/deal linkage failed, so an assignee is never left without
+    // a way to reach the client.
+    const contactLinked = !!profileId;
+    if (contactLinked) {
+      const trimmedDesc = description.trim();
+      const clientComment = comment && comment.trim() ? comment.trim() : "";
+      description = clientComment
+        ? (trimmedDesc
+            ? `${trimmedDesc}\n\nКомментарий клиента: ${clientComment}`
+            : `Комментарий клиента: ${clientComment}`)
+        : trimmedDesc;
+    } else {
+      const hasPhoneInDesc = effectivePhone && description.includes(effectivePhone);
+      const hasEmailInDesc = description.toLowerCase().includes(effectiveEmail.toLowerCase());
+      if (!hasPhoneInDesc && !hasEmailInDesc) {
+        const contactBlock =
+          `Клиент: ${effectiveName}\n` +
+          `Телефон: ${effectivePhone ?? "—"}\n` +
+          `Email: ${effectiveEmail}\n` +
+          (comment && comment.trim() ? `Комментарий: ${comment.trim()}\n` : "") +
+          `\n`;
+        description = contactBlock + description;
+      }
     }
+
+
 
 
     const { data: task, error: taskErr } = await supa

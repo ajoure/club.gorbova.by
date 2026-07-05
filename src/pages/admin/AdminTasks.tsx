@@ -14,8 +14,11 @@ import {
   type CrmTask,
   type CrmTaskListFilters,
 } from "@/hooks/useCrmTasks";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
+import { ViewCrmTaskDialog } from "@/components/admin/tasks/ViewCrmTaskDialog";
 import { TaskKanbanBoard } from "@/components/admin/tasks/board/TaskKanbanBoard";
 import { TasksListView } from "@/components/admin/tasks/TasksListView";
 import { TasksStaffStatsPanel } from "@/components/admin/tasks/stats/TasksStaffStatsPanel";
@@ -23,6 +26,7 @@ import {
   TasksFiltersBar,
   type TasksFiltersValue,
 } from "@/components/admin/tasks/filters/TasksFiltersBar";
+
 
 const DEFAULT_FILTERS: TasksFiltersValue = {
   quick: "all",
@@ -38,8 +42,16 @@ export default function AdminTasks() {
   const [view, setView] = useState<"board" | "list" | "stats">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewTask, setViewTask] = useState<CrmTask | null>(null);
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const {
+    selectedContact,
+    contactSheetOpen,
+    setContactSheetOpen,
+    openContactSheet,
+  } = useLiveContactSheet();
+
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
@@ -158,7 +170,7 @@ export default function AdminTasks() {
         </div>
       </div>
 
-      <TasksFiltersBar value={filters} onChange={setFilters} types={types} onPickTask={setEditTask} />
+      <TasksFiltersBar value={filters} onChange={setFilters} types={types} onPickTask={setViewTask} />
 
       {dealFilter && (
         <div className="flex items-center gap-2">
@@ -199,7 +211,7 @@ export default function AdminTasks() {
             <TaskKanbanBoard
               tasks={tasks}
               types={types}
-              onOpenTask={setEditTask}
+              onOpenTask={setViewTask}
               onOpenDeal={openDeal}
             />
           )}
@@ -209,7 +221,7 @@ export default function AdminTasks() {
           {isLoading ? (
             <div className="text-sm text-muted-foreground p-6">Загрузка…</div>
           ) : (
-            <TasksListView tasks={tasks} types={types} onOpenTask={setEditTask} />
+            <TasksListView tasks={tasks} types={types} onOpenTask={setViewTask} />
           )}
         </TabsContent>
 
@@ -219,11 +231,28 @@ export default function AdminTasks() {
       </Tabs>
 
       <CreateCrmTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ViewCrmTaskDialog
+        open={!!viewTask}
+        onOpenChange={(v) => !v && setViewTask(null)}
+        task={viewTask}
+        onEdit={(t) => {
+          setViewTask(null);
+          setEditTask(t);
+        }}
+        onOpenContact={(id) => openContactSheet(id)}
+        onOpenDeal={openDeal}
+      />
       <EditCrmTaskDialog
         open={!!editTask}
         onOpenChange={(v) => !v && setEditTask(null)}
         task={editTask}
       />
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={setContactSheetOpen}
+      />
     </div>
   );
+
 }

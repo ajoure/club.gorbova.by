@@ -28,10 +28,14 @@ export function useTaskRelations(dealIds: string[], contactIds: string[]) {
     enabled: dealIds.length > 0,
     queryFn: async (): Promise<Record<string, TaskDealLite>> => {
       const ids = Array.from(new Set(dealIds));
+      // NOTE: orders_v2 has NO `public_id` column — use `order_number`.
+      // Requesting a non-existent column makes PostgREST fail the whole select,
+      // which is what caused "Без контакта 759fa191" in cards / list / editor.
       const { data, error } = await (supabase as any)
         .from("orders_v2")
         .select(
-          `id, public_id, pipeline_id, pipeline_stage_id, status,
+          `id, order_number, pipeline_id, pipeline_stage_id, status,
+           customer_email, customer_phone, meta,
            product:products_v2(name),
            tariff:tariffs(name),
            profile:profiles!orders_v2_profile_id_fkey(full_name, email, phone)`,
@@ -40,21 +44,29 @@ export function useTaskRelations(dealIds: string[], contactIds: string[]) {
       if (error) throw error;
       const map: Record<string, TaskDealLite> = {};
       for (const r of (data ?? []) as any[]) {
+        const snap = (r.meta && typeof r.meta === "object" ? (r.meta as any).contact_snapshot : null) ?? null;
         map[r.id] = {
           id: r.id,
-          public_id: r.public_id,
+          public_id: r.order_number ?? null,
           pipeline_id: r.pipeline_id,
           pipeline_stage_id: r.pipeline_stage_id,
           status: r.status,
           product_name: r.product?.name || r.tariff?.name || null,
           contact_name:
-            r.profile?.full_name || r.profile?.email || r.profile?.phone || null,
+            r.profile?.full_name ||
+            snap?.name ||
+            r.profile?.email ||
+            r.customer_email ||
+            r.profile?.phone ||
+            r.customer_phone ||
+            null,
         };
       }
       return map;
     },
     staleTime: 60_000,
   });
+
 
   const contactsQ = useQuery({
     queryKey: ["task-relations-contacts", [...new Set(contactIds)].sort()],
