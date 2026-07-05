@@ -261,10 +261,15 @@ const ALLOWED_CASES = new Set([
 //   - 'long' — раскрывает короткую форму собственности (ООО → Общество с
 //     ограниченной ответственностью). Применяется только к токенам
 //     `*.leg.org_form`; на других полях возвращает значение без изменений.
+// PATCH-ROLE-PERSON-NAME-FLDS: добавлены 'full' и 'signature_short' — ФИО-модификаторы
+// для биллинговых полей из PERSON_NAME_FIELD_KEYS. 'short' уже был как date-alias;
+// диспетчеризация по data_type/regKey — в цикле резолвинга (person_name FLDs
+// маршрутизируются через formatPersonName до applyDateAliasFormat).
 const ALLOWED_FORMATS = new Set([
   'words', 'text',
   'short', 'dd.MM.yyyy', 'long_ru', 'words_ru',
   'long',
+  'full', 'signature_short',
 ]);
 // Format/case modifier values may include letters, digits, underscore and dot
 // (the dot is required for `format=dd.MM.yyyy`).
