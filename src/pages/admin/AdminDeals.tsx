@@ -66,6 +66,7 @@ import {
   SlidersHorizontal,
   X,
   Pencil,
+  Send,
 } from "lucide-react";
 import {
   DropdownMenu,
