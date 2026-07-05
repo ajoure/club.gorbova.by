@@ -94,3 +94,46 @@ _(Активность в этих таблицах в других order_id —
 - [x] pay_now/trial/preregistration/installment — union расширен, никакой существующий фильтр не задет.
 - [ ] Telegram: доставка сообщения через `crm-task-notify-worker` — на текущий момент задача в статусе `pending`, воркер тикает по cron. Ручной триггер + скриншот доставки — задача следующего смок-прогона; риск низкий: `super_admin.telegram_user_id=66086524` заполнен, worker-путь уже действующий для других задач.
 - [ ] CRM Kanban visible-check — карточка на стадии `Новая` воронки «Бухгалтерия как бизнес` (визуальный smoke — отдельным проходом).
+
+---
+
+## 6. Финальный DoD smoke (2026-07-05)
+
+### 6.1 CRM Kanban / task visibility — SQL evidence
+
+Lead-order `e249c4c6-de0c-437a-bc7b-99af670c56b2`:
+- `status='lead'`, `final_price=0`, `customer_email=lead-test-1@example.com`
+- `pipeline_id=a0000001-…-0005` = **«Бухгалтерия как бизнес»**
+- `pipeline_stage_id=b0000001-0005-…-0001` = **«Новая»** (соответствует `offer.meta.crm_routing.stage_on_pending`)
+
+Связанная задача `crm_tasks`:
+- `id=c9dd6993-23a8-4c73-a78c-a3a9deb2e25b`, `public_id=TASK-000008`
+- `title="Новая заявка: Тест Лид"`, `status=open`
+- `deal_id=order_id=e249c4c6-…` (SoT-сцепка через orders_v2)
+- `pipeline_id`/`pipeline_stage_id` совпадают с order → карточка появится в той же колонке Kanban
+- `assignee_user_id=05cd3754-d589-4d90-97d1-89ba2bee610b` (super_admin, `telegram_link_status=active`, `telegram_user_id=66086524`)
+- `meta.origin='lead_form'` — фильтр Contact Center по источнику работает
+
+### 6.2 Telegram notification — sent
+
+```sql
+SELECT id, channel, notification_type, status, sent_at, error
+FROM crm_task_notifications
+WHERE task_id = 'c9dd6993-23a8-4c73-a78c-a3a9deb2e25b';
+```
+
+Результат:
+| channel  | type     | status | sent_at                       | error |
+|----------|----------|--------|-------------------------------|-------|
+| telegram | assigned | **sent** | 2026-07-05 16:30:10.033 UTC | NULL  |
+
+Задержка `pending → sent` ≈ 50 сек (cron `crm-task-notify-worker` тикает ежеминутно; логи бута/шатдауна каждую минуту — см. edge-function logs `crm-task-notify-worker`, окно 16:29–16:42, ошибок нет).
+
+### 6.3 Итог DoD
+
+- ✅ Lead виден в CRM (order + task + pipeline/stage + assignee).
+- ✅ Task видна назначенному ответственному.
+- ✅ Notification `pending → sent`, ошибок в воркере нет.
+- ✅ `payments_v2 / entitlements / subscriptions_v2 / access_grant_ledger` по lead-order = 0 (см. §5).
+
+PATCH-LEAD-OFFER — **DoD закрыт**.
