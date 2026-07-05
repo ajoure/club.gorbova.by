@@ -1,12 +1,14 @@
+import { useState } from "react";
 import { useSiteVisibility } from "../SiteVisibilityContext";
 import { sanitizeHtml } from "@/lib/sanitization";
+import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 
 interface ButtonSectionProps {
   content: Record<string, unknown>;
   blockId?: string;
 }
 
-type ActionType = "link" | "scroll_to_anchor" | "show_block" | "toggle_block" | "open_form";
+type ActionType = "link" | "scroll_to_anchor" | "show_block" | "toggle_block" | "open_form" | "open_lead_form";
 
 export function ButtonSection({ content, blockId }: ButtonSectionProps) {
   const text = (content.text as string) || "";
