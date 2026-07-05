@@ -108,5 +108,3 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
     </section>
   );
 }
-  );
-}
