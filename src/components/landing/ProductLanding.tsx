@@ -5,6 +5,7 @@ import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
+import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
