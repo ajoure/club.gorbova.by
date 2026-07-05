@@ -135,8 +135,17 @@ export function ProductLanding({ data, header, footer, customSections }: Product
 
       {footer}
 
-      {/* Payment / Preregistration Dialog */}
-      {selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
+      {/* Payment / Preregistration / Lead Dialog */}
+      {selectedOffer && selectedOffer.offer.offer_type === "lead" ? (
+        <LeadRequestDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          offerId={selectedOffer.offer.id}
+          offerLabel={selectedOffer.offer.button_label}
+          commentPlaceholder={(selectedOffer.offer.meta as any)?.lead_form?.comment_placeholder}
+          successMessage={(selectedOffer.offer.meta as any)?.lead_form?.success_message}
+        />
+      ) : selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
         <PreregistrationDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
