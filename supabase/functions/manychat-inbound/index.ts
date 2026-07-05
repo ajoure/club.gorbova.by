@@ -608,6 +608,86 @@ Deno.serve(async (req) => {
     console.error("[manychat-inbound] domain_event_failed", e);
   }
 
+  // 8b) Push notifications to admins (only for incoming client messages, not dedupe path).
+  // Fire-and-forget: never break the 200 OK to ManyChat.
+  if (normalized.direction === "incoming" && inserted?.id) {
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+      // Resolve display name: prefer linked platform profile, fallback to IG username.
+      let senderName = normalized.subscriber_name || "Сообщение из Instagram";
+      let source = "ig_subscriber_name";
+      try {
+        const { data: contact } = await supabase
+          .from("instagram_contacts")
+          .select("profile_id, instagram_username, full_name")
+          .eq("instagram_account_id", accountId!)
+          .eq("provider_kind", "manychat")
+          .eq("instagram_user_id", normalized.subscriber_id)
+          .maybeSingle();
+
+        if (contact?.profile_id) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("first_name, last_name, full_name")
+            .eq("id", contact.profile_id)
+            .maybeSingle();
+          const last = (prof?.last_name || "").trim();
+          const first = (prof?.first_name || "").trim();
+          const full = (prof?.full_name || "").trim();
+          if (last && first) { senderName = `${last} ${first}`; source = "platform_first_last"; }
+          else if (last) { senderName = last; source = "platform_last"; }
+          else if (first) { senderName = first; source = "platform_first"; }
+          else if (full) { senderName = full; source = "platform_full"; }
+        } else if (contact?.instagram_username) {
+          senderName = `@${contact.instagram_username}`;
+          source = "ig_username";
+        }
+      } catch (nameErr) {
+        console.warn("[manychat-inbound][push] name_resolve_failed", nameErr);
+      }
+
+      const preview = ((normalized.message_text || "").trim()
+        || (normalized.media_url ? "[медиа]" : "Новое сообщение"))
+        .slice(0, 100);
+
+      console.log("[Push][instagram] resolved name", JSON.stringify({
+        source,
+        account_id: accountId,
+        subscriber_id: normalized.subscriber_id,
+      }));
+
+      // Fetch admin user_ids (super_admin + admin), mirror telegram-webhook.
+      const { data: adminRoles } = await supabase
+        .from("user_roles_v2")
+        .select("user_id, roles!inner(code)")
+        .in("roles.code", ["super_admin", "admin"]);
+      const adminUserIds = Array.from(
+        new Set(((adminRoles as any[]) || []).map((r) => r.user_id).filter(Boolean)),
+      );
+
+      if (adminUserIds.length > 0) {
+        fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({
+            user_ids: adminUserIds,
+            title: `📷 ${senderName}`,
+            body: preview,
+            url: "/admin/communication",
+            tag: `ig-msg-${accountId}-${normalized.subscriber_id}`,
+          }),
+        }).catch((e) => console.error("[Push][instagram] send error", e));
+      }
+    } catch (pushErr) {
+      console.error("[manychat-inbound][push] error", pushErr);
+    }
+  }
+
   await logIntegrationEvent(
     supabase,
     instance.id,
