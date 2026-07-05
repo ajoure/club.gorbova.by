@@ -1,182 +1,205 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. План принять, но расширить scope: сделать то же самое не только для:
+1. План можно выполнять.
   &nbsp;
-  ```text
-  Исполнитель ЮЛ
-  Заказчик ЮЛ
+  Итоговый статус после выполнения:
+2. Перед правками по `FLD-000313` и `FLD-000314` обязательно сделать SQL-discovery и зафиксировать в proof:
+  &nbsp;
+  ```sql
+  SELECT field_public_id, token_key, label, data_type, is_active
+  FROM fields_registry
+  WHERE field_public_id IN ('FLD-000313','FLD-000314')
+     OR token_key ILIKE 'customer.ind.%'
+     OR label ILIKE '%Заказчик ФЛ%'
+  ORDER BY field_public_id;
   ```
-  но и для:
-2. Перед правками сделать discovery по `fields_registry` и найти точное существующее поле для ФИО заказчика ИП.
-  &nbsp;
-  Проверить минимум по ключам:
+  Нужно подтвердить, что:
   ```text
-  customer.ip.full_name
-  customer.ip.name
-  customer.ip.person_full_name
-  customer.ip.entrepreneur_full_name
+  FLD-000313 = customer.ind.full_name
+  FLD-000314 = customer.ind.full_name_short
   ```
-  Нельзя добавлять новое поле, миграцию или новый `data_type`. Нужно использовать уже существующий FLD.
-3. После discovery добавить найденный FLD Заказчика ИП в тот же allowlist `person_name`.
+  Если token_key отличается — использовать фактический token_key из БД, не хардкодить неверное имя.
+3. Fix #1 принимаю: нужно синхронизировать whitelist форматов во всех валидаторах.
   &nbsp;
-  То есть итоговый allowlist должен быть не из 2, а из 3 полей:
+  Проверить минимум 3 места:
+  ```text
+  supabase/functions/canonical-template-apply-markup/index.ts
+  src/lib/documents/placeholderClassifier.ts
+  supabase/functions/_shared/placeholderClassifier.ts
+  ```
+  Все должны одинаково принимать:
+4. Важно: расширение whitelist в `canonical-template-apply-markup` должно быть только синтаксическим.
+  &nbsp;
+  Оно не должно означать, что `format=signature_short` применим к любому `field:FLD-*`.
+  Runtime-семантика остаётся через allowlist person-name полей:
+  ```text
+  FLD-000362
+  FLD-000338
+  FLD-000289
+  FLD-000313
+  ```
+  Где `FLD-000289` — уже добавленный Заказчик ИП, если это подтверждено предыдущим discovery.
+5. В `PlaceholdersCatalogTab.tsx` итоговый allowlist `PERSON_NAME_FIELD_FLDS` должен включать все 4 поля:
+  &nbsp;
   ```text
   FLD-000362 — Исполнитель ЮЛ: Руководитель ФИО
   FLD-000338 — Заказчик ЮЛ: Руководитель ФИО
-  FLD-XXXXXX — Заказчик ИП: ФИО / Наименование ИП / ФИО предпринимателя
+  FLD-000289 — Заказчик ИП: ФИО / ФИО предпринимателя
+  FLD-000313 — Заказчик ФЛ: ФИО
   ```
-  Точный `FLD-XXXXXX` подставить после SQL-discovery.
-4. Для Заказчика ИП UI должен показывать те же готовые controls:
+  Если `FLD-000289` оказался другим по discovery — использовать фактический ID.
+6. Список скрытых дублей должен включать:
   &nbsp;
   ```text
-  ФИО полностью
-  ФИО кратко
-  ФИО для подписи
-  падеж
+  FLD-000364
+  FLD-000340
+  FLD-000291
+  FLD-000314
   ```
-  Копирование должно давать существующий формат:
-5. Если у Заказчика ИП есть дубль “ФИО кратко” отдельным FLD, его тоже скрыть из UI-каталога по allowlist.
+  Но `FLD-000291` и `FLD-000314` скрывать только после подтверждения, что это именно short-дубли соответствующих основных ФИО-полей.
+7. В `canonical-document-generate-strict/index.ts` в `PERSON_NAME_FIELD_KEYS` добавить:
   &nbsp;
-  Но только после discovery. Не угадывать ID.
-6. Backend resolver/case-classifier расширить для Заказчика ИП.
-  &nbsp;
-  В `classifyTokenForCase` / related mapping добавить token_key найденного IP-поля как:
   ```text
-  person_name
+  customer.ind.full_name
   ```
-  Примерно:
+  И убедиться, что уже есть:
   ```text
-  customer.ip.full_name → person_name
+  executor.leg.director_full_name
+  customer.leg.director_full_name
+  customer.ent.director_full_name
   ```
-  Точный token_key взять из `fields_registry`.
-7. Для `formatPersonName` использовать существующую логику.
+  Если для Заказчика ИП используется другой token_key, он тоже должен остаться в allowlist.
+8. Для `customer.ind.full_name` использовать только существующую функцию:
   &nbsp;
-  Не писать отдельный formatter для ИП. Заказчик ИП — это тоже ФИО физлица, значит должен идти через тот же `formatPersonName`.
-8. В тесты добавить Заказчика ИП.
+  ```text
+  formatPersonName
+  ```
+  Не писать отдельную логику для ФЛ.
+9. Добавить регрессию, что не-person field с `format=signature_short` не превращается в ФИО на runtime.
   &nbsp;
-  Unit:
-9. В Playwright/E2E добавить проверку каталога для Заказчика ИП:
-  - открыть `Документы → Плейсхолдеры`;
-  - отфильтровать `Заказчик ИП`;
-  - убедиться, что у найденного FLD появились 3 тумблера ФИО + селектор падежа;
-  - если найден дубль “ФИО кратко” — убедиться, что дубль скрыт;
-  - приложить скрин.
-10. В DOCX runtime proof добавить 3 кейса:
+  Пример:
+  ```text
+  field:FLD-обычный_text|format=signature_short
+  ```
+  Синтаксис может пройти валидатор, но runtime не должен применять `formatPersonName` к обычному текстовому полю.
+10. В Playwright-проверку добавить все 4 активных person-name поля:
 
 ```text
-Исполнитель ЮЛ: Руководитель ФИО
-Заказчик ЮЛ: Руководитель ФИО
-Заказчик ИП: ФИО
+FLD-000362
+FLD-000338
+FLD-000289
+FLD-000313
 ```
 
-Для каждого проверить:
+И все 4 скрытых дубля:
 
 ```text
-format=short
-format=signature_short
-case=genitive
-format=signature_short|case=genitive
+FLD-000364
+FLD-000340
+FLD-000291
+FLD-000314
 ```
 
-11. Раздел “Что НЕ трогаем” исправить.
+11. Проверку шаблона «Счёт-акт ЮЛ Исполнитель v4» принять как обязательную.
 
-Сейчас там написано:
+В proof нужно показать:
 
 ```text
-Роли ФЛ/ИП в customer/executor — соответствующих director_* полей у них нет, поэтому в них ничего не меняется.
+Ошибок: 0
+кнопка «Активировать шаблон» доступна
+invalid_modifier_value: signature_short отсутствует
 ```
 
-Это больше не подходит, потому что Заказчик ИП входит в scope.
-
-Заменить на:
+12. Runtime proof должен включать минимум 3 типа:
 
 ```text
-Исполнитель ИП / роли ФЛ не трогаем, если discovery не покажет отдельного утверждённого поля для текущей задачи. Заказчик ИП входит в scope через найденное существующее FLD-поле ФИО.
+Исполнитель ЮЛ
+Заказчик ЮЛ
+Заказчик ФЛ
 ```
 
-12. В proof добавить SQL-discovery:
+И отдельно не потерять уже добавленный:
 
-```sql
-SELECT field_public_id, token_key, label, data_type, is_active
-FROM fields_registry
-WHERE token_key ILIKE 'customer.ip.%'
-   OR label ILIKE '%Заказчик ИП%'
-   OR label ILIKE '%ИП%ФИО%'
-ORDER BY field_public_id;
+```text
+Заказчик ИП
 ```
 
-И явно указать, какой FLD выбран для Заказчика ИП и почему.
-
-13. Proof должен подтвердить, что не было:
+13. В proof добавить проверку, что не было:
 
 ```text
 миграций
+новых таблиц
+новых RPC
 изменений fields_registry
-новых token types
-новых enum/data_type
+новых data_type / enum
 изменений package.ul/package.ip/package.fl
 ```
 
-14. Финальный статус после выполнения:
+14. Edge deploy обязателен для:
 
 ```text
-PASS: person_name modifiers for Исполнитель ЮЛ / Заказчик ЮЛ / Заказчик ИП
+canonical-template-apply-markup
+canonical-document-generate-strict
 ```
 
-После этих правок план можно выполнять.
+Если менялся только frontend classifier — фронт пересобрать/задеплоить обычным пайплайном.
+
+15. В отчёте приложить:
+
+- SQL-discovery по `FLD-000313/314`;
+- скрин каталога плейсхолдеров;
+- скрин валидации «Счёт-акт ЮЛ Исполнитель v4» без ошибок;
+- фрагмент DOCX/PDF с результатом `signature_short` и `short`;
+- список изменённых файлов;
+- результаты unit + Playwright/E2E.
+
+После этих уточнений план можно выполнять.
 
 &nbsp;
 
-## План: person_name-модификаторы для «Руководитель ФИО» в ролях Исполнитель ЮЛ и Заказчик ЮЛ
+План:
 
-### Цель
+## Задача
 
-Переиспользовать уже готовую функцию «ФИО полностью / ФИО кратко / ФИО для подписи + падеж», которая работает для пакетных плейсхолдеров (`package.ul.director_full_name` и т.п.), на биллинговых FLD-полях ролей Исполнитель ЮЛ и Заказчик ЮЛ. Ничего нового не создаём — используем существующие: `formatPersonName`, `RowSettingsCell` (kind=`person_name`), `buildFieldPlaceholder`, resolver в `_shared/typed-tokens-resolver.ts`, `case-format.ts`.
+1. Убрать ошибку валидации шаблонов `invalid_modifier_value: signature_short` для ФИО-полей (FLD-000362 Исполнитель ЮЛ.Руководитель, FLD-000338 Заказчик ЮЛ.Руководитель) — синтаксис уже разрешён в `_shared/placeholderClassifier.ts` и strict-резолвере, но остались две «отставшие» точки валидации, которые всё ещё режут `full/short/signature_short`.
+2. Добавить те же модификаторы (ФИО полностью / кратко / для подписи + падеж) для роли **Заказчик ФЛ** — по аналогии с уже сделанным для Заказчик ЮЛ / Исполнитель ЮЛ / Заказчик ИП. Функцию `formatPersonName` переиспользуем, ничего нового не создаём.
+3. Прогнать проверку шаблонов и E2E, чтобы все `.docx` с новыми плейсхолдерами (включая уже загруженный «Счёт-акт ЮЛ Исполнитель v4») стали `valid`.
 
-### Затронутые поля (уже существуют в `fields_registry`)
+## Что меняется (technical)
 
-- FLD-000362 «Исполнитель ЮЛ: Руководитель ФИО» (`executor.leg.director_full_name`)
-- FLD-000338 «Заказчик ЮЛ: Руководитель ФИО» (`customer.leg.director_full_name`)
-- Дубли к скрытию/архиву в UI-каталоге (как это сделано для пакета):
-  - FLD-000364 «Исполнитель ЮЛ: Руководитель ФИО кратко»
-  - FLD-000340 «Заказчик ЮЛ: Руководитель ФИО кратко»
+### Fix #1 — расширить whitelist форматов в двух валидаторах
 
-### Что делаем
+- `supabase/functions/canonical-template-apply-markup/index.ts` (стр. 48): `ALLOWED_FORMATS = new Set(['words','text'])` → `new Set(['words','text','full','short','signature_short'])`. Тип поля `Replacement.format` расширить соответственно. Per-FLD семантика (какой FLD реально person_name) остаётся на резолвере — задача этого валидатора только пропустить синтаксис.
+- `src/lib/documents/placeholderClassifier.ts` (стр. 104): `FORMATS_BILLING` привести к тому же значению, что и в `supabase/functions/_shared/placeholderClassifier.ts` (`'words','text','full','short','signature_short'`). Это фронтовый двойник — сейчас он рассинхронизирован и подсвечивает ошибки в редакторе.
+- Поправить тесты `src/lib/documents/placeholderClassifier.test.ts`, которые сейчас утверждают `field:FLD-…|format=signature_short → invalid_modifier_value` — теперь это валидный синтаксис (соответствующий тест `_shared`-версии уже давно ожидает `valid`).
 
-**1. Отметить эти FLD как person_name в UI-каталоге плейсхолдеров**
-Frontend-only. В `src/components/ai-documents/PlaceholdersCatalogTab.tsx` (строка 678) сейчас `kind` считается только из `data_type` (см. `classifyDataType`). Добавляем узкую проверку по `field_public_id` (allowlist из 2 значений: FLD-000362 и FLD-000338) — если совпало, `kind = "person_name"` вместо `"text"`. Это включает готовые тумблеры «ФИО полностью / ФИО кратко / ФИО для подписи» и селектор падежа через уже существующий компонент `RowSettingsCell`.
+### Fix #2 — Заказчик ФЛ: person_name-модификаторы на FLD-000313
 
-Плейсхолдер, который копирует пользователь, соберёт уже существующий `buildFieldPlaceholder(FLD, format, case)` → `{{field:FLD-000362|format=short|case=genitive}}` и т.п. Никаких новых токенов.
+Аналогично уже сделанному для ЮЛ/ИП, без миграций и новых полей:
 
-**2. Скрыть дубли «ФИО кратко» из каталога**
-Как это уже сделано для `package.ul` (см. комментарий в `src/utils/packagePlaceholderCatalog.ts:209` — «дубликат удалён из UI-каталога»), спрятать в `PlaceholdersCatalogTab` строки для FLD-000364 и FLD-000340 через тот же allowlist. Данные в БД не трогаем — только рендер строки.
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx`
+  - В `PERSON_NAME_FIELD_FLDS` добавить `"FLD-000313"` (customer.ind.full_name — «Заказчик ФЛ: ФИО»).
+  - В список скрытых дублей добавить `"FLD-000314"` (customer.ind.full_name_short — «ФИО кратко»), чтобы в каталоге осталось одно поле с тремя тумблерами Full/Short/Signature + падеж.
+- `supabase/functions/canonical-document-generate-strict/index.ts`
+  - В `PERSON_NAME_FIELD_KEYS` (там где `executor.leg.director_full_name`, `customer.leg.director_full_name`, `customer.ent.director_full_name`) добавить `customer.ind.full_name`, чтобы резолвер применял `formatPersonName(value, { format, case })` к значению из `client_legal_details` (уже отдаётся через `typed-tokens-resolver` строкой 253 `map["customer.ind.full_name"] = fullName`).
+- `src/components/ai-documents/extensions/FieldChipNode.ts` уже поддерживает `short`/`signature_short` — трогать не надо.
 
-**3. Резолвер значения на бэкенде**
-`_shared/typed-tokens-resolver.ts` уже кладёт в map `customer.leg.director_full_name` и `executor.leg.director_full_name` — сырые ФИО, к которым применяется `formatPersonName`. Проверяем и, если нужно, дополняем маршрут `{{field:FLD-000362|format=…|case=…}}` в `canonical-document-generate-strict`/`document-render` так, чтобы:
+### Deploy
 
-- `format=short|signature_short` → `formatPersonName(value, { format })`;
-- `case=<падеж>` → `applyCaseModifier` с `classifyTokenForCase` → `person_name` (расширить classifier: добавить token_key `executor.leg.director_full_name` и `customer.leg.director_full_name` → `person_name`).
+- Пересобрать edge-функции: `canonical-template-apply-markup`, `canonical-document-generate-strict`.
 
-Форматирование `formatPersonName` уже полностью реализовано (`supabase/functions/_shared/typed-tokens-resolver.ts:160`), склонение — через `ru-inflection.ts`. Дополнительной логики не пишем.
+## Проверка
 
-**4. Проверка**
+1. Юнит-тесты: `src/lib/documents/placeholderClassifier.test.ts`, `src/utils/personNameFormat.test.ts`, `supabase/functions/canonical-document-generate-strict/__tests__/snapshot_builder_smoke.test.ts`.
+2. Playwright под dev-паролем `123456`:
+  - `/admin/documents?sub=templates` → открыть «Счёт-акт ЮЛ Исполнитель v4» → «Проверка и исправление полей» → убедиться, что «Ошибок: 0», кнопка «Активировать шаблон» доступна. Скрин.
+  - `/admin/documents?sub=placeholders` → каталог: FLD-000362, FLD-000338, FLD-000289, FLD-000313 показывают тумблеры Full/Short/Signature + селектор падежа; FLD-000364/340/291/314 не показываются. Скрин.
+  - Тестовая генерация одного документа канонического пакета с плейсхолдерами `{{field:FLD-000338|format=signature_short|case=genitive}}` и `{{field:FLD-000313|format=short}}` → скачать PDF, убедиться визуально, что вставилось «И.И.Иванова» / «Иванов И.И.». Скрин страницы PDF.
 
-- Unit: расширить `case-format` тестами: `customer.leg.director_full_name|case=genitive` и `format=short` дают ожидаемые «Иванова И.И.» / «И.И.Иванова».
-- E2E через Playwright в песочнице:
-  1. Войти в `/admin` (пароль `123456`).
-  2. Открыть `Документы → Плейсхолдеры`, отфильтровать «Исполнитель ЮЛ» → убедиться, что у строки FLD-000362 появились тумблеры и селектор падежа; строка FLD-000364 отсутствует. То же для «Заказчик ЮЛ» / FLD-000338 / FLD-000340. Скрин.
-  3. Открыть визуальный редактор шаблона, вставить чипом `{{field:FLD-000362|format=signature_short|case=genitive}}`, сохранить.
-  4. Сгенерировать тестовый документ на сделке с ЮЛ-исполнителем → скачать → распарсить DOCX и убедиться, что в тексте, например, «И.В.Иванова» (родительный, инициалы перед фамилией). Скрин + фрагмент текста.
+## DoD
 
-### Что НЕ трогаем
-
-- `fields_registry` (данные), `data_type` полей, миграции — новых полей и enum-значений не добавляем.
-- Пакетные плейсхолдеры (`package.ul.*`, `package.ip.*`, `package.fl.*`) уже работают — оставляем как есть.
-- Роли ФЛ/ИП в customer/executor — соответствующих `director_*` полей у них нет (проверено запросом к `fields_registry`), поэтому в них ничего не меняется.
-
-### DoD
-
-- В каталоге плейсхолдеров у FLD-000362 и FLD-000338 отображаются 3 тумблера ФИО + селектор падежа; дубликаты (FLD-000364, FLD-000340) не показываются.
-- Копирование даёт `{{field:FLD-XXXXXX|format=…|case=…}}`.
-- Сгенерированный тестовый DOCX содержит корректно склонённое ФИО в выбранном формате.
-- Скрины (каталог + результат в документе) приложены к отчёту.
+- В `canonical-template-apply-markup` и `src/lib/documents/placeholderClassifier.ts` синтаксис `format=full|short|signature_short` для `field:FLD-*` принимается.
+- Шаблон «Счёт-акт ЮЛ Исполнитель v4» проходит валидацию без ошибок и активируется.
+- В каталоге плейсхолдеров для Заказчик ФЛ появились тумблеры ФИО (Full/Short/Signature) + падеж на FLD-000313, дубль FLD-000314 скрыт.
+- Сгенерированный тестовый документ показывает корректно применённые модификаторы для Заказчик ФЛ и Заказчик/Исполнитель ЮЛ (скрины приложены).
+- Никаких новых таблиц/RPC/полей `fields_registry`, никаких миграций.
