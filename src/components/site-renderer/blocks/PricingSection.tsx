@@ -24,7 +24,9 @@ export function PricingSection({ content, product, tariffs }: PricingSectionProp
   const allowedIds = (content.tariff_ids as string[] | undefined) ?? [];
   const filteredTariffs =
     mode === "selected"
-      ? tariffs.filter((t) => allowedIds.includes(t.id)) // preserves source order; silently drops stale IDs
+      ? allowedIds
+          .map((id) => tariffs.find((t) => t.id === id))
+          .filter((t): t is PublicTariff => Boolean(t)) // preserves block-selected order; silently drops stale IDs
       : tariffs;
 
   if (filteredTariffs.length === 0) return null;
