@@ -1,81 +1,182 @@
-План: PATCH-CONTACT-CENTER-PUSH-AND-SOUND-INSTAGRAM-AND-SUPPORT
+## да, согласен, с учетом правок:
 
-## Diagnose (что сейчас)
+1. План принять, но расширить scope: сделать то же самое не только для:
+  &nbsp;
+  ```text
+  Исполнитель ЮЛ
+  Заказчик ЮЛ
+  ```
+  но и для:
+2. Перед правками сделать discovery по `fields_registry` и найти точное существующее поле для ФИО заказчика ИП.
+  &nbsp;
+  Проверить минимум по ключам:
+  ```text
+  customer.ip.full_name
+  customer.ip.name
+  customer.ip.person_full_name
+  customer.ip.entrepreneur_full_name
+  ```
+  Нельзя добавлять новое поле, миграцию или новый `data_type`. Нужно использовать уже существующий FLD.
+3. После discovery добавить найденный FLD Заказчика ИП в тот же allowlist `person_name`.
+  &nbsp;
+  То есть итоговый allowlist должен быть не из 2, а из 3 полей:
+  ```text
+  FLD-000362 — Исполнитель ЮЛ: Руководитель ФИО
+  FLD-000338 — Заказчик ЮЛ: Руководитель ФИО
+  FLD-XXXXXX — Заказчик ИП: ФИО / Наименование ИП / ФИО предпринимателя
+  ```
+  Точный `FLD-XXXXXX` подставить после SQL-discovery.
+4. Для Заказчика ИП UI должен показывать те же готовые controls:
+  &nbsp;
+  ```text
+  ФИО полностью
+  ФИО кратко
+  ФИО для подписи
+  падеж
+  ```
+  Копирование должно давать существующий формат:
+5. Если у Заказчика ИП есть дубль “ФИО кратко” отдельным FLD, его тоже скрыть из UI-каталога по allowlist.
+  &nbsp;
+  Но только после discovery. Не угадывать ID.
+6. Backend resolver/case-classifier расширить для Заказчика ИП.
+  &nbsp;
+  В `classifyTokenForCase` / related mapping добавить token_key найденного IP-поля как:
+  ```text
+  person_name
+  ```
+  Примерно:
+  ```text
+  customer.ip.full_name → person_name
+  ```
+  Точный token_key взять из `fields_registry`.
+7. Для `formatPersonName` использовать существующую логику.
+  &nbsp;
+  Не писать отдельный formatter для ИП. Заказчик ИП — это тоже ФИО физлица, значит должен идти через тот же `formatPersonName`.
+8. В тесты добавить Заказчика ИП.
+  &nbsp;
+  Unit:
+9. В Playwright/E2E добавить проверку каталога для Заказчика ИП:
+  - открыть `Документы → Плейсхолдеры`;
+  - отфильтровать `Заказчик ИП`;
+  - убедиться, что у найденного FLD появились 3 тумблера ФИО + селектор падежа;
+  - если найден дубль “ФИО кратко” — убедиться, что дубль скрыт;
+  - приложить скрин.
+10. В DOCX runtime proof добавить 3 кейса:
 
-Проверил цепочку уведомлений в контакт-центре:
+```text
+Исполнитель ЮЛ: Руководитель ФИО
+Заказчик ЮЛ: Руководитель ФИО
+Заказчик ИП: ФИО
+```
 
-**Telegram (работает):**
-- `supabase/functions/telegram-webhook/index.ts:1397-1476` — при входящем сообщении явно дергает `send-push-notification` для всех админов (`super_admin`/`admin`).
-- `src/hooks/useIncomingMessageAlert.ts` подписан на `telegram_messages` INSERT (direction=incoming) и играет двухтоновый звук через WebAudio.
+Для каждого проверить:
 
-**Instagram (пуш не приходит, звук условный):**
-- `supabase/functions/manychat-inbound/index.ts` пишет в `instagram_messages`, но `send-push-notification` не вызывает.
-- Звук в `useIncomingMessageAlert.ts:55-83` играется, но только при `unifiedEnabled` (personal opt-in unified inbox). Если у сотрудника флаг выключен — тишина.
+```text
+format=short
+format=signature_short
+case=genitive
+format=signature_short|case=genitive
+```
 
-**Поддержка (пуш не приходит, звук условный, «тихо»):**
-- `ticket_messages` вставляются с клиента (`src/hooks/useTickets.ts`), никакого edge-хука нет → `send-push-notification` никогда не вызывается.
-- Звук аналогично только под `unifiedEnabled`.
+11. Раздел “Что НЕ трогаем” исправить.
 
-Итог: у Instagram и Support нет push-уведомлений вообще, звук — только у тех, кто включил unified inbox. Пользователь получает сообщение «тихо и не видно».
+Сейчас там написано:
 
-## Scope
+```text
+Роли ФЛ/ИП в customer/executor — соответствующих director_* полей у них нет, поэтому в них ничего не меняется.
+```
 
-Сделать паритет с Telegram для двух каналов:
-1. **Push** админам при новом входящем в Instagram и в поддержку.
-2. **Звук** в открытой вкладке админа — всегда, независимо от `unifiedEnabled`.
+Это больше не подходит, потому что Заказчик ИП входит в scope.
 
-Вне scope: iOS Safari APNs, per-admin настройки каналов уведомлений, кастомные звуки, «flash toast» (Telegram сейчас без toast — держим паритет).
+Заменить на:
 
-## Изменения
+```text
+Исполнитель ИП / роли ФЛ не трогаем, если discovery не покажет отдельного утверждённого поля для текущей задачи. Заказчик ИП входит в scope через найденное существующее FLD-поле ФИО.
+```
 
-### 1. Push для Instagram — `supabase/functions/manychat-inbound/index.ts`
-После успешной вставки `instagram_messages` (direction=incoming, не дубль) — non-blocking `fetch` к `send-push-notification`:
-- `user_ids` — тем же запросом, что и в telegram-webhook: `user_roles_v2` × `roles.code IN ('super_admin','admin')`.
-- `title` — `📷 <displayName>`. displayName берётся из связанного `profiles` (first/last/full), иначе IG username, иначе «Сообщение из Instagram». PII-safe лог (source/ids/fallback), без имени/текста.
-- `body` — превью (text/caption/`[медиа]`), первые 100 символов.
-- `url` — `/admin/communication`.
-- `tag` — `ig-msg-<instagram_account_id>` (склеивание уведомлений в одну «стопку» по контакту).
+12. В proof добавить SQL-discovery:
 
-Ошибки push — только console.error, не роняют вебхук (200 к ManyChat остаётся обязательным).
+```sql
+SELECT field_public_id, token_key, label, data_type, is_active
+FROM fields_registry
+WHERE token_key ILIKE 'customer.ip.%'
+   OR label ILIKE '%Заказчик ИП%'
+   OR label ILIKE '%ИП%ФИО%'
+ORDER BY field_public_id;
+```
 
-### 2. Push для поддержки — новая DB-триггер + edge helper
-`ticket_messages` пишутся с клиента, поэтому серверный хук делаем через триггер:
+И явно указать, какой FLD выбран для Заказчика ИП и почему.
 
-**Миграция:**
-- Функция `public.notify_admins_on_ticket_message()` (SECURITY DEFINER, `set search_path = public`):
-  - Срабатывает AFTER INSERT ON `public.ticket_messages`.
-  - Игнорирует `is_internal = true` и `author_type IN ('support','admin','system')` — шлём только клиентские входящие.
-  - Через `pg_net.http_post` дергает `${supabase_url}/functions/v1/send-push-notification` с service-role Bearer из `vault`/GUC (тот же паттерн, что уже используется в проекте для триггерных вызовов; при отсутствии — падаем в NOTICE, не ломаем INSERT).
-  - Payload: `{ notify_kind: 'ticket', ticket_id, message_id }`.
-- GRANT/RLS на `ticket_messages` не трогаем.
+13. Proof должен подтвердить, что не было:
 
-**Edge `send-push-notification`** — расширяем: если пришёл `notify_kind='ticket'` без готовых `user_ids`, функция сама:
-- Тянет ticket (`ticket_number`, `subject`, `user_id`) и message (`content`, `attachments`).
-- Резолвит senderName из `profiles` автора (first/last/full).
-- Получает `adminUserIds` тем же запросом к `user_roles_v2`.
-- Формирует `title = 🎧 <senderName>`, `body = TKT-<n>: <preview 100>`, `url = /admin/communication`, `tag = ticket-<ticket_id>`.
-- Дальше — существующая логика рассылки WebPush по `push_subscriptions`.
+```text
+миграций
+изменений fields_registry
+новых token types
+новых enum/data_type
+изменений package.ul/package.ip/package.fl
+```
 
-Такой вариант: (а) не тянет секреты в триггер (только URL + service key), (б) один источник правды для формата заголовка/тела.
+14. Финальный статус после выполнения:
 
-Если проектный паттерн для service-key в триггерах отсутствует — фолбэк: заменяем триггер на вызов edge-функции `ticket-message-notify` через `pg_net` без Bearer и внутри неё используем `SUPABASE_SERVICE_ROLE_KEY` из env. Уточним при execute (Dry run по существующим триггерам с `pg_net`).
+```text
+PASS: person_name modifiers for Исполнитель ЮЛ / Заказчик ЮЛ / Заказчик ИП
+```
 
-### 3. Звук в открытой вкладке — `src/hooks/useIncomingMessageAlert.ts`
-Убираем гейт `unifiedEnabled` для Instagram и `ticket_messages`. Причины:
-- Звук — сигнал «пришло сообщение», не завязан на конкретный UI режим.
-- Дубля не будет: моно-ленты IG/Support своего звука не имеют, а Telegram остаётся в отдельном канале `telegram_messages`.
-Оставляем фильтр `is_internal=false` для тикетов.
+После этих правок план можно выполнять.
 
-### 4. Проверка/DoD
-- Отправить входящее в IG (тестовый ManyChat flow / real) → в открытой вкладке админа: звук; в закрытой/фоне: browser push с `📷 Имя` и превью, клик ведёт `/admin/communication`.
-- Клиент пишет в существующий тикет → у админа звук + push `🎧 Имя` + `TKT-N: превью`; повторные сообщения склеиваются по `tag=ticket-<id>`.
-- Внутренняя админская заметка (`is_internal=true`) — ни звука, ни push.
-- Telegram-поведение не изменилось (тот же канал, тот же путь).
-- Отчёт: `docs/audit/2026-07-04-push-and-sound-ig-support.md` — diagnose, изменения, шаги проверки, edge-cases (нет подписок → тихий skip; ошибка pg_net → NOTICE, INSERT не откатывается).
+&nbsp;
 
-## Технические детали (для инженерного контекста)
+## План: person_name-модификаторы для «Руководитель ФИО» в ролях Исполнитель ЮЛ и Заказчик ЮЛ
 
-- Файлы: `supabase/functions/manychat-inbound/index.ts`, `supabase/functions/send-push-notification/index.ts`, `supabase/migrations/<new>.sql`, `src/hooks/useIncomingMessageAlert.ts`, новый audit doc.
-- Никаких изменений в схеме `ticket_messages`/`instagram_messages`, RLS, ManyChat-конфиге.
-- Дубли push исключены `tag`-склейкой на уровне ServiceWorker (`showNotification({ tag })` заменяет предыдущее с тем же тегом).
-- Триггер AFTER INSERT + `pg_net` — асинхронный, INSERT не блокируется.
+### Цель
+
+Переиспользовать уже готовую функцию «ФИО полностью / ФИО кратко / ФИО для подписи + падеж», которая работает для пакетных плейсхолдеров (`package.ul.director_full_name` и т.п.), на биллинговых FLD-полях ролей Исполнитель ЮЛ и Заказчик ЮЛ. Ничего нового не создаём — используем существующие: `formatPersonName`, `RowSettingsCell` (kind=`person_name`), `buildFieldPlaceholder`, resolver в `_shared/typed-tokens-resolver.ts`, `case-format.ts`.
+
+### Затронутые поля (уже существуют в `fields_registry`)
+
+- FLD-000362 «Исполнитель ЮЛ: Руководитель ФИО» (`executor.leg.director_full_name`)
+- FLD-000338 «Заказчик ЮЛ: Руководитель ФИО» (`customer.leg.director_full_name`)
+- Дубли к скрытию/архиву в UI-каталоге (как это сделано для пакета):
+  - FLD-000364 «Исполнитель ЮЛ: Руководитель ФИО кратко»
+  - FLD-000340 «Заказчик ЮЛ: Руководитель ФИО кратко»
+
+### Что делаем
+
+**1. Отметить эти FLD как person_name в UI-каталоге плейсхолдеров**
+Frontend-only. В `src/components/ai-documents/PlaceholdersCatalogTab.tsx` (строка 678) сейчас `kind` считается только из `data_type` (см. `classifyDataType`). Добавляем узкую проверку по `field_public_id` (allowlist из 2 значений: FLD-000362 и FLD-000338) — если совпало, `kind = "person_name"` вместо `"text"`. Это включает готовые тумблеры «ФИО полностью / ФИО кратко / ФИО для подписи» и селектор падежа через уже существующий компонент `RowSettingsCell`.
+
+Плейсхолдер, который копирует пользователь, соберёт уже существующий `buildFieldPlaceholder(FLD, format, case)` → `{{field:FLD-000362|format=short|case=genitive}}` и т.п. Никаких новых токенов.
+
+**2. Скрыть дубли «ФИО кратко» из каталога**
+Как это уже сделано для `package.ul` (см. комментарий в `src/utils/packagePlaceholderCatalog.ts:209` — «дубликат удалён из UI-каталога»), спрятать в `PlaceholdersCatalogTab` строки для FLD-000364 и FLD-000340 через тот же allowlist. Данные в БД не трогаем — только рендер строки.
+
+**3. Резолвер значения на бэкенде**
+`_shared/typed-tokens-resolver.ts` уже кладёт в map `customer.leg.director_full_name` и `executor.leg.director_full_name` — сырые ФИО, к которым применяется `formatPersonName`. Проверяем и, если нужно, дополняем маршрут `{{field:FLD-000362|format=…|case=…}}` в `canonical-document-generate-strict`/`document-render` так, чтобы:
+
+- `format=short|signature_short` → `formatPersonName(value, { format })`;
+- `case=<падеж>` → `applyCaseModifier` с `classifyTokenForCase` → `person_name` (расширить classifier: добавить token_key `executor.leg.director_full_name` и `customer.leg.director_full_name` → `person_name`).
+
+Форматирование `formatPersonName` уже полностью реализовано (`supabase/functions/_shared/typed-tokens-resolver.ts:160`), склонение — через `ru-inflection.ts`. Дополнительной логики не пишем.
+
+**4. Проверка**
+
+- Unit: расширить `case-format` тестами: `customer.leg.director_full_name|case=genitive` и `format=short` дают ожидаемые «Иванова И.И.» / «И.И.Иванова».
+- E2E через Playwright в песочнице:
+  1. Войти в `/admin` (пароль `123456`).
+  2. Открыть `Документы → Плейсхолдеры`, отфильтровать «Исполнитель ЮЛ» → убедиться, что у строки FLD-000362 появились тумблеры и селектор падежа; строка FLD-000364 отсутствует. То же для «Заказчик ЮЛ» / FLD-000338 / FLD-000340. Скрин.
+  3. Открыть визуальный редактор шаблона, вставить чипом `{{field:FLD-000362|format=signature_short|case=genitive}}`, сохранить.
+  4. Сгенерировать тестовый документ на сделке с ЮЛ-исполнителем → скачать → распарсить DOCX и убедиться, что в тексте, например, «И.В.Иванова» (родительный, инициалы перед фамилией). Скрин + фрагмент текста.
+
+### Что НЕ трогаем
+
+- `fields_registry` (данные), `data_type` полей, миграции — новых полей и enum-значений не добавляем.
+- Пакетные плейсхолдеры (`package.ul.*`, `package.ip.*`, `package.fl.*`) уже работают — оставляем как есть.
+- Роли ФЛ/ИП в customer/executor — соответствующих `director_*` полей у них нет (проверено запросом к `fields_registry`), поэтому в них ничего не меняется.
+
+### DoD
+
+- В каталоге плейсхолдеров у FLD-000362 и FLD-000338 отображаются 3 тумблера ФИО + селектор падежа; дубликаты (FLD-000364, FLD-000340) не показываются.
+- Копирование даёт `{{field:FLD-XXXXXX|format=…|case=…}}`.
+- Сгенерированный тестовый DOCX содержит корректно склонённое ФИО в выбранном формате.
+- Скрины (каталог + результат в документе) приложены к отчёту.
