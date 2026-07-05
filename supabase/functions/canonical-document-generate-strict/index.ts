@@ -36,6 +36,15 @@ const PERSON_NAME_PACKAGE_BAG_KEYS: ReadonlySet<string> = new Set([
   'package.ul.FLD-000014', // director (full/short)
   'package.fl.FLD-000372', // person full_name
 ]);
+// PATCH-ROLE-PERSON-NAME-FLDS: биллинговые FLD-поля «Руководитель ФИО» ролей,
+// для которых модификаторы формата (full/short/signature_short) и падеж применяются
+// через formatPersonName. Ключи совпадают с fields_registry.key (regKey).
+// Синхронизировано с фронтом PERSON_NAME_FIELD_FLDS в PlaceholdersCatalogTab.tsx.
+const PERSON_NAME_FIELD_KEYS: ReadonlySet<string> = new Set([
+  'executor.leg.director_full_name',
+  'customer.leg.director_full_name',
+  'customer.ent.director_full_name',
+]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 import { buildSystemFieldValues, SYSTEM_FIELD_VALUE_IDS } from '../_shared/system-field-values.ts';
