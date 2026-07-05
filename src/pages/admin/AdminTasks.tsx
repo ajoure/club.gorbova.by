@@ -170,7 +170,7 @@ export default function AdminTasks() {
         </div>
       </div>
 
-      <TasksFiltersBar value={filters} onChange={setFilters} types={types} onPickTask={setEditTask} />
+      <TasksFiltersBar value={filters} onChange={setFilters} types={types} onPickTask={setViewTask} />
 
       {dealFilter && (
         <div className="flex items-center gap-2">
@@ -211,7 +211,7 @@ export default function AdminTasks() {
             <TaskKanbanBoard
               tasks={tasks}
               types={types}
-              onOpenTask={setEditTask}
+              onOpenTask={setViewTask}
               onOpenDeal={openDeal}
             />
           )}
@@ -221,7 +221,7 @@ export default function AdminTasks() {
           {isLoading ? (
             <div className="text-sm text-muted-foreground p-6">Загрузка…</div>
           ) : (
-            <TasksListView tasks={tasks} types={types} onOpenTask={setEditTask} />
+            <TasksListView tasks={tasks} types={types} onOpenTask={setViewTask} />
           )}
         </TabsContent>
 
@@ -231,11 +231,28 @@ export default function AdminTasks() {
       </Tabs>
 
       <CreateCrmTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ViewCrmTaskDialog
+        open={!!viewTask}
+        onOpenChange={(v) => !v && setViewTask(null)}
+        task={viewTask}
+        onEdit={(t) => {
+          setViewTask(null);
+          setEditTask(t);
+        }}
+        onOpenContact={(id) => openContactSheet(id)}
+        onOpenDeal={openDeal}
+      />
       <EditCrmTaskDialog
         open={!!editTask}
         onOpenChange={(v) => !v && setEditTask(null)}
         task={editTask}
       />
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={setContactSheetOpen}
+      />
     </div>
   );
+
 }
