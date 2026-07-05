@@ -696,7 +696,12 @@ export function PlaceholdersCatalogTab() {
                               settings.format,
                               settings.caseModifier,
                             ));
-                      const kind = classifyDataType(t.field_data_type ?? t.data_type);
+                      // PATCH-ROLE-PERSON-NAME-FLDS: для ролевых «Руководитель ФИО» (Исполнитель ЮЛ,
+                      // Заказчик ЮЛ, Заказчик ИП) переиспользуем ФИО-модификаторы (полностью/кратко/для подписи + падеж).
+                      const kind: ReturnType<typeof classifyDataType> | "person_name" =
+                        t.field_public_id && PERSON_NAME_FIELD_FLDS.has(t.field_public_id)
+                          ? "person_name"
+                          : classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
                           <TableRow key={t.id} className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
