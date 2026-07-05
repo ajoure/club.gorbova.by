@@ -23,6 +23,7 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
   const target = (action.target || "").trim();
 
   const visibility = useSiteVisibility();
+  const [leadOpen, setLeadOpen] = useState(false);
 
   const alignClass = alignment === "left" ? "text-left" : alignment === "right" ? "text-right" : "text-center";
   const sizeClass = size === "sm" ? "px-4 py-2 text-xs" : size === "lg" ? "px-10 py-4 text-base" : "px-8 py-3 text-sm";
