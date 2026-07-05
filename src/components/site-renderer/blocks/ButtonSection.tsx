@@ -1,12 +1,14 @@
+import { useState } from "react";
 import { useSiteVisibility } from "../SiteVisibilityContext";
 import { sanitizeHtml } from "@/lib/sanitization";
+import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 
 interface ButtonSectionProps {
   content: Record<string, unknown>;
   blockId?: string;
 }
 
-type ActionType = "link" | "scroll_to_anchor" | "show_block" | "toggle_block" | "open_form";
+type ActionType = "link" | "scroll_to_anchor" | "show_block" | "toggle_block" | "open_form" | "open_lead_form";
 
 export function ButtonSection({ content, blockId }: ButtonSectionProps) {
   const text = (content.text as string) || "";
@@ -21,6 +23,7 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
   const target = (action.target || "").trim();
 
   const visibility = useSiteVisibility();
+  const [leadOpen, setLeadOpen] = useState(false);
 
   const alignClass = alignment === "left" ? "text-left" : alignment === "right" ? "text-right" : "text-center";
   const sizeClass = size === "sm" ? "px-4 py-2 text-xs" : size === "lg" ? "px-10 py-4 text-base" : "px-8 py-3 text-sm";
@@ -83,6 +86,10 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
       });
       return;
     }
+    if (actionType === "open_lead_form") {
+      setLeadOpen(true);
+      return;
+    }
   };
 
   return (
@@ -90,6 +97,14 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
       <div className={`max-w-4xl mx-auto ${alignClass}`}>
         <button type="button" onClick={handleClick} className={baseClass} dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
       </div>
+      {actionType === "open_lead_form" && target && (
+        <LeadRequestDialog
+          open={leadOpen}
+          onOpenChange={setLeadOpen}
+          offerId={target}
+          offerLabel={text.replace(/<[^>]*>/g, "").trim() || undefined}
+        />
+      )}
     </section>
   );
 }

@@ -20,7 +20,7 @@ export interface TariffCardFeature {
 
 export interface TariffCardOffer {
   id: string;
-  offer_type: "pay_now" | "trial" | "preregistration";
+  offer_type: "pay_now" | "trial" | "preregistration" | "lead";
   button_label: string;
   amount: number;
   trial_days?: number | null;
@@ -93,6 +93,7 @@ export function TariffCard({
   const payNowOffers = resolvedOffers.filter(o => o.offer_type === "pay_now" && o.is_active !== false);
   const trialOffers = resolvedOffers.filter(o => o.offer_type === "trial" && o.is_active !== false);
   const preregOffers = resolvedOffers.filter(o => o.offer_type === "preregistration" && o.is_active !== false);
+  const leadOffers = resolvedOffers.filter(o => o.offer_type === "lead" && o.is_active !== false);
 
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
@@ -100,7 +101,7 @@ export function TariffCard({
   // Price resolution: primaryOffer.amount > card_config.price_display > tariff.current_price > null
   const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
-  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0;
+  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0;
 
   // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
   const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
@@ -242,6 +243,17 @@ export function TariffCard({
               key={offer.id}
               onClick={() => onSelectOffer?.(offer, tariff)}
               variant={!hasActivePayOffers ? "default" : "outline"}
+              className="w-full"
+            >
+              {offer.button_label || "Оставить заявку"}
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ))}
+          {leadOffers.map((offer) => (
+            <Button
+              key={offer.id}
+              onClick={() => onSelectOffer?.(offer, tariff)}
+              variant={!hasActivePayOffers && preregOffers.length === 0 ? "default" : "outline"}
               className="w-full"
             >
               {offer.button_label || "Оставить заявку"}

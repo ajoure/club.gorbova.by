@@ -19041,6 +19041,7 @@ export type Database = {
         | "refunded"
         | "canceled"
         | "needs_mapping"
+        | "lead"
       payment_plan_type: "full" | "installment" | "bank_installment" | "trial"
       payment_status:
         | "pending"
@@ -19253,6 +19254,7 @@ export const Constants = {
         "refunded",
         "canceled",
         "needs_mapping",
+        "lead",
       ],
       payment_plan_type: ["full", "installment", "bank_installment", "trial"],
       payment_status: [

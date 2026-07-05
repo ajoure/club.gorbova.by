@@ -328,7 +328,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
@@ -1850,7 +1850,7 @@ export default function AdminProductDetailV2() {
                         ? "installment"
                         : offerForm.offer_type
                     }
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "installment") => {
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment") => {
                       if (v === "installment") {
                         // Кнопка «Рассрочка» = pay_now + internal_installment.
                         // Очищаем meta.recurring (взаимоисключение типов кнопки).
@@ -1865,6 +1865,28 @@ export default function AdminProductDetailV2() {
                           installment_interval_days: 30,
                           first_payment_delay_days: 0,
                           meta: metaWithoutRecurring,
+                        });
+                      } else if (v === "lead") {
+                        // Lead-offer: без оплат, без токенизации, amount=0.
+                        const { recurring, installment, acquiring, ...cleanMeta } = (offerForm.meta || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "lead",
+                          payment_method: "full_payment",
+                          amount: 0,
+                          button_label: offerForm.button_label && offerForm.offer_type === "lead" ? offerForm.button_label : "Оставить заявку",
+                          requires_card_tokenization: false,
+                          installment_count: null,
+                          installment_interval_days: null,
+                          first_payment_delay_days: null,
+                          meta: {
+                            ...cleanMeta,
+                            lead_form: {
+                              require_phone: true,
+                              require_email: true,
+                              ...(cleanMeta?.lead_form || {}),
+                            },
+                          },
                         });
                       } else {
                         setOfferForm({
@@ -1886,6 +1908,7 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="trial">Trial (пробный период)</SelectItem>
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                       <SelectItem value="installment">Рассрочка</SelectItem>
+                      <SelectItem value="lead">Заявка (без оплаты)</SelectItem>
                     </SelectContent>
                   </Select>
                   {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (

@@ -12,7 +12,7 @@ import { getStatusBadgeClass } from "@/utils/badgeUtils";
 
 interface TariffOffer {
   id: string;
-  offer_type: "pay_now" | "trial" | "preregistration";
+  offer_type: "pay_now" | "trial" | "preregistration" | "lead";
   button_label: string;
   amount: number;
   trial_days: number | null;

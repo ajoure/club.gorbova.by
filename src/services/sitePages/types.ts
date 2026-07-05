@@ -139,7 +139,7 @@ export const videoContentSchema = z.object({
 
 // Canonical button action types. Target ключ — ТОЛЬКО stable block.id (UUID) или anchorId.
 // Запрещены: title/name/index/order. Backward-compat: тип 'link' (default) использует поле link.
-export const BUTTON_ACTION_TYPES = ["link", "scroll_to_anchor", "show_block", "toggle_block", "open_form"] as const;
+export const BUTTON_ACTION_TYPES = ["link", "scroll_to_anchor", "show_block", "toggle_block", "open_form", "open_lead_form"] as const;
 export type ButtonActionType = typeof BUTTON_ACTION_TYPES[number];
 
 export const buttonActionSchema = z.object({
