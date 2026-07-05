@@ -1,205 +1,176 @@
-да, согласен, с учетом правок:
-
-1. План можно выполнять.
-  &nbsp;
-  Итоговый статус после выполнения:
-2. Перед правками по `FLD-000313` и `FLD-000314` обязательно сделать SQL-discovery и зафиксировать в proof:
-  &nbsp;
-  ```sql
-  SELECT field_public_id, token_key, label, data_type, is_active
-  FROM fields_registry
-  WHERE field_public_id IN ('FLD-000313','FLD-000314')
-     OR token_key ILIKE 'customer.ind.%'
-     OR label ILIKE '%Заказчик ФЛ%'
-  ORDER BY field_public_id;
-  ```
-  Нужно подтвердить, что:
-  ```text
-  FLD-000313 = customer.ind.full_name
-  FLD-000314 = customer.ind.full_name_short
-  ```
-  Если token_key отличается — использовать фактический token_key из БД, не хардкодить неверное имя.
-3. Fix #1 принимаю: нужно синхронизировать whitelist форматов во всех валидаторах.
-  &nbsp;
-  Проверить минимум 3 места:
-  ```text
-  supabase/functions/canonical-template-apply-markup/index.ts
-  src/lib/documents/placeholderClassifier.ts
-  supabase/functions/_shared/placeholderClassifier.ts
-  ```
-  Все должны одинаково принимать:
-4. Важно: расширение whitelist в `canonical-template-apply-markup` должно быть только синтаксическим.
-  &nbsp;
-  Оно не должно означать, что `format=signature_short` применим к любому `field:FLD-*`.
-  Runtime-семантика остаётся через allowlist person-name полей:
-  ```text
-  FLD-000362
-  FLD-000338
-  FLD-000289
-  FLD-000313
-  ```
-  Где `FLD-000289` — уже добавленный Заказчик ИП, если это подтверждено предыдущим discovery.
-5. В `PlaceholdersCatalogTab.tsx` итоговый allowlist `PERSON_NAME_FIELD_FLDS` должен включать все 4 поля:
-  &nbsp;
-  ```text
-  FLD-000362 — Исполнитель ЮЛ: Руководитель ФИО
-  FLD-000338 — Заказчик ЮЛ: Руководитель ФИО
-  FLD-000289 — Заказчик ИП: ФИО / ФИО предпринимателя
-  FLD-000313 — Заказчик ФЛ: ФИО
-  ```
-  Если `FLD-000289` оказался другим по discovery — использовать фактический ID.
-6. Список скрытых дублей должен включать:
-  &nbsp;
-  ```text
-  FLD-000364
-  FLD-000340
-  FLD-000291
-  FLD-000314
-  ```
-  Но `FLD-000291` и `FLD-000314` скрывать только после подтверждения, что это именно short-дубли соответствующих основных ФИО-полей.
-7. В `canonical-document-generate-strict/index.ts` в `PERSON_NAME_FIELD_KEYS` добавить:
-  &nbsp;
-  ```text
-  customer.ind.full_name
-  ```
-  И убедиться, что уже есть:
-  ```text
-  executor.leg.director_full_name
-  customer.leg.director_full_name
-  customer.ent.director_full_name
-  ```
-  Если для Заказчика ИП используется другой token_key, он тоже должен остаться в allowlist.
-8. Для `customer.ind.full_name` использовать только существующую функцию:
-  &nbsp;
-  ```text
-  formatPersonName
-  ```
-  Не писать отдельную логику для ФЛ.
-9. Добавить регрессию, что не-person field с `format=signature_short` не превращается в ФИО на runtime.
-  &nbsp;
-  Пример:
-  ```text
-  field:FLD-обычный_text|format=signature_short
-  ```
-  Синтаксис может пройти валидатор, но runtime не должен применять `formatPersonName` к обычному текстовому полю.
-10. В Playwright-проверку добавить все 4 активных person-name поля:
+# да, согласен.
 
 ```text
-FLD-000362
-FLD-000338
-FLD-000289
-FLD-000313
+План принимаю.
+
+Approve только на Фазу A — Discovery.
+
+Фаза B пока НЕ разрешена.
+
+Что важно:
+- сначала подтвердить SoT: почти наверняка `orders_v2`, но нужно доказать схемой и кодом;
+- не создавать `orders`;
+- не добавлять `status='lead'` без проверки constraints и всех фильтров;
+- не придумывать поля CRM-задач/уведомлений;
+- не трогать payments/entitlements/subscriptions;
+- не вызывать эквайринг;
+- не открывать таблицы публично;
+- не делать code patch до discovery.
+
+Discovery должен вернуть:
+1. какую таблицу использовать для lead-сделки;
+2. какой безопасный статус/маркер использовать;
+3. точную схему `crm_tasks`;
+4. точную схему `crm_task_automation_rules`;
+5. точную схему `crm_task_notifications`;
+6. фактический формат `offer.meta.crm_routing`;
+7. список всех payment-only мест, где `lead` нужно исключить;
+8. стратегию CORS/rate-limit/idempotency;
+9. финальный implementation-plan Фазы B.
+
+Proof:
+`.lovable/discovery/lead-offer.md`
+
+После discovery пришли отчёт. Только после этого принимать или править Фазу B.
+
+
+PATCH-LEAD-OFFER-DISCOVERY-AND-IMPLEMENTATION
 ```
 
-И все 4 скрытых дубля:
+Кнопка «Оставить заявку» (offer_type=lead): заявка → сделка в существующей CRM-воронке → автозадача ответственному → Telegram-уведомление. Оплата, эквайринг, доступы и подписки НЕ затрагиваются.
 
-```text
-FLD-000364
-FLD-000340
-FLD-000291
-FLD-000314
-```
+Работа в две фазы: **сначала read-only discovery, только потом код**.
 
-11. Проверку шаблона «Счёт-акт ЮЛ Исполнитель v4» принять как обязательную.
+---
 
-В proof нужно показать:
+## Фаза A — Discovery (read-only, ничего не пишем)
 
-```text
-Ошибок: 0
-кнопка «Активировать шаблон» доступна
-invalid_modifier_value: signature_short отсутствует
-```
+Цель — снять все допущения перед миграцией и edge-функцией. Результат — короткий отчёт `.lovable/discovery/lead-offer.md` с фактическими схемами и решениями.
 
-12. Runtime proof должен включать минимум 3 типа:
+### A1. `orders` vs `orders_v2`
 
-```text
-Исполнитель ЮЛ
-Заказчик ЮЛ
-Заказчик ФЛ
-```
+- Где реально живут сделки/лиды сегодня: `SELECT count(*)` по обеим, что читают CRM Kanban, Contact Center, `crm_deal_task_summary_v`.
+- Что ожидает `crm_tasks.deal_id` / `order_id` (FK, тип entity).
+- **Rule**: Из `.lovable/discovery/crm-tasks-diagnose.md` уже зафиксировано: **SoT сделки = `orders_v2**`, `crm_tasks.deal_id → orders_v2.id`. План использует `orders_v2`. Если discovery противоречит — STOP и пересобрать план.
+- Запрет: не создавать параллельную сущность в `orders`.
 
-И отдельно не потерять уже добавленный:
+### A2. Статус для lead
 
-```text
-Заказчик ИП
-```
+- Прочитать тип `orders_v2.status` и все check/enum ограничения; вытащить distinct значения.
+- Найти в коде все места, где фильтруется `status IN (...)` для revenue/paid/access — убедиться, что новый маркер их не заденет.
+- Решение принять из вариантов, **не наугад**:
+  1. отдельное поле-маркер `meta.lead = true` при `status='pending'`;
+  2. `payment_status='lead'` (если поле есть);
+  3. новый статус `'lead'` — только если ни один существующий фильтр его не примет за оплату/доступ.
+- Ни один сценарий не должен ронять существующие запросы pay_now/trial/preregistration.
 
-13. В proof добавить проверку, что не было:
+### A3. CRM-схема (факты, не догадки)
 
-```text
-миграций
-новых таблиц
-новых RPC
-изменений fields_registry
-новых data_type / enum
-изменений package.ul/package.ip/package.fl
-```
+- `\d crm_tasks` — поля `deal_id`, `order_id`, `pipeline_id`, `pipeline_stage_id`, `source` (какие значения уже используются, есть ли check).
+- `\d crm_task_automation_rules` — поля `trigger`/`event` (если есть), `is_active`, `assignee_strategy`, `assignee_user_id`, `due_offset_minutes`, `reminder_offset_minutes`, `title_template`, `description_template`, `metadata`. **Использовать только существующие имена**, ничего не переименовывать.
+- `\d crm_task_notifications` — точная схема (`task_id`, `notification_type`, `channel`, `recipient_user_id`, `scheduled_at`, `metadata`). Проверить, какие `notification_type`/`channel` уже сегодня ест `crm-task-notify-worker`.
 
-14. Edge deploy обязателен для:
+### A4. `offer.meta.crm_routing` — фактический формат
 
-```text
-canonical-template-apply-markup
-canonical-document-generate-strict
-```
+- Прочитать `CrmRoutingConfig` из `src/hooks/useTariffOffers.tsx` и рендер `OfferCrmRoutingSection`. Использовать реальные имена полей (`enabled`, `pipeline_id`, `stage_on_pending`, `stage_on_success`, `stage_on_failed`), **никаких новых ключей**.
+- Проверить: читает ли `crm_routing` сегодня какой-либо серверный код (в `.lovable/discovery/crm-tasks-diagnose.md` сказано, что нет — подтвердить). Если нет — lead будет первым сервер-сайд consumer'ом.
+- `meta.lead_form` — новая подсекция, добавляется только внутри `OfferMetaConfig`, без миграций схемы БД.
 
-Если менялся только frontend classifier — фронт пересобрать/задеплоить обычным пайплайном.
+### A5. Payment-only места, где lead должен быть исключён
 
-15. В отчёте приложить:
+Собрать список файлов/запросов и в реализации явно фильтровать `offer_type !== 'lead'`:
 
-- SQL-discovery по `FLD-000313/314`;
-- скрин каталога плейсхолдеров;
-- скрин валидации «Счёт-акт ЮЛ Исполнитель v4» без ошибок;
-- фрагмент DOCX/PDF с результатом `signature_short` и `short`;
-- список изменённых файлов;
-- результаты unit + Playwright/E2E.
+- `payment_links`, `create-payment-checkout`, `public-checkout`, `AdminPaymentLinkDialog`, `PaymentDialog`;
+- расчёт скидок/рассрочки/трайала (`useInstallments`, `CoursePricing`);
+- `acquiring` UI и `create-payment-checkout`;
+- recurring/subscriptions (`subscription-*`);
+- revenue/stats (список выбирается по факту — grep по `offer_type`, `tariff_offers`);
+- `provider choice` (Phase 5-C `CustomerProviderChoice`);
+- документы (не генерировать акт/счёт для lead).
 
-После этих уточнений план можно выполнять.
+### A6. Публичные точки входа
 
-&nbsp;
+- Product page: какой компонент рендерит кнопки офферов (tariff cards / `LiveEventProductCta`).
+- `ButtonSection` (site builder): формат `action.type` и как редактор блока (`ButtonEditor`) пишет `action.target`.
+- Итог: **один canonical submit flow** через один компонент `LeadRequestDialog` и одну edge-функцию.
 
-План:
+### A7. Rate-limit / idempotency стратегия
 
-## Задача
+Backend rate-limit primitive'а нет (см. `no-backend-rate-limiting`), поэтому:
 
-1. Убрать ошибку валидации шаблонов `invalid_modifier_value: signature_short` для ФИО-полей (FLD-000362 Исполнитель ЮЛ.Руководитель, FLD-000338 Заказчик ЮЛ.Руководитель) — синтаксис уже разрешён в `_shared/placeholderClassifier.ts` и strict-резолвере, но остались две «отставшие» точки валидации, которые всё ещё режут `full/short/signature_short`.
-2. Добавить те же модификаторы (ФИО полностью / кратко / для подписи + падеж) для роли **Заказчик ФЛ** — по аналогии с уже сделанным для Заказчик ЮЛ / Исполнитель ЮЛ / Заказчик ИП. Функцию `formatPersonName` переиспользуем, ничего нового не создаём.
-3. Прогнать проверку шаблонов и E2E, чтобы все `.docx` с новыми плейсхолдерами (включая уже загруженный «Счёт-акт ЮЛ Исполнитель v4») стали `valid`.
+- Honeypot-поле в форме + минимальное время заполнения (client hint).
+- Server-side idempotency window **15 минут** по ключу `(offer_id, normalized_phone|email)`: если в окне уже есть lead-order с той же связкой — возвращаем существующий, новую задачу не создаём.
+- Sanitize `comment` (DOMPurify text-only, ≤1000 симв.), phone нормализация в E.164-подобный вид.
+- CORS: разрешить preview/published origin'ы проекта (whitelist), не голый `*`. Список получить из `project_urls`.
 
-## Что меняется (technical)
+---
 
-### Fix #1 — расширить whitelist форматов в двух валидаторах
+## Фаза B — Реализация (только после Discovery)
 
-- `supabase/functions/canonical-template-apply-markup/index.ts` (стр. 48): `ALLOWED_FORMATS = new Set(['words','text'])` → `new Set(['words','text','full','short','signature_short'])`. Тип поля `Replacement.format` расширить соответственно. Per-FLD семантика (какой FLD реально person_name) остаётся на резолвере — задача этого валидатора только пропустить синтаксис.
-- `src/lib/documents/placeholderClassifier.ts` (стр. 104): `FORMATS_BILLING` привести к тому же значению, что и в `supabase/functions/_shared/placeholderClassifier.ts` (`'words','text','full','short','signature_short'`). Это фронтовый двойник — сейчас он рассинхронизирован и подсвечивает ошибки в редакторе.
-- Поправить тесты `src/lib/documents/placeholderClassifier.test.ts`, которые сейчас утверждают `field:FLD-…|format=signature_short → invalid_modifier_value` — теперь это валидный синтаксис (соответствующий тест `_shared`-версии уже давно ожидает `valid`).
+### B1. UI редактора оффера
 
-### Fix #2 — Заказчик ФЛ: person_name-модификаторы на FLD-000313
+- Добавить в `Select` «Тип кнопки» пункт `lead` — «Оставить заявку».
+- Расширить `TariffOffer.offer_type`, `OfferMetaConfig.lead_form?: { require_phone: boolean; require_email: boolean; comment_placeholder?: string; success_message?: string }`.
+- Для `lead` скрыть в диалоге: сумма, эквайринг, tokenization, автопродление, документы, рассрочка. Показать: текст кнопки, CRM-routing (существующий `OfferCrmRoutingSection`), автозадачи (существующий редактор из `useCrmTaskAutomationRules`), настройки формы.
+- В `handleSaveOffer` очистить несовместимые ветки meta (`recurring`, `installment`, `acquiring`).
 
-Аналогично уже сделанному для ЮЛ/ИП, без миграций и новых полей:
+### B2. Публичный UI
 
-- `src/components/ai-documents/PlaceholdersCatalogTab.tsx`
-  - В `PERSON_NAME_FIELD_FLDS` добавить `"FLD-000313"` (customer.ind.full_name — «Заказчик ФЛ: ФИО»).
-  - В список скрытых дублей добавить `"FLD-000314"` (customer.ind.full_name_short — «ФИО кратко»), чтобы в каталоге осталось одно поле с тремя тумблерами Full/Short/Signature + падеж.
-- `supabase/functions/canonical-document-generate-strict/index.ts`
-  - В `PERSON_NAME_FIELD_KEYS` (там где `executor.leg.director_full_name`, `customer.leg.director_full_name`, `customer.ent.director_full_name`) добавить `customer.ind.full_name`, чтобы резолвер применял `formatPersonName(value, { format, case })` к значению из `client_legal_details` (уже отдаётся через `typed-tokens-resolver` строкой 253 `map["customer.ind.full_name"] = fullName`).
-- `src/components/ai-documents/extensions/FieldChipNode.ts` уже поддерживает `short`/`signature_short` — трогать не надо.
+- Новый `src/components/lead/LeadRequestDialog.tsx` — единая модалка (Имя*, Телефон*, Email*, Комментарий, honeypot). Zod-валидация. POST в `submit-lead-request`.
+- Product/tariff card: для оффера `lead` — вместо checkout открываем `LeadRequestDialog`.
+- `ButtonSection`: новый `action.type = "lead_offer"` c `target = offer_id`; в `ButtonEditor` — селектор офферов `lead`.
 
-### Deploy
+### B3. Edge `submit-lead-request` (verify_jwt=false)
 
-- Пересобрать edge-функции: `canonical-template-apply-markup`, `canonical-document-generate-strict`.
+Path: `supabase/functions/submit-lead-request/index.ts`.
 
-## Проверка
+- CORS whitelist (см. A7).
+- Zod-валидация тела; honeypot-проверка; sanitize comment.
+- Загрузка оффера: убедиться `offer_type='lead'` и `is_active=true`; иначе 404 generic.
+- Idempotency (15 мин, см. A7): при попадании в окно — вернуть `{ ok: true, deduped: true }` без новой задачи.
+- Профиль (см. A выше): match по email → по нормализованному phone → если оба резолвятся в разные profiles, писать `meta.manual_review=true`, склейку не делать. `**auth.users` не создавать**.
+- INSERT в `orders_v2` (или в SoT, зафиксированный в A1) со snapshot контакта в `meta`, `amount=0`, статус по решению из A2, `offer_id/tariff_id/product_id`, `pipeline_id/pipeline_stage_id = crm_routing.stage_on_pending`.
+- Для каждого активного `crm_task_automation_rules` этого оффера — INSERT в `crm_tasks` строго по фактическим полям (A3): `assignee_user_id` из правила (`fixed_user`), `title/description` — шаблонная подстановка `{name}/{phone}/{email}/{comment}/{offer_label}`, `due_at = now() + due_offset_minutes`, `source` — значение, которое уже допускается схемой (иначе взять `'manual'` + `metadata.origin='lead_form'`).
+- INSERT в `crm_task_notifications` в формате, который сегодня понимает `crm-task-notify-worker` (проверено в A3). Никаких новых `notification_type`, если воркер их не обрабатывает.
+- Ответ клиенту — generic (`{ ok: true }`), детальные ошибки только в `audit_logs`/лог функции. Service-role наружу не течёт.
 
-1. Юнит-тесты: `src/lib/documents/placeholderClassifier.test.ts`, `src/utils/personNameFormat.test.ts`, `supabase/functions/canonical-document-generate-strict/__tests__/snapshot_builder_smoke.test.ts`.
-2. Playwright под dev-паролем `123456`:
-  - `/admin/documents?sub=templates` → открыть «Счёт-акт ЮЛ Исполнитель v4» → «Проверка и исправление полей» → убедиться, что «Ошибок: 0», кнопка «Активировать шаблон» доступна. Скрин.
-  - `/admin/documents?sub=placeholders` → каталог: FLD-000362, FLD-000338, FLD-000289, FLD-000313 показывают тумблеры Full/Short/Signature + селектор падежа; FLD-000364/340/291/314 не показываются. Скрин.
-  - Тестовая генерация одного документа канонического пакета с плейсхолдерами `{{field:FLD-000338|format=signature_short|case=genitive}}` и `{{field:FLD-000313|format=short}}` → скачать PDF, убедиться визуально, что вставилось «И.И.Иванова» / «Иванов И.И.». Скрин страницы PDF.
+### B4. Payment-guards
 
-## DoD
+В каждом месте из A5 добавить явный фильтр/гвард `offer_type !== 'lead'` и юнит-проверку. Ни одна payment/entitlement/subscription/revenue-ветка не должна принимать lead.
 
-- В `canonical-template-apply-markup` и `src/lib/documents/placeholderClassifier.ts` синтаксис `format=full|short|signature_short` для `field:FLD-*` принимается.
-- Шаблон «Счёт-акт ЮЛ Исполнитель v4» проходит валидацию без ошибок и активируется.
-- В каталоге плейсхолдеров для Заказчик ФЛ появились тумблеры ФИО (Full/Short/Signature) + падеж на FLD-000313, дубль FLD-000314 скрыт.
-- Сгенерированный тестовый документ показывает корректно применённые модификаторы для Заказчик ФЛ и Заказчик/Исполнитель ЮЛ (скрины приложены).
-- Никаких новых таблиц/RPC/полей `fields_registry`, никаких миграций.
+### B5. Тест (Playwright в песочнице)
+
+- Seed: тариф + оффер `lead` + правило автозадачи (assignee = суперадмин) + `crm_routing` на живой воронке.
+- Отправить форму с публичной страницы (product) и из ButtonSection — оба должны попадать в тот же submit flow.
+- Повторить submit в течение 15 мин — убедиться, что дубля задачи нет.
+- Прогнать `crm-task-notify-worker` — notification уходит в Telegram суперадмину.
+
+### B6. DoD / Proof
+
+Каждый пункт проверяется явным SQL/логом:
+
+- lead-order создан в SoT-таблице (A1), с корректным `pipeline_id/pipeline_stage_id`.
+- `crm_tasks` создана, `assignee_user_id` = выбранный ответственный, source/metadata корректны.
+- `crm_task_notifications` создана, `crm-task-notify-worker` перевёл в `sent`.
+- Telegram-уведомление доставлено (лог воркера).
+- `payments_v2` — 0 новых строк.
+- bePaid/Stripe API не дёргался (grep логов провайдеров, 0 hits).
+- `entitlements`, `subscriptions_v2`, `access_grant_ledger` — 0 новых строк.
+- Revenue/stats-запросы (список из A5) не учитывают lead.
+- Lead виден в CRM Kanban / Contact Center как заявка.
+- pay_now/trial/preregistration работают без регрессии (smoke).
+- Idempotency 15 мин: повтор submit не создаёт вторую задачу.
+
+---
+
+## Жёсткие запреты (на весь патч)
+
+- **Не создавать параллельную сущность в `orders`, если SoT = `orders_v2`.**
+- Не трогать `payments_v2`, эквайринг (`create-payment-checkout`, bePaid, Stripe).
+- Не создавать `entitlements`, `subscriptions_v2`, `access_grant_ledger`, telegram-доступы.
+- Не открывать anon-доступ шире, чем нужно публичной форме (edge, не таблица).
+- Не менять поведение pay_now/trial/preregistration/installment.
+- Не изобретать имена полей в `crm_task_automation_rules`/`crm_task_notifications` — использовать только фактическую схему из Discovery.
+- Не добавлять check-constraint «наугад» без проверки существующих значений (A2).
+
+Approve = разрешение начать **Фазу A (Discovery)**. Фаза B стартует только после того, как отчёт discovery подтверждён.
