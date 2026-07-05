@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
@@ -5,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { ButtonActionType } from "@/services/sitePages/types";
 import type { AnchorsRegistry } from "@/hooks/useSitePageAnchors";
 import { HelpIcon } from "@/components/help/HelpComponents";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ButtonBlockEditorProps {
   content: Record<string, unknown>;
@@ -21,6 +23,7 @@ const ACTION_LABELS: Record<ButtonActionType, string> = {
   show_block: "Показать блок",
   toggle_block: "Переключить видимость блока",
   open_form: "Открыть форму",
+  open_lead_form: "Открыть форму заявки (lead)",
 };
 
 export function ButtonBlockEditor({ content, onChange, registry, currentBlockId }: ButtonBlockEditorProps) {
