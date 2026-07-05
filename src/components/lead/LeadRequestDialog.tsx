@@ -64,7 +64,6 @@ export function LeadRequestDialog({
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
-  const startTelegramLink = useStartTelegramLink();
 
   const contextSubtitle = [productName, tariffName].filter(Boolean).join(" · ");
   const headerSubtitle = contextSubtitle && (offerLabel || priceLabel)
