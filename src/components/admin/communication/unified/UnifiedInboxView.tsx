@@ -342,7 +342,8 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
           body: {
             action: "mark_read",
             instagram_account_id: sr.meta.instagramAccountId,
-            thread_key: sr.meta.instagramThreadKey,
+            thread_id: sr.meta.instagramThreadId ?? undefined,
+            sender_id: sr.meta.instagramPeerId ?? undefined,
           },
         });
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
