@@ -14,8 +14,11 @@ import {
   type CrmTask,
   type CrmTaskListFilters,
 } from "@/hooks/useCrmTasks";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
+import { ViewCrmTaskDialog } from "@/components/admin/tasks/ViewCrmTaskDialog";
 import { TaskKanbanBoard } from "@/components/admin/tasks/board/TaskKanbanBoard";
 import { TasksListView } from "@/components/admin/tasks/TasksListView";
 import { TasksStaffStatsPanel } from "@/components/admin/tasks/stats/TasksStaffStatsPanel";
@@ -23,6 +26,7 @@ import {
   TasksFiltersBar,
   type TasksFiltersValue,
 } from "@/components/admin/tasks/filters/TasksFiltersBar";
+
 
 const DEFAULT_FILTERS: TasksFiltersValue = {
   quick: "all",
