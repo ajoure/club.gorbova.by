@@ -141,6 +141,8 @@ export function UniversalPricingSection({
           onOpenChange={setPaymentOpen}
           offerId={selectedOffer.offer.id}
           offerLabel={selectedOffer.offer.button_label}
+          productName={product.public_title || product.name}
+          tariffName={selectedOffer.tariff.name}
           commentPlaceholder={(selectedOffer.offer as any).meta?.lead_form?.comment_placeholder}
           successMessage={(selectedOffer.offer as any).meta?.lead_form?.success_message}
         />
