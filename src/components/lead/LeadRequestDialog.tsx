@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, Loader2, Send, MessageCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Send, MessageCircle, Mail } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import {
@@ -25,6 +25,12 @@ interface LeadRequestDialogProps {
   onOpenChange: (open: boolean) => void;
   offerId: string;
   offerLabel?: string;
+  /** Название продукта — показывается в подзаголовке шапки как контекст. */
+  productName?: string;
+  /** Название тарифа — показывается в подзаголовке. */
+  tariffName?: string;
+  /** Дополнительная ценовая метка (напр. "Бесплатно" или "по договорённости"). */
+  priceLabel?: string;
   commentPlaceholder?: string;
   successMessage?: string;
 }
@@ -50,12 +56,20 @@ export function LeadRequestDialog({
   onOpenChange,
   offerId,
   offerLabel,
+  productName,
+  tariffName,
+  priceLabel,
   commentPlaceholder,
   successMessage,
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
+
+  const contextSubtitle = [productName, tariffName].filter(Boolean).join(" · ");
+  const headerSubtitle = contextSubtitle && (offerLabel || priceLabel)
+    ? `${contextSubtitle} — ${offerLabel || priceLabel}`
+    : contextSubtitle || null;
 
   const [step, setStep] = useState<Step>(user ? "details" : "auth");
   const [details, setDetails] = useState<DetailsForm>(emptyDetails);
@@ -167,11 +181,15 @@ export function LeadRequestDialog({
         {step === "auth" && (
           <>
             <DialogHeader>
-              <DialogTitle>{offerLabel || "Оставить заявку"}</DialogTitle>
-              <DialogDescription>
-                Начнём с email — так мы сможем связаться с вами и сохранить
-                историю заявок в вашем личном кабинете.
-              </DialogDescription>
+              <DialogTitle className="flex items-center gap-2">
+                <Mail className="h-5 w-5" />
+                Введите email
+              </DialogTitle>
+              {headerSubtitle && (
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {headerSubtitle}
+                </DialogDescription>
+              )}
             </DialogHeader>
             <InlineAuthForm
               initialEmail={session?.user?.email || ""}
@@ -186,9 +204,14 @@ export function LeadRequestDialog({
         {step === "details" && (
           <>
             <DialogHeader>
-              <DialogTitle>{offerLabel || "Оставить заявку"}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <Send className="h-5 w-5" />
+                {offerLabel || "Оставить заявку"}
+              </DialogTitle>
               <DialogDescription>
-                Проверьте контактные данные — наш менеджер свяжется с вами.
+                {headerSubtitle
+                  ? `${headerSubtitle}. Проверьте контактные данные — менеджер свяжется с вами.`
+                  : "Проверьте контактные данные — менеджер свяжется с вами."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmitLead} className="space-y-4">

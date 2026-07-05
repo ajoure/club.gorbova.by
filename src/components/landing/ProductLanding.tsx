@@ -142,6 +142,8 @@ export function ProductLanding({ data, header, footer, customSections }: Product
           onOpenChange={setPaymentOpen}
           offerId={selectedOffer.offer.id}
           offerLabel={selectedOffer.offer.button_label}
+          productName={data.product.public_title || data.product.name}
+          tariffName={selectedOffer.tariff.name}
           commentPlaceholder={(selectedOffer.offer.meta as any)?.lead_form?.comment_placeholder}
           successMessage={(selectedOffer.offer.meta as any)?.lead_form?.success_message}
         />

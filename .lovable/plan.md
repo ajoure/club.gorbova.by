@@ -1,58 +1,62 @@
 ## да, согласен, с учетом правок:
 
 ```text
-1. Часть 1 — выполнить обязательно первой.
-Без CRM/Telegram smoke текущий lead-offer нельзя считать закрытым.
+1. План правильный: это финальные UI/cleanup/smoke правки, не изменение бизнес-архитектуры lead-offer.
 
-2. Часть 2 правильная по направлению: lead-заявка должна использовать canonical inline-auth flow, а не отдельную самодельную форму email/name.
+2. По пункту 1:
+добавлять T-000074 нужно только в конкретный PricingSection для `ideologicheskaya-rabota`, а не во все блоки продукта.
+Перед UPDATE:
+- показать current `tariff_ids`;
+- подтвердить, что T-000074 принадлежит этому продукту;
+- сохранить порядок: карта → счёт → индивидуальный договор;
+- сделать backup content JSON в proof.
 
-3. Но backend `submit-lead-request` не должен оставаться `verify_jwt=false` после перехода.
-Правильный целевой режим:
-- authenticated required;
-- `auth.uid()` обязателен;
-- profile берётся по `auth.uid()`;
-- unauthenticated fallback удалить или оставить только временно за feature flag с датой удаления.
+3. По пункту 2:
+можно использовать `useInlineAuth`, но нельзя разойтись с canonical auth-логикой.
+Если вручную пересобирается email-first UI, нужно покрыть:
+- existing email login;
+- new user signup/confirm;
+- auth error;
+- already-authenticated state.
+Не дублировать auth state machine.
 
-4. Чтобы не сломать публичную страницу, anon-пользователь должен сначала видеть модал `InlineAuthForm`, а submit заявки доступен только после auth.
+4. По пункту 3:
+hard delete lead-заказов разрешать только для тестовых/неоплаченных лидов без payment/access/subscription.
+Перед каскадом проверить:
+- `orders_v2.status='lead'`;
+- `amount=0`;
+- `payments_v2` отсутствуют;
+- `entitlements` отсутствуют;
+- `subscriptions_v2` отсутствуют;
+- `access_grant_ledger` отсутствует.
+Если хоть что-то найдено — hard delete blocked.
 
-5. Telegram prompt должен быть opt-in после submit:
-- если Telegram уже привязан — не показывать;
-- если не привязан — показать шаг;
-- skip разрешён;
-- отсутствие Telegram не блокирует создание заявки.
+5. В `offer_hard_delete` порядок удаления:
+- сначала `crm_task_notifications` по task_id;
+- потом `crm_tasks`;
+- потом `orders_v2 status='lead'`;
+- потом `tariff_offers`.
+И всё в одной транзакции/RPC.
 
-6. Не обновлять профиль агрессивно:
-- `full_name` обновлять только если пусто;
-- `phone` обновлять только если пусто или пользователь явно ввёл новый;
-- email не менять из формы, брать из auth/session.
+6. В `tariff_hard_delete` lead-заказы тоже не должны блокировать, но только при тех же guards.
+Не удалять реальные paid/pending payment orders.
 
-7. Idempotency после auth:
-ключ лучше:
-`offer_id + auth.uid() + 15 min`
-плюс fallback check по phone/email в metadata.
-Иначе один пользователь может создать дубли через разные телефоны.
+7. В safety-check UI вернуть понятный diff:
+- blocking_orders_count;
+- cascade_lead_orders_count;
+- cascade_crm_tasks_count;
+- cascade_notifications_count.
+Чтобы админ видел, что будет удалено.
 
-8. `submit-lead-request` должен сохранить совместимость с уже созданной логикой:
-- orders_v2 status='lead';
-- crm_tasks;
-- crm_task_notifications;
-- no payments;
-- no entitlements;
-- no subscriptions.
+8. Playwright cleanup через новый hard_delete — ок, но после cleanup обязательно SQL:
+- test offer удалён;
+- test lead orders = 0;
+- test crm_tasks = 0;
+- test notifications = 0;
+- payments/access/subscriptions всё ещё 0.
 
-9. Playwright надо делать не только happy-path:
-- signup;
-- login;
-- already-authenticated;
-- duplicate submit;
-- honeypot/timing reject;
-- Telegram skip;
-- Telegram already linked.
-
-10. Proof должен явно показать:
-- старая anon-form больше не создаёт draft-profile без auth;
-- lead создаётся только после inline-auth;
-- CRM/Telegram smoke PASS.
+9. Не использовать SQL-вставку тестового оффера, если цель проверить UI.
+Лучше создать оффер через UI или заранее seed, но smoke должен проверить публичную кнопку как пользователь.
 ```
 
 Итоговая команда:
@@ -60,166 +64,83 @@
 ```text
 План принимаю.
 
-Approve на выполнение:
+Approve на финальный PATCH-LEAD-OFFER-FINAL-UI-SMOKE-CLEANUP.
 
-PATCH-LEAD-OFFER-FINAL-DOD-AND-INLINE-AUTH
-
-Порядок:
-1. Сначала закрыть предыдущий DoD:
-- CRM Kanban / Contact Center smoke;
-- task видна ответственному;
-- crm-task-notify-worker переводит notification pending → sent;
-- proof обновлён.
-
-2. Затем discovery по canonical inline-auth:
-- `useInlineAuth`;
-- `InlineAuthForm`;
-- Telegram link hooks из `PaymentDialog`;
-- подтвердить, что Telegram hooks не завязаны на оплату.
-
-3. Затем code patch:
-- `LeadRequestDialog` перевести на multi-step:
-  auth → details → telegram optional → success;
-- использовать `InlineAuthForm`;
-- использовать `useTelegramLinkStatus` / `useStartTelegramLink`;
-- submit заявки только после auth;
-- backend `submit-lead-request` перевести на authenticated primary path через `auth.uid()`.
-
-4. Backend:
-- profile брать по auth.uid();
-- email брать из session/auth;
-- full_name/phone обновлять осторожно;
-- idempotency: offer_id + user_id + 15 min;
-- orders_v2/crm_tasks/crm_task_notifications оставить как в текущем lead flow;
-- payments/entitlements/subscriptions не создавать.
-
-5. Verify:
-- signup flow;
-- login flow;
-- already-authenticated flow;
-- Telegram prompt shown/skipped;
-- Telegram linked user skips prompt;
-- duplicate submit не создаёт вторую задачу;
-- payments_v2=0;
-- entitlements=0;
-- subscriptions_v2=0;
-- crm notification sent.
+Scope:
+1. Добавить T-000074 в выбранный PricingSection страницы `ideologicheskaya-rabota`.
+2. Перестилизовать LeadRequestDialog под email-first PaymentDialog style, но с reuse `useInlineAuth`.
+3. Обновить `offer_delete_safety_check` / `offer_hard_delete` и tariff analog:
+   - lead orders не блокируют delete;
+   - lead orders удаляются каскадом только если status='lead', amount=0 и нет payments/access/subscriptions.
+4. Playwright smoke:
+   - submit lead;
+   - Telegram step;
+   - idempotency;
+   - notification sent;
+   - cleanup через hard_delete;
+   - proof со скринами/SQL.
 
 Запрещено:
-- payments/acquiring;
-- entitlements/subscriptions;
-- parallel orders;
+- менять `submit-lead-request` бизнес-логику;
+- создавать payments/entitlements/subscriptions;
 - ломать pay_now/trial/preregistration;
-- обязательный Telegram как блокер;
-- создание draft-profile без auth в новом основном flow.
+- удалять не-lead orders;
+- удалять lead orders с payment/access следами;
+- менять pricing logic кроме whitelist блока.
 
 Proof:
 `.lovable/proofs/lead_offer_implementation_2026_05.md`
+
+План: Финальные правки lead-offer + smoke-тест
 ```
 
-Коротко: **да, переводим lead на тот же inline-auth, что и оплата, плюс optional Telegram после заявки.**
+### Задачи
 
-&nbsp;
+**1. Вернуть тариф "Индивидуальный договор" на публичную страницу**
 
-План: финальный DoD lead-offer + переход на канонический inline-auth flow
+- Причина: страница `gorbova.by/ideologicheskaya-rabota` рендерится через SiteBuilder-блок PricingSection с `tariff_filter_mode='selected'`, а `tariff_ids` содержит только `T-000072` (карта) и `T-000073` (счёт). Новый `T-000074 Индивидуальный договор` не добавлен в whitelist блока → не показывается.
+- Действие: через SQL-запрос найти site_blocks с product_id этого продукта, дописать `T-000074` в массив `content.tariff_ids` (сохраняя порядок). Ничего в коде фильтра менять не нужно — это конфиг блока.
 
-### Часть 1 — Финальный DoD (smoke)
+**2. Кнопка «Оставить заявку»: стиль как у оплаты картой (email-first)**
 
-**1.1 CRM Kanban / Contact Center smoke**
+Пересобрать `LeadRequestDialog` под визуальный шаблон PaymentDialog (см. скрин: header с иконкой карточки/документа, подзаголовок «{Продукт} · {Тариф} — {label}», поле Email, кнопки «Отмена / Продолжить»):
 
-- Открыть CRM Kanban и Contact Center в preview.
-- Проверить, что созданный lead-order виден как карточка «заявка».
-- Убедиться, что `pipeline_id` / `pipeline_stage_id` соответствуют `offer.meta.crm_routing`.
-- Убедиться, что связанная `crm_tasks`-строка видна назначенному ответственному (по `assignee_user_id`).
-- Приложить скриншоты в proof.
+- Шаг 1 `email`: заголовок + иконка (иконка — из meta оффера, дефолт `Send`), подстрока `{product.name} · {tariff.name} — {button_label}`, одно поле Email, кнопки [Отмена] [Продолжить]. Логика ввода email/логина/регистрации — 1-в-1 через существующий `useInlineAuth` (переиспользовать хук, не форму — чтобы визуал был компактный, как у PaymentDialog).
+- Шаг 2 `details`: после аутентификации показать телефон + комментарий (имя/email/телефон предзаполняются из profiles), кнопка «Отправить заявку». Визуально — те же стили Dialog, что и PaymentDialog (spacing, шрифты, кнопки).
+- Шаг 3 `telegram` и Шаг 4 `success` — без изменений в логике, только выравнять стиль.
+- Всё остальное (edge submit-lead-request, идемпотентность, orders_v2/crm_tasks/notifications) не трогаем.
 
-**1.2 Telegram notification smoke**
+**3. Починить удаление тестовой кнопки (offer_delete_blocked)**
 
-- Найти запись `crm_task_notifications` (status='pending', channel='telegram') созданную предыдущим e2e-прогоном.
-- Вручную вызвать `crm-task-notify-worker` (через `curl_edge_functions` или ручной cron-tick).
-- Подтвердить SQL-ом переход `pending → sent`, `sent_at IS NOT NULL`, `error IS NULL`.
-- Приложить лог воркера. Если `failed` — показать `error`+причину и завести follow-up.
+- Причина: `offer_delete_safety_check` блокирует hard delete, если есть `orders_v2` с этим `offer_id`, даже если все они `status='lead'` (без оплат, без entitlements, без subscriptions).
+- Миграция: обновить `public.offer_delete_safety_check` — считать `v_orders` **только** по НЕ-lead заказам. Lead-заказы вынести в отдельный счётчик `orders_v2_leads` в `cascade_will_remove`. Обновить `public.offer_hard_delete` — перед `DELETE FROM tariff_offers` каскадно удалить `orders_v2 WHERE offer_id=... AND status='lead'` и связанные `crm_tasks` (`WHERE order_id IN (...)`) и их `crm_task_notifications`. Так же обновить `tariff_delete_safety_check`/`tariff_hard_delete` по аналогии (lead-заказы не блокируют).
+- Аудит: в `audit_logs` писать сколько lead-заказов/задач удалено каскадом.
 
-**1.3 Обновить proof**
+**4. Playwright smoke-тест: полный путь заявки от тестового аккаунта**
 
-- Дополнить `.lovable/proofs/lead_offer_implementation_2026_05.md` разделами «CRM UI smoke» и «Telegram worker smoke» с SQL-выкладкой и скриншотами/логами.
+Сценарий (headless в песочнице, авторизация в preview через `123456`):
 
----
+1. Открыть страницу с lead-кнопкой (админ создаёт тестовый lead-оффер на T-000074 через UI, либо через SQL быстро вставить).
+2. Кликнуть «Оставить заявку» → диалог показывает email-шаг.
+3. Ввести email тестового аккаунта → sign-in → details → phone → submit.
+4. Скрин `telegram` шага → Skip → success.
+5. SQL-проверки: `orders_v2` (status='lead', amount=0, +1); `crm_tasks` (+1, metadata.origin='lead_form'); `crm_task_notifications` (pending→sent); `payments_v2/entitlements/subscriptions_v2` = 0 новых.
+6. Повторный submit тем же email за <15 мин → идемпотентность (без новой задачи).
+7. Cleanup: superadmin удаляет тестовую заявку (order+task) и тестовый lead-оффер через новую логику `offer_hard_delete`.
 
-### Часть 2 — Переиспользовать канонический registration flow в LeadRequestDialog
+Скрины + SQL-выдержки — в `.lovable/proofs/lead_offer_implementation_2026_05.md` (раздел 8 «Final UI smoke»).
 
-**Мотивация:** сейчас `LeadRequestDialog` — самостоятельная форма (name/phone/email/comment), которая идёт в edge `submit-lead-request`, где профиль ищется по email/phone или создаётся черновой без `auth.users`. Пользователь просит: заявка должна проходить через тот же inline-auth поток, что и оплата (`useInlineAuth` + `InlineAuthForm`), плюс сразу после — предложение привязать Telegram (как в `PaymentDialog` для клубных продуктов). Всё — в одном модале, без переходов.
+### Порядок исполнения
 
-**2.1 Discovery (read-only, до кода):**
+1. SQL: добавить T-000074 в `tariff_ids` соответствующего site-блока.
+2. Migration: обновить safety-check + hard_delete (offer и tariff) с исключением lead-заказов.
+3. Refactor `LeadRequestDialog` под PaymentDialog-стиль (email-first компакт).
+4. Playwright smoke-скрипт → скрины + SQL → обновить proof.
+5. Cleanup тестовых данных через новый `offer_hard_delete`.
 
-- `src/hooks/useInlineAuth.ts` — этапы `email → login | signup → confirm_signup`, реальные RPC/edge вызовы.
-- `src/components/auth/InlineAuthForm.tsx` — canonical UI, пропсы, что можно переиспользовать целиком.
-- `src/components/payment/PaymentDialog.tsx` (строки ~180–500, 1250–1300) — как встроен telegram prompt: `useTelegramLinkStatus`, `useStartTelegramLink`, шаг «Привязать Telegram / Пропустить», deeplink в бот.
-- Подтвердить, что `useTelegramLink` не требует платежного контекста и вызывается для любого authenticated user.
+### Замороженные инварианты (без изменений)
 
-**2.2 UI: перепроектировать `LeadRequestDialog` как многошаговый модал**
-
-Шаги (в одном `<Dialog>`, без навигации по страницам):
-
-```text
-[1] auth        — <InlineAuthForm> (email → login или signup+confirm)
-                  Заголовок: «Оставить заявку — {offerLabel}»
-                  Подзаголовок: «Начнём с email, чтобы связаться с вами»
-[2] details     — телефон + комментарий (имя берём из profiles.full_name;
-                  если пусто — поле «Имя» добавляем в этот же шаг)
-                  Кнопка «Отправить заявку»
-[3] telegram?   — показываем ТОЛЬКО если profile.telegram_link_status !== 'active'
-                  Обоснование (готовый копирайт):
-                  «Привяжите Telegram — так мы сможем быстро связаться
-                   с вами в любое время, отправлять напоминания и материалы
-                   прямо в мессенджер. Это займёт 10 секунд.»
-                  Кнопки: [Привязать Telegram] [Пропустить — привяжу позже]
-                  (текст «Позже можно привязать в личном кабинете».)
-[4] success     — «Заявка принята. Мы свяжемся с вами.»
-```
-
-Реализация:
-
-- Убираем из `LeadRequestDialog` собственные поля email/name (email приходит из session после auth; name — из profiles или добираем на шаге details).
-- Импортируем `InlineAuthForm`, `useTelegramLinkStatus`, `useStartTelegramLink`.
-- Если пользователь уже залогинен и `full_name`/`phone` заполнены — сразу шаг [2] с предзаполнением.
-- После успешного submit — переход [3] или [4] по признаку telegram_link_status.
-- Honeypot оставляем на шаге [2].
-
-**2.3 Backend: `submit-lead-request` — упростить под authenticated flow**
-
-- Требовать валидный JWT (снять `verify_jwt=false`; либо оставить для fallback, но в основном пути читать `auth.uid()`).
-- Не искать/не создавать draft-профиль по email — брать `profile_id` напрямую по `auth.uid()`.
-- Обновлять `profiles.phone`/`full_name` (если пусто) — reuse существующего update-паттерна.
-- Всё остальное (idempotency, CORS, honeypot timing, INSERT в `orders_v2`, `crm_tasks`, `crm_task_notifications`) — без изменений.
-- Оставить старый ветку «unauthenticated» помеченной как `deprecated`, чтобы не сломать site-builder ButtonSection во время миграции (или сразу переключить: `open_lead_form` тоже открывает inline-auth сначала).
-
-**2.4 Проверка reused components (ничего не дублируем)**
-
-- `useInlineAuth` — да, используем как есть.
-- `InlineAuthForm` — используем как есть, с `onAuthenticated` callback для перехода на шаг details.
-- `useTelegramLinkStatus`, `useStartTelegramLink` — reuse.
-- Deep-link/bot handshake — уже есть в `startTelegramLink.mutateAsync()`, ничего нового.
-
-**2.5 Тест (Playwright, дополнить существующий):**
-
-- Новый юзер: email → signup → confirm → details → submit → telegram prompt → skip → success.
-- Существующий юзер без телефона: email → login → details (ввод phone) → submit → telegram prompt (если не привязан).
-- Существующий полностью заполненный юзер с привязанным TG: email → login → details (auto-filled) → submit → success (без TG-шага).
-- Проверка, что `orders_v2 status='lead'`, `crm_tasks`, `crm_task_notifications` создаются как раньше; `payments_v2 = 0`, `entitlements = 0`.
-
-**2.6 Обновить proof** — добавить раздел «Inline-auth + Telegram integration» с SQL/скриншотами трёх сценариев.
-
----
-
-### Порядок выполнения
-
-1. Часть 1 (DoD smoke) — короткий проход, закрывает предыдущий scope.
-2. Часть 2 discovery → правки UI → edge → тесты → proof.
-
-### Запреты (сохранены из предыдущего approve)
-
-- Не создаём параллельную сущность к `orders_v2`.
-- Не трогаем `payments_v2` / эквайринг / entitlements / subscriptions.
-- Не добавляем anon-доступ сверх публичной формы (после миграции на inline-auth публичный anon путь сузится).
-- Не ломаем pay_now / trial / preregistration.
+- SoT = `orders_v2`, статус `lead`, amount=0.
+- Никаких payments_v2/entitlements/subscriptions_v2 для lead.
+- pay_now/trial/preregistration не трогаем.
+- Edge `submit-lead-request` уже требует JWT, идемпотентность 15 мин — не меняем.
