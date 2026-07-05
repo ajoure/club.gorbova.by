@@ -172,22 +172,30 @@ export function TariffCard({
         )}
       </div>
 
-      <div className="text-center mb-4">
-        {displayPrice !== null ? (
-          <div>
-            {showOldPrice && (
-              <div className="text-lg text-muted-foreground line-through">
-                {oldPrice} {resolvedSuffix}
+      {(() => {
+        // Hide price block for lead-only tariffs unless card_config.price_display is explicitly set
+        const isLeadOnly = leadOffers.length > 0 && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
+        if (isLeadOnly && cc?.price_display == null) return null;
+        return (
+          <div className="text-center mb-4">
+            {displayPrice !== null ? (
+              <div>
+                {showOldPrice && (
+                  <div className="text-lg text-muted-foreground line-through">
+                    {oldPrice} {resolvedSuffix}
+                  </div>
+                )}
+                <div className="text-3xl font-bold text-foreground price-value">
+                  {displayPrice} <span className="text-base font-normal text-muted-foreground">{resolvedSuffix}</span>
+                </div>
               </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">Цена не задана</div>
             )}
-            <div className="text-3xl font-bold text-foreground price-value">
-              {displayPrice} <span className="text-base font-normal text-muted-foreground">{resolvedSuffix}</span>
-            </div>
           </div>
-        ) : (
-          <div className="text-sm text-muted-foreground">Цена не задана</div>
-        )}
-      </div>
+        );
+      })()}
+
 
       {tariff.description && (
         <p className="text-sm text-muted-foreground text-center mb-4">{tariff.description}</p>
