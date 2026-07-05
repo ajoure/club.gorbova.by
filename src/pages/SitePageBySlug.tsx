@@ -19,6 +19,7 @@ import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
+import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
@@ -149,6 +150,23 @@ export default function SitePageBySlug() {
         pageId={page.id}
       />
       {resolved && (() => {
+        if (resolved.offer.offer_type === "lead") {
+          return (
+            <LeadRequestDialog
+              open={paymentOpen}
+              onOpenChange={(v) => {
+                setPaymentOpen(v);
+                if (!v) setPending(null);
+              }}
+              offerId={resolved.offer.id}
+              offerLabel={resolved.offer.button_label}
+              productName={resolved.product.public_title || resolved.product.name}
+              tariffName={resolved.tariff.name}
+              commentPlaceholder={(resolved.offer as any).meta?.lead_form?.comment_placeholder}
+              successMessage={(resolved.offer as any).meta?.lead_form?.success_message}
+            />
+          );
+        }
         const invoiceDetect = detectInvoiceOnlyOffer(resolved.offer);
         if (invoiceDetect.isInvoiceOnly) {
           return (
