@@ -263,6 +263,7 @@ Deno.serve(async (req) => {
       is_trial: false,
       customer_email: effectiveEmail,
       customer_phone: effectivePhone,
+      deal_date: new Date().toISOString(),
       pipeline_id: routing?.enabled ? routing.pipeline_id ?? null : null,
       pipeline_stage_id: routing?.enabled
         ? routing.stage_on_pending ?? null
