@@ -1457,7 +1457,7 @@ Deno.serve(async (req) => {
     // Load registry labels (for source_trace richness)
     const { data: regRows } = await supabase
       .from('fields_registry')
-      .select('public_id, label, entity_type, data_type')
+      .select('public_id, key, label, entity_type, data_type')
       .in('public_id', allIds.length > 0 ? allIds : ['__none__']);
     const regMap = new Map((regRows || []).map((r: any) => [r.public_id, (r as any)]));
 
