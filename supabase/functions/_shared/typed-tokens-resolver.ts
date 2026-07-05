@@ -201,9 +201,9 @@ export function formatPersonName(
   return initials ? `${initials}${surname}` : surname;
 }
 
-/** Legacy wrapper. New canon: `Фамилия И.О.` (без пробела между инициалами). */
+/** Legacy wrapper. New canon (2026-07): `И.О.Фамилия` (signature_short, без пробелов). */
 export function fullNameToInitials(fullName?: string | null): string {
-  return formatPersonName(fullName, { format: 'short' });
+  return formatPersonName(fullName, { format: 'signature_short' });
 }
 
 /**
