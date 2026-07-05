@@ -62,6 +62,23 @@ import {
 } from "@/utils/packagePlaceholderCatalog";
 import { ORG_FORM_SHORT_TO_FULL } from "@/lib/legal-entities/GrpAutofillService";
 
+// PATCH-ROLE-PERSON-NAME-FLDS: биллинговые FLD-поля ролей «Руководитель ФИО»,
+// которые переиспользуют готовые ФИО-модификаторы (полностью/кратко/для подписи + падеж),
+// как это уже работает для package.ul.director_full_name.
+// Синхронизировано с backend PERSON_NAME_FIELD_KEYS в canonical-document-generate-strict/index.ts.
+const PERSON_NAME_FIELD_FLDS: ReadonlySet<string> = new Set([
+  "FLD-000362", // executor.leg.director_full_name  — Исполнитель ЮЛ: Руководитель ФИО
+  "FLD-000338", // customer.leg.director_full_name  — Заказчик ЮЛ: Руководитель ФИО
+  "FLD-000289", // customer.ent.director_full_name  — Заказчик ИП: Руководитель ФИО
+]);
+// Дубли «ФИО кратко» — те же данные, что и полное ФИО, только другая форма.
+// Кратко теперь выбирается модификатором format=short прямо на *_full_name-поле.
+const HIDDEN_DUPLICATE_SHORT_FLDS: ReadonlySet<string> = new Set([
+  "FLD-000364", // executor.leg.director_short_name
+  "FLD-000340", // customer.leg.director_short_name
+  "FLD-000291", // customer.ent.director_short_name
+]);
+
 interface CatalogRow {
   id: string;
   token_key: string;            // legacy, только для поиска
@@ -397,6 +414,10 @@ export function PlaceholdersCatalogTab() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
+      // PATCH-ROLE-PERSON-NAME-FLDS: дубли «Руководитель ФИО кратко» скрыты
+      // из UI-каталога — краткая/подписная форма выбирается модификатором
+      // на соответствующем *_full_name-поле.
+      if (r.field_public_id && HIDDEN_DUPLICATE_SHORT_FLDS.has(r.field_public_id)) return false;
       const sectionId = sectionIdForRow(r);
       if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
@@ -675,7 +696,12 @@ export function PlaceholdersCatalogTab() {
                               settings.format,
                               settings.caseModifier,
                             ));
-                      const kind = classifyDataType(t.field_data_type ?? t.data_type);
+                      // PATCH-ROLE-PERSON-NAME-FLDS: для ролевых «Руководитель ФИО» (Исполнитель ЮЛ,
+                      // Заказчик ЮЛ, Заказчик ИП) переиспользуем ФИО-модификаторы (полностью/кратко/для подписи + падеж).
+                      const kind: ReturnType<typeof classifyDataType> | "person_name" =
+                        t.field_public_id && PERSON_NAME_FIELD_FLDS.has(t.field_public_id)
+                          ? "person_name"
+                          : classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
                           <TableRow key={t.id} className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>

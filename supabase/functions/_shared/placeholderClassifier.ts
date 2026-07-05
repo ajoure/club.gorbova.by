@@ -100,7 +100,14 @@ export type PlaceholderClassification =
   | { kind: 'invalid_modifier_value'; key: string; value: string }
   | { kind: 'invalid' };
 
-const FORMATS_BILLING = new Set<PlaceholderFormat>(['words', 'text']);
+// FORMATS_BILLING расширен под ФИО-модификаторы: `full|short|signature_short`
+// разрешены syntax-wise для field:FLD-* (per-FLD семантика — на резолвере,
+// см. PERSON_NAME_FIELD_KEYS в canonical-document-generate-strict). Это зеркалит
+// поведение package_requisite и нужно для полей «Руководитель ФИО» (Исполнитель ЮЛ,
+// Заказчик ЮЛ, Заказчик ИП).
+const FORMATS_BILLING = new Set<PlaceholderFormat>([
+  'words', 'text', 'full', 'short', 'signature_short',
+]);
 const FORMATS_LN = new Set<PlaceholderFormat>(['full', 'short', 'signature_short']);
 // package_requisite держит и биллинговые (суммы/даты: words|text), и
 // персоналии/орг-форму (full|short|signature_short|long). Per-FLD семантика
