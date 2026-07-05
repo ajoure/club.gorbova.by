@@ -293,24 +293,15 @@ export function LeadRequestDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
+              <TelegramCompactCard />
               <Button
-                onClick={handleStartTelegram}
-                disabled={startTelegramLink.isPending}
-                className="w-full"
-                size="lg"
-              >
-                {startTelegramLink.isPending ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Открываю бота…</>
-                ) : (
-                  <>Привязать Telegram</>
-                )}
-              </Button>
-              <Button
-                onClick={handleSkipTelegram}
+                onClick={handleFinishTelegram}
                 variant="ghost"
                 className="w-full"
               >
-                Пропустить — привяжу позже
+                {telegramStatus?.status === "active"
+                  ? "Готово"
+                  : "Пропустить — привяжу позже"}
               </Button>
               <p className="text-xs text-center text-muted-foreground">
                 Позже привязать Telegram можно в личном кабинете.
@@ -318,6 +309,7 @@ export function LeadRequestDialog({
             </div>
           </>
         )}
+
 
         {step === "success" && (
           <div className="py-6 text-center space-y-4">
