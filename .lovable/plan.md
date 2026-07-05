@@ -1,146 +1,228 @@
 ## да, согласен, с учетом правок:
 
-```text
-1. План правильный: это финальные UI/cleanup/smoke правки, не изменение бизнес-архитектуры lead-offer.
+### **1. Не менять логику Kanban, пока не доказана причина**
 
-2. По пункту 1:
-добавлять T-000074 нужно только в конкретный PricingSection для `ideologicheskaya-rabota`, а не во все блоки продукта.
-Перед UPDATE:
-- показать current `tariff_ids`;
-- подтвердить, что T-000074 принадлежит этому продукту;
-- сохранить порядок: карта → счёт → индивидуальный договор;
-- сделать backup content JSON в proof.
+Пункт 2 сейчас содержит опасное предположение:
 
-3. По пункту 2:
-можно использовать `useInlineAuth`, но нельзя разойтись с canonical auth-логикой.
-Если вручную пересобирается email-first UI, нужно покрыть:
-- existing email login;
-- new user signup/confirm;
-- auth error;
-- already-authenticated state.
-Не дублировать auth state machine.
+“расширить SQL-выборку kanban: включить status=‘lead’”
 
-4. По пункту 3:
-hard delete lead-заказов разрешать только для тестовых/неоплаченных лидов без payment/access/subscription.
-Перед каскадом проверить:
-- `orders_v2.status='lead'`;
-- `amount=0`;
-- `payments_v2` отсутствуют;
-- `entitlements` отсутствуют;
-- `subscriptions_v2` отсутствуют;
-- `access_grant_ledger` отсутствует.
-Если хоть что-то найдено — hard delete blocked.
+Это нельзя делать до диагностики.
 
-5. В `offer_hard_delete` порядок удаления:
-- сначала `crm_task_notifications` по task_id;
-- потом `crm_tasks`;
-- потом `orders_v2 status='lead'`;
-- потом `tariff_offers`.
-И всё в одной транзакции/RPC.
+Сначала нужно определить:
 
-6. В `tariff_hard_delete` lead-заказы тоже не должны блокировать, но только при тех же guards.
-Не удалять реальные paid/pending payment orders.
+- создается ли `orders_v2` с `status='lead'`;
+- записываются ли `pipeline_id` и `pipeline_stage_id`;
+- по какому источнику Kanban вообще строится (orders_v2, view, RPC);
+- фильтрует ли Kanban по статусу, по pipeline, по stage или по другому признаку.
 
-7. В safety-check UI вернуть понятный diff:
-- blocking_orders_count;
-- cascade_lead_orders_count;
-- cascade_crm_tasks_count;
-- cascade_notifications_count.
-Чтобы админ видел, что будет удалено.
+Только после этого менять соответствующий view/RPC/SQL. Если проблема только в неверном `pipeline_id`, фильтр Kanban менять вообще не нужно.
 
-8. Playwright cleanup через новый hard_delete — ок, но после cleanup обязательно SQL:
-- test offer удалён;
-- test lead orders = 0;
-- test crm_tasks = 0;
-- test notifications = 0;
-- payments/access/subscriptions всё ещё 0.
+---
 
-9. Не использовать SQL-вставку тестового оффера, если цель проверить UI.
-Лучше создать оффер через UI или заранее seed, но smoke должен проверить публичную кнопку как пользователь.
-```
+### **2. CRM routing сначала диагностировать**
 
-Итоговая команда:
+Не обновлять сразу `tariff_offers.meta.crm_routing`.
 
-```text
-План принимаю.
+Сначала подтвердить:
 
-Approve на финальный PATCH-LEAD-OFFER-FINAL-UI-SMOKE-CLEANUP.
+- какой pipeline выбран сейчас;
+- какой pipeline должен использоваться;
+- совпадает ли он с тем, который уже используют остальные лиды.
 
-Scope:
-1. Добавить T-000074 в выбранный PricingSection страницы `ideologicheskaya-rabota`.
-2. Перестилизовать LeadRequestDialog под email-first PaymentDialog style, но с reuse `useInlineAuth`.
-3. Обновить `offer_delete_safety_check` / `offer_hard_delete` и tariff analog:
-   - lead orders не блокируют delete;
-   - lead orders удаляются каскадом только если status='lead', amount=0 и нет payments/access/subscriptions.
-4. Playwright smoke:
-   - submit lead;
-   - Telegram step;
-   - idempotency;
-   - notification sent;
-   - cleanup через hard_delete;
-   - proof со скринами/SQL.
+Менять routing только если доказано, что именно он является причиной.
 
-Запрещено:
-- менять `submit-lead-request` бизнес-логику;
-- создавать payments/entitlements/subscriptions;
-- ломать pay_now/trial/preregistration;
-- удалять не-lead orders;
-- удалять lead orders с payment/access следами;
-- менять pricing logic кроме whitelist блока.
+---
 
-Proof:
-`.lovable/proofs/lead_offer_implementation_2026_05.md`
+### **3. Не выполнять UPDATE шаблона по UUID вслепую**
 
-План: Финальные правки lead-offer + smoke-тест
-```
+Вместо
 
-### Задачи
+UPDATE crm_task_automation_rules id=…
 
-**1. Вернуть тариф "Индивидуальный договор" на публичную страницу**
+нужно:
 
-- Причина: страница `gorbova.by/ideologicheskaya-rabota` рендерится через SiteBuilder-блок PricingSection с `tariff_filter_mode='selected'`, а `tariff_ids` содержит только `T-000072` (карта) и `T-000073` (счёт). Новый `T-000074 Индивидуальный договор` не добавлен в whitelist блока → не показывается.
-- Действие: через SQL-запрос найти site_blocks с product_id этого продукта, дописать `T-000074` в массив `content.tariff_ids` (сохраняя порядок). Ничего в коде фильтра менять не нужно — это конфиг блока.
+- сначала убедиться, что именно это правило привязано к T-000074;
+- затем обновить только его.
 
-**2. Кнопка «Оставить заявку»: стиль как у оплаты картой (email-first)**
+Если правило используется несколькими офферами — изменение должно быть согласовано отдельно.
 
-Пересобрать `LeadRequestDialog` под визуальный шаблон PaymentDialog (см. скрин: header с иконкой карточки/документа, подзаголовок «{Продукт} · {Тариф} — {label}», поле Email, кнопки «Отмена / Продолжить»):
+---
 
-- Шаг 1 `email`: заголовок + иконка (иконка — из meta оффера, дефолт `Send`), подстрока `{product.name} · {tariff.name} — {button_label}`, одно поле Email, кнопки [Отмена] [Продолжить]. Логика ввода email/логина/регистрации — 1-в-1 через существующий `useInlineAuth` (переиспользовать хук, не форму — чтобы визуал был компактный, как у PaymentDialog).
-- Шаг 2 `details`: после аутентификации показать телефон + комментарий (имя/email/телефон предзаполняются из profiles), кнопка «Отправить заявку». Визуально — те же стили Dialog, что и PaymentDialog (spacing, шрифты, кнопки).
-- Шаг 3 `telegram` и Шаг 4 `success` — без изменений в логике, только выравнять стиль.
-- Всё остальное (edge submit-lead-request, идемпотентность, orders_v2/crm_tasks/notifications) не трогаем.
+### **4. Защитный блок в submit-lead-request**
 
-**3. Починить удаление тестовой кнопки (offer_delete_blocked)**
+Помимо проверки наличия плейсхолдеров добавить правило:
 
-- Причина: `offer_delete_safety_check` блокирует hard delete, если есть `orders_v2` с этим `offer_id`, даже если все они `status='lead'` (без оплат, без entitlements, без subscriptions).
-- Миграция: обновить `public.offer_delete_safety_check` — считать `v_orders` **только** по НЕ-lead заказам. Lead-заказы вынести в отдельный счётчик `orders_v2_leads` в `cascade_will_remove`. Обновить `public.offer_hard_delete` — перед `DELETE FROM tariff_offers` каскадно удалить `orders_v2 WHERE offer_id=... AND status='lead'` и связанные `crm_tasks` (`WHERE order_id IN (...)`) и их `crm_task_notifications`. Так же обновить `tariff_delete_safety_check`/`tariff_hard_delete` по аналогии (lead-заказы не блокируют).
-- Аудит: в `audit_logs` писать сколько lead-заказов/задач удалено каскадом.
+если после шаблонной подстановки итоговое описание не содержит ни телефона, ни email, автоматически дописать контактный блок.
 
-**4. Playwright smoke-тест: полный путь заявки от тестового аккаунта**
+Проверять нужно уже готовый текст, а не только наличие `{{phone}}` и `{{email}}` в шаблоне.
 
-Сценарий (headless в песочнице, авторизация в preview через `123456`):
+---
 
-1. Открыть страницу с lead-кнопкой (админ создаёт тестовый lead-оффер на T-000074 через UI, либо через SQL быстро вставить).
-2. Кликнуть «Оставить заявку» → диалог показывает email-шаг.
-3. Ввести email тестового аккаунта → sign-in → details → phone → submit.
-4. Скрин `telegram` шага → Skip → success.
-5. SQL-проверки: `orders_v2` (status='lead', amount=0, +1); `crm_tasks` (+1, metadata.origin='lead_form'); `crm_task_notifications` (pending→sent); `payments_v2/entitlements/subscriptions_v2` = 0 новых.
-6. Повторный submit тем же email за <15 мин → идемпотентность (без новой задачи).
-7. Cleanup: superadmin удаляет тестовую заявку (order+task) и тестовый lead-оффер через новую логику `offer_hard_delete`.
+### **5. PricingSection**
 
-Скрины + SQL-выдержки — в `.lovable/proofs/lead_offer_implementation_2026_05.md` (раздел 8 «Final UI smoke»).
+Добавить отдельный Verify:
 
-### Порядок исполнения
+- проверить, что после изменения `tariff_ids` динамически отображаются именно данные из продукта (название, цена, описание, кнопка), а не старый HTML.
 
-1. SQL: добавить T-000074 в `tariff_ids` соответствующего site-блока.
-2. Migration: обновить safety-check + hard_delete (offer и tariff) с исключением lead-заказов.
-3. Refactor `LeadRequestDialog` под PaymentDialog-стиль (email-first компакт).
-4. Playwright smoke-скрипт → скрины + SQL → обновить proof.
-5. Cleanup тестовых данных через новый `offer_hard_delete`.
+То есть подтвердить, что источник данных — `PricingSection`, а не HTML-блок.
 
-### Замороженные инварианты (без изменений)
+---
 
-- SoT = `orders_v2`, статус `lead`, amount=0.
-- Никаких payments_v2/entitlements/subscriptions_v2 для lead.
-- pay_now/trial/preregistration не трогаем.
-- Edge `submit-lead-request` уже требует JWT, идемпотентность 15 мин — не меняем.
+### **6. HTML-блок не изменять**
+
+Сейчас правильно вынесено в backlog.
+
+Дополнительно явно указать:
+
+- никакого удаления HTML-блока;
+- никакого переписывания HTML;
+- никакого переноса карточек.
+
+В этом патче допускается только минимальная корректировка отступов, если именно она необходима для отображения существующего динамического PricingSection.
+
+---
+
+### **7. Smoke**
+
+Добавить обязательную проверку:
+
+- в Preview;
+- на опубликованном сайте;
+- после Publish выполнить принудительную проверку именно опубликованной версии (не Preview), чтобы исключить проблему с кэшем публикации.
+
+В остальном план выглядит корректно.
+
+&nbsp;
+
+План: финальный фикс lead-offer (ИНДИВИДУАЛЬНЫЙ ДОГОВОР)
+
+Устраняем 5 конкретных дефектов. Инвариант lead не трогаем: SoT=`orders_v2`, `status='lead'`, `amount=0`, без payments/entitlements/subscriptions.
+
+---
+
+### 1. Тариф «ИНДИВИДУАЛЬНЫЙ ДОГОВОР» не виден на `gorbova.by/ideologicheskaya-rabota` — восстановить динамический PricingSection
+
+**Что запрещено:**
+
+- Не добавлять hardcoded HTML-карточку.
+- Не оставлять в блоке только T-000074.
+- Не создавать второй pricing-блок.
+- Не менять `PricingSection`/`UniversalPricingSection`/фильтр.
+- Не сломать T-000072 (КАРТОЙ) и T-000073 (ПО СЧЁТУ).
+
+**Что делаем:**
+
+1. Найти в `site_pages.blocks` страницы `slug='ideologicheskaya-rabota'` единственный блок `type='pricing'` (сейчас там ровно один — id `86b93087-16d5-4fcc-8e4c-32cf920c1b53`).
+2. Проверить `content.product_id` — должно быть `3ea08f79-…` (Gorbova Club — идеология). Оставить как есть.
+3. Проверить `content.tariff_filter_mode`. Сейчас: `selected`, `tariff_ids=[6ff1769e]` (только T-000074). Это и есть корень регрессии.
+4. Исправить блок через `insert`-tool (UPDATE `site_pages`):
+  - `tariff_filter_mode='selected'`
+  - `tariff_ids=[<T-000072 id>, <T-000073 id>, <T-000074 id>]` — ровно 3 UUID, порядок = порядок отображения (сначала карта, потом счёт, потом индивидуальный).
+  - product_id, title/subtitle и остальное — не трогаем.
+5. Проверить HTML-блок выше: если он визуально дублирует «Оплатить картой» / «По счёту» (сейчас так и есть — это остаток старой вёрстки), НЕ переписывать его в этом патче, но зафиксировать в proof как техдолг (`.lovable/backlog/ideology_landing_html_dedup.md`) — это отдельная задача. Если HTML-блок физически перекрывает pricing-блок и делает его невидимым — временный минимальный фикс: увеличить нижний отступ HTML-блока, чтобы pricing-блок гарантированно был виден. Никаких новых hardcoded карточек.
+6. Republish/rebuild страницы: `updated_at=now()`, `published_at=now()` и (если есть) дернуть `SitePublicationService` через SQL-эквивалент.
+
+**Verify (обязательно оба):**
+
+- **Админский Preview** (`/admin/products-v2/3ea08f79-…/?tab=preview`) — видны 4 карточки (демо + 3 тарифа) как эталон SoT продукта.
+- **Публичный сайт** `gorbova.by/ideologicheskaya-rabota` — видны минимум 3 карточки: КАРТОЙ, ПО СЧЁТУ, ИНДИВИДУАЛЬНЫЙ ДОГОВОР.
+- Клик по T-000074 → открывает `LeadRequestDialog` (см. пункт 4).
+- Клик по T-000072/T-000073 → продолжает открывать `PaymentDialog` (bePaid), без регрессии.
+- Playwright-скрины обоих окружений в proof.
+
+---
+
+### 2. Сделка не приходит в Kanban сделок
+
+Причина: `tariff_offers.meta.crm_routing` для T-000074 указывает pipeline «Gorbova Club» / stage «Регистрация». Kanban сделок на эту стадию либо не смотрит, либо фильтрует только по paid-заказам.
+
+Действия:
+
+- Определить, какой pipeline/stage_type читает `/admin/crm/deals` (kanban сделок). Скорее всего фильтр по `orders_v2.status IN ('paid','pending')` — а lead-status исключён.
+- Расширить SQL-выборку канбана: включить `orders_v2.status='lead'` (или добавить в существующий whitelist статусов).
+- Убедиться, что `orders_v2.pipeline_id/pipeline_stage_id` и `crm_tasks.pipeline_id/pipeline_stage_id` записываются корректно (сейчас в `submit-lead-request` они пишутся из `crm_routing.pipeline_id/stage_on_pending`).
+- Если правильнее направить lead в отдельную «воронку заявок» — обновить `tariff_offers.meta.crm_routing` для T-000074 на подходящий pipeline из существующих (`a0000001-0000-0000-0000-000000000002` и далее — там стадии Новая/В работе/Успешно/Отказ).
+
+---
+
+### 3. В Telegram-задаче нет контактных данных
+
+Причина: `crm_task_automation_rules.description_template` (правило `2b00c61f-…`) содержит только «Связаться с клиентом…» без плейсхолдеров. `submit-lead-request` подставляет `{{name/phone/email/comment}}`, но их там нет.
+
+Действия:
+
+- UPDATE `crm_task_automation_rules` id=`2b00c61f-…`, `description_template`:
+  ```
+  Клиент: {{name}}
+  Телефон: {{phone}}
+  Email: {{email}}
+  Комментарий: {{comment}}
+
+  Связаться с клиентом, обсудить условия индивидуального договора и зафиксировать договорённости.
+  ```
+- В `submit-lead-request/index.ts`: если ни один из `{{name|phone|email|comment}}` не встретился в шаблоне — авто-дописать контактный блок в конец `description` перед вставкой. Страховка от повторения проблемы для будущих lead-правил.
+- Notify-worker (`crm-task-notify-worker`) не трогаем — он уже рендерит `task.description` в TG.
+
+---
+
+### 4. Кнопка «Оставить заявку» — в стиле «email-first» PaymentDialog
+
+Рефактор `src/components/lead/LeadRequestDialog.tsx`:
+
+- Первый шаг всегда `email`, визуально идентичный корпоративной оплате: иконка Mail, header `{Product} · {Tariff} — Оставить заявку`, компактный inline-input, кнопки `[Отмена][Продолжить]`.
+- Если пользователь залогинен — email prefilled read-only, «Продолжить» сразу к шагу details.
+- Если нет — `useInlineAuth` (тот же, что в PaymentDialog) → auth → details.
+- Дальнейшие шаги (details → telegram → success) — не меняем по смыслу, только унифицируем стиль карточек/кнопок.
+- API `submit-lead-request`, идемпотентность 15 мин — не трогаем.
+
+---
+
+### 5. Не видны данные привязки Telegram-бота
+
+В шаге `telegram` `LeadRequestDialog` сейчас молча пропускает при уже привязанном аккаунте и не показывает deep-link/QR при непривязанном.
+
+Действия:
+
+- Явно рендерить статус: «✓ Telegram привязан (@username)» либо блок с deep-link кнопкой `t.me/<bot>?start=<code>` + QR-код.
+- Переиспользовать существующий UI из кабинета: найти в `src/components/profile/` компонент привязки Telegram и вызвать его тем же способом (не дублировать логику).
+- Toast + фолбэк «Позже привязать в личном кабинете» при ошибке `startTelegramLink`.
+
+---
+
+### 6. Полный e2e smoke + очистка + proof
+
+Playwright:
+
+1. `gorbova.by/ideologicheskaya-rabota` → видно 3 карточки → клик «Оставить заявку» на T-000074.
+2. Email-шаг → auth (если нужно) → details (phone+comment) → submit → telegram-шаг (скрин с deep-link) → success.
+3. Отдельно: клик «Оплатить картой» на T-000072 → открывается PaymentDialog (регресс-контроль).
+
+SQL-verify:
+
+- `orders_v2` (+1, `status='lead'`, `amount/final_price=0`, `pipeline_id`/`pipeline_stage_id` заполнены).
+- `crm_tasks` (+1, `description` содержит phone/email/comment).
+- `crm_task_notifications` (pending → sent).
+- `payments_v2` / `entitlements` / `subscriptions_v2` / `access_grant_ledger` = 0 новых строк.
+- Заявка видна в `/admin/crm/deals` (скрин Kanban).
+- TG-сообщение содержит контакт (скрин).
+
+Cleanup: удалить тестовый lead через существующий каскад `offer_hard_delete`.
+
+Proof: `.lovable/proofs/lead_offer_implementation_2026_05.md` §9 — «Final DoD after regression fix», со скринами админ-preview + публичного сайта + Kanban + TG.
+
+### Файлы под правку
+
+- SQL (`insert`-tool): `site_pages.blocks` (обновление `tariff_ids` у существующего pricing-блока), `crm_task_automation_rules.description_template`, при необходимости `tariff_offers.meta.crm_routing`.
+- SQL (`insert`-tool): фильтр kanban сделок (или view/RPC, читающий заказы) — включить `status='lead'`.
+- `supabase/functions/submit-lead-request/index.ts` (страховочный контактный блок).
+- `src/components/lead/LeadRequestDialog.tsx` (email-first + видимый telegram-шаг).
+- `.lovable/proofs/lead_offer_implementation_2026_05.md` §9.
+- `.lovable/backlog/ideology_landing_html_dedup.md` (техдолг: убрать hardcoded карточки из HTML-блока в отдельной задаче).
+
+### Инварианты (не меняем)
+
+- SoT = `orders_v2`, `status='lead'`, `amount=0`.
+- Никаких записей в `payments_v2` / `entitlements` / `subscriptions_v2` / `access_grant_ledger`.
+- 15-минутная идемпотентность по (offer_id, profile_id).
+- pay_now/trial/preregistration flow не трогаем.
+- `PricingSection`/`UniversalPricingSection`/фильтр `tariff_filter_mode` — код не трогаем, только данные блока в БД.
