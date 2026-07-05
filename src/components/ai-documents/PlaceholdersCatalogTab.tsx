@@ -414,6 +414,10 @@ export function PlaceholdersCatalogTab() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
+      // PATCH-ROLE-PERSON-NAME-FLDS: дубли «Руководитель ФИО кратко» скрыты
+      // из UI-каталога — краткая/подписная форма выбирается модификатором
+      // на соответствующем *_full_name-поле.
+      if (r.field_public_id && HIDDEN_DUPLICATE_SHORT_FLDS.has(r.field_public_id)) return false;
       const sectionId = sectionIdForRow(r);
       if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
