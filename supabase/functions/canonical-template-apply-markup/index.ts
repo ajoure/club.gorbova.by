@@ -45,7 +45,10 @@ const corsHeaders = {
 const ALLOWED_CASES = new Set([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
 ]);
-const ALLOWED_FORMATS = new Set(['words', 'text']);
+// PATCH-ROLE-PERSON-NAME-FLDS: синтаксически принимаем ФИО-модификаторы для field:FLD-*.
+// Per-FLD семантика (какие FLD реально person_name) — на резолвере
+// canonical-document-generate-strict → PERSON_NAME_FIELD_KEYS.
+const ALLOWED_FORMATS = new Set(['words', 'text', 'full', 'short', 'signature_short']);
 const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
@@ -53,7 +56,7 @@ interface Replacement {
   original_text: string;
   field_public_id: string;
   status: 'accepted' | 'changed' | 'skipped' | 'manually_added';
-  format?: 'words' | 'text' | null;
+  format?: 'words' | 'text' | 'full' | 'short' | 'signature_short' | null;
   case_modifier?:
     | 'nominative' | 'genitive' | 'dative' | 'accusative'
     | 'instrumental' | 'prepositional' | null;

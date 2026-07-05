@@ -93,15 +93,15 @@ describe('classifyPlaceholder', () => {
     });
   });
 
-  it('field:FLD-000001|format=long → invalid_modifier_value (биллинг не расширен)', () => {
+  it('field:FLD-000001|format=long → invalid_modifier_value (биллинг не расширен на long)', () => {
     expect(classifyPlaceholder('field:FLD-000001|format=long')).toEqual({
       kind: 'invalid_modifier_value', key: 'format', value: 'long',
     });
   });
 
-  it('field:FLD-000001|format=signature_short → invalid_modifier_value (биллинг)', () => {
+  it('field:FLD-000001|format=signature_short → field (валидный синтаксис; per-FLD семантика на резолвере)', () => {
     expect(classifyPlaceholder('field:FLD-000001|format=signature_short')).toEqual({
-      kind: 'invalid_modifier_value', key: 'format', value: 'signature_short',
+      kind: 'field', public_id: 'FLD-000001', format: 'signature_short', case_modifier: null,
     });
   });
 

@@ -70,6 +70,7 @@ const PERSON_NAME_FIELD_FLDS: ReadonlySet<string> = new Set([
   "FLD-000362", // executor.leg.director_full_name  — Исполнитель ЮЛ: Руководитель ФИО
   "FLD-000338", // customer.leg.director_full_name  — Заказчик ЮЛ: Руководитель ФИО
   "FLD-000289", // customer.ent.director_full_name  — Заказчик ИП: Руководитель ФИО
+  "FLD-000313", // customer.ind.full_name           — Заказчик ФЛ: ФИО
 ]);
 // Дубли «ФИО кратко» — те же данные, что и полное ФИО, только другая форма.
 // Кратко теперь выбирается модификатором format=short прямо на *_full_name-поле.
@@ -77,6 +78,7 @@ const HIDDEN_DUPLICATE_SHORT_FLDS: ReadonlySet<string> = new Set([
   "FLD-000364", // executor.leg.director_short_name
   "FLD-000340", // customer.leg.director_short_name
   "FLD-000291", // customer.ent.director_short_name
+  "FLD-000314", // customer.ind.full_name_short
 ]);
 
 interface CatalogRow {
