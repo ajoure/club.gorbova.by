@@ -42,8 +42,16 @@ export default function AdminTasks() {
   const [view, setView] = useState<"board" | "list" | "stats">("board");
   const [filters, setFilters] = useState<TasksFiltersValue>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewTask, setViewTask] = useState<CrmTask | null>(null);
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const {
+    selectedContact,
+    contactSheetOpen,
+    setContactSheetOpen,
+    openContactSheet,
+  } = useLiveContactSheet();
+
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
