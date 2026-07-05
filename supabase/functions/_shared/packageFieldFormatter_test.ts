@@ -72,15 +72,15 @@ Deno.test('IP name: повторный «ИП ...» не дублируется'
   assertEquals(formatPackageIpField('package.ip.name', row), 'ИП Федорчук Сергей Валерьевич');
 });
 
-Deno.test('IP short_name: «ИП Фамилия И. О.»', () => {
+Deno.test('IP short_name: «ИП И.О.Фамилия»', () => {
   const row = { ent_name: 'Федорчук Сергей Валерьевич' };
-  assertEquals(formatPackageIpField('package.ip.short_name', row), 'ИП Федорчук С. В.');
+  assertEquals(formatPackageIpField('package.ip.short_name', row), 'ИП С.В.Федорчук');
 });
 
 // ── FL ─────────────────────────────────────────────────────────────────────
-Deno.test('FL full_name_short: fullNameToInitials', () => {
+Deno.test('FL full_name_short: fullNameToInitials (И.О.Фамилия)', () => {
   const person = { full_name: 'Петров Пётр Петрович' };
-  assertEquals(formatPackageFlField('package.fl.full_name_short', person), 'Петров П. П.');
+  assertEquals(formatPackageFlField('package.fl.full_name_short', person), 'П.П.Петров');
 });
 
 Deno.test('FL passport_number_full: серия+номер', () => {
