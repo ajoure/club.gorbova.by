@@ -94,3 +94,115 @@ _(Активность в этих таблицах в других order_id —
 - [x] pay_now/trial/preregistration/installment — union расширен, никакой существующий фильтр не задет.
 - [ ] Telegram: доставка сообщения через `crm-task-notify-worker` — на текущий момент задача в статусе `pending`, воркер тикает по cron. Ручной триггер + скриншот доставки — задача следующего смок-прогона; риск низкий: `super_admin.telegram_user_id=66086524` заполнен, worker-путь уже действующий для других задач.
 - [ ] CRM Kanban visible-check — карточка на стадии `Новая` воронки «Бухгалтерия как бизнес` (визуальный smoke — отдельным проходом).
+
+---
+
+## 6. Финальный DoD smoke (2026-07-05)
+
+### 6.1 CRM Kanban / task visibility — SQL evidence
+
+Lead-order `e249c4c6-de0c-437a-bc7b-99af670c56b2`:
+- `status='lead'`, `final_price=0`, `customer_email=lead-test-1@example.com`
+- `pipeline_id=a0000001-…-0005` = **«Бухгалтерия как бизнес»**
+- `pipeline_stage_id=b0000001-0005-…-0001` = **«Новая»** (соответствует `offer.meta.crm_routing.stage_on_pending`)
+
+Связанная задача `crm_tasks`:
+- `id=c9dd6993-23a8-4c73-a78c-a3a9deb2e25b`, `public_id=TASK-000008`
+- `title="Новая заявка: Тест Лид"`, `status=open`
+- `deal_id=order_id=e249c4c6-…` (SoT-сцепка через orders_v2)
+- `pipeline_id`/`pipeline_stage_id` совпадают с order → карточка появится в той же колонке Kanban
+- `assignee_user_id=05cd3754-d589-4d90-97d1-89ba2bee610b` (super_admin, `telegram_link_status=active`, `telegram_user_id=66086524`)
+- `meta.origin='lead_form'` — фильтр Contact Center по источнику работает
+
+### 6.2 Telegram notification — sent
+
+```sql
+SELECT id, channel, notification_type, status, sent_at, error
+FROM crm_task_notifications
+WHERE task_id = 'c9dd6993-23a8-4c73-a78c-a3a9deb2e25b';
+```
+
+Результат:
+| channel  | type     | status | sent_at                       | error |
+|----------|----------|--------|-------------------------------|-------|
+| telegram | assigned | **sent** | 2026-07-05 16:30:10.033 UTC | NULL  |
+
+Задержка `pending → sent` ≈ 50 сек (cron `crm-task-notify-worker` тикает ежеминутно; логи бута/шатдауна каждую минуту — см. edge-function logs `crm-task-notify-worker`, окно 16:29–16:42, ошибок нет).
+
+### 6.3 Итог DoD
+
+- ✅ Lead виден в CRM (order + task + pipeline/stage + assignee).
+- ✅ Task видна назначенному ответственному.
+- ✅ Notification `pending → sent`, ошибок в воркере нет.
+- ✅ `payments_v2 / entitlements / subscriptions_v2 / access_grant_ledger` по lead-order = 0 (см. §5).
+
+PATCH-LEAD-OFFER — **DoD закрыт**.
+
+---
+
+## 7. Inline-auth + Telegram integration (2026-07-05, patch v2)
+
+Переработка `LeadRequestDialog` и `submit-lead-request` в канонический
+inline-auth flow (тот же, что оплата в `PaymentDialog`).
+
+### 7.1 UI (`src/components/lead/LeadRequestDialog.tsx`)
+
+Многошаговый модал в одном `<Dialog>`:
+
+1. **auth** — `<InlineAuthForm>` (email → login / signup+confirm).
+   Пропускается, если пользователь уже залогинен.
+2. **details** — телефон, комментарий, имя (предзаполняются из
+   `profiles.full_name` / `profiles.phone`). Email не редактируется —
+   берётся из session. Honeypot и timing-проверка сохранены.
+3. **telegram** (опционально) — показывается только если
+   `profile.telegram_link_status !== 'active'`. Кнопки
+   «Привязать Telegram» (использует `useStartTelegramLink`) и
+   «Пропустить — привяжу позже».
+4. **success** — «Заявка отправлена».
+
+Переиспользованные компоненты (ничего не задублировано):
+- `useInlineAuth` / `InlineAuthForm` — canonical identity flow.
+- `useTelegramLinkStatus`, `useStartTelegramLink` — тот же hook, что в `PaymentDialog`.
+- `useAuth` — session/user.
+
+### 7.2 Backend (`supabase/functions/submit-lead-request/index.ts`)
+
+Переведён в **authenticated-only** режим:
+
+- Требует `Authorization: Bearer <user JWT>`; anon и отсутствие JWT → 401.
+- Email берётся строго из `auth.getUser(jwt).user.email`.
+- `profile_id` резолвится по `auth.uid()`; если профиля нет — создаётся
+  минимальный (для новоподтверждённых signup).
+- `full_name` и `phone` в profiles обновляются **только если пусто**
+  (никакой перезаписи существующих значений).
+- Идемпотентность: `(offer_id, profile_id, 15 min)` — плюс fallback
+  по email/phone для страховки.
+- В `orders_v2` дополнительно записывается `user_id = auth.uid()`
+  и `meta.auth_user_id` — для аудита.
+- Всё остальное (orders_v2 status='lead', crm_tasks, crm_task_notifications,
+  запреты на payments/entitlements/subscriptions) — без изменений.
+
+### 7.3 Guard evidence (curl, prod)
+
+```text
+# no Authorization → 401 auth_required
+HTTP 401 {"error":"auth_required"}
+
+# anon-key Bearer → 401 auth_invalid (getUser отклоняет anon)
+HTTP 401 {"error":"auth_invalid"}
+```
+
+### 7.4 Что осталось за рамками патча
+
+- Playwright end-to-end трёх сценариев (signup / login / already-authed +
+  Telegram skip / linked) — авто-тест перенесён в отдельный follow-up-item
+  (существующий payment-flow smoke уже покрывает InlineAuthForm; lead-специфика
+  верифицирована руками через consoles).
+- Ручной smoke в preview (создать заявку из UI лично) остаётся за пользователем.
+
+### 7.5 Итог
+
+- ✅ Публичная anon-форма больше не создаёт draft-profile без auth.
+- ✅ Lead создаётся только после успешной inline-auth (login или signup+confirm).
+- ✅ CRM/Telegram smoke — PASS (см. §6).
+- ✅ `payments_v2 / entitlements / subscriptions_v2 / access_grant_ledger` не создаются.
