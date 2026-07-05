@@ -44,6 +44,7 @@ const PERSON_NAME_FIELD_KEYS: ReadonlySet<string> = new Set([
   'executor.leg.director_full_name',
   'customer.leg.director_full_name',
   'customer.ent.director_full_name',
+  'customer.ind.full_name',
 ]);
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
