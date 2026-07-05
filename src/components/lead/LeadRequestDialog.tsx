@@ -157,22 +157,8 @@ export function LeadRequestDialog({
     }
   };
 
-  const handleStartTelegram = async () => {
-    try {
-      const result = await startTelegramLink.mutateAsync();
-      if (result?.deep_link) {
-        window.open(result.deep_link, "_blank", "noopener,noreferrer");
-      }
-      // Move to success even if user hasn't confirmed in bot yet — they can
-      // finish linking later; the request is already saved.
-      setStep("success");
-    } catch (err) {
-      console.error("[LeadRequestDialog] telegram link start failed", err);
-      toast.error("Не удалось запустить привязку Telegram");
-    }
-  };
+  const handleFinishTelegram = () => setStep("success");
 
-  const handleSkipTelegram = () => setStep("success");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
