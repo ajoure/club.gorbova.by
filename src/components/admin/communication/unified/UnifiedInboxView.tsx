@@ -341,7 +341,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         await supabase.functions.invoke("instagram-admin-chat", {
           body: {
             action: "mark_read",
-            account_id: sr.meta.instagramAccountId,
+            instagram_account_id: sr.meta.instagramAccountId,
             thread_key: sr.meta.instagramThreadKey,
           },
         });
