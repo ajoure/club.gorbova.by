@@ -98,8 +98,10 @@ export function TariffCard({
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
   
-  // Price resolution: primaryOffer.amount > card_config.price_display > tariff.current_price > null
-  const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
+  const hasConfiguredPriceDisplay = cc?.price_display != null && Number(cc.price_display) > 0;
+
+  // Price resolution: primaryOffer.amount > positive card_config.price_display > tariff.current_price > null
+  const displayPrice = primaryOffer?.amount ?? (hasConfiguredPriceDisplay ? cc?.price_display : null) ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
   const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0;
 
@@ -173,9 +175,9 @@ export function TariffCard({
       </div>
 
       {(() => {
-        // Hide price block for lead-only tariffs unless card_config.price_display is explicitly set
+        // Hide price block for lead-only tariffs unless card_config.price_display is explicitly set to a positive amount.
         const isLeadOnly = leadOffers.length > 0 && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
-        if (isLeadOnly && cc?.price_display == null) return null;
+        if (isLeadOnly && !hasConfiguredPriceDisplay) return null;
         return (
           <div className="text-center mb-4">
             {displayPrice !== null ? (
