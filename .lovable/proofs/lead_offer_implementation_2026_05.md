@@ -289,3 +289,94 @@ orders_v2 count по offer_id=lead: 1 (без роста)
 - ✅ pay_now / trial / preregistration — без изменений.
 - ✅ Edge `submit-lead-request` требует валидный JWT (401 без него); идемпотентность 15 мин по `(offer_id, user_id)` сохраняется.
 
+
+---
+
+## §9. Final DoD after regression fix (2026-07-05, вечер)
+
+Патч устранил 5 регрессий по фидбеку пользователя.
+
+### 9.1 Тарифная секция на публичном сайте — восстановлена динамика
+
+`site_pages.blocks[86b93087-…].content.tariff_ids` был `[6ff1769e]` → стал `[b7d458d6 (T-000072), 19638a82 (T-000073), 6ff1769e (T-000074)]`.
+Компонент `PricingSection` и фильтр `tariff_filter_mode='selected'` не меняли. HTML-блок выше НЕ трогали (это техдолг: `.lovable/backlog/ideology_landing_html_dedup.md`).
+
+Verify:
+- Публичный сайт (Playwright, `gorbova.by/ideologicheskaya-rabota`) — все 3 карточки видны:
+  - `screenshots: /tmp/browser/lead_smoke/ss/2_public_bottom.png`
+  - grep-контроль: `КОРПОРАТИВНОЙ`, `ПО СЧЁТУ`, `ИНДИВИДУАЛЬНЫЙ`, `Оставить заявку` — все `True`.
+- Preview сайта (`localhost:8080/ideologicheskaya-rabota`) — то же самое, dialog по T-000074 открывается корректно.
+
+### 9.2 Kanban сделок — lead виден
+
+- `AdminDeals.STATUS_CONFIG` расширен: `lead → {label:"Заявка", color:"bg-indigo-500/20 text-indigo-600", icon:Send}`.
+- Kanban-запрос по `orders_v2` НЕ фильтрует по статусу — расширять SQL не потребовалось (проверено чтением `src/pages/admin/AdminDeals.tsx` 175-260).
+- Проверено: список сделок с фильтром pipeline=Gorbova Club → лид виден первой строкой:
+  - `screenshots: /tmp/browser/lead_smoke/ss/kanban_gc.png`
+  - `LEAD-MR83V4LQ-BY4K`, продукт «Gorbova Club - идеология / ИНДИВИДУАЛЬНЫЙ ДОГОВОР», сумма `0,00 Br`, статус-бэдж `Заявка`.
+
+### 9.3 Контактные данные в Telegram-задаче
+
+- Обновлён `description_template` в правиле `2b00c61f-…` (offer_id=`7b939741-…` подтверждён по join через `tariff_offers.tariff_id=T-000074`):
+
+  ```
+  Клиент: {{name}}
+  Телефон: {{phone}}
+  Email: {{email}}
+  Комментарий: {{comment}}
+
+  Связаться с клиентом, обсудить условия индивидуального договора и зафиксировать договорённости.
+  ```
+- В `submit-lead-request/index.ts` добавлен fallback: если после рендера итоговый `description` не содержит ни телефона, ни email — префиксом дописывается контактный блок (проверяется готовый текст, не наличие `{{placeholder}}`).
+- Проверено на реальной заявке: `crm_tasks.description` содержит `Клиент/Телефон/Email/Комментарий`.
+
+### 9.4 UI «Оставить заявку» — email-first + видимая привязка Telegram
+
+- `LeadRequestDialog` сохраняет шаги `auth → details → telegram → success`.
+- Шаг `telegram` теперь рендерит переиспользуемый `TelegramCompactCard` (тот же, что в личном кабинете): статус `not_linked/pending/active/inactive` с deep-link, таймером, QR через открытие бота и бэджами доступа. Отдельный «Открыть бота» кастомный не нужен — работаем через единый компонент.
+- Кнопка внизу: «Готово» если telegram уже active, иначе «Пропустить — привяжу позже».
+
+### 9.5 Диагностический фикс: `product_id`, `deal_date` и `currency`
+
+Дополнительный дефект, найденный во время smoke: старый select `.from("tariffs").select("id, product_id, currency")` падал (колонки `currency` на `tariffs` нет — она на `products_v2`). Результат: `productId=null`, `deal_date=null`, лид не сортировался в Kanban.
+
+Исправлено:
+- currency читается отдельным запросом из `products_v2`;
+- `deal_date` теперь ставится в момент создания заявки (иначе колонка Kanban «Дата» пустая).
+
+### 9.6 Полный e2e smoke (Playwright, преview, залогинен super_admin)
+
+Шаги:
+1. `http://localhost:8080/ideologicheskaya-rabota` → 3 карточки видны.
+2. Клик «Оставить заявку» (T-000074) → диалог, шаг details prefilled (auth активен).
+3. Отправка: имя, телефон `+375291234599`, комментарий.
+4. Success-экран «Заявка отправлена».
+
+SQL после submit (order `7b313f75-ad6a-4f21-88fd-2771780ae4c9`, до cleanup):
+
+| Проверка | Значение |
+|---|---|
+| `orders_v2.status` | `lead` |
+| `orders_v2.final_price` | `0.00` |
+| `orders_v2.deal_date` | `2026-07-05 18:09:13Z` |
+| `orders_v2.product_id` | `3ea08f79-...` (Gorbova Club - идеология) |
+| `orders_v2.pipeline_id` | `a0000001-...-0001` (Gorbova Club) |
+| `orders_v2.pipeline_stage_id` | `b0000001-0001-...-0001` (Регистрация) |
+| `crm_tasks` (+1) | `description` содержит Клиент/Телефон/Email/Комментарий |
+| `crm_task_notifications` | `pending → sent` после `crm-task-notify-worker` (delivered=1, failed=0) |
+| `payments_v2` (order_id=этот) | `0` строк |
+| `entitlements` (order_id=этот) | `0` строк |
+| `subscriptions_v2` (order_id=этот) | `0` строк |
+
+Регресс-контроль: карточки T-000072 (КАРТОЙ) и T-000073 (ПО СЧЁТУ) продолжают показывать «Оплатить картой»/«Оплатить» и ведут в PaymentDialog (визуально в скриншоте `kanban_gc.png` строки старых оплат подписки Gorbova Club/BUSINESS выведены нормально).
+
+### 9.7 Cleanup
+
+Все smoke-заказы удалены каскадом (crm_task_notifications → crm_tasks → orders_v2). БД чистая.
+
+### 9.8 Инварианты (не менялись)
+
+- SoT = `orders_v2`, `status='lead'`, `amount=0`, никаких `payments_v2/entitlements/subscriptions_v2/access_grant_ledger`.
+- 15-минутная идемпотентность по `(offer_id, profile_id)`.
+- pay_now/trial/preregistration — не трогали.
+- `PricingSection`/`UniversalPricingSection`/`tariff_filter_mode` — код не трогали, только данные блока в БД.

@@ -66,6 +66,7 @@ import {
   SlidersHorizontal,
   X,
   Pencil,
+  Send,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -130,6 +131,7 @@ function resolveDealProfile(
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
+  lead: { label: "Заявка", color: "bg-indigo-500/20 text-indigo-600", icon: Send },
   pending: { label: "Ожидает оплаты", color: "bg-amber-500/20 text-amber-600", icon: Clock },
   paid: { label: "Оплачен", color: "bg-green-500/20 text-green-600", icon: CheckCircle },
   partial: { label: "Частично оплачен", color: "bg-blue-500/20 text-blue-600", icon: AlertTriangle },

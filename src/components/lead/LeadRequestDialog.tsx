@@ -15,9 +15,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { CheckCircle2, Loader2, Send, MessageCircle, Mail } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
+import { TelegramCompactCard } from "@/components/telegram/TelegramCompactCard";
 import {
   useTelegramLinkStatus,
-  useStartTelegramLink,
 } from "@/hooks/useTelegramLink";
 
 interface LeadRequestDialogProps {
@@ -64,7 +64,6 @@ export function LeadRequestDialog({
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
-  const startTelegramLink = useStartTelegramLink();
 
   const contextSubtitle = [productName, tariffName].filter(Boolean).join(" · ");
   const headerSubtitle = contextSubtitle && (offerLabel || priceLabel)
@@ -158,22 +157,8 @@ export function LeadRequestDialog({
     }
   };
 
-  const handleStartTelegram = async () => {
-    try {
-      const result = await startTelegramLink.mutateAsync();
-      if (result?.deep_link) {
-        window.open(result.deep_link, "_blank", "noopener,noreferrer");
-      }
-      // Move to success even if user hasn't confirmed in bot yet — they can
-      // finish linking later; the request is already saved.
-      setStep("success");
-    } catch (err) {
-      console.error("[LeadRequestDialog] telegram link start failed", err);
-      toast.error("Не удалось запустить привязку Telegram");
-    }
-  };
+  const handleFinishTelegram = () => setStep("success");
 
-  const handleSkipTelegram = () => setStep("success");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -308,24 +293,15 @@ export function LeadRequestDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
+              <TelegramCompactCard />
               <Button
-                onClick={handleStartTelegram}
-                disabled={startTelegramLink.isPending}
-                className="w-full"
-                size="lg"
-              >
-                {startTelegramLink.isPending ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Открываю бота…</>
-                ) : (
-                  <>Привязать Telegram</>
-                )}
-              </Button>
-              <Button
-                onClick={handleSkipTelegram}
+                onClick={handleFinishTelegram}
                 variant="ghost"
                 className="w-full"
               >
-                Пропустить — привяжу позже
+                {telegramStatus?.status === "active"
+                  ? "Готово"
+                  : "Пропустить — привяжу позже"}
               </Button>
               <p className="text-xs text-center text-muted-foreground">
                 Позже привязать Telegram можно в личном кабинете.
@@ -333,6 +309,7 @@ export function LeadRequestDialog({
             </div>
           </>
         )}
+
 
         {step === "success" && (
           <div className="py-6 text-center space-y-4">

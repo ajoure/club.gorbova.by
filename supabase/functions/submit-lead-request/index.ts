@@ -147,11 +147,19 @@ Deno.serve(async (req) => {
   }
   const { data: tariff } = await supa
     .from("tariffs")
-    .select("id, product_id, currency")
+    .select("id, product_id")
     .eq("id", offer.tariff_id)
     .maybeSingle();
   const productId = tariff?.product_id ?? null;
-  const currency = tariff?.currency ?? "BYN";
+  let currency = "BYN";
+  if (productId) {
+    const { data: product } = await supa
+      .from("products_v2")
+      .select("currency")
+      .eq("id", productId)
+      .maybeSingle();
+    if (product?.currency) currency = product.currency;
+  }
   const routing = (offer.meta as any)?.crm_routing ?? null;
 
   // 2. Profile: resolve strictly by auth.uid(). If missing (unusual — trigger
@@ -255,6 +263,7 @@ Deno.serve(async (req) => {
       is_trial: false,
       customer_email: effectiveEmail,
       customer_phone: effectivePhone,
+      deal_date: new Date().toISOString(),
       pipeline_id: routing?.enabled ? routing.pipeline_id ?? null : null,
       pipeline_stage_id: routing?.enabled
         ? routing.stage_on_pending ?? null
@@ -298,11 +307,27 @@ Deno.serve(async (req) => {
         .replaceAll("{{name}}", effectiveName)
         .replaceAll("{{email}}", effectiveEmail)
         .replaceAll("{{phone}}", effectivePhone ?? "") || "Новая заявка";
-    const description = (rule.description_template ?? "")
+    let description = (rule.description_template ?? "")
       .replaceAll("{{name}}", effectiveName)
       .replaceAll("{{email}}", effectiveEmail)
       .replaceAll("{{phone}}", effectivePhone ?? "")
       .replaceAll("{{comment}}", comment ?? "");
+
+    // Safety net: if the rendered description doesn't contain the phone or
+    // email (e.g. legacy template without placeholders), prepend a contact
+    // block so the Telegram/CRM assignee always sees who to call.
+    const hasPhoneInDesc = effectivePhone && description.includes(effectivePhone);
+    const hasEmailInDesc = description.toLowerCase().includes(effectiveEmail.toLowerCase());
+    if (!hasPhoneInDesc && !hasEmailInDesc) {
+      const contactBlock =
+        `Клиент: ${effectiveName}\n` +
+        `Телефон: ${effectivePhone ?? "—"}\n` +
+        `Email: ${effectiveEmail}\n` +
+        (comment && comment.trim() ? `Комментарий: ${comment.trim()}\n` : "") +
+        `\n`;
+      description = contactBlock + description;
+    }
+
 
     const { data: task, error: taskErr } = await supa
       .from("crm_tasks")
