@@ -181,11 +181,15 @@ export function LeadRequestDialog({
         {step === "auth" && (
           <>
             <DialogHeader>
-              <DialogTitle>{offerLabel || "Оставить заявку"}</DialogTitle>
-              <DialogDescription>
-                Начнём с email — так мы сможем связаться с вами и сохранить
-                историю заявок в вашем личном кабинете.
-              </DialogDescription>
+              <DialogTitle className="flex items-center gap-2">
+                <Mail className="h-5 w-5" />
+                Введите email
+              </DialogTitle>
+              {headerSubtitle && (
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {headerSubtitle}
+                </DialogDescription>
+              )}
             </DialogHeader>
             <InlineAuthForm
               initialEmail={session?.user?.email || ""}
@@ -200,9 +204,14 @@ export function LeadRequestDialog({
         {step === "details" && (
           <>
             <DialogHeader>
-              <DialogTitle>{offerLabel || "Оставить заявку"}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <Send className="h-5 w-5" />
+                {offerLabel || "Оставить заявку"}
+              </DialogTitle>
               <DialogDescription>
-                Проверьте контактные данные — наш менеджер свяжется с вами.
+                {headerSubtitle
+                  ? `${headerSubtitle}. Проверьте контактные данные — менеджер свяжется с вами.`
+                  : "Проверьте контактные данные — менеджер свяжется с вами."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmitLead} className="space-y-4">
