@@ -147,11 +147,19 @@ Deno.serve(async (req) => {
   }
   const { data: tariff } = await supa
     .from("tariffs")
-    .select("id, product_id, currency")
+    .select("id, product_id")
     .eq("id", offer.tariff_id)
     .maybeSingle();
   const productId = tariff?.product_id ?? null;
-  const currency = tariff?.currency ?? "BYN";
+  let currency = "BYN";
+  if (productId) {
+    const { data: product } = await supa
+      .from("products_v2")
+      .select("currency")
+      .eq("id", productId)
+      .maybeSingle();
+    if (product?.currency) currency = product.currency;
+  }
   const routing = (offer.meta as any)?.crm_routing ?? null;
 
   // 2. Profile: resolve strictly by auth.uid(). If missing (unusual — trigger
