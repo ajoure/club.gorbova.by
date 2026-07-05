@@ -28,11 +28,13 @@ export interface ExecutorRow {
 }
 
 function fullNameToInitials(fullName?: string | null): string {
+  // Canon (2026-07): «И.О.Фамилия» — signature_short, без пробелов.
   if (!fullName) return '';
-  const parts = String(fullName).trim().split(/\s+/);
+  const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
   if (parts.length === 1) return parts[0];
-  if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`;
-  return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
+  if (parts.length === 2) return `${parts[1][0].toUpperCase()}.${parts[0]}`;
+  return `${parts[1][0].toUpperCase()}.${parts[2][0].toUpperCase()}.${parts[0]}`;
 }
 
 /** All FLD-IDs that belong to executor entity. */
