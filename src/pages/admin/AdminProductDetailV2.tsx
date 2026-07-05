@@ -328,7 +328,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
@@ -1850,7 +1850,7 @@ export default function AdminProductDetailV2() {
                         ? "installment"
                         : offerForm.offer_type
                     }
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "installment") => {
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment") => {
                       if (v === "installment") {
                         // Кнопка «Рассрочка» = pay_now + internal_installment.
                         // Очищаем meta.recurring (взаимоисключение типов кнопки).
