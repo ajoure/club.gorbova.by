@@ -103,6 +103,13 @@ export interface OfferMetaConfig {
     };
     __backfill_marker__?: string;
   };
+  // Lead offer form settings (offer_type='lead')
+  lead_form?: {
+    require_phone?: boolean;
+    require_email?: boolean;
+    comment_placeholder?: string;
+    success_message?: string;
+  };
 }
 
 export type DocumentScenarioPayerType = 'individual' | 'legal_entity';
