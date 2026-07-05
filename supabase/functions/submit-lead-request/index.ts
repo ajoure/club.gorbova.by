@@ -88,10 +88,10 @@ Deno.serve(async (req) => {
     global: { headers: { Authorization: authHeader } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data: claimsData, error: claimsErr } = await supaAsUser.auth.getClaims(jwt);
-  const authUserId = claimsData?.claims?.sub as string | undefined;
-  const authEmail = (claimsData?.claims?.email as string | undefined)?.toLowerCase();
-  if (claimsErr || !authUserId || !authEmail) {
+  const { data: userData, error: userErr } = await supaAsUser.auth.getUser(jwt);
+  const authUserId = userData?.user?.id;
+  const authEmail = userData?.user?.email?.toLowerCase();
+  if (userErr || !authUserId || !authEmail) {
     return jsonResponse({ error: "auth_invalid" }, 401, cors);
   }
 
