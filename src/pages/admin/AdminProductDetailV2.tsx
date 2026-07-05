@@ -1866,6 +1866,28 @@ export default function AdminProductDetailV2() {
                           first_payment_delay_days: 0,
                           meta: metaWithoutRecurring,
                         });
+                      } else if (v === "lead") {
+                        // Lead-offer: без оплат, без токенизации, amount=0.
+                        const { recurring, installment, acquiring, ...cleanMeta } = (offerForm.meta || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "lead",
+                          payment_method: "full_payment",
+                          amount: 0,
+                          button_label: offerForm.button_label && offerForm.offer_type === "lead" ? offerForm.button_label : "Оставить заявку",
+                          requires_card_tokenization: false,
+                          installment_count: null,
+                          installment_interval_days: null,
+                          first_payment_delay_days: null,
+                          meta: {
+                            ...cleanMeta,
+                            lead_form: {
+                              require_phone: true,
+                              require_email: true,
+                              ...(cleanMeta?.lead_form || {}),
+                            },
+                          },
+                        });
                       } else {
                         setOfferForm({
                           ...offerForm,
@@ -1886,6 +1908,7 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="trial">Trial (пробный период)</SelectItem>
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                       <SelectItem value="installment">Рассрочка</SelectItem>
+                      <SelectItem value="lead">Заявка (без оплаты)</SelectItem>
                     </SelectContent>
                   </Select>
                   {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (
