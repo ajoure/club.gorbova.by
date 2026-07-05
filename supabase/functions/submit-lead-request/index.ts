@@ -298,11 +298,27 @@ Deno.serve(async (req) => {
         .replaceAll("{{name}}", effectiveName)
         .replaceAll("{{email}}", effectiveEmail)
         .replaceAll("{{phone}}", effectivePhone ?? "") || "Новая заявка";
-    const description = (rule.description_template ?? "")
+    let description = (rule.description_template ?? "")
       .replaceAll("{{name}}", effectiveName)
       .replaceAll("{{email}}", effectiveEmail)
       .replaceAll("{{phone}}", effectivePhone ?? "")
       .replaceAll("{{comment}}", comment ?? "");
+
+    // Safety net: if the rendered description doesn't contain the phone or
+    // email (e.g. legacy template without placeholders), prepend a contact
+    // block so the Telegram/CRM assignee always sees who to call.
+    const hasPhoneInDesc = effectivePhone && description.includes(effectivePhone);
+    const hasEmailInDesc = description.toLowerCase().includes(effectiveEmail.toLowerCase());
+    if (!hasPhoneInDesc && !hasEmailInDesc) {
+      const contactBlock =
+        `Клиент: ${effectiveName}\n` +
+        `Телефон: ${effectivePhone ?? "—"}\n` +
+        `Email: ${effectiveEmail}\n` +
+        (comment && comment.trim() ? `Комментарий: ${comment.trim()}\n` : "") +
+        `\n`;
+      description = contactBlock + description;
+    }
+
 
     const { data: task, error: taskErr } = await supa
       .from("crm_tasks")
