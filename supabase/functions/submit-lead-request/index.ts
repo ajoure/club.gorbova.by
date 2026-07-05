@@ -99,18 +99,21 @@ Deno.serve(async (req) => {
   // 1. Load offer + tariff + product; validate type=lead
   const { data: offer, error: offerErr } = await supa
     .from("tariff_offers")
-    .select(
-      "id, offer_type, tariff_id, is_active, meta, tariffs:tariff_id(id, product_id, currency)",
-    )
+    .select("id, offer_type, tariff_id, is_active, meta")
     .eq("id", offer_id)
     .maybeSingle();
   if (offerErr || !offer) {
+    console.error("[submit-lead-request] offer lookup", { offer_id, offerErr });
     return jsonResponse({ error: "offer_not_found" }, 404, cors);
   }
   if (offer.offer_type !== "lead" || !offer.is_active) {
     return jsonResponse({ error: "offer_not_lead" }, 400, cors);
   }
-  const tariff = (offer as any).tariffs;
+  const { data: tariff } = await supa
+    .from("tariffs")
+    .select("id, product_id, currency")
+    .eq("id", offer.tariff_id)
+    .maybeSingle();
   const productId = tariff?.product_id ?? null;
   const currency = tariff?.currency ?? "BYN";
   const routing = (offer.meta as any)?.crm_routing ?? null;
