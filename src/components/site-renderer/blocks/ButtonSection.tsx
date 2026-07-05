@@ -86,6 +86,10 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
       });
       return;
     }
+    if (actionType === "open_lead_form") {
+      setLeadOpen(true);
+      return;
+    }
   };
 
   return (
@@ -93,6 +97,16 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
       <div className={`max-w-4xl mx-auto ${alignClass}`}>
         <button type="button" onClick={handleClick} className={baseClass} dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
       </div>
+      {actionType === "open_lead_form" && target && (
+        <LeadRequestDialog
+          open={leadOpen}
+          onOpenChange={setLeadOpen}
+          offerId={target}
+          offerLabel={text.replace(/<[^>]*>/g, "").trim() || undefined}
+        />
+      )}
     </section>
+  );
+}
   );
 }
