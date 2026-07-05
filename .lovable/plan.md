@@ -1,176 +1,225 @@
-# да, согласен.
+## да, согласен, с учетом правок:
+
+```text
+1. Часть 1 — выполнить обязательно первой.
+Без CRM/Telegram smoke текущий lead-offer нельзя считать закрытым.
+
+2. Часть 2 правильная по направлению: lead-заявка должна использовать canonical inline-auth flow, а не отдельную самодельную форму email/name.
+
+3. Но backend `submit-lead-request` не должен оставаться `verify_jwt=false` после перехода.
+Правильный целевой режим:
+- authenticated required;
+- `auth.uid()` обязателен;
+- profile берётся по `auth.uid()`;
+- unauthenticated fallback удалить или оставить только временно за feature flag с датой удаления.
+
+4. Чтобы не сломать публичную страницу, anon-пользователь должен сначала видеть модал `InlineAuthForm`, а submit заявки доступен только после auth.
+
+5. Telegram prompt должен быть opt-in после submit:
+- если Telegram уже привязан — не показывать;
+- если не привязан — показать шаг;
+- skip разрешён;
+- отсутствие Telegram не блокирует создание заявки.
+
+6. Не обновлять профиль агрессивно:
+- `full_name` обновлять только если пусто;
+- `phone` обновлять только если пусто или пользователь явно ввёл новый;
+- email не менять из формы, брать из auth/session.
+
+7. Idempotency после auth:
+ключ лучше:
+`offer_id + auth.uid() + 15 min`
+плюс fallback check по phone/email в metadata.
+Иначе один пользователь может создать дубли через разные телефоны.
+
+8. `submit-lead-request` должен сохранить совместимость с уже созданной логикой:
+- orders_v2 status='lead';
+- crm_tasks;
+- crm_task_notifications;
+- no payments;
+- no entitlements;
+- no subscriptions.
+
+9. Playwright надо делать не только happy-path:
+- signup;
+- login;
+- already-authenticated;
+- duplicate submit;
+- honeypot/timing reject;
+- Telegram skip;
+- Telegram already linked.
+
+10. Proof должен явно показать:
+- старая anon-form больше не создаёт draft-profile без auth;
+- lead создаётся только после inline-auth;
+- CRM/Telegram smoke PASS.
+```
+
+Итоговая команда:
 
 ```text
 План принимаю.
 
-Approve только на Фазу A — Discovery.
+Approve на выполнение:
 
-Фаза B пока НЕ разрешена.
+PATCH-LEAD-OFFER-FINAL-DOD-AND-INLINE-AUTH
 
-Что важно:
-- сначала подтвердить SoT: почти наверняка `orders_v2`, но нужно доказать схемой и кодом;
-- не создавать `orders`;
-- не добавлять `status='lead'` без проверки constraints и всех фильтров;
-- не придумывать поля CRM-задач/уведомлений;
-- не трогать payments/entitlements/subscriptions;
-- не вызывать эквайринг;
-- не открывать таблицы публично;
-- не делать code patch до discovery.
+Порядок:
+1. Сначала закрыть предыдущий DoD:
+- CRM Kanban / Contact Center smoke;
+- task видна ответственному;
+- crm-task-notify-worker переводит notification pending → sent;
+- proof обновлён.
 
-Discovery должен вернуть:
-1. какую таблицу использовать для lead-сделки;
-2. какой безопасный статус/маркер использовать;
-3. точную схему `crm_tasks`;
-4. точную схему `crm_task_automation_rules`;
-5. точную схему `crm_task_notifications`;
-6. фактический формат `offer.meta.crm_routing`;
-7. список всех payment-only мест, где `lead` нужно исключить;
-8. стратегию CORS/rate-limit/idempotency;
-9. финальный implementation-plan Фазы B.
+2. Затем discovery по canonical inline-auth:
+- `useInlineAuth`;
+- `InlineAuthForm`;
+- Telegram link hooks из `PaymentDialog`;
+- подтвердить, что Telegram hooks не завязаны на оплату.
+
+3. Затем code patch:
+- `LeadRequestDialog` перевести на multi-step:
+  auth → details → telegram optional → success;
+- использовать `InlineAuthForm`;
+- использовать `useTelegramLinkStatus` / `useStartTelegramLink`;
+- submit заявки только после auth;
+- backend `submit-lead-request` перевести на authenticated primary path через `auth.uid()`.
+
+4. Backend:
+- profile брать по auth.uid();
+- email брать из session/auth;
+- full_name/phone обновлять осторожно;
+- idempotency: offer_id + user_id + 15 min;
+- orders_v2/crm_tasks/crm_task_notifications оставить как в текущем lead flow;
+- payments/entitlements/subscriptions не создавать.
+
+5. Verify:
+- signup flow;
+- login flow;
+- already-authenticated flow;
+- Telegram prompt shown/skipped;
+- Telegram linked user skips prompt;
+- duplicate submit не создаёт вторую задачу;
+- payments_v2=0;
+- entitlements=0;
+- subscriptions_v2=0;
+- crm notification sent.
+
+Запрещено:
+- payments/acquiring;
+- entitlements/subscriptions;
+- parallel orders;
+- ломать pay_now/trial/preregistration;
+- обязательный Telegram как блокер;
+- создание draft-profile без auth в новом основном flow.
 
 Proof:
-`.lovable/discovery/lead-offer.md`
-
-После discovery пришли отчёт. Только после этого принимать или править Фазу B.
-
-
-PATCH-LEAD-OFFER-DISCOVERY-AND-IMPLEMENTATION
+`.lovable/proofs/lead_offer_implementation_2026_05.md`
 ```
 
-Кнопка «Оставить заявку» (offer_type=lead): заявка → сделка в существующей CRM-воронке → автозадача ответственному → Telegram-уведомление. Оплата, эквайринг, доступы и подписки НЕ затрагиваются.
+Коротко: **да, переводим lead на тот же inline-auth, что и оплата, плюс optional Telegram после заявки.**
 
-Работа в две фазы: **сначала read-only discovery, только потом код**.
+&nbsp;
 
----
+План: финальный DoD lead-offer + переход на канонический inline-auth flow
 
-## Фаза A — Discovery (read-only, ничего не пишем)
+### Часть 1 — Финальный DoD (smoke)
 
-Цель — снять все допущения перед миграцией и edge-функцией. Результат — короткий отчёт `.lovable/discovery/lead-offer.md` с фактическими схемами и решениями.
+**1.1 CRM Kanban / Contact Center smoke**
 
-### A1. `orders` vs `orders_v2`
+- Открыть CRM Kanban и Contact Center в preview.
+- Проверить, что созданный lead-order виден как карточка «заявка».
+- Убедиться, что `pipeline_id` / `pipeline_stage_id` соответствуют `offer.meta.crm_routing`.
+- Убедиться, что связанная `crm_tasks`-строка видна назначенному ответственному (по `assignee_user_id`).
+- Приложить скриншоты в proof.
 
-- Где реально живут сделки/лиды сегодня: `SELECT count(*)` по обеим, что читают CRM Kanban, Contact Center, `crm_deal_task_summary_v`.
-- Что ожидает `crm_tasks.deal_id` / `order_id` (FK, тип entity).
-- **Rule**: Из `.lovable/discovery/crm-tasks-diagnose.md` уже зафиксировано: **SoT сделки = `orders_v2**`, `crm_tasks.deal_id → orders_v2.id`. План использует `orders_v2`. Если discovery противоречит — STOP и пересобрать план.
-- Запрет: не создавать параллельную сущность в `orders`.
+**1.2 Telegram notification smoke**
 
-### A2. Статус для lead
+- Найти запись `crm_task_notifications` (status='pending', channel='telegram') созданную предыдущим e2e-прогоном.
+- Вручную вызвать `crm-task-notify-worker` (через `curl_edge_functions` или ручной cron-tick).
+- Подтвердить SQL-ом переход `pending → sent`, `sent_at IS NOT NULL`, `error IS NULL`.
+- Приложить лог воркера. Если `failed` — показать `error`+причину и завести follow-up.
 
-- Прочитать тип `orders_v2.status` и все check/enum ограничения; вытащить distinct значения.
-- Найти в коде все места, где фильтруется `status IN (...)` для revenue/paid/access — убедиться, что новый маркер их не заденет.
-- Решение принять из вариантов, **не наугад**:
-  1. отдельное поле-маркер `meta.lead = true` при `status='pending'`;
-  2. `payment_status='lead'` (если поле есть);
-  3. новый статус `'lead'` — только если ни один существующий фильтр его не примет за оплату/доступ.
-- Ни один сценарий не должен ронять существующие запросы pay_now/trial/preregistration.
+**1.3 Обновить proof**
 
-### A3. CRM-схема (факты, не догадки)
-
-- `\d crm_tasks` — поля `deal_id`, `order_id`, `pipeline_id`, `pipeline_stage_id`, `source` (какие значения уже используются, есть ли check).
-- `\d crm_task_automation_rules` — поля `trigger`/`event` (если есть), `is_active`, `assignee_strategy`, `assignee_user_id`, `due_offset_minutes`, `reminder_offset_minutes`, `title_template`, `description_template`, `metadata`. **Использовать только существующие имена**, ничего не переименовывать.
-- `\d crm_task_notifications` — точная схема (`task_id`, `notification_type`, `channel`, `recipient_user_id`, `scheduled_at`, `metadata`). Проверить, какие `notification_type`/`channel` уже сегодня ест `crm-task-notify-worker`.
-
-### A4. `offer.meta.crm_routing` — фактический формат
-
-- Прочитать `CrmRoutingConfig` из `src/hooks/useTariffOffers.tsx` и рендер `OfferCrmRoutingSection`. Использовать реальные имена полей (`enabled`, `pipeline_id`, `stage_on_pending`, `stage_on_success`, `stage_on_failed`), **никаких новых ключей**.
-- Проверить: читает ли `crm_routing` сегодня какой-либо серверный код (в `.lovable/discovery/crm-tasks-diagnose.md` сказано, что нет — подтвердить). Если нет — lead будет первым сервер-сайд consumer'ом.
-- `meta.lead_form` — новая подсекция, добавляется только внутри `OfferMetaConfig`, без миграций схемы БД.
-
-### A5. Payment-only места, где lead должен быть исключён
-
-Собрать список файлов/запросов и в реализации явно фильтровать `offer_type !== 'lead'`:
-
-- `payment_links`, `create-payment-checkout`, `public-checkout`, `AdminPaymentLinkDialog`, `PaymentDialog`;
-- расчёт скидок/рассрочки/трайала (`useInstallments`, `CoursePricing`);
-- `acquiring` UI и `create-payment-checkout`;
-- recurring/subscriptions (`subscription-*`);
-- revenue/stats (список выбирается по факту — grep по `offer_type`, `tariff_offers`);
-- `provider choice` (Phase 5-C `CustomerProviderChoice`);
-- документы (не генерировать акт/счёт для lead).
-
-### A6. Публичные точки входа
-
-- Product page: какой компонент рендерит кнопки офферов (tariff cards / `LiveEventProductCta`).
-- `ButtonSection` (site builder): формат `action.type` и как редактор блока (`ButtonEditor`) пишет `action.target`.
-- Итог: **один canonical submit flow** через один компонент `LeadRequestDialog` и одну edge-функцию.
-
-### A7. Rate-limit / idempotency стратегия
-
-Backend rate-limit primitive'а нет (см. `no-backend-rate-limiting`), поэтому:
-
-- Honeypot-поле в форме + минимальное время заполнения (client hint).
-- Server-side idempotency window **15 минут** по ключу `(offer_id, normalized_phone|email)`: если в окне уже есть lead-order с той же связкой — возвращаем существующий, новую задачу не создаём.
-- Sanitize `comment` (DOMPurify text-only, ≤1000 симв.), phone нормализация в E.164-подобный вид.
-- CORS: разрешить preview/published origin'ы проекта (whitelist), не голый `*`. Список получить из `project_urls`.
+- Дополнить `.lovable/proofs/lead_offer_implementation_2026_05.md` разделами «CRM UI smoke» и «Telegram worker smoke» с SQL-выкладкой и скриншотами/логами.
 
 ---
 
-## Фаза B — Реализация (только после Discovery)
+### Часть 2 — Переиспользовать канонический registration flow в LeadRequestDialog
 
-### B1. UI редактора оффера
+**Мотивация:** сейчас `LeadRequestDialog` — самостоятельная форма (name/phone/email/comment), которая идёт в edge `submit-lead-request`, где профиль ищется по email/phone или создаётся черновой без `auth.users`. Пользователь просит: заявка должна проходить через тот же inline-auth поток, что и оплата (`useInlineAuth` + `InlineAuthForm`), плюс сразу после — предложение привязать Telegram (как в `PaymentDialog` для клубных продуктов). Всё — в одном модале, без переходов.
 
-- Добавить в `Select` «Тип кнопки» пункт `lead` — «Оставить заявку».
-- Расширить `TariffOffer.offer_type`, `OfferMetaConfig.lead_form?: { require_phone: boolean; require_email: boolean; comment_placeholder?: string; success_message?: string }`.
-- Для `lead` скрыть в диалоге: сумма, эквайринг, tokenization, автопродление, документы, рассрочка. Показать: текст кнопки, CRM-routing (существующий `OfferCrmRoutingSection`), автозадачи (существующий редактор из `useCrmTaskAutomationRules`), настройки формы.
-- В `handleSaveOffer` очистить несовместимые ветки meta (`recurring`, `installment`, `acquiring`).
+**2.1 Discovery (read-only, до кода):**
 
-### B2. Публичный UI
+- `src/hooks/useInlineAuth.ts` — этапы `email → login | signup → confirm_signup`, реальные RPC/edge вызовы.
+- `src/components/auth/InlineAuthForm.tsx` — canonical UI, пропсы, что можно переиспользовать целиком.
+- `src/components/payment/PaymentDialog.tsx` (строки ~180–500, 1250–1300) — как встроен telegram prompt: `useTelegramLinkStatus`, `useStartTelegramLink`, шаг «Привязать Telegram / Пропустить», deeplink в бот.
+- Подтвердить, что `useTelegramLink` не требует платежного контекста и вызывается для любого authenticated user.
 
-- Новый `src/components/lead/LeadRequestDialog.tsx` — единая модалка (Имя*, Телефон*, Email*, Комментарий, honeypot). Zod-валидация. POST в `submit-lead-request`.
-- Product/tariff card: для оффера `lead` — вместо checkout открываем `LeadRequestDialog`.
-- `ButtonSection`: новый `action.type = "lead_offer"` c `target = offer_id`; в `ButtonEditor` — селектор офферов `lead`.
+**2.2 UI: перепроектировать `LeadRequestDialog` как многошаговый модал**
 
-### B3. Edge `submit-lead-request` (verify_jwt=false)
+Шаги (в одном `<Dialog>`, без навигации по страницам):
 
-Path: `supabase/functions/submit-lead-request/index.ts`.
+```text
+[1] auth        — <InlineAuthForm> (email → login или signup+confirm)
+                  Заголовок: «Оставить заявку — {offerLabel}»
+                  Подзаголовок: «Начнём с email, чтобы связаться с вами»
+[2] details     — телефон + комментарий (имя берём из profiles.full_name;
+                  если пусто — поле «Имя» добавляем в этот же шаг)
+                  Кнопка «Отправить заявку»
+[3] telegram?   — показываем ТОЛЬКО если profile.telegram_link_status !== 'active'
+                  Обоснование (готовый копирайт):
+                  «Привяжите Telegram — так мы сможем быстро связаться
+                   с вами в любое время, отправлять напоминания и материалы
+                   прямо в мессенджер. Это займёт 10 секунд.»
+                  Кнопки: [Привязать Telegram] [Пропустить — привяжу позже]
+                  (текст «Позже можно привязать в личном кабинете».)
+[4] success     — «Заявка принята. Мы свяжемся с вами.»
+```
 
-- CORS whitelist (см. A7).
-- Zod-валидация тела; honeypot-проверка; sanitize comment.
-- Загрузка оффера: убедиться `offer_type='lead'` и `is_active=true`; иначе 404 generic.
-- Idempotency (15 мин, см. A7): при попадании в окно — вернуть `{ ok: true, deduped: true }` без новой задачи.
-- Профиль (см. A выше): match по email → по нормализованному phone → если оба резолвятся в разные profiles, писать `meta.manual_review=true`, склейку не делать. `**auth.users` не создавать**.
-- INSERT в `orders_v2` (или в SoT, зафиксированный в A1) со snapshot контакта в `meta`, `amount=0`, статус по решению из A2, `offer_id/tariff_id/product_id`, `pipeline_id/pipeline_stage_id = crm_routing.stage_on_pending`.
-- Для каждого активного `crm_task_automation_rules` этого оффера — INSERT в `crm_tasks` строго по фактическим полям (A3): `assignee_user_id` из правила (`fixed_user`), `title/description` — шаблонная подстановка `{name}/{phone}/{email}/{comment}/{offer_label}`, `due_at = now() + due_offset_minutes`, `source` — значение, которое уже допускается схемой (иначе взять `'manual'` + `metadata.origin='lead_form'`).
-- INSERT в `crm_task_notifications` в формате, который сегодня понимает `crm-task-notify-worker` (проверено в A3). Никаких новых `notification_type`, если воркер их не обрабатывает.
-- Ответ клиенту — generic (`{ ok: true }`), детальные ошибки только в `audit_logs`/лог функции. Service-role наружу не течёт.
+Реализация:
 
-### B4. Payment-guards
+- Убираем из `LeadRequestDialog` собственные поля email/name (email приходит из session после auth; name — из profiles или добираем на шаге details).
+- Импортируем `InlineAuthForm`, `useTelegramLinkStatus`, `useStartTelegramLink`.
+- Если пользователь уже залогинен и `full_name`/`phone` заполнены — сразу шаг [2] с предзаполнением.
+- После успешного submit — переход [3] или [4] по признаку telegram_link_status.
+- Honeypot оставляем на шаге [2].
 
-В каждом месте из A5 добавить явный фильтр/гвард `offer_type !== 'lead'` и юнит-проверку. Ни одна payment/entitlement/subscription/revenue-ветка не должна принимать lead.
+**2.3 Backend: `submit-lead-request` — упростить под authenticated flow**
 
-### B5. Тест (Playwright в песочнице)
+- Требовать валидный JWT (снять `verify_jwt=false`; либо оставить для fallback, но в основном пути читать `auth.uid()`).
+- Не искать/не создавать draft-профиль по email — брать `profile_id` напрямую по `auth.uid()`.
+- Обновлять `profiles.phone`/`full_name` (если пусто) — reuse существующего update-паттерна.
+- Всё остальное (idempotency, CORS, honeypot timing, INSERT в `orders_v2`, `crm_tasks`, `crm_task_notifications`) — без изменений.
+- Оставить старый ветку «unauthenticated» помеченной как `deprecated`, чтобы не сломать site-builder ButtonSection во время миграции (или сразу переключить: `open_lead_form` тоже открывает inline-auth сначала).
 
-- Seed: тариф + оффер `lead` + правило автозадачи (assignee = суперадмин) + `crm_routing` на живой воронке.
-- Отправить форму с публичной страницы (product) и из ButtonSection — оба должны попадать в тот же submit flow.
-- Повторить submit в течение 15 мин — убедиться, что дубля задачи нет.
-- Прогнать `crm-task-notify-worker` — notification уходит в Telegram суперадмину.
+**2.4 Проверка reused components (ничего не дублируем)**
 
-### B6. DoD / Proof
+- `useInlineAuth` — да, используем как есть.
+- `InlineAuthForm` — используем как есть, с `onAuthenticated` callback для перехода на шаг details.
+- `useTelegramLinkStatus`, `useStartTelegramLink` — reuse.
+- Deep-link/bot handshake — уже есть в `startTelegramLink.mutateAsync()`, ничего нового.
 
-Каждый пункт проверяется явным SQL/логом:
+**2.5 Тест (Playwright, дополнить существующий):**
 
-- lead-order создан в SoT-таблице (A1), с корректным `pipeline_id/pipeline_stage_id`.
-- `crm_tasks` создана, `assignee_user_id` = выбранный ответственный, source/metadata корректны.
-- `crm_task_notifications` создана, `crm-task-notify-worker` перевёл в `sent`.
-- Telegram-уведомление доставлено (лог воркера).
-- `payments_v2` — 0 новых строк.
-- bePaid/Stripe API не дёргался (grep логов провайдеров, 0 hits).
-- `entitlements`, `subscriptions_v2`, `access_grant_ledger` — 0 новых строк.
-- Revenue/stats-запросы (список из A5) не учитывают lead.
-- Lead виден в CRM Kanban / Contact Center как заявка.
-- pay_now/trial/preregistration работают без регрессии (smoke).
-- Idempotency 15 мин: повтор submit не создаёт вторую задачу.
+- Новый юзер: email → signup → confirm → details → submit → telegram prompt → skip → success.
+- Существующий юзер без телефона: email → login → details (ввод phone) → submit → telegram prompt (если не привязан).
+- Существующий полностью заполненный юзер с привязанным TG: email → login → details (auto-filled) → submit → success (без TG-шага).
+- Проверка, что `orders_v2 status='lead'`, `crm_tasks`, `crm_task_notifications` создаются как раньше; `payments_v2 = 0`, `entitlements = 0`.
+
+**2.6 Обновить proof** — добавить раздел «Inline-auth + Telegram integration» с SQL/скриншотами трёх сценариев.
 
 ---
 
-## Жёсткие запреты (на весь патч)
+### Порядок выполнения
 
-- **Не создавать параллельную сущность в `orders`, если SoT = `orders_v2`.**
-- Не трогать `payments_v2`, эквайринг (`create-payment-checkout`, bePaid, Stripe).
-- Не создавать `entitlements`, `subscriptions_v2`, `access_grant_ledger`, telegram-доступы.
-- Не открывать anon-доступ шире, чем нужно публичной форме (edge, не таблица).
-- Не менять поведение pay_now/trial/preregistration/installment.
-- Не изобретать имена полей в `crm_task_automation_rules`/`crm_task_notifications` — использовать только фактическую схему из Discovery.
-- Не добавлять check-constraint «наугад» без проверки существующих значений (A2).
+1. Часть 1 (DoD smoke) — короткий проход, закрывает предыдущий scope.
+2. Часть 2 discovery → правки UI → edge → тесты → proof.
 
-Approve = разрешение начать **Фазу A (Discovery)**. Фаза B стартует только после того, как отчёт discovery подтверждён.
+### Запреты (сохранены из предыдущего approve)
+
+- Не создаём параллельную сущность к `orders_v2`.
+- Не трогаем `payments_v2` / эквайринг / entitlements / subscriptions.
+- Не добавляем anon-доступ сверх публичной формы (после миграции на inline-auth публичный anon путь сузится).
+- Не ломаем pay_now / trial / preregistration.
