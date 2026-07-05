@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 /**
- * Global hook: plays a notification sound when a new incoming telegram message arrives.
- * Should be mounted once in AdminLayout so it works on any admin page.
+ * Global hook: plays a notification sound when a new incoming message arrives
+ * across Telegram / Instagram / Support ticket channels. Should be mounted once
+ * in AdminLayout so it works on any admin page.
  */
 export function useIncomingMessageAlert() {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -27,9 +27,10 @@ export function useIncomingMessageAlert() {
     };
   }, []);
 
-  const [unifiedEnabled] = useUnifiedInboxFlag();
-
   useEffect(() => {
+    // Единый канал: Telegram + Instagram incoming + клиентские сообщения в тикетах.
+    // Гейт unifiedEnabled убран — звук приходит всем админам, не задваивается
+    // (у моно-лент IG/Support своего звука нет).
     const channel = supabase
       .channel("global-incoming-alert")
       .on(
@@ -41,52 +42,44 @@ export function useIncomingMessageAlert() {
           filter: "direction=eq.incoming",
         },
         (payload) => {
-          console.log("[Alert] New incoming Telegram message:", payload.new?.id);
+          console.log("[Alert] New incoming Telegram message:", (payload.new as any)?.id);
           playNotificationSound();
         }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "instagram_messages",
+          filter: "direction=eq.incoming",
+        },
+        (payload) => {
+          console.log("[Alert] New incoming Instagram message:", (payload.new as any)?.id);
+          playNotificationSound();
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "ticket_messages" },
+        (payload) => {
+          const row = payload.new as { is_internal?: boolean; author_type?: string } | null;
+          // Only client-authored, non-internal messages should chime.
+          if (!row) return;
+          if (row.is_internal) return;
+          if (row.author_type && row.author_type !== "user") return;
+          console.log("[Alert] New ticket_message:", (payload.new as any)?.id);
+          playNotificationSound();
+        },
       )
       .subscribe((status) => {
         console.log("[Alert] Global incoming alert channel:", status);
       });
 
-    // Extra звук для unified inbox: Instagram incoming + новые сообщения тикетов
-    // (клиент пишет админу). Только при включённом флаге — не задваивает звук
-    // моно-лент, у которых своего звука нет.
-    const unifiedChannel = unifiedEnabled
-      ? supabase
-          .channel("global-incoming-alert-unified")
-          .on(
-            "postgres_changes",
-            {
-              event: "INSERT",
-              schema: "public",
-              table: "instagram_messages",
-              filter: "direction=eq.incoming",
-            },
-            (payload) => {
-              console.log("[Alert] New incoming Instagram message:", payload.new?.id);
-              playNotificationSound();
-            },
-          )
-          .on(
-            "postgres_changes",
-            { event: "INSERT", schema: "public", table: "ticket_messages" },
-            (payload) => {
-              // Звук только если это НЕ внутренняя админская заметка.
-              const row = payload.new as { is_internal?: boolean } | null;
-              if (row?.is_internal) return;
-              console.log("[Alert] New ticket_message:", (payload.new as any)?.id);
-              playNotificationSound();
-            },
-          )
-          .subscribe()
-      : null;
-
     return () => {
       supabase.removeChannel(channel);
-      if (unifiedChannel) supabase.removeChannel(unifiedChannel);
     };
-  }, [unifiedEnabled]);
+  }, []);
 
   async function playNotificationSound() {
     try {
