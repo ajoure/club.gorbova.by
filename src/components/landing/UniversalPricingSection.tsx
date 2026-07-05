@@ -134,8 +134,17 @@ export function UniversalPricingSection({
         </div>
       </section>
 
-      {/* Payment / Preregistration Dialog */}
-      {selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
+      {/* Payment / Preregistration / Lead Dialog */}
+      {selectedOffer && selectedOffer.offer.offer_type === "lead" ? (
+        <LeadRequestDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          offerId={selectedOffer.offer.id}
+          offerLabel={selectedOffer.offer.button_label}
+          commentPlaceholder={(selectedOffer.offer as any).meta?.lead_form?.comment_placeholder}
+          successMessage={(selectedOffer.offer as any).meta?.lead_form?.success_message}
+        />
+      ) : selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
         <PreregistrationDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
