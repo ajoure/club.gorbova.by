@@ -1,11 +1,17 @@
 // deno-lint-ignore-file no-explicit-any
 // Public endpoint: submit a lead request from a product page or a SitePage ButtonSection.
-// - No JWT required (verify_jwt=false is Lovable Cloud default).
+//
+// v2 (2026-07-05): canonical inline-auth path. Caller MUST be authenticated
+//   — email is taken from the session, profile is resolved by auth.uid().
+//   Idempotency is scoped by (offer_id, user_id, 15 min) plus a fallback
+//   contact-based window for safety.
+//
+// Guarantees preserved from v1:
 // - Writes a lead-only row into public.orders_v2 (status='lead', amount=0).
 // - Creates crm_tasks + crm_task_notifications from crm_task_automation_rules of the offer.
 // - Never touches payments_v2 / entitlements / subscriptions_v2 / access_grant_ledger.
 // - Never calls bePaid / Stripe / any acquirer.
-// - Never creates auth.users.
+// - Never creates auth.users (auth.users is created by inline-auth signup on the client).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
@@ -38,13 +44,14 @@ function corsHeaders(origin: string | null) {
 
 const BodySchema = z.object({
   offer_id: z.string().uuid(),
-  name: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(100).optional().nullable(),
   phone: z
     .string()
     .trim()
     .transform((v) => v.replace(/[^\d+]/g, ""))
-    .refine((v) => /^\+?\d{5,20}$/.test(v), "invalid phone"),
-  email: z.string().trim().toLowerCase().email().max(255),
+    .refine((v) => v === "" || /^\+?\d{5,20}$/.test(v), "invalid phone")
+    .optional()
+    .nullable(),
   comment: z.string().trim().max(1000).optional().nullable(),
   // anti-bot
   website: z.string().optional().nullable(), // honeypot — must be empty
@@ -66,7 +73,29 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405, cors);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+  // ── Auth (required) ──────────────────────────────────────────────────
+  const authHeader = req.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return jsonResponse({ error: "auth_required" }, 401, cors);
+  }
+  const jwt = authHeader.slice("Bearer ".length);
+
+  // We use the anon key + user JWT to resolve auth.uid() securely.
+  const supaAsUser = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: claimsData, error: claimsErr } = await supaAsUser.auth.getClaims(jwt);
+  const authUserId = claimsData?.claims?.sub as string | undefined;
+  const authEmail = (claimsData?.claims?.email as string | undefined)?.toLowerCase();
+  if (claimsErr || !authUserId || !authEmail) {
+    return jsonResponse({ error: "auth_invalid" }, 401, cors);
+  }
+
+  // Privileged client for writes.
   const supa = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -85,7 +114,7 @@ Deno.serve(async (req) => {
       cors,
     );
   }
-  const { offer_id, name, phone, email, comment, website, form_opened_at } =
+  const { offer_id, name: bodyName, phone: bodyPhone, comment, website, form_opened_at } =
     parsed.data;
 
   // Honeypot & timing checks — return fake success to avoid signalling bots.
@@ -118,43 +147,67 @@ Deno.serve(async (req) => {
   const currency = tariff?.currency ?? "BYN";
   const routing = (offer.meta as any)?.crm_routing ?? null;
 
-  // 2. Profile match (email → phone; conflict → manual_review)
-  const { data: emailProfile } = await supa
+  // 2. Profile: resolve strictly by auth.uid(). If missing (unusual — trigger
+  //    normally creates one on signup), create a minimal profile row.
+  const { data: existingProfile } = await supa
     .from("profiles")
-    .select("id, user_id")
-    .ilike("email", email)
-    .limit(1)
-    .maybeSingle();
-  const { data: phoneProfile } = await supa
-    .from("profiles")
-    .select("id, user_id")
-    .eq("phone", phone)
-    .limit(1)
+    .select("id, user_id, email, phone, full_name")
+    .eq("user_id", authUserId)
     .maybeSingle();
 
-  let profileId: string | null = null;
-  let manualReview: Record<string, unknown> | null = null;
-  if (emailProfile && phoneProfile && emailProfile.id !== phoneProfile.id) {
-    manualReview = {
-      reason: "email_phone_mismatch",
-      matched_email_profile: emailProfile.id,
-      matched_phone_profile: phoneProfile.id,
-    };
+  let profileId: string | null = existingProfile?.id ?? null;
+  if (!profileId) {
+    const { data: created, error: createProfErr } = await supa
+      .from("profiles")
+      .insert({
+        user_id: authUserId,
+        email: authEmail,
+        full_name: bodyName ?? null,
+        phone: bodyPhone && bodyPhone !== "" ? bodyPhone : null,
+      })
+      .select("id, user_id, email, phone, full_name")
+      .single();
+    if (createProfErr || !created) {
+      console.error("[submit-lead-request] profile create failed", createProfErr);
+      return jsonResponse({ error: "profile_create_failed" }, 500, cors);
+    }
+    profileId = created.id;
   } else {
-    profileId = emailProfile?.id ?? phoneProfile?.id ?? null;
+    // Soft update: only fill blank fields, never overwrite existing values.
+    const patch: Record<string, unknown> = {};
+    if (!existingProfile!.full_name && bodyName) patch.full_name = bodyName;
+    if (!existingProfile!.phone && bodyPhone && bodyPhone !== "") patch.phone = bodyPhone;
+    if (Object.keys(patch).length > 0) {
+      await supa.from("profiles").update(patch).eq("id", profileId);
+    }
   }
 
-  // 3. Idempotency window
+  // Effective contact snapshot for CRM/tasks.
+  const effectiveName =
+    bodyName ??
+    existingProfile?.full_name ??
+    authEmail;
+  const effectivePhone =
+    (bodyPhone && bodyPhone !== "" ? bodyPhone : null) ??
+    existingProfile?.phone ??
+    null;
+  const effectiveEmail = authEmail;
+
+  // 3. Idempotency window — primary key: (offer_id, user_id).
+  //    Fallback contact-based dedup for legacy anon rows still counts.
   const sinceIso = new Date(
     Date.now() - IDEMPOTENCY_WINDOW_MINUTES * 60_000,
   ).toISOString();
+
+  const orFilterParts = [`profile_id.eq.${profileId}`, `customer_email.eq.${effectiveEmail}`];
+  if (effectivePhone) orFilterParts.push(`customer_phone.eq.${effectivePhone}`);
   const { data: existing } = await supa
     .from("orders_v2")
     .select("id")
     .eq("offer_id", offer_id)
     .eq("status", "lead")
     .gte("created_at", sinceIso)
-    .or(`customer_email.eq.${email},customer_phone.eq.${phone}`)
+    .or(orFilterParts.join(","))
     .limit(1)
     .maybeSingle();
   if (existing) {
@@ -172,11 +225,11 @@ Deno.serve(async (req) => {
     .toUpperCase()}`;
   const orderMeta: Record<string, unknown> = {
     kind: "lead",
-    lead_form: { name, comment: comment ?? null },
-    contact_snapshot: { name, email, phone },
+    lead_form: { name: effectiveName, comment: comment ?? null },
+    contact_snapshot: { name: effectiveName, email: effectiveEmail, phone: effectivePhone },
     origin: "lead_form",
+    auth_user_id: authUserId,
   };
-  if (manualReview) orderMeta.manual_review = manualReview;
 
   const { data: insertedOrder, error: orderErr } = await supa
     .from("orders_v2")
@@ -186,14 +239,15 @@ Deno.serve(async (req) => {
       tariff_id: offer.tariff_id,
       product_id: productId,
       profile_id: profileId,
+      user_id: authUserId,
       status: "lead",
       base_price: 0,
       final_price: 0,
       paid_amount: 0,
       currency,
       is_trial: false,
-      customer_email: email,
-      customer_phone: phone,
+      customer_email: effectiveEmail,
+      customer_phone: effectivePhone,
       pipeline_id: routing?.enabled ? routing.pipeline_id ?? null : null,
       pipeline_stage_id: routing?.enabled
         ? routing.stage_on_pending ?? null
@@ -221,7 +275,6 @@ Deno.serve(async (req) => {
   const createdNotifications: string[] = [];
 
   for (const rule of rules ?? []) {
-    // Only fixed_user assignments create real tasks in MVP.
     if (rule.assignee_strategy !== "fixed_user" || !rule.assignee_user_id) {
       continue;
     }
@@ -235,13 +288,13 @@ Deno.serve(async (req) => {
         : null;
     const title =
       (rule.title_template ?? "Новая заявка")
-        .replaceAll("{{name}}", name)
-        .replaceAll("{{email}}", email)
-        .replaceAll("{{phone}}", phone) || "Новая заявка";
+        .replaceAll("{{name}}", effectiveName)
+        .replaceAll("{{email}}", effectiveEmail)
+        .replaceAll("{{phone}}", effectivePhone ?? "") || "Новая заявка";
     const description = (rule.description_template ?? "")
-      .replaceAll("{{name}}", name)
-      .replaceAll("{{email}}", email)
-      .replaceAll("{{phone}}", phone)
+      .replaceAll("{{name}}", effectiveName)
+      .replaceAll("{{email}}", effectiveEmail)
+      .replaceAll("{{phone}}", effectivePhone ?? "")
       .replaceAll("{{comment}}", comment ?? "");
 
     const { data: task, error: taskErr } = await supa
