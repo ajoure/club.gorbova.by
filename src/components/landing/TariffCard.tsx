@@ -249,6 +249,17 @@ export function TariffCard({
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           ))}
+          {leadOffers.map((offer) => (
+            <Button
+              key={offer.id}
+              onClick={() => onSelectOffer?.(offer, tariff)}
+              variant={!hasActivePayOffers && preregOffers.length === 0 ? "default" : "outline"}
+              className="w-full"
+            >
+              {offer.button_label || "Оставить заявку"}
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ))}
         </div>
       )}
 
