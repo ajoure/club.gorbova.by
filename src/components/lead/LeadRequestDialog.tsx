@@ -15,9 +15,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { CheckCircle2, Loader2, Send, MessageCircle, Mail } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
+import { TelegramCompactCard } from "@/components/telegram/TelegramCompactCard";
 import {
   useTelegramLinkStatus,
-  useStartTelegramLink,
 } from "@/hooks/useTelegramLink";
 
 interface LeadRequestDialogProps {
