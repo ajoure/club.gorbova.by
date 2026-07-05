@@ -38,8 +38,30 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
     onChange({ ...content, action: next });
   };
 
+  // Lead offers for open_lead_form target
+  const { data: leadOffers } = useQuery({
+    queryKey: ["site-builder", "lead-offers"],
+    enabled: actionType === "open_lead_form",
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tariff_offers")
+        .select("id, button_label, tariff_id, tariffs:tariff_id(name, code, products_v2:product_id(name))")
+        .eq("offer_type", "lead")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   // Список целей по типу действия (только stable id / anchorId — никаких title/index)
   const targetOptions = (() => {
+    if (actionType === "open_lead_form") {
+      return (leadOffers ?? []).map((o: any) => ({
+        value: o.id,
+        label: `${o.button_label || "Оставить заявку"} · ${o.tariffs?.products_v2?.name ?? ""} / ${o.tariffs?.name ?? ""}`.trim(),
+      }));
+    }
     if (!registry) return [];
     if (actionType === "scroll_to_anchor") {
       return registry.anchors
