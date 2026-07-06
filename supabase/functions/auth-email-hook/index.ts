@@ -268,7 +268,7 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   const EmailTemplate = EMAIL_TEMPLATES[emailType]
   if (!EmailTemplate) {
-    console.error('Unknown email type', { emailType, run_id })
+    console.error('Unknown email type', { emailType, run_id: runId })
     return new Response(JSON.stringify({ error: `Unknown email type: ${emailType}` }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -277,15 +277,25 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   // Ссылку ведём на наш SPA-proxy: /auth/v1/verify на корневом домене
   // может перехватываться сервером до React и отдавать 403/404.
-  let confirmationUrl: string = payload.data.url
+  // Для Supabase Auth Send Email Hook строим URL из token_hash + email_action_type + redirect_to.
+  // Для Lovable Emails используем готовый url из payload.
+  let confirmationUrl: string = normalized.rawUrl || ''
+  const supabaseUrlBase = Deno.env.get('SUPABASE_URL') || ''
+  if (!confirmationUrl && normalized.tokenHash && supabaseUrlBase) {
+    const verify = new URL(`${supabaseUrlBase}/auth/v1/verify`)
+    verify.searchParams.set('token', normalized.tokenHash)
+    verify.searchParams.set('type', emailType)
+    if (normalized.redirectTo) verify.searchParams.set('redirect_to', normalized.redirectTo)
+    confirmationUrl = verify.toString()
+  }
   try {
-    const u = new URL(payload.data.url)
+    const u = new URL(confirmationUrl)
     u.protocol = 'https:'
     u.host = new URL(SITE_URL).host
     u.pathname = VERIFY_PROXY_PATH
     confirmationUrl = u.toString()
   } catch {
-    console.warn('Failed to rewrite confirmationUrl host', { url: payload.data.url, run_id })
+    console.warn('Failed to rewrite confirmationUrl host', { url: confirmationUrl, run_id: runId })
   }
 
   const templateProps = {
@@ -293,9 +303,9 @@ async function handleWebhook(req: Request): Promise<Response> {
     siteUrl: SITE_URL,
     recipient,
     confirmationUrl,
-    token: payload.data.token,
+    token,
     email: recipient,
-    newEmail: payload.data.new_email,
+    newEmail: normalized.newEmail,
   }
 
   const html = await renderAsync(React.createElement(EmailTemplate, templateProps))
@@ -309,11 +319,11 @@ async function handleWebhook(req: Request): Promise<Response> {
   // OTP-first subjects (PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2):
   // для signup/magiclink показываем код прямо в теме — так пользователь видит
   // его в списке писем и в push-уведомлении, не открывая письмо.
-  const token = payload.data.token
   let subject = EMAIL_SUBJECTS[emailType] || 'Уведомление'
   if (token && (emailType === 'signup' || emailType === 'magiclink')) {
     subject = `Ваш код: ${token}`
   }
+
 
   const messageId = crypto.randomUUID()
 
