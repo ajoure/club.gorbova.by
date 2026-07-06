@@ -1,12 +1,18 @@
 /**
  * Shared inline auth hook — extracted from PaymentDialog.
- * 
+ *
  * Provides email-check → login/signup flow reusable across
  * PaymentDialog and site-renderer FormSection (auth_mode).
- * 
+ *
+ * @deprecated PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2 (2026-07-06):
+ *   New default is `useInlineEmailOtp` (OTP-first, no email-link redirect).
+ *   This hook is retained ONLY as a rollback path — activated by
+ *   `VITE_INLINE_AUTH_MODE=link`. Do not add new call-sites.
+ *
  * STOP-guard: This is an add-only extract. PaymentDialog's step contracts,
  * error texts, and UX transitions MUST NOT change when adopting this hook.
  */
+
 import { useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
