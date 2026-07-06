@@ -135,3 +135,112 @@ real inbox`.
   возвращается клиенту.
 - `YANDEX_SMTP_PASSWORD` — уже был в Cloud Secrets, не менялся.
 - `SUPABASE_SERVICE_ROLE_KEY` — auto-injected в edge, не менялся.
+
+---
+
+## v3 — 2026-07-06 — reset-state regression + MIME From EMPTY-FROM
+
+### Bug 1: Lead dialog возвращается в форму после Telegram-экрана
+
+**Root cause.** `useEffect(..., [open, user])` в `LeadRequestDialog`: любой
+`refetchTelegram()` / обновление auth-сессии меняло ссылку на `user` →
+эффект перезапускался → `setStep("details")` затирал `telegram`/`success`.
+
+**Архитектурное исправление.** Reset выполняется только на переходе
+`closed → open`, отслеживаемом через `wasOpenRef`. Deps effect'а — `[open]`.
+Никакие изменения `user`/`session`/telegram-статуса, происходящие ВНУТРИ
+открытого диалога, больше не могут сбросить step. Файл:
+`src/components/lead/LeadRequestDialog.tsx` (строки 73–98).
+
+**Grep по проекту на аналогичный anti-pattern:**
+```
+$ rg -n "open, user\]|open, session\]|user, open\]|session, open\]" src/
+src/components/lead/LeadRequestDialog.tsx:87 (ИСПРАВЛЕНО)
+```
+Других мест с deps `[open, user]` / `[open, session]` в проекте нет.
+`PaymentDialog` — уже использует `authInProgressRef` guard; `InvoiceCheckoutDialog`
+и `ConsultationPaymentDialog` — уже guard'ят через `step === "auth"` (только
+один направленный переход, регрессии не даёт); `PublicPayPage`,
+`FormSection`, `InlineEmailOtpForm` — step machine без auth-deps.
+
+**Regression-тест:** `src/components/lead/LeadRequestDialog.test.tsx` —
+3/3 passing. Проверяет:
+- initial reset при закрыт→открыт;
+- смена `user` при открытом диалоге НЕ ресетит step;
+- close→reopen снова триггерит fresh reset.
+
+### Bug 2: письма приходят с "EMPTY-FROM"
+
+**Root cause.** `From: "Екатерина Горбова" <noreply@gorbova.by>` содержал
+Cyrillic display-name как raw UTF-8. По RFC 5322/2047 не-ASCII в заголовках
+должно быть MIME encoded-word (`=?UTF-8?B?...?=`). Apple Mail при парсинге
+такого заголовка сбрасывал sender name в "EMPTY-FROM".
+
+**Универсальное исправление.** Создан shared helper
+`supabase/functions/_shared/mime-header.ts` c двумя функциями:
+- `encodeMimeHeader(value)` — RFC 2047 encoded-word для любого не-ASCII;
+- `encodeAddressHeader(name, email)` — `"Name" <email>` (ASCII quoted) или
+  `=?UTF-8?B?..?= <email>` (Unicode).
+
+`yandex-smtp-sender.ts` применяет helper ко ВСЕМ заголовкам, где может быть
+не-ASCII: `From`, `Subject`, `Reply-To`. `To` — email-only, без display-name.
+Дублирования кода нет.
+
+**Все use-sites yandex-smtp-sender:**
+```
+$ rg -n "sendViaYandexSmtp" supabase/functions/
+supabase/functions/auth-email-hook/index.ts
+supabase/functions/auth-actions/index.ts
+supabase/functions/oneshot-password-reset-notice-2026-07/index.ts
+supabase/functions/request-inline-otp/index.ts
+```
+После правки MIME в общем helper, все 4 функции автоматически получили
+корректный From. Все 4 передеплоены (`request-inline-otp`, `verify-inline-otp`,
+`auth-actions`, `auth-email-hook`, `oneshot-password-reset-notice-2026-07`
+— deploy OK).
+
+**Unit-тесты MIME:** `supabase/functions/_shared/mime-header.test.ts` — 6/6 passing.
+Покрывают: ASCII passthrough, Cyrillic encoding, address header quoting,
+Unicode address header, empty display-name, quote-escaping.
+
+### Ожидаемые headers (после фикса)
+
+```
+From: =?UTF-8?B?0JXQutCw0YLQtdGA0LjQvdCwINCT0L7RgNCx0L7QstCw?= <noreply@gorbova.by>
+Subject: =?UTF-8?B?0JLQsNGIINC60L7QtDog...?=
+Content-Type: multipart/alternative; boundary="alt_<uuid>"
+Date: <SMTP-injected>
+Message-ID: <SMTP-injected>
+```
+
+### E2E проверка (требуется от заказчика после этого патча)
+
+Кросс-клиентная проверка отображения From:
+- [ ] Apple Mail — sender name = "Екатерина Горбова" (не EMPTY-FROM)
+- [ ] Gmail Web — sender name отображается корректно
+- [ ] Outlook — sender name отображается корректно
+
+OTP smoke на всех сценариях:
+- [ ] Lead — форма → OTP → Telegram screen НЕ возвращается в форму
+- [ ] Payment — OTP → карта
+- [ ] Invoice — OTP → выбор плательщика
+- [ ] PublicPay — OTP → карта
+
+Полные raw headers письма (From/Subject/Content-Type/Date/Message-ID)
+приложить в этот же файл после реального теста.
+
+### Файлы
+
+Created:
+- `supabase/functions/_shared/mime-header.ts`
+- `supabase/functions/_shared/mime-header.test.ts`
+- `src/components/lead/LeadRequestDialog.test.tsx`
+
+Edited:
+- `supabase/functions/_shared/yandex-smtp-sender.ts` — использует helper для From/Subject/Reply-To
+- `src/components/lead/LeadRequestDialog.tsx` — wasOpenRef, deps `[open]`
+
+Deployed:
+- `request-inline-otp`, `verify-inline-otp`, `auth-actions`, `auth-email-hook`, `oneshot-password-reset-notice-2026-07`
+
+Status: **implemented, awaiting client E2E cross-mail-client sender verification.**
