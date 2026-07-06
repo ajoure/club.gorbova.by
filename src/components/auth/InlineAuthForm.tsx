@@ -17,6 +17,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Mail, AlertCircle, CheckCircle2 } from "lucide-react";
+import { INLINE_AUTH_MODE } from "@/lib/inlineAuth/mode";
+import { InlineEmailOtpForm } from "@/components/auth/InlineEmailOtpForm";
+
 
 export interface InlineAuthFormProps {
   /** Pre-fill email (e.g. from session); user may override. */
