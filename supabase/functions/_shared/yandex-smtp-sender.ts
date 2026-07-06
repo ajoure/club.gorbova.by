@@ -5,6 +5,7 @@
 // Логика взята из supabase/functions/send-email/index.ts (sendEmailViaSMTP),
 // но без зависимости от account/integration_instances — параметры передаются явно.
 import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
+import { encodeAddressHeader, encodeMimeHeader } from "./mime-header.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
