@@ -25,6 +25,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Auth = lazy(() => import("./pages/Auth"));
 const AuthVerifyProxy = lazy(() => import("./pages/AuthVerifyProxy"));
 const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
+const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
@@ -196,6 +197,7 @@ const App = () => {
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
+              <Route path="/connect" element={<LazyRoute><ConnectAgent /></LazyRoute>} />
               <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
               <Route path="/pricing/:productSlug" element={<LazyRoute><ProductPricing /></LazyRoute>} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
