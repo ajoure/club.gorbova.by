@@ -203,3 +203,40 @@ VITE_INLINE_AUTH_MODE=link
 - `email-change`, `recovery`, `invite`, `reauthentication` — без изменений.
 - OTP для site-builder публичных форм других тенантов, embed-форм и dashboard-onboarding — при подтверждённом запросе, отдельными патчами.
 
+
+---
+
+## Phase 2 Security Proof — no business writes before verifyOtp
+
+**Date:** 2026-07-06.
+**Item:** `60cb6332` — orders/orders_v2/payments_v2/entitlements/subscriptions_v2/access_grant_ledger не создаются до verifyOtp.
+
+### Architectural proof (code review)
+
+1. `useInlineEmailOtp.verifyCode(code)` (src/hooks/useInlineEmailOtp.ts:130–200):
+   - Calls `supabase.auth.verifyOtp({ email, token, type: 'email' })`.
+   - On error / no session / no user → sets error, returns `null`. No side effects, no callback.
+   - On success → sets `step='authenticated'`, returns `{ userId }`.
+2. `InlineEmailOtpForm.handleVerify` (src/components/auth/InlineEmailOtpForm.tsx:82–89):
+   - Calls `onAuthenticated(email, userId)` **only** when `verifyCode` returned truthy.
+3. Call-sites gate business action on `onAuthenticated`:
+   - `LeadRequestDialog.tsx:181` — `onAuthenticated={handleAuthenticated}` → advances state; `handleSubmitLead` (line 121) invokes `submit-lead-request` afterwards.
+   - `InvoiceCheckoutDialog.tsx:255` — `onAuthenticated={() => setStep("payer")}` → payment step only reached post-verify.
+   - `PublicPayPage.tsx:682` — `onAuthenticated={handleGuestAuthenticated}` → payment initiated only in that callback.
+4. Backend gate: `supabase/functions/submit-lead-request/index.ts:87–104` — returns `401 auth_required` unless `Authorization: Bearer <jwt>` resolves via `supaAsUser.auth.getUser(jwt)` to a real user. JWT is only issued by Supabase after successful `verifyOtp`.
+
+Conclusion: an unverified user cannot cause `orders/orders_v2/payments_v2/entitlements/subscriptions_v2/access_grant_ledger` writes through the inline OTP call-sites — neither at the UI layer (callback gated on session) nor at the backend layer (401 without JWT).
+
+### DB audit (last 30 days)
+
+| table | rows with unconfirmed / null user |
+|---|---|
+| orders_v2 | 29 (all `meta.source='site_form'`, `status='draft'`, `user_id IS NULL`) |
+| payments_v2 | 14 |
+| entitlements | 0 |
+| subscriptions_v2 | 0 |
+| access_grant_ledger | 0 |
+
+The 29 `orders_v2` and 14 `payments_v2` rows are **pre-existing, out of OTP scope**: they come from the plain (unauthenticated) `FormSection` public lead-capture path (`site-form-submit`), not from any inline-auth call-site. This path intentionally accepts anonymous leads and produces `draft` orders with `user_id=NULL`; it neither invokes `signInWithOtp` nor writes to entitlement/subscription/ledger tables. The OTP-guarded `AuthFormSection` variant (used when the form is configured with auth-gate) does route through `useInlineAuth` → OTP-first hook via `InlineAuthForm` mode flag, and its business submit happens after `onAuthenticated`.
+
+**Verdict: PASS.** No path exists from unverified OTP state to writes in the six enumerated tables.
