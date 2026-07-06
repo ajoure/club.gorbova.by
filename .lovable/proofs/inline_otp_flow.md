@@ -240,3 +240,33 @@ Conclusion: an unverified user cannot cause `orders/orders_v2/payments_v2/entitl
 The 29 `orders_v2` and 14 `payments_v2` rows are **pre-existing, out of OTP scope**: they come from the plain (unauthenticated) `FormSection` public lead-capture path (`site-form-submit`), not from any inline-auth call-site. This path intentionally accepts anonymous leads and produces `draft` orders with `user_id=NULL`; it neither invokes `signInWithOtp` nor writes to entitlement/subscription/ledger tables. The OTP-guarded `AuthFormSection` variant (used when the form is configured with auth-gate) does route through `useInlineAuth` → OTP-first hook via `InlineAuthForm` mode flag, and its business submit happens after `onAuthenticated`.
 
 **Verdict: PASS.** No path exists from unverified OTP state to writes in the six enumerated tables.
+
+---
+
+## Phase 2 Pre-prod checklist — что закрыто автоматически и что требует человека
+
+### PASS (автоматизировано)
+
+| Item | Evidence |
+|---|---|
+| OTP mode smoke (`VITE_INLINE_AUTH_MODE=otp`) | 10/10 unit tests зелёные (`useInlineEmailOtp.test.ts` × 8, `InlineEmailOtpForm.test.tsx` × 2). `InlineAuthForm.tsx:52` при `mode==='otp'` рендерит `InlineEmailOtpForm` — покрывает все 4 call-sites (Lead/Invoice/PublicPay/FormSection→AuthFormSection ветка через `InlineAuthForm`). |
+| Rollback link mode (`VITE_INLINE_AUTH_MODE=link`) | Ветка `InlineAuthForm.tsx:52` — при `mode==='link'` fall-through к legacy `useInlineAuth` (не тронут). Инверсия по env-flag, без изменения контракта call-sites. |
+| Resend & invalidation | Unit tests `useInlineEmailOtp.test.ts`: `RESEND_COOLDOWN_S=60` (строка 34), `FORCE_RESEND_AFTER=5` (строка 35), тест «resend blocked during cooldown» (line 100–109), тест «5-я неверная попытка → "Запросите новый код"» (line 90–99). Инвалидация старых кодов — свойство Supabase auth (verifyOtp одноразовый, новый signInWithOtp инвалидирует предыдущий). |
+| Security proof | См. секцию выше. |
+
+### BLOCKED — требует ручного QA на реальной инфраструктуре
+
+Эти пункты **не могут быть выполнены агентом** — приведены с точной инструкцией для человека:
+
+| Item | Почему нельзя автоматизировать | Как проверить руками |
+|---|---|---|
+| E2E new user × 4 call-sites (Lead/Invoice/PublicPay/FormSection) | OTP-код существует только в реальном inbox (в Supabase хранится хэш `auth.one_time_tokens`). Playwright не может прочитать код без SMTP-catcher или прод-инбокса. | Открыть `/pay/<token>`, `/`(форма Lead), `/pay` etc. в staging → ввести реальный email → получить письмо → ввести код → убедиться, что после verifyOtp сразу открывается следующий шаг (payer/submit/оплата) в том же окне. |
+| E2E existing user (verified/unverified/password) | Аналогично — нужен реальный inbox + учётная запись. | Использовать `andykn@mail.ru` (verified) и заведомо-непотдверждённый тестовый email; для password-fallback — временно выставить `VITE_INLINE_AUTH_MODE=link` в staging. |
+| Gmail Web / Apple Mail / Outlook rendering | Требует реальной доставки писем и клиент-side рендера. | Отправить signup + magiclink на 3 реальных ящика, проверить: (a) subject `Ваш код: XXXXXX`, (b) крупный monospace код, (c) plain-text строка «Ваш код подтверждения: NNNNNN», (d) fallback-ссылка. |
+| AutoFill matrix iPhone/macOS/Android | Требует физических устройств; jsdom не эмулирует iOS AutoFill. | На iPhone Safari + Mail: получить письмо → фокус на OTP-поле → над клавиатурой предложение кода. Аналогично macOS Safari + Mail; Android Chrome + Gmail. Задокументировать где сработало. |
+| Performance metrics | Требует прод-трафика; в dev-sandbox нет реалистичных задержек SMTP/verifyOtp. | Замерить на 10 реальных сендах: `signInWithOtp` latency (среднее время до доставки в inbox), `verifyOtp` latency, время открытия следующего шага после успешного verify. |
+
+### Rollout gate
+
+- Не удалять `VITE_INLINE_AUTH_MODE` и `useInlineAuth` до успешного prod-smoke (items выше). Отдельный cleanup-патч уже создан в roadmap: `3663f944`.
+- Замена ссылок на @gorbovabybot — отдельный PR (roadmap `4929c65a`), не смешивать с OTP.
