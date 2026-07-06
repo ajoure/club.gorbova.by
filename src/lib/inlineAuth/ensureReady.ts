@@ -10,10 +10,12 @@
  *   depth. Callers MUST await this before any create-order / create-lead
  *   / bePaid init.
  */
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface InlineAuthReady {
   ok: boolean;
+  user?: User;
   userId?: string;
   email?: string;
   reason?: "no_session" | "no_user" | "error";
@@ -32,6 +34,7 @@ export async function ensureInlineAuthReady(): Promise<InlineAuthReady> {
     }
     return {
       ok: true,
+      user: userData.user,
       userId: userData.user.id,
       email: userData.user.email ?? undefined,
     };
