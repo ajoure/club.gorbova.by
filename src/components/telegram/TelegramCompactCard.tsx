@@ -34,6 +34,12 @@ export function TelegramCompactCard() {
 
   const [linkSession, setLinkSession] = useState<LinkSessionResult | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  // Guard-и, чтобы авто-получение deep_link в pending-статусе выполнялось
+  // максимум один раз на монтирование и не запускалось, если пользователь
+  // явно отменил pending крестиком.
+  const autoStartAttemptedRef = useRef(false);
+  const userCancelledRef = useRef(false);
+  const [autoStartFailed, setAutoStartFailed] = useState(false);
 
   // Fetch club access info
   const { data: clubAccess } = useQuery({
