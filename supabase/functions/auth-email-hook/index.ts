@@ -372,14 +372,14 @@ async function handleWebhook(req: Request): Promise<Response> {
         meta: {
           source: 'auth-email-hook',
           action_type: emailType,
-          run_id,
+          run_id: runId,
         },
       })
     } catch (logErr) {
       console.warn('email_logs insert failed', { logErr })
     }
 
-    console.log('Auth email sent via Yandex SMTP', { emailType, recipient, run_id })
+    console.log('Auth email sent via Yandex SMTP', { emailType, recipient, run_id: runId })
     return new Response(JSON.stringify({ success: true, sent: true, message_id: messageId }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
