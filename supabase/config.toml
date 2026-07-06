@@ -2,3 +2,6 @@ project_id = "hdjgkjceownmmnrqqtuz"
 
 [functions.invoice-checkout-issue]
 verify_jwt = true
+
+[functions._otp-probe]
+verify_jwt = false
