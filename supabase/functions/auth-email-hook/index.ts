@@ -2,6 +2,7 @@ import * as React from 'npm:react@18.3.1'
 import { renderAsync } from 'npm:@react-email/components@0.0.22'
 import { parseEmailWebhookPayload } from 'npm:@lovable.dev/email-js'
 import { WebhookError, verifyWebhookRequest } from 'npm:@lovable.dev/webhooks-js'
+import { Webhook } from 'npm:standardwebhooks@1.0.0'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { SignupEmail } from '../_shared/email-templates/signup.tsx'
 import { InviteEmail } from '../_shared/email-templates/invite.tsx'
@@ -14,7 +15,7 @@ import { sendViaYandexSmtp } from '../_shared/yandex-smtp-sender.ts'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-lovable-signature, x-lovable-timestamp, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+    'authorization, x-client-info, apikey, content-type, x-lovable-signature, x-lovable-timestamp, webhook-id, webhook-timestamp, webhook-signature, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 }
 
 const ROOT_DOMAIN = 'gorbova.by'
@@ -145,64 +146,129 @@ async function handlePreview(req: Request): Promise<Response> {
   })
 }
 
-// Основной webhook — верифицируем подпись Lovable, рендерим шаблон,
-// отправляем напрямую через Яндекс SMTP.
-async function handleWebhook(req: Request): Promise<Response> {
-  const apiKey = Deno.env.get('LOVABLE_API_KEY')
-  if (!apiKey) {
-    console.error('LOVABLE_API_KEY not configured')
-    return new Response(JSON.stringify({ error: 'Server configuration error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+// Универсальная нормализация входящего payload — принимаем оба формата:
+//   1) Supabase Auth "Send Email Hook" (Standard Webhooks: webhook-id/timestamp/signature).
+//      Payload: { user: { email, ... }, email_data: { token, token_hash, redirect_to, email_action_type, site_url, new_email } }
+//   2) Lovable Emails managed pipeline (x-lovable-signature).
+//      Payload: parseEmailWebhookPayload -> { version, run_id, data: { email, action_type, token, url, new_email } }
+// Переходный период: пока Lovable Emails pipeline не отключён окончательно,
+// поддерживаем оба, чтобы был безопасный rollback.
+interface NormalizedEmail {
+  emailType: string
+  recipient: string
+  token: string
+  tokenHash?: string
+  rawUrl?: string
+  redirectTo?: string
+  newEmail?: string
+  runId: string
+  source: 'supabase_auth' | 'lovable_emails'
+}
 
-  let payload: any
-  let run_id = ''
+function b64(str: string): string {
+  return btoa(unescape(encodeURIComponent(str)))
+}
+
+async function tryVerifySupabaseAuth(req: Request, rawBody: string): Promise<NormalizedEmail | null> {
+  const rawSecret = Deno.env.get('SEND_EMAIL_HOOK_SECRET') || ''
+  if (!rawSecret) return null
+  const hasHeaders =
+    req.headers.get('webhook-id') &&
+    req.headers.get('webhook-timestamp') &&
+    req.headers.get('webhook-signature')
+  if (!hasHeaders) return null
+  // standardwebhooks ожидает base64-кодированный секрет.
+  const encoded = rawSecret.startsWith('whsec_')
+    ? rawSecret.slice('whsec_'.length)
+    : b64(rawSecret)
+  const wh = new Webhook(encoded)
+  const verified = wh.verify(rawBody, {
+    'webhook-id': req.headers.get('webhook-id')!,
+    'webhook-timestamp': req.headers.get('webhook-timestamp')!,
+    'webhook-signature': req.headers.get('webhook-signature')!,
+  }) as { user?: { email?: string }; email_data?: Record<string, any> }
+  const ed = verified.email_data || {}
+  return {
+    emailType: String(ed.email_action_type || ''),
+    recipient: String(verified.user?.email || ''),
+    token: String(ed.token || ''),
+    tokenHash: ed.token_hash ? String(ed.token_hash) : undefined,
+    redirectTo: ed.redirect_to ? String(ed.redirect_to) : undefined,
+    newEmail: ed.new_email ? String(ed.new_email) : undefined,
+    runId: req.headers.get('webhook-id') || crypto.randomUUID(),
+    source: 'supabase_auth',
+  }
+}
+
+async function tryVerifyLovable(req: Request): Promise<NormalizedEmail | null> {
+  const apiKey = Deno.env.get('LOVABLE_API_KEY')
+  if (!apiKey) return null
+  if (!req.headers.get('x-lovable-signature')) return null
   try {
     const verified = await verifyWebhookRequest({ req, secret: apiKey, parser: parseEmailWebhookPayload })
-    payload = verified.payload
-    run_id = payload.run_id
+    const p: any = verified.payload
+    if (!p?.run_id || p.version !== '1') return null
+    return {
+      emailType: String(p.data.action_type || ''),
+      recipient: String(p.data.email || ''),
+      token: String(p.data.token || ''),
+      rawUrl: p.data.url ? String(p.data.url) : undefined,
+      newEmail: p.data.new_email ? String(p.data.new_email) : undefined,
+      runId: String(p.run_id),
+      source: 'lovable_emails',
+    }
+  } catch (error) {
+    if (error instanceof WebhookError) throw error
+    return null
+  }
+}
+
+// Основной webhook — верифицируем подпись, рендерим шаблон, отправляем через Яндекс SMTP.
+async function handleWebhook(req: Request): Promise<Response> {
+  // Читаем тело один раз — standardwebhooks требует raw string.
+  const rawBody = await req.text()
+  const clonedReq = new Request(req.url, {
+    method: req.method,
+    headers: req.headers,
+    body: rawBody,
+  })
+
+  let normalized: NormalizedEmail | null = null
+  try {
+    normalized = await tryVerifySupabaseAuth(clonedReq, rawBody)
+    if (!normalized) {
+      normalized = await tryVerifyLovable(clonedReq)
+    }
   } catch (error) {
     if (error instanceof WebhookError) {
-      switch (error.code) {
-        case 'invalid_signature':
-        case 'missing_timestamp':
-        case 'invalid_timestamp':
-        case 'stale_timestamp':
-          return new Response(JSON.stringify({ error: 'Invalid signature' }), {
-            status: 401,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          })
-        case 'invalid_payload':
-        case 'invalid_json':
-          return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          })
-      }
+      const status =
+        error.code === 'invalid_payload' || error.code === 'invalid_json' ? 400 : 401
+      return new Response(
+        JSON.stringify({ error: status === 401 ? 'Invalid signature' : 'Invalid webhook payload' }),
+        { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
     }
-    console.error('Webhook verification failed', { error })
-    return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
-      status: 400,
+    console.error('Auth email hook signature verify failed', { error: String(error) })
+    return new Response(JSON.stringify({ error: 'Invalid signature' }), {
+      status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 
-  if (!run_id || payload.version !== '1') {
-    return new Response(JSON.stringify({ error: 'Invalid webhook payload' }), {
-      status: 400,
+  if (!normalized) {
+    return new Response(JSON.stringify({ error: 'Missing or invalid webhook signature' }), {
+      status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 
-  const emailType: string = payload.data.action_type
-  const recipient: string = payload.data.email
-  console.log('Auth webhook received', { emailType, recipient, run_id })
+  const { emailType, recipient, token, runId } = normalized
+  console.log('Auth webhook received', { emailType, recipient, run_id: runId, source: normalized.source })
+
 
   const EmailTemplate = EMAIL_TEMPLATES[emailType]
   if (!EmailTemplate) {
-    console.error('Unknown email type', { emailType, run_id })
+    console.error('Unknown email type', { emailType, run_id: runId })
     return new Response(JSON.stringify({ error: `Unknown email type: ${emailType}` }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -211,15 +277,25 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   // Ссылку ведём на наш SPA-proxy: /auth/v1/verify на корневом домене
   // может перехватываться сервером до React и отдавать 403/404.
-  let confirmationUrl: string = payload.data.url
+  // Для Supabase Auth Send Email Hook строим URL из token_hash + email_action_type + redirect_to.
+  // Для Lovable Emails используем готовый url из payload.
+  let confirmationUrl: string = normalized.rawUrl || ''
+  const supabaseUrlBase = Deno.env.get('SUPABASE_URL') || ''
+  if (!confirmationUrl && normalized.tokenHash && supabaseUrlBase) {
+    const verify = new URL(`${supabaseUrlBase}/auth/v1/verify`)
+    verify.searchParams.set('token', normalized.tokenHash)
+    verify.searchParams.set('type', emailType)
+    if (normalized.redirectTo) verify.searchParams.set('redirect_to', normalized.redirectTo)
+    confirmationUrl = verify.toString()
+  }
   try {
-    const u = new URL(payload.data.url)
+    const u = new URL(confirmationUrl)
     u.protocol = 'https:'
     u.host = new URL(SITE_URL).host
     u.pathname = VERIFY_PROXY_PATH
     confirmationUrl = u.toString()
   } catch {
-    console.warn('Failed to rewrite confirmationUrl host', { url: payload.data.url, run_id })
+    console.warn('Failed to rewrite confirmationUrl host', { url: confirmationUrl, run_id: runId })
   }
 
   const templateProps = {
@@ -227,9 +303,9 @@ async function handleWebhook(req: Request): Promise<Response> {
     siteUrl: SITE_URL,
     recipient,
     confirmationUrl,
-    token: payload.data.token,
+    token,
     email: recipient,
-    newEmail: payload.data.new_email,
+    newEmail: normalized.newEmail,
   }
 
   const html = await renderAsync(React.createElement(EmailTemplate, templateProps))
@@ -243,11 +319,11 @@ async function handleWebhook(req: Request): Promise<Response> {
   // OTP-first subjects (PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2):
   // для signup/magiclink показываем код прямо в теме — так пользователь видит
   // его в списке писем и в push-уведомлении, не открывая письмо.
-  const token = payload.data.token
   let subject = EMAIL_SUBJECTS[emailType] || 'Уведомление'
   if (token && (emailType === 'signup' || emailType === 'magiclink')) {
     subject = `Ваш код: ${token}`
   }
+
 
   const messageId = crypto.randomUUID()
 
@@ -296,21 +372,21 @@ async function handleWebhook(req: Request): Promise<Response> {
         meta: {
           source: 'auth-email-hook',
           action_type: emailType,
-          run_id,
+          run_id: runId,
         },
       })
     } catch (logErr) {
       console.warn('email_logs insert failed', { logErr })
     }
 
-    console.log('Auth email sent via Yandex SMTP', { emailType, recipient, run_id })
+    console.log('Auth email sent via Yandex SMTP', { emailType, recipient, run_id: runId })
     return new Response(JSON.stringify({ success: true, sent: true, message_id: messageId }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    console.error('Yandex SMTP send failed', { errMsg, recipient, run_id, emailType })
+    console.error('Yandex SMTP send failed', { errMsg, recipient, run_id: runId, emailType })
     await supabase.from('email_send_log').insert({
       message_id: messageId,
       template_name: emailType,
