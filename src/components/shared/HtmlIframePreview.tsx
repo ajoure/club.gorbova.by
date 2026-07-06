@@ -27,8 +27,12 @@ import { Code } from "lucide-react";
 const SANDBOX_POLICY =
   "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
-/** Maximum iframe height in px to prevent runaway content */
-const MAX_IFRAME_HEIGHT = 15000;
+/**
+ * Maximum iframe height in px — защита от runaway CSS (`min-height: 100vh` в кривой вёрстке и т.п.).
+ * 100 000 px ≈ 26 экранов FullHD, с запасом покрывает длинные Tilda/HTML-лендинги (ЦБ 2.0, ~30–60k px).
+ * При превышении в console пишется warning, чтобы сразу видеть причину визуальной обрезки.
+ */
+const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
 const BRIDGE_MARKER = "data-lovable-resize-v2";
@@ -508,6 +512,10 @@ export function HtmlIframePreview({
       if (data.type === 'iframe-resize') {
         const raw = data.height;
         if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return;
+        if (raw > MAX_IFRAME_HEIGHT) {
+          // eslint-disable-next-line no-console
+          console.warn('[HtmlIframePreview] height clamped', { raw: Math.ceil(raw), max: MAX_IFRAME_HEIGHT });
+        }
         const clamped = Math.max(minHeight, Math.min(Math.ceil(raw), MAX_IFRAME_HEIGHT));
         setHeight((prev) => (prev === clamped ? prev : clamped));
         postParentViewport();
