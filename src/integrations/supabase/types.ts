@@ -7298,6 +7298,60 @@ export type Database = {
           },
         ]
       }
+      inline_otp_codes: {
+        Row: {
+          attempts: number
+          code_hash: string
+          created_at: string
+          email: string
+          expires_at: string
+          flow_id: string | null
+          id: string
+          ip: unknown
+          last_send_at: string
+          meta: Json
+          purpose: string
+          revoked_at: string | null
+          salt: string
+          used_at: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          attempts?: number
+          code_hash: string
+          created_at?: string
+          email: string
+          expires_at: string
+          flow_id?: string | null
+          id?: string
+          ip?: unknown
+          last_send_at?: string
+          meta?: Json
+          purpose: string
+          revoked_at?: string | null
+          salt: string
+          used_at?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          attempts?: number
+          code_hash?: string
+          created_at?: string
+          email?: string
+          expires_at?: string
+          flow_id?: string | null
+          id?: string
+          ip?: unknown
+          last_send_at?: string
+          meta?: Json
+          purpose?: string
+          revoked_at?: string | null
+          salt?: string
+          used_at?: string | null
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
       instagram_accounts: {
         Row: {
           created_at: string

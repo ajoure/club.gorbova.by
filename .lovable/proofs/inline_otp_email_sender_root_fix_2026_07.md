@@ -1,122 +1,137 @@
-# PATCH-INLINE-OTP-EMAIL-SENDER-ROOT-FIX — proof
+# PATCH-INLINE-OTP-EMAIL-SENDER-ROOT-FIX v2 — Proof
 
-Дата: 2026-07-06.
+**Status:** implemented + smoke-verified; awaiting delivery verification in a real (non-disposable) inbox.
 
-## 1. Что подтверждено discovery
+## Выбранный путь
 
-Канонический sender проекта — `noreply@gorbova.by` через Yandex SMTP
-(`supabase/functions/_shared/yandex-smtp-sender.ts`). Используется в:
+Собственный OTP-канал полностью в обход GoTrue Send Email Hook — GoTrue-hook в этом
+проекте невозможно активировать инструментами (нужен Dashboard/PAT), поэтому
+`signInWithOtp` как канал доставки использовать нельзя.
 
-- `auth-email-hook/index.ts` (FROM_EMAIL = `noreply@gorbova.by`)
-- `auth-actions/index.ts`
-- `send-invoice/index.ts` (`from: "БУКВА ЗАКОНА <noreply@gorbova.by>"`)
-- `oneshot-password-reset-notice-2026-07/index.ts`
+Вместо этого:
 
-Пароль SMTP берётся из `integration_instances(category='email', email=noreply@gorbova.by)`
-→ fallback `email_accounts` → fallback `YANDEX_SMTP_PASSWORD` env.
+1. `request-inline-otp` (edge, публичный, `verify_jwt=false`)
+   - Генерирует 6-значный код, salt (16 байт).
+   - Хеширует: `HMAC-SHA256(salt + ":" + code, INLINE_OTP_PEPPER)`.
+   - Пишет в `public.inline_otp_codes` (TTL 10 мин).
+   - Rate-limit: 1/60с на email, 5/час на email, 20/час на IP.
+   - Отзывает предыдущие неиспользованные коды того же email.
+   - Отправляет письмо через **существующий** `_shared/yandex-smtp-sender.ts`
+     от `noreply@gorbova.by` (Yandex SMTP), Subject `Ваш код: NNNNNN`.
 
-**Sender / SMTP / DNS не менялись.** `sent.gorbova.by` не делегировался, NS-записи
-не трогались, `supabase/config.toml` в части email — не менялся.
+2. `verify-inline-otp` (edge, публичный, `verify_jwt=false`)
+   - Читает последний активный код по email.
+   - Constant-time HMAC compare, `attempts++`, lockout после 5.
+   - `admin.listUsers` → `createUser`/`updateUserById` (email_confirm=true, merge meta).
+   - Upsert в `public.profiles` (full_name/first_name/last_name/phone).
+   - `admin.generateLink({ type: 'magiclink' })` → возвращает `properties.hashed_token`.
+     **generateLink не отправляет письмо** (Supabase admin API только генерирует
+     ссылку/хеш; отправка идёт только через обычные auth-методы `signInWithOtp` и
+     через настроенный SMTP GoTrue).
+   - Возврат клиенту: `{ token_hash, type: 'magiclink', user_id, is_new }`.
 
-## 2. Root cause регрессии
+3. Frontend `useInlineEmailOtp`
+   - `sendOtpForEmail` → `functions.invoke('request-inline-otp', ...)`.
+   - `verifyCode` → `functions.invoke('verify-inline-otp', ...)` → на успех
+     `supabase.auth.verifyOtp({ token_hash, type: 'magiclink' })` — session
+     установлена, `onAuthenticated()` вызывается только тут.
+   - Гарантия: business-действие (create-lead, create-order, bePaid init)
+     стартует ТОЛЬКО из `onAuthenticated`, за `ensureInlineAuthReady`.
+   - `VITE_INLINE_AUTH_MODE=link` компилируется (аварийный откат к
+     `signInWithOtp` code-path; доставка писем в этом режиме не гарантируется —
+     задокументировано, это ограничение rollback, а не regression патча).
 
-`edge_function_logs auth-email-hook` — пусто. Supabase Auth не вызывает hook,
-потому что в GoTrue не зарегистрирован `HOOK_SEND_EMAIL_URI` → auth-email-hook.
-Ранее Lovable Emails managed pipeline пытался прописать hook, но требовал
-верификации DNS `sent.gorbova.by`, которую делать запрещено.
+## Почему без участия заказчика
 
-`signInWithOtp` возвращает 200 (Auth создаёт код на своей стороне), но письмо не
-уходит — GoTrue не знает, куда его отправить.
+- Не трогаем DNS, sender, SMTP-конфиг, `sent.gorbova.by`, Lovable Emails,
+  шаблоны, `auth-email-hook`, GoTrue.
+- Не запрашиваем PAT/Dashboard-доступ.
+- SMTP-пароль (`YANDEX_SMTP_PASSWORD`) и `SUPABASE_SERVICE_ROLE_KEY` уже есть
+  в Cloud Secrets проекта (инжектятся в edge как env).
+- Новый секрет `INLINE_OTP_PEPPER` (64 символа) сгенерирован автоматически
+  через `secrets.generate_secret`.
 
-## 3. Что сделано в коде
+## Что задеплоено
 
-### `supabase/functions/auth-email-hook/index.ts`
+- Миграция: `public.inline_otp_codes` + индексы + service-role grants + RLS (без
+  policies для anon/authenticated → полностью закрыта).
+- Edge functions: `request-inline-otp`, `verify-inline-otp` (задеплоены).
+- `supabase/config.toml`: `verify_jwt=false` для обеих функций.
+- Frontend: `src/hooks/useInlineEmailOtp.ts` переключён на новый транспорт;
+  публичный контракт хука не изменился, `InlineEmailOtpForm` не тронут.
+- Unit-тесты `src/hooks/useInlineEmailOtp.test.ts` (10/10 зелёные) переписаны
+  под новый транспорт.
 
-Добавлена поддержка **прямого** Supabase Auth "Send Email Hook" без изменения
-sender:
+## Smoke-verified
 
-- Добавлен импорт `standardwebhooks@1.0.0`.
-- Читаем raw body один раз (Standard Webhooks требует raw string).
-- Универсальный верификатор:
-  - **primary**: Supabase Auth Standard Webhooks (`webhook-id`,
-    `webhook-timestamp`, `webhook-signature`) с секретом `SEND_EMAIL_HOOK_SECRET`.
-    Payload: `{ user: { email }, email_data: { token, token_hash, redirect_to,
-    email_action_type, site_url, new_email } }`.
-  - **fallback**: старый Lovable Emails (`x-lovable-signature`) с `LOVABLE_API_KEY`.
-    Оставлен на переходный период — безопасный rollback.
-- Универсальная нормализация payload в структуру `NormalizedEmail`.
-- Все action types поддержаны без изменений: `signup`, `magiclink`, `recovery`,
-  `invite`, `email_change`, `reauthentication`.
-- `confirmationUrl` для Supabase Auth-формата строится из `token_hash` +
-  `email_action_type` + `redirect_to` через `SUPABASE_URL/auth/v1/verify`, затем
-  проксируется на `${SITE_URL}/auth-verify` (как раньше). Recovery/email_change/
-  invite ссылка сохранена primary.
-- OTP-first subject `Ваш код: <code>` для signup/magiclink — без изменений.
-- Yandex SMTP send-путь и From = `noreply@gorbova.by` — **без изменений**.
-- Preview endpoint остался за `LOVABLE_API_KEY` (защита сохранена).
+| Проверка | Результат |
+|---|---|
+| Deploy `request-inline-otp` | ✅ ok |
+| Deploy `verify-inline-otp` | ✅ ok |
+| `request-inline-otp` POST `{email:"not-an-email"}` | ✅ 400 `invalid_email` |
+| `verify-inline-otp` POST unknown email | ✅ 400 `no_active_code` |
+| `request-inline-otp` POST real email | ✅ 200 `{ok:true, expires_at, ttl_seconds:600}` |
+| Row inserted в `inline_otp_codes` | ✅ проверено `SELECT ...` |
+| SMTP transcript (в коде sender'а) | ✅ бросает исключение если 250 не получено; ни одного исключения в edge logs, значит Yandex ответил 250 на DATA-end |
+| Unit tests `useInlineEmailOtp.test.ts` | ✅ 10/10 pass |
 
-### `supabase/config.toml`
+## Открытое: доставка в реальный inbox не проверена подрядчиком
 
-Добавлено только:
+Yandex outbound на трёх популярных disposable-сервисах silently drops письма
+(SMTP 250 accept на нашей стороне, но получатель не видит):
 
-```toml
-[functions.auth-email-hook]
-verify_jwt = false
-```
+- `web-library.net` (mail.tm) — inbox пуст через 5+ минут
+- `guerrillamailblock.com` — inbox пуст
+- `mailsac.com` — inbox пуст
 
-Никаких email/sender/SMTP полей.
+Это ожидаемое поведение Yandex antispam для disposable-доменов (задокументировано
+в амандменте #11 задачи). Пайплайн отправки сам корректен — тот же
+`yandex-smtp-sender.ts` используется в `send-invoice`,
+`oneshot-password-reset-notice-2026-07`, `auth-actions`, `auth-email-hook` для
+реальных пользователей в продакшене.
 
-### Секреты
+Полноценный E2E-скрин с реальным получением письма требует одного из:
 
-Сгенерирован `SEND_EMAIL_HOOK_SECRET` (48 символов, random) через
-`generate_secret`. Хранится в env, в коде не появляется.
+1. Тестового ящика на публично-принимающем провайдере (Gmail/Yandex-own/etc.)
+   у подрядчика или заказчика.
+2. Одноразового включения `email_inbox` IMAP-поллинга на самом
+   `noreply@gorbova.by` (self-delivery ходит внутри Yandex).
 
-## 4. Deploy
+Этот пункт вынесен как отдельный follow-up: `verify inline OTP delivery in a
+real inbox`.
 
-`auth-email-hook` задеплоен. Smoke:
+## Rollback
 
-```
-POST /functions/v1/auth-email-hook  (без подписи)
-→ 401 {"error":"Missing or invalid webhook signature"}
-```
+`VITE_INLINE_AUTH_MODE=link` компилируется и переключает на предыдущий
+`signInWithOtp` code-path. Доставка писем в этом режиме зависит от GoTrue
+(который сейчас в проекте без активного Send Email Hook), поэтому rollback
+считается limited и предназначен только для аварийной ситуации, когда новый
+поток даёт ошибки на клиенте.
 
-То есть функция принимает вызовы без JWT (verify_jwt=false отработал) и
-корректно отклоняет запросы без валидной подписи.
+## Файлы
 
-## 5. Оставшийся шаг (требует доступа)
+Новые:
+- `supabase/migrations/*_inline_otp_codes.sql`
+- `supabase/functions/request-inline-otp/index.ts`
+- `supabase/functions/verify-inline-otp/index.ts`
+- `supabase/functions/_shared/inline-otp-email-template.ts`
+- `supabase/functions/_shared/inline-otp-crypto.ts`
 
-Финальная регистрация hook в GoTrue — установка
-`HOOK_SEND_EMAIL_URI = https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/auth-email-hook`
-и `HOOK_SEND_EMAIL_SECRETS = <SEND_EMAIL_HOOK_SECRET>` через Supabase Management
-API — **не доступна из инструментов агента на Lovable Cloud**:
+Изменённые:
+- `supabase/config.toml` — 2 блока `verify_jwt=false`
+- `src/hooks/useInlineEmailOtp.ts` — транспорт `request-inline-otp`/`verify-inline-otp`
+- `src/hooks/useInlineEmailOtp.test.ts` — моки обновлены, 10/10 pass
 
-- `supabase--configure_auth` поддерживает только 4 булевых флага
-  (disable_signup, external_anonymous_users_enabled, auto_confirm_email,
-  password_hibp_enabled) — hook-полей нет.
-- Supabase dashboard недоступен на Lovable Cloud.
-- Supabase Management API PAT (`sbp_...`) не находится в проектных секретах.
+Без изменений:
+- `_shared/yandex-smtp-sender.ts`, `_shared/email-templates/*`, DNS, sender,
+  `.env`, шаблоны Lovable Emails, `auth-email-hook`, `ensureInlineAuthReady`,
+  `InlineEmailOtpForm`, LeadRequestDialog, InvoiceCheckoutDialog, PublicPayPage,
+  FormSection.
 
-Варианты завершения:
+## Секреты
 
-1. Пользователь предоставляет Supabase Personal Access Token (PAT) — агент
-   выполняет `PATCH /v1/projects/hdjgkjceownmmnrqqtuz/config/auth` с
-   `hook_send_email_enabled=true`, `hook_send_email_uri=<url>`,
-   `hook_send_email_secrets=<value>`. DNS не затрагивается.
-2. Пользователь сам вводит эти три значения в Supabase Auth Hooks UI
-   (Authentication → Hooks → Send Email). Требует одноразовый доступ к
-   Supabase dashboard.
-
-После любого из этих двух шагов E2E прогон (mail.tm, /auth/v1/otp → hook →
-Yandex SMTP → noreply@gorbova.by → verifyOtp → lead/payment) будет выполнен
-подрядчиком целиком без участия пользователя.
-
-## 6. Что осталось запрещено и не тронуто
-
-- DNS `gorbova.by` / `sent.gorbova.by` — не изменялся.
-- `noreply@gorbova.by` — остаётся единственным отправителем.
-- Yandex SMTP config — без изменений.
-- `_shared/yandex-smtp-sender.ts` — не тронут.
-- `_shared/email-templates/*` — не тронуты.
-- `integration_instances` / `email_accounts` — не тронуты.
-- Frontend OTP код (`useInlineEmailOtp`, `InlineEmailOtpForm`,
-  `ensureReady.ts`) — не менялся (13/13 тестов зелёные с прошлого патча).
+- `INLINE_OTP_PEPPER` — 64 chars, cryptographically random, сгенерирован через
+  `secrets.generate_secret`; используется только в HMAC внутри edge, никогда не
+  возвращается клиенту.
+- `YANDEX_SMTP_PASSWORD` — уже был в Cloud Secrets, не менялся.
+- `SUPABASE_SERVICE_ROLE_KEY` — auto-injected в edge, не менялся.
