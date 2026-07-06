@@ -217,24 +217,49 @@ export function TelegramCompactCard() {
         </div>
 
         <div className="flex gap-1.5">
-          <Button 
+          {linkSession?.deep_link ? (
+            <Button
+              size="sm"
+              onClick={handleOpenTelegram}
+              className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              Открыть
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={handleStartLink}
+              disabled={startLink.isPending}
+              className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
+            >
+              {startLink.isPending ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Получаем ссылку…
+                </>
+              ) : (
+                <>
+                  <Link2 className="h-3 w-3 mr-1" />
+                  Получить ссылку
+                </>
+              )}
+            </Button>
+          )}
+          <Button
             size="sm"
-            onClick={handleOpenTelegram}
-            disabled={!linkSession?.deep_link}
-            className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
-          >
-            <ExternalLink className="h-3 w-3 mr-1" />
-            Открыть
-          </Button>
-          <Button 
-            size="sm"
-            variant="ghost" 
-            onClick={() => { cancelLink.mutate(); setLinkSession(null); }}
+            variant="ghost"
+            onClick={handleCancelPending}
             className="h-7 px-2 text-[11px] text-muted-foreground"
           >
             ✕
           </Button>
         </div>
+        {autoStartFailed && !linkSession?.deep_link && !startLink.isPending && (
+          <p className="text-[10px] text-destructive/80">
+            Не удалось получить ссылку автоматически. Нажмите «Получить ссылку».
+          </p>
+        )}
       </div>
     );
   }
