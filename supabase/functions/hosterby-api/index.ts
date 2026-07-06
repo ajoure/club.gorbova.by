@@ -1089,6 +1089,75 @@ serve(async (req) => {
         return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
       }
 
+      // ---- replace_dns_txt_recordset ---------------------------------
+      // Заменяет TXT-recordset для (order_id, name) на переданный массив records.
+      // Используется для консолидации нескольких SPF-записей в одну (RFC 7208).
+      case "replace_dns_txt_recordset": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const rawName = payload.name as string;
+        const ttl = (payload.ttl as number) || 3600;
+        const records = payload.records as Array<{ content: string; disabled?: boolean }> | undefined;
+        if (!orderId || !rawName || !Array.isArray(records) || records.length === 0) {
+          return jsonResp({ success: false, error: "order_id, name и records[] обязательны" });
+        }
+        const fqdn = rawName.endsWith(".") ? rawName : `${rawName}.`;
+        const normalized = records.map((r) => {
+          const raw = String(r.content ?? "").trim();
+          const quoted = raw.startsWith('"') && raw.endsWith('"') ? raw : `"${raw.replace(/"/g, '\\"')}"`;
+          return { content: quoted, disabled: r.disabled === true };
+        });
+        const body = JSON.stringify({ name: fqdn, ttl, records: normalized });
+
+        // Пробуем PUT (replace recordset); если 404/405 — fallback DELETE+POST.
+        let res = await hosterRequest("PUT", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
+        let strategy: "put" | "delete_post" = "put";
+        if (!res.ok && (res.status === 404 || res.status === 405 || res.code === "HOSTERBY_ROUTE_MISSING")) {
+          strategy = "delete_post";
+          const delQs = new URLSearchParams({ name: fqdn }).toString();
+          await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt?${delQs}`, "", tokenRes.accessToken);
+          res = await hosterRequest("POST", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
+        }
+
+        await writeAuditLog(supabaseAdmin, "hosterby.replace_dns_txt_recordset", {
+          instance_id: hosterInstance?.id,
+          order_id: orderId,
+          name: fqdn,
+          ttl,
+          records_count: normalized.length,
+          strategy,
+          result_ok: res.ok,
+          result_status: res.status,
+          result_code: res.code,
+        }, userId);
+
+        if (!res.ok) {
+          return jsonResp({
+            success: false,
+            error: `Ошибка: ${res.code ?? res.status}`,
+            code: res.code,
+            status: res.status,
+            data: res.data,
+            strategy,
+          });
+        }
+        return jsonResp({
+          success: true,
+          strategy,
+          data: (res.data as Record<string, unknown>)?.payload ?? res.data,
+        });
+      }
+
+
+
       // ================================================================
       // Gotenberg DOCX→PDF actions (C5-J)
       // ================================================================
