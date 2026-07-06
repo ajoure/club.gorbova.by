@@ -189,7 +189,7 @@ export function LeadRequestDialog({
             <InlineAuthForm
               initialEmail={session?.user?.email || ""}
               onAuthenticated={handleAuthenticated}
-              emailCtaLabel="Продолжить"
+              emailCtaLabel="Отправить"
               loginCtaLabel="Войти и оставить заявку"
               signupCtaLabel="Создать аккаунт"
             />

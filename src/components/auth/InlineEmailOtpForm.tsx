@@ -195,6 +195,9 @@ export function InlineEmailOtpForm({
           <p className="text-sm text-muted-foreground">
             Код отправлен на <strong>{auth.email}</strong>. Введите 6 цифр из письма.
           </p>
+          <p className="text-xs text-muted-foreground">
+            Если письма нет во «Входящих» — проверьте папку «Спам»/«Промоакции».
+          </p>
 
           <div className="flex justify-center">
             <InputOTP
