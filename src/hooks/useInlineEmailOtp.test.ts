@@ -1,14 +1,14 @@
 /**
- * Unit tests for useInlineEmailOtp (PATCH-INLINE-OTP-FIX-BROKEN-FLOW).
+ * Unit tests for useInlineEmailOtp
+ * (PATCH-INLINE-OTP-EMAIL-SENDER-ROOT-FIX v2 — own OTP channel).
  *
  * Contract:
  *   - submitEmail → identify via auth-check-email:
- *       * existing + hasProfile → signInWithOtp immediately → step "sent"
+ *       * existing + hasProfile → invoke("request-inline-otp") → step "sent"
  *       * else → step "details" (no OTP yet)
- *   - submitDetails(meta) → signInWithOtp with data payload → step "sent"
- *   - signInWithOtp is NEVER called before the user submits either email
- *     (for existing profile) or details (for new).
- *   - verifyOtp uses type='email'.
+ *   - submitDetails(meta) → invoke("request-inline-otp") with meta → step "sent"
+ *   - No signInWithOtp call anywhere.
+ *   - verifyCode: invoke("verify-inline-otp") → auth.verifyOtp(token_hash, magiclink).
  *   - No token/code value appears in console.*.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -32,6 +32,26 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 import { useInlineEmailOtp } from "./useInlineEmailOtp";
 
+// Helper: queue mock responses in the exact order the hook calls them.
+function mockIdentify(payload: any) {
+  functionsInvoke.mockImplementationOnce((name: string) => {
+    expect(name).toBe("auth-check-email");
+    return Promise.resolve({ data: payload, error: null });
+  });
+}
+function mockRequestOtp(response: { data?: any; error?: any } = { data: { ok: true } }) {
+  functionsInvoke.mockImplementationOnce((name: string) => {
+    expect(name).toBe("request-inline-otp");
+    return Promise.resolve(response);
+  });
+}
+function mockVerifyOtpFn(response: { data?: any; error?: any }) {
+  functionsInvoke.mockImplementationOnce((name: string) => {
+    expect(name).toBe("verify-inline-otp");
+    return Promise.resolve(response);
+  });
+}
+
 describe("useInlineEmailOtp", () => {
   beforeEach(() => {
     signInWithOtp.mockReset();
@@ -40,13 +60,11 @@ describe("useInlineEmailOtp", () => {
     functionsInvoke.mockReset();
   });
 
-  it("submitEmail for NEW email → routes to details, does NOT call signInWithOtp", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: false, hasPassword: false, profile_name: null },
-      error: null,
-    });
+  it("submitEmail for NEW email → routes to details, does NOT request OTP", async () => {
+    mockIdentify({ exists: false, hasPassword: false, profile_name: null });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("NEW@Example.com"); });
+    expect(functionsInvoke).toHaveBeenCalledTimes(1);
     expect(functionsInvoke).toHaveBeenCalledWith("auth-check-email", {
       body: { email: "new@example.com" },
     });
@@ -55,60 +73,51 @@ describe("useInlineEmailOtp", () => {
     expect(result.current.email).toBe("new@example.com");
   });
 
-  it("submitEmail for EXISTING profile → sends OTP directly, lands on sent", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, hasPassword: true, profile_name: "И П" },
-      error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+  it("submitEmail for EXISTING profile → requests OTP directly, lands on sent", async () => {
+    mockIdentify({ exists: true, hasPassword: true, profile_name: "И П" });
+    mockRequestOtp({ data: { ok: true } });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
-    expect(signInWithOtp).toHaveBeenCalledTimes(1);
-    const call = signInWithOtp.mock.calls[0][0];
-    expect(call.email).toBe("a@b.com");
-    expect(call.options.shouldCreateUser).toBe(true);
-    expect(call.options).not.toHaveProperty("emailRedirectTo");
-    // Existing user path: no meta payload.
-    expect(call.options).not.toHaveProperty("data");
+    expect(signInWithOtp).not.toHaveBeenCalled();
+    const otpCall = functionsInvoke.mock.calls[1];
+    expect(otpCall[0]).toBe("request-inline-otp");
+    expect(otpCall[1].body.email).toBe("a@b.com");
+    expect(otpCall[1].body.purpose).toBe("auth");
+    expect(otpCall[1].body.meta).toBeUndefined();
     expect(result.current.step).toBe("sent");
     expect(result.current.resendIn).toBeGreaterThan(0);
   });
 
-  it("submitDetails calls signInWithOtp with data payload; step→sent", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: false, profile_name: null }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+  it("submitDetails sends meta payload to request-inline-otp; step→sent", async () => {
+    mockIdentify({ exists: false, profile_name: null });
+    mockRequestOtp({ data: { ok: true } });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("new@x.com"); });
-    expect(signInWithOtp).not.toHaveBeenCalled();
+    expect(functionsInvoke).toHaveBeenCalledTimes(1);
     await act(async () => {
       await result.current.submitDetails({ firstName: "И", lastName: "П", phone: "+375" });
     });
-    expect(signInWithOtp).toHaveBeenCalledTimes(1);
-    const opts = signInWithOtp.mock.calls[0][0].options;
-    expect(opts.data).toMatchObject({
-      full_name: "И П", first_name: "И", last_name: "П", phone: "+375",
+    const otpCall = functionsInvoke.mock.calls[1];
+    expect(otpCall[0]).toBe("request-inline-otp");
+    expect(otpCall[1].body.meta).toMatchObject({
+      firstName: "И", lastName: "П", fullName: "И П", phone: "+375",
     });
     expect(result.current.step).toBe("sent");
   });
 
-  it("sendOtp error keeps step and shows message; NEVER advances to sent", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: { message: "Email rate limit exceeded" } });
+  it("request-inline-otp rate_limited keeps step and shows message", async () => {
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp({ data: { error: "rate_limited", retry_after_s: 42 } });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
     expect(result.current.step).toBe("email");
-    expect(result.current.error).toMatch(/подожд/i);
+    expect(result.current.error).toMatch(/попроб|подожд/i);
   });
 
-  it("verifyCode uses type='email' and lands authenticated", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+  it("verifyCode: exchanges token_hash for session and lands authenticated", async () => {
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
+    mockVerifyOtpFn({ data: { ok: true, token_hash: "th_abc", user_id: "u1" } });
     verifyOtp.mockResolvedValueOnce({
       data: { session: { access_token: "x" }, user: { id: "u1" } }, error: null,
     });
@@ -116,18 +125,18 @@ describe("useInlineEmailOtp", () => {
     await act(async () => { await result.current.submitEmail("a@b.com"); });
     let ok: any;
     await act(async () => { ok = await result.current.verifyCode("123456"); });
-    expect(verifyOtp).toHaveBeenCalledWith({ email: "a@b.com", token: "123456", type: "email" });
+    expect(functionsInvoke.mock.calls[2][0]).toBe("verify-inline-otp");
+    expect(functionsInvoke.mock.calls[2][1].body).toEqual({ email: "a@b.com", code: "123456" });
+    expect(verifyOtp).toHaveBeenCalledWith({ token_hash: "th_abc", type: "magiclink" });
     expect(ok).toEqual({ userId: "u1" });
     expect(result.current.step).toBe("authenticated");
   });
 
-  it("verifyCode increments invalidAttempts and never logs the code", async () => {
+  it("verifyCode invalid_code increments invalidAttempts and never logs the code", async () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
-    verifyOtp.mockResolvedValue({ data: {}, error: { message: "Token has invalid" } });
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
+    mockVerifyOtpFn({ data: { error: "invalid_code", attempts_left: 4 } });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
     await act(async () => { await result.current.verifyCode("111111"); });
@@ -141,11 +150,9 @@ describe("useInlineEmailOtp", () => {
   });
 
   it("force-resend hint after 5 invalid attempts", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
-    verifyOtp.mockResolvedValue({ data: {}, error: { message: "invalid token" } });
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
+    for (let i = 0; i < 5; i++) mockVerifyOtpFn({ data: { error: "invalid_code" } });
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
     for (let i = 0; i < 5; i++) {
@@ -155,24 +162,20 @@ describe("useInlineEmailOtp", () => {
   });
 
   it("resend is blocked until cooldown expires", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
-    signInWithOtp.mockClear();
+    const callsBefore = functionsInvoke.mock.calls.length;
     let ok: any;
     await act(async () => { ok = await result.current.resend(); });
     expect(ok).toBe(false);
-    expect(signInWithOtp).not.toHaveBeenCalled();
+    expect(functionsInvoke.mock.calls.length).toBe(callsBefore); // no extra call
   });
 
   it("changeEmail resets state to email step", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
     act(() => { result.current.changeEmail(); });
@@ -180,16 +183,16 @@ describe("useInlineEmailOtp", () => {
     expect(result.current.resendIn).toBe(0);
   });
 
-  it("empty/malformed code returns null and does not call verifyOtp", async () => {
-    functionsInvoke.mockResolvedValueOnce({
-      data: { exists: true, profile_name: "X" }, error: null,
-    });
-    signInWithOtp.mockResolvedValueOnce({ error: null });
+  it("empty/malformed code returns null and does not call verify function", async () => {
+    mockIdentify({ exists: true, profile_name: "X" });
+    mockRequestOtp();
     const { result } = renderHook(() => useInlineEmailOtp());
     await act(async () => { await result.current.submitEmail("a@b.com"); });
+    const callsBefore = functionsInvoke.mock.calls.length;
     let ok: any;
     await act(async () => { ok = await result.current.verifyCode("12"); });
     expect(ok).toBeNull();
     expect(verifyOtp).not.toHaveBeenCalled();
+    expect(functionsInvoke.mock.calls.length).toBe(callsBefore);
   });
 });
