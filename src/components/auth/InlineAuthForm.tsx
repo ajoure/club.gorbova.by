@@ -55,7 +55,7 @@ export function InlineAuthForm({
         initialEmail={initialEmail}
         onAuthenticated={onAuthenticated}
         contextNote={contextNote}
-        emailCtaLabel={emailCtaLabel === "Продолжить" ? "Получить код" : emailCtaLabel}
+        emailCtaLabel={emailCtaLabel}
         externalLoading={externalLoading}
         collectSignupMeta
       />
