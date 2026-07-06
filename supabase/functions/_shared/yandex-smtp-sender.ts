@@ -5,6 +5,7 @@
 // Логика взята из supabase/functions/send-email/index.ts (sendEmailViaSMTP),
 // но без зависимости от account/integration_instances — параметры передаются явно.
 import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
+import { encodeAddressHeader, encodeMimeHeader } from "./mime-header.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -33,6 +34,9 @@ export interface YandexSmtpParams {
   text?: string;
   fromName: string;
   fromEmail: string;
+  /** Optional Reply-To display name; email is required if display name present. */
+  replyToName?: string;
+  replyToEmail?: string;
   smtpHost?: string;
   smtpPort?: number;
   username: string;
@@ -90,17 +94,31 @@ export async function sendViaYandexSmtp(
     await sendCommand("DATA", [354]);
 
     const altBoundary = `alt_${crypto.randomUUID()}`;
-    const subjectEncoded = `=?UTF-8?B?${b64Utf8(params.subject)}?=`;
+    // MIME-encode every header value that may carry non-ASCII (From, Subject,
+    // Reply-To). Prevents "EMPTY-FROM"/garbled sender in Apple Mail/Gmail/Outlook.
+    const subjectEncoded = encodeMimeHeader(params.subject);
+    const fromHeader = encodeAddressHeader(params.fromName, params.fromEmail);
     const textPart = wrapBase64(b64Utf8(params.text || ""));
     const htmlPart = wrapBase64(b64Utf8(params.html));
 
-    const lines: string[] = [
-      `From: "${params.fromName}" <${params.fromEmail}>`,
+    const headers: string[] = [
+      `From: ${fromHeader}`,
       `To: ${params.to}`,
       `Subject: ${subjectEncoded}`,
+    ];
+    if (params.replyToEmail) {
+      headers.push(
+        `Reply-To: ${encodeAddressHeader(params.replyToName || "", params.replyToEmail)}`,
+      );
+    }
+    headers.push(
       `MIME-Version: 1.0`,
       `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
       "",
+    );
+
+    const lines: string[] = [
+      ...headers,
       `--${altBoundary}`,
       `Content-Type: text/plain; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,

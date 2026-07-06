@@ -75,16 +75,26 @@ export function LeadRequestDialog({
   const [submitting, setSubmitting] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const openedAtRef = useRef<number>(Date.now());
+  // Tracks previous `open` value so reset only fires on closed → open.
+  // PATCH-INLINE-OTP-FIX-BROKEN-FLOW v3: auth session updates (user/session
+  // refetch, telegram status changes) MUST NOT reset the step while the
+  // dialog is already open — that was the root of the "form reappears after
+  // OTP" regression. See .lovable/proofs/inline_otp_email_sender_root_fix_2026_07.md.
+  const wasOpenRef = useRef<boolean>(false);
 
-  // Reset state when dialog opens.
+  // Reset state only on the closed → open transition. Independent of user/session.
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
+      wasOpenRef.current = true;
       openedAtRef.current = Date.now();
       setDetails(emptyDetails);
       setProfileLoaded(false);
       setStep(user ? "details" : "auth");
+    } else if (!open && wasOpenRef.current) {
+      wasOpenRef.current = false;
     }
-  }, [open, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Pre-fill from profile once authenticated.
   useEffect(() => {
