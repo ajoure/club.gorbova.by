@@ -240,7 +240,15 @@ async function handleWebhook(req: Request): Promise<Response> {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
-  const subject = EMAIL_SUBJECTS[emailType] || 'Уведомление'
+  // OTP-first subjects (PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2):
+  // для signup/magiclink показываем код прямо в теме — так пользователь видит
+  // его в списке писем и в push-уведомлении, не открывая письмо.
+  const token = payload.data.token
+  let subject = EMAIL_SUBJECTS[emailType] || 'Уведомление'
+  if (token && (emailType === 'signup' || emailType === 'magiclink')) {
+    subject = `Ваш код: ${token}`
+  }
+
   const messageId = crypto.randomUUID()
 
   // Лог pending до отправки, чтобы был след даже при падении SMTP.
