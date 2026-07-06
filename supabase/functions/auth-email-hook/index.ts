@@ -386,7 +386,7 @@ async function handleWebhook(req: Request): Promise<Response> {
     })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    console.error('Yandex SMTP send failed', { errMsg, recipient, run_id, emailType })
+    console.error('Yandex SMTP send failed', { errMsg, recipient, run_id: runId, emailType })
     await supabase.from('email_send_log').insert({
       message_id: messageId,
       template_name: emailType,
