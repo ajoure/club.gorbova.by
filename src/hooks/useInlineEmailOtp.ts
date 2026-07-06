@@ -1,26 +1,32 @@
 /**
  * useInlineEmailOtp — OTP-first inline auth for public/identity flows.
  *
- * PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2.
+ * PATCH-INLINE-OTP-FIX-BROKEN-FLOW (2026-07-06):
+ *   Fixes production regression where OTP form asked for name/phone from
+ *   existing users AND allowed business actions to start without verifyOtp.
  *
- * Contract:
- *   1. `sendCode(email, meta?)`   → Supabase `signInWithOtp` (no emailRedirectTo!)
- *                                    metadata is applied on first verify via user_metadata update.
- *   2. `verifyCode(code)`         → `verifyOtp({ type: 'email' })` (staging-proven both signup & magiclink).
- *   3. `resend()`                 → same as sendCode with 60s cooldown.
+ * State machine:
+ *   email      → user types email, CTA "Продолжить"
+ *     ↓ identify (silent server call — never leaks existence to UI/error)
+ *   details    → ONLY for new users / users without profile.full_name.
+ *                Collects first/last/phone, CTA "Получить код" → signInWithOtp.
+ *   sent       → user enters 6-digit code, verifyOtp('email').
+ *   authenticated
  *
- * States: email → sent → verifying → authenticated | error.
- *
- * Never logs token/code. Never opens a new tab. Never sets `emailRedirectTo`.
- * `/dashboard` is never involved — session is established in the current window.
+ * Hard guarantees:
+ *   - `signInWithOtp` is called ONLY from `sendCodeForCurrentEmail`, which
+ *     transitions to "sent" ONLY on success. On error we stay put.
+ *   - `verifyCode` is the ONLY path that sets step="authenticated".
+ *   - No `emailRedirectTo`, no new tab.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type InlineOtpStep =
-  | "email"        // Enter email
-  | "sent"         // Code sent — enter 6-digit code
-  | "authenticated"; // Session active
+  | "email"
+  | "details"
+  | "sent"
+  | "authenticated";
 
 export interface InlineOtpMeta {
   firstName?: string;
@@ -28,29 +34,43 @@ export interface InlineOtpMeta {
   phone?: string;
 }
 
+interface IdentifyResult {
+  exists: boolean;
+  hasProfile: boolean;
+  needsDetails: boolean;
+}
+
 export interface UseInlineEmailOtpReturn {
   step: InlineOtpStep;
   email: string;
   isSending: boolean;
+  isIdentifying: boolean;
   isVerifying: boolean;
   error: string | null;
   invalidAttempts: number;
-  /** Seconds remaining before resend is allowed again. 0 = ready. */
   resendIn: number;
-  sendCode: (email: string, meta?: InlineOtpMeta) => Promise<boolean>;
+  /** Step 1: submit email; identifies silently, routes to details or sends OTP. */
+  submitEmail: (email: string) => Promise<boolean>;
+  /** Step 2 (new users only): submit collected meta and send OTP. */
+  submitDetails: (meta: InlineOtpMeta) => Promise<boolean>;
+  /** Step 3: verify 6-digit OTP; returns { userId } on success. */
   verifyCode: (code: string) => Promise<{ userId: string } | null>;
+  /** Resend OTP for the current email (respects cooldown). */
   resend: () => Promise<boolean>;
+  /** Return to email step, clear all state. */
   changeEmail: () => void;
   clearError: () => void;
 }
 
 const RESEND_COOLDOWN_S = 60;
 const FORCE_RESEND_AFTER = 5;
+const GENERIC_SEND_ERROR = "Не удалось отправить код. Попробуйте ещё раз.";
 
 export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
   const [step, setStep] = useState<InlineOtpStep>("email");
   const [email, setEmail] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isIdentifying, setIsIdentifying] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidAttempts, setInvalidAttempts] = useState(0);
@@ -65,67 +85,131 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
 
   const clearError = useCallback(() => setError(null), []);
 
-  const sendOtp = useCallback(async (targetEmail: string, meta?: InlineOtpMeta) => {
-    setError(null);
-    setIsSending(true);
+  const identify = useCallback(async (targetEmail: string): Promise<IdentifyResult> => {
+    // Silent identify — errors fall through to "treat as new user" so we never
+    // block the flow, and we NEVER surface exists/not-exists to the user.
     try {
-      const trimmed = targetEmail.toLowerCase().trim();
-      const fullName = [meta?.firstName, meta?.lastName].filter(Boolean).join(" ");
-      const dataPayload = meta
-        ? {
-            full_name: fullName || undefined,
-            first_name: meta.firstName || undefined,
-            last_name: meta.lastName || undefined,
-            phone: meta.phone || undefined,
-          }
-        : undefined;
-
-      const { error: sendError } = await supabase.auth.signInWithOtp({
-        email: trimmed,
-        options: {
-          // No emailRedirectTo — inline OTP flow stays in the current window.
-          shouldCreateUser: true,
-          ...(dataPayload ? { data: dataPayload } : {}),
-        },
+      const { data, error: fnError } = await supabase.functions.invoke("auth-check-email", {
+        body: { email: targetEmail },
       });
-
-      if (sendError) {
-        const msg = sendError.message || "";
-        if (/rate|too many|limit/i.test(msg)) {
-          setError("Слишком много попыток. Подождите пару минут и попробуйте снова.");
-        } else if (/invalid.*email|email.*invalid/i.test(msg)) {
-          setError("Некорректный формат email.");
-        } else {
-          console.error("[useInlineEmailOtp] sendOtp error:", sendError);
-          setError("Не удалось отправить код. Попробуйте ещё раз.");
-        }
-        return false;
+      if (fnError || !data) {
+        return { exists: false, hasProfile: false, needsDetails: true };
       }
-
-      setEmail(trimmed);
-      metaRef.current = meta;
-      setStep("sent");
-      setInvalidAttempts(0);
-      setResendIn(RESEND_COOLDOWN_S);
-      return true;
+      const exists = Boolean(data.exists);
+      // profile_name coming back means we have a filled profile — no need to
+      // re-ask for full name. Phone is optional; if we ever want to require
+      // phone-completeness, extend auth-check-email to return `has_phone`.
+      const hasProfile = Boolean(data.profile_name);
+      return {
+        exists,
+        hasProfile,
+        needsDetails: !(exists && hasProfile),
+      };
     } catch (e) {
-      console.error("[useInlineEmailOtp] sendOtp exception:", e);
-      setError("Не удалось отправить код. Попробуйте ещё раз.");
-      return false;
-    } finally {
-      setIsSending(false);
+      console.warn("[useInlineEmailOtp] identify failed, treating as new:", e);
+      return { exists: false, hasProfile: false, needsDetails: true };
     }
   }, []);
 
-  const sendCode = useCallback(
-    (targetEmail: string, meta?: InlineOtpMeta) => sendOtp(targetEmail, meta),
-    [sendOtp],
+  const sendOtpForEmail = useCallback(
+    async (targetEmail: string, meta?: InlineOtpMeta): Promise<boolean> => {
+      setError(null);
+      setIsSending(true);
+      try {
+        const trimmed = targetEmail.toLowerCase().trim();
+        const fullName = [meta?.firstName, meta?.lastName].filter(Boolean).join(" ");
+        const dataPayload = meta
+          ? {
+              full_name: fullName || undefined,
+              first_name: meta.firstName || undefined,
+              last_name: meta.lastName || undefined,
+              phone: meta.phone || undefined,
+            }
+          : undefined;
+
+        const { error: sendError } = await supabase.auth.signInWithOtp({
+          email: trimmed,
+          options: {
+            shouldCreateUser: true,
+            ...(dataPayload ? { data: dataPayload } : {}),
+          },
+        });
+
+        if (sendError) {
+          const msg = sendError.message || "";
+          if (/rate|too many|limit/i.test(msg)) {
+            setError("Слишком много попыток. Подождите пару минут и попробуйте снова.");
+          } else if (/invalid.*email|email.*invalid/i.test(msg)) {
+            setError("Некорректный формат email.");
+          } else {
+            console.error("[useInlineEmailOtp] signInWithOtp error:", sendError);
+            setError(GENERIC_SEND_ERROR);
+          }
+          return false;
+        }
+
+        // Only on success do we advance to the code step.
+        setEmail(trimmed);
+        if (meta) metaRef.current = meta;
+        setStep("sent");
+        setInvalidAttempts(0);
+        setResendIn(RESEND_COOLDOWN_S);
+        return true;
+      } catch (e) {
+        console.error("[useInlineEmailOtp] signInWithOtp exception:", e);
+        setError(GENERIC_SEND_ERROR);
+        return false;
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [],
+  );
+
+  const submitEmail = useCallback(
+    async (targetEmail: string): Promise<boolean> => {
+      setError(null);
+      const trimmed = (targetEmail || "").toLowerCase().trim();
+      if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
+        setError("Введите корректный email.");
+        return false;
+      }
+      setEmail(trimmed);
+      setIsIdentifying(true);
+      let identified: IdentifyResult;
+      try {
+        identified = await identify(trimmed);
+      } finally {
+        setIsIdentifying(false);
+      }
+
+      if (identified.needsDetails) {
+        // New user (or legacy profile without full_name) — collect meta first.
+        setStep("details");
+        return true;
+      }
+      // Existing user with filled profile — send OTP immediately.
+      return sendOtpForEmail(trimmed);
+    },
+    [identify, sendOtpForEmail],
+  );
+
+  const submitDetails = useCallback(
+    async (meta: InlineOtpMeta): Promise<boolean> => {
+      if (!email) {
+        setError("Введите email заново.");
+        setStep("email");
+        return false;
+      }
+      return sendOtpForEmail(email, meta);
+    },
+    [email, sendOtpForEmail],
   );
 
   const resend = useCallback(async () => {
     if (resendIn > 0 || !email) return false;
-    return sendOtp(email, metaRef.current);
-  }, [email, resendIn, sendOtp]);
+    return sendOtpForEmail(email, metaRef.current);
+  }, [email, resendIn, sendOtpForEmail]);
 
   const verifyCode = useCallback(
     async (code: string): Promise<{ userId: string } | null> => {
@@ -137,7 +221,6 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           setError("Введите 6-значный код из письма.");
           return null;
         }
-        // Staging-proven: type='email' works for BOTH signup and magiclink flows.
         const { data, error: verifyError } = await supabase.auth.verifyOtp({
           email,
           token: cleaned,
@@ -165,9 +248,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           return null;
         }
 
-        // Apply metadata (name/phone) once for signup path where verifyOtp does
-        // not accept `options.data`. Fire-and-forget — DB trigger has already
-        // claimed the profile row.
+        // Metadata for new signup path (verifyOtp doesn't accept options.data).
         if (metaRef.current) {
           const meta = metaRef.current;
           const fullName = [meta.firstName, meta.lastName].filter(Boolean).join(" ");
@@ -208,11 +289,13 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     step,
     email,
     isSending,
+    isIdentifying,
     isVerifying,
     error,
     invalidAttempts,
     resendIn,
-    sendCode,
+    submitEmail,
+    submitDetails,
     verifyCode,
     resend,
     changeEmail,
