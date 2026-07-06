@@ -1179,6 +1179,126 @@ serve(async (req) => {
         });
       }
 
+      // ---- replace_dns_recordset -------------------------------------
+      // Generic recordset replacement for a/mx/ns/cname/txt/aaaa/srv.
+      case "replace_dns_recordset": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const rawName = payload.name as string;
+        const rawType = String(payload.type ?? "").toLowerCase();
+        const ttl = (payload.ttl as number) || 3600;
+        const records = payload.records as Array<{ content: string; disabled?: boolean }> | undefined;
+        const allowed = new Set(["a", "aaaa", "mx", "ns", "cname", "txt", "srv"]);
+        if (!orderId || !rawName || !allowed.has(rawType) || !Array.isArray(records) || records.length === 0) {
+          return jsonResp({ success: false, error: "order_id, name, type и records[] обязательны" });
+        }
+        const fqdn = rawName.endsWith(".") ? rawName : `${rawName}.`;
+        const normalized = records.map((r) => {
+          let content = String(r.content ?? "").trim();
+          if (rawType === "txt") {
+            content = content.startsWith('"') && content.endsWith('"')
+              ? content
+              : `"${content.replace(/"/g, '\\"')}"`;
+          }
+          return { content, disabled: r.disabled === true };
+        });
+        const encodedName = encodeURIComponent(fqdn);
+        const patchBody = JSON.stringify({ ttl, records: normalized });
+        let res = await hosterRequest(
+          "PATCH",
+          `/dns/orders/${orderId}/records/${rawType}/${encodedName}`,
+          patchBody,
+          tokenRes.accessToken,
+        );
+        let strategy: "patch" | "delete_post" = "patch";
+        let delResult: unknown = null;
+        if (!res.ok) {
+          strategy = "delete_post";
+          const del = await hosterRequest(
+            "DELETE",
+            `/dns/orders/${orderId}/records/${rawType}/${encodedName}`,
+            "",
+            tokenRes.accessToken,
+          );
+          delResult = { status: del.status, code: del.code, data: del.data };
+          const createBody = JSON.stringify({ name: fqdn, ttl, records: normalized });
+          res = await hosterRequest(
+            "POST",
+            `/dns/orders/${orderId}/records/${rawType}`,
+            createBody,
+            tokenRes.accessToken,
+          );
+        }
+        await writeAuditLog(supabaseAdmin, "hosterby.replace_dns_recordset", {
+          instance_id: hosterInstance?.id,
+          order_id: orderId, name: fqdn, type: rawType, ttl,
+          records_count: normalized.length, strategy,
+          result_ok: res.ok, result_status: res.status, result_code: res.code,
+        }, userId);
+        if (!res.ok) {
+          return jsonResp({
+            success: false, error: `Ошибка: ${res.code ?? res.status}`,
+            code: res.code, status: res.status, data: res.data,
+            strategy, delete_debug: delResult,
+          });
+        }
+        return jsonResp({
+          success: true, strategy,
+          data: (res.data as Record<string, unknown>)?.payload ?? res.data,
+          delete_debug: delResult,
+        });
+      }
+
+      // ---- delete_dns_recordset --------------------------------------
+      case "delete_dns_recordset": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const rawName = payload.name as string;
+        const rawType = String(payload.type ?? "").toLowerCase();
+        const allowed = new Set(["a", "aaaa", "mx", "ns", "cname", "txt", "srv"]);
+        if (!orderId || !rawName || !allowed.has(rawType)) {
+          return jsonResp({ success: false, error: "order_id, name, type обязательны" });
+        }
+        const fqdn = rawName.endsWith(".") ? rawName : `${rawName}.`;
+        const encodedName = encodeURIComponent(fqdn);
+        const res = await hosterRequest(
+          "DELETE",
+          `/dns/orders/${orderId}/records/${rawType}/${encodedName}`,
+          "",
+          tokenRes.accessToken,
+        );
+        await writeAuditLog(supabaseAdmin, "hosterby.delete_dns_recordset", {
+          instance_id: hosterInstance?.id,
+          order_id: orderId, name: fqdn, type: rawType,
+          result_ok: res.ok, result_status: res.status, result_code: res.code,
+        }, userId);
+        if (!res.ok) {
+          return jsonResp({
+            success: false, error: `Ошибка: ${res.code ?? res.status}`,
+            code: res.code, status: res.status, data: res.data,
+          });
+        }
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+
+
 
 
       // ================================================================
