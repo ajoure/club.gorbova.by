@@ -233,53 +233,60 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           setError("Введите 6-значный код из письма.");
           return null;
         }
-        const { data, error: verifyError } = await supabase.auth.verifyOtp({
-          email,
-          token: cleaned,
-          type: "email",
-        });
 
-        if (verifyError || !data.session || !data.user) {
-          const msg = verifyError?.message || "";
+        // Step 1: verify code server-side and mint token_hash.
+        const { data: verifyData, error: verifyFnError } = await supabase.functions.invoke(
+          "verify-inline-otp",
+          { body: { email, code: cleaned } },
+        );
+
+        const errCode = ((verifyData as any)?.error || verifyFnError?.message || "").toString();
+        if (errCode) {
           const next = invalidAttempts + 1;
           setInvalidAttempts(next);
-          if (/expired/i.test(msg)) {
+          if (/expired/i.test(errCode)) {
             setError("Код истёк. Запросите новый.");
-          } else if (/invalid|incorrect|token/i.test(msg)) {
+          } else if (/locked/i.test(errCode)) {
+            setError("Слишком много неверных попыток. Запросите новый код.");
+          } else if (/no_active_code/i.test(errCode)) {
+            setError("Код не найден. Запросите новый.");
+          } else if (/invalid_code/i.test(errCode)) {
             setError(
               next >= FORCE_RESEND_AFTER
                 ? "Слишком много неверных попыток. Запросите новый код."
                 : "Неверный код. Проверьте письмо и попробуйте ещё раз.",
             );
-          } else if (/rate|too many|limit/i.test(msg)) {
+          } else if (/rate|too_many|limit/i.test(errCode)) {
             setError("Слишком много попыток. Подождите и попробуйте снова.");
           } else {
-            console.error("[useInlineEmailOtp] verifyOtp error:", verifyError);
+            console.error("[useInlineEmailOtp] verify-inline-otp error:", verifyFnError, verifyData);
             setError("Не удалось подтвердить код. Попробуйте ещё раз.");
           }
           return null;
         }
 
-        // Metadata for new signup path (verifyOtp doesn't accept options.data).
-        if (metaRef.current) {
-          const meta = metaRef.current;
-          const fullName = [meta.firstName, meta.lastName].filter(Boolean).join(" ");
-          const payload: Record<string, unknown> = {};
-          if (fullName) payload.full_name = fullName;
-          if (meta.firstName) payload.first_name = meta.firstName;
-          if (meta.lastName) payload.last_name = meta.lastName;
-          if (meta.phone) payload.phone = meta.phone;
-          if (Object.keys(payload).length > 0) {
-            supabase.auth
-              .updateUser({ data: payload })
-              .catch((e) => console.warn("[useInlineEmailOtp] metadata update failed:", e));
-          }
+        const tokenHash = (verifyData as any)?.token_hash as string | undefined;
+        if (!tokenHash) {
+          setError("Не удалось подтвердить код. Попробуйте ещё раз.");
+          return null;
+        }
+
+        // Step 2: exchange token_hash for a real Supabase session.
+        const { data: sessionData, error: sessionError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: "magiclink",
+        });
+
+        if (sessionError || !sessionData?.session || !sessionData?.user) {
+          console.error("[useInlineEmailOtp] session exchange failed:", sessionError);
+          setError("Не удалось подтвердить код. Попробуйте ещё раз.");
+          return null;
         }
 
         setStep("authenticated");
-        return { userId: data.user.id };
+        return { userId: sessionData.user.id };
       } catch (e) {
-        console.error("[useInlineEmailOtp] verifyOtp exception:", e);
+        console.error("[useInlineEmailOtp] verifyCode exception:", e);
         setError("Не удалось подтвердить код. Попробуйте ещё раз.");
         return null;
       } finally {
@@ -288,6 +295,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     },
     [email, invalidAttempts],
   );
+
 
   const changeEmail = useCallback(() => {
     setStep("email");
