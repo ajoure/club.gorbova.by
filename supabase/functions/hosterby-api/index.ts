@@ -1116,16 +1116,25 @@ serve(async (req) => {
           return { content: quoted, disabled: r.disabled === true };
         });
         const body = JSON.stringify({ name: fqdn, ttl, records: normalized });
+        const delBody = JSON.stringify({ name: fqdn });
 
-        // Пробуем PUT (replace recordset); если 404/405 — fallback DELETE+POST.
+        // Пробуем PUT (replace recordset); при неудаче — DELETE (query+body) + POST.
         let res = await hosterRequest("PUT", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
         let strategy: "put" | "delete_post" = "put";
-        if (!res.ok && (res.status === 404 || res.status === 405 || res.code === "HOSTERBY_ROUTE_MISSING")) {
+        let delResult: unknown = null;
+        if (!res.ok) {
           strategy = "delete_post";
+          // Пробуем несколько вариантов DELETE — hoster.by документирует нестабильно.
           const delQs = new URLSearchParams({ name: fqdn }).toString();
-          await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt?${delQs}`, "", tokenRes.accessToken);
+          const del1 = await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt?${delQs}`, delBody, tokenRes.accessToken);
+          delResult = { del_query_body: { status: del1.status, code: del1.code, data: del1.data } };
+          if (!del1.ok) {
+            const del2 = await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt`, delBody, tokenRes.accessToken);
+            (delResult as Record<string, unknown>).del_body_only = { status: del2.status, code: del2.code, data: del2.data };
+          }
           res = await hosterRequest("POST", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
         }
+
 
         await writeAuditLog(supabaseAdmin, "hosterby.replace_dns_txt_recordset", {
           instance_id: hosterInstance?.id,
