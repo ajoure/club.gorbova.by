@@ -1,18 +1,15 @@
 /**
  * InlineEmailOtpForm — OTP-first inline auth UI.
  *
- * PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2.
+ * PATCH-INLINE-OTP-FIX-BROKEN-FLOW (2026-07-06).
  *
- * Contract:
- *   - Same public shape as InlineAuthForm (initialEmail, onAuthenticated,
- *     contextNote, externalLoading) so callers can swap by feature flag.
- *   - Two visible steps: email → sent (6-digit OTP).
- *   - Real <input> underneath input-otp exposes autocomplete="one-time-code",
- *     inputmode="numeric", maxlength="6" — required for iOS/macOS AutoFill.
- *   - Never opens a new tab; verification finishes in the current window.
+ * Three steps:
+ *   email    → user types email, "Продолжить"
+ *   details  → ONLY for new users: name/surname/phone + "Получить код"
+ *   sent     → 6-digit OTP + "Подтвердить"
  *
- * Optional signup metadata (firstName/lastName/phone) is captured on the email
- * step and passed to signInWithOtp so it lands in user_metadata.
+ * `onAuthenticated` is invoked ONLY after `verifyOtp` returns a session.
+ * No new tab, no /dashboard redirect.
  */
 import { FormEvent, useEffect, useState } from "react";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp";
@@ -27,9 +24,8 @@ export interface InlineEmailOtpFormProps {
   onAuthenticated: (email: string, userId?: string) => void | Promise<void>;
   contextNote?: string;
   emailCtaLabel?: string;
-  /** Whether parent is processing something after onAuthenticated (payment/submit). */
   externalLoading?: boolean;
-  /** Collect name/phone on the email step (leads/signup). */
+  /** Kept for API compatibility; ignored — details step is decided by identify. */
   collectSignupMeta?: boolean;
 }
 
@@ -37,9 +33,8 @@ export function InlineEmailOtpForm({
   initialEmail = "",
   onAuthenticated,
   contextNote,
-  emailCtaLabel = "Получить код",
+  emailCtaLabel = "Продолжить",
   externalLoading = false,
-  collectSignupMeta = false,
 }: InlineEmailOtpFormProps) {
   const auth = useInlineEmailOtp();
   const [email, setEmail] = useState(initialEmail);
@@ -52,28 +47,33 @@ export function InlineEmailOtpForm({
     if (initialEmail && !email) setEmail(initialEmail);
   }, [initialEmail, email]);
 
-  const isBusy = auth.isSending || auth.isVerifying || externalLoading;
+  const isBusy =
+    auth.isSending || auth.isIdentifying || auth.isVerifying || externalLoading;
 
-  const handleSendEmail = async (e: FormEvent) => {
+  const handleSubmitEmail = async (e: FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
-    await auth.sendCode(
-      email,
-      collectSignupMeta ? { firstName, lastName, phone } : undefined,
-    );
+    await auth.submitEmail(email);
+  };
+
+  const handleSubmitDetails = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!firstName.trim()) return;
+    await auth.submitDetails({ firstName, lastName, phone });
   };
 
   const handleVerify = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const result = await auth.verifyCode(code);
     if (result) {
+      // HARD GUARD: onAuthenticated ONLY after verifyOtp success.
       await onAuthenticated(auth.email, result.userId);
     } else {
       setCode("");
     }
   };
 
-  // Auto-submit once all 6 digits are entered (paste + fill).
+  // Auto-submit once all 6 digits are entered (paste + AutoFill).
   useEffect(() => {
     if (auth.step === "sent" && code.length === 6 && !auth.isVerifying && !externalLoading) {
       handleVerify();
@@ -84,6 +84,9 @@ export function InlineEmailOtpForm({
   const handleChangeEmail = () => {
     auth.changeEmail();
     setCode("");
+    setFirstName("");
+    setLastName("");
+    setPhone("");
   };
 
   return (
@@ -98,7 +101,7 @@ export function InlineEmailOtpForm({
       )}
 
       {auth.step === "email" && (
-        <form onSubmit={handleSendEmail} method="post" action="#" className="space-y-3">
+        <form onSubmit={handleSubmitEmail} method="post" action="#" className="space-y-3">
           <div>
             <Label htmlFor="iaf-otp-email">Email</Label>
             <Input
@@ -116,55 +119,74 @@ export function InlineEmailOtpForm({
               spellCheck={false}
             />
           </div>
-
-          {collectSignupMeta && (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label htmlFor="iaf-otp-first">Имя</Label>
-                  <Input
-                    id="iaf-otp-first"
-                    name="given-name"
-                    autoComplete="given-name"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="iaf-otp-last">Фамилия</Label>
-                  <Input
-                    id="iaf-otp-last"
-                    name="family-name"
-                    autoComplete="family-name"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="iaf-otp-phone">Телефон</Label>
-                <Input
-                  id="iaf-otp-phone"
-                  name="tel"
-                  type="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                />
-              </div>
-            </>
-          )}
-
           <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
             {isBusy ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Отправка…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверка…</>
             ) : (
               <><Mail className="mr-2 h-4 w-4" /> {emailCtaLabel}</>
             )}
           </Button>
           <p className="text-xs text-muted-foreground text-center">
-            Мы пришлём 6-значный код на email — введите его здесь, ничего открывать не нужно.
+            Мы отправим код на email — введите его здесь, ничего открывать не нужно.
           </p>
+        </form>
+      )}
+
+      {auth.step === "details" && (
+        <form onSubmit={handleSubmitDetails} method="post" action="#" className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Заполните данные для <strong>{auth.email}</strong>, чтобы получить код.
+          </p>
+          <input type="email" name="email" autoComplete="email" value={auth.email} readOnly hidden />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label htmlFor="iaf-otp-first">Имя</Label>
+              <Input
+                id="iaf-otp-first"
+                name="given-name"
+                autoComplete="given-name"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="iaf-otp-last">Фамилия</Label>
+              <Input
+                id="iaf-otp-last"
+                name="family-name"
+                autoComplete="family-name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="iaf-otp-phone">Телефон</Label>
+            <Input
+              id="iaf-otp-phone"
+              name="tel"
+              type="tel"
+              autoComplete="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+          <Button type="submit" size="lg" className="w-full" disabled={isBusy || !firstName.trim()}>
+            {isBusy ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Отправка…</>
+            ) : (
+              <><Mail className="mr-2 h-4 w-4" /> Получить код</>
+            )}
+          </Button>
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline w-full text-center"
+            onClick={handleChangeEmail}
+            disabled={isBusy}
+          >
+            Другой email
+          </button>
         </form>
       )}
 
@@ -181,7 +203,6 @@ export function InlineEmailOtpForm({
               onChange={setCode}
               autoFocus
               disabled={isBusy}
-              // These props flow to the underlying real <input> (input-otp lib):
               autoComplete="one-time-code"
               inputMode="numeric"
               pattern="[0-9]*"
