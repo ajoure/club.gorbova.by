@@ -5,3 +5,10 @@ verify_jwt = true
 
 [functions.auth-email-hook]
 verify_jwt = false
+
+[functions.request-inline-otp]
+verify_jwt = false
+
+[functions.verify-inline-otp]
+verify_jwt = false
+
