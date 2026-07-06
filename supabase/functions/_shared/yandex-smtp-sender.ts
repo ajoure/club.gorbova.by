@@ -34,6 +34,9 @@ export interface YandexSmtpParams {
   text?: string;
   fromName: string;
   fromEmail: string;
+  /** Optional Reply-To display name; email is required if display name present. */
+  replyToName?: string;
+  replyToEmail?: string;
   smtpHost?: string;
   smtpPort?: number;
   username: string;
