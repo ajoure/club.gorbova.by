@@ -512,6 +512,10 @@ export function HtmlIframePreview({
       if (data.type === 'iframe-resize') {
         const raw = data.height;
         if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return;
+        if (raw > MAX_IFRAME_HEIGHT) {
+          // eslint-disable-next-line no-console
+          console.warn('[HtmlIframePreview] height clamped', { raw: Math.ceil(raw), max: MAX_IFRAME_HEIGHT });
+        }
         const clamped = Math.max(minHeight, Math.min(Math.ceil(raw), MAX_IFRAME_HEIGHT));
         setHeight((prev) => (prev === clamped ? prev : clamped));
         postParentViewport();
