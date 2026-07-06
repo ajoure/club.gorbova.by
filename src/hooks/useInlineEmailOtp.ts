@@ -118,31 +118,42 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
       try {
         const trimmed = targetEmail.toLowerCase().trim();
         const fullName = [meta?.firstName, meta?.lastName].filter(Boolean).join(" ");
-        const dataPayload = meta
+        const metaPayload = meta
           ? {
-              full_name: fullName || undefined,
-              first_name: meta.firstName || undefined,
-              last_name: meta.lastName || undefined,
+              firstName: meta.firstName || undefined,
+              lastName: meta.lastName || undefined,
+              fullName: fullName || undefined,
               phone: meta.phone || undefined,
             }
           : undefined;
 
-        const { error: sendError } = await supabase.auth.signInWithOtp({
-          email: trimmed,
-          options: {
-            shouldCreateUser: true,
-            ...(dataPayload ? { data: dataPayload } : {}),
+        const { data, error: sendError } = await supabase.functions.invoke(
+          "request-inline-otp",
+          {
+            body: {
+              email: trimmed,
+              purpose: "auth",
+              meta: metaPayload,
+            },
           },
-        });
+        );
 
-        if (sendError) {
-          const msg = sendError.message || "";
-          if (/rate|too many|limit/i.test(msg)) {
-            setError("Слишком много попыток. Подождите пару минут и попробуйте снова.");
-          } else if (/invalid.*email|email.*invalid/i.test(msg)) {
+        // functions.invoke surfaces non-2xx as sendError; we also check data.error defensively.
+        if (sendError || (data && (data as any).error)) {
+          const code = ((data as any)?.error || sendError?.message || "").toString();
+          if (/rate_limited|429/i.test(code)) {
+            const retry = (data as any)?.retry_after_s;
+            setError(
+              retry
+                ? `Слишком много попыток. Попробуйте через ${retry} с.`
+                : "Слишком много попыток. Подождите пару минут и попробуйте снова.",
+            );
+          } else if (/invalid_email/i.test(code)) {
             setError("Некорректный формат email.");
+          } else if (/smtp/i.test(code)) {
+            setError("Не удалось отправить письмо. Попробуйте ещё раз через минуту.");
           } else {
-            console.error("[useInlineEmailOtp] signInWithOtp error:", sendError);
+            console.error("[useInlineEmailOtp] request-inline-otp error:", sendError, data);
             setError(GENERIC_SEND_ERROR);
           }
           return false;
@@ -156,7 +167,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
         setResendIn(RESEND_COOLDOWN_S);
         return true;
       } catch (e) {
-        console.error("[useInlineEmailOtp] signInWithOtp exception:", e);
+        console.error("[useInlineEmailOtp] request-inline-otp exception:", e);
         setError(GENERIC_SEND_ERROR);
         return false;
       } finally {
@@ -165,6 +176,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     },
     [],
   );
+
 
   const submitEmail = useCallback(
     async (targetEmail: string): Promise<boolean> => {
