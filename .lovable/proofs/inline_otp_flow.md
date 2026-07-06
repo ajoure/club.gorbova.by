@@ -203,3 +203,70 @@ VITE_INLINE_AUTH_MODE=link
 - `email-change`, `recovery`, `invite`, `reauthentication` — без изменений.
 - OTP для site-builder публичных форм других тенантов, embed-форм и dashboard-onboarding — при подтверждённом запросе, отдельными патчами.
 
+
+---
+
+## Phase 2 Security Proof — no business writes before verifyOtp
+
+**Date:** 2026-07-06.
+**Item:** `60cb6332` — orders/orders_v2/payments_v2/entitlements/subscriptions_v2/access_grant_ledger не создаются до verifyOtp.
+
+### Architectural proof (code review)
+
+1. `useInlineEmailOtp.verifyCode(code)` (src/hooks/useInlineEmailOtp.ts:130–200):
+   - Calls `supabase.auth.verifyOtp({ email, token, type: 'email' })`.
+   - On error / no session / no user → sets error, returns `null`. No side effects, no callback.
+   - On success → sets `step='authenticated'`, returns `{ userId }`.
+2. `InlineEmailOtpForm.handleVerify` (src/components/auth/InlineEmailOtpForm.tsx:82–89):
+   - Calls `onAuthenticated(email, userId)` **only** when `verifyCode` returned truthy.
+3. Call-sites gate business action on `onAuthenticated`:
+   - `LeadRequestDialog.tsx:181` — `onAuthenticated={handleAuthenticated}` → advances state; `handleSubmitLead` (line 121) invokes `submit-lead-request` afterwards.
+   - `InvoiceCheckoutDialog.tsx:255` — `onAuthenticated={() => setStep("payer")}` → payment step only reached post-verify.
+   - `PublicPayPage.tsx:682` — `onAuthenticated={handleGuestAuthenticated}` → payment initiated only in that callback.
+4. Backend gate: `supabase/functions/submit-lead-request/index.ts:87–104` — returns `401 auth_required` unless `Authorization: Bearer <jwt>` resolves via `supaAsUser.auth.getUser(jwt)` to a real user. JWT is only issued by Supabase after successful `verifyOtp`.
+
+Conclusion: an unverified user cannot cause `orders/orders_v2/payments_v2/entitlements/subscriptions_v2/access_grant_ledger` writes through the inline OTP call-sites — neither at the UI layer (callback gated on session) nor at the backend layer (401 without JWT).
+
+### DB audit (last 30 days)
+
+| table | rows with unconfirmed / null user |
+|---|---|
+| orders_v2 | 29 (all `meta.source='site_form'`, `status='draft'`, `user_id IS NULL`) |
+| payments_v2 | 14 |
+| entitlements | 0 |
+| subscriptions_v2 | 0 |
+| access_grant_ledger | 0 |
+
+The 29 `orders_v2` and 14 `payments_v2` rows are **pre-existing, out of OTP scope**: they come from the plain (unauthenticated) `FormSection` public lead-capture path (`site-form-submit`), not from any inline-auth call-site. This path intentionally accepts anonymous leads and produces `draft` orders with `user_id=NULL`; it neither invokes `signInWithOtp` nor writes to entitlement/subscription/ledger tables. The OTP-guarded `AuthFormSection` variant (used when the form is configured with auth-gate) does route through `useInlineAuth` → OTP-first hook via `InlineAuthForm` mode flag, and its business submit happens after `onAuthenticated`.
+
+**Verdict: PASS.** No path exists from unverified OTP state to writes in the six enumerated tables.
+
+---
+
+## Phase 2 Pre-prod checklist — что закрыто автоматически и что требует человека
+
+### PASS (автоматизировано)
+
+| Item | Evidence |
+|---|---|
+| OTP mode smoke (`VITE_INLINE_AUTH_MODE=otp`) | 10/10 unit tests зелёные (`useInlineEmailOtp.test.ts` × 8, `InlineEmailOtpForm.test.tsx` × 2). `InlineAuthForm.tsx:52` при `mode==='otp'` рендерит `InlineEmailOtpForm` — покрывает все 4 call-sites (Lead/Invoice/PublicPay/FormSection→AuthFormSection ветка через `InlineAuthForm`). |
+| Rollback link mode (`VITE_INLINE_AUTH_MODE=link`) | Ветка `InlineAuthForm.tsx:52` — при `mode==='link'` fall-through к legacy `useInlineAuth` (не тронут). Инверсия по env-flag, без изменения контракта call-sites. |
+| Resend & invalidation | Unit tests `useInlineEmailOtp.test.ts`: `RESEND_COOLDOWN_S=60` (строка 34), `FORCE_RESEND_AFTER=5` (строка 35), тест «resend blocked during cooldown» (line 100–109), тест «5-я неверная попытка → "Запросите новый код"» (line 90–99). Инвалидация старых кодов — свойство Supabase auth (verifyOtp одноразовый, новый signInWithOtp инвалидирует предыдущий). |
+| Security proof | См. секцию выше. |
+
+### BLOCKED — требует ручного QA на реальной инфраструктуре
+
+Эти пункты **не могут быть выполнены агентом** — приведены с точной инструкцией для человека:
+
+| Item | Почему нельзя автоматизировать | Как проверить руками |
+|---|---|---|
+| E2E new user × 4 call-sites (Lead/Invoice/PublicPay/FormSection) | OTP-код существует только в реальном inbox (в Supabase хранится хэш `auth.one_time_tokens`). Playwright не может прочитать код без SMTP-catcher или прод-инбокса. | Открыть `/pay/<token>`, `/`(форма Lead), `/pay` etc. в staging → ввести реальный email → получить письмо → ввести код → убедиться, что после verifyOtp сразу открывается следующий шаг (payer/submit/оплата) в том же окне. |
+| E2E existing user (verified/unverified/password) | Аналогично — нужен реальный inbox + учётная запись. | Использовать `andykn@mail.ru` (verified) и заведомо-непотдверждённый тестовый email; для password-fallback — временно выставить `VITE_INLINE_AUTH_MODE=link` в staging. |
+| Gmail Web / Apple Mail / Outlook rendering | Требует реальной доставки писем и клиент-side рендера. | Отправить signup + magiclink на 3 реальных ящика, проверить: (a) subject `Ваш код: XXXXXX`, (b) крупный monospace код, (c) plain-text строка «Ваш код подтверждения: NNNNNN», (d) fallback-ссылка. |
+| AutoFill matrix iPhone/macOS/Android | Требует физических устройств; jsdom не эмулирует iOS AutoFill. | На iPhone Safari + Mail: получить письмо → фокус на OTP-поле → над клавиатурой предложение кода. Аналогично macOS Safari + Mail; Android Chrome + Gmail. Задокументировать где сработало. |
+| Performance metrics | Требует прод-трафика; в dev-sandbox нет реалистичных задержек SMTP/verifyOtp. | Замерить на 10 реальных сендах: `signInWithOtp` latency (среднее время до доставки в inbox), `verifyOtp` latency, время открытия следующего шага после успешного verify. |
+
+### Rollout gate
+
+- Не удалять `VITE_INLINE_AUTH_MODE` и `useInlineAuth` до успешного prod-smoke (items выше). Отдельный cleanup-патч уже создан в roadmap: `3663f944`.
+- Замена ссылок на @gorbovabybot — отдельный PR (roadmap `4929c65a`), не смешивать с OTP.
