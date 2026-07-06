@@ -1156,12 +1156,14 @@ serve(async (req) => {
             status: res.status,
             data: res.data,
             strategy,
+            delete_debug: delResult,
           });
         }
         return jsonResp({
           success: true,
           strategy,
           data: (res.data as Record<string, unknown>)?.payload ?? res.data,
+          delete_debug: delResult,
         });
       }
 
