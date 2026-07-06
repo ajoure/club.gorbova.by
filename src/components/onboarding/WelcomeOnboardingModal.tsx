@@ -214,12 +214,12 @@ export function WelcomeOnboardingModal() {
             <div className="text-sm">
               <span className="text-blue-900">Нужна помощь? Напишите </span>
               <a
-                href="https://t.me/Gorbova_club_bot"
+                href="https://t.me/gorbovabybot"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:underline font-medium"
               >
-                @Gorbova_club_bot
+                @gorbovabybot
               </a>
             </div>
           </div>
