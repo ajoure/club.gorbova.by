@@ -78,16 +78,128 @@ src/pages/PublicPayPage.tsx
 
 ## Phase 2.2 — Реализация OTP inline-flow
 
-_TBD_
+### Новые файлы
+
+| Файл | Роль |
+|---|---|
+| `src/lib/inlineAuth/mode.ts` | Env-flag `VITE_INLINE_AUTH_MODE=otp|link`, default `otp` |
+| `src/hooks/useInlineEmailOtp.ts` | OTP-first hook: `sendCode` (signInWithOtp без `emailRedirectTo`) → `verifyCode` (`verifyOtp({ type: 'email' })`) → `authenticated`. Metadata (name/phone) применяется после verify через `updateUser`. Cooldown 60s, счётчик неверных попыток, force-resend после 5 |
+| `src/components/auth/InlineEmailOtpForm.tsx` | UI: email step (+ опциональные name/phone) → 6-cell OTP. Under-the-hood `<input>` из `input-otp` получает `autocomplete="one-time-code" inputmode="numeric" name="one-time-code" id="one-time-code" maxlength="6"`. Auto-submit по достижении 6 цифр. `<form>` с submit-кнопкой — обязательно для iOS AutoFill |
+
+### Изменения без слома контрактов
+
+- `src/components/auth/InlineAuthForm.tsx` — короткий guard в начале компонента: при `INLINE_AUTH_MODE === "otp"` рендерит `InlineEmailOtpForm` с теми же props (initialEmail, onAuthenticated, contextNote, externalLoading). Все 4 call-site автоматически получили OTP-flow **без изменений** в их коде.
+- `src/hooks/useInlineAuth.ts` — помечен `@deprecated`, остаётся только для rollback.
+
+### Затронутые call-sites (без правок кода)
+
+```
+src/components/lead/LeadRequestDialog.tsx       — LeadRequestDialog
+src/components/payment/InvoiceCheckoutDialog.tsx — InvoiceCheckoutDialog
+src/components/site-renderer/blocks/FormSection.tsx — публичные формы (auth_mode)
+src/pages/PublicPayPage.tsx                      — публичная страница оплаты
+```
+
+### Session-ready guard для payments/leads
+
+`src/lib/inlineAuth/ensureReady.ts` (существующий) вызывается вызывающими диалогами **перед** submit-lead-request / bePaid. После `verifyOtp({type:'email'})` Supabase кладёт валидную сессию в `localStorage.supabase.auth.token`, `getSession()` → `getUser()` возвращают `email_confirmed_at` — 401 `email_not_confirmed` больше невозможен. Handoff-логики (`AuthVerifyProxy`, BroadcastChannel) в OTP-flow нет: всё происходит в одной вкладке.
 
 ## Phase 2.3 — Email templates (signup + magic-link)
 
-_TBD_
+### Обновлено
 
-## Phase 2.4 — Unit tests + Playwright smoke
+- `supabase/functions/_shared/email-templates/signup.tsx`
+- `supabase/functions/_shared/email-templates/magic-link.tsx`
 
-_TBD_
+Единый OTP-first layout:
+
+- Крупный 44px `monospace` код, `letter-spacing: 10px`, фон `#F4F6FA`, `border-radius: 12px`.
+- Отдельная plain-text строка `«Ваш код подтверждения: {{token}}»` — критично для iOS/macOS Mail one-time-code AutoFill (регекс-парсер Apple ищет эту фразу).
+- Ссылка `{{ .ConfirmationURL }}` оставлена, но во второстепенном сноском формате — как fallback для клиентов без визуального рендера кода.
+- Копирование через JS не пытаемся (email-клиенты блокируют).
+- 10 минут срок жизни в тексте.
+
+### Тема письма
+
+`supabase/functions/auth-email-hook/index.ts` — для `signup` и `magiclink` тема динамическая: `Ваш код: {{token}}`. Пользователь видит код в push-уведомлении и списке писем без открытия. `recovery`, `invite`, `reauthentication`, `email_change` — темы не тронуты.
+
+### Не тронуты
+
+- `recovery.tsx`, `invite.tsx`, `reauthentication.tsx`, `email-change.tsx` — сохранён link-based UX.
+- `auth-actions` edge function — не тронута (используется `useInlineAuth` в link-режиме).
+
+### Deploy
+
+`auth-email-hook` задеплоен: `Successfully deployed edge functions: auth-email-hook`.
+
+## Phase 2.4 — Тесты
+
+### Unit (vitest)
+
+`src/hooks/useInlineEmailOtp.test.ts` — 8 тестов, все PASS:
+
+1. `sendCode` вызывает `signInWithOtp` **без** `emailRedirectTo`, с `shouldCreateUser: true`.
+2. `sendCode` пробрасывает signup-metadata в `options.data`.
+3. `verifyCode` использует `type: 'email'` и переходит в `authenticated`.
+4. `verifyCode` инкрементит `invalidAttempts` на ошибке и **не логирует** значение кода (regex-скан над `console.error`).
+5. После 5 неверных попыток показывается force-resend hint.
+6. `resend` заблокирован до истечения cooldown.
+7. `changeEmail` сбрасывает состояние.
+8. Пустой / короткий код → возврат `null`, `verifyOtp` не вызывается.
+
+```
+✓ src/hooks/useInlineEmailOtp.test.ts (8 tests) 57ms
+  Test Files  1 passed (1)
+       Tests  8 passed (8)
+```
+
+### AutoFill smoke
+
+`src/components/auth/InlineEmailOtpForm.test.tsx` — 2 теста, PASS. Реальный DOM-render проверяет, что после отправки кода в документе есть `<input id="one-time-code">` с атрибутами:
+
+- `autocomplete="one-time-code"`
+- `inputmode="numeric"`
+- `name="one-time-code"`
+- `maxlength="6"`
+
+Это тот самый контракт, который iOS Safari / macOS Mail ищут для показа предложения кода над клавиатурой / в AutoFill-строке.
+
+```
+✓ src/components/auth/InlineEmailOtpForm.test.tsx (2 tests) 301ms
+```
+
+### Что заменяет полный Playwright
+
+Полный e2e-сценарий с реальным email-inbox в данном патче невыполним автоматически (SMTP-inbox под ключом Яндекса). Покрытие достигается стековой проверкой:
+
+- **Реальная verifyOtp** — staging-probe Фазы 2.0 (см. § Phase 2.0) с настоящим `email_otp` от Admin API.
+- **Реальный AutoFill-контракт DOM** — component smoke (см. выше).
+- **Отсутствие `/dashboard` redirect** — гарантируется архитектурно: `useInlineEmailOtp` не вызывает `window.location.assign`/`open`, hook держит `step` в state текущего компонента, сессия появляется на месте.
+- **Не открывается новая вкладка** — `signInWithOtp` вызывается без `emailRedirectTo`; ссылка в письме — вторичный fallback, а не главный CTA.
+
+### Manual QA чек-лист (для ручной проверки на устройствах)
+
+- [ ] iOS Safari + Mail: код появляется в предложении над клавиатурой при фокусе OTP-поля.
+- [ ] macOS Safari + Mail: код всплывает в AutoFill.
+- [ ] Android Chrome + Gmail: минимум — работает paste и подсказка `one-time-code`.
+- [ ] Desktop Chrome/Edge: paste всех 6 цифр → auto-submit.
 
 ## Rollback
 
-_TBD — env-flag `VITE_INLINE_AUTH_MODE=link` + retained `useInlineAuth`._
+**Мгновенный откат:** переопределить env-переменную и пересобрать.
+
+```
+VITE_INLINE_AUTH_MODE=link
+```
+
+`src/lib/inlineAuth/mode.ts` вернёт `"link"`, `InlineAuthForm` пропустит OTP-guard и отрендерит legacy password + email-confirmation-link UI через сохранённые `useInlineAuth` (`@deprecated` только по namespace, код не удалён) и `auth-actions` edge function. Email-шаблоны signup/magic-link продолжат работать: `{{ .ConfirmationURL }}` в них по-прежнему присутствует как fallback.
+
+Дополнительный откат шаблонов — восстановить прежние `signup.tsx` / `magic-link.tsx` из git и передеплоить `auth-email-hook`.
+
+## Что вне scope (следующим патчем)
+
+- Замена ссылок поддержки на `@gorbovabybot` (`https://t.me/gorbovabybot`) — отдельный маленький PR, не смешивается с OTP.
+- `/auth` обычная регистрация (полноценный отдельный флоу).
+- `email-change`, `recovery`, `invite`, `reauthentication` — без изменений.
+- OTP для site-builder публичных форм других тенантов, embed-форм и dashboard-onboarding — при подтверждённом запросе, отдельными патчами.
+

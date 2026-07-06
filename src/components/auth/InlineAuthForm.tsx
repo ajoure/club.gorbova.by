@@ -17,6 +17,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Mail, AlertCircle, CheckCircle2 } from "lucide-react";
+import { INLINE_AUTH_MODE } from "@/lib/inlineAuth/mode";
+import { InlineEmailOtpForm } from "@/components/auth/InlineEmailOtpForm";
+
 
 export interface InlineAuthFormProps {
   /** Pre-fill email (e.g. from session); user may override. */
@@ -44,7 +47,23 @@ export function InlineAuthForm({
   signupCtaLabel = "Зарегистрироваться",
   externalLoading = false,
 }: InlineAuthFormProps) {
+  // PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2: OTP-first inline flow.
+  // Rollback: set VITE_INLINE_AUTH_MODE=link — falls through to legacy password + email-link path.
+  if (INLINE_AUTH_MODE === "otp") {
+    return (
+      <InlineEmailOtpForm
+        initialEmail={initialEmail}
+        onAuthenticated={onAuthenticated}
+        contextNote={contextNote}
+        emailCtaLabel={emailCtaLabel === "Продолжить" ? "Получить код" : emailCtaLabel}
+        externalLoading={externalLoading}
+        collectSignupMeta
+      />
+    );
+  }
+
   const auth = useInlineAuth();
+
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
