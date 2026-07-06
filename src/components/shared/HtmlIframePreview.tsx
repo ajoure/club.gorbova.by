@@ -27,8 +27,12 @@ import { Code } from "lucide-react";
 const SANDBOX_POLICY =
   "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
-/** Maximum iframe height in px to prevent runaway content */
-const MAX_IFRAME_HEIGHT = 15000;
+/**
+ * Maximum iframe height in px — защита от runaway CSS (`min-height: 100vh` в кривой вёрстке и т.п.).
+ * 100 000 px ≈ 26 экранов FullHD, с запасом покрывает длинные Tilda/HTML-лендинги (ЦБ 2.0, ~30–60k px).
+ * При превышении в console пишется warning, чтобы сразу видеть причину визуальной обрезки.
+ */
+const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
 const BRIDGE_MARKER = "data-lovable-resize-v2";
