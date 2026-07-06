@@ -1,209 +1,185 @@
-# да, согласен.
+# да, согласен, с учетом правок:
 
 ```text
-План принимаю.
+1. P2 можно начинать.
 
-Approve на P1 Discovery.
+2. Важная правка по cross-subdomain:
+`refreshSession()` в исходной вкладке не сможет получить новую session, если Supabase verification завершился в другом origin и refresh token не попал в localStorage исходного origin.
 
-Execute/code patch пока НЕ запускать до discovery-отчёта.
+Поэтому в P2 нужно явно проверить этот сценарий.
+Если `refreshSession → getSession → getUser` на другом поддомене не обновляет session, значит P2 alone не решит cross-subdomain, и для P3/P4 потребуется одно из:
+- return-token handoff через `/auth-verify` на исходный origin;
+- magic-link redirect на тот же origin, где стартовал flow;
+- backend/server-side exchange flow.
 
-Подтверждение по боту:
-официальный username использовать: @Gorbovo_buy_bot
-ссылка: https://t.me/Gorbovo_buy_bot
+Не утверждать, что polling гарантированно работает cross-subdomain, пока это не доказано тестом.
 
-После discovery можно включать P8 rename по всему найденному списку.
+3. В discovery/proof добавить результат:
+- same-origin polling PASS/FAIL;
+- cross-subdomain polling PASS/FAIL;
+- если FAIL — указать, что P3/P4 должны решать handoff/redirect.
+
+4. `ensureInlineAuthReady()` должен сначала проверять текущую session.
+`refreshSession()` может вернуть ошибку, если refresh token отсутствует. Это не должно ломать UI.
+Алгоритм:
+- getSession;
+- если session есть — refreshSession;
+- затем getSession/getUser;
+- если session нет — pending/no_session.
+
+5. `supabase.auth.resend({ type: 'signup', email })` должен использовать тот же `emailRedirectTo=/auth-verify`, иначе повторное письмо снова унесёт пользователя в неправильный поток.
+
+6. В тестах добавить:
+- отсутствует refresh token/session → waiter остаётся pending/expired, а не падает;
+- resend использует правильный redirect;
+- repeated resend не создаёт новый flowId.
+
+7. Не подключать P2 к PaymentDialog/LeadRequestDialog в этом патче, если это отдельный P7 по плану.
+В P2 сделать hook + tests + proof. Интеграция — следующим патчем, если так сохраняется порядок P2→P7.
 ```
 
-Дополнение к плану:
+Итог:
 
 ```text
-В discovery отдельно проверить, что подтверждение email из письма действительно обновляет session в исходной вкладке через Supabase client. Если нет, polling должен делать refreshSession/getSession перед getUser, иначе исходная вкладка может ждать до таймаута.
+Approve на P2.
 
-В Verify добавить сценарий:
-- пользователь уже зарегистрирован, но не подтверждён;
-- повторно открывает lead/payment flow;
-- подтверждает email;
-- flow продолжается, дубль auth/users не создаётся.
+Но обязательно доказать cross-subdomain поведение, а не считать его гарантированным. Если Supabase session не синхронизируется между поддоменами, зафиксировать это как blocker для P3/P4 handoff-дизайна.
 ```
-
-Коротко: сначала **P1 discovery**, бот подтверждён: **@Gorbovo_buy_bot**.
-
-Подтверждение по боту обновлено.
-
-Официальный username:
-
-@gorbovabybot
-
-Официальная ссылка:
-
-[https://t.me/gorbovabybot](https://t.me/gorbovabybot)
-
-В P1 Discovery зафиксировать это как принятое решение.
-
-В P8 rename заменить везде:
-
-- @Gorbova_club_bot
-
-- @Gorbovo_buy_bot
-
-- @Gorbova_buy_bot
-
-- любые старые [t.me](http://t.me)-ссылки / deep links / QR / help / onboarding / welcome texts
-
-на:
-
-@gorbovabybot
-
-[https://t.me/gorbovabybot](https://t.me/gorbovabybot)
-
-Перед заменой:
-
-- найти все упоминания через grep;
-
-- приложить список файлов в discovery/proof.
-
-После замены:
-
-- повторный grep должен показать только @gorbovabybot;
-
-- Telegram linking flow должен генерировать deeplink на [https://t.me/gorbovabybot](https://t.me/gorbovabybot).
 
 &nbsp;
 
 &nbsp;
 
-План: возврат контекста после подтверждения email (revised)
+# План P2 — `useAwaitInlineAuthReady` (единый waiter подтверждения email)
 
-Применены все правки пользователя. Работа делится на Discovery → Execute → Verify. Строго Diagnose→Plan→Dry-run→Execute→Verify.
+Учтены все правки: SoT — Supabase Auth, BroadcastChannel/storage — только ускорители для same-origin, единый waiter для всех сценариев, защита от гонок и бесконечного ожидания.
 
-## 0. Discovery (обязательный, read-only)
+## 1. Cross-subdomain реальность (зафиксировать в discovery)
 
-Отчёт: `.lovable/discovery/inline_auth_return_flow.md`.
+Дополнить `.lovable/discovery/inline_auth_return_flow.md` разделом «Cross-origin ограничения»:
 
-Собрать реальную карту:
+- `BroadcastChannel` — работает **только в пределах одного origin**. Между `club.gorbova.by` ↔ `zg.gorbova.by` не работает.
+- `storage` event — то же самое, привязан к origin.
+- `window.opener.postMessage` — работает cross-origin, но требует, чтобы вкладка была открыта через `window.open` из исходной (в письме браузер обычно открывает новую вкладку без `opener` → ненадёжно).
+- **Вывод:** единственный надёжный канал между разными поддоменами — это сам Supabase (общий проект, но **каждый origin имеет свой localStorage** → сессия НЕ синхронизируется автоматически между поддоменами).
+- **Следствие для waiter:** источник истины — только серверный вызов `refreshSession() → getSession() → getUser()` через polling. Ускорители (BroadcastChannel/storage/onAuthStateChange) применяются только когда исходная вкладка и вкладка verify на одном origin.
 
-- **Все вызовы** `supabase.auth.signUp`, `useInlineAuth`, `InlineAuthForm`, `emailRedirectTo` — не только payment/lead. Каждое место: файл, что передаётся в `emailRedirectTo`, какой контекст надо восстановить, что происходит после возврата.
-- Все точки, где сейчас делается redirect на `/dashboard` через `onAuthStateChange` / `useLastRoute`.
-- Все сайты/страницы (лендинг, product page, site-pages, публичные формы, кастомные домены) — как каждая ведёт себя сегодня (работает / теряет контекст / уносит в /dashboard).
-- Все упоминания `@Gorbova_club_bot` / `Gorbova_buy_bot` / `Gorbovo_buy_bot` — файлы, deeplinks, QR, welcome, help, onboarding, константы.
+## 2. Waiter — `src/hooks/useAwaitInlineAuthReady.ts`
 
-DoD discovery: список исправлен → любая последующая правка адресует все затронутые сценарии, не только оплату.
+Единственный хук ожидания подтверждения email для всех inline-сценариев.
 
-## 1. Bot rename — сначала подтверждение
-
-Не менять вслепую. В отчёте discovery отдельным разделом:
-
-- Список всех текущих упоминаний (username, deeplink `t.me/...`, QR-источники, тексты welcome/help/onboarding, константы).
-- Явный запрос пользователю: «подтвердите единственный официальный username».
-
-Замена делается **после** подтверждения, единым патчем по всему списку. До подтверждения — код не трогаем.
-
-## 2. Архитектурные принципы
-
-### 2.1 Единая точка ожидания подтверждения — `useAwaitInlineAuthReady`
-
-Один reusable-хук для **всех** inline-flow (payment, lead, preregistration, любые будущие). `PaymentDialog` и `LeadRequestDialog` **обязаны** использовать один и тот же хук — двух реализаций быть не должно.
-
-Условие «готово» — не просто `email_confirmed_at != null`, а полноценно:
-
-1. `email_confirmed_at` заполнен;
-2. Есть валидная session (`supabase.auth.getSession()` возвращает session с непросроченным access_token);
-3. `supabase.auth.getUser()` успешно возвращает пользователя (server-validated, чтобы не поймать гонку «email подтверждён, но токен ещё старый»).
-
-Только когда все три условия — переход к следующему шагу (submit-lead-request / оплата).
-
-### 2.2 Каналы синхронизации между вкладками (приоритет)
-
-1. `**BroadcastChannel('inline-auth')**` — основной канал, мгновенная доставка.
-2. `storage` event — fallback для браузеров/контекстов без BroadcastChannel.
-3. `onAuthStateChange` (`USER_UPDATED`, `SIGNED_IN`) — локальный сигнал в исходной вкладке.
-4. Bounded polling `getUser()` каждые 3s, максимум 5 минут — последний рубеж.
-
-`window.opener.postMessage` — **только как дополнительный** механизм (многие почтовые клиенты открывают ссылку без opener, полагаться нельзя).
-
-Broadcast message формат:
+### 2.1 Источник истины (обязательный порядок)
 
 ```ts
-{ type: 'inline-auth:confirmed', flowId: string, userId: string, at: number }
+await supabase.auth.refreshSession();           // форс-обновление токенов
+const { data: { session } } = await supabase.auth.getSession();
+if (!session?.access_token) return "pending";
+const { data: { user }, error } = await supabase.auth.getUser(); // server-check
+if (error || !user?.email_confirmed_at) return "pending";
+return "ready";
 ```
 
-### 2.3 `AuthVerifyProxy` — success screen без `?done=1`
+Polling выполняет этот блок каждые 3 сек — **работает всегда**, независимо от BroadcastChannel/storage.
 
-`emailRedirectTo` = `${origin}/auth-verify` (без query-флагов).
+### 2.2 Каналы-ускорители (для same-origin)
 
-`AuthVerifyProxy` после нажатия «Продолжить» и успешного verify:
+Только уменьшают латентность; не влияют на корректность:
 
-1. Определяет успех по факту наличия session (не по `?done=1`).
-2. Публикует событие в `BroadcastChannel('inline-auth')` + `localStorage.setItem('inline-auth:confirmed:<userId>', ts)` для storage-fallback.
-3. Показывает success screen: «Email подтверждён. Вернитесь во вкладку, где вы начали действие — она продолжится автоматически.» + кнопка «Открыть личный кабинет» (не авто-редирект).
+1. `BroadcastChannel('inline-auth')` — publish `{type:'email_confirmed', flowId}` из `AuthVerifyProxy`.
+2. `storage` event на ключ `inline-auth:last-confirm`.
+3. `supabase.auth.onAuthStateChange` (`USER_UPDATED`, `SIGNED_IN`, `TOKEN_REFRESHED`).
 
-Никаких auto-redirect / meta-refresh / `?done=1`.
+Любое событие → триггерит немедленный re-check блока 2.1 (не заменяет его).
 
-### 2.4 Flow persistence с TTL
+### 2.3 Единый waiter для трёх входов
 
-`sessionStorage` key: `inline_auth_flow:<flowId>`. Payload:
+Все входные точки идут в один и тот же state-машинный хук:
+
+- новый `signUp` → `waiting_confirm`;
+- существующий пользователь с `email_not_confirmed` при `signIn` → `waiting_confirm` (без нового `signUp`, только `resend`);
+- повторный вход после `resend` → тот же `waiting_confirm`.
+
+Никаких параллельных веток ожидания.
+
+### 2.4 Защита от бесконечного ожидания
+
+- Таймаут **5 минут** (константа `WAIT_TIMEOUT_MS = 5 * 60_000`).
+- По истечении → state `expired`, показать:
+  - текст «Время ожидания истекло. Проверьте письмо или отправьте заново.»
+  - кнопка «Отправить письмо повторно» → `supabase.auth.resend({ type: 'signup', email })` + сброс таймера.
+  - кнопка «Изменить email» → возврат в форму email/пароль (сброс flow до шага `email`).
+- Polling останавливается по: `ready | expired | unmounted | cancelled`.
+
+### 2.5 Защита от гонок
+
+- `readyFiredRef = useRef(false)` — переход в `ready` и вызов `onReady` строго один раз.
+- При получении события (BroadcastChannel/storage/onAuthStateChange):
+  - если `readyFiredRef.current` — игнор;
+  - иначе — отменить текущий `setTimeout` polling, немедленно `checkReady()`, при `ready` — установить флаг, `cancel()` всех каналов, вызвать `onReady`.
+- `AbortController` для `getUser()` — при unmount отменяется.
+- Никаких «в фоне продолжаем polling» после `ready`.
+
+### 2.6 Pre-submit guard (используется вызывающими)
+
+Экспортируется утилита `ensureInlineAuthReady()`:
 
 ```ts
-{
-  flowId: string,
-  flow_type: 'payment' | 'lead' | 'preregistration',
-  offer_id: string,
-  current_step: 'awaiting_email' | 'authenticated' | 'submitting',
-  created_at: number,   // ms epoch
-  context: {...}        // минимально необходимое для восстановления
+async function ensureInlineAuthReady(): Promise<{ ok: true; user: User } | { ok: false; reason }> {
+  await supabase.auth.refreshSession();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { ok: false, reason: 'no_session' };
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) return { ok: false, reason: 'no_user' };
+  if (!user.email_confirmed_at) return { ok: false, reason: 'email_not_confirmed' };
+  return { ok: true, user };
 }
 ```
 
-Удаление:
+Правило для `PaymentDialog` / `LeadRequestDialog` / `PreregistrationDialog`: **перед** вызовом `submit-lead-request` / открытием bePaid / оплаты обязательно `await ensureInlineAuthReady()`. Если `!ok` — короткий retry (до 2 раз с 500ms), затем показ user-friendly ошибки. Никакого немедленного 401.
 
-- после успешного завершения flow,
-- по TTL 30 минут (`created_at + 30*60*1000 < now()`),
-- если offer уже недоступен (проверка при восстановлении).
+## 3. Публичный API хука
 
-Cleanup: при монтировании общего хука проходим по всем ключам `inline_auth_flow:*`, удаляем протухшие.
+```ts
+type State = 'idle' | 'waiting_confirm' | 'ready' | 'expired' | 'error';
 
-### 2.5 Блокировка глобального редиректа в `/dashboard`
+useAwaitInlineAuthReady({
+  email: string;
+  flowId: string;
+  enabled: boolean;
+  onReady: (user: User) => void;      // вызывается ровно один раз
+  onExpired?: () => void;
+}) => {
+  state: State;
+  remainingMs: number;                // для UI-таймера
+  resend: () => Promise<void>;        // «Отправить письмо повторно»
+  changeEmail: () => void;            // «Изменить email» — reset flow
+  cancel: () => void;
+};
+```
 
-В `AuthContext` / `useLastRoute` / любом месте, которое ловит `SIGNED_IN` и уносит на `/dashboard`: добавить guard — если в `sessionStorage` есть активный `inline_auth_flow:*` (не протухший), редирект в `/dashboard` подавляется до завершения flow.
+## 4. DoD P2
 
-Это ключевой DoD-критерий: **после подтверждения email пользователь ни разу не попадает в `/dashboard`, пока не завершит текущий flow.**
+1. При новом signup, при login с неподтверждённым email, и после resend — используется **один и тот же** waiter.
+2. Polling `refreshSession → getSession → getUser` работает и приводит к `ready` даже если BroadcastChannel и storage не сработали ни разу (проверяется отключением этих каналов в тесте).
+3. Cross-subdomain: подтверждение на `club.gorbova.by/auth-verify` корректно завершает waiter на `zg.gorbova.by` через polling (в пределах 3–6 сек).
+4. Same-origin: подтверждение завершает waiter в пределах ~1 сек (ускоритель отработал).
+5. Таймаут 5 мин → state `expired`, кнопки «Отправить повторно» и «Изменить email» работают.
+6. Гонки: тройное событие (BroadcastChannel + storage + polling одновременно) приводит к **одному** вызову `onReady` и **одному** submit.
+7. `ensureInlineAuthReady()` вызывается перед `submit-lead-request`/оплатой в трёх диалогах; 401 `email_not_confirmed` в happy-path не возникает.
+8. После `ready` — все каналы и таймеры очищены (проверить утечки в unmount-тесте).
 
-## 3. Патчи (в порядке исполнения)
+## 5. Файлы
 
-- **P1** — Discovery-отчёт, запрос подтверждения бот-username.
-- **P2** — `src/hooks/useAwaitInlineAuthReady.ts`: reusable-хук (BroadcastChannel + storage + onAuthStateChange + bounded polling + session/getUser проверка).
-- **P3** — `src/lib/inlineAuthFlow.ts`: persistence с TTL, cleanup, guards.
-- **P4** — `AuthVerifyProxy.tsx`: success screen, публикация в BroadcastChannel/localStorage, никакого `?done=1`.
-- **P5** — `AuthContext`/`useLastRoute`: guard от `/dashboard` при активном flow.
-- **P6** — `useInlineAuth`: `emailRedirectTo = ${origin}/auth-verify`, регистрация flow в sessionStorage.
-- **P7** — `PaymentDialog` + `LeadRequestDialog` + `PreregistrationDialog`: перевести на общий хук (одна реализация).
-- **P8** — Bot rename (только после подтверждения username от пользователя): единый патч по всему списку из discovery.
+Новые:
 
-## 4. Verify (обязательные сценарии)
+- `src/hooks/useAwaitInlineAuthReady.ts`
+- `src/lib/inlineAuth/ensureReady.ts` (экспорт `ensureInlineAuthReady`)
+- `src/lib/inlineAuth/broadcast.ts` (обёртка над BroadcastChannel + storage-fallback)
 
-1. Регистрация на публичной странице → email в **новой вкладке** → нажатие «Продолжить» → success screen → исходная вкладка автоматически продолжает flow (без /dashboard).
-2. **Главный UX-сценарий:** пользователь подтвердил email, **полностью закрыл вкладку** из письма, ничего не нажимал → исходная вкладка сама подхватила через BroadcastChannel/storage/polling и через несколько секунд продолжила.
-3. Оплата: email confirm → PaymentDialog продолжает без потери tariff/offer.
-4. Заявка: email confirm → LeadRequestDialog отправляет submit-lead-request без 401 (session валидна).
-5. TTL: старый `inline_auth_flow` (>30 мин) удаляется автоматически.
-6. Регрессия: остальные точки `signUp` (не payment/lead) продолжают работать корректно.
-7. Ни один сценарий не уносит в `/dashboard` до завершения flow.
+Тесты:
 
-Proof: `.lovable/proofs/inline_auth_return_flow_2026_07.md` — скриншоты Playwright для каждого сценария, включая закрытие вкладки из письма.
+- `src/hooks/__tests__/useAwaitInlineAuthReady.test.ts` — сценарии: polling-only, ускоритель, expired, resend, гонки, unmount.
 
-## 5. Definition of Done
+P3–P8 применяют этот хук; изменений в них не требуется относительно предыдущего плана.
 
-- Discovery-отчёт закоммичен, все точки `signUp`/`useInlineAuth`/`InlineAuthForm` перечислены.
-- Bot username подтверждён пользователем **до** rename-патча.
-- `useAwaitInlineAuthReady` — единственная реализация ожидания; `PaymentDialog` и `LeadRequestDialog` используют её.
-- Условие готовности = email_confirmed_at + valid session + getUser() ok.
-- BroadcastChannel — основной канал; storage/polling/onAuthStateChange — fallback.
-- Flow persistence с TTL 30 мин + автоочистка.
-- `AuthVerifyProxy` — success screen без `?done=1`.
-- **После подтверждения email пользователь ни разу не попадает в `/dashboard`, пока не завершит flow.**
-- Сценарий «закрыл вкладку из письма — исходная вкладка сама продолжила» работает.
-- Playwright proof по всем 7 сценариям.
-
-## 6. Открытый вопрос (блокирует P8)
-
-**Подтвердите единственный официальный username бота** — один из: `@Gorbovo_buy_bot`, `@Gorbova_buy_bot`, `@Gorbova_club_bot`, другое. Пока не подтверждено — bot rename не выполняется.
+После аппрува — приступаю к P2.
