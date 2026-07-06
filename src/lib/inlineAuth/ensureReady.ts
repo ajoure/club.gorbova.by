@@ -83,8 +83,8 @@ export async function ensureInlineAuthReadyWithRetry(opts?: {
   for (let i = 0; i <= retries; i++) {
     last = await ensureInlineAuthReady();
     if (last.ok) return last;
-    const failed: { ok: false; reason: EnsureReadyReason; message?: string } = last;
-    if (failed.reason === "no_session") return failed; // нет смысла ретраить
+    const failed = last as Extract<EnsureReadyResult, { ok: false }>;
+    if (failed.reason === "no_session") return failed;
     if (i < retries) await new Promise((r) => setTimeout(r, delayMs));
   }
   return last;
