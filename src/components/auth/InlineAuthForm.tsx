@@ -47,7 +47,23 @@ export function InlineAuthForm({
   signupCtaLabel = "Зарегистрироваться",
   externalLoading = false,
 }: InlineAuthFormProps) {
+  // PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2: OTP-first inline flow.
+  // Rollback: set VITE_INLINE_AUTH_MODE=link — falls through to legacy password + email-link path.
+  if (INLINE_AUTH_MODE === "otp") {
+    return (
+      <InlineEmailOtpForm
+        initialEmail={initialEmail}
+        onAuthenticated={onAuthenticated}
+        contextNote={contextNote}
+        emailCtaLabel={emailCtaLabel === "Продолжить" ? "Получить код" : emailCtaLabel}
+        externalLoading={externalLoading}
+        collectSignupMeta
+      />
+    );
+  }
+
   const auth = useInlineAuth();
+
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
