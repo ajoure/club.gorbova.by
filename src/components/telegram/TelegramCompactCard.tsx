@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { 
@@ -34,6 +34,12 @@ export function TelegramCompactCard() {
 
   const [linkSession, setLinkSession] = useState<LinkSessionResult | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  // Guard-и, чтобы авто-получение deep_link в pending-статусе выполнялось
+  // максимум один раз на монтирование и не запускалось, если пользователь
+  // явно отменил pending крестиком.
+  const autoStartAttemptedRef = useRef(false);
+  const userCancelledRef = useRef(false);
+  const [autoStartFailed, setAutoStartFailed] = useState(false);
 
   // Fetch club access info
   const { data: clubAccess } = useQuery({
@@ -120,9 +126,17 @@ export function TelegramCompactCard() {
   }, [user?.id, linkSession, refetch]);
 
   const handleStartLink = async () => {
-    const result = await startLink.mutateAsync();
-    if (result.success && result.deep_link) {
-      setLinkSession(result);
+    userCancelledRef.current = false;
+    setAutoStartFailed(false);
+    try {
+      const result = await startLink.mutateAsync();
+      if (result.success && result.deep_link) {
+        setLinkSession(result);
+      } else {
+        setAutoStartFailed(true);
+      }
+    } catch {
+      setAutoStartFailed(true);
     }
   };
 
@@ -135,6 +149,42 @@ export function TelegramCompactCard() {
   const handleCheckStatus = async () => {
     await checkStatus.mutateAsync();
   };
+
+  const handleCancelPending = () => {
+    userCancelledRef.current = true;
+    autoStartAttemptedRef.current = true; // блокируем повторный авто-старт до размонтирования
+    cancelLink.mutate();
+    setLinkSession(null);
+    setAutoStartFailed(false);
+  };
+
+  // Авто-получение deep_link, если сервер уже держит pending-сессию,
+  // а локального linkSession нет. Одна попытка на монтирование, без гонок.
+  useEffect(() => {
+    const currentStatus = linkStatus?.status;
+    if (currentStatus !== 'pending') return;
+    if (linkSession?.deep_link) return;
+    if (autoStartAttemptedRef.current) return;
+    if (userCancelledRef.current) return;
+    if (startLink.isPending) return;
+
+    autoStartAttemptedRef.current = true;
+    (async () => {
+      try {
+        const result = await startLink.mutateAsync();
+        if (result.success && result.deep_link) {
+          setLinkSession(result);
+          setAutoStartFailed(false);
+        } else {
+          setAutoStartFailed(true);
+        }
+      } catch {
+        setAutoStartFailed(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkStatus?.status, linkSession?.deep_link]);
+
 
   if (isStatusLoading) {
     return (
@@ -167,24 +217,49 @@ export function TelegramCompactCard() {
         </div>
 
         <div className="flex gap-1.5">
-          <Button 
+          {linkSession?.deep_link ? (
+            <Button
+              size="sm"
+              onClick={handleOpenTelegram}
+              className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              Открыть
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={handleStartLink}
+              disabled={startLink.isPending}
+              className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
+            >
+              {startLink.isPending ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Получаем ссылку…
+                </>
+              ) : (
+                <>
+                  <Link2 className="h-3 w-3 mr-1" />
+                  Получить ссылку
+                </>
+              )}
+            </Button>
+          )}
+          <Button
             size="sm"
-            onClick={handleOpenTelegram}
-            disabled={!linkSession?.deep_link}
-            className="flex-1 h-7 text-[11px] bg-primary/90 hover:bg-primary"
-          >
-            <ExternalLink className="h-3 w-3 mr-1" />
-            Открыть
-          </Button>
-          <Button 
-            size="sm"
-            variant="ghost" 
-            onClick={() => { cancelLink.mutate(); setLinkSession(null); }}
+            variant="ghost"
+            onClick={handleCancelPending}
             className="h-7 px-2 text-[11px] text-muted-foreground"
           >
             ✕
           </Button>
         </div>
+        {autoStartFailed && !linkSession?.deep_link && !startLink.isPending && (
+          <p className="text-[10px] text-destructive/80">
+            Не удалось получить ссылку автоматически. Нажмите «Получить ссылку».
+          </p>
+        )}
       </div>
     );
   }
