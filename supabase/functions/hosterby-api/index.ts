@@ -1115,25 +1115,37 @@ serve(async (req) => {
           const quoted = raw.startsWith('"') && raw.endsWith('"') ? raw : `"${raw.replace(/"/g, '\\"')}"`;
           return { content: quoted, disabled: r.disabled === true };
         });
-        const body = JSON.stringify({ name: fqdn, ttl, records: normalized });
-        const delBody = JSON.stringify({ name: fqdn });
+        const body = JSON.stringify({ ttl, records: normalized });
+        const encodedName = encodeURIComponent(fqdn);
 
-        // Пробуем PUT (replace recordset); при неудаче — DELETE (query+body) + POST.
-        let res = await hosterRequest("PUT", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
-        let strategy: "put" | "delete_post" = "put";
+        // Правильный эндпоинт hoster.by: PATCH /dns/orders/{orderId}/records/txt/{recordName}
+        // (заменяет весь recordset). Fallback — DELETE + POST.
+        let res = await hosterRequest(
+          "PATCH",
+          `/dns/orders/${orderId}/records/txt/${encodedName}`,
+          body,
+          tokenRes.accessToken,
+        );
+        let strategy: "patch" | "delete_post" = "patch";
         let delResult: unknown = null;
         if (!res.ok) {
           strategy = "delete_post";
-          // Пробуем несколько вариантов DELETE — hoster.by документирует нестабильно.
-          const delQs = new URLSearchParams({ name: fqdn }).toString();
-          const del1 = await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt?${delQs}`, delBody, tokenRes.accessToken);
-          delResult = { del_query_body: { status: del1.status, code: del1.code, data: del1.data } };
-          if (!del1.ok) {
-            const del2 = await hosterRequest("DELETE", `/dns/orders/${orderId}/records/txt`, delBody, tokenRes.accessToken);
-            (delResult as Record<string, unknown>).del_body_only = { status: del2.status, code: del2.code, data: del2.data };
-          }
-          res = await hosterRequest("POST", `/dns/orders/${orderId}/records/txt`, body, tokenRes.accessToken);
+          const del = await hosterRequest(
+            "DELETE",
+            `/dns/orders/${orderId}/records/txt/${encodedName}`,
+            "",
+            tokenRes.accessToken,
+          );
+          delResult = { status: del.status, code: del.code, data: del.data };
+          const createBody = JSON.stringify({ name: fqdn, ttl, records: normalized });
+          res = await hosterRequest(
+            "POST",
+            `/dns/orders/${orderId}/records/txt`,
+            createBody,
+            tokenRes.accessToken,
+          );
         }
+
 
 
         await writeAuditLog(supabaseAdmin, "hosterby.replace_dns_txt_recordset", {
