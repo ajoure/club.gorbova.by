@@ -126,9 +126,17 @@ export function TelegramCompactCard() {
   }, [user?.id, linkSession, refetch]);
 
   const handleStartLink = async () => {
-    const result = await startLink.mutateAsync();
-    if (result.success && result.deep_link) {
-      setLinkSession(result);
+    userCancelledRef.current = false;
+    setAutoStartFailed(false);
+    try {
+      const result = await startLink.mutateAsync();
+      if (result.success && result.deep_link) {
+        setLinkSession(result);
+      } else {
+        setAutoStartFailed(true);
+      }
+    } catch {
+      setAutoStartFailed(true);
     }
   };
 
@@ -141,6 +149,42 @@ export function TelegramCompactCard() {
   const handleCheckStatus = async () => {
     await checkStatus.mutateAsync();
   };
+
+  const handleCancelPending = () => {
+    userCancelledRef.current = true;
+    autoStartAttemptedRef.current = true; // блокируем повторный авто-старт до размонтирования
+    cancelLink.mutate();
+    setLinkSession(null);
+    setAutoStartFailed(false);
+  };
+
+  // Авто-получение deep_link, если сервер уже держит pending-сессию,
+  // а локального linkSession нет. Одна попытка на монтирование, без гонок.
+  useEffect(() => {
+    const currentStatus = linkStatus?.status;
+    if (currentStatus !== 'pending') return;
+    if (linkSession?.deep_link) return;
+    if (autoStartAttemptedRef.current) return;
+    if (userCancelledRef.current) return;
+    if (startLink.isPending) return;
+
+    autoStartAttemptedRef.current = true;
+    (async () => {
+      try {
+        const result = await startLink.mutateAsync();
+        if (result.success && result.deep_link) {
+          setLinkSession(result);
+          setAutoStartFailed(false);
+        } else {
+          setAutoStartFailed(true);
+        }
+      } catch {
+        setAutoStartFailed(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkStatus?.status, linkSession?.deep_link]);
+
 
   if (isStatusLoading) {
     return (
