@@ -90,7 +90,7 @@ describe("useAwaitInlineAuthReady", () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
 
-    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(onReady).toHaveBeenCalledTimes(1);
     expect(result.current.state).toBe("ready");
   });
 
@@ -108,7 +108,7 @@ describe("useAwaitInlineAuthReady", () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
 
-    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(onReady).toHaveBeenCalledTimes(1);
   });
 
   it("expired: onExpired вызван по таймауту 5 мин", async () => {
@@ -167,7 +167,7 @@ describe("useAwaitInlineAuthReady", () => {
       await Promise.resolve(); await Promise.resolve();
     });
 
-    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(onReady).toHaveBeenCalledTimes(1);
   });
 
   it("unmount очищает таймеры (нет вызовов после unmount)", async () => {
