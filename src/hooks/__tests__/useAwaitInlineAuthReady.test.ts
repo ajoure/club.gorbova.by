@@ -86,7 +86,7 @@ describe("useAwaitInlineAuthReady", () => {
     // Переключаем моки на ready и продвигаем polling
     mockReady();
     await act(async () => {
-      vi.advanceTimersByTime(POLL_INTERVAL_MS + 50);
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 50);
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
 
@@ -121,7 +121,7 @@ describe("useAwaitInlineAuthReady", () => {
     await act(async () => { await Promise.resolve(); });
 
     await act(async () => {
-      vi.advanceTimersByTime(WAIT_TIMEOUT_MS + 100);
+      await vi.advanceTimersByTimeAsync(WAIT_TIMEOUT_MS + 100);
       await Promise.resolve();
     });
 
@@ -163,7 +163,7 @@ describe("useAwaitInlineAuthReady", () => {
       publishInlineAuthEvent({ type: "email_confirmed", flowId: "f1" });
       // Триггерим onAuthStateChange listeners
       for (const l of authMock._listeners) l("USER_UPDATED", {});
-      vi.advanceTimersByTime(POLL_INTERVAL_MS * 2);
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
       await Promise.resolve(); await Promise.resolve();
     });
 
@@ -182,7 +182,7 @@ describe("useAwaitInlineAuthReady", () => {
     unmount();
 
     await act(async () => {
-      vi.advanceTimersByTime(WAIT_TIMEOUT_MS + POLL_INTERVAL_MS * 3);
+      await vi.advanceTimersByTimeAsync(WAIT_TIMEOUT_MS + POLL_INTERVAL_MS * 3);
       await Promise.resolve();
     });
 
@@ -200,7 +200,7 @@ describe("useAwaitInlineAuthReady", () => {
       useAwaitInlineAuthReady({ email: "u@e.com", flowId: "f1", enabled: true, onReady }),
     );
     await act(async () => {
-      vi.advanceTimersByTime(POLL_INTERVAL_MS + 50);
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 50);
       await Promise.resolve(); await Promise.resolve();
     });
     expect(result.current.state).toBe("waiting_confirm");
