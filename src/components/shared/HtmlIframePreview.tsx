@@ -50,7 +50,8 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   try {
     var st = document.createElement('style');
     st.setAttribute('${BRIDGE_MARKER}', '1');
-    st.textContent = 'html,body{overflow:visible !important;height:auto !important;}';
+    st.textContent = 'html,body{overflow:visible !important;height:auto !important;}'
+      + ' #t-footer,.t-footer,.t-tildalabel,a[href="https://tilda.cc/"],a[href="http://tilda.cc/"],a[href^="https://tilda.cc"]{display:none !important;visibility:hidden !important;height:0 !important;overflow:hidden !important;}';
     (document.head || document.documentElement).appendChild(st);
   } catch (e) {}
 
