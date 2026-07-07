@@ -1,68 +1,62 @@
-## Диагноз
 
-Страница `gorbova.by/cb` = site_pages.id `d5a5c2e0-…`, единственный HTML-блок (~3 МБ Tilda-экспорт CB 2.0 2026), рендерится в песочнице `HtmlIframePreview` (`sandbox="allow-scripts allow-forms allow-popups …"`, без `allow-same-origin`).
+## План: очистка блока «Как открыть доступ» + динамические кнопки оплаты на /cb
 
-Причины наблюдаемых сбоев:
+### Контекст
+- Страница `site_pages.slug='cb'` (id `d5a5c2e0-…`) — один html-блок (Tilda-выгрузка) в iframe (`HtmlIframePreview`).
+- Страница уже связана: `site_pages.product_id = 7101ed3c-…` = продукт `cb20` («Ценный бухгалтер | 1 ступень 2.0»).
+- Продукт `cb20` содержит 3 тарифа и по одному офферу «Оплатить обучение» (pay_now, full_payment):
+  - Бухгалтер — 1650 BYN — offer `29b0ee41-…`
+  - Главный бухгалтер — 1950 BYN — offer `badded0d-…`
+  - Бизнес-леди — 2650 BYN — offer `c667880e-…`
+- На сайте кнопки «Оплатить обучение» сейчас ведут в Tilda-поп-апы: `#popup:buh` (Бухгалтер), `#popup:gl_buh` (Главный бухгалтер), `#popup:biz-l` (Бизнес-леди). Это стабильный ключ маппинга «карточка → тариф».
+- Блок «Как открыть доступ» — Tilda-контейнер `<div id="rec776467190">…</div>` (сразу перед футером `rec1739234301`).
 
-1. **«Узнать подробнее»** — ссылка `<a href="#podrobnee">`, а якорь в HTML определён по-старому: `<a name="podrobnee">`. Bridge в `HtmlIframePreview` (`BRIDGE_SCRIPT`, строка 309) ищет цель только через `document.getElementById(id)`, не находит и «отпускает» клик. В srcdoc-iframe навигация по `#podrobnee` без соответствующего `id` ничего не делает — кнопка выглядит мёртвой.
-2. **«?» над «Рассрочка»** и остальные тултипы `data-tooltip-hook="#popup:…"` — Tilda-попапы (`t706`) внутри iframe остаются `position: fixed; inset: 0` относительно ICB iframe высотой ~60 000 px. Наш repack фиксированных оверлеев исключает `t-popup*` (строка 117), поэтому попап открывается, но «уезжает» к самому верху документа iframe и в видимом viewport parent-страницы его не видно → визуально «не работает».
-3. **Слайдер «Свайпай влево»** — Tilda-галерея (`t396` + `t-slds`). Кнопки-стрелки и touch внутри iframe работают, но wheel event перехватывается bridge и релеится parent’у (`iframe-wheel`), поэтому горизонтальный свайп тачпадом уходит в scroll родителя, а не в слайдер. Также кнопки навигации у слайдера отсутствуют в разметке — Tilda-JS их не инициализирует полностью из-за отсутствия `allow-same-origin` (использует `localStorage`).
-4. **Пустое пространство ниже футера** — под последним `rec1739234301` (Tilda-footer) ещё несколько скрытых Tilda-декораций и большие спейсеры контейнера с высотой `500 px` при пустом контенте. Родительский iframe получает `scrollHeight` включающий эти пустые артборды.
-5. **Замена футера** — сейчас последний `rec1739234301` («КАТЕРИНА GORBOVA + АЖУР инкам…») нужно полностью выкинуть и вставить единый футер как на `gorbowa.club` (уже лежит в `.lovable/artifacts/gorbova-footer.html`) с ссылками на публичную оферту / заказ и оплату / соцсети — все с `target="_blank" rel="noopener"`.
-6. **Кнопка «Скачать»** (GetCourse-гайд): `<a href="https://drive.google.com/…" target="_blank">Скачать</a>`. Нужно снять `href` и `target`, оставив визуально ту же кнопку, но неактивной.
-7. **Тарифный блок** — не трогаем.
+Другие кнопки в карточках (Заявка на рассрочку, Оплатить от юрлица) не трогаем — оставим Tilda-поведение, пользователь подключит их отдельным патчем.
 
-## План
+### Что делаем
 
-### 1. Патч HTML-блока в `site_pages` (rec1739234301 → новый футер, «Скачать» → без ссылки)
+#### 1. Удаляем блок «Как открыть доступ» (SQL-миграция)
+- В `site_pages.blocks[0].content.code` вырезаем контейнер `<div id="rec776467190" …>…</div>` целиком (по стабильному rec-id, регэксп нежадный до закрывающего `</div>` уровня секции). Дальше рядом остаётся футер `rec1739234301` — его не трогаем.
+- Ставим маркер-версию `data-lovable-cb20-remove-rec776467190-v1="1"` рядом с началом футера, чтобы можно было верифицировать применение SQL.
+- Верификация: `position('rec776467190' in code) = 0` и маркер найден.
 
-Скрипт `.lovable/artifacts/patch_cb20_footer_download.py` (по образцу `patch_site018_hero.py`):
+#### 2. Добавляем стабильные атрибуты для кнопок оплаты (SQL-миграция, тем же файлом)
+Для каждой из трёх ссылок `<a class="tn-atom" href="#popup:{buh|gl_buh|biz-l}">…Оплатить обучение…</a>` добавляем data-атрибуты:
+- `data-lovable-pay="1"`
+- `data-lovable-tariff-key="buh" | "gl_buh" | "biz-l"`
 
-- Читает `blocks[0].content.code` записи `site_pages.id = d5a5c2e0-9e4c-4e6c-b9bc-1e4bd264d656` через сервис-роль.
-- Сохраняет `before` в `.lovable/artifacts/cb20-before.html`.
-- Находит блок `<div id="rec1739234301" class="r t-rec" …>…</div>` (последний rec) и заменяет всё его содержимое на компактный обёрнутый в `<div id="rec1739234301" …>` HTML клубного футера (адаптированный из `.lovable/artifacts/gorbova-footer.html`), где:
-  - все `<a href>` = абсолютные URL клуба (`https://gorbova.by/offer`, `https://gorbova.by/order-payment`, соцсети) с `target="_blank" rel="noopener"`.
-  - убраны `target="_top"` (в песочнице top-navigation закрыт).
-  - фон/типографика — как на клубе (тёмный `#1a0a0e`, `Inter`).
-- Находит уникальный `<a class="tn-atom" href="https://drive.google.com/file/d/1UCPrOtSnAey0t8cEyWGam_7TcYzftqxF/view" target="_blank" rel="noopener">…<span…>Скачать</span></a>` и превращает его в тот же элемент без `href`/`target`/`rel` (обычный `<a class="tn-atom" aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:0.6">…</a>`), кнопка остаётся визуально, но не ведёт никуда.
-- Пишет `after` в `.lovable/artifacts/cb20-after.html` и обновляет `blocks` в БД (одно UPDATE).
-- В отчёте: diff по длине, число заменённых узлов (ожидаем: 1 футер, 1 «Скачать»).
+Ничего другого в HTML не меняем — Tilda-поп-апы других кнопок продолжают работать по-прежнему.
 
-Идемпотентность: при повторном запуске detect по маркеру `data-lovable-cb20-footer-v1` — если уже есть, пропуск.
+#### 3. Прокидываем продукт cb20 в html-блок (frontend)
+- В `src/pages/SitePageBySlug.tsx`: если `page.product_id` задан — подтянуть его через уже существующий `usePublicProduct({ productId })` и передать в `SitePageRenderer` новым пропом `linkedProduct` (product + tariffs с офферами).
+- В `src/components/site-renderer/SitePageRenderer.tsx`: пробросить `linkedProduct` в `HtmlSection`.
+- В `src/components/site-renderer/blocks/HtmlSection.tsx`: передать `linkedProduct` в `HtmlIframePreview` новым опциональным пропом `paymentBridge`.
 
-### 2. Правка `src/components/shared/HtmlIframePreview.tsx` (bridge)
+Никаких новых таблиц/эндпоинтов — только использование существующего `usePublicProduct` и `PaymentDialog`.
 
-Минимальные, локальные правки в `BRIDGE_SCRIPT` (bump `BRIDGE_MARKER` → `v4`):
+#### 4. Мост «iframe → PaymentDialog» в `HtmlIframePreview`
+- Bump `BRIDGE_MARKER` до `v6`.
+- Строим статический маппинг `tariffKey → { tariffId, tariff, primaryPayOffer }` из `paymentBridge.tariffs` (правило: `offer_type === 'pay_now'` c минимальной ценой; если оффера нет — кнопка остаётся с исходным `href="#popup:…"`).
+  - Ключ карточки определяется по позиции карточки в Tilda-разметке (1-й `data-lovable-tariff-key="buh"` → первый тариф продукта по возрастанию amount и т.д.). Сначала используем прямое соответствие по amount (1650→buh, 1950→gl_buh, 2650→biz-l), чтобы порядок не сломался, если админ поменяет сортировку.
+- В inject-скрипт iframe добавляем обработчик: для всех `a[data-lovable-pay="1"]` с известным маппингом:
+  - убираем Tilda popup-click, вешаем свой click → `parent.postMessage({ type: 'lovable:openPayment', offerId, tariffId, productId, tariffKey }, '*')`;
+  - остальные `#popup:*` не трогаем.
+- Родитель (`HtmlIframePreview` в React-контексте) слушает сообщение и монтирует уже существующий `PaymentDialog` (как в `ProductLanding.tsx`) с теми же параметрами (offerId, price, tariffCode, paymentMethod, isTrial=false, isClubProduct=false, isSubscription=false — офферы pay_now/full_payment).
 
-a. **Якорь `<a name="…">`**: в обработчике клика по `href="#id"` — если `document.getElementById(id)` вернул `null`, дополнительно искать `document.querySelector('a[name="'+CSS.escape(id)+'"], [id="'+CSS.escape(id)+'"]')`. При нахождении — считать `top` по нему и постить `iframe-anchor` (как сейчас). Решает «Узнать подробнее».
+Дизайн Tilda-кнопок не меняем — только перехват click, визуал остаётся прежним.
 
-b. **Repack Tilda-попапов**: убрать `t-popup*` из чёрного списка `isFullscreenFixedOverlay` (строка 117) и добавить отдельный, более узкий фильтр: repack применяем к `t-popup` только когда `getComputedStyle(el).display !== 'none'` **и** `el.offsetHeight > 0`. При закрытии попапа (`display:none` → observer срабатывает) — `restoreFixedOverlay`. Это делает Tilda-попапы (в т.ч. «?»-тултипы) видимыми в viewport родителя.
+### Что НЕ входит в этот патч (по явной просьбе)
+- Не рендерим тарифные карточки динамически — Tilda-разметка остаётся.
+- Не подключаем «Заявка на рассрочку» и «Оплатить от юрлица» — сделаем отдельным патчем, когда пользователь настроит соответствующие офферы в продукте.
+- Не добавляем блок `pricing` — визуально сохраняем текущую Tilda-раскладку.
 
-c. **Горизонтальный wheel не отдавать родителю**: в обработчике `wheel` не постить `iframe-wheel`, если `Math.abs(deltaX) > Math.abs(deltaY)` — оставляем горизонтальный скролл внутри iframe (Tilda-слайдер его использует). Вертикальный wheel как сейчас релеится в parent.
+### Verify (Definition of Done)
+- В preview `/cb`: блока «Как открыть доступ» больше нет; сразу под FAQ идёт футер.
+- Клик по «Оплатить обучение» в любой из 3 карточек → открывается `PaymentDialog` с корректной суммой (1650/1950/2650) и тарифом.
+- Остальные кнопки (Заявка на рассрочку, Оплатить от юрлица) продолжают вести на Tilda-поп-апы / внешнюю ссылку без изменений.
+- Playwright-скрин каждой из 3 карточек с открытым `PaymentDialog`.
+- Скрин страницы после удаления блока (нет пустой розовой секции с «СКАЧАТЬ»).
 
-### 3. Верификация (после build-mode, до финального ответа)
-
-- `tsgo` по `HtmlIframePreview.tsx`.
-- Playwright headless: открыть `http://localhost:8080/` c hostname override на `cb.gorbova.by` невозможен — вместо этого открыть `http://localhost:8080/` через SitePageBySlug: `/cb` (публичный slug). Проверить:
-  1. Клик «Узнать подробнее» → страница проскроллила к секции «подробнее».
-  2. Клик «?» рядом с «Рассрочка» → попап открылся в видимой части viewport.
-  3. Скролл до низа страницы → внизу новый клубный футер, ссылки в новой вкладке, нет «АЖУР инкам»-Tilda-футера, пустого места после футера нет.
-  4. Кнопка «Скачать» — курсор `default`, клик ничего не делает.
-- Скриншоты кладём в `/tmp/browser/cb20/screenshots/`.
-
-### 4. Definition of Done
-
-- Кнопка «Узнать подробнее» скроллит к целевой секции.
-- «?» над «Рассрочка» и аналогичные тултипы открывают попап в видимой области.
-- Свайп-блок «Кейсы моих учеников» листается тачпадом/трекпадом (горизонтальный wheel не уходит в parent).
-- Внизу страницы клубный футер вместо Tilda-футера, все ссылки внешние, `target="_blank"`.
-- Кнопка «Скачать» без ссылки.
-- Тарифный блок не изменён.
-- Патч идемпотентен, есть `before`/`after` артефакты.
-- Отчёт о выполнении на русском по формату ENGINEERING_RULES.
-
-### Что НЕ входит
-
-- Настройка кнопок «Оплатить обучение / Внести бронь / Заявка на рассрочку / Оплатить от юрлица» в тарифах — отдельный патч (по слову пользователя).
-- Изменения в схеме БД, RLS, edge functions.
-- Правки других site_pages / других HTML-блоков.
+### Технические заметки
+- Изменяемые файлы: SQL-миграция; `src/pages/SitePageBySlug.tsx`; `src/components/site-renderer/SitePageRenderer.tsx`; `src/components/site-renderer/blocks/HtmlSection.tsx`; `src/components/shared/HtmlIframePreview.tsx`.
+- Никаких изменений схемы БД, RLS/GRANT, edge-функций.
