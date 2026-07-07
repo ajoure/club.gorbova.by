@@ -299,6 +299,10 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var a = findAnchor(ev.target);
     if (!a) return;
 
+    // Anchors carrying a site-action are handled by the site-action bridge below.
+    // Skip anchor intercept so we do not stopPropagation the site-action listener.
+    if (a.getAttribute && a.getAttribute('data-lovable-action')) return;
+
     var rawHref = a.getAttribute('href');
     if (rawHref === null) return;
 
