@@ -89,11 +89,9 @@ export default function PaymentsStatsPanel({
       if (isSuccess) {
         successCount += 1;
         addTo(successful, currency, amount);
-        const meta = (p as unknown as { meta?: Record<string, unknown> | null }).meta;
-        if (meta && typeof meta === 'object' && 'commission_total' in meta) {
-          const fee = parseNumeric((meta as Record<string, unknown>).commission_total);
-          if (fee) addTo(commission, currency, fee);
-        }
+        // commission_total is exposed at top level by useUnifiedPayments (extracted from bePaid meta).
+        const fee = parseNumeric((p as unknown as { commission_total?: number | string | null }).commission_total);
+        if (fee) addTo(commission, currency, fee);
       } else if (isRefund) {
         refundCount += 1;
         addTo(refunded, currency, Math.abs(amount));
