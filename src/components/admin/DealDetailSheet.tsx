@@ -123,6 +123,7 @@ const getActionLabel = (action: string): string => {
 export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteWithPayments, setDeleteWithPayments] = useState(false); // dangerous mode
