@@ -218,6 +218,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+    queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-contacts"] });
     queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });

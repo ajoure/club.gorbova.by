@@ -433,6 +433,8 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       const row = list.find((d: any) => d?.user_id === userId);
       if (row?.last_message_at) return String(row.last_message_at);
     }
+    const visibleRow = dialogs.find((d) => d.user_id === userId);
+    if (visibleRow?.last_message_at) return String(visibleRow.last_message_at);
     return null;
   };
 
