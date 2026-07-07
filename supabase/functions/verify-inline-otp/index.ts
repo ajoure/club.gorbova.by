@@ -114,20 +114,28 @@ Deno.serve(async (req) => {
     [meta.firstName, meta.lastName].filter(Boolean).join(" ") ||
     undefined;
 
-  // Find user by email via admin.listUsers (paginated). For most projects the
-  // first page (per_page=200) is enough for identify — otherwise we fall back
-  // to createUser and treat duplicate error as "exists".
+  // Find user by email via admin.listUsers (paginated up to 50k users).
+  // Older accounts sink past page 1 (created_at DESC), so a single-page lookup
+  // locked existing users out of the OTP flow. Mirror auth-check-email pagination.
   let userId: string | null = null;
   let isNew = false;
 
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 50;
   try {
-    const { data: usersPage, error: listErr } = await (supabase.auth.admin as any)
-      .listUsers({ page: 1, perPage: 200 });
-    if (!listErr && usersPage?.users) {
-      const match = usersPage.users.find(
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const { data: usersPage, error: listErr } = await (supabase.auth.admin as any)
+        .listUsers({ page, perPage: PAGE_SIZE });
+      if (listErr) {
+        console.warn("[verify-inline-otp] listUsers page", page, "failed:", listErr.message);
+        break;
+      }
+      const users = usersPage?.users ?? [];
+      const match = users.find(
         (u: any) => (u.email || "").toLowerCase() === email,
       );
-      if (match) userId = match.id;
+      if (match) { userId = match.id; break; }
+      if (users.length < PAGE_SIZE) break;
     }
   } catch (e) {
     console.warn("[verify-inline-otp] listUsers failed:", (e as Error).message);
