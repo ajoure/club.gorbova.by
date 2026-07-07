@@ -63,13 +63,16 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
   const { data: comments, isLoading } = useQuery({
     queryKey: ["live-event-comments", liveEventId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: rawDesc, error } = await supabase
         .from("live_event_comments")
         .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
         .eq("live_event_id", liveEventId)
-        .order("created_at", { ascending: true })
+        .order("created_at", { ascending: false })
         .limit(200);
       if (error) throw error;
+      // Берём последние 200 (DESC), затем разворачиваем к ASC для рендера сверху-вниз.
+      // Раньше при >200 комментариях новейшие "исчезали" из выборки.
+      const data = (rawDesc || []).slice().reverse();
 
       // Legacy fallback: тянем ТОЛЬКО avatar_url, имя берётся из snapshot (см. resolveDisplayName).
       // Минимизация данных: никаких email/phone/admin-данных в participant-facing UI.
