@@ -202,8 +202,9 @@ Deno.serve(async (req) => {
         );
       };
 
-      if (accessRules && accessRules.length > 0) {
+      if (!accessValid && accessRules && accessRules.length > 0) {
         for (const rule of accessRules) {
+          if (rule.rule_kind === 'any_authenticated' || !rule.product_id) continue;
           const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
           let productOk = false;
           if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
