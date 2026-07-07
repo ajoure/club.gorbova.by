@@ -950,9 +950,18 @@ export default function AdminLiveEvents() {
   // Sync loaded rules into form when editing
   useMemo(() => {
     if (!existingRules || !editingId) return;
+    const rows = existingRules as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
+
+    // Any-authenticated preset short-circuits product grouping
+    if (rows.some(r => r.rule_kind === "any_authenticated")) {
+      setForm(f => ({ ...f, access_rules: [{ rule_kind: "any_authenticated", product_id: "", tariff_ids: [] }] }));
+      return;
+    }
+
     type Group = { tariff_ids: string[]; match_purchase_month: boolean };
     const grouped = new Map<string, Group>();
-    for (const row of existingRules as Array<{ product_id: string; tariff_id: string | null; conditions?: any }>) {
+    for (const row of rows) {
+      if (!row.product_id) continue;
       const pid = row.product_id;
       if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
       const g = grouped.get(pid)!;
@@ -961,6 +970,7 @@ export default function AdminLiveEvents() {
       if (cond?.match_purchase_month === true) g.match_purchase_month = true;
     }
     const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
+      rule_kind: "product",
       product_id,
       tariff_ids: g.tariff_ids,
       match_purchase_month: g.match_purchase_month,
