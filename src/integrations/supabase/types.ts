@@ -8875,7 +8875,8 @@ export type Database = {
           created_at: string
           id: string
           live_event_id: string
-          product_id: string
+          product_id: string | null
+          rule_kind: string
           sort_order: number
           tariff_id: string | null
         }
@@ -8884,7 +8885,8 @@ export type Database = {
           created_at?: string
           id?: string
           live_event_id: string
-          product_id: string
+          product_id?: string | null
+          rule_kind?: string
           sort_order?: number
           tariff_id?: string | null
         }
@@ -8893,7 +8895,8 @@ export type Database = {
           created_at?: string
           id?: string
           live_event_id?: string
-          product_id?: string
+          product_id?: string | null
+          rule_kind?: string
           sort_order?: number
           tariff_id?: string | null
         }

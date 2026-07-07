@@ -164,8 +164,14 @@ Deno.serve(async (req) => {
       // Try new multi-rule table first
       const { data: accessRules } = await supabase
         .from('live_event_access_rules')
-        .select('id, product_id, tariff_id, conditions')
+        .select('id, product_id, tariff_id, conditions, rule_kind')
         .eq('live_event_id', event.id);
+
+      // Fast path: any_authenticated grants access to any signed-in user
+      // (auth was already verified above; anonymous callers never reach this point).
+      if (accessRules && accessRules.some((r: any) => r.rule_kind === 'any_authenticated')) {
+        accessValid = true;
+      }
 
       // Month-gate context: derived from event.metadata.content_month
       const eventMeta = (event.metadata || {}) as Record<string, any>;
@@ -196,8 +202,9 @@ Deno.serve(async (req) => {
         );
       };
 
-      if (accessRules && accessRules.length > 0) {
+      if (!accessValid && accessRules && accessRules.length > 0) {
         for (const rule of accessRules) {
+          if (rule.rule_kind === 'any_authenticated' || !rule.product_id) continue;
           const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
           let productOk = false;
           if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
@@ -271,7 +278,7 @@ Deno.serve(async (req) => {
             break;
           }
         }
-      } else {
+      } else if (!accessValid && (!accessRules || accessRules.length === 0)) {
         // Legacy fallback: use access_rule from event
         const accessRule = event.access_rule as AccessRule;
 

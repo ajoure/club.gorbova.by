@@ -340,7 +340,7 @@ export default function AdminLiveEvents() {
       if (!editingId) return [];
       const { data } = await supabase
         .from("live_event_access_rules")
-        .select("product_id, tariff_id, sort_order, conditions")
+        .select("product_id, tariff_id, sort_order, conditions, rule_kind")
         .eq("live_event_id", editingId)
         .order("sort_order");
       return data || [];
@@ -488,8 +488,10 @@ export default function AdminLiveEvents() {
       }
     }
 
+    const hasAnyAuthenticated = form.access_rules.some(r => r.rule_kind === "any_authenticated");
+    const hasProductRules = form.access_rules.some(r => r.rule_kind !== "any_authenticated" && r.product_id);
     items.push(
-      { key: "access", label: "Указано, кто может войти на эфир", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
+      { key: "access", label: "Указано, кто может войти на эфир", ok: hasAnyAuthenticated || hasProductRules, blocker: true },
       { key: "replay", label: "Запись будет доступна после завершения", ok: form.replay_enabled, blocker: false },
     );
 
@@ -545,13 +547,21 @@ export default function AdminLiveEvents() {
     }
     setCreatingLiveEvent(true);
     try {
+      const KINESCOPE_NAME_MAX = 140;
+      const rawName = (form.title || "Новый эфир").trim();
+      const safeName = rawName.length > KINESCOPE_NAME_MAX
+        ? rawName.slice(0, KINESCOPE_NAME_MAX).trim()
+        : rawName;
+      if (rawName.length > KINESCOPE_NAME_MAX) {
+        toast.info(`Название эфира в Kinescope усечено до ${KINESCOPE_NAME_MAX} символов (ограничение провайдера).`);
+      }
       const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: {
           action: "create_live_event",
           instance_id: kinescopeInstanceId,
           folder_id: form.kinescope_folder_id,
           project_id: form.kinescope_project_id || undefined,
-          name: form.title || "Новый эфир",
+          name: safeName,
         },
       });
 
@@ -800,23 +810,44 @@ export default function AdminLiveEvents() {
 
       if (eventId) {
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
-        const validRules = data.access_rules.filter(r => r.product_id);
-        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number; conditions: Record<string, any> }> = [];
 
-        validRules.forEach((rule, ruleIdx) => {
-          const conditions: Record<string, any> = {};
-          if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
-          if (rule.tariff_ids.length === 0) {
-            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions });
-          } else {
-            rule.tariff_ids.forEach((tariffId, tIdx) => {
-              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions });
-            });
-          }
-        });
+        const hasAnyAuth = data.access_rules.some(r => r.rule_kind === "any_authenticated");
+        const rows: Array<{
+          live_event_id: string;
+          product_id: string | null;
+          tariff_id: string | null;
+          sort_order: number;
+          conditions: Record<string, any>;
+          rule_kind: "product" | "any_authenticated";
+        }> = [];
+
+        if (hasAnyAuth) {
+          // Any-authenticated is mutually exclusive with product rules.
+          rows.push({
+            live_event_id: eventId!,
+            product_id: null,
+            tariff_id: null,
+            sort_order: 0,
+            conditions: {},
+            rule_kind: "any_authenticated",
+          });
+        } else {
+          const validRules = data.access_rules.filter(r => r.rule_kind !== "any_authenticated" && r.product_id);
+          validRules.forEach((rule, ruleIdx) => {
+            const conditions: Record<string, any> = {};
+            if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
+            if (rule.tariff_ids.length === 0) {
+              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions, rule_kind: "product" });
+            } else {
+              rule.tariff_ids.forEach((tariffId, tIdx) => {
+                rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions, rule_kind: "product" });
+              });
+            }
+          });
+        }
 
         if (rows.length > 0) {
-          const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows);
+          const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows as any);
           if (rulesError) throw rulesError;
         }
       }
@@ -841,7 +872,7 @@ export default function AdminLiveEvents() {
         if (isLiveStream && !form.scheduled_at) missing.push("дата и время эфира");
         if (isLiveStream && !form.kinescope_live_event_id) missing.push("живой эфир в Kinescope");
         if (!isLiveStream && !form.kinescope_video_id) missing.push("видео Kinescope");
-        if (form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
+        if (!form.access_rules.some(r => r.rule_kind === "any_authenticated") && form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
         
         if (missing.length > 0) {
           toast.info(`Для приглашений осталось: ${missing.join(", ")}`, { duration: 8000 });
@@ -927,9 +958,18 @@ export default function AdminLiveEvents() {
   // Sync loaded rules into form when editing
   useMemo(() => {
     if (!existingRules || !editingId) return;
+    const rows = existingRules as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
+
+    // Any-authenticated preset short-circuits product grouping
+    if (rows.some(r => r.rule_kind === "any_authenticated")) {
+      setForm(f => ({ ...f, access_rules: [{ rule_kind: "any_authenticated", product_id: "", tariff_ids: [] }] }));
+      return;
+    }
+
     type Group = { tariff_ids: string[]; match_purchase_month: boolean };
     const grouped = new Map<string, Group>();
-    for (const row of existingRules as Array<{ product_id: string; tariff_id: string | null; conditions?: any }>) {
+    for (const row of rows) {
+      if (!row.product_id) continue;
       const pid = row.product_id;
       if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
       const g = grouped.get(pid)!;
@@ -938,6 +978,7 @@ export default function AdminLiveEvents() {
       if (cond?.match_purchase_month === true) g.match_purchase_month = true;
     }
     const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
+      rule_kind: "product",
       product_id,
       tariff_ids: g.tariff_ids,
       match_purchase_month: g.match_purchase_month,

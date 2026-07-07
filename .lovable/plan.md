@@ -1,62 +1,114 @@
+## да, согласен, с учетом правок:
 
-## План: очистка блока «Как открыть доступ» + динамические кнопки оплаты на /cb
+1. **Не дублируй access-логику в** `live-resolve`**.**  
+`any_authenticated` должен стать частью **единого SoT** через `live_event_access_rules` + `has_access_to_event`.  
+То есть:
+  &nbsp;
+  &nbsp;
+  - миграция расширяет `live_event_access_rules`;
+  - `has_access_to_event` учит новый `rule_kind`;
+  - `live-resolve` продолжает звать **тот же** RPC, а не получает второй параллельный branch с отдельной логикой доступа.  
+  Иначе будет раздвоение правил доступа, что противоречит архитектуре single-path / duplication prevention.  
+2. **DDL надо зафиксировать жёстче.**  
+Для `live_event_access_rules` добавь в план:
+  - `rule_kind text not null default 'product' check (rule_kind in ('product','any_authenticated'))`;
+  - `product_id` nullable **только** при `rule_kind='any_authenticated'`;
+  - `tariff_id` должен быть `null` при `rule_kind='any_authenticated'`;
+  - backfill existing rows: `rule_kind='product'`;
+  - индекс минимум на `(live_event_id, rule_kind)`; при необходимости partial index для `rule_kind='product'`.  
+  Это нужно, чтобы новая модель не стала “мягкой” и не породила мусорные строки.
+3. **В UI и в save-path надо менять не только blocker, но и сам контракт формы.**  
+В план добавь явно:
+  - `LiveEventAccessRulesEditor` и его value contract расширяются полем `rule_kind`;
+  - `AdminLiveEvents.tsx` при save/read должен корректно читать и писать `rule_kind`;
+  - режим `any_authenticated` должен быть **взаимоисключающим** с product/tariff rules в одной сохранённой конфигурации.  
+  Иначе получится смешанный state, который потом трудно интерпретировать.
+4. `any_authenticated` **— это только “любой залогиненный”, не “публичный эфир”.**  
+В плане это надо зафиксировать явно:
+  - анонимный доступ по `/live/:slug` по-прежнему запрещён;
+  - `/live-access/<token>` без сессии по-прежнему ведёт в auth;
+  - `required_one_time` / invite-token flow не меняется.  
+  Это нужно указать в границах патча, чтобы подрядчик не начал “по дороге” делать public access.
+5. **Фикс 140 символов должен быть canonical на backend, UI — только предупреждает.**  
+Правильно делать усечение в edge, а в UI:
+  - предупреждать;
+  - можно превентивно обрезать перед отправкой;
+  - но source of truth всё равно backend.  
+  В отчёте потом нужен proof, что даже при длинном названии запрос не падает и сохраняется корректный `kinescope_live_event_id`.
+6. **Verify дополни машинно-проверяемыми пунктами.**  
+Добавь в DoD:
+  - SQL-proof: новая строка `live_event_access_rules` с `rule_kind='any_authenticated'`, `product_id is null`, `tariff_id is null`;
+  - regression-proof на 3 старых эфирах: before/after результат `has_access_to_event` для старых `product`-правил идентичен;
+  - proof на logged-in user без продукта и без invite-token: `/live/<slug>` открывается;
+  - proof на anonymous user: редирект в auth сохраняется.
+7. **Границы патча оставь жёсткими.**  
+Отдельно допиши:
+  - не меняем `live_events`;
+  - не меняем invite-token модель;
+  - не меняем room/chat/autowebinar;
+  - не создаём новый источник истины доступа;
+  - не вводим фиктивные продукты и обходные compatibility-слои поверх `rule_kind`.
 
-### Контекст
-- Страница `site_pages.slug='cb'` (id `d5a5c2e0-…`) — один html-блок (Tilda-выгрузка) в iframe (`HtmlIframePreview`).
-- Страница уже связана: `site_pages.product_id = 7101ed3c-…` = продукт `cb20` («Ценный бухгалтер | 1 ступень 2.0»).
-- Продукт `cb20` содержит 3 тарифа и по одному офферу «Оплатить обучение» (pay_now, full_payment):
-  - Бухгалтер — 1650 BYN — offer `29b0ee41-…`
-  - Главный бухгалтер — 1950 BYN — offer `badded0d-…`
-  - Бизнес-леди — 2650 BYN — offer `c667880e-…`
-- На сайте кнопки «Оплатить обучение» сейчас ведут в Tilda-поп-апы: `#popup:buh` (Бухгалтер), `#popup:gl_buh` (Главный бухгалтер), `#popup:biz-l` (Бизнес-леди). Это стабильный ключ маппинга «карточка → тариф».
-- Блок «Как открыть доступ» — Tilda-контейнер `<div id="rec776467190">…</div>` (сразу перед футером `rec1739234301`).
+&nbsp;
 
-Другие кнопки в карточках (Заявка на рассрочку, Оплатить от юрлица) не трогаем — оставим Tilda-поведение, пользователь подключит их отдельным патчем.
+В остальном направление правильное: это именно **патч к существующей модели эфиров**, без дубля функционала и без параллельного контура.
 
-### Что делаем
+&nbsp;
 
-#### 1. Удаляем блок «Как открыть доступ» (SQL-миграция)
-- В `site_pages.blocks[0].content.code` вырезаем контейнер `<div id="rec776467190" …>…</div>` целиком (по стабильному rec-id, регэксп нежадный до закрывающего `</div>` уровня секции). Дальше рядом остаётся футер `rec1739234301` — его не трогаем.
-- Ставим маркер-версию `data-lovable-cb20-remove-rec776467190-v1="1"` рядом с началом футера, чтобы можно было верифицировать применение SQL.
-- Верификация: `position('rec776467190' in code) = 0` и маркер найден.
+План
 
-#### 2. Добавляем стабильные атрибуты для кнопок оплаты (SQL-миграция, тем же файлом)
-Для каждой из трёх ссылок `<a class="tn-atom" href="#popup:{buh|gl_buh|biz-l}">…Оплатить обучение…</a>` добавляем data-атрибуты:
-- `data-lovable-pay="1"`
-- `data-lovable-tariff-key="buh" | "gl_buh" | "biz-l"`
+### Отчёт по аудиту вкладки «Эфиры»
 
-Ничего другого в HTML не меняем — Tilda-поп-апы других кнопок продолжают работать по-прежнему.
+**1. Ошибка «Не удалось создать эфир: HTTP 400» (edge-логи `kinescope-api`)**
 
-#### 3. Прокидываем продукт cb20 в html-блок (frontend)
-- В `src/pages/SitePageBySlug.tsx`: если `page.product_id` задан — подтянуть его через уже существующий `usePublicProduct({ productId })` и передать в `SitePageRenderer` новым пропом `linkedProduct` (product + tariffs с офферами).
-- В `src/components/site-renderer/SitePageRenderer.tsx`: пробросить `linkedProduct` в `HtmlSection`.
-- В `src/components/site-renderer/blocks/HtmlSection.tsx`: передать `linkedProduct` в `HtmlIframePreview` новым опциональным пропом `paymentBridge`.
+Kinescope REST API отклоняет запрос `POST /live/events` с сообщением:
 
-Никаких новых таблиц/эндпоинтов — только использование существующего `usePublicProduct` и `PaymentDialog`.
+```
+"name must be less than or equal 140 characters"
+```
 
-#### 4. Мост «iframe → PaymentDialog» в `HtmlIframePreview`
-- Bump `BRIDGE_MARKER` до `v6`.
-- Строим статический маппинг `tariffKey → { tariffId, tariff, primaryPayOffer }` из `paymentBridge.tariffs` (правило: `offer_type === 'pay_now'` c минимальной ценой; если оффера нет — кнопка остаётся с исходным `href="#popup:…"`).
-  - Ключ карточки определяется по позиции карточки в Tilda-разметке (1-й `data-lovable-tariff-key="buh"` → первый тариф продукта по возрастанию amount и т.д.). Сначала используем прямое соответствие по amount (1650→buh, 1950→gl_buh, 2650→biz-l), чтобы порядок не сломался, если админ поменяет сортировку.
-- В inject-скрипт iframe добавляем обработчик: для всех `a[data-lovable-pay="1"]` с известным маппингом:
-  - убираем Tilda popup-click, вешаем свой click → `parent.postMessage({ type: 'lovable:openPayment', offerId, tariffId, productId, tariffKey }, '*')`;
-  - остальные `#popup:*` не трогаем.
-- Родитель (`HtmlIframePreview` в React-контексте) слушает сообщение и монтирует уже существующий `PaymentDialog` (как в `ProductLanding.tsx`) с теми же параметрами (offerId, price, tariffCode, paymentMethod, isTrial=false, isClubProduct=false, isSubscription=false — офферы pay_now/full_payment).
+Название эфира сотрудник вводит длиной ~180 символов («Как бухгалтеру зарабатывать на консультациях…»), а мы прокидываем его в поле `name` без обрезки. Ошибка воспроизводится стабильно (лог `2026-07-07T15:12:34Z`, `code: 400400`).
 
-Дизайн Tilda-кнопок не меняем — только перехват click, визуал остаётся прежним.
+**2. Модель доступа к эфиру (кто может войти)**
 
-### Что НЕ входит в этот патч (по явной просьбе)
-- Не рендерим тарифные карточки динамически — Tilda-разметка остаётся.
-- Не подключаем «Заявка на рассрочку» и «Оплатить от юрлица» — сделаем отдельным патчем, когда пользователь настроит соответствующие офферы в продукте.
-- Не добавляем блок `pricing` — визуально сохраняем текущую Tilda-раскладку.
+- Роут `/live/:slug` → `LiveEvent.tsx` вызывает edge `live-resolve`. Функция первым делом требует `Authorization: Bearer …`; без сессии → `401 auth_required`. Анонимный пользователь на эфир попасть НЕ может — ни по прямой ссылке `/live/<slug>`, ни по пригласительной `/live-access/<token>`.
+- `LiveAccessEntry.tsx` при отсутствии сессии сам редиректит на `/auth?redirectTo=…`, т.е. пригласительная ссылка тоже требует логин.
+- Далее `live-resolve` проверяет `live_event_access_rules` (пары `product_id + tariff_id`) через RPC `has_access_to_event`. Т.е. сейчас админ **обязан** привязать эфир к продукту/тарифу — «просто все зарегистрированные пользователи» выбрать нельзя. В UI создания эфира это и есть blocker «Указано, кто может войти на эфир» (скрин 1: «Правила доступа не заданы»).
 
-### Verify (Definition of Done)
-- В preview `/cb`: блока «Как открыть доступ» больше нет; сразу под FAQ идёт футер.
-- Клик по «Оплатить обучение» в любой из 3 карточек → открывается `PaymentDialog` с корректной суммой (1650/1950/2650) и тарифом.
-- Остальные кнопки (Заявка на рассрочку, Оплатить от юрлица) продолжают вести на Tilda-поп-апы / внешнюю ссылку без изменений.
-- Playwright-скрин каждой из 3 карточек с открытым `PaymentDialog`.
-- Скрин страницы после удаления блока (нет пустой розовой секции с «СКАЧАТЬ»).
+**Вывод по вопросу пользователя:**
+Регистрация на платформе для просмотра эфира уже обязательна — анонимных зрителей нет. Не хватает варианта правила «Открытый доступ для всех зарегистрированных пользователей» (без привязки к продукту). Его нужно добавить, иначе для каждого «открытого» эфира приходится создавать фиктивный продукт.
 
-### Технические заметки
-- Изменяемые файлы: SQL-миграция; `src/pages/SitePageBySlug.tsx`; `src/components/site-renderer/SitePageRenderer.tsx`; `src/components/site-renderer/blocks/HtmlSection.tsx`; `src/components/shared/HtmlIframePreview.tsx`.
-- Никаких изменений схемы БД, RLS/GRANT, edge-функций.
+---
+
+### Что делаю в патче
+
+**A. Фикс создания эфира (HTTP 400)**
+
+1. В `supabase/functions/kinescope-api/index.ts`, кейс `create_live_event`:
+  - обрезать `name` до 140 символов (`name.slice(0, 140).trim()`) перед отправкой в Kinescope;
+  - логировать факт усечения.
+2. В `src/pages/admin/AdminLiveEvents.tsx` (обработчик `handleCreateKinescopeLiveEvent`):
+  - передавать в `name` уже обрезанное значение (140 симв.) и показывать `toast.info`, если длина была урезана, чтобы админ понимал, что имя в Kinescope короче названия эфира на платформе.
+3. Deploy edge-функции + smoke-verify через `supabase--edge_function_logs`.
+
+**B. Правило доступа «Все зарегистрированные пользователи»**
+
+1. Миграция:
+  - расширить `live_event_access_rules` — добавить `rule_kind text not null default 'product'` (`product` | `any_authenticated`); сделать `product_id` nullable при `rule_kind='any_authenticated'`.
+  - обновить SQL-функцию `has_access_to_event`: если для эфира есть хотя бы одна строка `rule_kind='any_authenticated'` → возвращать `true` для любого залогиненного `user_id`.
+  - RLS/GRANTs не трогаем (таблица уже настроена).
+2. `LiveEventAccessRulesEditor.tsx` — добавить чекбокс/пресет «Открытый доступ для всех зарегистрированных пользователей»; при включении скрывать список продуктов и сохранять одну строку `rule_kind='any_authenticated'`.
+3. `AdminLiveEvents.tsx` — снять blocker «Указано, кто может войти на эфир», если выбран пресет `any_authenticated`.
+4. `live-resolve` — если у эфира правило `any_authenticated`, пропускать проверку подписки и отдавать `status: 'ok'` любому залогиненному.
+
+**C. Verify (DoD)**
+
+- Создать тестовый эфир с длинным (>140) названием — Kinescope возвращает 201, `kinescope_live_event_id` записан.
+- Создать эфир с правилом «Все зарегистрированные» — открыть `/live/<slug>` под обычным пользователем без продуктов → успешный вход; открыть в приватном окне без логина → редирект на `/auth`.
+- Проверить, что старые эфиры с product-правилами работают без регрессий (RPC `has_access_to_event` возвращает те же значения на выборке из 3 старых эфиров).
+- Скрины/логи прикладываю в отчёт о выполнении.
+
+### Границы патча
+
+- Не трогаю: комнату/чат/автовебинары, invite-tokens (`required_one_time`), notifications-cron.
+- Не меняю схему `live_events`, только `live_event_access_rules` + функция.
