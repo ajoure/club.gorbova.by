@@ -44,12 +44,17 @@
 
 `profile_id` в `legal_details_persons` = **владелец ЛК-карточки**, тот, кто добавил персону в своих реквизитах. Это НЕ CRM-контакт самой персоны.
 
-**Правило для Phase 2 backfill:**
+**Решение (v2, принято в Master Plan §3.1):**
 
-- `company_contacts.person_ref = legal_details_persons.id` (обязательно).
-- `company_contacts.profile_id` = **NULL** по умолчанию.
-- Заполняется только через отдельный matcher (ФИО+phone+email против `profiles`) с confidence-score; low-confidence — в review-очередь.
-- Автоматический перенос `LDP.profile_id → company_contacts.profile_id` **запрещён**.
+`legal_details_persons` и `legal_details_entity_person_links` **полностью исключены из CRM auto-source**. Причина: эти таблицы обслуживают пакеты документов (роли подписантов, договоры, генерация документов) и содержат данные, которые не должны автоматически становиться CRM-контактами компании клиента.
+
+- В Phase 3 backfill НЕ используются.
+- В Phase 4 sync НЕ используются.
+- В базе прозвона НЕ участвуют.
+- `company_contact_person_map` в Phase 1 НЕ создаётся; перенесена в deferred/Phase 10 Documents follow-up (только через отдельный approval).
+- Persons matcher (ФИО+phone+email → profiles) и review-очередь — тоже deferred в Phase 10, только через approval.
+
+**Единственный источник `company_contacts` при auto-backfill (Phase 3):** владелец ЛК-карточки `client_legal_details.profile_id` с `relationship_type='billing_contact'`, `is_billing_contact=true`, `source='billing_requisites'`.
 
 ## 4. Safety-net sync — решение
 
