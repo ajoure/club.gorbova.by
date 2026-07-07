@@ -69,6 +69,13 @@ export default function SitePageBySlug() {
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
+  const linkedProductId = page?.product_id || null;
+  const { data: linkedProductData } = usePublicProduct(
+    linkedProductId ? { productId: linkedProductId } : null,
+  );
+  const linkedProductDataRef = useRef(linkedProductData);
+  useEffect(() => { linkedProductDataRef.current = linkedProductData; }, [linkedProductData]);
+
   useEffect(() => {
     function onSiteAction(e: Event) {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
@@ -86,6 +93,35 @@ export default function SitePageBySlug() {
         setPaymentOpen(true);
         return;
       }
+
+      if (detail.action === "open-payment") {
+        // Dynamic binding: resolve tariff_key against the page-linked product's tariffs,
+        // pick the primary pay_now offer (lowest amount). No UUIDs in the HTML.
+        const tariffKey = String(detail.payload?.tariff_key || "").trim();
+        const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
+        const product = linkedProductDataRef.current;
+        if (!matcher || !product?.product?.id || !product.tariffs?.length) {
+          console.warn("[site-action] open-payment: no product data or unknown tariff_key", { tariffKey });
+          return;
+        }
+        const tariff = product.tariffs.find((t) => matcher(t.name || ""));
+        if (!tariff) {
+          console.warn("[site-action] open-payment: tariff not found", { tariffKey });
+          return;
+        }
+        const payOffers = (tariff.offers || []).filter(
+          (o) => o.offer_type === "pay_now" && o.is_active !== false,
+        );
+        const offer = payOffers.slice().sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
+        if (!offer) {
+          console.warn("[site-action] open-payment: no pay_now offer on tariff", { tariffKey });
+          return;
+        }
+        setPending({ productId: product.product.id, offerId: offer.id });
+        setPaymentOpen(true);
+        return;
+      }
+
 
       if (detail.action === "open-preregistration") {
         const offerId = String(detail.payload?.offer_id || "");
