@@ -35,7 +35,7 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v2";
+const BRIDGE_MARKER = "data-lovable-resize-v3";
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -50,7 +50,8 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   try {
     var st = document.createElement('style');
     st.setAttribute('${BRIDGE_MARKER}', '1');
-    st.textContent = 'html,body{overflow:visible !important;height:auto !important;}';
+    st.textContent = 'html,body{overflow:visible !important;height:auto !important;}'
+      + ' #t-footer,.t-footer,.t-tildalabel,a[href="https://tilda.cc/"],a[href="http://tilda.cc/"],a[href^="https://tilda.cc"]{display:none !important;visibility:hidden !important;height:0 !important;overflow:hidden !important;}';
     (document.head || document.documentElement).appendChild(st);
   } catch (e) {}
 
@@ -111,13 +112,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   function isFullscreenFixedOverlay(el) {
     if (isHidden(el)) return false;
+    // Don't repack Tilda-managed popups — Tilda handles their own backdrop/positioning.
+    var cls = String(el.className || '');
+    if (/(^|\s)(t-popup|t-popup__container|t-popup__close|t-popup__wrapper)(\s|$)/.test(cls)) return false;
     var cs = window.getComputedStyle(el);
     if (cs.position !== 'fixed') return false;
     var rect = el.getBoundingClientRect();
     var docWidth = document.documentElement.clientWidth || window.innerWidth || 0;
     var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
     var z = parseInt(cs.zIndex || '0', 10);
-    var marker = String(el.id || '') + ' ' + String(el.className || '');
+    var marker = String(el.id || '') + ' ' + cls;
     var looksLikeModal = /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
     var insetLike = Math.abs(rect.left) <= 3 && Math.abs(rect.top) <= 3 && Math.abs(docWidth - rect.right) <= Math.max(3, docWidth * 0.08);
     var fullscreenSize = rect.width >= docWidth * 0.85 && rect.height >= Math.min(docHeight, Math.max(parentViewport.height || 800, 320)) * 0.7;
@@ -300,10 +304,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // In-page hash anchor.
     if (rawHref.charAt(0) === '#') {
       var id = rawHref.slice(1);
+      // Tilda popup syntax (#popup:xxx) or unknown id → let author JS handle (bubble phase).
+      // Only intercept when the id actually resolves to an element in the iframe document.
       var el = id ? document.getElementById(id) : null;
-      var targetOffsetTop = el
-        ? (el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0))
-        : 0;
+      if (!el) return;
+      var targetOffsetTop = el.getBoundingClientRect().top
+        + (window.pageYOffset || document.documentElement.scrollTop || 0);
       ev.preventDefault();
       ev.stopPropagation();
       try {
@@ -311,7 +317,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
           type: 'iframe-anchor',
           id: id,
           targetOffsetTop: targetOffsetTop,
-          found: !!el
+          found: true
         }, '*');
       } catch (e) {}
       return;
@@ -320,11 +326,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // javascript: / mailto: / tel: — let browser/author handle.
     if (/^(javascript|mailto|tel|sms):/i.test(rawHref)) return;
 
-    // External link — open safely in new tab.
+    // External link — open safely in new tab; fall back to parent-relay if
+    // the sandboxed popup is blocked (Safari popup blocker).
     var url = a.href; // resolved absolute URL
     ev.preventDefault();
     ev.stopPropagation();
-    try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+    var opened = null;
+    try { opened = window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+    if (!opened) {
+      try { parent.postMessage({ type: 'iframe-open-url', url: url }, '*'); } catch (e) {}
+    }
   }, true);
 
   // ---- Site-action bridge (data-lovable-action) ----
@@ -594,6 +605,15 @@ export function HtmlIframePreview({
         }
         return;
       }
+
+      if (data.type === 'iframe-open-url') {
+        const url = typeof data.url === 'string' ? data.url : '';
+        // Strict whitelist — never open javascript:, data:, blob:, about:srcdoc, etc.
+        if (!/^(https?:\/\/|mailto:|tel:|sms:)/i.test(url)) return;
+        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch {}
+        return;
+      }
+
 
       if (data.type === 'site-action') {
         // Forward to host via CustomEvent. Host validates action/payload before acting.
