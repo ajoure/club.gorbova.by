@@ -800,8 +800,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     onClick={() => {
                       const contactUserId = profile?.user_id || deal?.user_id;
                       if (!contactUserId) return;
-                      onOpenChange(false);
-                      navigate(`/admin/contacts?contact=${contactUserId}&from=deals`);
+                      openContactSheet(contactUserId);
                     }}
                     disabled={!(profile?.user_id || deal?.user_id)}
                     className={cn(
