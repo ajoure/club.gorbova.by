@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
+import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -145,10 +146,13 @@ export function getActiveChannel(
 interface Options {
   enabled: boolean;
   perSourceLimit?: number;
+  search?: string;
 }
 
-export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
+export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: Options) {
   const { user } = useAuth();
+  const serverSearch = normalizeTelegramSearchInput(search);
+  const effectiveTelegramLimit = serverSearch ? 100 : perSourceLimit;
 
   // --- Telegram ---
   // Отдельный queryKey от INBOX_DIALOGS_QK: моно-InboxTabContent кэширует
@@ -157,16 +161,16 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
   // вкладок «Все» / «Telegram» компонент читал чужую форму данных из кэша
   // и показывал «Неизвестный» / пустой preview до следующего refetch.
   const tg = useQuery({
-    queryKey: ["unified-inbox-telegram", perSourceLimit],
+    queryKey: ["unified-inbox-telegram", effectiveTelegramLimit, serverSearch],
     enabled,
     staleTime: 30_000,
     refetchInterval: 30_000,
     refetchOnWindowFocus: false,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_inbox_dialogs_v1", {
-        p_limit: perSourceLimit,
+        p_limit: effectiveTelegramLimit,
         p_offset: 0,
-        p_search: null,
+        p_search: serverSearch || null,
       });
       if (error) throw error;
       return (data || []) as any[];

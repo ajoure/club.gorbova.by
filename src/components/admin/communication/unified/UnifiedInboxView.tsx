@@ -19,6 +19,12 @@ import { Search, MessageSquare, RefreshCw, ArrowLeft, Check, Star, Pin } from "l
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  normalizeTelegramNumericSearch,
+  normalizeTelegramSearchInput,
+  normalizeTelegramUsernameSearch,
+} from "@/lib/telegramSearch";
 
 import {
   useUnifiedInbox,
@@ -48,10 +54,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { contactRows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true });
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const serverSearch = normalizeTelegramSearchInput(debouncedSearch);
+  const { contactRows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true, search: serverSearch });
   type FilterKind = "all" | "unread" | "favorite" | "pinned";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -89,13 +97,26 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const matchesSearch = (r: UnifiedContactRow, q: string): boolean => {
     if (!q) return true;
-    const lc = q.toLowerCase();
+    const normalized = normalizeTelegramSearchInput(q);
+    const lc = normalized.toLowerCase();
+    const usernameSearch = normalizeTelegramUsernameSearch(normalized);
+    const numericSearch = normalizeTelegramNumericSearch(normalized);
+
     if (r.displayName.toLowerCase().includes(lc)) return true;
     for (const src of r.availableSources) {
       const ch = r.channels[src]!;
       if (ch.lastMessagePreview.toLowerCase().includes(lc)) return true;
       const sl = ch.sourceRow.sourceLabel || "";
       if (sl.toLowerCase().includes(lc)) return true;
+      const meta = ch.sourceRow.meta;
+      const tgUsername = normalizeTelegramUsernameSearch(meta.telegramUsername);
+      if (usernameSearch && tgUsername.includes(usernameSearch)) return true;
+      if (numericSearch && String(meta.telegramNumericId || "") === numericSearch) return true;
+      if (meta.telegramUserId?.toLowerCase().includes(lc)) return true;
+      if (meta.profileId?.toLowerCase().includes(lc)) return true;
+      if (meta.instagramSenderName?.toLowerCase().includes(lc)) return true;
+      if (meta.instagramUserId?.toLowerCase().includes(lc)) return true;
+      if (meta.ticketUserId?.toLowerCase().includes(lc)) return true;
     }
     return false;
   };
@@ -106,10 +127,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       if (filterKind === "unread" && !r.isUnanswered) return false;
       if (filterKind === "favorite" && !r.isFavorite) return false;
       if (filterKind === "pinned" && !r.isPinned) return false;
-      if (!matchesSearch(r, search)) return false;
+      if (serverSearch && r.channels.telegram) return true;
+      if (!matchesSearch(r, serverSearch)) return false;
       return true;
     });
-  }, [contactRows, sourceFilter, filterKind, search]);
+  }, [contactRows, sourceFilter, filterKind, serverSearch]);
 
   const counts2 = useMemo(() => {
     let all = 0, unread = 0, fav = 0, pinned = 0;
@@ -196,6 +218,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+    queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
     queryClient.invalidateQueries({ queryKey: ["unified-ig-contacts"] });
     queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
