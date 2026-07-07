@@ -112,9 +112,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   function isFullscreenFixedOverlay(el) {
     if (isHidden(el)) return false;
-    // Don't repack Tilda-managed popups — Tilda handles their own backdrop/positioning.
     var cls = String(el.className || '');
-    if (/(^|\s)(t-popup|t-popup__container|t-popup__close|t-popup__wrapper)(\s|$)/.test(cls)) return false;
     var cs = window.getComputedStyle(el);
     if (cs.position !== 'fixed') return false;
     var rect = el.getBoundingClientRect();
@@ -122,9 +120,14 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
     var z = parseInt(cs.zIndex || '0', 10);
     var marker = String(el.id || '') + ' ' + cls;
-    var looksLikeModal = /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
+    // Tilda popups: repack the outer .t-popup container (position:fixed;inset:0),
+    // but never the inner __container/__close/__wrapper — those live inside .t-popup.
+    var isTildaPopupOuter = /(^|\s)t-popup(\s|$)/.test(cls) && !/(t-popup__)/.test(cls);
+    var looksLikeModal = isTildaPopupOuter || /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
     var insetLike = Math.abs(rect.left) <= 3 && Math.abs(rect.top) <= 3 && Math.abs(docWidth - rect.right) <= Math.max(3, docWidth * 0.08);
     var fullscreenSize = rect.width >= docWidth * 0.85 && rect.height >= Math.min(docHeight, Math.max(parentViewport.height || 800, 320)) * 0.7;
+    // Tilda popup outer is always full-viewport when open; skip the size heuristic for it.
+    if (isTildaPopupOuter) return insetLike && !isHidden(el) && rect.height > 0;
     return looksLikeModal && insetLike && fullscreenSize;
   }
 
