@@ -488,8 +488,10 @@ export default function AdminLiveEvents() {
       }
     }
 
+    const hasAnyAuthenticated = form.access_rules.some(r => r.rule_kind === "any_authenticated");
+    const hasProductRules = form.access_rules.some(r => r.rule_kind !== "any_authenticated" && r.product_id);
     items.push(
-      { key: "access", label: "Указано, кто может войти на эфир", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
+      { key: "access", label: "Указано, кто может войти на эфир", ok: hasAnyAuthenticated || hasProductRules, blocker: true },
       { key: "replay", label: "Запись будет доступна после завершения", ok: form.replay_enabled, blocker: false },
     );
 
