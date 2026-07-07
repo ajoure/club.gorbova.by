@@ -304,10 +304,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // In-page hash anchor.
     if (rawHref.charAt(0) === '#') {
       var id = rawHref.slice(1);
+      // Tilda popup syntax (#popup:xxx) or unknown id → let author JS handle (bubble phase).
+      // Only intercept when the id actually resolves to an element in the iframe document.
       var el = id ? document.getElementById(id) : null;
-      var targetOffsetTop = el
-        ? (el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0))
-        : 0;
+      if (!el) return;
+      var targetOffsetTop = el.getBoundingClientRect().top
+        + (window.pageYOffset || document.documentElement.scrollTop || 0);
       ev.preventDefault();
       ev.stopPropagation();
       try {
@@ -315,7 +317,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
           type: 'iframe-anchor',
           id: id,
           targetOffsetTop: targetOffsetTop,
-          found: !!el
+          found: true
         }, '*');
       } catch (e) {}
       return;
@@ -324,11 +326,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // javascript: / mailto: / tel: — let browser/author handle.
     if (/^(javascript|mailto|tel|sms):/i.test(rawHref)) return;
 
-    // External link — open safely in new tab.
+    // External link — open safely in new tab; fall back to parent-relay if
+    // the sandboxed popup is blocked (Safari popup blocker).
     var url = a.href; // resolved absolute URL
     ev.preventDefault();
     ev.stopPropagation();
-    try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+    var opened = null;
+    try { opened = window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+    if (!opened) {
+      try { parent.postMessage({ type: 'iframe-open-url', url: url }, '*'); } catch (e) {}
+    }
   }, true);
 
   // ---- Site-action bridge (data-lovable-action) ----
