@@ -864,7 +864,7 @@ export default function AdminLiveEvents() {
         if (isLiveStream && !form.scheduled_at) missing.push("дата и время эфира");
         if (isLiveStream && !form.kinescope_live_event_id) missing.push("живой эфир в Kinescope");
         if (!isLiveStream && !form.kinescope_video_id) missing.push("видео Kinescope");
-        if (form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
+        if (!form.access_rules.some(r => r.rule_kind === "any_authenticated") && form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
         
         if (missing.length > 0) {
           toast.info(`Для приглашений осталось: ${missing.join(", ")}`, { duration: 8000 });
