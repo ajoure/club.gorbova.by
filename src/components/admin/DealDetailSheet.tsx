@@ -10,6 +10,8 @@ import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
   Sheet,
   SheetContent,
