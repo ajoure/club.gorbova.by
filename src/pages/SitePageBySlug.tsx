@@ -26,12 +26,25 @@ import NotFound from "./NotFound";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
+const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration", "open-payment"]);
 
 interface PendingOffer {
   productId: string;
   offerId: string;
 }
+
+/**
+ * Map an admin-HTML tariff key (data-lovable-tariff-key="…") to a tariff on the
+ * linked product. Matches by substring of tariff.name (case-insensitive) so the
+ * product's tariffs stay editable without HTML re-patch.
+ * cb20 (Ценный бухгалтер): buh → «Бухгалтер», gl_buh → «Главный бухгалтер», biz-l → «Бизнес-леди».
+ */
+const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
+  buh: (n) => /^бухгалтер/i.test(n.trim()),
+  gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
+  "biz-l": (n) => /бизнес.?леди/i.test(n),
+};
+
 
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
