@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
         scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
         event_type: "live_stream", source_kind: "kinescope",
         access_rule: { mode: "all", product_id: null, tariff_id: null },
-        invite_mode: "public", direct_access_allowed: true,
+        invite_mode: "none", direct_access_allowed: true,
       }).select("id").single();
       if (ierr) return json({ error: "create_event_failed", slug: e.slug, details: ierr.message }, 500);
       id = ins.id;
