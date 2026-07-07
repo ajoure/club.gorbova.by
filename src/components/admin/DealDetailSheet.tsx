@@ -10,6 +10,8 @@ import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
   Sheet,
   SheetContent,
@@ -121,6 +123,7 @@ const getActionLabel = (action: string): string => {
 export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteWithPayments, setDeleteWithPayments] = useState(false); // dangerous mode
@@ -530,6 +533,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const tariff = deal.tariffs as any;
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16">
@@ -797,8 +801,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     onClick={() => {
                       const contactUserId = profile?.user_id || deal?.user_id;
                       if (!contactUserId) return;
-                      onOpenChange(false);
-                      navigate(`/admin/contacts?contact=${contactUserId}&from=deals`);
+                      openContactSheet(contactUserId);
                     }}
                     disabled={!(profile?.user_id || deal?.user_id)}
                     className={cn(
@@ -1354,5 +1357,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         }}
       />
     </Sheet>
+    <ContactDetailSheet
+      contact={selectedContact}
+      open={contactSheetOpen}
+      onOpenChange={setContactSheetOpen}
+    />
+    </>
   );
 }
