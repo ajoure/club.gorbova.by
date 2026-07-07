@@ -12,9 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, X, Info } from "lucide-react";
+import { Plus, X, Info, Users } from "lucide-react";
+
+export type AccessRuleKind = "product" | "any_authenticated";
 
 export interface AccessRuleRow {
+  rule_kind?: AccessRuleKind; // default 'product' for backward-compat
   product_id: string;
   tariff_ids: string[]; // empty = all tariffs
   match_purchase_month?: boolean;
@@ -38,40 +41,53 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
     },
   });
 
-  const usedProductIds = rules.filter(r => r.tariff_ids.length === 0).map(r => r.product_id);
+  // any_authenticated is mutually exclusive with product rules
+  const isAnyAuthenticated = rules.some(r => r.rule_kind === "any_authenticated");
+
+  const productRules = rules.filter(r => r.rule_kind !== "any_authenticated");
+  const usedProductIds = productRules.filter(r => r.tariff_ids.length === 0).map(r => r.product_id);
+
+  const toggleAnyAuthenticated = (value: boolean) => {
+    if (value) {
+      onChange([{ rule_kind: "any_authenticated", product_id: "", tariff_ids: [] }]);
+    } else {
+      onChange([]);
+    }
+  };
 
   const addRule = () => {
-    onChange([...rules, { product_id: "", tariff_ids: [] }]);
+    onChange([...productRules, { rule_kind: "product", product_id: "", tariff_ids: [] }]);
   };
 
   const removeRule = (index: number) => {
-    onChange(rules.filter((_, i) => i !== index));
+    onChange(productRules.filter((_, i) => i !== index));
   };
 
   const updateProduct = (index: number, productId: string) => {
-    // Check if this product already has "all tariffs" rule
-    const existingAll = rules.findIndex((r, i) => i !== index && r.product_id === productId && r.tariff_ids.length === 0);
-    if (existingAll >= 0) return; // prevent duplicate
-
-    const updated = [...rules];
-    updated[index] = { product_id: productId, tariff_ids: [] };
+    const existingAll = productRules.findIndex(
+      (r, i) => i !== index && r.product_id === productId && r.tariff_ids.length === 0,
+    );
+    if (existingAll >= 0) return;
+    const updated = [...productRules];
+    updated[index] = { rule_kind: "product", product_id: productId, tariff_ids: [] };
     onChange(updated);
   };
 
   const updateTariffs = (index: number, tariffIds: string[]) => {
-    const updated = [...rules];
-    updated[index] = { ...updated[index], tariff_ids: tariffIds };
+    const updated = [...productRules];
+    updated[index] = { ...updated[index], rule_kind: "product", tariff_ids: tariffIds };
     onChange(updated);
   };
 
   const updateMonthGate = (index: number, value: boolean) => {
-    const updated = [...rules];
-    updated[index] = { ...updated[index], match_purchase_month: value };
+    const updated = [...productRules];
+    updated[index] = { ...updated[index], rule_kind: "product", match_purchase_month: value };
     onChange(updated);
   };
 
-  // Build audience preview text
-  const previewText = buildPreviewText(rules, products || []);
+  const previewText = isAnyAuthenticated
+    ? "Итог: доступ у любого зарегистрированного пользователя платформы."
+    : buildPreviewText(productRules, products || []);
 
   return (
     <div className="space-y-3">
@@ -79,30 +95,53 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
         <Label className="text-sm font-medium">Кто может войти</Label>
       </div>
 
-      {rules.length === 0 && (
-        <p className="text-sm text-muted-foreground italic">
-          Правила доступа не заданы. Добавьте хотя бы одно правило.
-        </p>
-      )}
-
-      {rules.map((rule, index) => (
-        <RuleRow
-          key={index}
-          rule={rule}
-          index={index}
-          products={products || []}
-          usedProductIds={usedProductIds}
-          onUpdateProduct={updateProduct}
-          onUpdateTariffs={updateTariffs}
-          onUpdateMonthGate={updateMonthGate}
-          onRemove={removeRule}
+      {/* Preset: any authenticated user */}
+      <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/30">
+        <Switch
+          id="any-authenticated"
+          checked={isAnyAuthenticated}
+          onCheckedChange={toggleAnyAuthenticated}
         />
-      ))}
+        <div className="flex-1 -mt-0.5">
+          <Label htmlFor="any-authenticated" className="text-sm font-medium cursor-pointer flex items-center gap-1.5">
+            <Users className="h-3.5 w-3.5" />
+            Открытый доступ для всех зарегистрированных пользователей
+          </Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Любой залогиненный пользователь платформы сможет войти на эфир — без привязки к продукту.
+            Анонимный вход по-прежнему запрещён.
+          </p>
+        </div>
+      </div>
 
-      <Button variant="outline" size="sm" onClick={addRule} className="gap-1.5">
-        <Plus className="h-3.5 w-3.5" />
-        Добавить правило
-      </Button>
+      {!isAnyAuthenticated && (
+        <>
+          {productRules.length === 0 && (
+            <p className="text-sm text-muted-foreground italic">
+              Правила доступа не заданы. Добавьте хотя бы одно правило или включите открытый доступ выше.
+            </p>
+          )}
+
+          {productRules.map((rule, index) => (
+            <RuleRow
+              key={index}
+              rule={rule}
+              index={index}
+              products={products || []}
+              usedProductIds={usedProductIds}
+              onUpdateProduct={updateProduct}
+              onUpdateTariffs={updateTariffs}
+              onUpdateMonthGate={updateMonthGate}
+              onRemove={removeRule}
+            />
+          ))}
+
+          <Button variant="outline" size="sm" onClick={addRule} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" />
+            Добавить правило
+          </Button>
+        </>
+      )}
 
       {previewText && (
         <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
