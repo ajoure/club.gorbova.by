@@ -802,23 +802,44 @@ export default function AdminLiveEvents() {
 
       if (eventId) {
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
-        const validRules = data.access_rules.filter(r => r.product_id);
-        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number; conditions: Record<string, any> }> = [];
 
-        validRules.forEach((rule, ruleIdx) => {
-          const conditions: Record<string, any> = {};
-          if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
-          if (rule.tariff_ids.length === 0) {
-            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions });
-          } else {
-            rule.tariff_ids.forEach((tariffId, tIdx) => {
-              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions });
-            });
-          }
-        });
+        const hasAnyAuth = data.access_rules.some(r => r.rule_kind === "any_authenticated");
+        const rows: Array<{
+          live_event_id: string;
+          product_id: string | null;
+          tariff_id: string | null;
+          sort_order: number;
+          conditions: Record<string, any>;
+          rule_kind: "product" | "any_authenticated";
+        }> = [];
+
+        if (hasAnyAuth) {
+          // Any-authenticated is mutually exclusive with product rules.
+          rows.push({
+            live_event_id: eventId!,
+            product_id: null,
+            tariff_id: null,
+            sort_order: 0,
+            conditions: {},
+            rule_kind: "any_authenticated",
+          });
+        } else {
+          const validRules = data.access_rules.filter(r => r.rule_kind !== "any_authenticated" && r.product_id);
+          validRules.forEach((rule, ruleIdx) => {
+            const conditions: Record<string, any> = {};
+            if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
+            if (rule.tariff_ids.length === 0) {
+              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions, rule_kind: "product" });
+            } else {
+              rule.tariff_ids.forEach((tariffId, tIdx) => {
+                rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions, rule_kind: "product" });
+              });
+            }
+          });
+        }
 
         if (rows.length > 0) {
-          const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows);
+          const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows as any);
           if (rulesError) throw rulesError;
         }
       }
