@@ -91,12 +91,28 @@ Deno.serve(async (req) => {
       .replace(/%/g, '\\%')    // Escape percent signs
       .replace(/_/g, '\\_');   // Escape underscores
 
+    // Normalize telegram username (strip @ and t.me/ prefix) for search
+    const tgHandle = sanitizedQuery
+      .replace(/^@+/, '')
+      .replace(/^(https?:\\\/\\\/)?(t\.me|telegram\.me)\\\//i, '');
+
+    // Build OR filter: name/email/phone + telegram_username; add telegram_user_id if numeric
+    const orParts = [
+      `full_name.ilike.%${sanitizedQuery}%`,
+      `email.ilike.%${sanitizedQuery}%`,
+      `phone.ilike.%${sanitizedQuery}%`,
+      `telegram_username.ilike.%${tgHandle}%`,
+    ];
+    const numericQuery = query.replace(/[^\d]/g, '');
+    if (numericQuery.length >= 5 && numericQuery.length <= 20) {
+      orParts.push(`telegram_user_id.eq.${numericQuery}`);
+    }
+
     // Search profiles with service role (bypasses RLS)
-    // Using Supabase's built-in escaping via the filter method
     const { data: results, error: searchError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, email, phone, user_id")
-      .or(`full_name.ilike.%${sanitizedQuery}%,email.ilike.%${sanitizedQuery}%,phone.ilike.%${sanitizedQuery}%`)
+      .select("id, full_name, email, phone, user_id, telegram_username, telegram_user_id")
+      .or(orParts.join(','))
       .limit(safeLimit);
 
     if (searchError) {
