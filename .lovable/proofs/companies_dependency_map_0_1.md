@@ -25,7 +25,7 @@
 | `_shared/typed-tokens-resolver` | shared | да | нет | тот же путь |
 | миграции: `20260510162228`, `20260511102941`, `20260510170316`, `20260510164919` | SQL | — | schema | — |
 
-Writer в код-базе не найден для нового `legal_entities_requisites` — используется как view-layer поверх `client_legal_details` (`source_legacy_id`). Backfill в companies идёт через `client_legal_details` (см. §1.1).
+Writer в код-базе не найден для нового `legal_entities_requisites` — используется как view-layer поверх `client_legal_details` (`source_legacy_id`). **v2:** `LER` = **secondary mirror only**. Если `source_legacy_id` отсутствует ИЛИ ссылается не на billing legal_entity/entrepreneur → excluded from CRM auto-source. Backfill в companies идёт **только** через billing `client_legal_details` (см. §1.1 + Master Plan §3.1).
 
 ### 1.3 `legal_details_persons` + `legal_details_entity_person_links`
 
