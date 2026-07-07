@@ -340,7 +340,7 @@ export default function AdminLiveEvents() {
       if (!editingId) return [];
       const { data } = await supabase
         .from("live_event_access_rules")
-        .select("product_id, tariff_id, sort_order, conditions")
+        .select("product_id, tariff_id, sort_order, conditions, rule_kind")
         .eq("live_event_id", editingId)
         .order("sort_order");
       return data || [];
