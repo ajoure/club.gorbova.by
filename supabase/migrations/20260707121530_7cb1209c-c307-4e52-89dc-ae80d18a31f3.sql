@@ -1,0 +1,1 @@
+UPDATE site_pages SET blocks = REPLACE(blocks::text, 't.me/gorbova_bot', 't.me/gorbovabybot')::jsonb WHERE id='d5a5c2e0-9e4c-4e6c-b9bc-1e4bd264d656';
