@@ -114,7 +114,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     if (isHidden(el)) return false;
     // Don't repack Tilda-managed popups — Tilda handles their own backdrop/positioning.
     var cls = String(el.className || '');
-    if (/(^|\\s)(t-popup|t-popup__container|t-popup__close|t-popup__wrapper)(\\s|$)/.test(cls)) return false;
+    if (/(^|\s)(t-popup|t-popup__container|t-popup__close|t-popup__wrapper)(\s|$)/.test(cls)) return false;
     var cs = window.getComputedStyle(el);
     if (cs.position !== 'fixed') return false;
     var rect = el.getBoundingClientRect();
