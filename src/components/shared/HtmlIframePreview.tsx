@@ -307,9 +307,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // In-page hash anchor.
     if (rawHref.charAt(0) === '#') {
       var id = rawHref.slice(1);
-      // Tilda popup syntax (#popup:xxx) or unknown id → let author JS handle (bubble phase).
-      // Only intercept when the id actually resolves to an element in the iframe document.
-      var el = id ? document.getElementById(id) : null;
+      // Tilda popup syntax (#popup:xxx) → let author JS handle (bubble phase).
+      // Otherwise resolve target via id first, then legacy <a name="..."> fallback.
+      var el = null;
+      if (id) {
+        try { el = document.getElementById(id); } catch (e) {}
+        if (!el) {
+          try {
+            var named = document.getElementsByName(id);
+            if (named && named.length) el = named[0];
+          } catch (e) {}
+        }
+      }
       if (!el) return;
       var targetOffsetTop = el.getBoundingClientRect().top
         + (window.pageYOffset || document.documentElement.scrollTop || 0);
