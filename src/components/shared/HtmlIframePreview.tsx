@@ -257,8 +257,13 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   } catch (e) {}
 
   window.addEventListener('wheel', function(ev) {
+    // Keep horizontal wheel/trackpad gestures inside the iframe so author-authored
+    // sliders (Tilda t396/t-slds) receive them. Only relay vertical scroll to parent.
+    var dx = ev.deltaX || 0;
+    var dy = ev.deltaY || 0;
+    if (Math.abs(dx) > Math.abs(dy)) return;
     try {
-      parent.postMessage({ type: 'iframe-wheel', deltaX: ev.deltaX || 0, deltaY: ev.deltaY || 0 }, '*');
+      parent.postMessage({ type: 'iframe-wheel', deltaX: dx, deltaY: dy }, '*');
     } catch (e) {}
   }, { passive: true });
 
