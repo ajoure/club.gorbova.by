@@ -151,8 +151,13 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 100 }: Options) {
   const { user } = useAuth();
 
   // --- Telegram ---
+  // Отдельный queryKey от INBOX_DIALOGS_QK: моно-InboxTabContent кэширует
+  // обогащённые Dialog[] (с profile/orders/last_message), а здесь мы держим
+  // сырые RPC-строки. Общий ключ приводил к тому, что при переключении
+  // вкладок «Все» / «Telegram» компонент читал чужую форму данных из кэша
+  // и показывал «Неизвестный» / пустой preview до следующего refetch.
   const tg = useQuery({
-    queryKey: INBOX_DIALOGS_QK,
+    queryKey: ["unified-inbox-telegram", perSourceLimit],
     enabled,
     staleTime: 30_000,
     refetchInterval: 30_000,

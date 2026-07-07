@@ -32,7 +32,7 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все статусы</SelectItem>
-            <SelectItem value="successful_and_refunds">Успешные + возвраты</SelectItem>
+            <SelectItem value="successful_and_refunds">Успешные</SelectItem>
             <SelectItem value="successful">Только успешные</SelectItem>
             <SelectItem value="failed">Неуспешные (ошибки)</SelectItem>
             <SelectItem value="pending">Ожидает обработки</SelectItem>
