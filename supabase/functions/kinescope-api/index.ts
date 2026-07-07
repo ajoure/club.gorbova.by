@@ -291,8 +291,19 @@ serve(async (req) => {
           break;
         }
         const recordParent = project_id || liveFolderId;
+        // Kinescope API constraint: name.length <= 140
+        const KINESCOPE_NAME_MAX = 140;
+        const rawName = (request.name || "Новый эфир").trim();
+        const safeName = rawName.length > KINESCOPE_NAME_MAX
+          ? rawName.slice(0, KINESCOPE_NAME_MAX).trim()
+          : rawName;
+        if (rawName.length > KINESCOPE_NAME_MAX) {
+          console.log(
+            `[kinescope-api] create_live_event: name truncated ${rawName.length} -> ${safeName.length}`,
+          );
+        }
         const createBody: Record<string, unknown> = {
-          name: request.name || "Новый эфир",
+          name: safeName,
           parent_id: liveFolderId,
           type: "one-time",
           record: { parent_id: recordParent },
