@@ -547,13 +547,21 @@ export default function AdminLiveEvents() {
     }
     setCreatingLiveEvent(true);
     try {
+      const KINESCOPE_NAME_MAX = 140;
+      const rawName = (form.title || "Новый эфир").trim();
+      const safeName = rawName.length > KINESCOPE_NAME_MAX
+        ? rawName.slice(0, KINESCOPE_NAME_MAX).trim()
+        : rawName;
+      if (rawName.length > KINESCOPE_NAME_MAX) {
+        toast.info(`Название эфира в Kinescope усечено до ${KINESCOPE_NAME_MAX} символов (ограничение провайдера).`);
+      }
       const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: {
           action: "create_live_event",
           instance_id: kinescopeInstanceId,
           folder_id: form.kinescope_folder_id,
           project_id: form.kinescope_project_id || undefined,
-          name: form.title || "Новый эфир",
+          name: safeName,
         },
       });
 
