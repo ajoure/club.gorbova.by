@@ -35,7 +35,7 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v4";
+const BRIDGE_MARKER = "data-lovable-resize-v5";
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -385,6 +385,208 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     }
     try { parent.postMessage({ type: 'site-action', action: action, payload: payload }, '*'); } catch (e) {}
   }, true);
+
+
+  // ---- Tilda slider fallback ----
+  // Some exported Tilda sliders mark themselves initialized inside a sandboxed
+  // iframe but lose their click/touch handlers. Keep the native Tilda path first;
+  // if it does not change state, apply a small deterministic fallback.
+  try {
+    if (!window.__lovableTildaSliderFallbackV1) {
+      window.__lovableTildaSliderFallbackV1 = true;
+
+      function closestMatch(node, selector) {
+        while (node && node !== document) {
+          if (node.matches && node.matches(selector)) return node;
+          node = node.parentElement;
+        }
+        return null;
+      }
+
+      function getSliderRec(node) {
+        return closestMatch(node, '.t-rec') || document;
+      }
+
+      function getSliderWrapper(node) {
+        var rec = getSliderRec(node);
+        return rec ? rec.querySelector('.t-slds__items-wrapper') : null;
+      }
+
+      function getSliderState(wrap) {
+        if (!wrap) return '';
+        var transform = wrap.style.transform || window.getComputedStyle(wrap).transform || '';
+        return String(wrap.getAttribute('data-slider-pos') || '') + '|' + transform;
+      }
+
+      function setLoadedImages(rec, pos) {
+        var indexes = [pos - 1, pos, pos + 1];
+        for (var i = 0; i < indexes.length; i++) {
+          var item = rec.querySelector('.t-slds__item[data-slide-index="' + indexes[i] + '"]');
+          if (!item) continue;
+          item.classList.add('t-slds__item-loaded');
+          var images = item.querySelectorAll('.t-bgimg[data-original]');
+          for (var j = 0; j < images.length; j++) {
+            var url = images[j].getAttribute('data-original');
+            if (!url) continue;
+            images[j].style.backgroundImage = 'url("' + url.replace(/"/g, '%22') + '")';
+            images[j].classList.add('loaded');
+          }
+        }
+      }
+
+      function setActiveSlide(rec, pos) {
+        var items = rec.querySelectorAll('.t-slds__item');
+        for (var i = 0; i < items.length; i++) {
+          var isActive = items[i].getAttribute('data-slide-index') === String(pos);
+          items[i].classList.toggle('t-slds__item_active', isActive);
+          items[i].setAttribute('aria-hidden', isActive ? 'false' : 'true');
+        }
+      }
+
+      function syncSliderArrows(rec, pos, total, cycle) {
+        var left = rec.querySelector('.t-slds__arrow_wrapper-left');
+        var right = rec.querySelector('.t-slds__arrow_wrapper-right');
+        if (left) left.style.display = (!cycle && pos <= 1) ? 'none' : '';
+        if (right) right.style.display = (!cycle && pos >= total) ? 'none' : '';
+      }
+
+      function moveTildaSlider(node, direction) {
+        var rec = getSliderRec(node);
+        var wrap = rec ? rec.querySelector('.t-slds__items-wrapper') : null;
+        if (!rec || !wrap) return false;
+        var total = parseInt(wrap.getAttribute('data-slider-totalslides') || '0', 10)
+          || rec.querySelectorAll('.t-slds__item:not(.t-slds__item_dummy)').length
+          || 1;
+        var pos = parseInt(wrap.getAttribute('data-slider-pos') || '1', 10) || 1;
+        var cycle = wrap.getAttribute('data-slider-with-cycle') !== 'false';
+        var next = pos + ((direction === 'left' || direction === 'prev') ? -1 : 1);
+        if (cycle) {
+          if (next < 1) next = total;
+          if (next > total) next = 1;
+        } else {
+          next = Math.max(1, Math.min(total, next));
+        }
+        if (next === pos) return false;
+
+        var before = getSliderState(wrap);
+        var recId = rec.id ? rec.id.replace(/^rec/, '') : '';
+        wrap.setAttribute('data-slider-stopped', '');
+        wrap.setAttribute('data-slider-touch', '');
+        wrap.setAttribute('data-slider-animated', '');
+        wrap.setAttribute('data-slider-pos', String(next));
+
+        try {
+          var current = (typeof window.t_slds_getCurrentTranslate === 'function') ? window.t_slds_getCurrentTranslate(rec) : 0;
+          if (recId && typeof window.t_slideMoveWithoutAnimation === 'function') window.t_slideMoveWithoutAnimation(recId, false, {}, current);
+          if (recId && typeof window.t_slds_updateSlider === 'function') window.t_slds_updateSlider(recId);
+        } catch (e) {}
+
+        var after = getSliderState(wrap);
+        if (!after || after === before || after.indexOf('none') !== -1) {
+          var item = rec.querySelector('.t-slds__container .t-slds__item');
+          var container = rec.querySelector('.t-slds__container');
+          var width = (item && item.offsetWidth) || (container && container.offsetWidth) || 0;
+          if (width) wrap.style.transform = 'translateX(-' + (width * next) + 'px)';
+        }
+
+        setActiveSlide(rec, next);
+        setLoadedImages(rec, next);
+        syncSliderArrows(rec, next, total, cycle);
+        try { rec.dispatchEvent(new Event('updateSlider', { bubbles: true })); } catch (e) {}
+        post();
+        return true;
+      }
+
+      function bindTildaSliderFallback(root) {
+        var mains = (root || document).querySelectorAll('.t-slds__main');
+        for (var i = 0; i < mains.length; i++) setupTildaSliderMain(mains[i]);
+      }
+
+      function setupTildaSliderMain(main) {
+        if (!main || main.getAttribute('data-lovable-tilda-slider-fallback') === '1') return;
+        main.setAttribute('data-lovable-tilda-slider-fallback', '1');
+        var sx = 0;
+        var sy = 0;
+        var tracking = false;
+        var horizontal = false;
+
+        function start(x, y) {
+          sx = x;
+          sy = y;
+          tracking = true;
+          horizontal = false;
+        }
+
+        function move(ev, x, y) {
+          if (!tracking) return;
+          var dx = x - sx;
+          var dy = y - sy;
+          if (!horizontal && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) {
+            horizontal = Math.abs(dx) > Math.abs(dy) + 6;
+          }
+          if (horizontal && ev.cancelable) ev.preventDefault();
+        }
+
+        function end(x, y, target) {
+          if (!tracking) return;
+          var dx = x - sx;
+          var dy = y - sy;
+          tracking = false;
+          if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+            moveTildaSlider(target || main, dx < 0 ? 'right' : 'left');
+          }
+        }
+
+        main.addEventListener('touchstart', function(ev) {
+          if (ev.touches && ev.touches[0]) start(ev.touches[0].clientX, ev.touches[0].clientY);
+        }, { passive: true });
+        main.addEventListener('touchmove', function(ev) {
+          if (ev.touches && ev.touches[0]) move(ev, ev.touches[0].clientX, ev.touches[0].clientY);
+        }, { passive: false });
+        main.addEventListener('touchend', function(ev) {
+          var t = (ev.changedTouches && ev.changedTouches[0]) || null;
+          end(t ? t.clientX : sx, t ? t.clientY : sy, ev.target);
+        }, { passive: true });
+        main.addEventListener('mousedown', function(ev) {
+          if (ev.button !== 0) return;
+          start(ev.clientX, ev.clientY);
+        }, true);
+        main.addEventListener('mousemove', function(ev) {
+          move(ev, ev.clientX, ev.clientY);
+        }, true);
+        main.addEventListener('mouseup', function(ev) {
+          end(ev.clientX, ev.clientY, ev.target);
+        }, true);
+        main.addEventListener('wheel', function(ev) {
+          var dx = ev.deltaX || 0;
+          var dy = ev.deltaY || 0;
+          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 20) {
+            if (ev.cancelable) ev.preventDefault();
+            moveTildaSlider(ev.target, dx > 0 ? 'right' : 'left');
+          }
+        }, { passive: false });
+      }
+
+      document.addEventListener('click', function(ev) {
+        var arrow = closestMatch(ev.target, '.t-slds__arrow_wrapper[data-slide-direction]');
+        if (!arrow) return;
+        var wrap = getSliderWrapper(arrow);
+        var before = getSliderState(wrap);
+        timers.push(setTimeout(function() {
+          if (before && before === getSliderState(wrap)) {
+            moveTildaSlider(arrow, arrow.getAttribute('data-slide-direction') === 'left' ? 'left' : 'right');
+          }
+        }, 0));
+      }, true);
+
+      bindTildaSliderFallback(document);
+      if (typeof MutationObserver !== 'undefined') {
+        var sliderFallbackObserver = new MutationObserver(function() { bindTildaSliderFallback(document); });
+        sliderFallbackObserver.observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener('beforeunload', function() { sliderFallbackObserver.disconnect(); });
+      }
+    }
+  } catch (e) {}
 
 
   // ---- Element.prototype.scrollIntoView intercept with fallback ----
