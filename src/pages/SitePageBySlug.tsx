@@ -26,12 +26,25 @@ import NotFound from "./NotFound";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration"]);
+const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration", "open-payment"]);
 
 interface PendingOffer {
   productId: string;
   offerId: string;
 }
+
+/**
+ * Map an admin-HTML tariff key (data-lovable-tariff-key="…") to a tariff on the
+ * linked product. Matches by substring of tariff.name (case-insensitive) so the
+ * product's tariffs stay editable without HTML re-patch.
+ * cb20 (Ценный бухгалтер): buh → «Бухгалтер», gl_buh → «Главный бухгалтер», biz-l → «Бизнес-леди».
+ */
+const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
+  buh: (n) => /^бухгалтер/i.test(n.trim()),
+  gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
+  "biz-l": (n) => /бизнес.?леди/i.test(n),
+};
+
 
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
@@ -56,6 +69,13 @@ export default function SitePageBySlug() {
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
+  const linkedProductId = page?.product_id || null;
+  const { data: linkedProductData } = usePublicProduct(
+    linkedProductId ? { productId: linkedProductId } : null,
+  );
+  const linkedProductDataRef = useRef(linkedProductData);
+  useEffect(() => { linkedProductDataRef.current = linkedProductData; }, [linkedProductData]);
+
   useEffect(() => {
     function onSiteAction(e: Event) {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
@@ -73,6 +93,35 @@ export default function SitePageBySlug() {
         setPaymentOpen(true);
         return;
       }
+
+      if (detail.action === "open-payment") {
+        // Dynamic binding: resolve tariff_key against the page-linked product's tariffs,
+        // pick the primary pay_now offer (lowest amount). No UUIDs in the HTML.
+        const tariffKey = String(detail.payload?.tariff_key || "").trim();
+        const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
+        const product = linkedProductDataRef.current;
+        if (!matcher || !product?.product?.id || !product.tariffs?.length) {
+          console.warn("[site-action] open-payment: no product data or unknown tariff_key", { tariffKey });
+          return;
+        }
+        const tariff = product.tariffs.find((t) => matcher(t.name || ""));
+        if (!tariff) {
+          console.warn("[site-action] open-payment: tariff not found", { tariffKey });
+          return;
+        }
+        const payOffers = (tariff.offers || []).filter(
+          (o) => o.offer_type === "pay_now" && o.is_active !== false,
+        );
+        const offer = payOffers.slice().sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
+        if (!offer) {
+          console.warn("[site-action] open-payment: no pay_now offer on tariff", { tariffKey });
+          return;
+        }
+        setPending({ productId: product.product.id, offerId: offer.id });
+        setPaymentOpen(true);
+        return;
+      }
+
 
       if (detail.action === "open-preregistration") {
         const offerId = String(detail.payload?.offer_id || "");

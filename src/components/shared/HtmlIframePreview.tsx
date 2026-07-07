@@ -35,7 +35,7 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v5";
+const BRIDGE_MARKER = "data-lovable-resize-v6";
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -298,6 +298,10 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
     var a = findAnchor(ev.target);
     if (!a) return;
+
+    // Anchors carrying a site-action are handled by the site-action bridge below.
+    // Skip anchor intercept so we do not stopPropagation the site-action listener.
+    if (a.getAttribute && a.getAttribute('data-lovable-action')) return;
 
     var rawHref = a.getAttribute('href');
     if (rawHref === null) return;
