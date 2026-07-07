@@ -82,6 +82,12 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  normalizeTelegramNumericSearch,
+  normalizeTelegramSearchInput,
+  normalizeTelegramUsernameSearch,
+} from "@/lib/telegramSearch";
 
 // Звуковое уведомление о новых входящих живёт в глобальном хуке
 // `useIncomingMessageAlert` (mounted в AdminLayout). Локальный playNotificationSound
@@ -178,6 +184,8 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   };
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
+  const serverSearchQuery = normalizeTelegramSearchInput(debouncedSearchQuery);
   const [contactSheetUserId, setContactSheetUserId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "unread" | "read" | "favorites" | "pinned">("all");
   const [advancedFilters, setAdvancedFilters] = useState<Filters>(initialFilters);
@@ -243,14 +251,15 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
 
   // === P1 OPTIMIZED: Use get_inbox_dialogs_v1 RPC instead of loading all messages ===
   const { data: dialogs = [], isLoading, refetch } = useQuery({
-    queryKey: INBOX_DIALOGS_QK,
+    queryKey: [...INBOX_DIALOGS_QK, serverSearchQuery],
     queryFn: async () => {
+      const search = serverSearchQuery || null;
       // Call optimized RPC that does server-side aggregation
       const { data: rpcDialogs, error: rpcError } = await supabase
         .rpc('get_inbox_dialogs_v1', { 
-          p_limit: 100, 
+          p_limit: search ? 100 : 200,
           p_offset: 0,
-          p_search: null  // Search is done client-side for now
+          p_search: search
         });
 
       if (rpcError) {
@@ -588,13 +597,17 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       result = result.filter(d => d.last_bot_id === botFilter);
     }
 
-    if (searchQuery) {
-      const search = searchQuery.toLowerCase();
+    if (serverSearchQuery) {
+      const search = serverSearchQuery.toLowerCase();
+      const usernameSearch = normalizeTelegramUsernameSearch(serverSearchQuery);
+      const numericSearch = normalizeTelegramNumericSearch(serverSearchQuery);
       result = result.filter(dialog => 
         dialog.profile?.full_name?.toLowerCase().includes(search) ||
         dialog.profile?.email?.toLowerCase().includes(search) ||
         dialog.profile?.phone?.toLowerCase().includes(search) ||
         dialog.profile?.telegram_username?.toLowerCase().includes(search) ||
+        (usernameSearch && normalizeTelegramUsernameSearch(dialog.profile?.telegram_username).includes(usernameSearch)) ||
+        (numericSearch && String(dialog.profile?.telegram_user_id || "") === numericSearch) ||
         dialog.last_message?.toLowerCase().includes(search) ||
         dialog.orders?.some(o => o.order_number.toLowerCase().includes(search))
       );
@@ -622,7 +635,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     });
 
     return result;
-  }, [dialogs, searchQuery, advancedFilters, filter, prefsMap, botFilter]);
+  }, [dialogs, serverSearchQuery, advancedFilters, filter, prefsMap, botFilter]);
 
   // Unified bot display label: bot_name -> @bot_username -> "Бот"
   const displayBotLabel = (botName?: string | null, botUsername?: string | null) => {
