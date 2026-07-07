@@ -164,8 +164,14 @@ Deno.serve(async (req) => {
       // Try new multi-rule table first
       const { data: accessRules } = await supabase
         .from('live_event_access_rules')
-        .select('id, product_id, tariff_id, conditions')
+        .select('id, product_id, tariff_id, conditions, rule_kind')
         .eq('live_event_id', event.id);
+
+      // Fast path: any_authenticated grants access to any signed-in user
+      // (auth was already verified above; anonymous callers never reach this point).
+      if (accessRules && accessRules.some((r: any) => r.rule_kind === 'any_authenticated')) {
+        accessValid = true;
+      }
 
       // Month-gate context: derived from event.metadata.content_month
       const eventMeta = (event.metadata || {}) as Record<string, any>;
