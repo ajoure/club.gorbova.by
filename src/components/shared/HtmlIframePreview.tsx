@@ -606,6 +606,15 @@ export function HtmlIframePreview({
         return;
       }
 
+      if (data.type === 'iframe-open-url') {
+        const url = typeof data.url === 'string' ? data.url : '';
+        // Strict whitelist — never open javascript:, data:, blob:, about:srcdoc, etc.
+        if (!/^(https?:\/\/|mailto:|tel:|sms:)/i.test(url)) return;
+        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch {}
+        return;
+      }
+
+
       if (data.type === 'site-action') {
         // Forward to host via CustomEvent. Host validates action/payload before acting.
         const action = typeof data.action === 'string' ? data.action : '';
