@@ -35,7 +35,7 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v3";
+const BRIDGE_MARKER = "data-lovable-resize-v4";
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -112,9 +112,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 
   function isFullscreenFixedOverlay(el) {
     if (isHidden(el)) return false;
-    // Don't repack Tilda-managed popups — Tilda handles their own backdrop/positioning.
     var cls = String(el.className || '');
-    if (/(^|\s)(t-popup|t-popup__container|t-popup__close|t-popup__wrapper)(\s|$)/.test(cls)) return false;
     var cs = window.getComputedStyle(el);
     if (cs.position !== 'fixed') return false;
     var rect = el.getBoundingClientRect();
@@ -122,9 +120,14 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var docHeight = document.documentElement.clientHeight || window.innerHeight || 0;
     var z = parseInt(cs.zIndex || '0', 10);
     var marker = String(el.id || '') + ' ' + cls;
-    var looksLikeModal = /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
+    // Tilda popups: repack the outer .t-popup container (position:fixed;inset:0),
+    // but never the inner __container/__close/__wrapper — those live inside .t-popup.
+    var isTildaPopupOuter = /(^|\s)t-popup(\s|$)/.test(cls) && !/(t-popup__)/.test(cls);
+    var looksLikeModal = isTildaPopupOuter || /modal|overlay|backdrop|z-\d+|z-50/i.test(marker) || (!Number.isNaN(z) && z >= 40);
     var insetLike = Math.abs(rect.left) <= 3 && Math.abs(rect.top) <= 3 && Math.abs(docWidth - rect.right) <= Math.max(3, docWidth * 0.08);
     var fullscreenSize = rect.width >= docWidth * 0.85 && rect.height >= Math.min(docHeight, Math.max(parentViewport.height || 800, 320)) * 0.7;
+    // Tilda popup outer is always full-viewport when open; skip the size heuristic for it.
+    if (isTildaPopupOuter) return insetLike && !isHidden(el) && rect.height > 0;
     return looksLikeModal && insetLike && fullscreenSize;
   }
 
@@ -254,8 +257,13 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   } catch (e) {}
 
   window.addEventListener('wheel', function(ev) {
+    // Keep horizontal wheel/trackpad gestures inside the iframe so author-authored
+    // sliders (Tilda t396/t-slds) receive them. Only relay vertical scroll to parent.
+    var dx = ev.deltaX || 0;
+    var dy = ev.deltaY || 0;
+    if (Math.abs(dx) > Math.abs(dy)) return;
     try {
-      parent.postMessage({ type: 'iframe-wheel', deltaX: ev.deltaX || 0, deltaY: ev.deltaY || 0 }, '*');
+      parent.postMessage({ type: 'iframe-wheel', deltaX: dx, deltaY: dy }, '*');
     } catch (e) {}
   }, { passive: true });
 
@@ -304,9 +312,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // In-page hash anchor.
     if (rawHref.charAt(0) === '#') {
       var id = rawHref.slice(1);
-      // Tilda popup syntax (#popup:xxx) or unknown id → let author JS handle (bubble phase).
-      // Only intercept when the id actually resolves to an element in the iframe document.
-      var el = id ? document.getElementById(id) : null;
+      // Tilda popup syntax (#popup:xxx) → let author JS handle (bubble phase).
+      // Otherwise resolve target via id first, then legacy <a name="..."> fallback.
+      var el = null;
+      if (id) {
+        try { el = document.getElementById(id); } catch (e) {}
+        if (!el) {
+          try {
+            var named = document.getElementsByName(id);
+            if (named && named.length) el = named[0];
+          } catch (e) {}
+        }
+      }
       if (!el) return;
       var targetOffsetTop = el.getBoundingClientRect().top
         + (window.pageYOffset || document.documentElement.scrollTop || 0);
