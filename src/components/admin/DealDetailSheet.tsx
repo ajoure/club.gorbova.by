@@ -1357,5 +1357,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         }}
       />
     </Sheet>
+    <ContactDetailSheet
+      contact={selectedContact}
+      open={contactSheetOpen}
+      onOpenChange={setContactSheetOpen}
+    />
+    </>
   );
 }
