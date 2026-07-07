@@ -25,7 +25,7 @@
 | `_shared/typed-tokens-resolver` | shared | да | нет | тот же путь |
 | миграции: `20260510162228`, `20260511102941`, `20260510170316`, `20260510164919` | SQL | — | schema | — |
 
-Writer в код-базе не найден для нового `legal_entities_requisites` — используется как view-layer поверх `client_legal_details` (`source_legacy_id`). Backfill в companies идёт через `client_legal_details` (см. §1.1).
+Writer в код-базе не найден для нового `legal_entities_requisites` — используется как view-layer поверх `client_legal_details` (`source_legacy_id`). **v2:** `LER` = **secondary mirror only**. Если `source_legacy_id` отсутствует ИЛИ ссылается не на billing legal_entity/entrepreneur → excluded from CRM auto-source. Backfill в companies идёт **только** через billing `client_legal_details` (см. §1.1 + Master Plan §3.1).
 
 ### 1.3 `legal_details_persons` + `legal_details_entity_person_links`
 
@@ -35,7 +35,7 @@ Writer в код-базе не найден для нового `legal_entities_
 | `_shared/resolve-per-role-recipients`, `_shared/resolve-package-tokens`, `_shared/packagePlaceholderCatalog`, `_shared/docx-table-repeat-expand`, `_shared/ln-subfield-spec`, `_shared/packageFieldFormatter` | да | нет | per-role резолв |
 | UI: `PersonLinkedEntitiesBlock`, `useAiEntities`, corporate драфт-сессии | да | **да** | Writer LDP/LEPL — из UI карточки реквизитов |
 
-**Важно (см. `companies_discovery_0_1_sql.md` §2):** `LDP.profile_id` = владелец ЛК, а не сам подписант. При backfill в `company_contacts` — только `LDP.id → company_contacts.person_ref` + `company_id` из LEPL; `profile_id` резолвится отдельно matcher-ом или NULL.
+**Важно (v2, см. Master Plan §3.1):** `legal_details_persons` и `legal_details_entity_person_links` **excluded from CRM auto-source**. Причина: `LDP.profile_id` = владелец ЛК, а не подписант (`companies_discovery_0_1_sql.md §2`), а сами таблицы обслуживают document-packages / роли подписантов, а не CRM-контакты компании. В Phase 3 backfill НЕ используются. `company_contact_person_map` в Phase 1 НЕ создаётся; deferred в Phase 10 Documents follow-up (только через отдельный approval).
 
 ### 1.4 `orders_v2`
 
