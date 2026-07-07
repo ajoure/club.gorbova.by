@@ -347,3 +347,34 @@ RPC `crm_company_upsert_from_legal_details(legal_details_id)`:
 - Phase 4 содержит sync guard + UNP-collision правило (map + owner-contact, без overwrite).
 - Discovery 0.1 не содержит упоминаний matcher/review-очереди по persons.
 - Dependency map помечает persons/entity_person_links как excluded from CRM auto-source.
+---
+
+## Отчет о выполнении: Master Plan v2 — source guard принят (2026-07-07)
+
+Обновлены только markdown-документы. Код, БД, миграции, edge, UI — не тронуты.
+
+### Изменения
+
+- `.lovable/architecture/companies_master_implementation_plan.md` — полностью переписан в v2:
+  - Новый §3.1 Source rules (billing-only, 10 пунктов).
+  - §4: закрытый список 4 core-таблиц (`companies`, `company_contacts`, `client_legal_details_company_map`, `company_sync_queue`); `company_contact_person_map` перенесён в deferred/Phase 10.
+  - §5 Freeze list: пункт 7 (LDP/LEPL/document-purpose excluded) + пункт 8 (закрытый список таблиц).
+  - Phase 1: `company_contacts.source` и `relationship_type` = text CHECK, не PG ENUM; `company_contact_person_map` не создаётся.
+  - Phase 2: source guard в `crm_company_upsert_from_legal_details`.
+  - Phase 3: source guard SQL + excluded-by-reason; contacts backfill = только `billing_contact` владелец ЛК; persons matcher удалён.
+  - Phase 3/4: единое правило UNP-collision (map + billing_contact без overwrite; archived/merged → follow `merged_into_id` или review).
+  - Phase 7: колонка Source во вкладке Контакты.
+  - Phase 10: `company_contact_person_map` и persons matcher — deferred, только через отдельный approval.
+  - §10 Verification: добавлены source guard invariants.
+  - §11 Open questions: обновлены под v2.
+- `.lovable/architecture/companies_sprint_discovery_0_1.md` — §3 переформулирован (LDP/LEPL excluded from CRM auto-source; единственный источник company_contacts при backfill = владелец ЛК с `billing_contact`/`billing_requisites`).
+- `.lovable/proofs/companies_dependency_map_0_1.md` — §1.2 (LER = secondary mirror only) + §1.3 (LDP/LEPL excluded from CRM auto-source; `company_contact_person_map` deferred).
+
+### Что НЕ сделано (по scope)
+
+- Не написан отдельный документ «План: CRM Companies — Phase 1 Canonical Data Model» (DDL/RLS/GRANT/rollback/verification SQL). Это следующий approval-шаг.
+- Никаких изменений в БД, RPC, edge, UI.
+
+### Готовность
+
+Master Plan v2 готов к формированию Phase 1 DDL-плана отдельным approval.
