@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
             break;
           }
         }
-      } else {
+      } else if (!accessValid && (!accessRules || accessRules.length === 0)) {
         // Legacy fallback: use access_rule from event
         const accessRule = event.access_rule as AccessRule;
 
