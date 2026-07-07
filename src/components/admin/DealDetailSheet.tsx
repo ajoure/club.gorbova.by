@@ -533,6 +533,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const tariff = deal.tariffs as any;
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16">
