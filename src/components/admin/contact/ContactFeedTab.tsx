@@ -533,7 +533,12 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
           const t = (messageText || "").replace(/<[^>]+>/g, "").trim();
           return t ? (t.length > 320 ? `${t.slice(0, 320)}…` : t) : null;
         }
-        const parts = [subject ? `Тема: ${subject}` : null, preview ? `Preview: ${preview}` : null];
+        const fullEmailText = (messageText || "").replace(/<[^>]+>/g, "").trim();
+        const parts = [
+          subject ? `Тема: ${subject}` : null,
+          preview ? `Preview: ${preview}` : null,
+          fullEmailText || null,
+        ];
         return parts.filter(Boolean).join("\n") || null;
       })();
       const title = subject && kind === "email"
@@ -993,7 +998,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                           <div className="mt-1 text-sm font-medium truncate">{evt.title}</div>
                         )}
                         {evt.body && (
-                          <div className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words line-clamp-4">
+                          <div className={cn(
+                            "mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words",
+                            evt.meta?.event_source === "order_notification"
+                              ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
+                              : "line-clamp-4"
+                          )}>
                             {evt.body}
                           </div>
                         )}
