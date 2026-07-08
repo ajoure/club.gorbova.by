@@ -104,7 +104,7 @@ export function TariffCard({
   // Price resolution: primaryOffer.amount > positive card_config.price_display > tariff.current_price > null
   const displayPrice = primaryOffer?.amount ?? (hasConfiguredPriceDisplay ? cc?.price_display : null) ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
-  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0;
+  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0 || bankInstallmentOffers.length > 0;
 
   // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
   const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
