@@ -177,7 +177,7 @@ export function TariffCard({
 
       {(() => {
         // Hide price block for lead-only tariffs unless card_config.price_display is explicitly set to a positive amount.
-        const isLeadOnly = leadOffers.length > 0 && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
+        const isLeadOnly = (leadOffers.length > 0 || bankInstallmentOffers.length > 0) && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
         if (isLeadOnly && !hasConfiguredPriceDisplay) return null;
         return (
           <div className="text-center mb-4">
