@@ -72,6 +72,9 @@ export function SwipeableDialogCard({
         style={swipeStyle}
         className={cn("relative bg-background overflow-visible", className)}
         onClick={onClick}
+        onPointerEnter={onPrefetch}
+        onPointerDown={onPrefetch}
+        onFocus={onPrefetch}
       >
         {children}
       </div>
