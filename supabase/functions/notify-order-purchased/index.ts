@@ -78,9 +78,10 @@ Deno.serve(async (req) => {
   // 1. Load order
   const { data: order, error: orderErr } = await supabase
     .from('orders_v2')
-    .select('id, order_number, user_id, product_id, tariff_id, customer_email, status, meta, currency, final_price')
+    .select('id, order_number, user_id, product_id, tariff_id, customer_email, status, meta, currency, final_price, paid_amount, updated_at')
     .eq('id', orderId)
     .maybeSingle()
+
 
   if (orderErr) return json({ error: 'order_lookup_failed', details: orderErr.message }, 500)
   if (!order) return json({ error: 'order_not_found' }, 404)
