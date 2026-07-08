@@ -227,8 +227,12 @@ const Email = ({
 
   return (
     <Html lang="ru" dir="ltr">
-      <Head />
-      <Preview>Оплата получена — доступ к «{product}» открыт</Preview>
+      <Head>
+        <meta httpEquiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </Head>
+      <Preview>Оплата получена. Доступ к продукту {product} открыт.</Preview>
+
       <Body style={main}>
         <Section style={outer}>
           <Container style={container}>
