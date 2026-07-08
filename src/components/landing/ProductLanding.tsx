@@ -6,6 +6,7 @@ import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
@@ -136,17 +137,25 @@ export function ProductLanding({ data, header, footer, customSections }: Product
       {footer}
 
       {/* Payment / Preregistration / Lead Dialog */}
-      {selectedOffer && selectedOffer.offer.offer_type === "lead" ? (
-        <LeadRequestDialog
-          open={paymentOpen}
-          onOpenChange={setPaymentOpen}
-          offerId={selectedOffer.offer.id}
-          offerLabel={selectedOffer.offer.button_label}
-          productName={data.product.public_title || data.product.name}
-          tariffName={selectedOffer.tariff.name}
-          commentPlaceholder={(selectedOffer.offer.meta as any)?.lead_form?.comment_placeholder}
-          successMessage={(selectedOffer.offer.meta as any)?.lead_form?.success_message}
-        />
+      {selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (
+        (() => {
+          const bank = selectedOffer.offer.offer_type === "bank_installment"
+            ? readBankInstallmentMeta(selectedOffer.offer)
+            : {};
+          return (
+            <LeadRequestDialog
+              open={paymentOpen}
+              onOpenChange={setPaymentOpen}
+              offerId={selectedOffer.offer.id}
+              offerLabel={selectedOffer.offer.button_label}
+              productName={data.product.public_title || data.product.name}
+              tariffName={selectedOffer.tariff.name}
+              commentPlaceholder={(selectedOffer.offer.meta as any)?.lead_form?.comment_placeholder}
+              successMessage={(selectedOffer.offer.meta as any)?.lead_form?.success_message}
+              {...bank}
+            />
+          );
+        })()
       ) : selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
         <PreregistrationDialog
           open={paymentOpen}

@@ -20,7 +20,7 @@ export interface TariffCardFeature {
 
 export interface TariffCardOffer {
   id: string;
-  offer_type: "pay_now" | "trial" | "preregistration" | "lead";
+  offer_type: "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment";
   button_label: string;
   amount: number;
   trial_days?: number | null;
@@ -94,6 +94,7 @@ export function TariffCard({
   const trialOffers = resolvedOffers.filter(o => o.offer_type === "trial" && o.is_active !== false);
   const preregOffers = resolvedOffers.filter(o => o.offer_type === "preregistration" && o.is_active !== false);
   const leadOffers = resolvedOffers.filter(o => o.offer_type === "lead" && o.is_active !== false);
+  const bankInstallmentOffers = resolvedOffers.filter(o => o.offer_type === "bank_installment" && o.is_active !== false);
 
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
@@ -103,7 +104,7 @@ export function TariffCard({
   // Price resolution: primaryOffer.amount > positive card_config.price_display > tariff.current_price > null
   const displayPrice = primaryOffer?.amount ?? (hasConfiguredPriceDisplay ? cc?.price_display : null) ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
-  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0;
+  const hasAnyActionableOffer = payNowOffers.length > 0 || trialOffers.length > 0 || preregOffers.length > 0 || leadOffers.length > 0 || bankInstallmentOffers.length > 0;
 
   // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
   const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
@@ -176,7 +177,7 @@ export function TariffCard({
 
       {(() => {
         // Hide price block for lead-only tariffs unless card_config.price_display is explicitly set to a positive amount.
-        const isLeadOnly = leadOffers.length > 0 && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
+        const isLeadOnly = (leadOffers.length > 0 || bankInstallmentOffers.length > 0) && payNowOffers.length === 0 && trialOffers.length === 0 && preregOffers.length === 0;
         if (isLeadOnly && !hasConfiguredPriceDisplay) return null;
         return (
           <div className="text-center mb-4">
@@ -267,6 +268,17 @@ export function TariffCard({
               className="w-full"
             >
               {offer.button_label || "Оставить заявку"}
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ))}
+          {bankInstallmentOffers.map((offer) => (
+            <Button
+              key={offer.id}
+              onClick={() => onSelectOffer?.(offer, tariff)}
+              variant="outline"
+              className="w-full"
+            >
+              {offer.button_label || "Заявка на рассрочку от банка"}
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           ))}

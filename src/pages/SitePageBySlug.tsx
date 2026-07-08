@@ -21,6 +21,7 @@ import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialo
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
+import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
@@ -33,6 +34,7 @@ const ALLOWED_ACTIONS = new Set([
   "open-invoice",
   "open-installment",
   "open-lead",
+  "open-bank-installment",
 ]);
 
 /** Map action → flow used by pickOfferForFlow. */
@@ -41,6 +43,7 @@ const ACTION_TO_FLOW = {
   "open-invoice": "invoice",
   "open-installment": "installment",
   "open-lead": "lead",
+  "open-bank-installment": "bank_installment",
 } as const;
 type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
 
@@ -71,6 +74,7 @@ const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
 function pickOfferForFlow(offers: readonly any[], flow: Flow) {
   const active = offers.filter((o) => o.is_active !== false);
   if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
+  if (flow === "bank_installment") return active.find((o) => o.offer_type === "bank_installment") || null;
   const pn = active.filter((o) => o.offer_type === "pay_now");
   if (flow === "installment") {
     return pn.find((o) => o.payment_method === "internal_installment") || null;
@@ -246,7 +250,10 @@ export default function SitePageBySlug() {
         pageId={page.id}
       />
       {resolved && (() => {
-        if (resolved.offer.offer_type === "lead") {
+        if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
+          const bank = resolved.offer.offer_type === "bank_installment"
+            ? readBankInstallmentMeta(resolved.offer)
+            : {};
           return (
             <LeadRequestDialog
               open={paymentOpen}
@@ -260,6 +267,7 @@ export default function SitePageBySlug() {
               tariffName={resolved.tariff.name}
               commentPlaceholder={(resolved.offer as any).meta?.lead_form?.comment_placeholder}
               successMessage={(resolved.offer as any).meta?.lead_form?.success_message}
+              {...bank}
             />
           );
         }

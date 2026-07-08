@@ -33,6 +33,10 @@ interface LeadRequestDialogProps {
   priceLabel?: string;
   commentPlaceholder?: string;
   successMessage?: string;
+  /** Bank-installment mode: after submit, show HTML message and a CTA leading to the bank. */
+  bankLinkUrl?: string;
+  bankLinkLabel?: string;
+  bankMessageHtml?: string;
 }
 
 type Step = "auth" | "details" | "telegram" | "success";
@@ -61,6 +65,9 @@ export function LeadRequestDialog({
   priceLabel,
   commentPlaceholder,
   successMessage,
+  bankLinkUrl,
+  bankLinkLabel,
+  bankMessageHtml,
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
@@ -329,7 +336,24 @@ export function LeadRequestDialog({
               {successMessage ||
                 "Спасибо! Мы свяжемся с вами в ближайшее время."}
             </DialogDescription>
-            <Button onClick={() => onOpenChange(false)} className="w-full">
+            {bankMessageHtml && (
+              <div
+                className="text-sm text-left text-foreground/90 bg-muted/40 rounded-md p-3 [&_a]:text-primary [&_a]:underline"
+                dangerouslySetInnerHTML={{ __html: bankMessageHtml }}
+              />
+            )}
+            {bankLinkUrl && (
+              <Button asChild className="w-full">
+                <a href={bankLinkUrl} target="_blank" rel="noopener noreferrer">
+                  {bankLinkLabel || "Перейти к оформлению в банк"}
+                </a>
+              </Button>
+            )}
+            <Button
+              onClick={() => onOpenChange(false)}
+              variant={bankLinkUrl ? "ghost" : "default"}
+              className="w-full"
+            >
               Закрыть
             </Button>
           </div>
