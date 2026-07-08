@@ -978,26 +978,13 @@ Deno.serve(async (req) => {
             );
           }
 
-          // Single batch audit log instead of per-URL logs (P2 optimization)
+          // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1:
+          // синхронный INSERT в audit_logs удалён из critical path.
+          // Оставляем только компактный console-лог; endpoint более не
+          // используется UI (см. RPC admin_get_telegram_messages_fast_v1),
+          // но код сохранён на случай внешних вызовов.
           if (urlCount > 0 || errorCount > 0) {
             const elapsedMs = Date.now() - startMs;
-            try {
-              await supabase.from('audit_logs').insert({
-                actor_type: 'system',
-                actor_user_id: null,
-                actor_label: 'telegram-admin-chat',
-                action: 'signed_urls_batch',
-                meta: {
-                  count: urlCount,
-                  errors: errorCount,
-                  ms: elapsedMs,
-                  user_id: user_id
-                }
-              });
-            } catch (auditErr) {
-              console.error('[telegram-admin-chat] batch audit log failed', auditErr);
-            }
-            
             console.log(`[ENRICH] Batch complete: ${urlCount} URLs generated, ${errorCount} errors, ${elapsedMs}ms`);
           }
 
