@@ -345,10 +345,17 @@ Deno.serve(async (req) => {
   console.log('Transactional email enqueued', { templateName, effectiveRecipient })
 
   return new Response(
-    JSON.stringify({ success: true, queued: true }),
+    JSON.stringify({
+      success: true,
+      queued: true,
+      rendered_subject: resolvedSubject,
+      rendered_text: plainText,
+      rendered_html: html,
+    }),
     {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     }
   )
+
 })
