@@ -1003,6 +1003,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                     onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
                     onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                     onClick={() => handleSelectDialog(dialog.user_id)}
+                    onPrefetch={() => prefetchDialogMessages(dialog.user_id)}
                     className={cn(
                       "group relative grid grid-cols-[auto_1fr_24px] items-start gap-1.5 p-1.5 cursor-pointer rounded-lg border transition-colors duration-200",
                       selectedUserId === dialog.user_id 
