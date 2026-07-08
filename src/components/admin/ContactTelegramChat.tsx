@@ -1634,7 +1634,7 @@ export function ContactTelegramChat({
                 {statusSuffix && <span className="opacity-70">{statusSuffix}</span>}
               </span>
               <span className="opacity-60">
-                {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
+                {timeMedium}
               </span>
               {event.status === 'success' && <CheckCircle className="w-3 h-3 text-green-500" />}
               {isFailed && <AlertCircle className="w-3 h-3 text-destructive" />}
@@ -1689,7 +1689,7 @@ export function ContactTelegramChat({
           <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
             <p className="text-sm text-muted-foreground italic">Сообщение удалено</p>
             <span className="text-xs opacity-60">
-              {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+              {timeShort}
             </span>
           </div>
         </div>
@@ -1883,7 +1883,7 @@ export function ContactTelegramChat({
                     <span className="text-xs opacity-60 mr-1">ред.</span>
                   )}
                   <span className="text-xs opacity-60">
-                    {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+                    {timeShort}
                   </span>
                   {msg.direction === "outgoing" && (
                     <>
