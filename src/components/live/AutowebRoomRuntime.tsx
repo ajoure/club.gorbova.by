@@ -2,14 +2,15 @@
  * Autoweb Room Runtime — самостоятельная комната автовебинара.
  *
  * Ключевые инварианты:
- *  - Плеер: seek/pause/hotkeys/subtitles ЗАПРЕЩЕНЫ. Реализовано двумя слоями:
- *      1) Kinescope iframe query-params (controls=false, hotkeys=false, subtitles=false, pip=false)
- *      2) Прозрачный overlay-guard, перехватывающий клики по нижней панели плеера.
+ *  - Плеер: seek/pause/скорость определяются ЕДИНЫМ SoT — autoweb_config.viewer_controls,
+ *    приходящим через autoweb-room-state в state.viewer_controls. Никакой отдельной
+ *    "крепости" сверху нет: если админ включил Пауза=true, пауза работает.
  *  - Бейдж: "В эфире" для live/replay (никакого "Запись"). "Завершён" только для ended.
  *  - Timed-replay: если у автовеба задан source_live_event_id, вкладки Чат/Вопросы
  *    подтягивают исторические сообщения ИСХОДНОГО эфира и проигрывают их по
- *    таймингу видео. Новые сообщения текущих зрителей пишутся под id автовеба
- *    и подмешиваются в единую ленту.
+ *    таймингу видео (t0 = source.live_started_at ?? room_opened_at ?? starts_at).
+ *    Новые сообщения текущих зрителей пишутся под id автовеба и подмешиваются в
+ *    единую ленту.
  *  - Участники: показываем ТОЛЬКО текущих в autoweb-session (никакого архива online).
  *  - Сценарий/Блоки: подтягиваются из source (это редакторский контент прошедшего эфира).
  */
@@ -37,6 +38,7 @@ import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { formatDualTz } from "@/lib/autowebTzLabel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
+import type { AutowebViewerControls } from "@/types/autoweb";
 import "@/components/live/liveRoomTheme.css";
 
 interface Props {
@@ -46,36 +48,54 @@ interface Props {
 }
 
 /**
- * Kinescope iframe плеер с жёстко заблокированным seek/pause/subtitles.
- * - URL: controls=false, hotkeys=false, subtitles=false, pip=false, autoplay=1
- * - Overlay div поверх нижней ~72px области — перехватывает клики по timeline/bottom bar
- *   на случай, если embed-параметры частично проигнорируются.
- * - postMessage listener: пробрасывает currentTime наружу для timed-replay ленты.
+ * Kinescope iframe плеер. Разрешения/запреты берутся из viewerControls (единый SoT).
+ *  - allow_seek=false        → hotkeys=false + overlay-guard на нижнюю панель (timeline)
+ *  - allow_pause=false       → controls=false + overlay-guard на центр (клик = pause/play)
+ *  - allow_speed_control=false → speed=false + settings=false
+ * subtitles/captions выключены всегда — это отдельное продуктовое требование
+ * "эффект live" для автовебинаров, не связанное с viewer_controls.
  */
 function AutowebKinescopePlayer({
   videoId,
   startSeconds,
   onTimeUpdate,
+  viewerControls,
 }: {
   videoId: string;
   startSeconds: number;
   onTimeUpdate: (seconds: number) => void;
+  viewerControls: AutowebViewerControls;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const allowSeek = !!viewerControls.allow_seek;
+  const allowPause = viewerControls.allow_pause !== false;
+  const allowSpeed = !!viewerControls.allow_speed_control;
 
   const src = useMemo(() => {
     const u = new URL(`https://kinescope.io/embed/${videoId}`);
     if (startSeconds > 0) u.searchParams.set("t", String(Math.floor(startSeconds)));
     u.searchParams.set("autoplay", "1");
-    // Отключаем всё, что даёт seek/pause/subtitles/pip и намекает на запись.
-    u.searchParams.set("controls", "false");
-    u.searchParams.set("hotkeys", "false");
+    // Controls (панель плеера) скрываем целиком только если И пауза, И перемотка запрещены.
+    // Если разрешено что-то одно — оставляем controls, а лишнее прячем overlay-guard'ом.
+    if (!allowPause && !allowSeek) {
+      u.searchParams.set("controls", "false");
+    }
+    // Hotkeys управляют клавиатурными Space/←/→. Разрешаем только если хотя бы одно из них
+    // фактически доступно; иначе — глушим, чтобы клавиатура не обходила UI-запрет.
+    u.searchParams.set("hotkeys", allowPause || allowSeek ? "true" : "false");
+    // Скорость и настройки — отдельным флагом.
+    if (!allowSpeed) {
+      u.searchParams.set("speed", "false");
+      u.searchParams.set("settings", "false");
+    }
+    // Всегда — никаких субтитров/PiP на автовебе.
     u.searchParams.set("subtitles", "false");
     u.searchParams.set("captions", "false");
     u.searchParams.set("pip", "false");
     u.searchParams.set("preload", "true");
     return u.toString();
-  }, [videoId, startSeconds]);
+  }, [videoId, startSeconds, allowPause, allowSeek, allowSpeed]);
 
   // Слушаем timeupdate/postMessage от Kinescope плеера.
   useEffect(() => {
@@ -126,16 +146,36 @@ function AutowebKinescopePlayer({
         allowFullScreen
         className="absolute inset-0 w-full h-full border-0"
       />
-      {/* Overlay-guard: перехватывает клики по нижней панели (timeline / controls / CC). */}
-      <div
-        aria-hidden
-        className="absolute inset-x-0 bottom-0 h-[72px] z-10"
-        style={{ pointerEvents: "auto", background: "transparent" }}
-        onClick={(e) => e.preventDefault()}
-        onMouseDown={(e) => e.preventDefault()}
-        onContextMenu={(e) => e.preventDefault()}
-        onDoubleClick={(e) => e.preventDefault()}
-      />
+      {/* Overlay-guard: перехватывает клики по нижней панели (timeline).
+          Ставим ТОЛЬКО если перемотка запрещена — иначе не мешаем зрителю. */}
+      {!allowSeek && (
+        <div
+          aria-hidden
+          className="absolute inset-x-0 bottom-0 h-[72px] z-10"
+          style={{ pointerEvents: "auto", background: "transparent" }}
+          onClick={(e) => e.preventDefault()}
+          onMouseDown={(e) => e.preventDefault()}
+          onContextMenu={(e) => e.preventDefault()}
+          onDoubleClick={(e) => e.preventDefault()}
+        />
+      )}
+      {/* Overlay-guard центра — блокирует клик по видео (pause/play toggle).
+          Ставим ТОЛЬКО если пауза запрещена. */}
+      {!allowPause && (
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 z-10"
+          style={{
+            pointerEvents: "auto",
+            background: "transparent",
+            bottom: !allowSeek ? 72 : 0,
+          }}
+          onClick={(e) => e.preventDefault()}
+          onMouseDown={(e) => e.preventDefault()}
+          onContextMenu={(e) => e.preventDefault()}
+          onDoubleClick={(e) => e.preventDefault()}
+        />
+      )}
     </div>
   );
 }
