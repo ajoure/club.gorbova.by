@@ -87,6 +87,9 @@ export async function resolveAiAccess(supabase: any, userId: string): Promise<Ai
 }
 
 export function isModeAllowed(access: AiAccess, mode: AiMode, scenarioCode?: string | null): { allowed: boolean; reason?: string } {
+  // Admin bypass: полный доступ ко всем режимам и сценариям (в т.ч. будущим).
+  if (access.is_admin) return { allowed: true };
+
   if (mode === 'chat') {
     if (!access.chat) return { allowed: false, reason: 'chat_not_in_tier' };
     return { allowed: true };
