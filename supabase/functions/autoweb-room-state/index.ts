@@ -131,12 +131,23 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, event_timezone, is_published')
+      .select('id, event_type, autoweb_mode, autoweb_config, event_timezone, is_published, source_live_event_id')
       .eq('id', session.live_event_id)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
     if (event.event_type !== 'autowebinar' && event.event_type !== 'recorded_webinar') {
       return jsonRes({ status: 'unsupported_event_type', event_type: event.event_type }, 400);
+    }
+
+    // Опционально подтягиваем starts_at исходного эфира для timed-replay.
+    let source_started_at: string | null = null;
+    if (event.source_live_event_id) {
+      const { data: src } = await admin
+        .from('live_events')
+        .select('starts_at')
+        .eq('id', event.source_live_event_id)
+        .maybeSingle();
+      source_started_at = (src as any)?.starts_at ?? null;
     }
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
