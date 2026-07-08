@@ -735,8 +735,10 @@ Deno.serve(async (req) => {
     const successUrl = settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
     const failUrl = settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
     
-    // Get origin from request for URLs
-    const origin = req.headers.get('origin') || 'https://lovable.app';
+    // Origin MUST be canonical public host — never trust req.headers.origin,
+    // because admin/embedded flows may originate from Lovable preview or
+    // legacy subdomains. See src/utils/buildPublicPaymentUrl.ts.
+    const origin = 'https://gorbova.by';
 
     // Payment amount
     let paymentAmount = productInfo.price;
