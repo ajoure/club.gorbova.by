@@ -336,7 +336,24 @@ export function LeadRequestDialog({
               {successMessage ||
                 "Спасибо! Мы свяжемся с вами в ближайшее время."}
             </DialogDescription>
-            <Button onClick={() => onOpenChange(false)} className="w-full">
+            {bankMessageHtml && (
+              <div
+                className="text-sm text-left text-foreground/90 bg-muted/40 rounded-md p-3 [&_a]:text-primary [&_a]:underline"
+                dangerouslySetInnerHTML={{ __html: bankMessageHtml }}
+              />
+            )}
+            {bankLinkUrl && (
+              <Button asChild className="w-full">
+                <a href={bankLinkUrl} target="_blank" rel="noopener noreferrer">
+                  {bankLinkLabel || "Перейти к оформлению в банк"}
+                </a>
+              </Button>
+            )}
+            <Button
+              onClick={() => onOpenChange(false)}
+              variant={bankLinkUrl ? "ghost" : "default"}
+              className="w-full"
+            >
               Закрыть
             </Button>
           </div>
