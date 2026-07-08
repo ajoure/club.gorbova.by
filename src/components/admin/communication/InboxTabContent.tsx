@@ -567,6 +567,98 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     // НЕ вызываем markAsRead — чат остаётся "новым" до явного действия или ответа
   };
 
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1:
+  // Prefetch the dialog's lean last-20 messages on hover / pointer-down /
+  // focus. The lean RPC seeds the same `["telegram-messages", userId]` cache
+  // that `ContactTelegramChat` reads, so a click hits a warm cache instead
+  // of a cold network round-trip.
+  //
+  // Guards:
+  //   - skip if already prefetching this user or the cache already has data
+  //   - skip if tab is hidden (background invalidations can cascade)
+  //   - throttle to one call per dialog per 30 s
+  const prefetchInFlightRef = useRef<Set<string>>(new Set());
+  const prefetchLastAtRef = useRef<Map<string, number>>(new Map());
+  const prefetchDialogMessages = (dialogUserId: string) => {
+    if (!dialogUserId) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    if (prefetchInFlightRef.current.has(dialogUserId)) return;
+    const last = prefetchLastAtRef.current.get(dialogUserId) || 0;
+    if (Date.now() - last < 30_000) return;
+    const existing = queryClient.getQueryData([
+      "telegram-messages",
+      dialogUserId,
+    ]) as unknown[] | undefined;
+    if (existing && existing.length > 0) return;
+
+    prefetchInFlightRef.current.add(dialogUserId);
+    prefetchLastAtRef.current.set(dialogUserId, Date.now());
+    queryClient
+      .prefetchQuery({
+        queryKey: ["telegram-messages-lean", dialogUserId],
+        staleTime: 60_000,
+        queryFn: async () => {
+          const { data, error } = await supabase.rpc(
+            "admin_get_telegram_messages_lean_v1" as any,
+            { p_user_id: dialogUserId, p_limit: 20, p_text_limit: 4096 } as any,
+          );
+          if (error) throw error;
+          const rows = (data || []) as any[];
+          const mapped = [...rows].reverse().map((r: any) => ({
+            id: r.id,
+            type: "message" as const,
+            direction: r.direction,
+            message_text: r.message_text,
+            is_truncated: r.is_truncated ?? false,
+            message_id: r.message_id,
+            reply_to_message_id: r.reply_to_message_id ?? null,
+            status: r.status,
+            created_at: r.created_at,
+            sent_by_admin: r.sent_by_admin ?? null,
+            bot_id: r.bot_id ?? null,
+            bot_username: r.bot_username ?? null,
+            bot_name: r.bot_name ?? null,
+            admin_profile: r.sent_by_admin
+              ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
+              : null,
+            telegram_bots: r.bot_id
+              ? { id: r.bot_id, bot_name: r.bot_name, bot_username: r.bot_username }
+              : null,
+            meta: null,
+            is_read: r.is_read,
+            is_pinned: r.is_pinned,
+            is_favorite: r.is_favorite,
+            error_message: r.error_message,
+            telegram_user_id: r.telegram_user_id,
+            file_type: r.file_type,
+            storage_bucket: r.storage_bucket,
+            storage_path: r.storage_path,
+            file_url: r.file_url,
+            file_name: r.file_name,
+            file_size: r.file_size,
+            mime_type: r.mime_type,
+            duration: r.duration,
+            thumbnail_url: r.thumbnail_url,
+            automated: r.automated,
+            source: r.source,
+            upload_status: r.upload_status,
+          }));
+          // Seed the shared cache the chat component reads from.
+          queryClient.setQueryData(
+            ["telegram-messages", dialogUserId],
+            (old: any[] | undefined) => (old && old.length ? old : mapped),
+          );
+          return mapped;
+        },
+      })
+      .catch(() => {
+        // Prefetch failure must never surface to the user.
+      })
+      .finally(() => {
+        prefetchInFlightRef.current.delete(dialogUserId);
+      });
+  };
+
   // Realtime-подписка перенесена в глобальный `useInboxRealtimeInvalidation`
   // (mounted в AdminLayout). Здесь больше не нужна: invalidate приходит из общего
   // bus-хука с trailing debounce 300 мс и event-aware матрицей.
