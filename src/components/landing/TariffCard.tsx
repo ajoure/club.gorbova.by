@@ -94,6 +94,7 @@ export function TariffCard({
   const trialOffers = resolvedOffers.filter(o => o.offer_type === "trial" && o.is_active !== false);
   const preregOffers = resolvedOffers.filter(o => o.offer_type === "preregistration" && o.is_active !== false);
   const leadOffers = resolvedOffers.filter(o => o.offer_type === "lead" && o.is_active !== false);
+  const bankInstallmentOffers = resolvedOffers.filter(o => o.offer_type === "bank_installment" && o.is_active !== false);
 
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
