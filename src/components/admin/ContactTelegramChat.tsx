@@ -605,11 +605,6 @@ export function ContactTelegramChat({
   //     OR text is empty (no value to show as pill).
   const normalizeText = (t?: string | null) =>
     (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-  const outgoingMirrored = (messages || []).filter(
-    (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
-  );
-  const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
-  const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
 
   const MIRRORABLE_ACTIONS = new Set<string>([
     'SEND_REMINDER',
@@ -626,36 +621,69 @@ export function ContactTelegramChat({
 
   const SUCCESSFUL_STATUSES = new Set<string>(['success', 'ok', 'sent']);
 
-  const isMirroredEvent = (e: TelegramEvent): boolean => {
-    const action = e.action || '';
-    const isMirrorable =
-      MIRRORABLE_ACTIONS.has(action) ||
-      action.startsWith('subscription_reminder_');
-    if (!isMirrorable) return false;
-    // Keep failed/skipped events visible as diagnostic pills.
-    if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
-    // Backend hint: explicit flag in meta wins.
-    if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
-    // Match by telegram message id if backend provided it.
-    const mirroredTgId = (e.meta as any)?.telegram_message_id;
-    if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
-      const hit = (messages || []).some((m: any) => m.message_id === mirroredTgId);
-      if (hit) return true;
-    }
-    // No payload to render as pill — always hide.
-    if (!e.message_text || !e.message_text.trim()) return true;
-    // Exact text match with any mirrored bubble.
-    if (mirroredTexts.has(normalizeText(e.message_text))) return true;
-    // Time-window fallback (±5 min) for legacy rows without explicit flag.
-    const t = new Date(e.created_at).getTime();
-    return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
-  };
+  // V1.2: chatItems is now memoized on [messages, events, billingEvents].
+  // Draft/highlighted/unread state changes no longer rebuild the array
+  // (so downstream map + date/time precompute stays reference-stable).
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const msgs = messages || [];
+    const outgoingMirrored = msgs.filter(
+      (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
+    );
+    const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
+    const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
 
-  const chatItems: ChatItem[] = [
-    ...(messages || []),
-    ...((events || []).filter((e) => !isMirroredEvent(e as TelegramEvent))),
-    ...(billingEvents || []),
-  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const isMirrored = (e: TelegramEvent): boolean => {
+      const action = e.action || '';
+      const isMirrorable =
+        MIRRORABLE_ACTIONS.has(action) ||
+        action.startsWith('subscription_reminder_');
+      if (!isMirrorable) return false;
+      if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
+      if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
+      const mirroredTgId = (e.meta as any)?.telegram_message_id;
+      if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
+        const hit = msgs.some((m: any) => m.message_id === mirroredTgId);
+        if (hit) return true;
+      }
+      if (!e.message_text || !e.message_text.trim()) return true;
+      if (mirroredTexts.has(normalizeText(e.message_text))) return true;
+      const t = new Date(e.created_at).getTime();
+      return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
+    };
+
+    return [
+      ...msgs,
+      ...((events || []).filter((e) => !isMirrored(e as TelegramEvent))),
+      ...(billingEvents || []),
+    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, events, billingEvents]);
+
+  // V1.2: precompute date separators, date labels, and time strings once
+  // per chatItems change. Removes ~2×N `new Date` + ~2×N `format(...)`
+  // calls from the hot render path (was previously inside the .map).
+  const chatItemsWithMeta = useMemo(() => {
+    return chatItems.map((item, index) => {
+      const currentDate = new Date(item.created_at);
+      const prevItem = index > 0 ? chatItems[index - 1] : null;
+      const prevDate = prevItem ? new Date(prevItem.created_at) : null;
+      const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
+      const dateLabel = showDateSeparator
+        ? (isToday(currentDate)
+            ? "Сегодня"
+            : isYesterday(currentDate)
+              ? "Вчера"
+              : format(currentDate, "dd.MM.yyyy", { locale: ru }))
+        : "";
+      return {
+        item,
+        showDateSeparator,
+        dateLabel,
+        timeShort: format(currentDate, "HH:mm", { locale: ru }),
+        timeMedium: format(currentDate, "dd.MM HH:mm", { locale: ru }),
+      };
+    });
+  }, [chatItems]);
 
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1: первый рендер
   // блокируем ТОЛЬКО сообщениями. События (`events`) и billing
