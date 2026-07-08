@@ -140,7 +140,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     link_business_stream: null,
   });
 
-  const effectiveOrigin = origin || 'https://club.gorbova.by';
+  const effectiveOrigin = origin || 'https://gorbova.by';
   const effectiveActorType = actor_type || 'system';
   const auditActorType = effectiveActorType === 'admin' ? 'user' : effectiveActorType;
   const paymentFlow = payment_type === 'one_time'
