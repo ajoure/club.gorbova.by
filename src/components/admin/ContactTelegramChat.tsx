@@ -442,6 +442,14 @@ export function ContactTelegramChat({
   //     lands, enriches the cache. Never blocks first paint.
   // Both stages fill the same `["telegram-messages", userId]` cache; downstream
   // optimistic writes (send/edit/delete) keep pointing at that single key.
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.2:
+  //   1) Removed `placeholderData: (prev) => prev` on both queries — it
+  //      leaked previous userId's data between queryKey switches (1-frame
+  //      wrong-chat flash). Cache-first is now provided by React Query's
+  //      per-key cache alone.
+  //   2) `refetchOnMount: false` on both — warm reopens must NOT round-trip
+  //      to the server when data is still fresh. Realtime + background
+  //      refresh (see fullEnabled effect below) keep the cache honest.
   const { data: leanData, isLoading: leanLoading } = useQuery({
     queryKey: ["telegram-messages-lean", userId],
     queryFn: async () => {
@@ -462,12 +470,44 @@ export function ContactTelegramChat({
     enabled: !!userId,
     staleTime: 60_000,
     gcTime: 10 * 60_000,
-    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchInterval: false,
     refetchOnReconnect: false,
   });
+
+  // V1.2: Stage 2 (full RPC) is deferred out of the warm critical path.
+  // It only fires after first paint (requestIdleCallback) and only when
+  // full-cache is missing or older than 120 s for THIS userId. Warm
+  // reopens with fresh full-cache skip the RPC entirely.
+  const [fullEnabled, setFullEnabled] = useState(false);
+  // Freshness marker stored in queryClient so it survives remount of this
+  // component (e.g., inbox → chat navigation cycles).
+  const fullFreshnessKey = ["telegram-messages-full-at", userId] as const;
+  useEffect(() => {
+    setFullEnabled(false);
+    if (!userId || !leanData) return;
+
+    const lastFullAt = queryClient.getQueryData<number>(fullFreshnessKey);
+    const isFullFresh = lastFullAt && Date.now() - lastFullAt < 120_000;
+    if (isFullFresh) return; // warm hit — no RPC on critical path
+
+
+
+    const w = window as any;
+    const cancel = (h: any) => {
+      if (typeof w.cancelIdleCallback === "function") {
+        try { w.cancelIdleCallback(h); } catch { /* noop */ }
+      } else {
+        clearTimeout(h);
+      }
+    };
+    const handle =
+      typeof w.requestIdleCallback === "function"
+        ? w.requestIdleCallback(() => setFullEnabled(true), { timeout: 500 })
+        : setTimeout(() => setFullEnabled(true), 80);
+    return () => cancel(handle);
+  }, [userId, leanData]);
 
   const { data: fullData, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
@@ -482,17 +522,24 @@ export function ContactTelegramChat({
         (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
-    // Stage 2 waits for Stage 1 so the network doesn't queue two calls in
-    // parallel and steal TCP/HTTP2 slots from the critical path.
-    enabled: !!userId && !!leanData,
+    enabled: !!userId && fullEnabled,
     staleTime: 60_000,
     gcTime: 10 * 60_000,
-    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchInterval: false,
     refetchOnReconnect: false,
   });
+
+  // Track successful full-fetch per user, so subsequent warm reopens skip
+  // the RPC while the cache is fresh (<120 s). Stored in queryClient so
+  // it survives component remount.
+  useEffect(() => {
+    if (fullData && userId) {
+      queryClient.setQueryData(fullFreshnessKey, Date.now());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullData, userId]);
 
   // Rendered messages: prefer full (enriched) if available, otherwise lean.
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
@@ -564,11 +611,6 @@ export function ContactTelegramChat({
   //     OR text is empty (no value to show as pill).
   const normalizeText = (t?: string | null) =>
     (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-  const outgoingMirrored = (messages || []).filter(
-    (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
-  );
-  const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
-  const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
 
   const MIRRORABLE_ACTIONS = new Set<string>([
     'SEND_REMINDER',
@@ -585,36 +627,69 @@ export function ContactTelegramChat({
 
   const SUCCESSFUL_STATUSES = new Set<string>(['success', 'ok', 'sent']);
 
-  const isMirroredEvent = (e: TelegramEvent): boolean => {
-    const action = e.action || '';
-    const isMirrorable =
-      MIRRORABLE_ACTIONS.has(action) ||
-      action.startsWith('subscription_reminder_');
-    if (!isMirrorable) return false;
-    // Keep failed/skipped events visible as diagnostic pills.
-    if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
-    // Backend hint: explicit flag in meta wins.
-    if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
-    // Match by telegram message id if backend provided it.
-    const mirroredTgId = (e.meta as any)?.telegram_message_id;
-    if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
-      const hit = (messages || []).some((m: any) => m.message_id === mirroredTgId);
-      if (hit) return true;
-    }
-    // No payload to render as pill — always hide.
-    if (!e.message_text || !e.message_text.trim()) return true;
-    // Exact text match with any mirrored bubble.
-    if (mirroredTexts.has(normalizeText(e.message_text))) return true;
-    // Time-window fallback (±5 min) for legacy rows without explicit flag.
-    const t = new Date(e.created_at).getTime();
-    return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
-  };
+  // V1.2: chatItems is now memoized on [messages, events, billingEvents].
+  // Draft/highlighted/unread state changes no longer rebuild the array
+  // (so downstream map + date/time precompute stays reference-stable).
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const msgs = messages || [];
+    const outgoingMirrored = msgs.filter(
+      (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
+    );
+    const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
+    const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
 
-  const chatItems: ChatItem[] = [
-    ...(messages || []),
-    ...((events || []).filter((e) => !isMirroredEvent(e as TelegramEvent))),
-    ...(billingEvents || []),
-  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const isMirrored = (e: TelegramEvent): boolean => {
+      const action = e.action || '';
+      const isMirrorable =
+        MIRRORABLE_ACTIONS.has(action) ||
+        action.startsWith('subscription_reminder_');
+      if (!isMirrorable) return false;
+      if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
+      if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
+      const mirroredTgId = (e.meta as any)?.telegram_message_id;
+      if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
+        const hit = msgs.some((m: any) => m.message_id === mirroredTgId);
+        if (hit) return true;
+      }
+      if (!e.message_text || !e.message_text.trim()) return true;
+      if (mirroredTexts.has(normalizeText(e.message_text))) return true;
+      const t = new Date(e.created_at).getTime();
+      return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
+    };
+
+    return [
+      ...msgs,
+      ...((events || []).filter((e) => !isMirrored(e as TelegramEvent))),
+      ...(billingEvents || []),
+    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, events, billingEvents]);
+
+  // V1.2: precompute date separators, date labels, and time strings once
+  // per chatItems change. Removes ~2×N `new Date` + ~2×N `format(...)`
+  // calls from the hot render path (was previously inside the .map).
+  const chatItemsWithMeta = useMemo(() => {
+    return chatItems.map((item, index) => {
+      const currentDate = new Date(item.created_at);
+      const prevItem = index > 0 ? chatItems[index - 1] : null;
+      const prevDate = prevItem ? new Date(prevItem.created_at) : null;
+      const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
+      const dateLabel = showDateSeparator
+        ? (isToday(currentDate)
+            ? "Сегодня"
+            : isYesterday(currentDate)
+              ? "Вчера"
+              : format(currentDate, "dd.MM.yyyy", { locale: ru }))
+        : "";
+      return {
+        item,
+        showDateSeparator,
+        dateLabel,
+        timeShort: format(currentDate, "HH:mm", { locale: ru }),
+        timeMedium: format(currentDate, "dd.MM HH:mm", { locale: ru }),
+      };
+    });
+  }, [chatItems]);
 
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1: первый рендер
   // блокируем ТОЛЬКО сообщениями. События (`events`) и billing
@@ -672,6 +747,14 @@ export function ContactTelegramChat({
       return (meta as any).upload_status === 'pending';
     });
   }, [messages]);
+
+  // V1.2: Reset selectedBotId immediately on dialog switch so the footer
+  // doesn't flash the previous chat's bot before the useEffect below
+  // resolves the correct one from localStorage/messages/active bots.
+  useEffect(() => {
+    setSelectedBotId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // === DEFAULT BOT SELECTION ===
   useEffect(() => {
@@ -1498,7 +1581,7 @@ export function ContactTelegramChat({
     );
   }
 
-  const renderChatItem = (item: ChatItem) => {
+  const renderChatItem = (item: ChatItem, timeShort: string, timeMedium: string) => {
     if (item.type === "event") {
       const event = item as TelegramEvent;
       // PATCH: Show message_text for ANY event that has it (not just manual/system notifications)
@@ -1557,7 +1640,7 @@ export function ContactTelegramChat({
                 {statusSuffix && <span className="opacity-70">{statusSuffix}</span>}
               </span>
               <span className="opacity-60">
-                {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
+                {timeMedium}
               </span>
               {event.status === 'success' && <CheckCircle className="w-3 h-3 text-green-500" />}
               {isFailed && <AlertCircle className="w-3 h-3 text-destructive" />}
@@ -1612,7 +1695,7 @@ export function ContactTelegramChat({
           <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
             <p className="text-sm text-muted-foreground italic">Сообщение удалено</p>
             <span className="text-xs opacity-60">
-              {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+              {timeShort}
             </span>
           </div>
         </div>
@@ -1806,7 +1889,7 @@ export function ContactTelegramChat({
                     <span className="text-xs opacity-60 mr-1">ред.</span>
                   )}
                   <span className="text-xs opacity-60">
-                    {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+                    {timeShort}
                   </span>
                   {msg.direction === "outgoing" && (
                     <>
@@ -1974,33 +2057,20 @@ export function ContactTelegramChat({
               </div>
             ) : (
               <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
-                {chatItems.map((item, index) => {
-                  const currentDate = new Date(item.created_at);
-                  const prevItem = index > 0 ? chatItems[index - 1] : null;
-                  const prevDate = prevItem ? new Date(prevItem.created_at) : null;
-                  const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
-
-                  const getDateLabel = (date: Date) => {
-                    if (isToday(date)) return "Сегодня";
-                    if (isYesterday(date)) return "Вчера";
-                    return format(date, "dd.MM.yyyy", { locale: ru });
-                  };
-
-                  return (
-                    <div key={item.id}>
-                      {showDateSeparator && (
-                        <div className="flex items-center justify-center my-4">
-                          <div className="flex-1 border-t border-border/30" />
-                          <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
-                            {getDateLabel(currentDate)}
-                          </span>
-                          <div className="flex-1 border-t border-border/30" />
-                        </div>
-                      )}
-                      {renderChatItem(item)}
-                    </div>
-                  );
-                })}
+                {chatItemsWithMeta.map(({ item, showDateSeparator, dateLabel, timeShort, timeMedium }) => (
+                  <div key={item.id}>
+                    {showDateSeparator && (
+                      <div className="flex items-center justify-center my-4">
+                        <div className="flex-1 border-t border-border/30" />
+                        <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
+                          {dateLabel}
+                        </span>
+                        <div className="flex-1 border-t border-border/30" />
+                      </div>
+                    )}
+                    {renderChatItem(item, timeShort, timeMedium)}
+                  </div>
+                ))}
                 <div ref={bottomRef} />
               </div>
             )}
