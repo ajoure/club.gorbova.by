@@ -17717,34 +17717,23 @@ export type Database = {
         Returns: {
           admin_avatar_url: string
           admin_full_name: string
-          automated: boolean
           bot_id: string
           bot_name: string
           bot_username: string
           created_at: string
           direction: string
-          duration: number
           error_message: string
-          file_name: string
-          file_size: number
-          file_type: string
-          file_url: string
           id: string
           is_favorite: boolean
           is_pinned: boolean
           is_read: boolean
           message_id: number
           message_text: string
-          mime_type: string
+          meta: Json
           reply_to_message_id: number
           sent_by_admin: string
-          source: string
           status: string
-          storage_bucket: string
-          storage_path: string
           telegram_user_id: number
-          thumbnail_url: string
-          upload_status: string
           user_id: string
         }[]
       }
