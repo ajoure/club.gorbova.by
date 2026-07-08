@@ -1,5 +1,15 @@
 # Audit: пути создания ссылок на оплату
 
+## Canonical payment URL policy (2026-07)
+- Все публичные payment-ссылки строятся на **едином canonical host `https://gorbova.by/pay/:token`**, независимо от продукта.
+- `products_v2.primary_domain` **не используется** для payment origin (только для резолвинга лендинга / роутинга).
+- Legacy-домены (`cb.gorbova.by`, `club.gorbova.by`, `cons.gorbova.by` и т.п.) принимаются как compatibility-route (SPA + `DomainRouter` продолжают открывать `/pay/:token`), но новые ссылки на них не выпускаются.
+- Обе реализации builder-а обязаны давать одинаковый результат:
+  - клиент: `src/utils/buildPublicPaymentUrl.ts` (`CANONICAL_PUBLIC_HOST = https://gorbova.by`);
+  - edge functions: inline-константа `CANONICAL_PUBLIC_HOST = 'https://gorbova.by'` в `admin-create-public-link`, `public-create-installment-link`, `public-charge-saved-card`, `payment-dialog-create-bridge-link`, `admin-create-payment-link`, `admin-manual-charge`, `public-checkout`, `_shared/create-payment-checkout.ts`.
+- Stripe/bePaid `success_url` / `cancel_url` / `return_url` тоже используют `https://gorbova.by`.
+- DB CHECK на `payment_links.public_url` (regex `^https://` + запрет lovable/localhost) продолжает работать как defence-in-depth.
+
 ## Verdict
 **Все каналы создания ссылок ведут в один canonical downstream-path.** Расхождений нет.
 **Локализация UI новой вкладки «Ссылки» выполнена полностью** — все строки на русском.
