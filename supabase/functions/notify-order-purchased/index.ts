@@ -290,14 +290,20 @@ Deno.serve(async (req) => {
         if (!botToken) throw new Error('primary_bot_not_configured')
 
         const endLine = accessEndAt
-          ? `\n🗓 Доступ действует до: <b>${fmtRuDate(accessEndAt)}</b>`
+          ? `\n🗓 <b>Доступ до:</b> ${fmtRuDate(accessEndAt)}`
           : ''
-        const tariffPart = tariffName ? ` (тариф «${tariffName}»)` : ''
+        const priceRaw = Number(order.paid_amount ?? order.final_price ?? 0)
+        const priceLine = priceRaw > 0
+          ? `\n💳 <b>Оплачено:</b> ${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
+          : ''
+        const orderLine = order.order_number ? `\n🧾 <b>Заказ:</b> ${order.order_number}` : ''
+        const tariffPart = tariffName ? `\n📦 <b>Тариф:</b> ${tariffName}` : ''
         const namePrefix = recipientName ? `${recipientName}, ` : ''
         const extra = overrides.telegram?.intro_text
           ? `\n\n${overrides.telegram.intro_text}`
           : ''
-        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${productName}</b>${tariffPart}.${endLine}\n\nЛичный кабинет: https://gorbova.by/purchases${extra}`
+        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${productName}</b>.${tariffPart}${priceLine}${endLine}${orderLine}\n\n👉 <a href="https://gorbova.by/purchases">Открыть личный кабинет</a>${extra}`
+
 
         const { ok, data } = await tgSendMessage(botToken, telegramUserId, text, true)
         if (!ok) throw new Error(`telegram_send_failed: ${JSON.stringify(data).slice(0, 300)}`)
