@@ -74,11 +74,7 @@ export function AutowebSessionSelector({ liveEventId, onSessionChosen }: Props) 
 
   const eventTz = data.timezone || "Europe/Minsk";
 
-  // one_time не должен сюда доходить (selector скрывается на уровне LiveEvent.tsx),
-  // но на всякий случай обрабатываем — без выбора, пробрасываем ситуацию выше.
-  if (data.mode === "one_time") {
-    return null;
-  }
+  // one_time уже обработан выше (auto-start effect) — здесь дублирующий guard не нужен.
 
   const handleCreatePersonal = async (offsetMinutes?: number) => {
     setSubmitting(offsetMinutes != null ? `jit-${offsetMinutes}` : "on_demand");
