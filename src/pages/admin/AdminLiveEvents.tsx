@@ -130,6 +130,7 @@ interface LiveEvent {
   room_opened_at?: string | null;
   live_started_at?: string | null;
   webinar_completed_at?: string | null;
+  source_live_event_id?: string | null;
 }
 
 interface NotificationOffset {
