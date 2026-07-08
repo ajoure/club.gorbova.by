@@ -21,8 +21,8 @@
  *   - rounding_mode
  *   - installment_count, total_amount, total_installment_amount, source, offer_id (для трассировки)
  *
- * AUTH: JWT optional. Если передан — пишем created_by; user_id ссылки = NULL
- * (плательщик резолвится в public-checkout как любой email).
+ * AUTH: JWT optional. Если передан — link.user_id = auth user (has_target_user
+ * на /pay/:token, без повторного email). Гость — user_id=NULL, резолвится по email.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
@@ -180,8 +180,11 @@ Deno.serve(async (req) => {
         payment_type: 'one_time',
         description: null,
         max_uses: 1,
-        // user_id = NULL — payer резолвится на /pay/:token.
-        user_id: null,
+        // Если пользователь авторизован — привязываем ссылку к нему,
+        // тогда PublicPayPage работает в режиме has_target_user=true
+        // и не требует повторного ввода email / входа.
+        // Гости (authUserId=null) резолвятся на /pay/:token как раньше.
+        user_id: authUserId,
         created_by: authUserId,
         url_token,
         public_url,
