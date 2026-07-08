@@ -481,14 +481,18 @@ export function ContactTelegramChat({
   // full-cache is missing or older than 120 s for THIS userId. Warm
   // reopens with fresh full-cache skip the RPC entirely.
   const [fullEnabled, setFullEnabled] = useState(false);
-  const fullFetchedAtRef = useRef<Map<string, number>>(new Map());
+  // Freshness marker stored in queryClient so it survives remount of this
+  // component (e.g., inbox → chat navigation cycles).
+  const fullFreshnessKey = ["telegram-messages-full-at", userId] as const;
   useEffect(() => {
     setFullEnabled(false);
     if (!userId || !leanData) return;
 
-    const lastFullAt = fullFetchedAtRef.current.get(userId);
+    const lastFullAt = queryClient.getQueryData<number>(fullFreshnessKey);
     const isFullFresh = lastFullAt && Date.now() - lastFullAt < 120_000;
     if (isFullFresh) return; // warm hit — no RPC on critical path
+
+
 
     const w = window as any;
     const cancel = (h: any) => {
