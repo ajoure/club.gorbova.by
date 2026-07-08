@@ -955,6 +955,7 @@ export default function AdminLiveEvents() {
           : "one_time"
       ),
       autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
+      source_live_event_id: ((event as any).source_live_event_id as string | null) ?? null,
     });
     setDialogOpen(true);
   };
