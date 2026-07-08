@@ -1971,7 +1971,7 @@ export function ContactTelegramChat({
                 </div>
               </div>
             ) : (
-              <div className="space-y-3 px-3 w-full max-w-full box-border">
+              <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
                 {chatItems.map((item, index) => {
                   const currentDate = new Date(item.created_at);
                   const prevItem = index > 0 ? chatItems[index - 1] : null;
