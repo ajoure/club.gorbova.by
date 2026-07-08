@@ -34,9 +34,36 @@ export interface AiAccess {
   chat: boolean;
   balance_analysis: boolean;
   '107NK': boolean;
+  /**
+   * true → пользователь имеет роль admin/superadmin (из user_roles).
+   * Снимает tier enforcement, quota, per-minute rate и daily chars budget.
+   * НЕ снимает: auth, hard cap на размер сообщения, upload guard, off-topic classifier.
+   */
+  is_admin: boolean;
+}
+
+/**
+ * Проверяет наличие роли admin/superadmin.
+ * Инвариант: admin-bypass резолвится РАНЬШЕ entitlements — при true чтение entitlements
+ * пропускается вовсе, чтобы истечение/отсутствие продукта не влияло на админа.
+ */
+async function hasAdminRole(supabase: any, userId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', userId)
+    .in('role', ['admin', 'superadmin'])
+    .limit(1);
+  if (error || !data) return false;
+  return data.length > 0;
 }
 
 export async function resolveAiAccess(supabase: any, userId: string): Promise<AiAccess> {
+  // Инвариант: admin-bypass ПЕРЕД entitlements.
+  if (await hasAdminRole(supabase, userId)) {
+    return { tier: 'full', chat: true, balance_analysis: true, '107NK': true, is_admin: true };
+  }
+
   const { data, error } = await supabase
     .from('entitlements')
     .select('product_id, expires_at, status')
@@ -46,7 +73,7 @@ export async function resolveAiAccess(supabase: any, userId: string): Promise<Ai
 
   if (error || !data) {
     // Fallback: deny by default
-    return { tier: 'none', chat: false, balance_analysis: false, '107NK': false };
+    return { tier: 'none', chat: false, balance_analysis: false, '107NK': false, is_admin: false };
   }
 
   const now = Date.now();
@@ -54,12 +81,15 @@ export async function resolveAiAccess(supabase: any, userId: string): Promise<Ai
   const hasFull = active.some((r: any) => FULL_AI_PRODUCTS.includes(r.product_id));
   const hasZg = active.some((r: any) => r.product_id === PRODUCT_ZG);
 
-  if (hasFull) return { tier: 'full', chat: true, balance_analysis: true, '107NK': true };
-  if (hasZg) return { tier: 'zg_only', chat: false, balance_analysis: true, '107NK': false };
-  return { tier: 'none', chat: false, balance_analysis: false, '107NK': false };
+  if (hasFull) return { tier: 'full', chat: true, balance_analysis: true, '107NK': true, is_admin: false };
+  if (hasZg) return { tier: 'zg_only', chat: false, balance_analysis: true, '107NK': false, is_admin: false };
+  return { tier: 'none', chat: false, balance_analysis: false, '107NK': false, is_admin: false };
 }
 
 export function isModeAllowed(access: AiAccess, mode: AiMode, scenarioCode?: string | null): { allowed: boolean; reason?: string } {
+  // Admin bypass: полный доступ ко всем режимам и сценариям (в т.ч. будущим).
+  if (access.is_admin) return { allowed: true };
+
   if (mode === 'chat') {
     if (!access.chat) return { allowed: false, reason: 'chat_not_in_tier' };
     return { allowed: true };
@@ -90,12 +120,15 @@ export function limitsForKey(key: 'chat' | 'balance_analysis' | '107NK' | 'defau
 
 export interface AiAccessStatusUi {
   tier: 'full' | 'zg_only' | 'none';
+  /** add-only: true для admin/superadmin. Фронт использует для рендера «∞». */
+  is_admin: boolean;
   allowed_modes: { chat: boolean; prompt: boolean };
   allowed_scenarios: Array<{
     code: string;
     allowed: boolean;
     denial_reason?: string;
   }>;
+  /** limit === -1 → безлимит (для admin). */
   quota_by_mode: {
     chat: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
     balance_analysis: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
@@ -119,6 +152,7 @@ const DENIAL_HUMAN: Record<string, string> = {
 };
 
 function quotaSlot(used: number, limit: number) {
+  if (limit < 0) return { used, limit: -1, remaining: -1 }; // безлимит для admin
   return { used, limit, remaining: Math.max(0, limit - used) };
 }
 
@@ -134,6 +168,24 @@ export async function resolveAiAccessStatus(
     return { code, allowed: check.allowed, denial_reason: check.allowed ? undefined : check.reason };
   });
 
+  // Admin: безлимит, счётчики не читаем.
+  if (access.is_admin) {
+    const unlimited = { daily: quotaSlot(0, -1), monthly: quotaSlot(0, -1) };
+    return {
+      tier: access.tier,
+      is_admin: true,
+      allowed_modes: { chat: true, prompt: true },
+      allowed_scenarios: scenarios,
+      quota_by_mode: {
+        chat: unlimited,
+        balance_analysis: unlimited,
+        '107NK': unlimited,
+      },
+      cta_target: CTA_TARGET,
+      denial_reasons: DENIAL_HUMAN,
+    };
+  }
+
   const [chatUsed, baUsed, nkUsed] = await Promise.all([
     countUserMessages(supabase, userId, { ai_mode: 'chat' }),
     countUserMessages(supabase, userId, { scenario_code: 'balance_analysis' }),
@@ -142,6 +194,7 @@ export async function resolveAiAccessStatus(
 
   return {
     tier: access.tier,
+    is_admin: false,
     allowed_modes: { chat: chatCheck.allowed, prompt: scenarios.some(s => s.allowed) },
     allowed_scenarios: scenarios,
     quota_by_mode: {

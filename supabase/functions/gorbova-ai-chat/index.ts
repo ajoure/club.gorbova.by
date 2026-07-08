@@ -297,9 +297,11 @@ Deno.serve(async (req) => {
     }
 
     // 6.1 Access check (entitlements-based). Default-deny при ошибке.
+    // Admin/superadmin — bypass tier enforcement (см. _shared/ai-access.ts).
     const scenarioCode = promptData?.code || null;
     const access = await resolveAiAccess(serviceClient, user.id);
     metadata.access_tier = access.tier;
+    if (access.is_admin) metadata.admin_bypass = true;
     const accessCheck = isModeAllowed(access, mode, scenarioCode);
     if (!accessCheck.allowed) {
       metadata.routing_reason = 'access_denied';
@@ -317,67 +319,72 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 6.2 Quota check (по нормализованным ai_mode / scenario_code)
-    const limitKey: 'chat' | 'balance_analysis' | '107NK' | 'default_prompt' =
-      mode === 'chat'
-        ? 'chat'
-        : (scenarioCode === 'balance_analysis' ? 'balance_analysis'
-          : scenarioCode === '107NK' ? '107NK' : 'default_prompt');
-    const limits = limitsForKey(limitKey);
-    const used = await countUserMessages(serviceClient, user.id, mode === 'chat'
-      ? { ai_mode: 'chat' }
-      : { scenario_code: scenarioCode || undefined });
-    metadata.quota_limit = limits;
-    metadata.quota_used = used;
-    if (used.daily >= limits.daily || used.monthly >= limits.monthly) {
-      metadata.routing_reason = 'quota_denied';
-      metadata.denial_reason = used.daily >= limits.daily ? 'daily_limit_reached' : 'monthly_limit_reached';
-      await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied', {
-        mode, scenario_code: scenarioCode, limit_key: limitKey, used, limits,
-      });
-      return new Response(JSON.stringify({
-        error: `Достигнут лимит сообщений (${used.daily >= limits.daily ? `${limits.daily} в день` : `${limits.monthly} в месяц`}). Попробуйте позже.`,
-        code: 'rate_limited_for_mode',
-        limits, used,
-      }), {
-        status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 6.3 PATCH v2.2 — per-minute rate-limit (антифлуд) для mode='chat'
-    if (mode === 'chat') {
-      const lastMin = await countChatMessagesLastMinute(serviceClient, user.id);
-      metadata.chat_msgs_last_minute = lastMin;
-      if (lastMin >= PER_MINUTE_RATE_CHAT) {
-        await writeAccessAudit(serviceClient, user.id, 'ai_chat.rate_limit_per_minute', {
-          mode, count_last_60s: lastMin, limit: PER_MINUTE_RATE_CHAT,
+    // 6.2–6.4 Enforcement (quota / per-minute / daily chars) — только для не-админов.
+    // Admin/superadmin: пропускаем все три блока. НЕ снимается: auth, hard cap на размер
+    // сообщения, upload guard (6.0), off-topic classifier (ниже по коду).
+    if (!access.is_admin) {
+      // 6.2 Quota check (по нормализованным ai_mode / scenario_code)
+      const limitKey: 'chat' | 'balance_analysis' | '107NK' | 'default_prompt' =
+        mode === 'chat'
+          ? 'chat'
+          : (scenarioCode === 'balance_analysis' ? 'balance_analysis'
+            : scenarioCode === '107NK' ? '107NK' : 'default_prompt');
+      const limits = limitsForKey(limitKey);
+      const used = await countUserMessages(serviceClient, user.id, mode === 'chat'
+        ? { ai_mode: 'chat' }
+        : { scenario_code: scenarioCode || undefined });
+      metadata.quota_limit = limits;
+      metadata.quota_used = used;
+      if (used.daily >= limits.daily || used.monthly >= limits.monthly) {
+        metadata.routing_reason = 'quota_denied';
+        metadata.denial_reason = used.daily >= limits.daily ? 'daily_limit_reached' : 'monthly_limit_reached';
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied', {
+          mode, scenario_code: scenarioCode, limit_key: limitKey, used, limits,
         });
         return new Response(JSON.stringify({
-          error: 'Подождите минуту перед следующим вопросом.',
-          code: 'rate_limit_per_minute',
-          limit_per_minute: PER_MINUTE_RATE_CHAT,
+          error: `Достигнут лимит сообщений (${used.daily >= limits.daily ? `${limits.daily} в день` : `${limits.monthly} в месяц`}). Попробуйте позже.`,
+          code: 'rate_limited_for_mode',
+          limits, used,
         }), {
           status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-    }
 
-    // 6.4 PATCH v2.2 — daily chars budget для mode='chat' (защита от outlier-юзеров)
-    if (mode === 'chat') {
-      const usedChars = await sumChatContextCharsToday(serviceClient, user.id);
-      metadata.daily_chars_used = usedChars;
-      metadata.daily_chars_limit = DAILY_CHARS_BUDGET_CHAT;
-      if (usedChars >= DAILY_CHARS_BUDGET_CHAT) {
-        await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied_chars', {
-          mode, used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
-        });
-        return new Response(JSON.stringify({
-          error: 'На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра.',
-          code: 'quota_denied_chars',
-          used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
-        }), {
-          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      // 6.3 PATCH v2.2 — per-minute rate-limit (антифлуд) для mode='chat'
+      if (mode === 'chat') {
+        const lastMin = await countChatMessagesLastMinute(serviceClient, user.id);
+        metadata.chat_msgs_last_minute = lastMin;
+        if (lastMin >= PER_MINUTE_RATE_CHAT) {
+          await writeAccessAudit(serviceClient, user.id, 'ai_chat.rate_limit_per_minute', {
+            mode, count_last_60s: lastMin, limit: PER_MINUTE_RATE_CHAT,
+          });
+          return new Response(JSON.stringify({
+            error: 'Подождите минуту перед следующим вопросом.',
+            code: 'rate_limit_per_minute',
+            limit_per_minute: PER_MINUTE_RATE_CHAT,
+          }), {
+            status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // 6.4 PATCH v2.2 — daily chars budget для mode='chat' (защита от outlier-юзеров)
+      if (mode === 'chat') {
+        const usedChars = await sumChatContextCharsToday(serviceClient, user.id);
+        metadata.daily_chars_used = usedChars;
+        metadata.daily_chars_limit = DAILY_CHARS_BUDGET_CHAT;
+        if (usedChars >= DAILY_CHARS_BUDGET_CHAT) {
+          await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied_chars', {
+            mode, used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+          });
+          return new Response(JSON.stringify({
+            error: 'На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра.',
+            code: 'quota_denied_chars',
+            used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+          }), {
+            status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
     }
 
