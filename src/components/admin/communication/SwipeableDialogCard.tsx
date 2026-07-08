@@ -83,6 +83,7 @@ export function SwipeableDialogCard({
         onPointerEnter={onPrefetch}
         onPointerDown={onPrefetch}
         onFocus={onPrefetch}
+        data-testid={testId}
       >
         {children}
       </div>
