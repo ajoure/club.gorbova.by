@@ -118,23 +118,43 @@ Deno.serve(async (req) => {
     accessEndAt = (sub as any)?.access_end_at || null
   }
 
-  // 3. Recipient resolution
+  // 3. Recipient resolution — try profile via user_id, profile_id, and customer_email
   let recipientEmail: string | null = order.customer_email || null
   let telegramUserId: number | null = null
   let recipientName: string | null = null
-  if (order.user_id) {
+
+  const profileIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
+  const applyProfile = (profile: any | null | undefined) => {
+    if (!profile) return
+    recipientEmail = recipientEmail || profile.email || null
+    recipientName = recipientName || profile.first_name || profile.full_name || null
+    if (!telegramUserId) {
+      const tuid = profile.telegram_user_id
+      if (tuid) telegramUserId = typeof tuid === 'string' ? Number(tuid) : Number(tuid)
+    }
+  }
+
+  for (const pid of profileIds) {
+    if (telegramUserId && recipientEmail && recipientName) break
     const { data: profile } = await supabase
       .from('profiles')
       .select('email, full_name, first_name, telegram_user_id')
-      .eq('id', order.user_id)
+      .eq('id', pid)
       .maybeSingle()
-    if (profile) {
-      recipientEmail = recipientEmail || (profile as any).email || null
-      recipientName = (profile as any).first_name || (profile as any).full_name || null
-      const tuid = (profile as any).telegram_user_id
-      if (tuid) telegramUserId = typeof tuid === 'string' ? Number(tuid) : tuid
-    }
+    applyProfile(profile)
   }
+
+  // Fallback: lookup by customer_email if still no telegram/name
+  if ((!telegramUserId || !recipientName) && recipientEmail) {
+    const { data: profileByEmail } = await supabase
+      .from('profiles')
+      .select('email, full_name, first_name, telegram_user_id')
+      .ilike('email', recipientEmail)
+      .limit(1)
+      .maybeSingle()
+    applyProfile(profileByEmail)
+  }
+
 
   // 4. Load per-product overrides (email + telegram)
   const overrides: Record<string, any> = {}
