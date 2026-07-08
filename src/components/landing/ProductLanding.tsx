@@ -140,7 +140,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
       {selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (
         (() => {
           const bank = selectedOffer.offer.offer_type === "bank_installment"
-            ? require("@/lib/bankInstallment").readBankInstallmentMeta(selectedOffer.offer)
+            ? readBankInstallmentMeta(selectedOffer.offer)
             : {};
           return (
             <LeadRequestDialog
