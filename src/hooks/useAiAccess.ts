@@ -3,7 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 
 export interface AiAccessQuotaSlot {
   used: number;
+  /** -1 = безлимит (admin/superadmin). UI рендерит «∞». */
   limit: number;
+  /** -1 = безлимит. */
   remaining: number;
 }
 
@@ -14,6 +16,8 @@ export interface AiAccessQuota {
 
 export interface AiAccessStatus {
   tier: "full" | "zg_only" | "none";
+  /** add-only: admin/superadmin bypass. */
+  is_admin?: boolean;
   allowed_modes: { chat: boolean; prompt: boolean };
   allowed_scenarios: Array<{ code: string; allowed: boolean; denial_reason?: string }>;
   quota_by_mode: {
@@ -23,6 +27,16 @@ export interface AiAccessStatus {
   };
   cta_target: { business_url: string; club_url: string };
   denial_reasons: Record<string, string>;
+}
+
+/** Единый форматтер для отображения квот: `-1 → ∞`. Не хардкодить в компонентах. */
+export function formatQuotaLimit(limit: number): string {
+  return limit < 0 ? "∞" : String(limit);
+}
+
+/** Форматирование slot'а `used / limit` с поддержкой безлимита. */
+export function formatQuotaSlot(slot: AiAccessQuotaSlot): string {
+  return slot.limit < 0 ? "∞" : `${slot.used} / ${slot.limit}`;
 }
 
 /**
