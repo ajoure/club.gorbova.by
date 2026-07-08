@@ -329,11 +329,12 @@ const Email = ({
 export const template = {
   component: Email,
   subject: (data: Props) =>
-    `✓ Оплата получена: ${data.productName || 'ваш продукт'}`,
+    `Оплата получена: ${data.productName || 'ваш продукт'}`,
   displayName: 'Уведомление о покупке продукта',
   previewData: {
     recipientName: 'Сергей',
-    productName: 'Gorbova Club — идеология',
+    productName: 'Gorbova Club - идеология',
+
     tariffName: 'Доступ к +600 ответов',
     accessEndAt: new Date(Date.now() + 90 * 24 * 3600_000).toISOString(),
     paidAmount: 490,
