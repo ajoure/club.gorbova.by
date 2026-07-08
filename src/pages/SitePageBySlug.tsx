@@ -250,7 +250,10 @@ export default function SitePageBySlug() {
         pageId={page.id}
       />
       {resolved && (() => {
-        if (resolved.offer.offer_type === "lead") {
+        if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
+          const bank = resolved.offer.offer_type === "bank_installment"
+            ? readBankInstallmentMeta(resolved.offer)
+            : {};
           return (
             <LeadRequestDialog
               open={paymentOpen}
@@ -264,6 +267,7 @@ export default function SitePageBySlug() {
               tariffName={resolved.tariff.name}
               commentPlaceholder={(resolved.offer as any).meta?.lead_form?.comment_placeholder}
               successMessage={(resolved.offer as any).meta?.lead_form?.success_message}
+              {...bank}
             />
           );
         }
