@@ -120,12 +120,15 @@ export function limitsForKey(key: 'chat' | 'balance_analysis' | '107NK' | 'defau
 
 export interface AiAccessStatusUi {
   tier: 'full' | 'zg_only' | 'none';
+  /** add-only: true для admin/superadmin. Фронт использует для рендера «∞». */
+  is_admin: boolean;
   allowed_modes: { chat: boolean; prompt: boolean };
   allowed_scenarios: Array<{
     code: string;
     allowed: boolean;
     denial_reason?: string;
   }>;
+  /** limit === -1 → безлимит (для admin). */
   quota_by_mode: {
     chat: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
     balance_analysis: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
