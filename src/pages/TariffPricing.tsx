@@ -3,6 +3,8 @@ import { useParams } from "react-router-dom";
 import { usePublicTariffByPublicId } from "@/hooks/usePublicTariff";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Loader2, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
