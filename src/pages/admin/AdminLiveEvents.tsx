@@ -174,6 +174,9 @@ interface LiveEventForm {
   // Sprint A — autowebinar
   autoweb_user_mode: AutowebUserMode;
   autoweb_config: AutowebConfig;
+  /** Timed-replay: id исходного live_stream/recorded_webinar, чью историю чата/вопросов/сценария
+   *  подтягивает runtime автовебинара. Обязателен для timed-replay сценария. */
+  source_live_event_id: string | null;
 }
 
 const defaultForm: LiveEventForm = {
