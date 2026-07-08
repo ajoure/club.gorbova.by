@@ -34,9 +34,36 @@ export interface AiAccess {
   chat: boolean;
   balance_analysis: boolean;
   '107NK': boolean;
+  /**
+   * true → пользователь имеет роль admin/superadmin (из user_roles).
+   * Снимает tier enforcement, quota, per-minute rate и daily chars budget.
+   * НЕ снимает: auth, hard cap на размер сообщения, upload guard, off-topic classifier.
+   */
+  is_admin: boolean;
+}
+
+/**
+ * Проверяет наличие роли admin/superadmin.
+ * Инвариант: admin-bypass резолвится РАНЬШЕ entitlements — при true чтение entitlements
+ * пропускается вовсе, чтобы истечение/отсутствие продукта не влияло на админа.
+ */
+async function hasAdminRole(supabase: any, userId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', userId)
+    .in('role', ['admin', 'superadmin'])
+    .limit(1);
+  if (error || !data) return false;
+  return data.length > 0;
 }
 
 export async function resolveAiAccess(supabase: any, userId: string): Promise<AiAccess> {
+  // Инвариант: admin-bypass ПЕРЕД entitlements.
+  if (await hasAdminRole(supabase, userId)) {
+    return { tier: 'full', chat: true, balance_analysis: true, '107NK': true, is_admin: true };
+  }
+
   const { data, error } = await supabase
     .from('entitlements')
     .select('product_id, expires_at, status')
@@ -46,7 +73,7 @@ export async function resolveAiAccess(supabase: any, userId: string): Promise<Ai
 
   if (error || !data) {
     // Fallback: deny by default
-    return { tier: 'none', chat: false, balance_analysis: false, '107NK': false };
+    return { tier: 'none', chat: false, balance_analysis: false, '107NK': false, is_admin: false };
   }
 
   const now = Date.now();
@@ -54,9 +81,9 @@ export async function resolveAiAccess(supabase: any, userId: string): Promise<Ai
   const hasFull = active.some((r: any) => FULL_AI_PRODUCTS.includes(r.product_id));
   const hasZg = active.some((r: any) => r.product_id === PRODUCT_ZG);
 
-  if (hasFull) return { tier: 'full', chat: true, balance_analysis: true, '107NK': true };
-  if (hasZg) return { tier: 'zg_only', chat: false, balance_analysis: true, '107NK': false };
-  return { tier: 'none', chat: false, balance_analysis: false, '107NK': false };
+  if (hasFull) return { tier: 'full', chat: true, balance_analysis: true, '107NK': true, is_admin: false };
+  if (hasZg) return { tier: 'zg_only', chat: false, balance_analysis: true, '107NK': false, is_admin: false };
+  return { tier: 'none', chat: false, balance_analysis: false, '107NK': false, is_admin: false };
 }
 
 export function isModeAllowed(access: AiAccess, mode: AiMode, scenarioCode?: string | null): { allowed: boolean; reason?: string } {
