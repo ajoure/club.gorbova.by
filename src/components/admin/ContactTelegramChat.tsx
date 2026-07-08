@@ -389,64 +389,115 @@ export function ContactTelegramChat({
     );
   }
 
-  // Fetch messages - with polling interval as backup
-  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
-    queryKey: ["telegram-messages", userId],
+  // Row → TelegramMessage mapper (shared by lean + full queries).
+  // Both RPCs return the same flattened shape; lean adds `is_truncated`.
+  function mapRowsToMessages(rows: any[]): TelegramMessage[] {
+    return [...rows].reverse().map((r) => ({
+      id: r.id,
+      type: "message" as const,
+      direction: r.direction,
+      message_text: r.message_text,
+      is_truncated: r.is_truncated ?? false,
+      message_id: r.message_id,
+      reply_to_message_id: r.reply_to_message_id ?? null,
+      status: r.status,
+      created_at: r.created_at,
+      sent_by_admin: r.sent_by_admin ?? null,
+      bot_id: r.bot_id ?? null,
+      bot_username: r.bot_username ?? null,
+      bot_name: r.bot_name ?? null,
+      admin_profile: r.sent_by_admin
+        ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
+        : null,
+      telegram_bots: r.bot_id
+        ? { id: r.bot_id, bot_name: r.bot_name, bot_username: r.bot_username }
+        : null,
+      meta: r.meta ?? null,
+      is_read: r.is_read,
+      is_pinned: r.is_pinned,
+      is_favorite: r.is_favorite,
+      error_message: r.error_message,
+      telegram_user_id: r.telegram_user_id,
+      // media fields flattened by both RPCs
+      file_type: r.file_type,
+      storage_bucket: r.storage_bucket,
+      storage_path: r.storage_path,
+      file_url: r.file_url,
+      file_name: r.file_name,
+      file_size: r.file_size,
+      mime_type: r.mime_type,
+      duration: r.duration,
+      thumbnail_url: r.thumbnail_url,
+      automated: r.automated,
+      source: r.source,
+      upload_status: r.upload_status,
+    } as unknown as TelegramMessage));
+  }
+
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1:
+  // Two-step read for chat first paint.
+  //   Stage 1 (lean): last 20 messages, message_text ≤ 4KB, no reply_markup/meta.
+  //     Drives `isLoading` — the only critical path.
+  //   Stage 2 (full): last 50 messages, full text/meta. Runs after Stage 1
+  //     lands, enriches the cache. Never blocks first paint.
+  // Both stages fill the same `["telegram-messages", userId]` cache; downstream
+  // optimistic writes (send/edit/delete) keep pointing at that single key.
+  const { data: leanData, isLoading: leanLoading } = useQuery({
+    queryKey: ["telegram-messages-lean", userId],
     queryFn: async () => {
-      // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1:
-      // прямой DB RPC (SECURITY DEFINER, guarded by has_role) вместо
-      // Edge Function `telegram-admin-chat.get_messages`. Убирает cold
-      // start Edge и синхронную генерацию signed URL для медиа. Medias
-      // подтягиваются лениво через существующий effect ниже.
-      const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
-        p_user_id: userId,
-        p_limit: 50,
-      });
+      const { data, error } = await supabase.rpc(
+        "admin_get_telegram_messages_lean_v1" as any,
+        { p_user_id: userId, p_limit: 20, p_text_limit: 4096 } as any,
+      );
       if (error) throw error;
-
-      // Reverse to ASC (oldest at top, newest at bottom) and reshape rows
-      // in the same TelegramMessage shape the render expects.
-      const rows = (data || []) as any[];
-      const nextMessages: TelegramMessage[] = [...rows].reverse().map((r) => ({
-        id: r.id,
-        type: "message" as const,
-        direction: r.direction,
-        message_text: r.message_text,
-        message_id: r.message_id,
-        reply_to_message_id: r.reply_to_message_id ?? null,
-        status: r.status,
-        created_at: r.created_at,
-        sent_by_admin: r.sent_by_admin ?? null,
-        bot_id: r.bot_id ?? null,
-        bot_username: r.bot_username ?? null,
-        bot_name: r.bot_name ?? null,
-        admin_profile: r.sent_by_admin
-          ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
-          : null,
-        telegram_bots: r.bot_id
-          ? { id: r.bot_id, bot_name: r.bot_name, bot_username: r.bot_username }
-          : null,
-        meta: r.meta ?? null,
-        // preserve extras the raw row may carry (unread, pinned, etc.)
-        is_read: r.is_read,
-        is_pinned: r.is_pinned,
-        is_favorite: r.is_favorite,
-        error_message: r.error_message,
-        telegram_user_id: r.telegram_user_id,
-      } as unknown as TelegramMessage));
-
-      const prevMessages = (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
-      return mergeByIdPreferEnriched(prevMessages, nextMessages);
+      const mapped = mapRowsToMessages((data || []) as any[]);
+      // Seed the shared cache so downstream reads/writes see something
+      // immediately, and Stage 2 can merge into a warm cache.
+      queryClient.setQueryData(
+        ["telegram-messages", userId],
+        (old: TelegramMessage[] | undefined) => mergeByIdPreferEnriched(old || [], mapped),
+      );
+      return mapped;
     },
     enabled: !!userId,
-    staleTime: 60_000,             // 60s stale — warm reopen is instant from cache
-    gcTime: 10 * 60_000,           // keep cache 10 min for warm reopen
-    placeholderData: (prev) => prev, // show previous data instantly during refetch
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
     refetchOnMount: true,
     refetchInterval: false,
     refetchOnReconnect: false,
   });
+
+  const { data: fullData, refetch: refetchMessages } = useQuery({
+    queryKey: ["telegram-messages", userId],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
+        p_user_id: userId,
+        p_limit: 50,
+      });
+      if (error) throw error;
+      const nextMessages = mapRowsToMessages((data || []) as any[]);
+      const prevMessages =
+        (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
+      return mergeByIdPreferEnriched(prevMessages, nextMessages);
+    },
+    // Stage 2 waits for Stage 1 so the network doesn't queue two calls in
+    // parallel and steal TCP/HTTP2 slots from the critical path.
+    enabled: !!userId && !!leanData,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: (prev) => prev,
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    refetchInterval: false,
+    refetchOnReconnect: false,
+  });
+
+  // Rendered messages: prefer full (enriched) if available, otherwise lean.
+  // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
+  const messages = fullData ?? leanData;
+  const messagesLoading = leanLoading && !leanData && !fullData;
 
   // Fetch events from telegram_logs - optimized
   const { data: events, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
