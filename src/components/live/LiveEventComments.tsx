@@ -47,20 +47,41 @@ interface LiveEventCommentsProps {
   autowebSessionId?: string | null;
   /** Sprint final: render-time emoji normalization toggle. */
   emojiNormalizationEnabled?: boolean;
+  /**
+   * Autoweb timed-replay: id исходного live_stream, чья историческая лента
+   * проигрывается синхронно с видео. Если задан вместе с historySourceStartedAt —
+   * компонент подтягивает комментарии этого события read-only и показывает
+   * только те, чьё created_at−sourceStartedAt <= currentPlaybackSeconds.
+   * Новые сообщения продолжают писаться под liveEventId (текущий автовеб).
+   */
+  historySourceEventId?: string;
+  historySourceStartedAt?: string;
+  currentPlaybackSeconds?: number;
+  /** Для staff — визуально помечать источник (history/live) значком. */
+  staffSourceIndicator?: boolean;
 }
 
-export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId, emojiNormalizationEnabled = true }: LiveEventCommentsProps) {
+export function LiveEventComments({
+  liveEventId,
+  presenterUserId,
+  onOpenProfile,
+  autowebSessionId,
+  emojiNormalizationEnabled = true,
+  historySourceEventId,
+  historySourceStartedAt,
+  currentPlaybackSeconds,
+  staffSourceIndicator = false,
+}: LiveEventCommentsProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
-  // Staff display rule: ФИО приходит ТОЛЬКО из RPC get_room_participants.
-  // onOpenProfile передаётся ТОЛЬКО при isStaff (см. LiveEvent.tsx) — используем как маркер.
   const isStaffViewer = !!onOpenProfile;
   const staffNameMap = useStaffNameMap(liveEventId, isStaffViewer);
 
-  const { data: comments, isLoading } = useQuery({
+  // Live (текущий автовеб) — новые комментарии зрителей идут сюда.
+  const { data: liveComments, isLoading } = useQuery({
     queryKey: ["live-event-comments", liveEventId],
     queryFn: async () => {
       const { data: rawDesc, error } = await supabase
@@ -70,12 +91,8 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
         .order("created_at", { ascending: false })
         .limit(200);
       if (error) throw error;
-      // Берём последние 200 (DESC), затем разворачиваем к ASC для рендера сверху-вниз.
-      // Раньше при >200 комментариях новейшие "исчезали" из выборки.
       const data = (rawDesc || []).slice().reverse();
 
-      // Legacy fallback: тянем ТОЛЬКО avatar_url, имя берётся из snapshot (см. resolveDisplayName).
-      // Минимизация данных: никаких email/phone/admin-данных в participant-facing UI.
       const needsAvatarFallback = (data || []).filter(c => !c.author_avatar_url);
       let profiles: Record<string, { avatar_url: string | null }> = {};
       if (needsAvatarFallback.length > 0) {
@@ -95,6 +112,48 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
       })) as Comment[];
     },
   });
+
+  // Historical (исходный live_stream) — read-only, для timed-replay.
+  const historyEnabled = !!historySourceEventId && !!historySourceStartedAt;
+  const { data: historyComments } = useQuery({
+    queryKey: ["live-event-comments-history", historySourceEventId],
+    enabled: historyEnabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("live_event_comments")
+        .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
+        .eq("live_event_id", historySourceEventId!)
+        .order("created_at", { ascending: true })
+        .limit(1000);
+      if (error) throw error;
+
+      const needsAvatarFallback = (data || []).filter(c => !c.author_avatar_url);
+      let profiles: Record<string, { avatar_url: string | null }> = {};
+      if (needsAvatarFallback.length > 0) {
+        const userIds = [...new Set(needsAvatarFallback.map(c => c.user_id))];
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("user_id, avatar_url")
+          .in("user_id", userIds);
+        for (const p of profileData || []) {
+          profiles[p.user_id] = { avatar_url: p.avatar_url };
+        }
+      }
+      return (data || []).map(c => ({
+        ...c,
+        profile: profiles[c.user_id] || null,
+      })) as Comment[];
+    },
+  });
+
+  // Unified feed: timed-replay history + live, отсортированные по display_at.
+  const sourceStartedMs = historyEnabled ? new Date(historySourceStartedAt!).getTime() : 0;
+  const cutoffMs = historyEnabled
+    ? sourceStartedMs + Math.max(0, currentPlaybackSeconds ?? 0) * 1000
+    : 0;
+  const comments = useMemoComments(liveComments, historyComments, historyEnabled, cutoffMs);
+
 
   // Realtime subscription
   useEffect(() => {
