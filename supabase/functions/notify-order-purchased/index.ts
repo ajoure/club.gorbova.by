@@ -103,20 +103,27 @@ Deno.serve(async (req) => {
   const productName = (product as any)?.name || 'Продукт'
   const tariffName = (tariff as any)?.name || null
 
-  // Best-effort: resolve access_end_at from the most recent active subscription for this user+product
+  // Best-effort: resolve access_end_at from the most recent active subscription for this order/product
   let accessEndAt: string | null = null
-  if (order.user_id && order.product_id) {
-    const { data: sub } = await supabase
-      .from('subscriptions_v2')
-      .select('access_end_at')
-      .eq('user_id', order.user_id)
-      .eq('product_id', order.product_id)
-      .in('status', ['active', 'past_due'])
-      .order('access_end_at', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle()
-    accessEndAt = (sub as any)?.access_end_at || null
+  if (order.product_id) {
+    const subUserIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
+    for (const uid of subUserIds) {
+      const { data: sub } = await supabase
+        .from('subscriptions_v2')
+        .select('access_end_at')
+        .eq('user_id', uid)
+        .eq('product_id', order.product_id)
+        .in('status', ['active', 'past_due'])
+        .order('access_end_at', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle()
+      if ((sub as any)?.access_end_at) {
+        accessEndAt = (sub as any).access_end_at
+        break
+      }
+    }
   }
+
 
   // 3. Recipient resolution — try profile via user_id, profile_id, and customer_email
   let recipientEmail: string | null = order.customer_email || null
