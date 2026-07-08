@@ -302,10 +302,9 @@ Deno.serve(async (req) => {
 
     console.log('[public-checkout] target_user_resolved', { userId, resolvedVia, link_id: link.id });
 
-    // Determine origin for return URLs
-    const reqOrigin = req.headers.get('origin');
-    const reqReferer = req.headers.get('referer');
-    const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
+    // Canonical origin for return URLs — ВСЕГДА https://gorbova.by, независимо
+    // от request origin/referer (legacy домены и Lovable preview не должны утекать).
+    const origin = 'https://gorbova.by';
 
     // Delegate to shared checkout helper.
     // PATCH-PUBLIC-LINK-COUNTER: payment_link_id уходит в orders_v2.meta через канонический meta_extra
