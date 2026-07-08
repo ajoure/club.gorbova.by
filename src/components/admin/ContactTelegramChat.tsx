@@ -2051,33 +2051,20 @@ export function ContactTelegramChat({
               </div>
             ) : (
               <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
-                {chatItems.map((item, index) => {
-                  const currentDate = new Date(item.created_at);
-                  const prevItem = index > 0 ? chatItems[index - 1] : null;
-                  const prevDate = prevItem ? new Date(prevItem.created_at) : null;
-                  const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
-
-                  const getDateLabel = (date: Date) => {
-                    if (isToday(date)) return "Сегодня";
-                    if (isYesterday(date)) return "Вчера";
-                    return format(date, "dd.MM.yyyy", { locale: ru });
-                  };
-
-                  return (
-                    <div key={item.id}>
-                      {showDateSeparator && (
-                        <div className="flex items-center justify-center my-4">
-                          <div className="flex-1 border-t border-border/30" />
-                          <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
-                            {getDateLabel(currentDate)}
-                          </span>
-                          <div className="flex-1 border-t border-border/30" />
-                        </div>
-                      )}
-                      {renderChatItem(item)}
-                    </div>
-                  );
-                })}
+                {chatItemsWithMeta.map(({ item, showDateSeparator, dateLabel, timeShort, timeMedium }) => (
+                  <div key={item.id}>
+                    {showDateSeparator && (
+                      <div className="flex items-center justify-center my-4">
+                        <div className="flex-1 border-t border-border/30" />
+                        <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
+                          {dateLabel}
+                        </span>
+                        <div className="flex-1 border-t border-border/30" />
+                      </div>
+                    )}
+                    {renderChatItem(item, timeShort, timeMedium)}
+                  </div>
+                ))}
                 <div ref={bottomRef} />
               </div>
             )}
