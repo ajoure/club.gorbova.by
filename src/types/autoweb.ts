@@ -40,4 +40,6 @@ export interface AutowebRoomStateResponse {
   viewer_timezone: string;
   event_timezone: string;
   kinescope_video_id: string | null;
+  source_live_event_id: string | null;
+  source_started_at: string | null;
 }
