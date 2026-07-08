@@ -794,6 +794,9 @@ export default function AdminLiveEvents() {
         metadata: mergedMetadata,
         autoweb_mode: autowebMode,
         autoweb_config: effectiveEventType === "autowebinar" ? data.autoweb_config : {},
+        // Timed-replay источник: сохраняем только для autowebinar; для остальных типов очищаем.
+        source_live_event_id:
+          effectiveEventType === "autowebinar" ? (data.source_live_event_id || null) : null,
       };
 
       // On INSERT only: seed initial lifecycle status. UPDATE never touches platform_status/status.
