@@ -226,6 +226,7 @@ const defaultForm: LiveEventForm = {
       allow_rewatch_before_end: false,
     },
   },
+  source_live_event_id: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
