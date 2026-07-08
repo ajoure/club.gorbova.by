@@ -86,6 +86,20 @@ import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
 import { SmilePlus } from "lucide-react";
+// V1.3: memo-bubble refactor
+import { TelegramMessageBubble } from "./chat/TelegramMessageBubble";
+import { TelegramEventBubble } from "./chat/TelegramEventBubble";
+import {
+  EMPTY_REACTIONS,
+  EVENT_ICONS,
+  buildReactionsSignature,
+  messageRenderSignature,
+  type MessageBubbleData,
+  type EventBubbleData,
+} from "./chat/telegramBubbleTypes";
+import {
+  buildQuotePreview,
+} from "./chat/telegramFormat";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -167,109 +181,8 @@ const EMOJI_LIST = [
   "🤷", "🤷‍♀️", "😡",
 ];
 
-const EVENT_ICONS: Record<string, React.ReactNode> = {
-  // Telegram linking
-  LINK_SUCCESS: <Link className="w-3 h-3 text-green-500" />,
-  RELINK_SUCCESS: <Link className="w-3 h-3 text-blue-500" />,
-  UNLINK: <Unlink className="w-3 h-3 text-orange-500" />,
-  
-  // Access management
-  AUTO_GRANT: <Key className="w-3 h-3 text-green-500" />,
-  MANUAL_GRANT: <Key className="w-3 h-3 text-green-500" />,
-  MANUAL_EXTEND: <Key className="w-3 h-3 text-blue-500" />,
-  AUTO_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
-  MANUAL_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
-  AUTO_KICK_VIOLATOR: <UserMinus className="w-3 h-3 text-red-500" />,
-  "telegram.access_granted": <Key className="w-3 h-3 text-green-500" />,
-  "telegram.access_revoked": <UserMinus className="w-3 h-3 text-red-500" />,
-  "telegram.access_queued": <RefreshCcw className="w-3 h-3 text-blue-500" />,
-  
-  // Notifications
-  manual_notification: <Bell className="w-3 h-3 text-blue-500" />,
-  ADMIN_CHAT_MESSAGE: <MessageCircle className="w-3 h-3 text-primary" />,
-  ADMIN_CHAT_FILE: <Paperclip className="w-3 h-3 text-primary" />,
-  
-  // Contacts
-  CONTACT_MERGED: <UserPlus className="w-3 h-3 text-purple-500" />,
-  CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
-  
-  // Billing / Subscriptions (NEW)
-  "subscription.charged": <CreditCard className="w-3 h-3 text-green-500" />,
-  "subscription.renewal_order_created": <Package className="w-3 h-3 text-blue-500" />,
-  "subscription.purchased": <CreditCard className="w-3 h-3 text-green-500" />,
-  "subscription.created": <Package className="w-3 h-3 text-blue-500" />,
-  "subscription.activated": <CheckCircle2 className="w-3 h-3 text-green-500" />,
-  "subscription.expired": <AlertTriangle className="w-3 h-3 text-orange-500" />,
-  "subscription.canceled": <AlertTriangle className="w-3 h-3 text-red-500" />,
-  "subscription.charge_failed": <AlertTriangle className="w-3 h-3 text-red-500" />,
-  "subscription.gc_sync_renewal_success": <RefreshCcw className="w-3 h-3 text-green-500" />,
-  "subscription.gc_sync_renewal_failed": <AlertTriangle className="w-3 h-3 text-orange-500" />,
-  
-  // Payments
-  "payment.success": <CreditCard className="w-3 h-3 text-green-500" />,
-  "payment.failed": <AlertTriangle className="w-3 h-3 text-red-500" />,
-  
-  // System
-  "system.trigger_fix_telegram_status": <Settings className="w-3 h-3 text-muted-foreground" />,
-  "telegram.backfill_grant": <RefreshCcw className="w-3 h-3 text-blue-500" />,
-};
-
-const TELEGRAM_HTML_TAG_PATTERN = /<\/?(b|strong|i|em|u|s|strike|del|code|pre|a|tg-spoiler|br)\b/i;
-
-function getTelegramPlainText(text: string | null | undefined): string {
-  const value = text || "";
-  if (!TELEGRAM_HTML_TAG_PATTERN.test(value) || typeof DOMParser === "undefined") return value;
-  const doc = new DOMParser().parseFromString(`<div>${value}</div>`, "text/html");
-  return doc.body.textContent || "";
-}
-
-function renderTelegramFormattedText(text: string): ReactNode {
-  if (!TELEGRAM_HTML_TAG_PATTERN.test(text) || typeof DOMParser === "undefined") return text;
-
-  const doc = new DOMParser().parseFromString(`<div>${text}</div>`, "text/html");
-  const root = doc.body.firstElementChild;
-  if (!root) return text;
-
-  const safeHref = (href: string | null) => {
-    if (!href) return null;
-    try {
-      const url = new URL(href);
-      return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const walk = (node: ChildNode, key: string): ReactNode => {
-    if (node.nodeType === 3) return node.textContent;
-    if (node.nodeType !== 1) return null;
-
-    const el = node as Element;
-    const tag = el.tagName.toLowerCase();
-    if (tag === "br") return "\n";
-
-    const children = Array.from(el.childNodes).map((child, index) => walk(child, `${key}-${index}`));
-
-    if (tag === "b" || tag === "strong") return <strong key={key} className="font-semibold">{children}</strong>;
-    if (tag === "i" || tag === "em") return <em key={key}>{children}</em>;
-    if (tag === "u") return <span key={key} className="underline underline-offset-2">{children}</span>;
-    if (tag === "s" || tag === "strike" || tag === "del") return <span key={key} className="line-through">{children}</span>;
-    if (tag === "code" || tag === "pre") return <code key={key} className="rounded bg-background/20 px-1 py-0.5 font-mono text-[0.92em]">{children}</code>;
-    if (tag === "tg-spoiler") return <span key={key} className="rounded bg-foreground/15 px-1">{children}</span>;
-    if (tag === "a") {
-      const href = safeHref(el.getAttribute("href"));
-      return href ? (
-        <a key={key} href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
-          {children}
-        </a>
-      ) : <span key={key}>{children}</span>;
-    }
-
-    return <span key={key}>{children}</span>;
-  };
-
-  return Array.from(root.childNodes).map((node, index) => walk(node, `tg-html-${index}`));
-}
+// V1.3: EVENT_ICONS moved to ./chat/telegramBubbleTypes,
+// text formatters moved to ./chat/telegramFormat.
 
 // PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
 
@@ -350,41 +263,74 @@ export function ContactTelegramChat({
   const MAX_PENDING_REFRESH_ATTEMPTS = 30; // 1 minute at 2s interval
   const PENDING_REFRESH_INTERVAL = 2000; // 2 seconds
 
+  /**
+   * V1.3: identity-preserving merge.
+   * - If a `next` item is byte-identical (by render signature) to `prev`, we
+   *   REUSE the prev object reference — bubble memo does not re-render.
+   * - If the incoming row is worse (missing file_url), we keep the enriched URL.
+   * - If the whole set is identical (same ids, same order, no changes), we
+   *   return the `prev` array reference — downstream memos stay stable.
+   */
   function mergeByIdPreferEnriched(prev: TelegramMessage[], next: TelegramMessage[]) {
-    const map = new Map<string, TelegramMessage>();
-    for (const m of prev) map.set(m.id, m);
+    const prevById = new Map<string, TelegramMessage>();
+    const prevSigs = new Map<string, string>();
+    for (const p of prev) {
+      prevById.set(p.id, p);
+      prevSigs.set(p.id, messageRenderSignature(p));
+    }
+
+    const nextById = new Map<string, TelegramMessage>();
+    let anyChange = false;
 
     for (const m of next) {
-      const old = map.get(m.id);
+      const old = prevById.get(m.id);
       if (!old) {
-        map.set(m.id, m);
+        nextById.set(m.id, m);
+        anyChange = true;
         continue;
       }
-
       const oldMeta: any = (old as any).meta ?? {};
       const newMeta: any = (m as any).meta ?? {};
-
       const oldUrl: string | null =
         oldMeta.file_url ?? (old as any).file_url ?? (old as any).fileUrl ?? null;
       const newUrl: string | null =
         newMeta.file_url ?? (m as any).file_url ?? (m as any).fileUrl ?? null;
 
-      // Prefer already-enriched item if the new one is worse (no URL)
-      if (oldUrl && !newUrl) {
-        map.set(m.id, {
-          ...m,
-          meta: {
-            ...newMeta,
-            file_url: oldUrl,
-          },
-        });
+      const candidate: TelegramMessage =
+        oldUrl && !newUrl
+          ? ({ ...m, meta: { ...newMeta, file_url: oldUrl } } as TelegramMessage)
+          : m;
+
+      if (messageRenderSignature(candidate) === prevSigs.get(m.id)) {
+        // reuse prev reference — bubble memo stays intact
+        nextById.set(m.id, old);
       } else {
-        map.set(m.id, m);
+        nextById.set(m.id, candidate);
+        anyChange = true;
       }
     }
 
-    // Sort by created_at ASC to maintain correct order after merge
-    return Array.from(map.values()).sort(
+    // Preserve prev-only ids too (e.g., optimistic temps not in next yet).
+    for (const p of prev) {
+      if (!nextById.has(p.id)) {
+        nextById.set(p.id, p);
+        anyChange = true;
+      }
+    }
+
+    if (!anyChange && nextById.size === prev.length) {
+      // Same set — check order too. If ordered the same, return prev ref.
+      let sameOrder = true;
+      let i = 0;
+      for (const p of prev) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        if (nextById.get(p.id) !== p) { sameOrder = false; break; }
+        i++;
+      }
+      if (sameOrder && i === prev.length) return prev;
+    }
+
+    return Array.from(nextById.values()).sort(
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     );
   }
@@ -665,10 +611,31 @@ export function ContactTelegramChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, events, billingEvents]);
 
-  // V1.2: precompute date separators, date labels, and time strings once
-  // per chatItems change. Removes ~2×N `new Date` + ~2×N `format(...)`
-  // calls from the hot render path (was previously inside the .map).
-  const chatItemsWithMeta = useMemo(() => {
+  // V1.3: reactions moved above chatItemsWithMeta so precompute has access.
+  const telegramMessageIds = useMemo(
+    () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
+    [messages]
+  );
+  const { data: telegramReactionsMap } = useTelegramReactions(telegramMessageIds);
+  const toggleTelegramReaction = useToggleTelegramReaction();
+
+  // V1.3: chatItemsWithMeta emits fully-flat bubble data for each row.
+  // Deps: chatItems + reactions + labels/bots (no draft/highlighted/hover).
+  const chatItemsWithMeta = useMemo<Array<{
+    key: string;
+    showDateSeparator: boolean;
+    dateLabel: string;
+    bubble: MessageBubbleData | EventBubbleData;
+  }>>(() => {
+    // H4 fix: build tgId → message map once for quote preview lookup.
+    const byTgId = new Map<number, TelegramMessage>();
+    for (const it of chatItems) {
+      if (it.type === "message") {
+        const mm = it as TelegramMessage;
+        if (mm.message_id) byTgId.set(mm.message_id, mm);
+      }
+    }
+
     return chatItems.map((item, index) => {
       const currentDate = new Date(item.created_at);
       const prevItem = index > 0 ? chatItems[index - 1] : null;
@@ -681,32 +648,178 @@ export function ContactTelegramChat({
               ? "Вчера"
               : format(currentDate, "dd.MM.yyyy", { locale: ru }))
         : "";
-      return {
-        item,
-        showDateSeparator,
-        dateLabel,
-        timeShort: format(currentDate, "HH:mm", { locale: ru }),
-        timeMedium: format(currentDate, "dd.MM HH:mm", { locale: ru }),
+      const timeShort = format(currentDate, "HH:mm", { locale: ru });
+      const timeMedium = format(currentDate, "dd.MM HH:mm", { locale: ru });
+
+      if (item.type === "event") {
+        const ev = item as TelegramEvent;
+        const meta = ev.meta as Record<string, unknown> | undefined;
+        let displayText = getEventLabel(ev.action);
+        if (ev.action === 'AUTO_GRANT' || ev.action === 'MANUAL_GRANT') {
+          const clubName = (meta?.club_name || meta?.product_name || '') as string;
+          const tariffName = meta?.tariff_name as string | undefined;
+          const accessEndDate = meta?.access_end_date as string | undefined;
+          const validUntil = meta?.valid_until as string | undefined;
+          const endDate = accessEndDate || (validUntil ? new Date(validUntil).toLocaleDateString('ru-RU') : null);
+          const prefix = ev.action === 'AUTO_GRANT' ? 'Авто-выдача' : 'Ручная выдача';
+          const productInfo = clubName || 'Клуб';
+          const tariffInfo = tariffName ? ` тариф ${tariffName}` : '';
+          const dateInfo = endDate ? ` до ${endDate}` : '';
+          displayText = `${prefix}: ${productInfo}${tariffInfo}${dateInfo}`;
+        }
+        const isSkipped = ev.status === 'skipped';
+        const isFailed = ev.status === 'failed' || ev.status === 'error';
+        const isSuccess = ev.status === 'success';
+        const skipReason = (meta?.reason || meta?.skip_reason) as string | undefined;
+        const errorMsg = (meta as any)?.error_message as string | undefined;
+        const statusSuffix = isSkipped ? ' · не отправлено' : isFailed ? ' · ошибка отправки' : '';
+        const title = skipReason ? `Причина: ${skipReason}` : errorMsg || null;
+        const evData: EventBubbleData = {
+          kind: "event",
+          key: ev.id,
+          id: ev.id,
+          action: ev.action,
+          displayText,
+          statusSuffix,
+          status: String(ev.status || ''),
+          isSkipped,
+          isFailed,
+          isSuccess,
+          skipReason: skipReason || null,
+          errorMessage: errorMsg || null,
+          hasMessageText: !!ev.message_text,
+          messageText: ev.message_text || null,
+          timeMedium,
+          title,
+        };
+        return { key: ev.id, showDateSeparator, dateLabel, bubble: evData };
+      }
+
+      const msg = item as TelegramMessage;
+      const metaAny: any = (msg as any).meta ?? {};
+      const msgAny: any = msg as any;
+
+      const fileType = (metaAny.file_type ?? metaAny.fileType ?? msgAny.file_type ?? msgAny.fileType ?? null) as string | null;
+      const fileName = (metaAny.file_name ?? metaAny.fileName ?? msgAny.file_name ?? msgAny.fileName ?? null) as string | null;
+      const fileUrl = (metaAny.file_url ?? metaAny.fileUrl ?? msgAny.file_url ?? msgAny.fileUrl ?? null) as string | null;
+      const mimeType = (metaAny.mime_type ?? metaAny.mimeType ?? msgAny.mime_type ?? msgAny.mimeType ?? null) as string | null;
+      const bucket = (metaAny.storage_bucket ?? metaAny.storageBucket ?? msgAny.storage_bucket ?? msgAny.storageBucket ?? null) as string | null;
+      const path = (metaAny.storage_path ?? metaAny.storagePath ?? msgAny.storage_path ?? msgAny.storagePath ?? null) as string | null;
+      const uploadError = (metaAny.upload_error ?? metaAny.uploadError ?? msgAny.upload_error ?? msgAny.uploadError ?? null) as string | null;
+      const uploadStatus = (metaAny.upload_status ?? metaAny.uploadStatus ?? msgAny.upload_status ?? null) as string | null;
+
+      const fileNameLooksLikeMedia = /\.(pdf|png|jpe?g|webp|gif|mp4|mov|mp3|m4a|ogg|wav|webm|oga|opus)$/i.test(fileName || "");
+      const isMediaLike = !!(fileType || mimeType || (bucket && path) || fileNameLooksLikeMedia);
+
+      const isEdited = !!(metaAny.edited ?? (msg as any).edited);
+      const isDeleted = !!(msg.status === "deleted" || metaAny.deleted || (msg as any).deleted);
+      const canEdit = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
+      const canDelete = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !isDeleted;
+
+      // Quote precompute (H4 fix — no lookup in bubble render).
+      let hasReply = false;
+      let quotedMessageDbId: string | null = null;
+      let quotedPreview: string | null = null;
+      let quotedAuthor: string | null = null;
+      let quotedMissing = false;
+      if (msg.reply_to_message_id) {
+        hasReply = true;
+        const quoted = byTgId.get(msg.reply_to_message_id) || null;
+        if (quoted) {
+          quotedMessageDbId = quoted.id;
+          quotedPreview = buildQuotePreview(quoted);
+          quotedAuthor = quoted.direction === "outgoing"
+            ? (quoted.admin_profile?.full_name || "Администратор")
+            : (clientName || "Клиент");
+        } else {
+          quotedMissing = true;
+          quotedAuthor = "Сообщение";
+          quotedPreview = null;
+        }
+      }
+
+      // Bot label — flatten join + botsMap.
+      const joined = msg.telegram_bots;
+      const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
+      const botNameRaw = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
+      const botUsernameRaw = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
+      const botLabelName = botNameRaw?.trim();
+      const botLabel = botLabelName
+        ? botLabelName
+        : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
+
+      // Automated badge.
+      const automated = msg.direction === "outgoing" && !msg.sent_by_admin && !!(msg.meta as any)?.automated;
+      const automatedSource = (msg.meta as any)?.source as string | undefined;
+      const automatedTitle = automated
+        ? (automatedSource ? `Автоматическое сообщение · ${automatedSource}` : "Автоматическое сообщение")
+        : null;
+
+      // Inline keyboard url-only rows + signature.
+      const rm = (msg.meta as any)?.reply_markup;
+      const rowsIn: Array<Array<{ text?: string; url?: string }>> = Array.isArray(rm?.inline_keyboard) ? rm.inline_keyboard : [];
+      const urlRows = rowsIn
+        .map((row) => row.filter((b) => b && typeof b.url === "string" && b.url.trim().length > 0))
+        .filter((row) => row.length > 0);
+      const inlineUrlSignature = urlRows.length
+        ? urlRows.map((r) => r.map((b) => `${b.text ?? ""}::${b.url ?? ""}`).join("|")).join("~")
+        : "";
+
+      // Reactions (H5 fix): stable empty ref, comparator uses signature.
+      const rxRaw = telegramReactionsMap?.[msg.id];
+      const reactionsForRow = rxRaw && rxRaw.length ? rxRaw : EMPTY_REACTIONS;
+      const reactionsSignature = buildReactionsSignature(reactionsForRow);
+
+      const bubbleData: MessageBubbleData = {
+        kind: "message",
+        key: msg.id,
+        id: msg.id,
+        telegramMessageId: msg.message_id ?? null,
+        direction: msg.direction,
+        status: msg.status,
+        createdAt: msg.created_at,
+        messageText: msg.message_text ?? null,
+        isDeleted,
+        isEdited,
+        isMediaLike,
+        fileType,
+        fileUrl,
+        fileName,
+        mimeType,
+        storageBucket: bucket,
+        storagePath: path,
+        uploadStatus,
+        uploadError,
+        hasReply,
+        quotedMessageDbId,
+        quotedPreview,
+        quotedAuthor,
+        quotedMissing,
+        adminName: msg.admin_profile?.full_name ?? null,
+        adminAvatarUrl: msg.admin_profile?.avatar_url ?? null,
+        clientName: clientName ?? null,
+        clientAvatarUrl: avatarUrl ?? null,
+        botLabel,
+        automated,
+        automatedTitle,
+        inlineUrlRows: urlRows,
+        inlineUrlSignature,
+        timeShort,
+        canEdit,
+        canDelete,
+        reactionsForRow,
+        reactionsSignature,
       };
+
+      return { key: msg.id, showDateSeparator, dateLabel, bubble: bubbleData };
     });
-  }, [chatItems]);
+  }, [chatItems, telegramReactionsMap, clientName, avatarUrl, botsMap]);
 
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1: первый рендер
-  // блокируем ТОЛЬКО сообщениями. События (`events`) и billing
-  // (`billingEvents`) — пилюли; они дорисовываются, как только приходят,
-  // и не должны держать чат «пустым».
+  // блокируем ТОЛЬКО сообщениями.
   const isLoading = messagesLoading;
 
-  // Map: Telegram message_id -> message (для рендера quote/reply)
-  const messagesByTgId = useMemo(() => {
-    const m = new Map<number, TelegramMessage>();
-    (messages || []).forEach((msg) => {
-      if (msg.message_id) m.set(msg.message_id, msg);
-    });
-    return m;
-  }, [messages]);
-
-  // Скролл к сообщению по DB id + подсветка
+  // Скролл к сообщению по DB id + подсветка.
   const scrollToMessage = useCallback((dbId: string) => {
     const el = document.getElementById(`tg-msg-${dbId}`);
     if (!el) return;
@@ -715,29 +828,11 @@ export function ContactTelegramChat({
     setTimeout(() => setHighlightedId(null), 1500);
   }, []);
 
-  // Превью текста для quote-блока
-  const previewForQuote = useCallback((m: TelegramMessage): string => {
-    const meta: any = m.meta || {};
-    const fileType = meta.file_type;
-    if (fileType === "photo") return "📷 Фото";
-    if (fileType === "video") return "🎬 Видео";
-    if (fileType === "video_note") return "⭕ Видео-кружок";
-    if (fileType === "voice") return "🎤 Голосовое";
-    if (fileType === "audio") return "🎵 Аудио";
-    if (fileType === "document") return `📎 ${meta.file_name || "Документ"}`;
-    if (fileType === "sticker") return "🌟 Стикер";
-    const text = getTelegramPlainText(m.message_text).trim();
-    return text.length > 80 ? text.slice(0, 80) + "…" : text || "Сообщение";
-  }, []);
-
-
-  // --- Telegram reactions ---
-  const telegramMessageIds = useMemo(
-    () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
-    [messages]
-  );
-  const { data: telegramReactionsMap } = useTelegramReactions(telegramMessageIds);
-  const toggleTelegramReaction = useToggleTelegramReaction();
+  // V1.3: stable refs for handler lookups (avoids per-render callback churn).
+  const latestMessagesRef = useRef<TelegramMessage[]>([]);
+  useEffect(() => { latestMessagesRef.current = messages || []; }, [messages]);
+  const toggleReactionRef = useRef(toggleTelegramReaction);
+  toggleReactionRef.current = toggleTelegramReaction;
 
   // Check if any messages have pending upload status
   const hasPendingMedia = useMemo(() => {
@@ -1581,438 +1676,37 @@ export function ContactTelegramChat({
     );
   }
 
-  const renderChatItem = (item: ChatItem, timeShort: string, timeMedium: string) => {
-    if (item.type === "event") {
-      const event = item as TelegramEvent;
-      // PATCH: Show message_text for ANY event that has it (not just manual/system notifications)
-      const hasMessageText = !!event.message_text;
-      
-      // PATCH: Show extended info for access grant events
-      const meta = event.meta as Record<string, unknown> | undefined;
-      let displayText = getEventLabel(event.action);
-      
-      if (event.action === 'AUTO_GRANT' || event.action === 'MANUAL_GRANT') {
-        const clubName = (meta?.club_name || meta?.product_name || '') as string;
-        const tariffName = meta?.tariff_name as string | undefined;
-        const accessEndDate = meta?.access_end_date as string | undefined;
-        const validUntil = meta?.valid_until as string | undefined;
-        const endDate = accessEndDate || (validUntil ? new Date(validUntil).toLocaleDateString('ru-RU') : null);
-        
-        const prefix = event.action === 'AUTO_GRANT' ? 'Авто-выдача' : 'Ручная выдача';
-        const productInfo = clubName || 'Клуб';
-        const tariffInfo = tariffName ? ` тариф ${tariffName}` : '';
-        const dateInfo = endDate ? ` до ${endDate}` : '';
-        
-        displayText = `${prefix}: ${productInfo}${tariffInfo}${dateInfo}`;
-      }
-      
-      const isSkipped = event.status === 'skipped';
-      const isFailed = event.status === 'failed' || event.status === 'error';
-      const skipReason = (meta?.reason || meta?.skip_reason) as string | undefined;
-      const errorMsg = (meta as any)?.error_message as string | undefined;
+  // V1.3: stable handlers passed to memoized bubbles.
+  // All lookups by db id use `latestMessagesRef` to keep deps [].
+  const handleReplyById = useCallback((id: string) => {
+    const msg = latestMessagesRef.current.find((m) => m.id === id);
+    if (msg) setReplyingTo(msg);
+  }, []);
 
-      const pillBg = isSkipped
-        ? 'bg-muted/40 border border-dashed border-muted-foreground/30'
-        : isFailed
-          ? 'bg-destructive/10 border border-destructive/30'
-          : 'bg-muted';
-
-      const statusSuffix = isSkipped
-        ? ' · не отправлено'
-        : isFailed
-          ? ' · ошибка отправки'
-          : '';
-
-      return (
-        <div key={event.id} className="flex justify-center my-2">
-          <div className="flex flex-col items-center gap-1 max-w-[85%]">
-            <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs text-muted-foreground ${pillBg}`}
-              title={skipReason ? `Причина: ${skipReason}` : errorMsg || undefined}
-            >
-              {isSkipped ? (
-                <AlertCircle className="w-3 h-3 text-muted-foreground" />
-              ) : (
-                EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />
-              )}
-              <span>
-                {displayText}
-                {statusSuffix && <span className="opacity-70">{statusSuffix}</span>}
-              </span>
-              <span className="opacity-60">
-                {timeMedium}
-              </span>
-              {event.status === 'success' && <CheckCircle className="w-3 h-3 text-green-500" />}
-              {isFailed && <AlertCircle className="w-3 h-3 text-destructive" />}
-            </div>
-            {/* PATCH 13E: Show notification text (skipped тоже показываем, чтобы было видно что планировалось) */}
-            {hasMessageText && (
-              <div className="w-full px-4 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground border border-border/30">
-                <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                  {renderTelegramFormattedText(event.message_text || "")}
-                </div>
-              </div>
-            )}
-            {isSkipped && skipReason && (
-              <div className="text-[10px] text-muted-foreground/70 italic">
-                Причина: {skipReason}
-              </div>
-            )}
-          </div>
-        </div>
-      );
+  const handleEditById = useCallback((id: string) => {
+    const msg = latestMessagesRef.current.find((m) => m.id === id);
+    if (msg) {
+      setEditingMessage(msg);
+      setEditText(msg.message_text || "");
     }
+  }, []);
 
-    const msg = item as TelegramMessage;
-    const metaAny: any = (msg as any).meta ?? {};
-    const msgAny: any = msg as any;
-    
-    // Normalize all media fields (snake_case + camelCase fallbacks)
-    const fileType = (metaAny.file_type ?? metaAny.fileType ?? msgAny.file_type ?? msgAny.fileType ?? null) as string | null;
-    const fileName = (metaAny.file_name ?? metaAny.fileName ?? msgAny.file_name ?? msgAny.fileName ?? null) as string | null;
-    const fileUrl = (metaAny.file_url ?? metaAny.fileUrl ?? msgAny.file_url ?? msgAny.fileUrl ?? null) as string | null;
-    const mimeType = (metaAny.mime_type ?? metaAny.mimeType ?? msgAny.mime_type ?? msgAny.mimeType ?? null) as string | null;
-    const bucket = (metaAny.storage_bucket ?? metaAny.storageBucket ?? msgAny.storage_bucket ?? msgAny.storageBucket ?? null) as string | null;
-    const path = (metaAny.storage_path ?? metaAny.storagePath ?? msgAny.storage_path ?? msgAny.storagePath ?? null) as string | null;
-    const uploadError = (metaAny.upload_error ?? metaAny.uploadError ?? msgAny.upload_error ?? msgAny.uploadError ?? null) as string | null;
-    
-    // Detect media-like messages (even if fileType is missing)
-    const fileNameLooksLikeMedia = /\.(pdf|png|jpe?g|webp|gif|mp4|mov|mp3|m4a|ogg|wav|webm|oga|opus)$/i.test(fileName || "");
-    const isMediaLike = !!(fileType || mimeType || (bucket && path) || fileNameLooksLikeMedia);
+  const handleDeleteMessage = useCallback((dbId: string, telegramMessageId: number) => {
+    deleteMutation.mutate({ dbMessageId: dbId, messageId: telegramMessageId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteMutation]);
 
-    const isEdited = (metaAny.edited ?? (msg as any).edited) as boolean | undefined;
-    const isDeleted = (msg.status === "deleted" || metaAny.deleted || (msg as any).deleted) as boolean;
-    const canEdit = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
-    const canDelete = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !isDeleted;
+  const handleReact = useCallback((id: string, emoji: string) => {
+    toggleReactionRef.current.mutate({ messageId: id, emoji });
+  }, []);
 
-    if (isDeleted) {
-      return (
-        <div
-          key={msg.id}
-          data-message-id={msg.id}
-          className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
-        >
-          <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
-            <p className="text-sm text-muted-foreground italic">Сообщение удалено</p>
-            <span className="text-xs opacity-60">
-              {timeShort}
-            </span>
-          </div>
-        </div>
-      );
-    }
+  const handleQuoteClick = useCallback((dbId: string) => {
+    scrollToMessage(dbId);
+  }, [scrollToMessage]);
 
-    const msgReactions = telegramReactionsMap?.[msg.id] || [];
-
-    return (
-      <div
-        key={msg.id}
-        id={`tg-msg-${msg.id}`}
-        data-message-id={msg.id}
-        className={cn(
-          "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
-          msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start",
-          highlightedId === msg.id && "bg-yellow-200/40"
-        )}
-      >
-        <div className={`relative max-w-[80%] min-w-0 ${msg.direction === "outgoing" ? "mr-1" : ""}`}>
-          <div className="flex flex-col w-full min-w-0">
-            <div className="relative">
-              {(() => {
-                const isVideoNoteMsg = fileType === "video_note";
-                // Прозрачный пузырь для чисто-медиа сообщений (фото/видео/аудио/голос/кружок)
-                // без текста и без цитаты — как у видео-кружков
-                const isPureMediaMsg =
-                  isMediaLike &&
-                  !msg.message_text &&
-                  !msg.reply_to_message_id;
-                const transparentBubble = isVideoNoteMsg || isPureMediaMsg;
-                return (
-              <div
-                className={cn(
-                  "break-words overflow-hidden",
-                  transparentBubble
-                    ? "p-0 bg-transparent rounded-none"
-                    : cn(
-                        "rounded-lg p-3",
-                        msg.direction === "outgoing"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted"
-                      )
-                )}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  {msg.direction === "outgoing" ? (
-                    msg.admin_profile?.avatar_url ? (
-                      <img src={msg.admin_profile.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
-                    ) : (
-                      <Bot className="w-3 h-3 flex-shrink-0" />
-                    )
-                  ) : (
-                    avatarUrl ? (
-                      <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
-                    ) : (
-                      <User className="w-3 h-3 flex-shrink-0" />
-                    )
-                  )}
-                  <span className="text-xs opacity-70">
-                    {msg.direction === "outgoing" 
-                      ? (msg.admin_profile?.full_name || "Администратор") 
-                      : (clientName || "Клиент")}
-                  </span>
-                </div>
-
-                {/* Quote-блок (если это reply) */}
-                {msg.reply_to_message_id ? (() => {
-                  const quoted = messagesByTgId.get(msg.reply_to_message_id);
-                  const isOutgoing = msg.direction === "outgoing";
-                  const authorLabel = quoted
-                    ? (quoted.direction === "outgoing"
-                        ? (quoted.admin_profile?.full_name || "Администратор")
-                        : (clientName || "Клиент"))
-                    : "Сообщение";
-                  const previewText = quoted ? previewForQuote(quoted) : "Недоступно (не загружено)";
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => quoted && scrollToMessage(quoted.id)}
-                      disabled={!quoted}
-                      className={cn(
-                        "block w-full text-left mb-2 pl-2 border-l-2 rounded-sm py-1 px-2 -mx-1 transition-colors",
-                        isOutgoing
-                          ? "border-primary-foreground/60 bg-primary-foreground/10 hover:bg-primary-foreground/20"
-                          : "border-primary/60 bg-primary/5 hover:bg-primary/10",
-                        !quoted && "opacity-60 cursor-default"
-                      )}
-                    >
-                      <div className={cn(
-                        "text-[11px] font-semibold truncate",
-                        isOutgoing ? "text-primary-foreground/90" : "text-primary"
-                      )}>
-                        {authorLabel}
-                      </div>
-                      <div className={cn(
-                        "text-xs truncate",
-                        isOutgoing ? "text-primary-foreground/80" : "text-muted-foreground"
-                      )}>
-                        {previewText}
-                      </div>
-                    </button>
-                  );
-                })() : null}
-                
-                {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
-                {isMediaLike && (
-                  <div className="mb-2">
-    <ChatMediaMessage
-                      fileType={fileType}
-                      fileUrl={fileUrl}
-                      fileName={fileName}
-                      mimeType={mimeType}
-                      errorMessage={uploadError}
-                      isOutgoing={msg.direction === "outgoing"}
-                      storageBucket={bucket}
-                      storagePath={path}
-                      uploadStatus={(metaAny.upload_status ?? metaAny.uploadStatus ?? null) as string | null}
-                      onRefresh={() => refetchMessages()}
-                    />
-                  </div>
-                )}
-                
-                {msg.message_text && (
-                  <p className="text-sm whitespace-pre-wrap break-words">{renderTelegramFormattedText(msg.message_text)}</p>
-                )}
-
-                {/* Inline keyboard mirror — рендер как нативные Telegram-кнопки.
-                    Берём только url-кнопки (callback_data намеренно скрыты).
-                    Кнопки тянутся на всю ширину пузыря, разделены тонкой линией от текста. */}
-                {(() => {
-                  const rm = (msg.meta as any)?.reply_markup;
-                  const rows: Array<Array<{ text?: string; url?: string }>> = Array.isArray(rm?.inline_keyboard) ? rm.inline_keyboard : [];
-                  const urlRows = rows
-                    .map((row) => row.filter((b) => b && typeof b.url === "string" && b.url.trim().length > 0))
-                    .filter((row) => row.length > 0);
-                  if (urlRows.length === 0) return null;
-                  const isOutgoing = msg.direction === "outgoing";
-                  return (
-                    <div className={cn(
-                      "mt-2 pt-2 -mx-3 px-3 flex flex-col gap-1.5 border-t",
-                      isOutgoing ? "border-primary-foreground/20" : "border-border/40",
-                    )}>
-                      {urlRows.map((row, ri) => (
-                        <div key={ri} className="flex flex-wrap gap-1.5">
-                          {row.map((btn, bi) => (
-                            <a
-                              key={bi}
-                              href={btn.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={cn(
-                                "flex-1 min-w-0 inline-flex items-center justify-center text-center h-9 px-3 rounded-lg text-sm font-medium transition-colors break-words",
-                                isOutgoing
-                                  ? "bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
-                                  : "bg-primary/10 text-primary hover:bg-primary/20",
-                              )}
-                            >
-                              <span className="truncate">{btn.text || btn.url}</span>
-                            </a>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
-
-                <div className="flex items-center justify-end gap-1 mt-1">
-                  {/* Авто badge — automated outgoing messages without admin author */}
-                  {msg.direction === "outgoing" && !msg.sent_by_admin && (msg.meta as any)?.automated && (
-                    <span
-                      className="text-[10px] opacity-80 mr-1 px-1 rounded bg-primary-foreground/20"
-                      title={(msg.meta as any)?.source ? `Автоматическое сообщение · ${(msg.meta as any).source}` : "Автоматическое сообщение"}
-                    >
-                      Авто
-                    </span>
-                  )}
-                  {/* Bot badge — приоритет bot_name, fallback @username, иначе null */}
-                  {(() => {
-                    const joined = msg.telegram_bots;
-                    const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
-                    const botName = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
-                    const botUsername = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
-                    const name = botName?.trim();
-                    const label = name ? name : (botUsername?.trim() ? `@${botUsername.trim()}` : null);
-                    return label ? (
-                      <span className="text-[10px] opacity-70 mr-1">{label}</span>
-                    ) : null;
-                  })()}
-                  {isEdited && (
-                    <span className="text-xs opacity-60 mr-1">ред.</span>
-                  )}
-                  <span className="text-xs opacity-60">
-                    {timeShort}
-                  </span>
-                  {msg.direction === "outgoing" && (
-                    <>
-                      {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
-                      {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
-                      {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
-                    </>
-                  )}
-                </div>
-              </div>
-                );
-              })()}
-
-              {/* Reply + Emoji controls — hover */}
-              <div
-                className={cn(
-                  "absolute -bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
-                  msg.direction === "outgoing" ? "left-0" : "right-0"
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => setReplyingTo(msg)}
-                  title="Ответить"
-                  className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
-                >
-                  <Reply className="h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
-                      title="Реакция"
-                    >
-                      <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-2" side="top" align="center">
-                    <div className="grid grid-cols-10 gap-1">
-                      {EMOJI_LIST.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
-                          className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
-                      В Telegram отображается только 1 реакция от бота (лимит Telegram API)
-                    </p>
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-
-            {/* Reactions display */}
-            {msgReactions.length > 0 && (
-              <div className={cn("flex flex-wrap gap-1 mt-1", msg.direction === "outgoing" && "justify-end")}>
-                {msgReactions.map((r) => (
-                  <button
-                    key={r.emoji}
-                    onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji: r.emoji })}
-                    className={cn(
-                      "inline-flex items-center gap-1 h-6 px-1.5 rounded-full text-xs border transition-colors",
-                      r.userReacted
-                        ? "bg-primary/10 border-primary/30 text-primary"
-                        : "bg-muted border-border hover:bg-accent"
-                    )}
-                  >
-                    <span>{r.emoji}</span>
-                    <span className="font-medium">{r.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {msg.direction === "outgoing" && (canEdit || canDelete) && (
-            <div className="absolute -left-8 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                  >
-                    <MoreVertical className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canEdit && (
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setEditingMessage(msg);
-                        setEditText(msg.message_text || "");
-                      }}
-                    >
-                      <Edit2 className="w-4 h-4 mr-2" />
-                      Редактировать
-                    </DropdownMenuItem>
-                  )}
-                  {canDelete && (
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => {
-                        if (msg.message_id) {
-                          deleteMutation.mutate({ dbMessageId: msg.id, messageId: msg.message_id });
-                        }
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Удалить
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const handleMediaRefresh = useCallback(() => {
+    refetchMessages();
+  }, [refetchMessages]);
 
   return (
     <TooltipProvider>
@@ -2057,8 +1751,8 @@ export function ContactTelegramChat({
               </div>
             ) : (
               <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
-                {chatItemsWithMeta.map(({ item, showDateSeparator, dateLabel, timeShort, timeMedium }) => (
-                  <div key={item.id}>
+                {chatItemsWithMeta.map(({ key, showDateSeparator, dateLabel, bubble }) => (
+                  <div key={key}>
                     {showDateSeparator && (
                       <div className="flex items-center justify-center my-4">
                         <div className="flex-1 border-t border-border/30" />
@@ -2068,7 +1762,21 @@ export function ContactTelegramChat({
                         <div className="flex-1 border-t border-border/30" />
                       </div>
                     )}
-                    {renderChatItem(item, timeShort, timeMedium)}
+                    {bubble.kind === "event" ? (
+                      <TelegramEventBubble data={bubble} />
+                    ) : (
+                      <TelegramMessageBubble
+                        data={bubble}
+                        isHighlighted={highlightedId === bubble.id}
+                        onReply={handleReplyById}
+                        onEdit={handleEditById}
+                        onDelete={handleDeleteMessage}
+                        onReact={handleReact}
+                        onQuoteClick={handleQuoteClick}
+                        onMediaRefresh={handleMediaRefresh}
+                        emojiList={EMOJI_LIST}
+                      />
+                    )}
                   </div>
                 ))}
                 <div ref={bottomRef} />
@@ -2147,7 +1855,7 @@ export function ContactTelegramChat({
                     : (clientName || "Клиент")}
                 </div>
                 <div className="text-xs text-muted-foreground truncate">
-                  {previewForQuote(replyingTo)}
+                  {buildQuotePreview(replyingTo)}
                 </div>
               </div>
               <button
