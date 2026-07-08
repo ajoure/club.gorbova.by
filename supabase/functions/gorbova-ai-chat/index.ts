@@ -640,12 +640,17 @@ Deno.serve(async (req) => {
         const textContent = aiMessages[lastUserIdx].content;
         aiMessages[lastUserIdx].content = [
           { type: 'text', text: textContent },
-          ...images!.map(img => ({
-            type: 'image_url',
-            image_url: {
-              url: `data:${img.mimeType || 'image/jpeg'};base64,${img.base64}`,
-            },
-          })),
+          ...images!.map(img => {
+            // Клиент иногда шлёт готовый data-URL в поле base64 — снимаем префикс,
+            // иначе Gemini падает: Base64 decoding failed for "data:...;base64".
+            const m = /^data:([^;]+);base64,(.*)$/s.exec(img.base64);
+            const rawB64 = m ? m[2] : img.base64;
+            const mime = m ? m[1] : (img.mimeType || 'image/jpeg');
+            return {
+              type: 'image_url',
+              image_url: { url: `data:${mime};base64,${rawB64}` },
+            };
+          }),
         ];
       }
     }
