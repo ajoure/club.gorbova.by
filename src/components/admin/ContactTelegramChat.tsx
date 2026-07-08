@@ -442,6 +442,14 @@ export function ContactTelegramChat({
   //     lands, enriches the cache. Never blocks first paint.
   // Both stages fill the same `["telegram-messages", userId]` cache; downstream
   // optimistic writes (send/edit/delete) keep pointing at that single key.
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.2:
+  //   1) Removed `placeholderData: (prev) => prev` on both queries — it
+  //      leaked previous userId's data between queryKey switches (1-frame
+  //      wrong-chat flash). Cache-first is now provided by React Query's
+  //      per-key cache alone.
+  //   2) `refetchOnMount: false` on both — warm reopens must NOT round-trip
+  //      to the server when data is still fresh. Realtime + background
+  //      refresh (see fullEnabled effect below) keep the cache honest.
   const { data: leanData, isLoading: leanLoading } = useQuery({
     queryKey: ["telegram-messages-lean", userId],
     queryFn: async () => {
@@ -462,12 +470,40 @@ export function ContactTelegramChat({
     enabled: !!userId,
     staleTime: 60_000,
     gcTime: 10 * 60_000,
-    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchInterval: false,
     refetchOnReconnect: false,
   });
+
+  // V1.2: Stage 2 (full RPC) is deferred out of the warm critical path.
+  // It only fires after first paint (requestIdleCallback) and only when
+  // full-cache is missing or older than 120 s for THIS userId. Warm
+  // reopens with fresh full-cache skip the RPC entirely.
+  const [fullEnabled, setFullEnabled] = useState(false);
+  const fullFetchedAtRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    setFullEnabled(false);
+    if (!userId || !leanData) return;
+
+    const lastFullAt = fullFetchedAtRef.current.get(userId);
+    const isFullFresh = lastFullAt && Date.now() - lastFullAt < 120_000;
+    if (isFullFresh) return; // warm hit — no RPC on critical path
+
+    const w = window as any;
+    const cancel = (h: any) => {
+      if (typeof w.cancelIdleCallback === "function") {
+        try { w.cancelIdleCallback(h); } catch { /* noop */ }
+      } else {
+        clearTimeout(h);
+      }
+    };
+    const handle =
+      typeof w.requestIdleCallback === "function"
+        ? w.requestIdleCallback(() => setFullEnabled(true), { timeout: 500 })
+        : setTimeout(() => setFullEnabled(true), 80);
+    return () => cancel(handle);
+  }, [userId, leanData]);
 
   const { data: fullData, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
@@ -482,17 +518,22 @@ export function ContactTelegramChat({
         (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
-    // Stage 2 waits for Stage 1 so the network doesn't queue two calls in
-    // parallel and steal TCP/HTTP2 slots from the critical path.
-    enabled: !!userId && !!leanData,
+    enabled: !!userId && fullEnabled,
     staleTime: 60_000,
     gcTime: 10 * 60_000,
-    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchInterval: false,
     refetchOnReconnect: false,
   });
+
+  // Track successful full-fetch per user, so subsequent warm reopens skip
+  // the RPC while the cache is fresh (<120 s).
+  useEffect(() => {
+    if (fullData && userId) {
+      fullFetchedAtRef.current.set(userId, Date.now());
+    }
+  }, [fullData, userId]);
 
   // Rendered messages: prefer full (enriched) if available, otherwise lean.
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
