@@ -26,7 +26,23 @@ import NotFound from "./NotFound";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration", "open-payment"]);
+const ALLOWED_ACTIONS = new Set([
+  "open-offer",
+  "open-preregistration",
+  "open-payment",
+  "open-invoice",
+  "open-installment",
+  "open-lead",
+]);
+
+/** Map action → flow used by pickOfferForFlow. */
+const ACTION_TO_FLOW = {
+  "open-payment": "payment",
+  "open-invoice": "invoice",
+  "open-installment": "installment",
+  "open-lead": "lead",
+} as const;
+type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
 
 interface PendingOffer {
   productId: string;
@@ -44,6 +60,39 @@ const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
   gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
   "biz-l": (n) => /бизнес.?леди/i.test(n),
 };
+
+/**
+ * Select the offer that matches the requested flow.
+ * - lead        → offer_type='lead'
+ * - installment → pay_now + payment_method='internal_installment'
+ * - invoice     → pay_now + detectInvoiceOnlyOffer=true
+ * - payment     → pay_now, primary full_payment, ignoring installment/invoice-only
+ */
+function pickOfferForFlow(offers: readonly any[], flow: Flow) {
+  const active = offers.filter((o) => o.is_active !== false);
+  if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
+  const pn = active.filter((o) => o.offer_type === "pay_now");
+  if (flow === "installment") {
+    return pn.find((o) => o.payment_method === "internal_installment") || null;
+  }
+  if (flow === "invoice") {
+    return pn.find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) || null;
+  }
+  // payment: primary full_payment, non-installment, non-invoice-only.
+  return (
+    pn
+      .filter(
+        (o) =>
+          o.payment_method !== "internal_installment" &&
+          !detectInvoiceOnlyOffer(o).isInvoiceOnly,
+      )
+      .sort(
+        (a, b) =>
+          (b.is_primary === true ? 1 : 0) - (a.is_primary === true ? 1 : 0) ||
+          (a.amount || 0) - (b.amount || 0),
+      )[0] || null
+  );
+}
 
 
 export default function SitePageBySlug() {
@@ -94,27 +143,25 @@ export default function SitePageBySlug() {
         return;
       }
 
-      if (detail.action === "open-payment") {
+      if (detail.action in ACTION_TO_FLOW) {
         // Dynamic binding: resolve tariff_key against the page-linked product's tariffs,
-        // pick the primary pay_now offer (lowest amount). No UUIDs in the HTML.
+        // pick offer that matches the requested flow. No UUIDs in the HTML.
+        const flow = ACTION_TO_FLOW[detail.action as keyof typeof ACTION_TO_FLOW];
         const tariffKey = String(detail.payload?.tariff_key || "").trim();
         const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
         const product = linkedProductDataRef.current;
         if (!matcher || !product?.product?.id || !product.tariffs?.length) {
-          console.warn("[site-action] open-payment: no product data or unknown tariff_key", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: no product data or unknown tariff_key`, { tariffKey });
           return;
         }
         const tariff = product.tariffs.find((t) => matcher(t.name || ""));
         if (!tariff) {
-          console.warn("[site-action] open-payment: tariff not found", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: tariff not found`, { tariffKey });
           return;
         }
-        const payOffers = (tariff.offers || []).filter(
-          (o) => o.offer_type === "pay_now" && o.is_active !== false,
-        );
-        const offer = payOffers.slice().sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
+        const offer = pickOfferForFlow(tariff.offers || [], flow);
         if (!offer) {
-          console.warn("[site-action] open-payment: no pay_now offer on tariff", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: no matching offer on tariff`, { tariffKey, flow });
           return;
         }
         setPending({ productId: product.product.id, offerId: offer.id });
