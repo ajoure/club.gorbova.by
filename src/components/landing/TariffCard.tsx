@@ -271,6 +271,17 @@ export function TariffCard({
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           ))}
+          {bankInstallmentOffers.map((offer) => (
+            <Button
+              key={offer.id}
+              onClick={() => onSelectOffer?.(offer, tariff)}
+              variant="outline"
+              className="w-full"
+            >
+              {offer.button_label || "Заявка на рассрочку от банка"}
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ))}
         </div>
       )}
 
