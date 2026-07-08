@@ -223,13 +223,8 @@ Deno.serve(async (req) => {
     }
 
     // ── Build canonical public_url (server-side, never trust window.location) ──
-    const rawPrimaryDomain: string | null = (product as { primary_domain?: string | null })?.primary_domain ?? null;
-    const primaryDomain = rawPrimaryDomain ? rawPrimaryDomain.trim().toLowerCase() : null;
-    const primaryDomainValid =
-      !!primaryDomain &&
-      VALID_DOMAIN_RE.test(primaryDomain) &&
-      !FORBIDDEN_HOST_RE.test(primaryDomain);
-    const canonicalOrigin = primaryDomainValid ? `https://${primaryDomain}` : CANONICAL_PUBLIC_HOST;
+    // ВСЕГДА https://gorbova.by — независимо от продукта.
+    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
 
     if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
       console.error('[bridge-link] invalid canonical origin:', canonicalOrigin);
