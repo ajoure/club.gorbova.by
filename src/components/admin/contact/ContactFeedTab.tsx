@@ -503,6 +503,107 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
     }
   }
 
+  // Post-payment уведомления (email/telegram) по заказам этого контакта.
+  if (orderIds.length && (!types || types.includes("email") || types.includes("telegram"))) {
+    const { data: notifs } = await supabase
+      .from("order_notification_deliveries")
+      .select("id,order_id,channel,notification_type,status,recipient,provider_message_id,sent_at,created_at,error,metadata")
+      .in("order_id", orderIds.slice(0, 80))
+      .order("created_at", { ascending: false })
+      .limit(200);
+    for (const n of ((notifs || []) as any[])) {
+      const channel = String(n.channel || "").toLowerCase();
+      const kind: FeedKind = channel === "telegram" ? "telegram" : "email";
+      if (types && !types.includes(kind)) continue;
+      const chanLabel = kind === "telegram" ? "Telegram" : "Email";
+      const status = String(n.status || "");
+      const statusWord =
+        status === "sent" ? "отправлен" :
+        status === "failed" ? "не отправлен" :
+        status === "skipped" ? "пропущен" :
+        status === "pending" ? "в очереди" :
+        `статус: ${status}`;
+      const title = `${chanLabel} ${statusWord}`;
+      const body = [
+        n.notification_type ? `Шаблон: ${n.notification_type}` : null,
+        n.recipient ? `Получатель: ${n.recipient}` : null,
+        n.provider_message_id ? `ID сообщения: ${n.provider_message_id}` : null,
+        n.error ? `Ошибка: ${n.error}` : null,
+      ].filter(Boolean).join("\n");
+      if (!match(title, body, n.recipient, n.notification_type)) continue;
+      events.push({
+        id: `notification:${n.id}`,
+        kind,
+        at: n.sent_at || n.created_at,
+        title,
+        body,
+        author: "Система",
+        meta: {
+          event_source: "order_notification",
+          order_id: n.order_id,
+          status,
+          channel,
+          notification_type: n.notification_type,
+          provider_message_id: n.provider_message_id,
+          is_error: status === "failed" || Boolean(n.error),
+        },
+      });
+    }
+  }
+
+  // Выдача доступа по заказам (access_grant_ledger).
+  if (orderIds.length && (!types || types.includes("event"))) {
+    const { data: grants } = await supabase
+      .from("access_grant_ledger")
+      .select("id,order_id,action_type,status,reason_code,target_type,target_key,target_ref,result,error_details,created_at")
+      .in("order_id", orderIds.slice(0, 80))
+      .order("created_at", { ascending: false })
+      .limit(200);
+    for (const g of ((grants || []) as any[])) {
+      const action = String(g.action_type || "").toLowerCase();
+      const status = String(g.status || "").toLowerCase();
+      const actionWord =
+        action === "grant" ? "Доступ выдан" :
+        action === "revoke" ? "Доступ отозван" :
+        action === "extend" ? "Доступ продлён" :
+        `Доступ: ${action || "изменение"}`;
+      const failed = status === "failed" || status === "error" || Boolean(g.error_details);
+      const title = failed ? `${actionWord} — ошибка` : actionWord;
+      const result = (g.result || {}) as Record<string, any>;
+      const accessEnd = result?.access_end || result?.expires_at || null;
+      const windowDays = result?.window_days ?? null;
+      const body = [
+        g.target_type ? `Тип: ${g.target_type}${g.target_ref ? ` (${g.target_ref})` : ""}` : null,
+        g.target_key ? `Ключ: ${g.target_key}` : null,
+        accessEnd ? `Действует до: ${accessEnd}` : null,
+        windowDays ? `Окно: ${windowDays} дн.` : null,
+        g.reason_code ? `Причина: ${g.reason_code}` : null,
+        failed && g.error_details ? `Ошибка: ${typeof g.error_details === "string" ? g.error_details : JSON.stringify(g.error_details)}` : null,
+      ].filter(Boolean).join("\n");
+      if (!match(title, body, g.target_key, g.target_ref, g.reason_code)) continue;
+      events.push({
+        id: `access_grant:${g.id}`,
+        kind: "event",
+        at: g.created_at,
+        title,
+        body,
+        author: "Система",
+        meta: {
+          event_source: "access_grant",
+          order_id: g.order_id,
+          action_type: g.action_type,
+          status: g.status,
+          target_type: g.target_type,
+          target_key: g.target_key,
+          target_ref: g.target_ref,
+          access_end: accessEnd,
+          window_days: windowDays,
+          is_error: failed,
+        },
+      });
+    }
+  }
+
   return events;
 }
 
