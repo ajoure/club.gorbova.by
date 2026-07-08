@@ -1,197 +1,443 @@
-PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1
+## да, согласен, с учетом правок:
 
-Цель: открытие любого диалога в контакт-центре ощущается «как Telegram» — текст и структура мгновенно, медиа догружается лениво, фон не грузит систему.
+## **1. V1.1 нельзя начинать с реализации, сначала короткий perf-diagnose**
 
-## Diagnose (подтверждено кодом и pg_stat_statements)
+План правильно выделяет проблему, но перед Step 1 нужно зафиксировать обязательный mini-diagnose:
 
-Открытие чата (`ContactTelegramChat`) блокируется тремя параллельными запросами:
-
-1. **Edge Function `telegram-admin-chat` action `get_messages`** — cold-start 1–5 сек + `SELECT *` (толстый `meta jsonb`) + join `telegram_bots` + `admin_profile`, затем **до 50 signed URL** для медиа с бюджетом 2 сек, затем синхронный `INSERT audit_logs (signed_urls_batch)`. Всё это на критическом пути до первого рендера.
-2. **`audit_logs` по `target_user_id + action IN (...)`** — pg_stat_statements: mean **948 мс**, max **6 сек**, 5192 вызова. На `audit_logs (471k строк)` НЕТ ни одного индекса по `target_user_id` → seq scan.
-3. **`telegram_logs` по `user_id`** — индекса `(user_id, created_at)` нет; на 18k строк пока терпимо, но добавит десятки мс.
-
-Фон вкладки:
-- `INBOX_DIALOGS_QK` крутит `refetchInterval: 30000` + parallel `.in()` на profiles/orders/subs/дважды-профили — жалоба «загрузка всей системы постоянная».
-
-Все три запроса помечены в UI как единый `isLoading = messagesLoading || eventsLoading || billingLoading` → чат «пустой» до самого медленного.
-
-## Scope — что делаем
-
-### 1. Read-path сообщений: DB RPC вместо Edge Function
-
-**Предпочтительный вариант (B в правках)** — новый lightweight SECURITY DEFINER RPC:
-
-```sql
-CREATE OR REPLACE FUNCTION public.admin_get_telegram_messages_fast_v1(
-  p_user_id uuid,
-  p_limit int DEFAULT 50
-) RETURNS TABLE (
-  id uuid,
-  user_id uuid,
-  telegram_user_id bigint,
-  telegram_bot_id uuid,
-  message_id bigint,
-  direction text,
-  message_text text,
-  reply_to_message_id bigint,
-  sent_by_admin uuid,
-  is_read boolean,
-  created_at timestamptz,
-  -- нормализованные поля из meta, чтобы НЕ отдавать весь jsonb
-  media_type text,
-  storage_bucket text,
-  storage_path text,
-  file_url text,
-  file_name text,
-  file_size bigint,
-  mime_type text,
-  duration numeric,
-  thumbnail_url text,
-  automated boolean,
-  source text,
-  -- денормализованные join'ы одной строкой
-  bot_name text,
-  bot_username text,
-  admin_full_name text,
-  admin_avatar_url text
-)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT ... FROM telegram_messages m
-  LEFT JOIN telegram_bots b ON b.id = m.telegram_bot_id
-  LEFT JOIN profiles ap ON ap.user_id = m.sent_by_admin
-  WHERE m.user_id = p_user_id
-    AND has_role(auth.uid(), 'admin')  -- guard внутри SECURITY DEFINER
-  ORDER BY m.created_at DESC
-  LIMIT LEAST(GREATEST(p_limit, 1), 200);
-$$;
-
-GRANT EXECUTE ON FUNCTION public.admin_get_telegram_messages_fast_v1(uuid, int) TO authenticated;
-REVOKE EXECUTE ON FUNCTION ... FROM anon;
+```text
+PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1-DIAGNOSE
 ```
 
-Причины выбрать B, а не сырой прямой SELECT:
-- RLS `telegram_messages` не гарантирует admin-read без побочных эффектов; SECURITY DEFINER с внутренним `has_role` — явный и узкий.
-- Payload детерминирован; полный `meta jsonb` не уезжает в UI.
-- Cold start Edge устранён; PostgREST даёт стабильные 20–80 мс.
+Без этого есть риск оптимизировать не тот слой.
 
-Клиент (`ContactTelegramChat.tsx`) заменяет `supabase.functions.invoke("telegram-admin-chat", { action: "get_messages" })` на `supabase.rpc("admin_get_telegram_messages_fast_v1", { p_user_id, p_limit: 50 })`. Дальше собирается `TelegramMessage` в том же shape (media-поля кладём обратно внутрь `meta` при мэппинге, чтобы не переписывать рендер).
+Нужно сначала получить:
 
-Edge Function `telegram-admin-chat` **оставляем** — только для write-путей (`send_message`, `edit_message`, `delete_message`, `fetch_profile_photo`, `bridge_ticket_message`, `process_media_jobs`, `sync_reaction`, …). Action `get_messages` **не удаляем**, просто перестаём вызывать из UI (могут быть внешние вызовы).
+```text
+browser timing:
+- blocked / DNS / TLS
+- TTFB
+- download
+- JSON parse
+- React render до first visible message
 
-### 2. Индексы
-
-Перед и после — `EXPLAIN ANALYZE` на реальных значениях; проверить, что план идёт по index scan.
-
-```sql
--- (a) messages latest N per user — верификация:
---    существующий idx_telegram_messages_user_created(user_id, created_at DESC)
---    покрывает WHERE user_id=? ORDER BY created_at DESC LIMIT 50.
---    Дополнительный индекс НЕ создаём, если EXPLAIN подтверждает использование.
---    Если план идёт seq scan (напр. из-за join'ов) — добавим:
--- CREATE INDEX IF NOT EXISTS idx_telegram_messages_user_bot_created
---   ON public.telegram_messages (user_id, telegram_bot_id, created_at DESC);
-
--- (b) billing events в открытом чате
-CREATE INDEX IF NOT EXISTS idx_audit_logs_target_action_created
-  ON public.audit_logs (target_user_id, action, created_at DESC)
-  WHERE target_user_id IS NOT NULL;
-
--- (c) telegram_logs events pills
-CREATE INDEX IF NOT EXISTS idx_telegram_logs_user_created
-  ON public.telegram_logs (user_id, created_at DESC)
-  WHERE user_id IS NOT NULL;
+RPC:
+- EXPLAIN ANALYZE под authenticated
+- payload size current
+- row count current
+- fields current
 ```
 
-Индекс (b) — trigram `(target_user_id, action, created_at)` под фактический WHERE `target_user_id=? AND action IN (...) ORDER BY created_at`. Trade-off: +немного места, чуть медленнее INSERT в audit_logs — приемлемо.
+Если окажется, что 1.04 сек — это сеть/Auth/PostgREST, а не payload, то split fast/full может дать меньше эффекта, чем prefetch/cache.
 
-### 3. Payload — без полного `meta jsonb`
+## **2. Не менять текущий RPC несовместимо**
 
-RPC возвращает нормализованные media-поля (`media_type`, `storage_path`, `file_url`, `mime_type`, …) вместо `meta::jsonb`. Ожидаемое сокращение payload — в 2–5 раз (замер до/после в отчёте).
+Не перегружать текущий RPC так, чтобы случайно поменять поведение V1.
 
-Полный `meta` доступен по требованию через отдельный точечный запрос (пока такого потребителя в UI нет — не тянем).
+Вместо:
 
-### 4. Signed URLs — лениво
+```text
+admin_get_telegram_messages_fast_v1(p_user_id, p_limit, p_fast boolean)
+```
 
-- Из edge get_messages выпилен critical path на URL (мы его больше не вызываем на чтение).
-- Новый клиентский хук `src/hooks/useSignedMediaUrls.ts`:
-  - Вход: массив `{ id, bucket, path, mime, file_name }` только для сообщений, у которых нет уже готового `file_url`.
-  - Модуль-уровень кэш `Map<bucket:path, { url, expiresAt }>`, TTL 55 мин (URL живёт 60).
-  - In-flight dedupe (`Map<key, Promise>`).
-  - Батч по 10 через существующий edge action `get_media_urls` (уже есть в `telegram-admin-chat`) одним HTTP-запросом на пачку.
-  - Триггер запроса — только когда message-bubble попадает в viewport (IntersectionObserver в `TelegramMediaBubble` — оборачиваем существующий рендер).
-- До прихода URL — placeholder/player shell (уже частично есть) + skeleton.
-- Ошибка на конкретном media не валит остальные.
+лучше создать отдельную функцию:
 
-### 5. Audit из critical path — убрать
+```text
+admin_get_telegram_messages_lean_v1
+```
 
-В `telegram-admin-chat`:
-- `INSERT audit_logs (action='signed_urls_batch')` из ветки get_messages удаляется полностью (эта ветка больше не в critical path, но чистим).
-- В новом ленивом endpoint (`get_media_urls`) audit — sampled 1% и через `EdgeRuntime.waitUntil(...)` (не блокирует ответ). Ошибки логируем в консоль всегда.
+Текущий `admin_get_telegram_messages_fast_v1` оставить как есть.
 
-### 6. Loading state (клиент)
+Причина: V1 уже прошёл PASS, не нужно ломать стабильный путь.
 
-`ContactTelegramChat.tsx`:
-- `isLoading = messagesLoading` (без `|| eventsLoading || billingLoading`).
-- Пилюли-события/billing дорисовываются, когда придут (текущий `sort` в конце уже это допускает).
-- Для messages-query: `placeholderData: (prev) => prev`, `staleTime: 60_000`, `gcTime: 10 * 60_000`. Повторное открытие того же диалога — мгновенно из кэша, фон refetch не блокирует.
+## **3. Fast payload 20 сообщений — да, но нужен fallback на полный текст**
 
-### 7. Список диалогов
+Обрезка `message_text` до 4 КБ допустима только если в UI есть:
 
-`InboxTabContent.tsx`:
-- Убрать `refetchInterval: 30000` для `INBOX_DIALOGS_QK`.
-- Оставить/усилить: realtime invalidation (`useInboxRealtimeInvalidation`), `refetchOnReconnect: true`, `staleTime: 30_000`, ручная кнопка refresh (уже есть).
-- Safety poll: `refetchInterval: 5 * 60 * 1000` через `useVisibilityPolling` (пауза во вне-фокусной вкладке) — на случай потери realtime канала.
+```text
+“Показать полностью”
+```
 
-### 8. Prefetch (эффект «как Telegram»)
+или автоматическая замена текста после прихода full-query.
 
-- В строке диалога `onMouseEnter` / `onFocus` → `queryClient.prefetchQuery(['telegram-messages', userId], …)` с тем же RPC.
-- Debounce 120 мс, чтобы не выстреливать при быстром скролле.
-- Mobile: после idle prefetch первых **3** видимых диалогов (не 100).
-- Prefetch не должен дёргать signed URLs (они всё равно лениво).
+Иначе можно получить баг: оператор открыл чат и видит обрезанное сообщение, не понимая, что оно неполное.
 
-### 9. Regression guards (что НЕ ломаем)
+Для V1.1:
 
-- send/edit/delete сообщений — не трогаем (те же edge actions).
-- unread-логика и `mark_dialog_read_v2` — не трогаем; проверяем, что открытие диалога помечает read по тому же boundary (`last_message_at`), self-zero баг не возвращается.
-- realtime bus (`useInboxRealtimeInvalidation`, coordinator `isSelfMarkActive`) — не трогаем.
-- unified IG/support inbox — не трогаем.
-- LiveEvents/автовебинары — не трогаем.
-- RLS `telegram_messages` — не меняем (доступ идёт через SECURITY DEFINER RPC с внутренним `has_role`-guard).
-- Старый edge `get_messages` не удаляем.
+```text
+lean query:
+- message_text_preview <= 4 KB
+- is_truncated boolean
+full query:
+- заменяет preview полным message_text
+```
 
-## DoD — обязательные замеры (в proof-файл)
+## **4. Не убирать все join из fast, если они нужны для первого paint**
 
-Замеры с DevTools Network + `EXPLAIN ANALYZE`, до и после:
+Убрать `bot_*` и `admin_*` join можно только если UI не зависит от них для первого отображения.
 
-| Метрика | Before | After (цель) |
-|---|---|---|
-| Cold open (без cache), p95 до первого сообщения | 10–15 с | **< 1 с** |
-| Warm open (тот же диалог из cache) | ~1–2 с | **< 100 мс** |
-| RPC/edge messages query (server-side) | edge cold + 400–800 мс | **< 100 мс** |
-| Response size messages | X КБ (весь meta) | **/2…/5** |
-| `audit_logs` mean_ms (billing query) | 948 мс | **< 20 мс** (index scan) |
-| Signed URLs на critical path | да | **нет** |
-| Realtime regression (новое входящее поднимает диалог) | pass | **pass** |
-| send / voice / video note / edit / delete / mark-read / unread | pass | **pass** |
-| EXPLAIN ANALYZE messages query | — | **Index Scan**, не Seq Scan |
+Если без них появляются пустые аватары/имена/лейблы, лучше:
 
-Proof-файл: `docs/audit/2026-07-08-telegram-chat-performance-v1.md` со скриншотами Network-панели, выводом EXPLAIN и before/after размерами.
+```text
+header/bot/admin metadata брать из выбранного dialog row
+```
 
-## Файлы, которые буду менять
+а не из messages RPC.
 
-- Новая миграция: RPC `admin_get_telegram_messages_fast_v1` + индексы (b), (c). Индекс (a) — только если EXPLAIN покажет seq scan.
-- `src/components/admin/ContactTelegramChat.tsx` — переход на RPC, разделение loading state, `placeholderData`/`staleTime`/`gcTime`, интеграция `useSignedMediaUrls`.
-- `src/hooks/useSignedMediaUrls.ts` — новый (batch + TTL cache + in-flight dedupe).
-- `src/components/admin/communication/InboxTabContent.tsx` — снять 30-сек polling, добавить 5-мин safety poll, prefetch on hover/focus.
-- `supabase/functions/telegram-admin-chat/index.ts` — удалить sync audit из `get_messages`; в `get_media_urls` sampled audit через `waitUntil`. Action `get_messages` оставить рабочим (не удаляем).
+То есть first paint должен получать:
 
-## Этапы (Diagnose → Plan → Dry run → Execute → Verify)
+```text
+messages lean + already-known dialog metadata
+```
 
-1. **Diagnose (done в этом плане).**
-2. **Dry run**: `EXPLAIN ANALYZE` текущих запросов (messages/audit/telegram_logs) с реальными user_id.
-3. **Execute**: миграция (RPC + индексы) → фронт (RPC-вызов, lazy media, split loading) → фронт (inbox polling) → edge (убрать sync audit).
-4. **Verify**: замеры по таблице DoD; заполнить proof-файл с before/after.
+## **5. Prefetch первых 3 диалогов — осторожно**
 
-## Формат финального отчёта
+Prefetch первых 3 диалогов после загрузки списка может ускорить UX, но может создать лишнюю нагрузку, если список часто инвалидируется realtime.
 
-`Отчет о выполненной работе: PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1` — с реальными цифрами по каждой строке DoD (before → after), а не «оптимизировано».
+Добавить ограничения:
+
+```text
+- prefetch только при idle/requestIdleCallback
+- только если вкладка активна
+- только если диалог ещё не в cache
+- throttle/debounce после realtime invalidation
+- не prefetch при включённых тяжёлых фильтрах/поиске
+```
+
+Иначе после каждого входящего сообщения можно получить скрытую волну RPC.
+
+## **6. Hover/pointer prefetch — да, но только для desktop**
+
+Для mobile hover не работает. Использовать:
+
+```text
+onPointerEnter — desktop
+onPointerDown — desktop/mobile
+onFocus — keyboard navigation
+```
+
+`onPointerDown` особенно полезен: запрос стартует на 100–200 мс раньше click.
+
+## **7. Warm reopen <100–200 мс лучше решать cache-only first**
+
+Если warm reopen сейчас делает RPC 176 мс, значит при выборе уже cached диалога не нужно блокироваться на refetch.
+
+Для warm open:
+
+```text
+- показывать cache immediately
+- background refetch через staleTime
+- selected dialog не должен remount full tree, если key тот же тип
+```
+
+Проверить настройки:
+
+```text
+staleTime: 60–120 сек
+gcTime: 10 мин
+refetchOnMount: false или controlled background refetch
+placeholderData: previous
+```
+
+## **8. React.memo недостаточно — нужна виртуализация или сохранение mounted state**
+
+Если warm reopen 0.6 сек из-за remount дерева, `React.memo` может помочь частично, но надо проверить:
+
+```text
+- не пересоздаётся ли весь список сообщений из-за reverse/map
+- не меняется ли key родительского компонента
+- не пересоздаётся ли Supabase/query client context
+- не пересчитываются ли grouped rows всего inbox
+```
+
+Для V1.1 не вводить тяжёлую виртуализацию, если её нет. Но добавить proof React Profiler.
+
+Если сообщений всего 50, проблема скорее не в VirtualList, а в remount/parsing/components.
+
+
+
+
+
+## **9. Markdown/emoji через**
+
+`startTransition` **— только если реально есть bottleneck**
+
+Не добавлять преждевременно.
+
+Сначала React Profiler должен показать, что Markdown/emoji/formatting съедают заметное время. Если нет — не трогать.
+
+## **10. Signed URL map memo — обязательно**
+
+После V1 lazy media уже вне critical path, но warm render может тормозить из-за пересчёта карт.
+
+Добавить:
+
+```text
+useMemo по stable message ids/storage_paths
+dedupe in-flight signed-url requests
+cache by storage_path + expires_at
+```
+
+## **11. Messages cache key должен быть единым и предсказуемым**
+
+Для lean/full нельзя устроить ситуацию, где UI скачет между двумя query keys.
+
+Рекомендация:
+
+```text
+telegramMessagesLeanQK(dialogKey, limit=20)
+telegramMessagesFullQK(dialogKey, limit=50)
+```
+
+Мержить в derived view:
+
+```text
+displayMessages = merge(full ?? lean)
+```
+
+Не пытаться вручную писать full в lean cache без строгого adapter-а.
+
+## **12. Full-query не должен блокировать actions**
+
+Пока пришёл только lean:
+
+- send работает;
+- reply preview работает, если reply_to есть;
+- mark read работает;
+- scroll bottom работает;
+- media placeholders работают.
+
+Full-query только обогащает данные.
+
+## **13. Mark read timing не менять**
+
+Нельзя из-за fast-paint раньше/позже ломать unread.
+
+Зафиксировать:
+
+```text
+mark-read вызывается по тем же условиям, что V1
+```
+
+Не привязывать mark-read к full-query.
+
+## **14. Нужно проверить PostgreSQL/Auth overhead именно под тем же JWT**
+
+`EXPLAIN authenticated` сделать не абстрактно, а максимально близко к UI:
+
+```text
+same admin user
+same p_user_id / telegram_user_id
+same bot id
+same limit
+same selected heavy dialog
+```
+
+Иначе сравнение снова будет некорректным.
+
+## **15. Payload proof обязателен**
+
+В audit добавить таблицу:
+
+```text
+V1 full response:
+- bytes compressed
+- bytes uncompressed
+- rows
+- fields
+
+V1.1 lean response:
+- bytes compressed
+- bytes uncompressed
+- rows
+- fields
+
+Reduction %
+```
+
+Без этого нельзя понять, дал ли lean RPC эффект.
+
+## **16. Network proof обязателен**
+
+В audit добавить:
+
+```text
+Request start
+TTFB
+Content download
+JSON parse
+React first visible message
+Total UI ready
+```
+
+Скрин или exported performance trace.
+
+## **17. Цель <1 сек cold open должна быть “first visible messages”, не “всё готово”**
+
+Иначе медиа/full/pills могут мешать.
+
+Формулировка DoD:
+
+```text
+Cold open first visible message < 1 сек p95
+Full enrichment may finish later
+```
+
+## **18. p95 нельзя доказать одним открытием**
+
+Минимально:
+
+```text
+10 cold opens на тяжёлом диалоге
+10 warm reopens
+median + p95
+```
+
+Если Lovable не может стабильно гонять 10 раз, статус только `PARTIAL`.
+
+## **19. Не трогать IG/Support/unified — согласен**
+
+Но proof regression всё равно нужен:
+
+```text
+unified inbox opens
+IG row opens
+Support row opens
+mono Telegram opens
+```
+
+Без глубокой проверки, просто smoke.
+
+## **20. Итоговый proof-файл**
+
+```text
+docs/audit/2026-07-08-telegram-chat-performance-v1-1.md
+```
+
+## **21. Финальный отчёт**
+
+```text
+Отчет о выполненной работе: PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1
+```
+
+Финальный статус:
+
+```text
+Telegram chat V1.1 first-paint optimization — PASS / PARTIAL
+Cold first visible message p95 — <1s / not reached
+Warm reopen p95 — <200ms / not reached
+Lean payload reduction — % 
+Prefetch hit rate — %
+Realtime/send/read/media regression — PASS
+```
+
+## **Утверждение**
+
+План утверждён после этих правок.
+
+Ключевой принцип V1.1:
+
+```text
+Сначала показываем lean последние 20 сообщений из cache/prefetch.
+Потом фоном догружаем full 50 и медиа.
+Ни один enrichment-запрос не блокирует первый видимый чат.
+
+PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1
+```
+
+**Цель:** довести открытие чата до ощущения «как Telegram».
+
+- Cold open < 1 сек стабильно (сейчас ~1.7 с UI / 1.04 с RPC)
+- Warm reopen < 100–200 мс (сейчас ~0.6 с UI / 0.18 с RPC)
+
+---
+
+### Diagnose (перед реализацией)
+
+1. **Почему RPC 1043 мс в UI против 0.5 мс в DB.**
+  - Замерить в браузере: DNS/TLS, TTFB, download, JSON parse отдельно.
+  - Проверить размер payload (Content-Length, gzip on/off).
+  - Проверить, не идёт ли auth refresh перед первым запросом (частая причина +300–500 мс).
+  - `EXPLAIN (ANALYZE, BUFFERS)` того же RPC под ролью `authenticated` (не только под service_role) — RLS/guard overhead.
+  - Посмотреть, не тянет ли RPC лишние поля (`meta` jsonb, `reply_markup`, длинные тексты у старых сообщений).
+2. **Warm reopen 0.6 с при cache hit 0.18 мс RPC.**
+  - Значит время съедает не сеть, а re-mount дерева (VirtualList, аватарки, парсинг Markdown, i18n).
+  - Профайл React DevTools: сколько ms на render `ContactTelegramChat` + список сообщений.
+
+---
+
+### Plan
+
+#### Step 1. Split payload: fast-paint 20 + background 50
+
+- RPC `admin_get_telegram_messages_fast_v1` → добавить перегрузку/параметр `p_fast_limit` (по умолчанию 20).
+- Новый lean-вариант возвращает только поля для первого paint:
+`id, direction, message_text, message_type, created_at, is_read, sent_by_admin, telegram_message_id`
+без `meta`, `reply_markup`, без `bot_*` / `admin_*` join (их отдаёт вторым RPC).
+- Клиент: два `useQuery`:
+  - `messages-fast` (limit 20, lean) — критический путь;
+  - `messages-full` (limit 50, полный) — фоновая догрузка, мерджится в тот же кэш.
+- `isLoading` привязан только к `messages-fast`.
+
+#### Step 2. Prefetch стратегия
+
+- После загрузки списка диалогов — `queryClient.prefetchQuery` для первых 3 диалогов (lean-вариант, 20 сообщений).
+- На `onMouseEnter` / `onPointerDown` строки диалога — prefetch того же lean-запроса (Telegram/Slack паттерн).
+- Prefetch кладём с тем же query key, чтобы клик по диалогу мгновенно взял cache hit.
+
+#### Step 3. RPC round-trip diagnostics
+
+- Добавить `console.time`/Performance API вокруг RPC: `network`, `parse`, `render`.
+- Если TTFB > 300 мс — проверить, не идёт ли параллельный `auth.getSession()` перед fetch (пересобрать supabase client init, чтобы session уже был hydrated к моменту клика).
+- Если parse тяжёлый — вынести `meta` из fast-варианта (Step 1 это уже решает).
+
+#### Step 4. Render-cost на warm reopen
+
+- `React.memo` на `MessageBubble`, стабильные ключи, `useMemo` для отформатированных дат.
+- Не пересчитывать signed URL map на каждый render (мемо по `message.id`).
+- Отложить mount тяжёлых плагинов (Markdown/emoji) через `startTransition` — текст появляется, форматирование через кадр.
+
+#### Step 5. Payload size
+
+- gzip/br проверить на ответе Postgres (RPC через PostgREST должен уже сжимать).
+- Обрезать `message_text` до 4 КБ на fast-варианте (полный текст приходит во втором запросе).
+
+---
+
+### Dry run / замеры до
+
+- Performance timeline на cold open: TTFB, response, parse, first paint.
+- Warm reopen: React Profiler flamegraph.
+- `EXPLAIN ANALYZE` под `authenticated`.
+
+### Execute
+
+- Миграция: перегрузка RPC `admin_get_telegram_messages_fast_v1(p_user_id, p_limit, p_fast boolean default true)` либо новая `admin_get_telegram_messages_lean_v1`.
+- Клиент: `ContactTelegramChat.tsx` — двухступенчатый useQuery + мердж; prefetch в `InboxTabContent.tsx` / row hover.
+- Мемоизация в `MessageBubble` и производных компонентах.
+
+### Verify (DoD)
+
+Приложить фактические цифры before/after:
+
+
+| Метрика                             | Baseline (V1) | Target (V1.1)                    |
+| ----------------------------------- | ------------- | -------------------------------- |
+| Cold open UI                        | 1.696 с       | < 1.0 с                          |
+| Cold open RPC network               | 1.043 с       | < 400 мс                         |
+| Warm reopen UI                      | 0.595 с       | < 200 мс                         |
+| Warm reopen RPC                     | 0.176 с       | < 50 мс (или 0, если cache-only) |
+| Prefetch hit rate первых 3 диалогов | 0%            | > 80%                            |
+| Payload fast-варианта               | текущий       | −60% (без meta/join)             |
+
+
+Regression pass: send/edit/delete/voice/video_note, mark_read, unread counter, realtime, IG/Support/mono inbox — не тронуты.
+
+---
+
+### Что НЕ делаем в V1.1
+
+- Не меняем write-path (`telegram-admin-chat` send/edit/delete).
+- Не трогаем RLS `telegram_messages`.
+- Не трогаем coordinator `mark_dialog_read_v2`, unread-счётчик.
+- Не переносим realtime подписки.
+- Unified inbox / IG / Support — вне scope.
