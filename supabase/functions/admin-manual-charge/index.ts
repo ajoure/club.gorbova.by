@@ -106,9 +106,8 @@ Deno.serve(async (req) => {
       trackingId: string,
       meta?: { order_id?: string; payment_id?: string },
     ): Promise<ChargeCardResult> {
-      const reqOrigin = req.headers.get('origin');
-      const reqReferer = req.headers.get('referer');
-      const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
+      // Canonical origin — ВСЕГДА https://gorbova.by (admin может быть в Lovable preview).
+      const origin = 'https://gorbova.by';
 
       // bePaid webhook receiver (so we can finalize payment after 3DS)
       const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;

@@ -69,10 +69,9 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid payment_type');
     }
 
-    // Determine origin for return URL
-    const reqOrigin = req.headers.get('origin');
-    const reqReferer = req.headers.get('referer');
-    const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
+    // Canonical origin for return URL: ВСЕГДА https://gorbova.by.
+    // request origin/referer НЕ используем — админ может работать из Lovable preview.
+    const origin = 'https://gorbova.by';
 
     // Delegate to shared helper. КОНТРАКТ: payment_type = выбор админа
     // (source of truth). Helper НЕ derive payment_type из offer.recurring.

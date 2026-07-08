@@ -593,7 +593,7 @@ Deno.serve(async (req) => {
     }
 
     // Prepare bePaid subscription request
-    const baseUrl = 'https://club.gorbova.by/purchases';
+    const baseUrl = 'https://gorbova.by/purchases';
     const trackingId = `subv2:${subscription.id}:order:${order.id}`;
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription.id}&order=${order.id}`;

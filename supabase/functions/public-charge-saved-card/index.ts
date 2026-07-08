@@ -402,27 +402,16 @@ Deno.serve(async (req) => {
     const trackingId = `link:order:${order.id}`;
 
     // CANONICAL RETURN_URL — never req.headers.origin/referer.
-    // Source of truth: products_v2.primary_domain → fallback CANONICAL_PUBLIC_HOST.
-    // Same forbidden-host policy as admin-create-public-link.
-    const CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by';
+    // SINGLE SOURCE OF TRUTH: все payment URL / return URL строятся на https://gorbova.by.
+    // product.primary_domain НЕ используется для payment origin.
+    const CANONICAL_PUBLIC_HOST = 'https://gorbova.by';
     const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
-    const VALID_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
-    const rawPrimaryDomain: string | null =
-      typeof product.primary_domain === 'string' ? product.primary_domain : null;
-    const primaryDomain = rawPrimaryDomain ? rawPrimaryDomain.trim().toLowerCase() : null;
-    const primaryDomainValid =
-      !!primaryDomain &&
-      VALID_DOMAIN_RE.test(primaryDomain) &&
-      !FORBIDDEN_HOST_RE.test(primaryDomain);
-    const canonicalOrigin = primaryDomainValid
-      ? `https://${primaryDomain}`
-      : CANONICAL_PUBLIC_HOST;
+    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
     if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
       console.error('[public-charge-saved-card] canonical origin rejected:', canonicalOrigin);
       return errorResponse('internal_invalid_canonical_origin', 500);
     }
-    const originSource: 'product_primary_domain' | 'fallback_canonical' =
-      primaryDomainValid ? 'product_primary_domain' : 'fallback_canonical';
+    const originSource: 'canonical_gorbova_by' = 'canonical_gorbova_by';
 
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const returnUrl = `${canonicalOrigin}/purchases?order=${order.id}&payment=processing`;

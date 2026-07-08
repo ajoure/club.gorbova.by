@@ -499,25 +499,19 @@ Deno.serve(async (req) => {
       typeof cta_contract_version === 'number' ? cta_contract_version : 1;
 
     // ── Canonical public URL host resolution ──
-    // ИСТОЧНИК ИСТИНЫ: product.primary_domain → fallback CANONICAL_PUBLIC_HOST.
-    // request origin / referer ИСПОЛЬЗОВАТЬ НЕЛЬЗЯ — админ может работать
-    // из Lovable preview, и ссылка для клиента не должна указывать на preview.
-    const CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by';
+    // SINGLE SOURCE OF TRUTH: ВСЕ payment ссылки строятся на https://gorbova.by.
+    // product.primary_domain НЕ используется для payment origin (только для
+    // резолвинга лендинга). request origin / referer использовать нельзя —
+    // админ может работать из Lovable preview.
+    const CANONICAL_PUBLIC_HOST = 'https://gorbova.by';
     const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
-    const VALID_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
+    // primary_domain читаем только для аудита в meta.
     const rawPrimaryDomain: string | null = (product as { primary_domain?: string | null })?.primary_domain ?? null;
     const primaryDomain = rawPrimaryDomain ? rawPrimaryDomain.trim().toLowerCase() : null;
-    const primaryDomainValid =
-      !!primaryDomain &&
-      VALID_DOMAIN_RE.test(primaryDomain) &&
-      !FORBIDDEN_HOST_RE.test(primaryDomain);
 
-    const canonicalOrigin = primaryDomainValid
-      ? `https://${primaryDomain}`
-      : CANONICAL_PUBLIC_HOST;
-    const originSource: 'product_primary_domain' | 'fallback_canonical' =
-      primaryDomainValid ? 'product_primary_domain' : 'fallback_canonical';
+    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
+    const originSource: 'canonical_gorbova_by' = 'canonical_gorbova_by';
 
     // STOP-guard: defence in depth (DB CHECK уже это enforce-ит, но явная ошибка лучше 500-ки).
     if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
@@ -630,7 +624,7 @@ Deno.serve(async (req) => {
         target_user_id: user_id,
         public_url,
         origin_source: originSource,
-        primary_domain: primaryDomainValid ? primaryDomain : null,
+        primary_domain: primaryDomain,
         // Phase 4.1 + 5-C — provider routing proof
         provider: linkProviderColumn,
         account_code: linkAccountCodeColumn,
