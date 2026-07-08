@@ -194,7 +194,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const amountByn = amount / 100;
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
-  const effectiveOrigin = origin || 'https://club.gorbova.by';
+  const effectiveOrigin = origin || 'https://gorbova.by';
   const actorUserId = actor_user_id || null;
   const effectiveActorType = actor_type || 'system';
   // audit_logs CHECK constraint allows only 'user' | 'system'; map 'admin' → 'user'
