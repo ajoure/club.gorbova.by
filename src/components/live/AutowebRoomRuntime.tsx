@@ -301,12 +301,14 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             <AutowebTimelineOverlay sessionId={state.session_id} enabled={true} />
           )}
 
-          {/* Блоки редакторского контента прошедшего эфира. */}
+          {/* Блоки редакторского контента прошедшего эфира (под видео). */}
           <LiveEventRoomBlocks
             liveEventId={scenarioEventId}
-            editable={false}
+            displayContext={isReplay ? "replay" : "live"}
+            position="under_video"
           />
         </div>
+
 
         {/* Sidebar: chat / questions / participants / scenario / (moderation-staff) */}
         <div className="lg:flex-[1] min-w-0 lg:min-w-[320px] flex flex-col">
