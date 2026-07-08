@@ -781,20 +781,16 @@ export default function AdminLiveEvents() {
       // by lifecycle actions (handleLifecycleAction) and provider sync. Form save MUST NOT
       // downgrade an active 'live' status back to whatever stale value sits in form state.
       // Initial 'status' is set only on INSERT (new event creation).
-      // Sprint A — autowebinar mapping:
-      //   one_time     → event_type='recorded_webinar' (NO autoweb_mode), без дублей
-      //   scheduled/JIT/on_demand → event_type='autowebinar' + autoweb_mode
-      // Один источник истины: пользователь выбирает 4 режима в UI, БД хранит 2 типа.
+      // Sprint C — autowebinar mapping (revised):
+      //   Все 4 пользовательских режима (one_time / scheduled / just_in_time / on_demand)
+      //   сохраняются как event_type='autowebinar' + autoweb_mode=<user_mode>.
+      //   event_type='recorded_webinar' остаётся ТОЛЬКО для обычного видео без autoweb-логики
+      //   и в этом save-path не назначается автоматически.
       let effectiveEventType: EventType = data.event_type;
       let autowebMode: AutowebUserMode | null = null;
       if (data.event_type === "recorded_webinar" || data.event_type === "autowebinar") {
-        if (data.autoweb_user_mode === "one_time") {
-          effectiveEventType = "recorded_webinar";
-          autowebMode = null;
-        } else {
-          effectiveEventType = "autowebinar";
-          autowebMode = data.autoweb_user_mode;
-        }
+        effectiveEventType = "autowebinar";
+        autowebMode = data.autoweb_user_mode;
       }
       const effectiveSourceKind: SourceKind =
         effectiveEventType === "live_stream" ? "kinescope_live_event" : "kinescope_video";
