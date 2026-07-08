@@ -1,181 +1,314 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Передеплой — да, но DoD “следующая реальная покупка” недостаточен.**  
-Нельзя ждать случайной покупки как единственный proof. Нужен controlled smoke без повторной отправки клиенту.
-  &nbsp;
-  Добавить безопасный режим верификации:
-  ```text
-  notify-order-purchased должен иметь dry-run / replay_no_send режим,
-  который проходит resolver/render/mirror-precheck,
-  но НЕ вызывает Telegram Bot API и НЕ вызывает send-transactional-email.
-  ```
-  Если такого режима сейчас нет — не добавлять полноценную новую бизнес-логику, но сделать минимальный технический diagnostic endpoint/log path только для проверки deployed version.
-2. **Нельзя вызывать** `{ force: true }` **на реальном order.**  
-Это правильно отмечено. В плане явно закрепить:
-3. **Repair должен быть через отдельный SQL/скрипт, а не через** `notify-order-purchased`**.**  
-Чтобы не было риска повторной отправки:
-4. `email_send_log не растёт` **— недостаточный proof.**  
-Нужно также проверить, что не изменились существующие строки отправки:
-  &nbsp;
-  ```sql
-  select id, status, sent_at, provider_message_id, updated_at
-  from order_notification_deliveries
-  where order_id = 'bb63eea6-...';
-  ```
-  После repair:
-  - `sent_at` не должен измениться;
-  - `provider_message_id=25792` должен сохраниться;
-  - `status='sent'` должен сохраниться;
-  - измениться может только `metadata` / технический `updated_at`.
-5. **Для** `telegram_messages` **обязательно проверить существующую уникальность.**  
-Перед insert:
-  &nbsp;
-  ```sql
-  select *
-  from telegram_messages
-  where message_id = '25792'
-     or meta->>'source_order_id' = 'bb63eea6-...';
-  ```
-  После insert:
-6. **Не вставлять** `user_id` **через “fallback по email” без проверки.**  
-Это риск связать Telegram-сообщение не с тем профилем. Лучше:
-7. `bot_id=primary bot` **нужно резолвить детерминированно.**  
-В repair указать конкретный источник:
-  &nbsp;
-  ```text
-  тот же bot_id, который использует notify-order-purchased / primary active Telegram bot
-  ```
-  И в proof показать фактический `bot_id`.
-8. `message_text = точный текст DM` **— нужен источник истины.**  
-В repair нельзя “примерно восстановить”. Нужно либо:
-  - использовать тот же formatter/helper из `notify-order-purchased`;
-  - либо явно зафиксировать, что текст восстановлен по текущему production template и может не быть 100% доказуемо идентичен уже отправленному сообщению, но `provider_message_id` подтверждает факт отправки.
-9. **Metadata не должна хранить полный HTML письма без необходимости.**  
-Для ленты достаточно:
-  &nbsp;
-  ```json
-  {
-    "subject": "...",
-    "preview_text": "...",
-    "template_code": "product-purchased",
-    "product_name": "...",
-    "tariff_name": "...",
-    "message_text": "..."
-  }
-  ```
-  `rendered_html` хранить только если это уже утвержденный контракт `send-transactional-email`. Иначе не расширять хранилище письма в этом патче.
-10. **Добавить проверку deployed version.**  
-После redeploy нужен proof не только “deployed”, а что реально исполняется новая версия:
+### **1. Исправить ключевую архитектурную ошибку в текущем плане**
 
-```text
-edge function logs содержат новую диагностическую метку/версию
-либо контрольный вызов no-send режима вернул version/build marker
-```
+Текущий шаг с простым чтением по `readEventIds = [source_live_event_id, live_event_id]` и общей сортировкой по `created_at` **недостаточен**. Он даст просто сваленную историю старого эфира, а не реалистичный автовебинар.
 
-11. **Step 1 должен включать deploy всех реально изменённых функций.**  
-Если mirror/metadata код находится только в `notify-order-purchased`, а email render в `send-transactional-email`, достаточно этих двух.  
-Но если shared helper используется edge-функциями, добавить в список все функции, которые бандлят этот shared код.
-12. **Backlog по admin-DM корректен, но не смешивать с текущим acceptance.**  
-Файл `.lovable/backlog/admin-notify-on-purchase-canonical.md` можно создать, но без изменения `bepaid-webhook` в этом патче.
-13. **DoD дополнить проверкой нового заказа без клуба в controlled режиме.**  
-После deploy нужен один из вариантов:
+Нужно заменить это на две разные сущности:
 
-```text
-Вариант A: тестовый sandbox order без реального клиента → notify-order-purchased создаёт metadata + telegram mirror.
-Вариант B: no-send diagnostic на существующем order → подтверждает deployed version и dry-run render/mirror plan.
-Вариант C: следующая реальная покупка → только как дополнительный proof, не единственный.
-```
+- **историческая лента источника** — read-only, проигрывается по таймингу видео;
+- **новая лента текущего автовебинара** — реальные новые комментарии/вопросы текущих участников, пишутся в `live_event_id` автовебинара и показываются сразу.
 
-14. **Границу причины сформулировать осторожнее.**  
-Сейчас диагноз “на проде старая версия функции” выглядит вероятным, но не доказан на 100%. Возможны также:
+Итоговый UI должен показывать **одну объединённую ленту**, но собранную из двух потоков по правилам ниже.
 
-- деплой был, но вызвалась старая cached/bundled версия;
-- insert в `telegram_messages` упал после отправки, а ошибка была swallowed;
-- metadata update не дошёл из-за branch/guard;
-- функция вообще не была вызвана для этой ветки, а delivery rows создал другой путь.
+---
 
-В плане лучше написать:
+### **2. Комментарии и вопросы — не просто “подтянуть историю”, а сделать timed replay**
 
-```text
-Основная гипотеза: production исполняет неактуальный код или актуальный код не проходит ветку metadata/mirror. Шаг 1 должен доказать deployed/runtime version через logs/version marker.
-```
+Для реалистичности, как у нормальных evergreen/autowebinar-платформ, исторические комментарии и вопросы нужно показывать **не все сразу**, а по позиции видео.
 
-Итог: план можно выполнять после этих правок. Главное — **никаких повторных отправок клиенту**, repair только DB-only, и обязательный proof, что новая версия `notify-order-purchased` реально исполняется, а не просто “задеплоена”.
+#### **Что добавить в план**
+
+**Новый отдельный шаг после Шага 2:** `Timed replay history layer`
+
+#### **Логика**
+
+Для каждого исторического комментария / вопроса из `source_live_event_id` вычислять:
+
+- `relative_seconds = created_at - source_live_event.live_started_at`
+
+В комнате автовебинара показывать исторический элемент только когда:
+
+- `currentPlaybackSeconds >= relative_seconds`
+
+То есть:
+
+- исторические комментарии идут по ходу видео;
+- новые комментарии текущих участников появляются сразу;
+- в UI обе группы смешиваются в **единый поток**, как будто эфир идёт “по-настоящему”.
+
+#### **Правило сортировки unified feed**
+
+В unified feed сортировать не просто по `created_at`, а по:
+
+- для historical items → `display_at = session_started_at + relative_seconds`
+- для новых live items → `display_at = real created_at`
+
+Именно по `display_at` строится единая лента.
+
+Это и есть нативное поведение, похожее на реальные автоворонки и evergreen-вебинары.
+
+---
+
+### **3. Новые участники должны писать в текущий автовебинар, а не в source**
+
+Это нужно зафиксировать жёстко.
+
+#### **Добавить в план**
+
+- **исторические комментарии/вопросы источника** — read-only, не редактируются, не переносятся, не переписываются;
+- **новые комментарии/вопросы** текущих зрителей всегда пишутся только в:
+  - `live_event_id = текущий autowebinar`
+  - `metadata.session_id = autoweb session`
+  - при необходимости `metadata.source = 'autoweb_live'`
+
+#### **Результат**
+
+Получаем:
+
+- старая история сохранена;
+- новые сообщения сохраняются отдельно;
+- в интерфейсе они подмешиваются в старую ленту и выглядят естественно;
+- никакой порчи исходного live_stream не происходит.
+
+---
+
+### **4. Важная правка по участникам: не показывать старых участников как “сейчас онлайн”**
+
+Этот пункт в текущем плане нужно **исправить**.
+
+Просто подтягивать `RoomParticipantsList` по `source_live_event_id` нельзя, потому что это создаст ложную картину, будто люди из прошлого эфира сейчас находятся в комнате.
+
+#### **Правильное поведение**
+
+- во вкладке **«Участники»** показывать только **текущих участников автосессии**, то есть тех, кто реально сейчас вошёл в автовебинар;
+- если нужен архив исходного эфира — показывать его только отдельно и только staff, например:
+  - `Исторические участники`
+  - или `Были на исходном эфире: N`
+- но не смешивать их с текущим online-list.
+
+Это обязательная правка для реалистичности.
+
+---
+
+### **5. Вкладки комнаты автовебинара уточнить так**
+
+В плане заменить формулировку по вкладкам на такую:
+
+#### **Runtime-вкладки для зрителя**
+
+- **Чат** — unified timed-replay + новые live-комментарии
+- **Вопросы** — unified timed-replay + новые live-вопросы
+- **Участники** — только текущие участники текущей autoweb-session
+- **Сценарий** — из `source_live_event_id`
+- **Блоки** — из `source_live_event_id`
+
+#### **Runtime-вкладки для staff**
+
+- всё выше +
+- **Модерация**
+- при необходимости тех. режим/переключатель:
+  - показать источник элемента (`history` / `live_now`) только staff, не обычному пользователю
+
+---
+
+
+
+
+
+
+
+
+
+
+
+### **6. Для**
+
+`LiveEventComments` **и** `LiveEventQuestions` **нельзя ограничиться** `.in('live_event_id', ids)`
+
+Нужно явно заменить этот шаг в плане.
+
+#### **Вместо этого:**
+
+Расширить компоненты так, чтобы они принимали два потока:
+
+- `historySourceEventId`
+- `runtimeEventId`
+- `historyMode = 'timed_replay'`
+- `sourceStartedAt`
+- `currentPlaybackSeconds`
+- `sessionStartedAt`
+
+#### **Что делает компонент**
+
+1. Загружает исторические записи из `source_live_event_id`
+2. Загружает новые записи из `live_event_id` автовеба
+3. Для исторических рассчитывает `relative_seconds`
+4. Показывает только те исторические элементы, которые уже “дошли” по времени
+5. Новые элементы показывает сразу
+6. Собирает единую ленту по `display_at`
+
+Это надо явно прописать, иначе lovable сделает простой union по двум event_id, и получится ненативно.
+
+---
+
+### **7. Нужен late-join behavior**
+
+Добавить отдельный пункт.
+
+Если участник вошёл не в начале, а позже:
+
+- он должен видеть ленту в состоянии, соответствующем **текущей позиции видео**;
+- ему не нужно мгновенно выгружать весь архив комментариев с самого начала в экран;
+- историческая лента должна восстановиться до текущего playback offset.
+
+То есть источник истины — не время входа пользователя, а текущий `currentPlaybackSeconds`.
+
+---
+
+### **8. Вопросы — тот же принцип, но с mark-as-answered сохраняется только для новых**
+
+Для вопросов нужно отдельно зафиксировать:
+
+- исторические вопросы исходного эфира подтягиваются как read-only replay-история;
+- новые вопросы текущих участников создаются под текущим autoweb event;
+- staff может отвечать и помечать answered только на текущих и исторических — но источник не переписывается “внутрь source event”, если это нежелательно по продукту;
+- если mark-as-answered должен работать поверх исторического вопроса, нужно заранее решить:
+  - либо это допустимое изменение source event,
+  - либо answered-state хранится overlay-слоем в autoweb context.
+
+Без этого lovable может сделать опасную запись в исходный эфир.
+
+---
+
+### **9. Плеер: уточнить поведение “как у мировых evergreen-платформ”**
+
+Добавить в план продуктовый ориентир:
+
+- исторический чат идёт синхронно с видео;
+- зритель видит одну естественную ленту, а не “архив + новые” двумя блоками;
+- новые сообщения от текущих участников мгновенно встраиваются в поток;
+- пауза/seek/rewatch не должны ломать модель timed replay;
+- если seek запрещён, timed replay опирается на monotonic playback time.
+
+Это даст lovable правильный ориентир реализации.
+
+---
+
+### **10. Исправить DoD**
+
+В текущем DoD нужно заменить часть про участников и историю на более точную.
+
+#### **Новый DoD для комнаты автовебинара**
+
+- исторические комментарии и вопросы исходного эфира появляются по таймингу видео, а не все сразу;
+- новые комментарии и вопросы текущих зрителей пишутся в `live_event_id` автовебинара и сразу подмешиваются в единую ленту;
+- обычный пользователь визуально видит одну нативную ленту;
+- список участников показывает только реально присутствующих сейчас в автосессии;
+- staff может отдельно понимать источник элемента (`history/live`) без показа этого обычному зрителю;
+- при обновлении страницы лента восстанавливается корректно по текущему playback offset;
+- новый комментарий после отправки одновременно:
+  - сохраняется в БД под автовебинаром,
+  - появляется в unified feed,
+  - не ломает historical replay.
+
+---
+
+### **11. Что не делать**
+
+Добавить явный запрет:
+
+- не делать простой union двух `live_event_id` с сортировкой по `created_at`;
+- не показывать исторических участников как текущих online;
+- не переносить старые комментарии в новый event массовым backfill;
+- не переписывать source history ради “смешивания”.
+
+---
+
+### **12. Краткая формулировка задачи для lovable.dev**
+
+Добавь в конец плана как обязательную продуктовую цель:
+
+Реализовать в автовебинаре **timed replay chat/questions** по исходному live_stream и **live overlay** новых сообщений текущих участников, чтобы пользователь видел одну нативную ленту, максимально похожую на реальный эфир. Историческая лента проигрывается по таймингу видео, новые сообщения сохраняются отдельно в текущем autoweb event и подмешиваются в тот же поток. Список участников отражает только текущую autoweb-session.
+
+Если хочешь, я могу сразу переписать весь твой план целиком в финальную версию для отправки lovable.dev.
 
 &nbsp;
 
-&nbsp;
+План: Автовебинар — заблокировать проматывание, скрыть признаки записи, подтянуть историю прошедшего эфира
 
-Диагностика
+## Diagnose (что реально сломано)
 
-Проверил заказ **ORD-26-00277** (Романовская Ольга, продукт «Подоходный налог ИП», оплачен 2026-07-08 11:20).
+**1. Проматывание доступно.** `AutowebKinescopePlayer` (`src/components/live/AutowebRoomRuntime.tsx`, стр. 41–66) грузит голый `https://kinescope.io/embed/{videoId}?autoplay=1&t=...`. Никакие параметры Kinescope Player, отключающие панель управления, seek, hotkeys и субтитры, не передаются. В `AutowebRoomStateResponse.viewer_controls` уже приходят `allow_pause=false`, `allow_seek=false`, `allow_speed_control=false`, `allow_rewatch_before_end=false` — они на клиенте игнорируются.
 
-Состояние в БД:
+**2. Субтитры автоматически включены** — тот же корень: Kinescope-плеер запускается без `subtitles=off`/явного отключения captions.
 
-- `order_notification_deliveries`: 2 строки, обе `status='sent'` (email + telegram, provider_message_id=25792), НО поле `metadata = {}` — пустое.
-- `telegram_messages`: mirror-строки для message_id 25792 **нет**.
-- `access_rules` продукта = `training_content` (клубного DM нет), значит ветка `club_dm_already_sent` не сработала — mirror ДОЛЖЕН был создаться.
+**3. В комнате автовеба нет комментариев, вопросов, участников, модерации, сценария.** Две причины:
 
-Исходник `supabase/functions/notify-order-purchased/index.ts` содержит и запись `metadata`, и `insert` в `telegram_messages` (строки 291–420). Раз ни того, ни другого нет в БД для свежего заказа — **на проде крутится старая версия функции**. Прошлый деплой не применился (либо не был вызван, либо упал молча).
+- `AutowebRoomRuntime` монтирует только 2 вкладки (Чат, Вопросы). Нет `RoomParticipantsList`, `LiveEventScenario`, `LiveInlineModeration`, `LiveEventRoomBlocks` — при том, что все эти компоненты уже используются в `LiveEventLegacy` (`src/pages/LiveEvent.tsx` стр. 776, 808–860).
+- `LiveEventComments`/`LiveEventQuestions` читают строго по `live_event_id`. Автовебинар — это **отдельная** запись в `live_events` (event_type='autowebinar'), а комментарии/вопросы/участники/сценарий прошедшего эфира лежат под `live_event_id` исходного live_stream. Связи между двумя событиями в БД сейчас нет — потому подтянуть историю неоткуда.
 
-Это ровно та же симптоматика, что была у Шедловской, но там мы вручную забэкфилили данные, а корневую причину (недоставленный код) не проверили.
+## Порядок работ (строго последовательно)
 
-## Про уведомления админам
+### Шаг 1. БД: миграция `source_live_event_id` (structure only, без backfill)
 
-`notify-order-purchased` НЕ шлёт админам. Админские DM (`telegram-notify-admins`) вызываются только из `bepaid-webhook` при определённых сценариях. Это отдельная (существующая, но не canonical) ветка. В рамках текущего бага её не трогаем, но фиксирую как отдельный follow-up.
+- `ALTER TABLE public.live_events ADD COLUMN source_live_event_id uuid NULL REFERENCES public.live_events(id) ON DELETE SET NULL;`
+- Индекс по колонке.
+- COMMENT: «Для autowebinar/recorded_webinar — ссылка на исходный live_stream, из которого берётся историческая лента чата/вопросов/участников/сценария. NULL допустим (legacy)».
+- Существующие RLS не трогаем (чтение открыто по `live_event_id`, а мы будем читать по source id как по обычному live_event).
 
-## Границы патча
+### Шаг 2. `autoweb-room-state` — вернуть `source_live_event_id`
 
-НЕ меняем:
+- В `supabase/functions/autoweb-room-state/index.ts` в SELECT из `live_events` добавить `source_live_event_id`.
+- В `AutowebRoomStateResponse` (`supabase/functions/_shared/autoweb-types.ts` + `src/types/autoweb.ts`) добавить `source_live_event_id: string | null`.
+- Redeploy функции.
 
-- write-path оплаты, выдачу доступа, `access_rules`;
-- логику `notify-order-purchased` (код уже правильный, нужно только доставить);
-- шаблоны писем/DM;
-- добавление админ-канала в canonical (отдельная задача).
+### Шаг 3. `AutowebRoomRuntime` — плеер без seek/subtitles
 
-Никаких повторных отправок клиенту.
+- Убрать голый iframe. Поставить `KinescopePlayerWrapper` (используется в LiveEventLegacy, `src/pages/LiveEvent.tsx` стр. 755) в режиме «autoweb strict»: параметры плеера `controls=false`, `hotkeys=false`, `subtitles=false` (или пустой массив субтитров), `pip=false`, `pictureInPicture=false`, `preload=auto`, `muted=false`, `autoplay=true`, `startTime = resume.last_video_position_seconds`.
+- Если официальный SDK Kinescope позволяет — использовать `@kinescope/react-kinescope-player` с options; иначе — iframe URL с полным набором query-params (сверить актуальные имена по developers.kinescope.io перед патчем).
+- Поверх плеера — прозрачный overlay-div (`pointer-events: auto`) над нижней панелью (~48px), который перехватывает клики по timeline. Это hard-guard на случай, если Kinescope частично проигнорирует параметр — гарантирует, что пользователь не сможет промотать даже если UI прорисуется.
+- Скрыть значок «запись/replay» в бейдже (сейчас показывается `<Badge>Запись</Badge>` для phase=replay) — заменить на «В эфире» для всех фаз, где играет видео (live+replay); фаза `ended` остаётся «Завершён». Это закрывает «ощущение, что это запись».
 
-## План
+### Шаг 4. `AutowebRoomRuntime` — вкладки как в LiveEventLegacy + подмена live_event_id
 
-### Шаг 1. Передеплой canonical-функций
+- Ввести локальную константу `historyEventId = state.source_live_event_id ?? state.live_event_id`.
+- Передавать `historyEventId` в `LiveEventComments`, `LiveEventQuestions`, `RoomParticipantsList`, `LiveEventScenario` для **чтения истории**.
+- `autowebSessionId={state.session_id}` продолжает записываться в metadata **новых** комментариев/вопросов (server-side trigger `enforce_autoweb_session_id_on_comment/question` требует его для event_type='autowebinar'). Здесь важно: писать новые сообщения нужно всё равно под `live_event_id` автовебинара (новое событие), но читать — и историю (source), и свежие (autoweb). Значит:
+  - Расширить `LiveEventComments`/`LiveEventQuestions` prop: `readEventIds: string[]` (по умолчанию — `[liveEventId]`). Запрос переделать на `.in('live_event_id', readEventIds)`, сортировка по created_at. Realtime — подписка на каждый id из массива.
+  - Отправка (`sendMutation`) продолжает работать по `liveEventId` (автовеб).
+- Добавить в UI-табы: Чат, Вопросы, Участники (для isStaff/всех, как в legacy), Сценарий (все), Модерация (только staff — по signature LiveInlineModeration в legacy).
+- `LiveEventRoomBlocks` рендерить над плеером, читая по `historyEventId` (блоки — это редактируемый контент прошедшего эфира; хочется показывать те же).
 
-Redeploy без изменений кода:
+### Шаг 5. Admin edit dialog (пункт из скриншота — вкладки Комментарии/Вопросы/Модерация/Сценарий у автовеба)
 
-- `notify-order-purchased`
-- `send-transactional-email` (там прошлый патч добавил `rendered_text`/`rendered_html` — на прод тоже мог не доехать)
+- В админском редакторе автовебинара (`src/pages/admin/AdminLiveEvents.tsx` / связанные компоненты вкладок) при `event_type='autowebinar'` и заполненном `source_live_event_id` подгружать данные по source id (те же вкладки «Комментарии/Вопросы/Модерация/Сценарий/Блоки»). Добавить в форму редактирования поле-селектор «Исходный live_stream» (обязательное для автовеба), чтобы автор мог связать прошедший эфир с автовебом.
 
-Верификация: `curl` GET на функцию + чтение `supabase--edge_function_logs` при следующей реальной покупке (метка «[notify-order-purchased]» и запись `metadata`+mirror в БД).
+### Шаг 6. Verify (обязательный DoD)
 
-### Шаг 2. Smoke-верификация на копии
+- Открыть автовебинар с заполненным `source_live_event_id` в preview:
+  - Плеер Kinescope не показывает панель управления, timeline, кнопку CC/субтитров; клик по нижней трети не мотает; hotkeys space/←/→ ничего не делают.
+  - Во вкладке «Чат» видны исторические сообщения прошедшего эфира; во вкладке «Вопросы» — вопросы; во вкладке «Участники» — список; во вкладке «Сценарий» — сценарий.
+  - Новое сообщение, отправленное сейчас, ложится под liveEventId автовеба (проверить `SELECT metadata->>'session_id', live_event_id FROM live_event_comments ORDER BY created_at DESC LIMIT 5;`) и отображается в общей ленте вместе с историей.
+  - Бейдж «Запись» не показывается ни в одной фазе с активным плеером.
 
-Дёрнуть `notify-order-purchased` с `{ order_id: 'bb63eea6-…', force: true }` — **не подходит**, потому что force вызовет повторную отправку. Вместо этого — dry-run: передеплоенная функция при следующей оплате должна сработать корректно. Для проверки прямо сейчас используем backfill (шаг 3), который отделён от send-пути.
+## Технические заметки
 
-### Шаг 3. Repair Романовской (ORD-26-00277) — strictly no-send
+- Kinescope embed-параметры сверить перед патчем (`controls`, `hotkeys`, `pip`, `subtitles`/`captions` — точные ключи могут отличаться). Если параметр отключения субтитров у embed URL не поддерживается — использовать `@kinescope/player` SDK (`playerParams: { showSubtitles: false, controls: false, ... }`).
+- Overlay-guard на seek — обязателен как «пояс+подтяжки», т.к. Kinescope изредка игнорирует URL-параметры на touch.
+- `enforce_autoweb_session_id_on_comment/question` триггеры затрагивают только INSERT — историческое чтение по source_live_event_id их не задевает.
+- Realtime-канал: `live-comments-${eventId}-${uniq}` — при `readEventIds.length > 1` подписаться на каждый через один channel с несколькими `.on('postgres_changes', {filter: 'live_event_id=eq.<id>'} , …)`.
+- Никаких новых edge-функций не создаём — используем существующие `autoweb-room-state`, live_event_comments/questions, RoomParticipantsList RPC.
 
-Аналогично repair Шедловской, идемпотентно, без вызова Telegram/email API:
+## Границы scope
 
-1. **Восстановить `metadata` в `order_notification_deliveries**`:
-  - Email-row: заполнить `subject='Оплата получена: Подоходный налог ИП'`, `preview_text`, `template_code='product-purchased'`, `product_name`, `tariff_name`. Тело письма (`rendered_html`/`message_text`) отрендерить локально из шаблона и записать. Если это невозможно без пересылки — оставить `message_text=null`, но остальные поля заполнить, чтобы вкладка «Письма» показала subject/preview.
-  - Telegram-row: заполнить `message_text` = точный текст DM, сгенерированный по тем же правилам, что в коде функции (это чистая строка, без побочных эффектов), `template_code='product-purchased-dm'`, `product_name`, `tariff_name`.
-2. **Вставить mirror-строку в `telegram_messages**` для `message_id=25792`:
-  - `user_id` = auth user_id профиля Ольги (resolve через `profiles` по `orders_v2.user_id` → фолбэк по email);
-  - `telegram_user_id=112970524`, `bot_id`= primary bot, `direction='outgoing'`, `status='sent'`;
-  - `message_text` — тот же текст DM;
-  - `meta`: `{ source:'notify-order-purchased', event:'product_purchased_dm', source_order_id:'bb63eea6-…', template_code:'product-purchased-dm', order_number:'ORD-26-00277', profile_id, product_name, tariff_name }`;
-  - `created_at` = `sent_at` из delivery (2026-07-08 11:20:39.859+00), чтобы сообщение встало в ленту диалога на правильную дату.
-  - Идемпотентно (partial unique index уже существует).
-
-### Шаг 4. Follow-up (не в текущем скоупе — фиксирую в бэклоге)
-
-`.lovable/backlog/admin-notify-on-purchase-canonical.md`:
-
-- Перенести admin-DM про оплаты в `notify-order-purchased` (единая точка), с тем же `order_notification_deliveries` (новый `channel='telegram_admin'`) и mirror'ом в чат админа.
-- Убрать дубли из `bepaid-webhook` (там сейчас несколько мест шлют напрямую).
+**НЕ** делаем в этом патче: sync ленты чата с таймингом видео (проигрывание комментариев «в правильные моменты»), backfill `source_live_event_id` для существующих автовебов (админ проставит вручную через UI из Шага 5), правку telegram/email уведомлений, изменение access rules.
 
 ## DoD
 
-- `notify-order-purchased` (и `send-transactional-email`) в статусе deployed с текущим кодом репо.
-- В карточке Романовской вкладка **Telegram** показывает DM «✅ Оплата получена…» за 2026-07-08 11:20.
-- Вкладка **Письма** показывает письмо «Оплата получена: Подоходный налог ИП» с subject и preview.
-- Никаких новых отправок клиенту (проверить: `email_send_log` не растёт, в `telegram_messages` — ровно одна новая строка mirror для msg 25792).
-- Следующая реальная покупка любого продукта пишет `metadata` и mirror автоматически.
+- Миграция применена, `source_live_event_id` присутствует в live_events + возвращается из autoweb-room-state.
+- В комнате автовеба нельзя промотать/поставить на паузу/включить субтитры через UI Kinescope и hotkeys.
+- В комнате автовеба видны 5 вкладок (Чат, Вопросы, Участники, Сценарий, Модерация для staff) + блоки над плеером — все читают историю по source_live_event_id.
+- Новый комментарий/вопрос, отправленный в автовебе, ложится под id автовеба с `metadata.session_id`.
+- Админ-редактор автовеба показывает исторические Комментарии/Вопросы/Модерацию/Сценарий/Блоки прошедшего эфира и содержит селектор «Исходный live_stream».
+- Preview-verify по чек-листу Шага 6 пройден и приложен в отчёте.

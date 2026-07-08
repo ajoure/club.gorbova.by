@@ -43,6 +43,17 @@ export interface AutowebRoomStateResponse {
   event_timezone: string;
   /** Для UI: видео-источник (ID Kinescope), уже подтверждённый правом на эту session. */
   kinescope_video_id: string | null;
+  /**
+   * Ссылка на исходный live_stream, чью запись проигрывает автовеб.
+   * Из этого события берутся исторические комментарии/вопросы/участники/сценарий
+   * для timed-replay. NULL — источник не привязан, история недоступна.
+   */
+  source_live_event_id: string | null;
+  /**
+   * ISO-время старта исходного эфира (для расчёта relative_seconds исторических событий).
+   * NULL если source_live_event_id не задан.
+   */
+  source_started_at: string | null;
 }
 
 export interface AutowebRoomStateError {

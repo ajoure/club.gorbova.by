@@ -9718,6 +9718,7 @@ export type Database = {
           scheduled_at: string | null
           slug: string
           source_kind: string
+          source_live_event_id: string | null
           status: string
           title: string
           updated_at: string
@@ -9750,6 +9751,7 @@ export type Database = {
           scheduled_at?: string | null
           slug: string
           source_kind?: string
+          source_live_event_id?: string | null
           status?: string
           title: string
           updated_at?: string
@@ -9782,6 +9784,7 @@ export type Database = {
           scheduled_at?: string | null
           slug?: string
           source_kind?: string
+          source_live_event_id?: string | null
           status?: string
           title?: string
           updated_at?: string
@@ -9793,6 +9796,13 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_events_source_live_event_id_fkey"
+            columns: ["source_live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
             referencedColumns: ["id"]
           },
         ]

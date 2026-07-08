@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -44,26 +44,43 @@ interface LiveEventQuestionsProps {
   onOpenProfile?: (userId: string) => void;
   /**
    * Sprint B: для autowebinar event_type обязателен session_id.
-   * Если передан — записывается в metadata.session_id и клиент валидирует
-   * наличие до submit. Для legacy live_stream/recorded_webinar — undefined.
    */
   autowebSessionId?: string | null;
   /** Sprint final: render-time emoji normalization toggle. */
   emojiNormalizationEnabled?: boolean;
+  /** Autoweb timed-replay history layer. */
+  historySourceEventId?: string;
+  historySourceStartedAt?: string;
+  currentPlaybackSeconds?: number;
+  /** Для staff — визуально помечать источник (history/live). */
+  staffSourceIndicator?: boolean;
 }
 
 // forwardRef to satisfy Tabs/Radix ref forwarding (fixes console warning).
 export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsProps>(
-  function LiveEventQuestions({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId, emojiNormalizationEnabled = true }, ref) {
+  function LiveEventQuestions(
+    {
+      liveEventId,
+      presenterUserId,
+      onOpenProfile,
+      autowebSessionId,
+      emojiNormalizationEnabled = true,
+      historySourceEventId,
+      historySourceStartedAt,
+      currentPlaybackSeconds,
+      staffSourceIndicator = false,
+    },
+    ref,
+  ) {
     const { user, role } = useAuth();
     const queryClient = useQueryClient();
     const [newQuestion, setNewQuestion] = useState("");
     const isStaff = role === "admin" || role === "superadmin" || role === "employee";
     const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
-    // Staff display rule (sprint final): ФИО ТОЛЬКО из RPC get_room_participants.
     const staffNameMap = useStaffNameMap(liveEventId, isStaff);
 
-    const { data: questions, isLoading } = useQuery({
+    // Live (текущий автовеб).
+    const { data: liveQuestions, isLoading } = useQuery({
       queryKey: ["live-event-questions", liveEventId],
       queryFn: async () => {
         const { data, error } = await supabase
@@ -74,7 +91,6 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
           .limit(200);
         if (error) throw error;
 
-        // Legacy fallback: тянем ТОЛЬКО avatar_url. Имя — из snapshot.
         const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
         let profiles: Record<string, { avatar_url: string | null }> = {};
         if (needsAvatarFallback.length > 0) {
@@ -94,6 +110,54 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         })) as Question[];
       },
     });
+
+    // Historical (исходный live_stream) — read-only, timed-replay.
+    const historyEnabled = !!historySourceEventId && !!historySourceStartedAt;
+    const { data: historyQuestions } = useQuery({
+      queryKey: ["live-event-questions-history", historySourceEventId],
+      enabled: historyEnabled,
+      staleTime: 5 * 60_000,
+      queryFn: async () => {
+        const { data, error } = await supabase
+          .from("live_event_questions")
+          .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
+          .eq("live_event_id", historySourceEventId!)
+          .order("created_at", { ascending: true })
+          .limit(1000);
+        if (error) throw error;
+        const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
+        let profiles: Record<string, { avatar_url: string | null }> = {};
+        if (needsAvatarFallback.length > 0) {
+          const userIds = [...new Set(needsAvatarFallback.map(q => q.user_id))];
+          const { data: profileData } = await supabase
+            .from("profiles")
+            .select("user_id, avatar_url")
+            .in("user_id", userIds);
+          for (const p of profileData || []) {
+            profiles[p.user_id] = { avatar_url: p.avatar_url };
+          }
+        }
+        return (data || []).map(q => ({
+          ...q,
+          profile: profiles[q.user_id] || null,
+        })) as Question[];
+      },
+    });
+
+    const sourceStartedMs = historyEnabled ? new Date(historySourceStartedAt!).getTime() : 0;
+    const cutoffMs = historyEnabled
+      ? sourceStartedMs + Math.max(0, currentPlaybackSeconds ?? 0) * 1000
+      : 0;
+    const questions = useMemo<Question[]>(() => {
+      if (!historyEnabled) return liveQuestions ?? [];
+      const visible = (historyQuestions ?? []).filter(
+        (q) => new Date(q.created_at).getTime() <= cutoffMs,
+      );
+      const merged = [...visible, ...(liveQuestions ?? [])];
+      merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      return merged;
+    }, [historyEnabled, liveQuestions, historyQuestions, cutoffMs]);
+
 
     // Realtime
     useEffect(() => {

@@ -1,71 +1,154 @@
 /**
- * Sprint B: AutowebRoomRuntime — самостоятельная комната автовебинара.
+ * Autoweb Room Runtime — самостоятельная комната автовебинара.
  *
- * Add-only: не трогает существующий live/recorded flow в LiveEvent.tsx.
- * Включается через одну early-return ветку, когда:
- *   event_type === 'autowebinar' && URL содержит ?session=<uuid>.
- *
- * Внутри:
- *   - polling autoweb-room-state (pure resolver, ZERO writes)
- *   - phase: pre_show / live / replay / ended → разные UI
- *   - Kinescope-плеер с currentTime = resume.last_video_position_seconds
- *   - LiveEventComments / LiveEventQuestions с autowebSessionId (обязателен)
- *   - AutowebTimelineOverlay (scripted layer, изолирован)
- *   - TZ labels viewer + event (если отличаются)
+ * Ключевые инварианты:
+ *  - Плеер: seek/pause/hotkeys/subtitles ЗАПРЕЩЕНЫ. Реализовано двумя слоями:
+ *      1) Kinescope iframe query-params (controls=false, hotkeys=false, subtitles=false, pip=false)
+ *      2) Прозрачный overlay-guard, перехватывающий клики по нижней панели плеера.
+ *  - Бейдж: "В эфире" для live/replay (никакого "Запись"). "Завершён" только для ended.
+ *  - Timed-replay: если у автовеба задан source_live_event_id, вкладки Чат/Вопросы
+ *    подтягивают исторические сообщения ИСХОДНОГО эфира и проигрывают их по
+ *    таймингу видео. Новые сообщения текущих зрителей пишутся под id автовеба
+ *    и подмешиваются в единую ленту.
+ *  - Участники: показываем ТОЛЬКО текущих в autoweb-session (никакого архива online).
+ *  - Сценарий/Блоки: подтягиваются из source (это редакторский контент прошедшего эфира).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, CalendarClock, Video, MessageCircle, HelpCircle } from "lucide-react";
+import {
+  Loader2,
+  AlertTriangle,
+  CalendarClock,
+  Video,
+  MessageCircle,
+  HelpCircle,
+  Users,
+  FileText,
+} from "lucide-react";
 import { useAutowebRoomState } from "@/hooks/useAutowebRoomState";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { AutowebTimelineOverlay } from "@/components/live/AutowebTimelineOverlay";
+import { RoomParticipantsList } from "@/components/live/RoomParticipantsList";
+import { LiveEventScenario } from "@/components/live/LiveEventScenario";
+import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { formatDualTz } from "@/lib/autowebTzLabel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuth } from "@/contexts/AuthContext";
 import "@/components/live/liveRoomTheme.css";
 
 interface Props {
   sessionId: string;
-  /** Нужен только для UI заголовка комнаты — берётся из live-resolve. */
   title?: string;
   description?: string | null;
 }
 
 /**
- * Компактный Kinescope iframe-плеер с поддержкой стартовой позиции (resume).
- * Использует параметр t= в URL — это самый предсказуемый способ
- * без зависимости от состояния плеер-объекта между навигациями.
+ * Kinescope iframe плеер с жёстко заблокированным seek/pause/subtitles.
+ * - URL: controls=false, hotkeys=false, subtitles=false, pip=false, autoplay=1
+ * - Overlay div поверх нижней ~72px области — перехватывает клики по timeline/bottom bar
+ *   на случай, если embed-параметры частично проигнорируются.
+ * - postMessage listener: пробрасывает currentTime наружу для timed-replay ленты.
  */
 function AutowebKinescopePlayer({
   videoId,
   startSeconds,
+  onTimeUpdate,
 }: {
   videoId: string;
   startSeconds: number;
+  onTimeUpdate: (seconds: number) => void;
 }) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
   const src = useMemo(() => {
     const u = new URL(`https://kinescope.io/embed/${videoId}`);
     if (startSeconds > 0) u.searchParams.set("t", String(Math.floor(startSeconds)));
     u.searchParams.set("autoplay", "1");
+    // Отключаем всё, что даёт seek/pause/subtitles/pip и намекает на запись.
+    u.searchParams.set("controls", "false");
+    u.searchParams.set("hotkeys", "false");
+    u.searchParams.set("subtitles", "false");
+    u.searchParams.set("captions", "false");
+    u.searchParams.set("pip", "false");
+    u.searchParams.set("preload", "true");
     return u.toString();
   }, [videoId, startSeconds]);
+
+  // Слушаем timeupdate/postMessage от Kinescope плеера.
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      try {
+        if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
+        const data: any = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (!data) return;
+        const t: number | undefined =
+          data?.data?.currentTime ??
+          data?.currentTime ??
+          data?.time ??
+          undefined;
+        if (typeof t === "number" && isFinite(t)) {
+          onTimeUpdate(t);
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [onTimeUpdate]);
+
+  // Fallback: если Kinescope не шлёт postMessage — оцениваем время по монотонному счётчику,
+  // сбрасываемому только при смене видео. Не абсолютно точно, но достаточно для timed-replay.
+  useEffect(() => {
+    let mounted = true;
+    const startedAt = Date.now();
+    const base = Math.max(0, Math.floor(startSeconds));
+    const id = window.setInterval(() => {
+      if (!mounted) return;
+      onTimeUpdate(base + (Date.now() - startedAt) / 1000);
+    }, 1000);
+    return () => {
+      mounted = false;
+      window.clearInterval(id);
+    };
+  }, [videoId, startSeconds, onTimeUpdate]);
 
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
       <iframe
+        ref={iframeRef}
         src={src}
         title="Autoweb video"
         allow="autoplay; fullscreen; picture-in-picture"
         allowFullScreen
         className="absolute inset-0 w-full h-full border-0"
       />
+      {/* Overlay-guard: перехватывает клики по нижней панели (timeline / controls / CC). */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 bottom-0 h-[72px] z-10"
+        style={{ pointerEvents: "auto", background: "transparent" }}
+        onClick={(e) => e.preventDefault()}
+        onMouseDown={(e) => e.preventDefault()}
+        onContextMenu={(e) => e.preventDefault()}
+        onDoubleClick={(e) => e.preventDefault()}
+      />
     </div>
   );
 }
 
-function PreShowCountdown({ startsAt, viewerTz, eventTz }: { startsAt: string; viewerTz: string; eventTz: string }) {
+function PreShowCountdown({
+  startsAt,
+  viewerTz,
+  eventTz,
+}: {
+  startsAt: string;
+  viewerTz: string;
+  eventTz: string;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -99,6 +182,15 @@ function PreShowCountdown({ startsAt, viewerTz, eventTz }: { startsAt: string; v
 
 export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
   const { state, isLoading, error } = useAutowebRoomState(sessionId);
+  const { role } = useAuth();
+  const isStaff = role === "admin" || role === "superadmin" || role === "employee";
+
+  // Playback time для timed-replay ленты. Обновляется постом от Kinescope-плеера
+  // и/или fallback-интервалом (см. AutowebKinescopePlayer).
+  const [playbackSeconds, setPlaybackSeconds] = useState<number>(0);
+  const handleTimeUpdate = useCallback((seconds: number) => {
+    setPlaybackSeconds((prev) => (Math.abs(prev - seconds) >= 0.5 ? seconds : prev));
+  }, []);
 
   if (isLoading) {
     return (
@@ -128,6 +220,16 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
   const isLive = state.phase === "live";
   const isReplay = state.phase === "replay";
   const isEnded = state.phase === "ended";
+  const isPlaying = isLive || isReplay;
+
+  // Единый режим для чат/вопросов: если у автовеба привязан source_live_event_id
+  // и известен его starts_at — включаем timed-replay слой исторической ленты.
+  const historyEnabled = !!state.source_live_event_id && !!state.source_started_at;
+  const historyEventId = historyEnabled ? state.source_live_event_id! : undefined;
+  const historyStartedAt = historyEnabled ? state.source_started_at! : undefined;
+
+  // Для Сценария/Блоков — читаем из source, если он задан; иначе из самого автовеба.
+  const scenarioEventId = state.source_live_event_id ?? state.live_event_id;
 
   return (
     <div className="live-room-themed min-h-screen flex flex-col">
@@ -143,21 +245,24 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
               {title ?? "Автовебинар"}
             </h1>
           </TooltipTrigger>
-          <TooltipContent side="bottom" align="start" className="max-w-[min(92vw,640px)] text-sm leading-snug whitespace-normal break-words">
+          <TooltipContent
+            side="bottom"
+            align="start"
+            className="max-w-[min(92vw,640px)] text-sm leading-snug whitespace-normal break-words"
+          >
             {title ?? "Автовебинар"}
           </TooltipContent>
         </Tooltip>
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
-          <Badge variant={isLive ? "default" : "outline"}>
+          <Badge variant={isPlaying ? "default" : "outline"}>
             {isPreShow && "До эфира"}
-            {isLive && "В эфире"}
-            {isReplay && "Запись"}
+            {isPlaying && "В эфире"}
             {isEnded && "Завершён"}
           </Badge>
-          <Badge variant="outline" className="text-xs">Видео</Badge>
         </div>
-        {description && <p className="room-subtitle text-sm line-clamp-1 mb-1">{description}</p>}
-        {/* TZ-лейбл (если viewer_tz != event_tz) */}
+        {description && (
+          <p className="room-subtitle text-sm line-clamp-1 mb-1">{description}</p>
+        )}
         {state.viewer_timezone !== state.event_timezone && (
           <div className="text-xs text-muted-foreground">
             TZ зрителя: {state.viewer_timezone} · TZ эфира: {state.event_timezone}
@@ -175,10 +280,11 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
               viewerTz={state.viewer_timezone}
               eventTz={state.event_timezone}
             />
-          ) : (isLive || isReplay) && state.kinescope_video_id ? (
+          ) : isPlaying && state.kinescope_video_id ? (
             <AutowebKinescopePlayer
               videoId={state.kinescope_video_id}
               startSeconds={state.resume.enabled ? state.resume.last_video_position_seconds : 0}
+              onTimeUpdate={handleTimeUpdate}
             />
           ) : (
             <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
@@ -191,43 +297,93 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             </div>
           )}
 
-          {/* Scripted timeline overlay — отдельный визуальный слой, изолирован от SoT */}
-          {state.timeline_enabled && (isLive || isReplay) && (
+          {state.timeline_enabled && isPlaying && (
             <AutowebTimelineOverlay sessionId={state.session_id} enabled={true} />
           )}
+
+          {/* Блоки редакторского контента прошедшего эфира (под видео). */}
+          <LiveEventRoomBlocks
+            liveEventId={scenarioEventId}
+            displayContext={isReplay ? "replay" : "live"}
+            position="under_video"
+          />
         </div>
 
-        {/* Sidebar: chat + questions */}
+
+        {/* Sidebar: chat / questions / participants / scenario / (moderation-staff) */}
         <div className="lg:flex-[1] min-w-0 lg:min-w-[320px] flex flex-col">
           <Tabs defaultValue="chat" className="flex-1 flex flex-col">
-            <TabsList className="grid grid-cols-2">
+            <TabsList className={`grid ${isStaff ? "grid-cols-5" : "grid-cols-4"} w-full`}>
               <TabsTrigger value="chat" disabled={!state.chat_enabled}>
                 <MessageCircle className="h-4 w-4 mr-1" /> Чат
               </TabsTrigger>
               <TabsTrigger value="questions" disabled={!state.questions_enabled}>
                 <HelpCircle className="h-4 w-4 mr-1" /> Вопросы
               </TabsTrigger>
+              <TabsTrigger value="participants">
+                <Users className="h-4 w-4 mr-1" /> Участники
+              </TabsTrigger>
+              <TabsTrigger value="scenario">
+                <FileText className="h-4 w-4 mr-1" /> Сценарий
+              </TabsTrigger>
+              {isStaff && (
+                <TabsTrigger value="moderation">Модер.</TabsTrigger>
+              )}
             </TabsList>
+
             <TabsContent value="chat" className="flex-1 mt-2">
               {state.chat_enabled ? (
                 <LiveEventComments
                   liveEventId={state.live_event_id}
                   autowebSessionId={state.session_id}
+                  historySourceEventId={historyEventId}
+                  historySourceStartedAt={historyStartedAt}
+                  currentPlaybackSeconds={playbackSeconds}
+                  staffSourceIndicator={isStaff}
                 />
               ) : (
                 <div className="text-sm text-muted-foreground p-3">Чат отключён.</div>
               )}
             </TabsContent>
+
             <TabsContent value="questions" className="flex-1 mt-2">
               {state.questions_enabled ? (
                 <LiveEventQuestions
                   liveEventId={state.live_event_id}
                   autowebSessionId={state.session_id}
+                  historySourceEventId={historyEventId}
+                  historySourceStartedAt={historyStartedAt}
+                  currentPlaybackSeconds={playbackSeconds}
+                  staffSourceIndicator={isStaff}
                 />
               ) : (
                 <div className="text-sm text-muted-foreground p-3">Вопросы отключены.</div>
               )}
             </TabsContent>
+
+            {/* Участники — ТОЛЬКО текущие в этой автосессии.
+                Исторические слушатели не показываются как "сейчас онлайн". */}
+            <TabsContent value="participants" className="flex-1 mt-2">
+              <RoomParticipantsList
+                liveEventId={state.live_event_id}
+                isStaff={isStaff}
+                visibleForStudents={true}
+              />
+            </TabsContent>
+
+
+            <TabsContent value="scenario" className="flex-1 mt-2">
+              <LiveEventScenario liveEventId={scenarioEventId} />
+            </TabsContent>
+
+            {isStaff && (
+              <TabsContent value="moderation" className="flex-1 mt-2">
+                <div className="text-xs text-muted-foreground p-3">
+                  Модерация встроена в каждое сообщение (иконки при наведении).
+                  Полная админ-модерация — в редакторе эфира.
+                </div>
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>
