@@ -106,8 +106,21 @@ export default function TariffPricing() {
         )}
       </div>
 
-      {/* PaymentDialog — props 1:1 with ProductLanding */}
-      {selectedOffer && (
+      {selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (
+        <LeadRequestDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          offerId={selectedOffer.offer.id}
+          offerLabel={selectedOffer.offer.button_label}
+          productName={data.product.public_title || data.product.name}
+          tariffName={selectedOffer.tariff.name}
+          commentPlaceholder={(selectedOffer.offer.meta as any)?.lead_form?.comment_placeholder}
+          successMessage={(selectedOffer.offer.meta as any)?.lead_form?.success_message}
+          {...(selectedOffer.offer.offer_type === "bank_installment"
+            ? readBankInstallmentMeta(selectedOffer.offer)
+            : {})}
+        />
+      ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
           onOpenChange={setPaymentOpen}
@@ -121,7 +134,7 @@ export default function TariffPricing() {
           isClubProduct={!!data.product.telegram_club_id}
           isSubscription={selectedOffer.offer.requires_card_tokenization}
         />
-      )}
+      ) : null}
     </div>
   );
 }
