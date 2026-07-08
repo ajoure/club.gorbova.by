@@ -74,6 +74,7 @@ const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
 function pickOfferForFlow(offers: readonly any[], flow: Flow) {
   const active = offers.filter((o) => o.is_active !== false);
   if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
+  if (flow === "bank_installment") return active.find((o) => o.offer_type === "bank_installment") || null;
   const pn = active.filter((o) => o.offer_type === "pay_now");
   if (flow === "installment") {
     return pn.find((o) => o.payment_method === "internal_installment") || null;
