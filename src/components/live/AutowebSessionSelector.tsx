@@ -12,7 +12,7 @@
  *
  * После выбора → setSearchParams({session: <uuid>}) → AutowebRoomRuntime монтируется.
  */
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
