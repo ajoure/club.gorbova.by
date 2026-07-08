@@ -257,6 +257,9 @@ Deno.serve(async (req) => {
           introHtml: overrides.email?.intro_html || null,
         }
 
+        const subject = overrides.email?.subject_override || `Оплата получена: ${productName}`
+        const previewText = `Спасибо! Мы получили оплату по заказу ${order.order_number || ''}`.trim()
+
         const { data: sendRes, error: sendErr } = await supabase.functions.invoke(
           'send-transactional-email',
           {
@@ -269,11 +272,23 @@ Deno.serve(async (req) => {
           },
         )
         if (sendErr) throw sendErr
+
+        // Compact metadata for audit/display (no personal payload leakage)
+        const auditMeta = {
+          subject,
+          preview_text: previewText,
+          message_text: (sendRes as any)?.rendered_text || null,
+          rendered_html: (sendRes as any)?.rendered_html || null,
+          template_code: 'product-purchased',
+          product_name: productName,
+          tariff_name: tariffName,
+        }
+
         if ((sendRes as any)?.reason === 'email_suppressed') {
-          await markDelivery(row.id, { status: 'skipped', error: 'email_suppressed' })
+          await markDelivery(row.id, { status: 'skipped', error: 'email_suppressed', metadata: { ...auditMeta, skip_reason: 'email_suppressed' } })
           results.email = { skipped: 'email_suppressed', delivery_id: row.id }
         } else {
-          await markDelivery(row.id, { status: 'sent', sent_at: new Date().toISOString() })
+          await markDelivery(row.id, { status: 'sent', sent_at: new Date().toISOString(), metadata: auditMeta })
           results.email = { sent: true, delivery_id: row.id }
         }
       } catch (e) {
@@ -292,10 +307,19 @@ Deno.serve(async (req) => {
     results.telegram = { skipped: 'no_telegram_user_id' }
   } else if (clubDmSent) {
     // Access DM (from telegram-grant-access) already delivered — skip duplicate purchase-DM.
-    // Still record a 'skipped' row for auditability.
+    // Record 'skipped' row for auditability. Do NOT create a fake telegram_messages mirror.
     const { row } = await upsertDelivery('telegram', String(telegramUserId))
     if (row && row.status !== 'sent') {
-      await markDelivery(row.id, { status: 'skipped', error: 'club_dm_already_sent' })
+      await markDelivery(row.id, {
+        status: 'skipped',
+        error: 'club_dm_already_sent',
+        metadata: {
+          template_code: 'product-purchased-dm',
+          product_name: productName,
+          tariff_name: tariffName,
+          skip_reason: 'club_dm_already_sent',
+        },
+      })
     }
     results.telegram = { skipped: 'club_dm_already_sent' }
   } else {
@@ -309,11 +333,12 @@ Deno.serve(async (req) => {
         // Load primary bot
         const { data: bot } = await supabase
           .from('telegram_bots')
-          .select('bot_token_encrypted')
+          .select('id, bot_token_encrypted')
           .eq('status', 'active')
           .eq('is_primary', true)
           .maybeSingle()
         const botToken = (bot as any)?.bot_token_encrypted
+        const botId = (bot as any)?.id || null
         if (!botToken) throw new Error('primary_bot_not_configured')
 
         const endLine = accessEndAt
@@ -334,11 +359,51 @@ Deno.serve(async (req) => {
 
         const { ok, data } = await tgSendMessage(botToken, telegramUserId, text, true)
         if (!ok) throw new Error(`telegram_send_failed: ${JSON.stringify(data).slice(0, 300)}`)
+        const providerMessageId = data?.result?.message_id ? Number(data.result.message_id) : null
+
+        const tgAuditMeta = {
+          message_text: text,
+          template_code: 'product-purchased-dm',
+          parse_mode: 'HTML',
+          product_name: productName,
+          tariff_name: tariffName,
+        }
         await markDelivery(row.id, {
           status: 'sent',
           sent_at: new Date().toISOString(),
-          provider_message_id: data?.result?.message_id ? String(data.result.message_id) : null,
+          provider_message_id: providerMessageId ? String(providerMessageId) : null,
+          metadata: tgAuditMeta,
         })
+
+        // Mirror to telegram_messages so it appears in the Telegram tab / dialog.
+        // Idempotent via partial unique index uniq_tg_msg_purchase_dm_order.
+        if (providerMessageId && order.user_id) {
+          const { error: mirrorErr } = await supabase
+            .from('telegram_messages')
+            .insert({
+              user_id: order.user_id,
+              telegram_user_id: telegramUserId,
+              bot_id: botId,
+              direction: 'outgoing',
+              message_text: text,
+              message_id: providerMessageId,
+              status: 'sent',
+              meta: {
+                source: 'notify-order-purchased',
+                event: 'product_purchased_dm',
+                source_order_id: orderId,
+                template_code: 'product-purchased-dm',
+                parse_mode: 'HTML',
+                order_number: order.order_number || null,
+                product_name: productName,
+                tariff_name: tariffName,
+              },
+            })
+          if (mirrorErr && !/duplicate key|unique/i.test(mirrorErr.message || '')) {
+            console.error('[notify-order-purchased] telegram_messages mirror failed', mirrorErr)
+          }
+        }
+
         results.telegram = { sent: true, delivery_id: row.id }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -350,3 +415,4 @@ Deno.serve(async (req) => {
 
   return json({ success: true, ...results })
 })
+
