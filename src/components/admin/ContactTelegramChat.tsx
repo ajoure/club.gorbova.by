@@ -1575,7 +1575,7 @@ export function ContactTelegramChat({
     );
   }
 
-  const renderChatItem = (item: ChatItem) => {
+  const renderChatItem = (item: ChatItem, timeShort: string, timeMedium: string) => {
     if (item.type === "event") {
       const event = item as TelegramEvent;
       // PATCH: Show message_text for ANY event that has it (not just manual/system notifications)
