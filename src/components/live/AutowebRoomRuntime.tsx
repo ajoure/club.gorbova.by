@@ -325,6 +325,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
               videoId={state.kinescope_video_id}
               startSeconds={state.resume.enabled ? state.resume.last_video_position_seconds : 0}
               onTimeUpdate={handleTimeUpdate}
+              viewerControls={state.viewer_controls}
             />
           ) : (
             <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
