@@ -565,7 +565,11 @@ export function ContactTelegramChat({
     ...(billingEvents || []),
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-  const isLoading = messagesLoading || eventsLoading || billingLoading;
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1: первый рендер
+  // блокируем ТОЛЬКО сообщениями. События (`events`) и billing
+  // (`billingEvents`) — пилюли; они дорисовываются, как только приходят,
+  // и не должны держать чат «пустым».
+  const isLoading = messagesLoading;
 
   // Map: Telegram message_id -> message (для рендера quote/reply)
   const messagesByTgId = useMemo(() => {
