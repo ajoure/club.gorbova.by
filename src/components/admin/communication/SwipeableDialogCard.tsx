@@ -17,6 +17,12 @@ interface SwipeableDialogCardProps {
    * lean messages so the click hits a warm cache.
    */
   onPrefetch?: () => void;
+  /**
+   * PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1-RUNTIME-PROOF:
+   * Optional stable test id forwarded to the inner content wrapper for
+   * Playwright perf harness. No production behavior change.
+   */
+  "data-testid"?: string;
 }
 
 export function SwipeableDialogCard({
