@@ -48,6 +48,8 @@ const Privacy = lazy(() => import("./pages/Privacy"));
 const Consent = lazy(() => import("./pages/Consent"));
 const Instruction = lazy(() => import("./pages/Instruction"));
 const Contacts = lazy(() => import("./pages/Contacts"));
+const Unsubscribe = lazy(() => import("./pages/Unsubscribe"));
+
 const MnsResponseService = lazy(() => import("./pages/audits/MnsResponseService"));
 const MnsDocumentHistory = lazy(() => import("./pages/audits/MnsDocumentHistory"));
 const Purchases = lazy(() => import("./pages/Purchases"));
