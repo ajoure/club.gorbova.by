@@ -742,6 +742,14 @@ export function ContactTelegramChat({
     });
   }, [messages]);
 
+  // V1.2: Reset selectedBotId immediately on dialog switch so the footer
+  // doesn't flash the previous chat's bot before the useEffect below
+  // resolves the correct one from localStorage/messages/active bots.
+  useEffect(() => {
+    setSelectedBotId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   // === DEFAULT BOT SELECTION ===
   useEffect(() => {
     if (!messages || messages.length === 0 || activeBots.length === 0) return;
