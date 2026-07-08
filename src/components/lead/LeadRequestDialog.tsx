@@ -33,6 +33,10 @@ interface LeadRequestDialogProps {
   priceLabel?: string;
   commentPlaceholder?: string;
   successMessage?: string;
+  /** Bank-installment mode: after submit, show HTML message and a CTA leading to the bank. */
+  bankLinkUrl?: string;
+  bankLinkLabel?: string;
+  bankMessageHtml?: string;
 }
 
 type Step = "auth" | "details" | "telegram" | "success";
