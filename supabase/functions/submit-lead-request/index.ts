@@ -142,7 +142,10 @@ Deno.serve(async (req) => {
     console.error("[submit-lead-request] offer lookup", { offer_id, offerErr });
     return jsonResponse({ error: "offer_not_found" }, 404, cors);
   }
-  if (offer.offer_type !== "lead" || !offer.is_active) {
+  // Accept both classic 'lead' offers and 'bank_installment' offers
+  // (bank_installment reuses the same lead pipeline — CRM task + notify —
+  // and additionally shows a bank link in the success step client-side).
+  if ((offer.offer_type !== "lead" && offer.offer_type !== "bank_installment") || !offer.is_active) {
     return jsonResponse({ error: "offer_not_lead" }, 400, cors);
   }
   const { data: tariff } = await supa
