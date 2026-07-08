@@ -427,6 +427,30 @@ export default function AdminLiveEvents() {
     enabled: dialogOpen,
   });
 
+  // Sprint C — кандидаты в "Исходный live_stream" для timed-replay автовебинара.
+  // Загружаем список только когда открыт диалог автовеба/recorded_webinar.
+  const { data: sourceCandidates } = useQuery({
+    queryKey: ["autoweb-source-candidates"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("live_events")
+        .select("id, title, starts_at:scheduled_at, event_type")
+        .in("event_type", ["live_stream", "recorded_webinar"])
+        .order("scheduled_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as Array<{
+        id: string;
+        title: string;
+        starts_at: string | null;
+        event_type: string;
+      }>;
+    },
+    enabled: dialogOpen && (form.event_type === "recorded_webinar" || form.event_type === "autowebinar"),
+  });
+
+
+
 
   const validationItems = useMemo(() => {
     const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
