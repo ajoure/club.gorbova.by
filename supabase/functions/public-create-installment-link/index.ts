@@ -180,8 +180,11 @@ Deno.serve(async (req) => {
         payment_type: 'one_time',
         description: null,
         max_uses: 1,
-        // user_id = NULL — payer резолвится на /pay/:token.
-        user_id: null,
+        // Если пользователь авторизован — привязываем ссылку к нему,
+        // тогда PublicPayPage работает в режиме has_target_user=true
+        // и не требует повторного ввода email / входа.
+        // Гости (authUserId=null) резолвятся на /pay/:token как раньше.
+        user_id: authUserId,
         created_by: authUserId,
         url_token,
         public_url,
