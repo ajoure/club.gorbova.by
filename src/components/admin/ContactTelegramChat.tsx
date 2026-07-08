@@ -532,11 +532,13 @@ export function ContactTelegramChat({
   });
 
   // Track successful full-fetch per user, so subsequent warm reopens skip
-  // the RPC while the cache is fresh (<120 s).
+  // the RPC while the cache is fresh (<120 s). Stored in queryClient so
+  // it survives component remount.
   useEffect(() => {
     if (fullData && userId) {
-      fullFetchedAtRef.current.set(userId, Date.now());
+      queryClient.setQueryData(fullFreshnessKey, Date.now());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullData, userId]);
 
   // Rendered messages: prefer full (enriched) if available, otherwise lean.
