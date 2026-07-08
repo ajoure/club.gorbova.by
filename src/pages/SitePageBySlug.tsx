@@ -143,27 +143,25 @@ export default function SitePageBySlug() {
         return;
       }
 
-      if (detail.action === "open-payment") {
+      if (detail.action in ACTION_TO_FLOW) {
         // Dynamic binding: resolve tariff_key against the page-linked product's tariffs,
-        // pick the primary pay_now offer (lowest amount). No UUIDs in the HTML.
+        // pick offer that matches the requested flow. No UUIDs in the HTML.
+        const flow = ACTION_TO_FLOW[detail.action as keyof typeof ACTION_TO_FLOW];
         const tariffKey = String(detail.payload?.tariff_key || "").trim();
         const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
         const product = linkedProductDataRef.current;
         if (!matcher || !product?.product?.id || !product.tariffs?.length) {
-          console.warn("[site-action] open-payment: no product data or unknown tariff_key", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: no product data or unknown tariff_key`, { tariffKey });
           return;
         }
         const tariff = product.tariffs.find((t) => matcher(t.name || ""));
         if (!tariff) {
-          console.warn("[site-action] open-payment: tariff not found", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: tariff not found`, { tariffKey });
           return;
         }
-        const payOffers = (tariff.offers || []).filter(
-          (o) => o.offer_type === "pay_now" && o.is_active !== false,
-        );
-        const offer = payOffers.slice().sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
+        const offer = pickOfferForFlow(tariff.offers || [], flow);
         if (!offer) {
-          console.warn("[site-action] open-payment: no pay_now offer on tariff", { tariffKey });
+          console.warn(`[site-action] ${detail.action}: no matching offer on tariff`, { tariffKey, flow });
           return;
         }
         setPending({ productId: product.product.id, offerId: offer.id });
