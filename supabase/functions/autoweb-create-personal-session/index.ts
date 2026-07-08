@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
           chosen_offset: chosenOffset,
         });
       }
-    } else {
+    } else if (mode === 'on_demand') {
       // on_demand → любая активная сессия (ends_at > now), pending|live
       const { data: existing } = await admin
         .from('live_event_sessions')
@@ -154,6 +154,25 @@ Deno.serve(async (req) => {
           session: existing[0],
           dedup: true,
           dedup_reason: 'on_demand_active_session',
+        });
+      }
+    } else {
+      // one_time → одна сессия на пользователя+эфир (starts_at общий = event.scheduled_at)
+      const { data: existing } = await admin
+        .from('live_event_sessions')
+        .select('id, starts_at, ends_at, status, mode')
+        .eq('live_event_id', liveEventId)
+        .eq('viewer_user_id', viewerUserId)
+        .eq('mode', 'one_time')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        return jsonRes({
+          status: 'ok',
+          session: existing[0],
+          dedup: true,
+          dedup_reason: 'one_time_existing',
         });
       }
     }
