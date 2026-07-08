@@ -48,6 +48,8 @@ const Privacy = lazy(() => import("./pages/Privacy"));
 const Consent = lazy(() => import("./pages/Consent"));
 const Instruction = lazy(() => import("./pages/Instruction"));
 const Contacts = lazy(() => import("./pages/Contacts"));
+const Unsubscribe = lazy(() => import("./pages/Unsubscribe"));
+
 const MnsResponseService = lazy(() => import("./pages/audits/MnsResponseService"));
 const MnsDocumentHistory = lazy(() => import("./pages/audits/MnsDocumentHistory"));
 const Purchases = lazy(() => import("./pages/Purchases"));
@@ -211,6 +213,8 @@ const App = () => {
               <Route path="/consent" element={<LazyRoute><Consent /></LazyRoute>} />
               <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
+              <Route path="/unsubscribe" element={<LazyRoute><Unsubscribe /></LazyRoute>} />
+
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
               <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
               <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />

@@ -2400,6 +2400,33 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Canonical post-payment notification (Telegram DM + Email).
+    // Fire-and-forget: notification failures MUST NOT block access grant.
+    // Idempotency is enforced downstream via order_notification_deliveries
+    // unique(order_id, channel, notification_type).
+    // ──────────────────────────────────────────────────────────────────────
+    if (orderId) {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (supabaseUrl && serviceKey) {
+          fetch(`${supabaseUrl}/functions/v1/notify-order-purchased`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${serviceKey}`,
+            },
+            body: JSON.stringify({ order_id: orderId }),
+          }).catch((e) => console.warn('[grant-access-for-order] notify-order-purchased fire-and-forget error:', (e as Error)?.message || e));
+        }
+      } catch (notifyErr) {
+        console.warn('[grant-access-for-order] notify-order-purchased scheduling error (ignored):', notifyErr);
+      }
+    }
+
+
+
     return new Response(
 
       JSON.stringify({
