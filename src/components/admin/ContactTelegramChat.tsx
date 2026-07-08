@@ -1606,6 +1606,7 @@ export function ContactTelegramChat({
       return (
         <div
           key={msg.id}
+          data-message-id={msg.id}
           className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
         >
           <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
@@ -1624,6 +1625,7 @@ export function ContactTelegramChat({
       <div
         key={msg.id}
         id={`tg-msg-${msg.id}`}
+        data-message-id={msg.id}
         className={cn(
           "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
           msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start",
@@ -1931,7 +1933,7 @@ export function ContactTelegramChat({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full min-h-0">
+      <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
           <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
@@ -1971,7 +1973,7 @@ export function ContactTelegramChat({
                 </div>
               </div>
             ) : (
-              <div className="space-y-3 px-3 w-full max-w-full box-border">
+              <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
                 {chatItems.map((item, index) => {
                   const currentDate = new Date(item.created_at);
                   const prevItem = index > 0 ? chatItems[index - 1] : null;

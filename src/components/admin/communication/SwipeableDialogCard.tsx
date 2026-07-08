@@ -17,6 +17,12 @@ interface SwipeableDialogCardProps {
    * lean messages so the click hits a warm cache.
    */
   onPrefetch?: () => void;
+  /**
+   * PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1-RUNTIME-PROOF:
+   * Optional stable test id forwarded to the inner content wrapper for
+   * Playwright perf harness. No production behavior change.
+   */
+  "data-testid"?: string;
 }
 
 export function SwipeableDialogCard({
@@ -27,7 +33,9 @@ export function SwipeableDialogCard({
   className,
   onClick,
   onPrefetch,
+  ...rest
 }: SwipeableDialogCardProps) {
+  const testId = (rest as Record<string, string | undefined>)["data-testid"];
   const { swipeHandlers, swipeStyle, offsetX, swipeDirection } = useSwipeActions({
     threshold: 80,
     onSwipeLeft,
@@ -75,6 +83,7 @@ export function SwipeableDialogCard({
         onPointerEnter={onPrefetch}
         onPointerDown={onPrefetch}
         onFocus={onPrefetch}
+        data-testid={testId}
       >
         {children}
       </div>
