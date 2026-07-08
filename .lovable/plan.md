@@ -149,3 +149,70 @@
 - Sync таймингов чата с точной секундой видео через Kinescope SDK-poll (сейчас — postMessage + fallback-таймер, оставляем).
 - Backfill старых автовебинаров.
 - Политика answered-state для исторических вопросов — оставляем текущее поведение read-only.
+---
+
+## Отчет о выполнении: приёмка отклонена — статус partial (обновление после one_time data-fix)
+
+**Статус:** `partial — code applied, one_time auto-session proof captured, history/live merge proof pending`.
+
+Причина отказа от accepted: главный пользовательский сценарий — «история + новые комментарии в one_time-autoweb» — покрыт кодом и SQL data-fix'ом, но не подтверждён runtime-proof'ом на живой сессии. Скрин с `phase=ended` и пустым чатом эту приёмку не закрывает.
+
+### Что ещё нужно приложить до следующей приёмки
+
+**1. Полный history-merge proof на живой one_time-сессии:**
+- создать эфир с `scheduled_at = now() + 5..10 min`,
+- в `source_live_event_id` — реальные исторические комментарии/вопросы,
+- открыть one_time автовеб как обычный зритель,
+- скрин: исторические сообщения появляются по таймлайну,
+- отправить новый комментарий из runtime,
+- скрин: новый комментарий подмешался нативно, в хвосте ленты.
+
+**2. SQL proof по новым комментариям:**
+- новый комментарий из one_time runtime записан в `live_event_comments.live_event_id = <autoweb_id>`,
+- в `source_live_event_id` от текущего зрителя новых записей нет,
+- `metadata.session_id` у нового комментария заполнен.
+
+**3. Runtime-proof по `viewer_controls` (а не только code-level):**
+- `allow_seek=false` → промотка не работает; `true` → работает,
+- `allow_pause=false` → пауза не работает; `true` → работает,
+- `allow_speed_control=false` → выбора скорости нет; `true` → есть.
+Минимум один one_time автовеб, 2–3 короткие переключения конфига, скрины/видео.
+
+**4. UI proof по админке:**
+- для `one_time` блоки Replay и Viewer controls реально видны,
+- для `scheduled` — тоже видны,
+- `source_live_event_id` выбирается через UI,
+- после save и повторного открытия формы значение не теряется.
+
+**5. Регресс-proof:**
+- `scheduled` / `just_in_time` / `on_demand` не сломаны,
+- обычный `recorded_webinar` по-прежнему уходит в legacy,
+- `LiveEventLegacy` не затронут маршрутизацией сверх согласованного узкого случая (`event_type='autowebinar'` + `autoweb_mode='one_time'`).
+
+### Финальный блок изменений (для следующего отчёта — фиксируем сейчас)
+
+**Изменённые файлы:**
+- `src/pages/admin/AdminLiveEvents.tsx` — все 4 режима автопоказа сохраняются как `event_type='autowebinar'` + `autoweb_mode=<user_mode>`; `source_live_event_id` в UI-селекторе, сброс в `null` при смене типа; список источников ограничен `live_stream`.
+- `src/components/live/AutowebSessionSelector.tsx` — для `one_time` селектор скрыт, персональная сессия создаётся/находится автоматически, редирект в `AutowebRoomRuntime`.
+- `src/components/admin/live/AutowebModeEditor.tsx` — блоки Replay и Viewer controls доступны для всех 4 режимов из единого `autoweb_config` (без дублей).
+- `src/components/live/AutowebRoomRuntime.tsx` — плеер читает `state.viewer_controls`; overlay-guards и iframe-параметры считаются из флагов.
+- `src/components/live/LiveEventComments.tsx`, `LiveEventQuestions.tsx` — нативный merge истории и live по `effective_ts`.
+
+**Redeployed edge functions:**
+- `autoweb-room-state` — `source_started_at = live_started_at ?? room_opened_at ?? starts_at`.
+- `autoweb-create-personal-session` — ветка `one_time` с дедупом по `(live_event_id, viewer_user_id)`.
+- `autoweb-resolve-sessions` — `mode='one_time'` не показывает селектор.
+
+**Изменённые constraints:**
+- `live_events.autoweb_mode` check — добавлено значение `one_time`.
+- `live_event_sessions.mode` check — добавлено значение `one_time`.
+
+**Точечный data-fix (без массовых апдейтов):**
+- `UPDATE live_events SET event_type='autowebinar', autoweb_mode='one_time', source_live_event_id=<...> WHERE id='91d97e72-c96a-4917-bb79-cfdc834c3a8b'` — один конкретный проблемный эфир из скрина пользователя.
+- Массовых миграций `recorded_webinar → autowebinar` не выполнялось.
+
+### Формулировка статуса
+
+`partial — code applied, one_time auto-session proof captured, history/live merge proof pending`
+
+После приложения runtime/UI/SQL артефактов из пунктов 1–5 отчёт можно принимать как completed.
