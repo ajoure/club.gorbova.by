@@ -194,6 +194,8 @@ Deno.serve(async (req) => {
       viewer_timezone: viewerTzParam,
       event_timezone: event.event_timezone ?? cfg?.schedule?.timezone ?? 'Europe/Minsk',
       kinescope_video_id: cfg?.video?.kinescope_video_id ?? null,
+      source_live_event_id: event.source_live_event_id ?? null,
+      source_started_at,
     };
 
     return jsonRes(response);
