@@ -152,6 +152,7 @@ const DENIAL_HUMAN: Record<string, string> = {
 };
 
 function quotaSlot(used: number, limit: number) {
+  if (limit < 0) return { used, limit: -1, remaining: -1 }; // безлимит для admin
   return { used, limit, remaining: Math.max(0, limit - used) };
 }
 
