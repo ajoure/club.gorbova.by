@@ -73,10 +73,11 @@
 
 ## DoD
 
-- [ ] discovery-отчёт зафиксирован в `.lovable/discovery/buttons_parity_ccb_v1.md` с матрицей 5×5.
-- [ ] На cb все 5 кнопок присутствуют и корректно срабатывают (Playwright-скрины).
-- [ ] «Оплатить от ЮЛ» на cb генерирует счёт (запись в `generated_documents`), а не bepaid checkout.
-- [ ] «Оплатить в два этапа» имеет per-offer лимит попыток и уведомления 7/3/1 день до списания.
-- [ ] Новый offer_type `bank_installment` работает на cb, ссылка сохраняется в `meta`, сделка создаётся, письмо+Telegram отправляются.
-- [ ] После любой lead-заявки предлагается привязка Telegram (тот же UX, что в Club/Ideology).
-- [ ] Нет регрессий на страницах club и ideology (smoke: открытие + первая кнопка каждого типа).
+- [x] discovery-отчёт зафиксирован в `.lovable/discovery/buttons_parity_ccb_v1.md` с матрицей 5×5.
+- [x] Фаза 2 — «Оплатить от ЮЛ» на cb: bridge open-invoice + `InvoiceCheckoutDialog` (миграция HTML применена, dialog маршрутизируется в SitePageBySlug).
+- [x] Фаза 4 (backend + runtime) — новый `offer_type='bank_installment'`: CHECK-констрейнт расширен, типы обновлены, `TariffCard` рендерит кнопку, `LeadRequestDialog` в bank-режиме показывает HTML-сообщение + CTA «Перейти в банк», роутинг подключён во всех 4 точках входа (ProductLanding / UniversalPricingSection / TariffPricing / SitePageBySlug bridge + `open-bank-installment`).
+- [x] Фаза 6 (частично) — Telegram-prompt после lead уже работает через `LeadRequestDialog` (шаг `telegram` + `TelegramCompactCard`); reuse без копирования. Автоматически покрывает и bank_installment.
+- [ ] Фаза 3 — редактор оффера `internal_installment`: попытки списания per-offer + уведомления 7/3/1, cron читает `meta.installment.max_charge_attempts_per_installment`.
+- [ ] Фаза 4 (UI редактора) — в OfferEditor добавить тип «Заявка на рассрочку» с полями «Ссылка банка», «Текст сообщения (HTML)», «Подпись кнопки CTA».
+- [ ] Фаза 5 — на HTML-странице cb: убрать «Внести бронь», добавить наши кнопки «Оплатить в два этапа» (open-installment) и «Заявка на рассрочку» (open-bank-installment) для всех 3 тарифов.
+- [ ] Фаза 7 — Playwright E2E: cb, все 5 кнопок × 3 тарифа, скриншоты, отчёт.
