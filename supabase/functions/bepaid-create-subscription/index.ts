@@ -236,7 +236,8 @@ Deno.serve(async (req) => {
     }
 
     // Build bePaid subscription request
-    const baseUrl = return_url?.split('?')[0] || 'https://club.gorbova.by/settings/payment-methods';
+    // Canonical public host (see src/utils/buildPublicPaymentUrl.ts).
+    const baseUrl = return_url?.split('?')[0] || 'https://gorbova.by/settings/payment-methods';
     const trackingId = `subv2:${subscription_v2_id}`;
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription_v2_id}`;
