@@ -1,443 +1,437 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-## **1. V1.1 нельзя начинать с реализации, сначала короткий perf-diagnose**
+## **1. Шаг diagnose обязателен перед правками**
 
-План правильно выделяет проблему, но перед Step 1 нужно зафиксировать обязательный mini-diagnose:
-
-```text
-PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1-DIAGNOSE
-```
-
-Без этого есть риск оптимизировать не тот слой.
-
-Нужно сначала получить:
+Начинать только с read-only diagnose H1–H5. После него прислать короткий отчёт:
 
 ```text
-browser timing:
-- blocked / DNS / TLS
-- TTFB
-- download
-- JSON parse
-- React render до first visible message
-
-RPC:
-- EXPLAIN ANALYZE под authenticated
-- payload size current
-- row count current
-- fields current
+H1 merge identity — confirmed / not confirmed
+H2 chatItemsWithMeta deps — confirmed / not confirmed
+H3 unstable callbacks/maps — confirmed / not confirmed
+H4 quote lookup hot path — confirmed / not confirmed
+H5 reactions lookup hot path — confirmed / not confirmed
 ```
 
-Если окажется, что 1.04 сек — это сеть/Auth/PostgREST, а не payload, то split fast/full может дать меньше эффекта, чем prefetch/cache.
+Правки делать только после подтверждения реального bottleneck.
 
-## **2. Не менять текущий RPC несовместимо**
 
-Не перегружать текущий RPC так, чтобы случайно поменять поведение V1.
 
-Вместо:
+
+
+## **2.**
+
+`React.memo` **не должен быть “магическим” ускорением**
+
+Если props всё равно пересоздаются на каждый render, memo не даст эффекта. Поэтому порядок работ правильный, но зафиксировать жёстко:
 
 ```text
-admin_get_telegram_messages_fast_v1(p_user_id, p_limit, p_fast boolean)
+Сначала стабилизировать input props / callbacks / item identity.
+Потом memoize bubbles.
 ```
 
-лучше создать отдельную функцию:
+Иначе получится новый компонент, который всё равно ререндерится 50 раз.
+
+## **3. Comparator должен быть безопасным, не минимальным**
+
+В список render-relevant полей добавить:
 
 ```text
-admin_get_telegram_messages_lean_v1
+is_read
+is_deleted
+deleted_at
+error
+upload_status
+upload_progress
+media_load_state
+signed_url
+signed_url_error
+file_name
+file_size
+mime_type
+duration
+thumbnail_url
+reply_preview
+reply_author
+isHighlighted
+isEditing
+isReplyTarget
+isOptimistic
 ```
 
-Текущий `admin_get_telegram_messages_fast_v1` оставить как есть.
+Если хоть одно из этих полей влияет на UI, comparator обязан его учитывать.
 
-Причина: V1 уже прошёл PASS, не нужно ломать стабильный путь.
 
-## **3. Fast payload 20 сообщений — да, но нужен fallback на полный текст**
 
-Обрезка `message_text` до 4 КБ допустима только если в UI есть:
+
+
+## **4. Не передавать**
+
+`admin_profile ref`**, если ref нестабилен**
+
+В плане есть:
 
 ```text
-“Показать полностью”
+admin_profile ref
 ```
 
-или автоматическая замена текста после прихода full-query.
+Лучше не передавать объектом. Передавать плоско:
 
-Иначе можно получить баг: оператор открыл чат и видит обрезанное сообщение, не понимая, что оно неполное.
+```ts
+adminName: string | null
+adminAvatarUrl: string | null
+```
 
-Для V1.1:
+Иначе новая ссылка на объект сломает memo.
+
+То же самое для `bot metadata`:
+
+```ts
+botName: string | null
+botUsername: string | null
+botAvatarUrl?: string | null
+```
+
+## **5. Reactions тоже лучше стабилизировать**
+
+Если `reactionsForRow` — массив, он должен быть stable:
 
 ```text
-lean query:
-- message_text_preview <= 4 KB
-- is_truncated boolean
-full query:
-- заменяет preview полным message_text
+same reaction payload → same array reference
 ```
 
-## **4. Не убирать все join из fast, если они нужны для первого paint**
+Иначе comparator будет видеть новый массив каждый раз.
 
-Убрать `bot_*` и `admin_*` join можно только если UI не зависит от них для первого отображения.
+Варианты:
 
-Если без них появляются пустые аватары/имена/лейблы, лучше:
+- передавать `reactionsVersion`;
+- или memoized `reactionsForRow`;
+- или comparator сравнивает короткий stable signature.
+
+Не делать глубокий compare большого массива на каждый bubble render.
+
+## **6. Quote preview вынести из hot path — согласен**
+
+`messagesByTgId.get(...)` в render path убрать.
+
+В `chatItemsWithMeta` заранее подготовить:
+
+```ts
+quotedPreview
+quotedAuthor
+quotedMessageId
+quotedMissing
+```
+
+В bubble не должно быть lookup по общей map.
+
+
+
+
+
+## **7.**
+
+`chatItemsWithMeta` **dependencies проверить особо**
+
+Этот memo не должен зависеть от:
 
 ```text
-header/bot/admin metadata брать из выбранного dialog row
+draft message
+selectedBotId
+footer state
+hover state
+context menu state
+temporary input state
 ```
 
-а не из messages RPC.
-
-То есть first paint должен получать:
+Он может зависеть от:
 
 ```text
-messages lean + already-known dialog metadata
+messages
+events
+billingEvents
+telegramReactionsMap / reactionsVersion
+highlightedId
+locale/timezone если реально используется
 ```
 
-## **5. Prefetch первых 3 диалогов — осторожно**
+Но `highlightedId` будет менять props максимум у двух bubbles, если comparator правильный.
 
-Prefetch первых 3 диалогов после загрузки списка может ускорить UX, но может создать лишнюю нагрузку, если список часто инвалидируется realtime.
+## **8. Callback dependencies должны быть стабильными**
 
-Добавить ограничения:
+`useCallback` должен зависеть не от больших объектов, а от стабильных функций/mutations.
+
+Проверить, чтобы не было:
+
+```ts
+useCallback(..., [messages, chatItems, telegramReactionsMap])
+```
+
+Иначе каждый render будет пересоздавать callbacks и ломать memo.
+
+
+
+
+
+## **9.**
+
+`mergeByIdPreferEnriched` **— без тяжёлого deepEqual**
+
+Согласен с identity preservation, но нельзя делать deepEqual по всему `meta`.
+
+Сравнивать только render-relevant fields.
+
+Формат:
+
+```ts
+hasRenderRelevantChanges(prev, next): boolean
+```
+
+Если `false`:
+
+```ts
+return prev
+```
+
+Если `true`:
+
+```ts
+return next
+```
+
+## **10. EventBubble тоже memoize, но не смешивать с message comparator**
+
+Системные события/пилюли имеют другой набор props. Для них отдельный comparator:
 
 ```text
-- prefetch только при idle/requestIdleCallback
-- только если вкладка активна
-- только если диалог ещё не в cache
-- throttle/debounce после realtime invalidation
-- не prefetch при включённых тяжёлых фильтрах/поиске
+id
+type
+label
+created_at/time label
+status
+amount/currency если billing
+isHighlighted если есть
 ```
 
-Иначе после каждого входящего сообщения можно получить скрытую волну RPC.
+Не использовать один общий comparator для message/event.
 
-## **6. Hover/pointer prefetch — да, но только для desktop**
+## **11. Hover controls внутри bubble — принять, но проверить initial paint**
 
-Для mobile hover не работает. Использовать:
+Если hover controls монтируют тяжёлые dropdown/menu компоненты сразу, это может съесть initial paint.
+
+Для V1.3 проверить:
 
 ```text
-onPointerEnter — desktop
-onPointerDown — desktop/mobile
-onFocus — keyboard navigation
+Dropdown/Menu content mounted only on open/hover?
+Emoji picker not mounted until needed?
 ```
 
-`onPointerDown` особенно полезен: запрос стартует на 100–200 мс раньше click.
+Если они монтируются сразу для 50 bubbles — вынести lazy/deferred, но только если diagnose подтвердит.
 
-## **7. Warm reopen <100–200 мс лучше решать cache-only first**
+## **12. Runtime proof должен включать render count**
 
-Если warm reopen сейчас делает RPC 176 мс, значит при выборе уже cached диалога не нужно блокироваться на refetch.
-
-Для warm open:
+Гейт `MessageBubble render count ≤ diff-only` правильный, но надо формализовать:
 
 ```text
-- показывать cache immediately
-- background refetch через staleTime
-- selected dialog не должен remount full tree, если key тот же тип
+Warm A→B→A:
+- при возврате к A не должно быть 50 render сообщений A;
+- допускаются рендеры changed/highlighted/new messages;
+- target: <= 5–10 bubble renders на warm reopen, если данных не изменилось.
 ```
 
-Проверить настройки:
+Если render count всё ещё 50, V1.3 не PASS даже если p95 случайно прошёл.
+
+## **13. Cold gates принять**
+
+Использовать именно текущие V1.2 baseline:
 
 ```text
-staleTime: 60–120 сек
-gcTime: 10 мин
-refetchOnMount: false или controlled background refetch
-placeholderData: previous
+cold-nopf p95 <= 461 ms
+cold-pf p95 <= 415 ms
 ```
 
-## **8. React.memo недостаточно — нужна виртуализация или сохранение mounted state**
+Если cold ухудшился — это regression.
 
-Если warm reopen 0.6 сек из-за remount дерева, `React.memo` может помочь частично, но надо проверить:
+## **14. Proof по media/reactions/reply обязателен**
+
+Так как comparator легко ломает обновления, smoke должен включать:
 
 ```text
-- не пересоздаётся ли весь список сообщений из-за reverse/map
-- не меняется ли key родительского компонента
-- не пересоздаётся ли Supabase/query client context
-- не пересчитываются ли grouped rows всего inbox
+- отправка реакции обновляет bubble;
+- edit обновляет текст;
+- delete меняет состояние сообщения;
+- mark_read/read indicator обновляется;
+- media signed URL после загрузки обновляет bubble;
+- reply quote scroll работает;
+- highlighted bubble появляется и снимается.
 ```
 
-Для V1.1 не вводить тяжёлую виртуализацию, если её нет. Но добавить proof React Profiler.
+Без этого memo-патч опасен.
 
-Если сообщений всего 50, проблема скорее не в VirtualList, а в remount/parsing/components.
+## **15. Не трогать Stage-2 / prefetch V1.2**
 
-
-
-
-
-## **9. Markdown/emoji через**
-
-`startTransition` **— только если реально есть bottleneck**
-
-Не добавлять преждевременно.
-
-Сначала React Profiler должен показать, что Markdown/emoji/formatting съедают заметное время. Если нет — не трогать.
-
-## **10. Signed URL map memo — обязательно**
-
-После V1 lazy media уже вне critical path, но warm render может тормозить из-за пересчёта карт.
-
-Добавить:
+Согласен. V1.3 должен работать поверх V1.2:
 
 ```text
-useMemo по stable message ids/storage_paths
-dedupe in-flight signed-url requests
-cache by storage_path + expires_at
+full RPC before first paint = 0
+wrong-chat flash = 0
 ```
 
-## **11. Messages cache key должен быть единым и предсказуемым**
+Эти два инварианта нельзя сломать.
 
-Для lean/full нельзя устроить ситуацию, где UI скачет между двумя query keys.
+## **16. Отдельный audit-файл**
 
-Рекомендация:
+Да:
 
 ```text
-telegramMessagesLeanQK(dialogKey, limit=20)
-telegramMessagesFullQK(dialogKey, limit=50)
+docs/audit/2026-07-08-telegram-chat-performance-v1-3.md
 ```
 
-Мержить в derived view:
+В V1.2 добавить только ссылку на V1.3, если нужно.
+
+## **17. Итоговый статус**
+
+Финальный отчёт должен завершаться одним из вариантов:
 
 ```text
-displayMessages = merge(full ?? lean)
+PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.3-MEMOIZE-BUBBLE — PASS
 ```
 
-Не пытаться вручную писать full в lean cache без строгого adapter-а.
-
-## **12. Full-query не должен блокировать actions**
-
-Пока пришёл только lean:
-
-- send работает;
-- reply preview работает, если reply_to есть;
-- mark read работает;
-- scroll bottom работает;
-- media placeholders работают.
-
-Full-query только обогащает данные.
-
-## **13. Mark read timing не менять**
-
-Нельзя из-за fast-paint раньше/позже ломать unread.
-
-Зафиксировать:
+или:
 
 ```text
-mark-read вызывается по тем же условиям, что V1
+PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.3-MEMOIZE-BUBBLE — PARTIAL
 ```
 
-Не привязывать mark-read к full-query.
-
-## **14. Нужно проверить PostgreSQL/Auth overhead именно под тем же JWT**
-
-`EXPLAIN authenticated` сделать не абстрактно, а максимально близко к UI:
+`PASS` только если:
 
 ```text
-same admin user
-same p_user_id / telegram_user_id
-same bot id
-same limit
-same selected heavy dialog
+warm p95 < 200 ms
+cold gates pass
+render count diff-only
+full RPC before first paint = 0
+wrong-chat flash = 0
+regression smoke pass
+typecheck pass
 ```
 
-Иначе сравнение снова будет некорректным.
+## **18. Virtualization не начинать автоматически**
 
-## **15. Payload proof обязателен**
-
-В audit добавить таблицу:
+Если V1.3 не даст `<200 ms`, следующий вывод не “сразу делаем virtualization”, а:
 
 ```text
-V1 full response:
-- bytes compressed
-- bytes uncompressed
-- rows
-- fields
-
-V1.1 lean response:
-- bytes compressed
-- bytes uncompressed
-- rows
-- fields
-
-Reduction %
+V1.4 candidate only after Profiler proof
 ```
 
-Без этого нельзя понять, дал ли lean RPC эффект.
-
-## **16. Network proof обязателен**
-
-В audit добавить:
-
-```text
-Request start
-TTFB
-Content download
-JSON parse
-React first visible message
-Total UI ready
-```
-
-Скрин или exported performance trace.
-
-## **17. Цель <1 сек cold open должна быть “first visible messages”, не “всё готово”**
-
-Иначе медиа/full/pills могут мешать.
-
-Формулировка DoD:
-
-```text
-Cold open first visible message < 1 сек p95
-Full enrichment may finish later
-```
-
-## **18. p95 нельзя доказать одним открытием**
-
-Минимально:
-
-```text
-10 cold opens на тяжёлом диалоге
-10 warm reopens
-median + p95
-```
-
-Если Lovable не может стабильно гонять 10 раз, статус только `PARTIAL`.
-
-## **19. Не трогать IG/Support/unified — согласен**
-
-Но proof regression всё равно нужен:
-
-```text
-unified inbox opens
-IG row opens
-Support row opens
-mono Telegram opens
-```
-
-Без глубокой проверки, просто smoke.
-
-## **20. Итоговый proof-файл**
-
-```text
-docs/audit/2026-07-08-telegram-chat-performance-v1-1.md
-```
-
-## **21. Финальный отчёт**
-
-```text
-Отчет о выполненной работе: PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1
-```
-
-Финальный статус:
-
-```text
-Telegram chat V1.1 first-paint optimization — PASS / PARTIAL
-Cold first visible message p95 — <1s / not reached
-Warm reopen p95 — <200ms / not reached
-Lean payload reduction — % 
-Prefetch hit rate — %
-Realtime/send/read/media regression — PASS
-```
-
-## **Утверждение**
-
-План утверждён после этих правок.
-
-Ключевой принцип V1.1:
-
-```text
-Сначала показываем lean последние 20 сообщений из cache/prefetch.
-Потом фоном догружаем full 50 и медиа.
-Ни один enrichment-запрос не блокирует первый видимый чат.
-
-PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1
-```
-
-**Цель:** довести открытие чата до ощущения «как Telegram».
-
-- Cold open < 1 сек стабильно (сейчас ~1.7 с UI / 1.04 с RPC)
-- Warm reopen < 100–200 мс (сейчас ~0.6 с UI / 0.18 с RPC)
+Для 50 сообщений virtualization может быть лишней.
 
 ---
 
-### Diagnose (перед реализацией)
+План утверждён. Начинать с **read-only diagnose H1–H5**, затем прислать мини-отчёт перед клиентскими правками.
 
-1. **Почему RPC 1043 мс в UI против 0.5 мс в DB.**
-  - Замерить в браузере: DNS/TLS, TTFB, download, JSON parse отдельно.
-  - Проверить размер payload (Content-Length, gzip on/off).
-  - Проверить, не идёт ли auth refresh перед первым запросом (частая причина +300–500 мс).
-  - `EXPLAIN (ANALYZE, BUFFERS)` того же RPC под ролью `authenticated` (не только под service_role) — RLS/guard overhead.
-  - Посмотреть, не тянет ли RPC лишние поля (`meta` jsonb, `reply_markup`, длинные тексты у старых сообщений).
-2. **Warm reopen 0.6 с при cache hit 0.18 мс RPC.**
-  - Значит время съедает не сеть, а re-mount дерева (VirtualList, аватарки, парсинг Markdown, i18n).
-  - Профайл React DevTools: сколько ms на render `ContactTelegramChat` + список сообщений.
+&nbsp;
 
----
+План: PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.3-MEMOIZE-BUBBLE
 
-### Plan
+Цель: warm p95 first visible message <200 ms (желательно <150 ms) при переключении A↔B, без регрессий cold/write-path. Bottleneck по V1.2 proof — не сеть, а render/DOM 50 bubbles.
 
-#### Step 1. Split payload: fast-paint 20 + background 50
+## Scope V1.3
 
-- RPC `admin_get_telegram_messages_fast_v1` → добавить перегрузку/параметр `p_fast_limit` (по умолчанию 20).
-- Новый lean-вариант возвращает только поля для первого paint:
-`id, direction, message_text, message_type, created_at, is_read, sent_by_admin, telegram_message_id`
-без `meta`, `reply_markup`, без `bot_*` / `admin_*` join (их отдаёт вторым RPC).
-- Клиент: два `useQuery`:
-  - `messages-fast` (limit 20, lean) — критический путь;
-  - `messages-full` (limit 50, полный) — фоновая догрузка, мерджится в тот же кэш.
-- `isLoading` привязан только к `messages-fast`.
+Только client-side render-оптимизация:
 
-#### Step 2. Prefetch стратегия
+1. Извлечь `MessageBubble` (сообщения) и `EventBubble` (события/системные пиллы) как отдельные top-level компоненты в `src/components/admin/chat/`.
+2. Обернуть оба в `React.memo` с explicit props (никаких больших `msg`/`event` объектов целиком — только render-relevant поля).
+3. Custom comparator: только render-relevant поля (id, direction, message_text, status, edited, deleted, timeShort, highlighted, reactions ref, media поля, reply_to_message_id, bot metadata, admin_profile ref).
+4. Стабилизировать identity: `mergeByIdPreferEnriched` при равных полезных полях должен возвращать **ту же ссылку** на существующий item (`===`), чтобы memo реально не перерисовывал ряды после fetch.
+5. Проброс всех обработчиков (`onReply`, `onReact`, `onEdit`, `onDelete`, `onScrollToQuote`, `onRefreshMedia`) через `useCallback` со стабильными зависимостями.
+6. Мапы (`messagesByTgId`, `botsMap`, `telegramReactionsMap`) — пробрасывать не целиком, а через селектор конкретной строки: комбинируем в `chatItemsWithMeta` (уже memoized) заранее рассчитанные `quotedPreview`, `botLabel`, `reactionsForRow`. Тогда `<MessageBubble>` получает готовые примитивы + один reactions-массив.
+7. Стабилизировать `avatarUrl`, `clientName` — уже строки, ок; убедиться, что props не перекладываются в новые объекты каждый рендер.
+8. Раздел «Reply/Emoji hover controls» и dropdown «Редактировать/Удалить» оставить внутри `<MessageBubble>` — они висят на hover, не влияют на initial paint.
+9. НЕ трогать: RPC, RLS, edge functions, realtime, write-path (`sendMessage/edit/delete/reactions/read`), Stage-2 idle-fetch, prefetch механику, freshness marker, ScrollArea/pinning.
+10. НЕ смешивать с `DRAFT-PER-DIALOG` — отдельный будущий патч.
 
-- После загрузки списка диалогов — `queryClient.prefetchQuery` для первых 3 диалогов (lean-вариант, 20 сообщений).
-- На `onMouseEnter` / `onPointerDown` строки диалога — prefetch того же lean-запроса (Telegram/Slack паттерн).
-- Prefetch кладём с тем же query key, чтобы клик по диалогу мгновенно взял cache hit.
-
-#### Step 3. RPC round-trip diagnostics
-
-- Добавить `console.time`/Performance API вокруг RPC: `network`, `parse`, `render`.
-- Если TTFB > 300 мс — проверить, не идёт ли параллельный `auth.getSession()` перед fetch (пересобрать supabase client init, чтобы session уже был hydrated к моменту клика).
-- Если parse тяжёлый — вынести `meta` из fast-варианта (Step 1 это уже решает).
-
-#### Step 4. Render-cost на warm reopen
-
-- `React.memo` на `MessageBubble`, стабильные ключи, `useMemo` для отформатированных дат.
-- Не пересчитывать signed URL map на каждый render (мемо по `message.id`).
-- Отложить mount тяжёлых плагинов (Markdown/emoji) через `startTransition` — текст появляется, форматирование через кадр.
-
-#### Step 5. Payload size
-
-- gzip/br проверить на ответе Postgres (RPC через PostgREST должен уже сжимать).
-- Обрезать `message_text` до 4 КБ на fast-варианте (полный текст приходит во втором запросе).
-
----
-
-### Dry run / замеры до
-
-- Performance timeline на cold open: TTFB, response, parse, first paint.
-- Warm reopen: React Profiler flamegraph.
-- `EXPLAIN ANALYZE` под `authenticated`.
-
-### Execute
-
-- Миграция: перегрузка RPC `admin_get_telegram_messages_fast_v1(p_user_id, p_limit, p_fast boolean default true)` либо новая `admin_get_telegram_messages_lean_v1`.
-- Клиент: `ContactTelegramChat.tsx` — двухступенчатый useQuery + мердж; prefetch в `InboxTabContent.tsx` / row hover.
-- Мемоизация в `MessageBubble` и производных компонентах.
-
-### Verify (DoD)
-
-Приложить фактические цифры before/after:
+## Гипотезы, которые обязан подтвердить/опровергнуть diagnose (Шаг 2 перед правкой)
 
 
-| Метрика                             | Baseline (V1) | Target (V1.1)                    |
-| ----------------------------------- | ------------- | -------------------------------- |
-| Cold open UI                        | 1.696 с       | < 1.0 с                          |
-| Cold open RPC network               | 1.043 с       | < 400 мс                         |
-| Warm reopen UI                      | 0.595 с       | < 200 мс                         |
-| Warm reopen RPC                     | 0.176 с       | < 50 мс (или 0, если cache-only) |
-| Prefetch hit rate первых 3 диалогов | 0%            | > 80%                            |
-| Payload fast-варианта               | текущий       | −60% (без meta/join)             |
+| Гипотеза                                                                                   | Как проверить                                  |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| H1: `mergeByIdPreferEnriched` возвращает новые item-ссылки при equal payload               | reader на функцию 353–390, сравнить с equality |
+| H2: `chatItemsWithMeta` пересобирается на каждый setState (draft/editing/highlightedId)    | grep зависимостей useMemo 671                  |
+| H3: `renderChatItem` замыкается на нестабильные callbacks/maps → все ряды перерисовываются | React DevTools Profiler (2 warm sample)        |
+| H4: quote lookup (`messagesByTgId.get`) в hot render path                                  | line 1767                                      |
+| H5: reactions map read (`telegramReactionsMap?.[msg.id]`) в hot render path                | line 1705                                      |
 
 
-Regression pass: send/edit/delete/voice/video_note, mark_read, unread counter, realtime, IG/Support/mono inbox — не тронуты.
+Diagnose read-only без правок, потом мини-отчёт с таблицей → согласование → правки.
 
----
+## Технические шаги (build phase, после согласования)
 
-### Что НЕ делаем в V1.1
+Шаг A (файлы, создание):
 
-- Не меняем write-path (`telegram-admin-chat` send/edit/delete).
-- Не трогаем RLS `telegram_messages`.
-- Не трогаем coordinator `mark_dialog_read_v2`, unread-счётчик.
-- Не переносим realtime подписки.
-- Unified inbox / IG / Support — вне scope.
+- `src/components/admin/chat/TelegramMessageBubble.tsx` — memo, explicit props.
+- `src/components/admin/chat/TelegramEventBubble.tsx` — memo, explicit props.
+- `src/components/admin/chat/telegramBubbleTypes.ts` — тип props (плоский), чтобы TS следил за explicit polями.
+
+Шаг B (изменения `ContactTelegramChat.tsx`):
+
+- `mergeByIdPreferEnriched`: shallow-equal по render-relevant fields → return `prev[i]` при совпадении (identity preserved).
+- `chatItemsWithMeta` расширить: добавить precomputed `quotedPreview`, `quotedAuthor`, `botLabel`, `reactionsForRow`.
+- Заменить inline `renderChatItem` на `<TelegramMessageBubble ... />` / `<TelegramEventBubble ... />` в map (2060–2073).
+- Все callbacks через `useCallback` (с корректными deps: mutations, setters, scrollToMessage).
+- `renderChatItem` удалить.
+
+Шаг C (проверка):
+
+- typecheck.
+- Runtime proof harness V1.3 (тот же что V1.2, стабильные selectors `data-testid="telegram-message-list"` + `data-message-id`): N=10 warm, N=10 cold-nopf, N=10 cold-pf.
+- React DevTools Profiler: reopen A→B → «render committed» count по `<TelegramMessageBubble>` должен быть = только новые/изменённые ряды (не 50).
+- Регрессия smoke: send / edit / delete / voice / video_note / mark_read / реакция / reply-quote scroll / realtime новое входящее.
+
+## Гейты (Definition of Done)
+
+
+| Метрика                             | Гейт                   | Действие при miss                                    |
+| ----------------------------------- | ---------------------- | ---------------------------------------------------- |
+| Warm TTFP p95                       | <200 ms (stretch <150) | PARTIAL, но проверить нужна ли virtualization (V1.4) |
+| Warm render count MessageBubble     | ≤ diff-only            | Иначе H3 не решена, править comparator               |
+| Cold no-pf p95                      | ≤ 461 ms (V1.2 +10%)   | fail → откат                                         |
+| Cold pf p95                         | ≤ 415 ms (V1.2 +10%)   | fail → откат                                         |
+| Full RPC before first paint         | 0/N                    | не должно измениться                                 |
+| Wrong-chat flash                    | 0                      | не должно измениться                                 |
+| Selector timeouts                   | 0/30                   | иначе proof не принимается                           |
+| Typecheck                           | PASS                   | обязателен                                           |
+| Регрессия write-path/realtime/media | нет                    | обязателен                                           |
+
+
+## Файлы (ожидаемое)
+
+- new: `src/components/admin/chat/TelegramMessageBubble.tsx`
+- new: `src/components/admin/chat/TelegramEventBubble.tsx`
+- new: `src/components/admin/chat/telegramBubbleTypes.ts`
+- edit: `src/components/admin/ContactTelegramChat.tsx` (merge identity, chatItemsWithMeta расширение, замена renderChatItem, useCallback)
+- new: `docs/audit/2026-07-08-telegram-chat-performance-v1-3.md` (diagnose + proof + итог)
+- edit: `.lovable/plan.md`
+
+## Не в scope
+
+- DRAFT-PER-DIALOG (отдельный bugfix patch).
+- Virtualization (только если H3+memo не даст <200 ms).
+- Любые изменения RPC/RLS/edge functions/realtime.
+- Изменения в prefetch/idle Stage-2 механике V1.2.
+
+## Отчёт по завершении
+
+Обязательная итоговая таблица:
+
+
+| Metric                                                          | V1.2     | V1.3 | Status    |
+| --------------------------------------------------------------- | -------- | ---- | --------- |
+| warm p95                                                        | 349.8 ms | ...  | PASS/MISS |
+| cold-nopf p95                                                   | 430.9 ms | ...  | PASS/MISS |
+| cold-pf p95                                                     | 376.6 ms | ...  | PASS/MISS |
+| MessageBubble render count on reopen                            | ~50      | ...  | PASS/MISS |
+| full RPC before first paint                                     | 0        | 0    | PASS      |
+| wrong-chat flash                                                | 0        | 0    | PASS      |
+| regression send/edit/delete/voice/video_note/mark_read/realtime | PASS     | ...  | PASS/FAIL |
+
+
+Начать с Шага 2 — read-only diagnose с подтверждением H1–H5 и коротким отчётом, только потом клиентские правки.
