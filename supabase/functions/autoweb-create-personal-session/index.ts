@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, is_published')
+      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at')
       .eq('id', liveEventId)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     }
 
     const mode = event.autoweb_mode as string;
-    if (mode !== 'just_in_time' && mode !== 'on_demand') {
+    if (mode !== 'just_in_time' && mode !== 'on_demand' && mode !== 'one_time') {
       return jsonRes({ status: 'unsupported_mode', mode }, 400);
     }
 
@@ -93,9 +93,13 @@ Deno.serve(async (req) => {
       }
       chosenOffset = off;
       startsAt = new Date(Date.now() + off * 60_000);
-    } else {
+    } else if (mode === 'on_demand') {
       const minDelay = Math.max(0, Number(cfg?.on_demand?.min_delay_seconds ?? 0));
       startsAt = new Date(Date.now() + minDelay * 1000);
+    } else {
+      // one_time: старт из event.scheduled_at (общая точка для всех зрителей);
+      // fallback на now(), если scheduled_at не задан (не должно случаться в валидной конфигурации).
+      startsAt = event.scheduled_at ? new Date(event.scheduled_at as string) : new Date();
     }
 
     const endsAt = new Date(
@@ -131,7 +135,7 @@ Deno.serve(async (req) => {
           chosen_offset: chosenOffset,
         });
       }
-    } else {
+    } else if (mode === 'on_demand') {
       // on_demand → любая активная сессия (ends_at > now), pending|live
       const { data: existing } = await admin
         .from('live_event_sessions')
@@ -150,6 +154,25 @@ Deno.serve(async (req) => {
           session: existing[0],
           dedup: true,
           dedup_reason: 'on_demand_active_session',
+        });
+      }
+    } else {
+      // one_time → одна сессия на пользователя+эфир (starts_at общий = event.scheduled_at)
+      const { data: existing } = await admin
+        .from('live_event_sessions')
+        .select('id, starts_at, ends_at, status, mode')
+        .eq('live_event_id', liveEventId)
+        .eq('viewer_user_id', viewerUserId)
+        .eq('mode', 'one_time')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        return jsonRes({
+          status: 'ok',
+          session: existing[0],
+          dedup: true,
+          dedup_reason: 'one_time_existing',
         });
       }
     }

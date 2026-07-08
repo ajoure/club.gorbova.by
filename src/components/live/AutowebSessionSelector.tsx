@@ -12,7 +12,7 @@
  *
  * После выбора → setSearchParams({session: <uuid>}) → AutowebRoomRuntime монтируется.
  */
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +30,30 @@ export function AutowebSessionSelector({ liveEventId, onSessionChosen }: Props) 
   const { data, isLoading, error, viewerTimezone } = useAutowebSessionResolver({ liveEventId });
   const [submitting, setSubmitting] = useState<string | null>(null);
 
-  if (isLoading) {
+  // one_time: селектор не показывается, персональная сессия создаётся/находится автоматически,
+  // пользователь сразу попадает в AutowebRoomRuntime.
+  const oneTimeStartedRef = useRef(false);
+  useEffect(() => {
+    if (data?.mode !== "one_time" || oneTimeStartedRef.current) return;
+    oneTimeStartedRef.current = true;
+    (async () => {
+      const res = await createAutowebPersonalSession({ liveEventId });
+      if (!res.ok || !res.sessionId) {
+        toast.error(res.reason || "Не удалось открыть эфир");
+        oneTimeStartedRef.current = false;
+        return;
+      }
+      onSessionChosen(res.sessionId);
+    })();
+  }, [data?.mode, liveEventId, onSessionChosen]);
+
+  if (isLoading || data?.mode === "one_time") {
     return (
       <Card className="p-8 flex items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin mr-2" />
-        <span className="text-sm text-muted-foreground">Загружаем расписание…</span>
+        <span className="text-sm text-muted-foreground">
+          {data?.mode === "one_time" ? "Открываем эфир…" : "Загружаем расписание…"}
+        </span>
       </Card>
     );
   }
@@ -55,11 +74,7 @@ export function AutowebSessionSelector({ liveEventId, onSessionChosen }: Props) 
 
   const eventTz = data.timezone || "Europe/Minsk";
 
-  // one_time не должен сюда доходить (selector скрывается на уровне LiveEvent.tsx),
-  // но на всякий случай обрабатываем — без выбора, пробрасываем ситуацию выше.
-  if (data.mode === "one_time") {
-    return null;
-  }
+  // one_time уже обработан выше (auto-start effect) — здесь дублирующий guard не нужен.
 
   const handleCreatePersonal = async (offsetMinutes?: number) => {
     setSubmitting(offsetMinutes != null ? `jit-${offsetMinutes}` : "on_demand");
