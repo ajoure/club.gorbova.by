@@ -79,5 +79,5 @@
 - [x] Фаза 6 (частично) — Telegram-prompt после lead уже работает через `LeadRequestDialog` (шаг `telegram` + `TelegramCompactCard`); reuse без копирования. Автоматически покрывает и bank_installment.
 - [ ] Фаза 3 — редактор оффера `internal_installment`: попытки списания per-offer + уведомления 7/3/1, cron читает `meta.installment.max_charge_attempts_per_installment`.
 - [ ] Фаза 4 (UI редактора) — в OfferEditor добавить тип «Заявка на рассрочку» с полями «Ссылка банка», «Текст сообщения (HTML)», «Подпись кнопки CTA».
-- [ ] Фаза 5 — на HTML-странице cb: убрать «Внести бронь», добавить наши кнопки «Оплатить в два этапа» (open-installment) и «Заявка на рассрочку» (open-bank-installment) для всех 3 тарифов.
+- [x] Фаза 5 (частично) — на HTML-странице cb: 3× «Внести бронь 100byn» → «Заявка на рассрочку» (open-bank-installment, tariff-key = buh/gl_buh/biz-l); 3× «Оставить заявку» → open-lead (tariff-key = buh). Кнопки «Оплатить в два этапа» на cb пока не добавлены (нет позиции в Tilda-гриде — ожидает решения).
 - [ ] Фаза 7 — Playwright E2E: cb, все 5 кнопок × 3 тарифа, скриншоты, отчёт.
