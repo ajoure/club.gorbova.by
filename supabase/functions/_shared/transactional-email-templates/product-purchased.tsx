@@ -303,7 +303,7 @@ const Email = ({
               <Hr style={{ borderColor: '#eee', margin: '24px 0 16px 0' }} />
 
               <Text style={{ ...paragraph, color: MUTED, fontSize: '13px' }}>
-                Если у вас возникнут вопросы — просто ответьте на это письмо, мы всегда на связи.
+                Если у вас возникнут вопросы, просто ответьте на это письмо. Мы всегда на связи.
               </Text>
             </Section>
 
