@@ -78,9 +78,10 @@ Deno.serve(async (req) => {
   // 1. Load order
   const { data: order, error: orderErr } = await supabase
     .from('orders_v2')
-    .select('id, order_number, user_id, product_id, tariff_id, customer_email, status, meta, currency, final_price')
+    .select('id, order_number, user_id, profile_id, product_id, tariff_id, customer_email, status, meta, currency, final_price, paid_amount, updated_at')
     .eq('id', orderId)
     .maybeSingle()
+
 
   if (orderErr) return json({ error: 'order_lookup_failed', details: orderErr.message }, 500)
   if (!order) return json({ error: 'order_not_found' }, 404)
@@ -102,38 +103,65 @@ Deno.serve(async (req) => {
   const productName = (product as any)?.name || 'Продукт'
   const tariffName = (tariff as any)?.name || null
 
-  // Best-effort: resolve access_end_at from the most recent active subscription for this user+product
+  // Best-effort: resolve access_end_at from the most recent active subscription for this order/product
   let accessEndAt: string | null = null
-  if (order.user_id && order.product_id) {
-    const { data: sub } = await supabase
-      .from('subscriptions_v2')
-      .select('access_end_at')
-      .eq('user_id', order.user_id)
-      .eq('product_id', order.product_id)
-      .in('status', ['active', 'past_due'])
-      .order('access_end_at', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle()
-    accessEndAt = (sub as any)?.access_end_at || null
+  if (order.product_id) {
+    const subUserIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
+    for (const uid of subUserIds) {
+      const { data: sub } = await supabase
+        .from('subscriptions_v2')
+        .select('access_end_at')
+        .eq('user_id', uid)
+        .eq('product_id', order.product_id)
+        .in('status', ['active', 'past_due'])
+        .order('access_end_at', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle()
+      if ((sub as any)?.access_end_at) {
+        accessEndAt = (sub as any).access_end_at
+        break
+      }
+    }
   }
 
-  // 3. Recipient resolution
+
+  // 3. Recipient resolution — try profile via user_id, profile_id, and customer_email
   let recipientEmail: string | null = order.customer_email || null
   let telegramUserId: number | null = null
   let recipientName: string | null = null
-  if (order.user_id) {
+
+  const profileIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
+  const applyProfile = (profile: any | null | undefined) => {
+    if (!profile) return
+    recipientEmail = recipientEmail || profile.email || null
+    recipientName = recipientName || profile.first_name || profile.full_name || null
+    if (!telegramUserId) {
+      const tuid = profile.telegram_user_id
+      if (tuid) telegramUserId = typeof tuid === 'string' ? Number(tuid) : Number(tuid)
+    }
+  }
+
+  for (const pid of profileIds) {
+    if (telegramUserId && recipientEmail && recipientName) break
     const { data: profile } = await supabase
       .from('profiles')
       .select('email, full_name, first_name, telegram_user_id')
-      .eq('id', order.user_id)
+      .eq('id', pid)
       .maybeSingle()
-    if (profile) {
-      recipientEmail = recipientEmail || (profile as any).email || null
-      recipientName = (profile as any).first_name || (profile as any).full_name || null
-      const tuid = (profile as any).telegram_user_id
-      if (tuid) telegramUserId = typeof tuid === 'string' ? Number(tuid) : tuid
-    }
+    applyProfile(profile)
   }
+
+  // Fallback: lookup by customer_email if still no telegram/name
+  if ((!telegramUserId || !recipientName) && recipientEmail) {
+    const { data: profileByEmail } = await supabase
+      .from('profiles')
+      .select('email, full_name, first_name, telegram_user_id')
+      .ilike('email', recipientEmail)
+      .limit(1)
+      .maybeSingle()
+    applyProfile(profileByEmail)
+  }
+
 
   // 4. Load per-product overrides (email + telegram)
   const overrides: Record<string, any> = {}
@@ -216,14 +244,19 @@ Deno.serve(async (req) => {
       results.email = { skipped: 'already_sent', delivery_id: row.id }
     } else {
       try {
+        const paidAmount = Number(order.paid_amount ?? order.final_price ?? 0) || null
         const templateData: Record<string, unknown> = {
           recipientName,
           productName,
           tariffName,
           accessEndAt,
           orderNumber: order.order_number,
+          paidAmount,
+          currency: order.currency || 'BYN',
+          paidAt: order.updated_at || new Date().toISOString(),
           introHtml: overrides.email?.intro_html || null,
         }
+
         const { data: sendRes, error: sendErr } = await supabase.functions.invoke(
           'send-transactional-email',
           {
@@ -284,14 +317,20 @@ Deno.serve(async (req) => {
         if (!botToken) throw new Error('primary_bot_not_configured')
 
         const endLine = accessEndAt
-          ? `\n🗓 Доступ действует до: <b>${fmtRuDate(accessEndAt)}</b>`
+          ? `\n🗓 <b>Доступ до:</b> ${fmtRuDate(accessEndAt)}`
           : ''
-        const tariffPart = tariffName ? ` (тариф «${tariffName}»)` : ''
+        const priceRaw = Number(order.paid_amount ?? order.final_price ?? 0)
+        const priceLine = priceRaw > 0
+          ? `\n💳 <b>Оплачено:</b> ${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
+          : ''
+        const orderLine = order.order_number ? `\n🧾 <b>Заказ:</b> ${order.order_number}` : ''
+        const tariffPart = tariffName ? `\n📦 <b>Тариф:</b> ${tariffName}` : ''
         const namePrefix = recipientName ? `${recipientName}, ` : ''
         const extra = overrides.telegram?.intro_text
           ? `\n\n${overrides.telegram.intro_text}`
           : ''
-        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${productName}</b>${tariffPart}.${endLine}\n\nЛичный кабинет: https://gorbova.by/purchases${extra}`
+        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${productName}</b>.${tariffPart}${priceLine}${endLine}${orderLine}\n\n👉 <a href="https://gorbova.by/purchases">Открыть личный кабинет</a>${extra}`
+
 
         const { ok, data } = await tgSendMessage(botToken, telegramUserId, text, true)
         if (!ok) throw new Error(`telegram_send_failed: ${JSON.stringify(data).slice(0, 300)}`)
