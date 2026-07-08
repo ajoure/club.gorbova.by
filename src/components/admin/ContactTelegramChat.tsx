@@ -1606,6 +1606,7 @@ export function ContactTelegramChat({
       return (
         <div
           key={msg.id}
+          data-message-id={msg.id}
           className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
         >
           <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
