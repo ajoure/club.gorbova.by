@@ -130,6 +130,7 @@ interface LiveEvent {
   room_opened_at?: string | null;
   live_started_at?: string | null;
   webinar_completed_at?: string | null;
+  source_live_event_id?: string | null;
 }
 
 interface NotificationOffset {
@@ -174,6 +175,9 @@ interface LiveEventForm {
   // Sprint A — autowebinar
   autoweb_user_mode: AutowebUserMode;
   autoweb_config: AutowebConfig;
+  /** Timed-replay: id исходного live_stream/recorded_webinar, чью историю чата/вопросов/сценария
+   *  подтягивает runtime автовебинара. Обязателен для timed-replay сценария. */
+  source_live_event_id: string | null;
 }
 
 const defaultForm: LiveEventForm = {
@@ -223,6 +227,7 @@ const defaultForm: LiveEventForm = {
       allow_rewatch_before_end: false,
     },
   },
+  source_live_event_id: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
@@ -421,6 +426,30 @@ export default function AdminLiveEvents() {
     },
     enabled: dialogOpen,
   });
+
+  // Sprint C — кандидаты в "Исходный live_stream" для timed-replay автовебинара.
+  // Загружаем список только когда открыт диалог автовеба/recorded_webinar.
+  const { data: sourceCandidates } = useQuery({
+    queryKey: ["autoweb-source-candidates"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("live_events")
+        .select("id, title, starts_at:scheduled_at, event_type")
+        .in("event_type", ["live_stream", "recorded_webinar"])
+        .order("scheduled_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as Array<{
+        id: string;
+        title: string;
+        starts_at: string | null;
+        event_type: string;
+      }>;
+    },
+    enabled: dialogOpen && (form.event_type === "recorded_webinar" || form.event_type === "autowebinar"),
+  });
+
+
 
 
   const validationItems = useMemo(() => {
@@ -789,6 +818,9 @@ export default function AdminLiveEvents() {
         metadata: mergedMetadata,
         autoweb_mode: autowebMode,
         autoweb_config: effectiveEventType === "autowebinar" ? data.autoweb_config : {},
+        // Timed-replay источник: сохраняем только для autowebinar; для остальных типов очищаем.
+        source_live_event_id:
+          effectiveEventType === "autowebinar" ? (data.source_live_event_id || null) : null,
       };
 
       // On INSERT only: seed initial lifecycle status. UPDATE never touches platform_status/status.
@@ -951,6 +983,7 @@ export default function AdminLiveEvents() {
           : "one_time"
       ),
       autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
+      source_live_event_id: ((event as any).source_live_event_id as string | null) ?? null,
     });
     setDialogOpen(true);
   };
@@ -1186,8 +1219,54 @@ export default function AdminLiveEvents() {
                     onConfigChange={(c) => setForm((f) => ({ ...f, autoweb_config: c }))}
                     timezone={form.event_timezone}
                   />
+                  <div className="space-y-2 pt-2">
+                    <Label>
+                      Исходный live_stream (источник истории чата/вопросов/сценария)
+                    </Label>
+                    <Select
+                      value={form.source_live_event_id ?? "__none__"}
+                      onValueChange={(v) =>
+                        setForm((f) => ({ ...f, source_live_event_id: v === "__none__" ? null : v }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Не выбран — история не подтягивается" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[50vh] overflow-y-auto">
+                        <SelectItem value="__none__">— Не выбран —</SelectItem>
+                        {(sourceCandidates ?? [])
+                          .filter((e) => e.id !== editingId)
+                          .map((e) => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {e.title}
+                              {e.starts_at
+                                ? ` · ${new Date(e.starts_at).toLocaleDateString("ru-RU", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    year: "numeric",
+                                  })}`
+                                : ""}
+                              {" · "}
+                              {e.event_type === "live_stream" ? "live" : "video"}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    {!form.source_live_event_id ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        Без исходного эфира история чата, вопросов и сценария не будет подтянута
+                        в комнату автовебинара. Обязательно для сценария timed-replay.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        История ленты и сценарий берутся из этого эфира; новые сообщения зрителей
+                        пишутся под id автовебинара.
+                      </p>
+                    )}
+                  </div>
                 </FormSection>
               )}
+
 
               <Separator />
 

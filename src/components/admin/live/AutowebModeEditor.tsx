@@ -486,115 +486,114 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
         </Card>
       )}
 
-      {/* Replay (общий блок для всех режимов кроме one_time) */}
-      {userMode !== "one_time" && (
-        <Card>
-          <CardContent className="pt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium">Replay-окно (повторный просмотр после окончания)</Label>
-              <Switch checked={replay.enabled !== false} onCheckedChange={(v) => patchReplay({ enabled: v })} />
-            </div>
-            {replay.enabled !== false && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Открыть replay</Label>
-                    <Select
-                      value={replay.open_strategy ?? "immediate"}
-                      onValueChange={(v) => patchReplay({ open_strategy: v as any })}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="immediate">Сразу после окончания</SelectItem>
-                        <SelectItem value="after_delay">Через задержку</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {replay.open_strategy === "after_delay" && (
-                    <div className="space-y-2">
-                      <Label>Задержка (минут)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={replay.delay_minutes ?? 0}
-                        onChange={(e) => patchReplay({ delay_minutes: Math.max(0, Number(e.target.value || 0)) })}
-                      />
-                    </div>
-                  )}
+      {/* Replay (общий блок для ВСЕХ режимов автовебинара, включая one_time).
+          SoT — один и тот же autoweb_config.replay для всех 4 режимов. */}
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium">Replay-окно (повторный просмотр после окончания)</Label>
+            <Switch checked={replay.enabled !== false} onCheckedChange={(v) => patchReplay({ enabled: v })} />
+          </div>
+          {replay.enabled !== false && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Открыть replay</Label>
+                  <Select
+                    value={replay.open_strategy ?? "immediate"}
+                    onValueChange={(v) => patchReplay({ open_strategy: v as any })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="immediate">Сразу после окончания</SelectItem>
+                      <SelectItem value="after_delay">Через задержку</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                {replay.open_strategy === "after_delay" && (
                   <div className="space-y-2">
-                    <Label>Длительность окна (часов)</Label>
+                    <Label>Задержка (минут)</Label>
                     <Input
                       type="number"
                       min={0}
-                      max={720}
-                      value={replay.window_hours ?? 48}
-                      onChange={(e) => patchReplay({ window_hours: Math.max(0, Number(e.target.value || 0)) })}
+                      value={replay.delay_minutes ?? 0}
+                      onChange={(e) => patchReplay({ delay_minutes: Math.max(0, Number(e.target.value || 0)) })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>CTA в replay</Label>
-                    <Select
-                      value={replay.cta_strategy ?? "same_as_live"}
-                      onValueChange={(v) => patchReplay({ cta_strategy: v as any })}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="same_as_live">Те же, что в эфире</SelectItem>
-                        <SelectItem value="replay_only">Отдельные replay-CTA</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={!!replay.show_chat_history}
-                    onCheckedChange={(v) => patchReplay({ show_chat_history: v })}
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Длительность окна (часов)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={replay.window_hours ?? 48}
+                    onChange={(e) => patchReplay({ window_hours: Math.max(0, Number(e.target.value || 0)) })}
                   />
-                  <Label>Показывать историю чата в replay</Label>
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                <div className="space-y-2">
+                  <Label>CTA в replay</Label>
+                  <Select
+                    value={replay.cta_strategy ?? "same_as_live"}
+                    onValueChange={(v) => patchReplay({ cta_strategy: v as any })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="same_as_live">Те же, что в эфире</SelectItem>
+                      <SelectItem value="replay_only">Отдельные replay-CTA</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={!!replay.show_chat_history}
+                  onCheckedChange={(v) => patchReplay({ show_chat_history: v })}
+                />
+                <Label>Показывать историю чата в replay</Label>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Viewer controls (общий блок для всех режимов кроме one_time) */}
-      {userMode !== "one_time" && (
-        <Card>
-          <CardContent className="pt-4 space-y-2">
-            <Label className="text-sm font-medium">Управление плеером для зрителя</Label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <ToggleRow
-                label="Пауза"
-                checked={vc.allow_pause !== false}
-                onChange={(v) => patchVc({ allow_pause: v })}
-              />
-              <ToggleRow
-                label="Перемотка"
-                checked={!!vc.allow_seek}
-                onChange={(v) => patchVc({ allow_seek: v })}
-              />
-              <ToggleRow
-                label="Изменение скорости"
-                checked={!!vc.allow_speed_control}
-                onChange={(v) => patchVc({ allow_speed_control: v })}
-              />
-              <ToggleRow
-                label="Продолжить с прошлой позиции"
-                checked={vc.resume_from_last_position !== false}
-                onChange={(v) => patchVc({ resume_from_last_position: v })}
-              />
-              <ToggleRow
-                label="Повторный просмотр до конца эфира"
-                checked={!!vc.allow_rewatch_before_end}
-                onChange={(v) => patchVc({ allow_rewatch_before_end: v })}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Viewer controls (общий блок для ВСЕХ режимов автовебинара, включая one_time).
+          Runtime (AutowebRoomRuntime) читает эти флаги напрямую — никакой параллельной
+          "крепости" сверху нет. */}
+      <Card>
+        <CardContent className="pt-4 space-y-2">
+          <Label className="text-sm font-medium">Управление плеером для зрителя</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <ToggleRow
+              label="Пауза"
+              checked={vc.allow_pause !== false}
+              onChange={(v) => patchVc({ allow_pause: v })}
+            />
+            <ToggleRow
+              label="Перемотка"
+              checked={!!vc.allow_seek}
+              onChange={(v) => patchVc({ allow_seek: v })}
+            />
+            <ToggleRow
+              label="Изменение скорости"
+              checked={!!vc.allow_speed_control}
+              onChange={(v) => patchVc({ allow_speed_control: v })}
+            />
+            <ToggleRow
+              label="Продолжить с прошлой позиции"
+              checked={vc.resume_from_last_position !== false}
+              onChange={(v) => patchVc({ resume_from_last_position: v })}
+            />
+            <ToggleRow
+              label="Повторный просмотр до конца эфира"
+              checked={!!vc.allow_rewatch_before_end}
+              onChange={(v) => patchVc({ allow_rewatch_before_end: v })}
+            />
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

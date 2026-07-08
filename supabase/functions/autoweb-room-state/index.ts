@@ -139,15 +139,22 @@ Deno.serve(async (req) => {
       return jsonRes({ status: 'unsupported_event_type', event_type: event.event_type }, 400);
     }
 
-    // Опционально подтягиваем starts_at исходного эфира для timed-replay.
+    // Опционально подтягиваем время фактического старта исходного эфира для timed-replay.
+    // Приоритет: live_started_at (реальный старт трансляции) → room_opened_at (комната открыта)
+    // → starts_at (запланированная дата). Именно эта точка используется как t0 для
+    // проигрывания истории чата/вопросов синхронно с видео.
     let source_started_at: string | null = null;
     if (event.source_live_event_id) {
       const { data: src } = await admin
         .from('live_events')
-        .select('starts_at')
+        .select('starts_at, live_started_at, room_opened_at')
         .eq('id', event.source_live_event_id)
         .maybeSingle();
-      source_started_at = (src as any)?.starts_at ?? null;
+      source_started_at =
+        (src as any)?.live_started_at ??
+        (src as any)?.room_opened_at ??
+        (src as any)?.starts_at ??
+        null;
     }
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
