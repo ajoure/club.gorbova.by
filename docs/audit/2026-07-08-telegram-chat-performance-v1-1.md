@@ -1,5 +1,12 @@
 # PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1 — proof
 
+> **Продолжение:** warm-reopen оптимизация вынесена в отдельный отчёт
+> [PATCH-…-V1.2-WARM-REOPEN](./2026-07-08-telegram-chat-performance-v1-2.md).
+> V1.1 закрыт как PARTIAL: cold target achieved (419 ms p95 <1 s),
+> warm target 200 ms deferred на V1.2 → V1.3.
+
+
+
 **Цель.** Довести открытие чата до ощущения «как Telegram»:
 Cold open <1 сек, Warm reopen <200 мс.
 
