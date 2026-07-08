@@ -435,7 +435,8 @@ export default function AdminLiveEvents() {
       const { data, error } = await supabase
         .from("live_events")
         .select("id, title, starts_at:scheduled_at, event_type")
-        .in("event_type", ["live_stream", "recorded_webinar"])
+        // Только настоящие live_stream — recorded_webinar не является источником истории.
+        .eq("event_type", "live_stream")
         .order("scheduled_at", { ascending: false })
         .limit(200);
       if (error) throw error;
