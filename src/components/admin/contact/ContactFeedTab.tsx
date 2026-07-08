@@ -523,14 +523,31 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
         status === "skipped" ? "пропущен" :
         status === "pending" ? "в очереди" :
         `статус: ${status}`;
-      const title = `${chanLabel} ${statusWord}`;
+      const md = (n.metadata || {}) as Record<string, any>;
+      const subject: string | null = md.subject || null;
+      const preview: string | null = md.preview_text || null;
+      const messageText: string | null = md.message_text || null;
+      // Short preview: telegram → first ~280 chars of message; email → subject + preview
+      const shortBody = (() => {
+        if (kind === "telegram") {
+          const t = (messageText || "").replace(/<[^>]+>/g, "").trim();
+          return t ? (t.length > 320 ? `${t.slice(0, 320)}…` : t) : null;
+        }
+        const parts = [subject ? `Тема: ${subject}` : null, preview ? `Preview: ${preview}` : null];
+        return parts.filter(Boolean).join("\n") || null;
+      })();
+      const title = subject && kind === "email"
+        ? `${chanLabel} ${statusWord}: ${subject}`
+        : `${chanLabel} ${statusWord}`;
       const body = [
-        n.notification_type ? `Шаблон: ${n.notification_type}` : null,
+        shortBody,
+        md.product_name ? `Продукт: ${md.product_name}${md.tariff_name ? ` · ${md.tariff_name}` : ""}` : null,
+        md.skip_reason ? `Причина пропуска: ${md.skip_reason}` : null,
         n.recipient ? `Получатель: ${n.recipient}` : null,
         n.provider_message_id ? `ID сообщения: ${n.provider_message_id}` : null,
         n.error ? `Ошибка: ${n.error}` : null,
       ].filter(Boolean).join("\n");
-      if (!match(title, body, n.recipient, n.notification_type)) continue;
+      if (!match(title, body, n.recipient, n.notification_type, messageText, subject)) continue;
       events.push({
         id: `notification:${n.id}`,
         kind,
@@ -545,10 +562,17 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
           channel,
           notification_type: n.notification_type,
           provider_message_id: n.provider_message_id,
+          subject,
+          message_text: messageText,
+          rendered_html: md.rendered_html || null,
+          template_code: md.template_code || null,
+          product_name: md.product_name || null,
+          tariff_name: md.tariff_name || null,
           is_error: status === "failed" || Boolean(n.error),
         },
       });
     }
+
   }
 
   // Выдача доступа по заказам (access_grant_ledger).
