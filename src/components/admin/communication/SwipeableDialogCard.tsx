@@ -10,6 +10,13 @@ interface SwipeableDialogCardProps {
   disabled?: boolean;
   className?: string;
   onClick?: () => void;
+  /**
+   * PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1:
+   * Fires on pointer enter (desktop hover) and pointer down (mobile press-in,
+   * ~100–200 ms before click). Consumer uses it to prefetch the dialog's
+   * lean messages so the click hits a warm cache.
+   */
+  onPrefetch?: () => void;
 }
 
 export function SwipeableDialogCard({
@@ -19,6 +26,7 @@ export function SwipeableDialogCard({
   disabled = false,
   className,
   onClick,
+  onPrefetch,
 }: SwipeableDialogCardProps) {
   const { swipeHandlers, swipeStyle, offsetX, swipeDirection } = useSwipeActions({
     threshold: 80,
