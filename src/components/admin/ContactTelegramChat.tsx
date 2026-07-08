@@ -1931,7 +1931,7 @@ export function ContactTelegramChat({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full min-h-0">
+      <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
           <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
