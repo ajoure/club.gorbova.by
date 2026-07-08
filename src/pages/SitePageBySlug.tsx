@@ -21,6 +21,7 @@ import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialo
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
+import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
@@ -33,6 +34,7 @@ const ALLOWED_ACTIONS = new Set([
   "open-invoice",
   "open-installment",
   "open-lead",
+  "open-bank-installment",
 ]);
 
 /** Map action → flow used by pickOfferForFlow. */
@@ -41,6 +43,7 @@ const ACTION_TO_FLOW = {
   "open-invoice": "invoice",
   "open-installment": "installment",
   "open-lead": "lead",
+  "open-bank-installment": "bank_installment",
 } as const;
 type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
 
