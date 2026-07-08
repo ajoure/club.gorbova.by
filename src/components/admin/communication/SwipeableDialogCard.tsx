@@ -33,7 +33,9 @@ export function SwipeableDialogCard({
   className,
   onClick,
   onPrefetch,
+  ...rest
 }: SwipeableDialogCardProps) {
+  const testId = (rest as Record<string, string | undefined>)["data-testid"];
   const { swipeHandlers, swipeStyle, offsetX, swipeDirection } = useSwipeActions({
     threshold: 80,
     onSwipeLeft,
