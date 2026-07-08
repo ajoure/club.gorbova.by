@@ -237,7 +237,7 @@ const Email = ({
         <Section style={outer}>
           <Container style={container}>
             <Section style={header}>
-              <Text style={headerBadge}>✓ ОПЛАТА ПОЛУЧЕНА</Text>
+              <Text style={headerBadge}>ОПЛАТА ПОЛУЧЕНА</Text>
               <Heading style={headerTitle}>Спасибо за покупку!</Heading>
             </Section>
 
@@ -247,8 +247,9 @@ const Email = ({
               </Text>
 
               <Text style={paragraph}>
-                Мы получили вашу оплату — доступ уже открыт в личном кабинете.
+                Мы получили вашу оплату. Доступ уже открыт в личном кабинете.
               </Text>
+
 
               {introHtml ? (
                 <Text style={paragraph} dangerouslySetInnerHTML={{ __html: introHtml }} />
