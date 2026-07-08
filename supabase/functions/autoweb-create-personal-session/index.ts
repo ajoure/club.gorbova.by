@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, is_published')
+      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at')
       .eq('id', liveEventId)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     }
 
     const mode = event.autoweb_mode as string;
-    if (mode !== 'just_in_time' && mode !== 'on_demand') {
+    if (mode !== 'just_in_time' && mode !== 'on_demand' && mode !== 'one_time') {
       return jsonRes({ status: 'unsupported_mode', mode }, 400);
     }
 
@@ -93,9 +93,13 @@ Deno.serve(async (req) => {
       }
       chosenOffset = off;
       startsAt = new Date(Date.now() + off * 60_000);
-    } else {
+    } else if (mode === 'on_demand') {
       const minDelay = Math.max(0, Number(cfg?.on_demand?.min_delay_seconds ?? 0));
       startsAt = new Date(Date.now() + minDelay * 1000);
+    } else {
+      // one_time: старт из event.scheduled_at (общая точка для всех зрителей);
+      // fallback на now(), если scheduled_at не задан (не должно случаться в валидной конфигурации).
+      startsAt = event.scheduled_at ? new Date(event.scheduled_at as string) : new Date();
     }
 
     const endsAt = new Date(
