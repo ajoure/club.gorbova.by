@@ -393,21 +393,59 @@ export function ContactTelegramChat({
   const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { action: "get_messages", user_id: userId, limit: 50 },
+      // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1:
+      // прямой DB RPC (SECURITY DEFINER, guarded by has_role) вместо
+      // Edge Function `telegram-admin-chat.get_messages`. Убирает cold
+      // start Edge и синхронную генерацию signed URL для медиа. Medias
+      // подтягиваются лениво через существующий effect ниже.
+      const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
+        p_user_id: userId,
+        p_limit: 50,
       });
       if (error) throw error;
 
-      const nextMessages = (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
+      // Reverse to ASC (oldest at top, newest at bottom) and reshape rows
+      // in the same TelegramMessage shape the render expects.
+      const rows = (data || []) as any[];
+      const nextMessages: TelegramMessage[] = [...rows].reverse().map((r) => ({
+        id: r.id,
+        type: "message" as const,
+        direction: r.direction,
+        message_text: r.message_text,
+        message_id: r.message_id,
+        reply_to_message_id: r.reply_to_message_id ?? null,
+        status: r.status,
+        created_at: r.created_at,
+        sent_by_admin: r.sent_by_admin ?? null,
+        bot_id: r.bot_id ?? null,
+        bot_username: r.bot_username ?? null,
+        bot_name: r.bot_name ?? null,
+        admin_profile: r.sent_by_admin
+          ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
+          : null,
+        telegram_bots: r.bot_id
+          ? { id: r.bot_id, bot_name: r.bot_name, bot_username: r.bot_username }
+          : null,
+        meta: r.meta ?? null,
+        // preserve extras the raw row may carry (unread, pinned, etc.)
+        is_read: r.is_read,
+        is_pinned: r.is_pinned,
+        is_favorite: r.is_favorite,
+        error_message: r.error_message,
+        telegram_user_id: r.telegram_user_id,
+      } as unknown as TelegramMessage));
+
       const prevMessages = (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId,
-    staleTime: 30000,              // 30s before stale - reduces refetch frequency (mobile fix)
-    refetchOnWindowFocus: false,   // Disable - causes mobile "infinite reload" feel
-    refetchOnMount: true,          // Once on mount, not "always"
-    refetchInterval: false,        // Disable polling - realtime is enough
-    refetchOnReconnect: false,     // Prevent mobile reconnect floods
+    staleTime: 60_000,             // 60s stale — warm reopen is instant from cache
+    gcTime: 10 * 60_000,           // keep cache 10 min for warm reopen
+    placeholderData: (prev) => prev, // show previous data instantly during refetch
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    refetchInterval: false,
+    refetchOnReconnect: false,
   });
 
   // Fetch events from telegram_logs - optimized
