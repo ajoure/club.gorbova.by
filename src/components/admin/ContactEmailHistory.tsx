@@ -50,6 +50,23 @@ interface EmailLog {
   meta?: Record<string, any> | null;
 }
 
+function compactEmailPreview(item: Pick<EmailLog, "body_text" | "body_html" | "meta">): string | null {
+  const raw = item.body_text || item.meta?.preview_text || item.body_html || "";
+  const text = String(raw)
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+  return text || null;
+}
+
 export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -116,7 +133,67 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
     enabled: !!(profileId || email),
   });
 
-  const isLoading = isLoadingLogs || isLoadingInbox;
+  // Canonical post-payment email audit: product purchase emails are stored here,
+  // not in legacy email_logs, so the contact card must read this Source of Truth too.
+  const { data: purchaseEmails, isLoading: isLoadingPurchaseEmails } = useQuery({
+    queryKey: ["purchase-email-deliveries", userId, profileId, email],
+    queryFn: async () => {
+      const orderFilters: string[] = [];
+      if (profileId) orderFilters.push(`profile_id.eq.${profileId}`);
+      if (userId) orderFilters.push(`user_id.eq.${userId}`);
+      if (email) orderFilters.push(`customer_email.ilike.${email}`);
+      if (orderFilters.length === 0) return [] as EmailLog[];
+
+      const { data: orders, error: ordersError } = await supabase
+        .from("orders_v2")
+        .select("id")
+        .or(orderFilters.join(","))
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (ordersError) return [] as EmailLog[];
+      const orderIds = (orders || []).map((o) => o.id).filter(Boolean);
+      if (orderIds.length === 0) return [] as EmailLog[];
+
+      const { data, error } = await supabase
+        .from("order_notification_deliveries")
+        .select("id, order_id, channel, notification_type, status, recipient, provider_message_id, sent_at, created_at, error, metadata")
+        .eq("channel", "email")
+        .in("order_id", orderIds)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) return [] as EmailLog[];
+
+      return (data || []).map((row: any) => {
+        const md = (row.metadata || {}) as Record<string, any>;
+        const subject = md.subject || (md.product_name ? `Оплата получена: ${md.product_name}` : "Письмо по покупке");
+        return {
+          id: `purchase-email-${row.id}`,
+          direction: "outgoing" as const,
+          from_email: "system",
+          to_email: row.recipient || email || "—",
+          subject,
+          body_html: md.rendered_html || null,
+          body_text: md.message_text || md.preview_text || null,
+          template_code: md.template_code || row.notification_type || null,
+          provider: "order_notification_deliveries",
+          status: row.status,
+          error_message: row.error || null,
+          created_at: row.sent_at || row.created_at,
+          opened_at: null,
+          clicked_at: null,
+          meta: {
+            ...md,
+            order_id: row.order_id,
+            provider_message_id: row.provider_message_id,
+            source: "order_notification_deliveries",
+          },
+        } satisfies EmailLog;
+      });
+    },
+    enabled: !!(userId || profileId || email),
+  });
+
+  const isLoading = isLoadingLogs || isLoadingInbox || isLoadingPurchaseEmails;
 
   // Also fetch contact_requests as "incoming" emails
   const { data: contactRequests } = useQuery({
@@ -169,6 +246,7 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
 
   // Combine email logs, inbox emails and contact requests
   const allEmails = [
+    ...(purchaseEmails || []).map(e => ({ ...e, _source: 'purchase_delivery' as const })),
     ...((emails || []).filter(e => !isPhantomLog(e))).map(e => ({ ...e, _source: 'log' as const })),
     ...(inboxEmails || []).map((e) => ({
       id: e.id,
@@ -271,6 +349,11 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
                                 ? emailItem.to_email 
                                 : (clientName || emailItem.from_email)}
                             </p>
+                            {compactEmailPreview(emailItem) && (
+                              <p className="mt-1 text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap">
+                                {compactEmailPreview(emailItem)}
+                              </p>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">

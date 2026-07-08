@@ -125,14 +125,19 @@ Deno.serve(async (req) => {
   }
 
 
-  // 3. Recipient resolution — try profile via user_id, profile_id, and customer_email
+  // 3. Recipient resolution — try profile via auth user_id, profile_id, and customer_email.
+  // IMPORTANT: telegram_messages.user_id is the chat/dialog key used by admin UI.
+  // For registered contacts it must be profiles.user_id (auth user id), not profiles.id.
   let recipientEmail: string | null = order.customer_email || null
   let telegramUserId: number | null = null
   let recipientName: string | null = null
+  let mirrorUserId: string | null = (order as any).user_id || null
+  let mirrorProfileId: string | null = (order as any).profile_id || null
 
-  const profileIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
   const applyProfile = (profile: any | null | undefined) => {
     if (!profile) return
+    mirrorProfileId = mirrorProfileId || profile.id || null
+    mirrorUserId = mirrorUserId || profile.user_id || null
     recipientEmail = recipientEmail || profile.email || null
     recipientName = recipientName || profile.first_name || profile.full_name || null
     if (!telegramUserId) {
@@ -141,21 +146,30 @@ Deno.serve(async (req) => {
     }
   }
 
-  for (const pid of profileIds) {
-    if (telegramUserId && recipientEmail && recipientName) break
-    const { data: profile } = await supabase
+  if (order.user_id) {
+    const { data: profileByUserId } = await supabase
       .from('profiles')
-      .select('email, full_name, first_name, telegram_user_id')
-      .eq('id', pid)
+      .select('id, user_id, email, full_name, first_name, telegram_user_id')
+      .eq('user_id', order.user_id)
+      .limit(1)
       .maybeSingle()
-    applyProfile(profile)
+    applyProfile(profileByUserId)
+  }
+
+  if ((order as any).profile_id && (!telegramUserId || !recipientEmail || !recipientName || !mirrorUserId)) {
+    const { data: profileById } = await supabase
+      .from('profiles')
+      .select('id, user_id, email, full_name, first_name, telegram_user_id')
+      .eq('id', (order as any).profile_id)
+      .maybeSingle()
+    applyProfile(profileById)
   }
 
   // Fallback: lookup by customer_email if still no telegram/name
-  if ((!telegramUserId || !recipientName) && recipientEmail) {
+  if ((!telegramUserId || !recipientName || !mirrorUserId) && recipientEmail) {
     const { data: profileByEmail } = await supabase
       .from('profiles')
-      .select('email, full_name, first_name, telegram_user_id')
+      .select('id, user_id, email, full_name, first_name, telegram_user_id')
       .ilike('email', recipientEmail)
       .limit(1)
       .maybeSingle()
@@ -377,11 +391,12 @@ Deno.serve(async (req) => {
 
         // Mirror to telegram_messages so it appears in the Telegram tab / dialog.
         // Idempotent via partial unique index uniq_tg_msg_purchase_dm_order.
-        if (providerMessageId && order.user_id) {
+        const chatDialogUserId = mirrorUserId || mirrorProfileId
+        if (providerMessageId && chatDialogUserId) {
           const { error: mirrorErr } = await supabase
             .from('telegram_messages')
             .insert({
-              user_id: order.user_id,
+              user_id: chatDialogUserId,
               telegram_user_id: telegramUserId,
               bot_id: botId,
               direction: 'outgoing',
@@ -395,6 +410,7 @@ Deno.serve(async (req) => {
                 template_code: 'product-purchased-dm',
                 parse_mode: 'HTML',
                 order_number: order.order_number || null,
+                profile_id: mirrorProfileId,
                 product_name: productName,
                 tariff_name: tariffName,
               },
