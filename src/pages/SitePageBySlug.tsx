@@ -26,7 +26,23 @@ import NotFound from "./NotFound";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_ACTIONS = new Set(["open-offer", "open-preregistration", "open-payment"]);
+const ALLOWED_ACTIONS = new Set([
+  "open-offer",
+  "open-preregistration",
+  "open-payment",
+  "open-invoice",
+  "open-installment",
+  "open-lead",
+]);
+
+/** Map action → flow used by pickOfferForFlow. */
+const ACTION_TO_FLOW = {
+  "open-payment": "payment",
+  "open-invoice": "invoice",
+  "open-installment": "installment",
+  "open-lead": "lead",
+} as const;
+type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
 
 interface PendingOffer {
   productId: string;
@@ -44,6 +60,39 @@ const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
   gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
   "biz-l": (n) => /бизнес.?леди/i.test(n),
 };
+
+/**
+ * Select the offer that matches the requested flow.
+ * - lead        → offer_type='lead'
+ * - installment → pay_now + payment_method='internal_installment'
+ * - invoice     → pay_now + detectInvoiceOnlyOffer=true
+ * - payment     → pay_now, primary full_payment, ignoring installment/invoice-only
+ */
+function pickOfferForFlow(offers: readonly any[], flow: Flow) {
+  const active = offers.filter((o) => o.is_active !== false);
+  if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
+  const pn = active.filter((o) => o.offer_type === "pay_now");
+  if (flow === "installment") {
+    return pn.find((o) => o.payment_method === "internal_installment") || null;
+  }
+  if (flow === "invoice") {
+    return pn.find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) || null;
+  }
+  // payment: primary full_payment, non-installment, non-invoice-only.
+  return (
+    pn
+      .filter(
+        (o) =>
+          o.payment_method !== "internal_installment" &&
+          !detectInvoiceOnlyOffer(o).isInvoiceOnly,
+      )
+      .sort(
+        (a, b) =>
+          (b.is_primary === true ? 1 : 0) - (a.is_primary === true ? 1 : 0) ||
+          (a.amount || 0) - (b.amount || 0),
+      )[0] || null
+  );
+}
 
 
 export default function SitePageBySlug() {
