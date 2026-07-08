@@ -167,6 +167,24 @@ export async function resolveAiAccessStatus(
     return { code, allowed: check.allowed, denial_reason: check.allowed ? undefined : check.reason };
   });
 
+  // Admin: безлимит, счётчики не читаем.
+  if (access.is_admin) {
+    const unlimited = { daily: quotaSlot(0, -1), monthly: quotaSlot(0, -1) };
+    return {
+      tier: access.tier,
+      is_admin: true,
+      allowed_modes: { chat: true, prompt: true },
+      allowed_scenarios: scenarios,
+      quota_by_mode: {
+        chat: unlimited,
+        balance_analysis: unlimited,
+        '107NK': unlimited,
+      },
+      cta_target: CTA_TARGET,
+      denial_reasons: DENIAL_HUMAN,
+    };
+  }
+
   const [chatUsed, baUsed, nkUsed] = await Promise.all([
     countUserMessages(supabase, userId, { ai_mode: 'chat' }),
     countUserMessages(supabase, userId, { scenario_code: 'balance_analysis' }),
@@ -175,6 +193,7 @@ export async function resolveAiAccessStatus(
 
   return {
     tier: access.tier,
+    is_admin: false,
     allowed_modes: { chat: chatCheck.allowed, prompt: scenarios.some(s => s.allowed) },
     allowed_scenarios: scenarios,
     quota_by_mode: {
