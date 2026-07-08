@@ -751,6 +751,30 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const selectedDialog = filteredDialogs.find(d => d.user_id === selectedUserId) || dialogs.find(d => d.user_id === selectedUserId);
   const clearFilters = () => setAdvancedFilters(initialFilters);
 
+  // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1:
+  // Idle-prefetch the top 3 dialogs after the list resolves. Uses
+  // requestIdleCallback so it never competes with the critical path.
+  useEffect(() => {
+    if (isLoading || dialogs.length === 0) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    const top = dialogs.slice(0, 3).map((d) => d.user_id).filter(Boolean);
+    if (top.length === 0) return;
+    const schedule = (cb: () => void) =>
+      (typeof (window as any).requestIdleCallback === "function"
+        ? (window as any).requestIdleCallback(cb, { timeout: 2000 })
+        : window.setTimeout(cb, 500));
+    const cancel = (id: any) =>
+      (typeof (window as any).cancelIdleCallback === "function"
+        ? (window as any).cancelIdleCallback(id)
+        : window.clearTimeout(id));
+    const id = schedule(() => {
+      top.forEach((uid) => prefetchDialogMessages(uid));
+    });
+    return () => cancel(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, dialogs.length > 0 ? dialogs[0]?.user_id : null]);
+
+
   // Unique bots from dialogs for filter
   const uniqueBots = useMemo(() => {
     const botsMap = new Map<string, { id: string; username: string; name: string }>();
