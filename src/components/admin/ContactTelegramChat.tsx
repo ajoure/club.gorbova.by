@@ -1625,6 +1625,7 @@ export function ContactTelegramChat({
       <div
         key={msg.id}
         id={`tg-msg-${msg.id}`}
+        data-message-id={msg.id}
         className={cn(
           "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
           msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start",
