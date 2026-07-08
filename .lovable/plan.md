@@ -1,149 +1,176 @@
-## да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. В п.1 зафиксируй точный source of truth для admin-bypass:
-  &nbsp;
-  &nbsp;
-  - сначала подтвердить фактические значения ролей в `user_roles` (`admin` / `super_admin` или `superadmin`);
-  - не хардкодить `superadmin`, пока не подтверждено реальное значение в БД.  
-  Это важно, иначе bypass может не сработать у части админов.
-2. В `resolveAiAccess` добавь явное правило приоритета:
-  - `admin/super_admin` bypass проверяется **раньше** entitlements;
-  - если bypass сработал, чтение entitlements не выполняется вообще.  
-  Это нужно зафиксировать в плане как инвариант, а не только в описании реализации.
-3. В п.2 уточни контракт `resolveAiAccessStatus`:
-  - для admin `tier='full'`, `is_admin=true`;
-  - `allowed_modes.chat=true`, `allowed_modes.prompt=true`;
-  - `quota_by_mode.* = { used: 0, limit: -1, remaining: -1 }`;
-  - `cta_target = null`;
-  - `denial_reasons = []`.  
-  Иначе фронт может продолжить показывать CTA даже при unlimited.
-4. В п.3 добавь явную правку UI-текста:
-  - вместо числового лимита показывать `Без лимита` или `∞`, но единообразно во всех местах;
-  - не оставлять смешанный рендер `-1 / ∞ / unlimited`.  
-  Один формат на всём `/ai` и `/admin/ai`.
-5. В п.4 зафиксируй, что для admin снимаются только:
-  - quota checks,
-  - per-minute rate,
-  - daily chars budget,
-  - tier enforcement.  
-  Но **не** снимаются:
-  - auth,
-  - hard cap на размер одного сообщения,
-  - upload guard по mode/scenario,
-  - off-topic classifier.  
-  Это важно для безопасности и чтобы bypass не стал “полным обходом вообще всего”.
-6. В shared-тесты добавь ещё 2 кейса:
-  - `admin + просроченные/отсутствующие entitlements` → всё равно `full`;
-  - `admin + mode='prompt' + unknown future scenario` → `allowed:true`.  
-  Это закрепит обещание “в т.ч. для будущих сценариев”.
-7. В verify добавь отдельную негативную проверку:
-  - обычный пользователь с Club/Business не получает admin-bypass и по-прежнему ограничивается quota/rate-limit.  
-  Иначе можно случайно снять лимиты всем full-tier пользователям.
-8. В DoD уточни proof по backend:
-  - для admin в `ai_chat_messages.metadata` есть `admin_bypass=true`;
-  - для не-admin этого флага нет;
-  - для admin нет `quota_denied_*` и `rate_limit_per_minute` на тех же сценариях, где у обычного пользователя они срабатывают.
-9. В ограничения добавь:
-  - не меняем `ai-access-status` response shape, кроме add-only поля `is_admin` и unlimited semantics;
-  - не меняем access-matrix для обычных пользователей;
-  - не меняем deny-reasons для ЗГ / без entitlements.
-10. В отчёте потребуй отдельную таблицу:
+1. В Фазе 0 добавь отдельный подпункт: зафиксировать точные SoT-поля и переходы для `room`, `event`, `player`, `scenario` с mapping `поле БД/edge → UI-status`. Иначе дальше легко смешать статусы и снова получить ложный `В эфире`.
+2. В Фазе A зафиксируй жёсткое правило:
+  - сценарий не имеет права стартовать раньше фактического старта видео;
+  - `room_open` и `video_playing` — не одно и то же;
+  - `live` для зрителя показывается только после подтверждённого playback start либо после явного fallback-CTA.
+3. В Фазе B добавь в DoD обязательную проверку по всем 4 режимам:
+  - `one_time`
+  - `scheduled`
+  - `just_in_time`
+  - `on_demand`
+  Не только один сценарий. Иначе снова можно починить только часть режимов.
+4. В Фазе C по simulated viewers допиши:
+  - цифра должна быть детерминированной в рамках одной session/window, чтобы при refresh не прыгать хаотично;
+  - simulated count — только presentation layer, без записей в sessions/messages/questions/audit как реальные зрители.
+5. По изоляции чата допиши отдельно:
+  - исторические сообщения source-event тоже должны уважать режим изоляции для обычного зрителя;
+  - staff продолжает видеть полный merged feed.
+6. В Фазе D по `launches_end_at` допиши:
+  - блокируются только новые старты и новые personal sessions;
+  - уже активная сессия, начавшаяся до дедлайна, доигрывает до конца без принудительного обрыва.
+7. По replay access toggle добавь явную проверку всех точек:
+  - пользовательский список эфиров;
+  - `/live/:slug`;
+  - direct/invite links;
+  - server resolve/gate;
+  - autoweb runtime после завершения.
+  Не только UI-скрытие.
+8. По test mode добавь жёсткий guard:
+  - не писать production comments/questions/participants;
+  - не менять реальные lifecycle-поля;
+  - не влиять на real viewer counters;
+  - любые тестовые следы либо не писать вообще, либо писать только в уже существующий безопасный test-only контур, если он реально есть.
+9. В общий DoD добавь backward compatibility:
+  - существующие уже созданные автовебинары без новых настроек не должны ломаться;
+  - `LiveEventLegacy` и live-stream сценарии — обязательный regression proof.
+10. В конце плана добавь правило сдачи по фазам:
+
+- каждая фаза закрывается только при наличии одновременно UI proof + runtime proof + SQL/event proof;
+- без этого статус фазы только `partial`.
+
+Если хочешь, я могу сразу превратить это в финальный текст для [lovable.dev](http://lovable.dev) без комментариев, в готовом виде для отправки.
 
 &nbsp;
 
-- actor: `admin` / `zg_only` / `full_user` / `none`
-- chat
-- balance_analysis
-- 107NK
-- quota applied
-- CTA shown
-- expected result / actual result.
-- &nbsp;
-- Проблема
+План: Доработка автовебинарной комнаты (runtime, плеер, сценарий, social-layer)
 
-`supabase/functions/_shared/ai-access.ts` вычисляет доступ к AI-помощнику исключительно по активным entitlements на три хардкод-продукта (`ЗАКРОЙ ГОД`, `Gorbova Club`, `Business`). Роль пользователя не учитывается — поэтому admin/superadmin получают `tier='none'` и видят «Свободный чат недоступен на вашем тарифе» / «Сценарий … недоступен на вашем тарифе», хотя должны иметь полный доступ.
+## Ключевые инварианты (STOP-guards)
 
-Второй пункт — проверка ЗГ. Текущий маппинг совпадает с уточнением пользователя: `ЗАКРОЙ ГОД → только balance_analysis` (chat=false, 107NK=false, прочие брендированные сценарии=false). Правки контента не требуются, но нужно добавить рантайм-проверку и юнит-тест, чтобы негативная гарантия («никто без нужного продукта не проходит») не сломалась.
+- НЕ создавать: новые таблицы сценариев/viewers/lifecycle/viewer_controls; параллельный runtime; вторую механику запуска room/session/video/scenario; fake viewer sessions для simulated count.
+- НЕ переписывать `LiveEventLegacy`.
+- НЕ клонировать source comments/questions/buttons/scenario в autoweb-event.
+- Reuse обязателен: `live_events`, `live_event_sessions`, `autoweb_config`, `viewer_controls`, `source_live_event_id`, `autoweb-room-state`, `autoweb-create-personal-session`, `AutowebRoomRuntime`, `LiveEventComments/Questions/Scenario/RoomBlocks`, `RoomParticipantsList`, существующий audit path.
+- Новые сущности допускаются только с доказательством, что reuse невозможен (пишется в Discovery-отчёте фазы).
 
-Источник истины остаётся хардкод в `_shared/ai-access.ts` (согласно ответу — UI-настройки не заводим).
+## Фаза 0 — Discovery (обязательно перед кодом)
 
-## План правок (V1 — read-only diagnose уже сделан, ниже — Execute)
+Read-only аудит с письменным отчётом по каждому пункту (existing SoT / gaps / reuse plan):
 
-### 1. `supabase/functions/_shared/ai-access.ts` — bypass для admin/superadmin
+1. Runtime start/lifecycle автовебинаров (self-heal, cron, race conditions).
+2. `autoweb-room-state`, `autoweb-create-personal-session`, `autoweb-resolve-sessions`, `autoweb-generate-occurrences`.
+3. Kinescope integration: доступный currentTime, postMessage bridge, SDK возможности.
+4. Scenario runtime + timed comments/CTA (где источник времени, как считается).
+5. Viewer counters (реальные vs отображаемые), где считаются, кто пишет.
+6. Replay access logic: пользовательский список эфиров, `/live/:slug`, invite/direct links, серверный gate.
+7. Chat/questions runtime + существующие merge history/live.
+8. Test/admin-only pathways.
+9. Существующие audit hooks.
 
-Расширить `AiAccess`:
+**Gate:** без утверждённого discovery-отчёта следующие фазы не начинаются.
 
-```ts
-export interface AiAccess {
-  tier: 'full' | 'zg_only' | 'none';
-  chat: boolean;
-  balance_analysis: boolean;
-  '107NK': boolean;
-  is_admin: boolean;   // новое: true → снимает лимиты и tier-checks
-}
-```
+## State model и SoT времени (сквозной инвариант)
 
-В `resolveAiAccess`:
+Четыре независимых контура: **room** (scheduled/room_open/waiting_for_video/live/ended/source_unavailable/test_mode), **event** (scheduled/live/ended/replay_available), **player** (idle/loading/playing/paused/autoplay_blocked/ended/error), **scenario** (idle/armed/running/paused/completed/blocked_by_video/test_mode).
 
-1. Читать роль через `user_roles` (`role in ('admin','superadmin')`) service-клиентом. Один запрос перед проверкой entitlements.
-2. Если admin → вернуть `{ tier:'full', chat:true, balance_analysis:true, '107NK':true, is_admin:true }` без чтения entitlements.
-3. Иначе — текущая логика по entitlements + `is_admin:false`.
+**Канонический источник таймкода:** фактический `currentTime` плеера; fallback — session-relative wall clock только когда плеер не отдал время. Все timed-элементы (comments/buttons/scenario/late join/resume/end) читают ОДИН источник.
 
-В `isModeAllowed`:
+## Фаза A — Runtime lifecycle + автозапуск
 
-- Если `access.is_admin` → всегда `{ allowed: true }` (в т.ч. для любых будущих сценариев).
+Scope:
 
-### 2. `resolveAiAccessStatus` — квоты «безлимит» для admin
+- Автооткрытие комнаты, авто-старт эфира/видео/сценария, авто-завершение.
+- Self-heal в runtime (SoT): lazy-start догоняет lifecycle при входе после `scheduled_at`, работает после рестарта.
+- Cron/worker — только ускоритель, не SoT.
+- Guards: no double start, no double scenario boot, no duplicate room-open transition, повторный вход не рестартует эфир.
 
-- Для `is_admin=true` возвращать `used=0, limit=-1, remaining=-1` во всех trois slot'ах (`chat` / `balance_analysis` / `107NK`), пропуская `countUserMessages`.
-- `denial_reasons` не меняем; `allowed_scenarios` для admin — все `allowed:true, denial_reason: undefined`.
+Приёмка фазы A: авто-старт без дублей + self-heal proof (SQL lifecycle transitions).
 
-### 3. `useAiAccess.ts` (frontend) — рендер безлимита
+## Фаза B — Плеер, таймкод, late join, viewer_controls
 
-- Тип `AiAccessQuotaSlot` расширить: `limit: number` уже подходит, договоримся, что `-1 = unlimited`.
-- В `ChatScenarioLauncher` / `AiPageContent`, где показываются квоты, отрисовать «∞» когда `limit === -1`. Проверить `chatAllowed` — оно уже через `allowed_modes.chat`, для admin вернётся `true`.
+Scope:
 
-### 4. `supabase/functions/gorbova-ai-chat/index.ts` — снятие enforcement для admin
+- Единый SoT playback time.
+- Late join → фактический currentTime, показ только актуальных timed-элементов.
+- Resume from last position по `viewer_controls.resume_from_last_position`.
+- Autoplay fallback: если браузер блокирует — сценарий НЕ стартует по wall-clock, показывается CTA «Нажмите, чтобы начать просмотр», после ручного play — синхронизация по currentTime.
+- Kinescope controls: reuse `autoweb_config.viewer_controls` (allow_pause/seek/speed_control, resume_from_last_position, allow_rewatch_before_end). Никаких новых флагов для тех же ограничений.
+- Test mode для админа: seek/pause/speed разрешены, полностью изолирован от production.
+- Source unavailable: понятная ошибка, сценарий/эфир не переводятся в live.
 
-- После `resolveAiAccess` и `isModeAllowed`: если `access.is_admin`, пропустить блоки `daily_limit_reached / monthly_limit_reached`, `per_minute_rate`, `daily_chars_budget`. Off-topic classifier сохраняем — он ограничивает тематику, а не доступ.
-- Сохраняем логирование `access_tier='full', admin_bypass=true` в `metadata`.
+Приёмка фазы B: runtime proof по late-join, resume, autoplay-block, обёртка `viewer_controls`.
 
-### 5. Негативная гарантия (нельзя дать доступ никому лишнему)
+## Фаза C — Комната и social-layer
 
-Добавить единственный шаред-тест `supabase/functions/_shared/ai-access.test.ts`:
+Scope:
 
-- `resolveAiAccess` с пустыми entitlements + без роли → `tier='none'`, все `false`.
-- Только ЗГ активен → `tier='zg_only', balance_analysis=true`, chat/107NK=false.
-- Только Club → `tier='full'`.
-- admin без entitlements → `tier='full', is_admin=true`.
-- Просроченный entitlement (expires_at < now) → игнорируется.
-- `isModeAllowed(zg, 'prompt', '107NK')` → `{ allowed:false, reason:'107NK_not_in_tier' }`.
-- `isModeAllowed(zg, 'prompt', 'other_branded')` → `{ allowed:false, reason:'scenario_requires_full_tier' }`.
+- History/live merge: history по `source_live_event_id` (read-only), новые сообщения текущих зрителей — только в текущий `live_event_id`. В source ничего не пишется.
+- Тайминг: исторические сообщения/вопросы всплывают только когда их время ≤ playback time.
+- Staff-only source-indicator (history/live) — для зрителя лента нативная.
+- Изоляция чата (`autoweb_config.chat_isolation` или существующий эквивалент): обычный зритель видит только свои + сценарные + системные; staff/модераторы видят всё.
+- Viewer counts:
+  - Реальные метрики для staff (без admin/moderator/test/технич.).
+  - Отображаемая цифра: live-stream — реальные, autowebinar — simulated (presentation-only, БЕЗ fake sessions, БЕЗ влияния на access/chat/moderation/metrics).
+  - Настройки: «Показывать зрителям количество онлайн», «Задать количество зрителей», точки роста/падения в %, preview-график.
+- Sim viewers НЕ создают sessions.
 
-### 6. Диплой и верификация
+Приёмка фазы C: изоляция + merge + separation viewer counters (SQL proof).
 
-- `supabase--deploy_edge_functions` для `ai-access-status` и `gorbova-ai-chat`.
-- Ручная проверка через Playwright: залогинен админом (уже login as developer), открыть `/admin/ai?sub=chat`, убедиться, что:
-  - нет плашек «недоступно на тарифе» ни у одного сценария;
-  - `Свободный чат` работает (input активен, placeholder не «недоступен…»);
-  - вызов `sendMessage` возвращает ответ (проверить `ai_chat_messages` insert).
-- Позитив: подписаться пользователем без entitlements → все плашки на месте.
-- Позитив: пользователь только с ЗГ → доступен только «Анализ баланса», чат и 107НК заблокированы (правильными denial-текстами).
+## Фаза D — Editor, сценарий, завершение, доступ к записи
 
-### 7. DoD
+Scope:
 
-- typecheck PASS
-- edge functions deployed
-- shared-тест PASS
-- admin: полный доступ ко всему AI (chat + все сценарии), лимиты сняты
-- user с ЗГ: только `balance_analysis`
-- user без entitlements: ничего
-- негативная проверка: user без ЗГ/Club/Business не может открыть 107НК / chat
-- отчёт «Отчет о выполненной работе: PATCH-AI-ACCESS-ADMIN-BYPASS-V1» с таблицей
+- Editor (доработка существующего): редактирование сценария/времени/порядка, CRUD timed-comments и timed-buttons, reorder.
+- Кнопки/комментарии живут в source-event; autoweb только реплеит (без клонирования).
+- Кнопка появляется ТОЛЬКО в момент по таймингу, не при открытии комнаты.
+- Bulk shift (add-only): сдвиг comments/buttons/всех элементов с preview до применения.
+- Автозавершение: стоп видео/сценария, скрыть scripted comments/CTA, сессия завершена, показать «Вебинар завершен». После завершения повторный вход не рестартует ничего.
+- `launches_end_at` (новое поле): после наступления — новые personal sessions не создаются, входы в незапущенные — блок; уже начатые не убивать; корректный статус.
+- Replay access toggle: серверный gate закрывает список эфиров, `/live/:slug`, invite/direct links; админ продолжает видеть. Проверка на всех точках, не только UI.
+- Массовый сдвиг сценария — add-only относительно текущей модели.
 
-### Ограничения (что НЕ делаем)
+Приёмка фазы D: editor CRUD + bulk shift preview + replay-gate proof (server-side).
 
-- Не создаём UI-настройку «сценарий → продукт» (по ответу — оставить хардкод).
-- Не трогаем правила `ЗАКРОЙ ГОД → balance_analysis` (уже корректно).
-- Не меняем rate-limit и off-topic classifier для обычных пользователей.
-- Не переносим маппинг ролей в БД-функцию — используем существующую `user_roles` + inline read; `has_role` RPC не нужен, потому что service-client уже привилегирован.
+## Аудит (сквозной)
+
+Через существующий безопасный audit path (client insert запрещён):
+
+- Runtime: room opened, webinar started, video started, autoplay blocked, scenario started/completed, webinar ended, source unavailable, replay toggled, viewer_controls violations.
+- Editor: scenario/comment/button CRUD, bulk shift preview/apply, test mode start/stop, viewer display config, chat isolation, `launches_end_at` changed.
+
+## Порядок реализации (нарушать нельзя)
+
+1. lifecycle + auto-start + statuses (A)
+2. video start + autoplay fallback + viewer_controls (B)
+3. timed scenario runtime + late join + resume (B)
+4. history/live merge + chat isolation (C)
+5. viewer counts + simulated presentation (C)
+6. launches_end_at (D)
+7. replay access toggle (D)
+8. editor improvements (D)
+9. test mode (D)
+10. audit hardening (сквозное)
+
+## DoD и proof (3 группы, обязательны на каждой фазе)
+
+**A. UI proof** — скрины/видео admin settings, runtime states, viewer controls, scenario editor, test mode, viewer count settings, chat isolation, replay toggle.
+
+**B. Runtime proof** — auto-start, no double-start, autoplay fallback, late join, resume, seek/pause/speed по конфигу, timed comments/buttons, end-of-webinar, launches_end_at, replay disabled instantly.
+
+**C. SQL/event proof** — session rows, lifecycle transitions, audit logs, отсутствие duplicate starts, отсутствие live writes в `source_live_event_id`, правильное закрытие replay, separation viewer counters, отсутствие fake sessions.
+
+## Критерии приёмки спринта
+
+Все 13 пунктов из §22 плана заказчика одновременно выполнены + все фазы приняты последовательно + Discovery-отчёты приложены + no regressions в `LiveEventLegacy` и live-stream сценариях.
+
+## Технические заметки
+
+- Формат сообщений: только «План:» / «Отчет о выполнении:» (docs/ENGINEERING_RULES.md).
+- Порядок: Diagnose → Plan → Dry run → Execute → Verify на каждой фазе.
+- Каждая фаза — отдельный патч с приёмкой; переход к следующей только после утверждения предыдущей.
+- Перед созданием новых RPC/edge/table/enum/cron — проверка на существующее (дубли запрещены).
+
+## Первый шаг после утверждения плана
+
+Фаза 0 (Discovery) — read-only отчёт по 9 пунктам аудита с картой reuse/gaps и предложением конкретных точек изменения. Без правок кода.
