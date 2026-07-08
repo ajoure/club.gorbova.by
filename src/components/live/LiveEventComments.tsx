@@ -152,7 +152,19 @@ export function LiveEventComments({
   const cutoffMs = historyEnabled
     ? sourceStartedMs + Math.max(0, currentPlaybackSeconds ?? 0) * 1000
     : 0;
-  const comments = useMemoComments(liveComments, historyComments, historyEnabled, cutoffMs);
+  const comments = useMemo<Comment[]>(() => {
+    if (!historyEnabled) return liveComments ?? [];
+    const cut = cutoffMs;
+    const historicalVisible = (historyComments ?? []).filter(
+      (c) => new Date(c.created_at).getTime() <= cut,
+    );
+    // Отсортированный merge по created_at (для history — created_at исходного,
+    // для live — реальный now, но т.к. live всегда >= now > cut, они всегда позже).
+    const merged = [...historicalVisible, ...(liveComments ?? [])];
+    merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    return merged;
+  }, [historyEnabled, liveComments, historyComments, cutoffMs]);
+
 
 
   // Realtime subscription
