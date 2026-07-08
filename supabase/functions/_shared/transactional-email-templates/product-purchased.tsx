@@ -296,7 +296,7 @@ const Email = ({
 
               <Section style={ctaWrap}>
                 <Link href={`${siteUrl}/purchases`} style={ctaLink}>
-                  Открыть личный кабинет →
+                  Открыть личный кабинет
                 </Link>
               </Section>
 
