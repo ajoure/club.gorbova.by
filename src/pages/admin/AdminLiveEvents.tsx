@@ -1195,8 +1195,54 @@ export default function AdminLiveEvents() {
                     onConfigChange={(c) => setForm((f) => ({ ...f, autoweb_config: c }))}
                     timezone={form.event_timezone}
                   />
+                  <div className="space-y-2 pt-2">
+                    <Label>
+                      Исходный live_stream (источник истории чата/вопросов/сценария)
+                    </Label>
+                    <Select
+                      value={form.source_live_event_id ?? "__none__"}
+                      onValueChange={(v) =>
+                        setForm((f) => ({ ...f, source_live_event_id: v === "__none__" ? null : v }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Не выбран — история не подтягивается" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[50vh] overflow-y-auto">
+                        <SelectItem value="__none__">— Не выбран —</SelectItem>
+                        {(sourceCandidates ?? [])
+                          .filter((e) => e.id !== editingId)
+                          .map((e) => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {e.title}
+                              {e.starts_at
+                                ? ` · ${new Date(e.starts_at).toLocaleDateString("ru-RU", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    year: "numeric",
+                                  })}`
+                                : ""}
+                              {" · "}
+                              {e.event_type === "live_stream" ? "live" : "video"}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    {!form.source_live_event_id ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        Без исходного эфира история чата, вопросов и сценария не будет подтянута
+                        в комнату автовебинара. Обязательно для сценария timed-replay.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        История ленты и сценарий берутся из этого эфира; новые сообщения зрителей
+                        пишутся под id автовебинара.
+                      </p>
+                    )}
+                  </div>
                 </FormSection>
               )}
+
 
               <Separator />
 
