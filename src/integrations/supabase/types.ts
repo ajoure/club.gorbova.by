@@ -10405,6 +10405,59 @@ export type Database = {
         }
         Relationships: []
       }
+      order_notification_deliveries: {
+        Row: {
+          channel: string
+          created_at: string
+          error: string | null
+          id: string
+          metadata: Json
+          notification_type: string
+          order_id: string
+          provider_message_id: string | null
+          recipient: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          metadata?: Json
+          notification_type: string
+          order_id: string
+          provider_message_id?: string | null
+          recipient?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          metadata?: Json
+          notification_type?: string
+          order_id?: string
+          provider_message_id?: string | null
+          recipient?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_notification_deliveries_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       orders: {
         Row: {
           amount: number
@@ -11999,6 +12052,56 @@ export type Database = {
             foreignKeyName: "product_email_mappings_product_id_fkey"
             columns: ["product_id"]
             isOneToOne: true
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_notification_templates: {
+        Row: {
+          channel: string
+          created_at: string
+          id: string
+          intro_html: string | null
+          intro_text: string | null
+          is_enabled: boolean
+          metadata: Json
+          notification_type: string
+          product_id: string
+          subject_override: string | null
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          id?: string
+          intro_html?: string | null
+          intro_text?: string | null
+          is_enabled?: boolean
+          metadata?: Json
+          notification_type: string
+          product_id: string
+          subject_override?: string | null
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          id?: string
+          intro_html?: string | null
+          intro_text?: string | null
+          is_enabled?: boolean
+          metadata?: Json
+          notification_type?: string
+          product_id?: string
+          subject_override?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_notification_templates_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
             referencedRelation: "products_v2"
             referencedColumns: ["id"]
           },
