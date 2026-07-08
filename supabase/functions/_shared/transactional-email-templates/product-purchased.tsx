@@ -227,13 +227,17 @@ const Email = ({
 
   return (
     <Html lang="ru" dir="ltr">
-      <Head />
-      <Preview>Оплата получена — доступ к «{product}» открыт</Preview>
+      <Head>
+        <meta httpEquiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </Head>
+      <Preview>Оплата получена. Доступ к продукту {product} открыт.</Preview>
+
       <Body style={main}>
         <Section style={outer}>
           <Container style={container}>
             <Section style={header}>
-              <Text style={headerBadge}>✓ ОПЛАТА ПОЛУЧЕНА</Text>
+              <Text style={headerBadge}>ОПЛАТА ПОЛУЧЕНА</Text>
               <Heading style={headerTitle}>Спасибо за покупку!</Heading>
             </Section>
 
@@ -243,8 +247,9 @@ const Email = ({
               </Text>
 
               <Text style={paragraph}>
-                Мы получили вашу оплату — доступ уже открыт в личном кабинете.
+                Мы получили вашу оплату. Доступ уже открыт в личном кабинете.
               </Text>
+
 
               {introHtml ? (
                 <Text style={paragraph} dangerouslySetInnerHTML={{ __html: introHtml }} />
@@ -291,14 +296,14 @@ const Email = ({
 
               <Section style={ctaWrap}>
                 <Link href={`${siteUrl}/purchases`} style={ctaLink}>
-                  Открыть личный кабинет →
+                  Открыть личный кабинет
                 </Link>
               </Section>
 
               <Hr style={{ borderColor: '#eee', margin: '24px 0 16px 0' }} />
 
               <Text style={{ ...paragraph, color: MUTED, fontSize: '13px' }}>
-                Если у вас возникнут вопросы — просто ответьте на это письмо, мы всегда на связи.
+                Если у вас возникнут вопросы, просто ответьте на это письмо. Мы всегда на связи.
               </Text>
             </Section>
 
@@ -324,11 +329,12 @@ const Email = ({
 export const template = {
   component: Email,
   subject: (data: Props) =>
-    `✓ Оплата получена: ${data.productName || 'ваш продукт'}`,
+    `Оплата получена: ${data.productName || 'ваш продукт'}`,
   displayName: 'Уведомление о покупке продукта',
   previewData: {
     recipientName: 'Сергей',
-    productName: 'Gorbova Club — идеология',
+    productName: 'Gorbova Club - идеология',
+
     tariffName: 'Доступ к +600 ответов',
     accessEndAt: new Date(Date.now() + 90 * 24 * 3600_000).toISOString(),
     paidAmount: 490,
