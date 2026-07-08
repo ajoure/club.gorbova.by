@@ -364,10 +364,18 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       // Already sorted by last_message_at DESC from RPC
       return result;
     },
-    refetchInterval: 30000,
+    // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1:
+    // основной сигнал обновления списка — realtime bus
+    // (`useInboxRealtimeInvalidation`). Убран 30-сек фоновый refetch,
+    // который дёргал тяжёлый RPC + parallel `.in()` на profiles/orders/subs
+    // каждые 30 секунд и «шевелил» весь интерфейс. Realtime покрывает
+    // 100% случаев поступления новых сообщений; на случай потери канала
+    // оставлен safety-poll раз в 5 минут (пауза во вкладке вне фокуса).
+    refetchInterval: 5 * 60 * 1000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
   });
 
   const totalUnread = dialogs.reduce((sum, d) => sum + d.unread_count, 0);
