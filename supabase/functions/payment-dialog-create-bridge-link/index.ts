@@ -35,9 +35,10 @@ interface BridgeRequest {
   description?: string | null;
 }
 
-const CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by';
+// SINGLE SOURCE OF TRUTH: все payment ссылки строятся на https://gorbova.by.
+// product.primary_domain НЕ используется для payment origin.
+const CANONICAL_PUBLIC_HOST = 'https://gorbova.by';
 const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
-const VALID_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
