@@ -624,7 +624,7 @@ Deno.serve(async (req) => {
         target_user_id: user_id,
         public_url,
         origin_source: originSource,
-        primary_domain: primaryDomainValid ? primaryDomain : null,
+        primary_domain: primaryDomain,
         // Phase 4.1 + 5-C — provider routing proof
         provider: linkProviderColumn,
         account_code: linkAccountCodeColumn,
