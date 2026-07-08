@@ -217,14 +217,19 @@ Deno.serve(async (req) => {
       results.email = { skipped: 'already_sent', delivery_id: row.id }
     } else {
       try {
+        const paidAmount = Number(order.paid_amount ?? order.final_price ?? 0) || null
         const templateData: Record<string, unknown> = {
           recipientName,
           productName,
           tariffName,
           accessEndAt,
           orderNumber: order.order_number,
+          paidAmount,
+          currency: order.currency || 'BYN',
+          paidAt: order.updated_at || new Date().toISOString(),
           introHtml: overrides.email?.intro_html || null,
         }
+
         const { data: sendRes, error: sendErr } = await supabase.functions.invoke(
           'send-transactional-email',
           {
