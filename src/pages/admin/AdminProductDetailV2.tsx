@@ -328,7 +328,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
@@ -679,7 +679,11 @@ export default function AdminProductDetailV2() {
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
       // Installment fields (legacy mirror — installment_count хранит max_months)
-      payment_method: offerForm.offer_type === "pay_now" ? offerForm.payment_method : "full_payment",
+      payment_method: offerForm.offer_type === "pay_now"
+        ? offerForm.payment_method
+        : offerForm.offer_type === "bank_installment"
+          ? (offerForm.payment_method || "full_payment")
+          : "full_payment",
       installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
       installment_interval_days: isInstallment ? 30 : null,
       first_payment_delay_days: isInstallment ? 0 : null,
@@ -1850,7 +1854,7 @@ export default function AdminProductDetailV2() {
                         ? "installment"
                         : offerForm.offer_type
                     }
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment") => {
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment" | "bank_installment") => {
                       if (v === "installment") {
                         // Кнопка «Рассрочка» = pay_now + internal_installment.
                         // Очищаем meta.recurring (взаимоисключение типов кнопки).
@@ -1888,6 +1892,35 @@ export default function AdminProductDetailV2() {
                             },
                           },
                         });
+                      } else if (v === "bank_installment") {
+                        // Рассрочка банка (РР): add-only meta.bank_installment,
+                        // ВСЕ существующие ключи meta сохраняются, включая legacy external_link.
+                        const prevMeta = (offerForm.meta || {}) as any;
+                        const prevBI = (prevMeta.bank_installment || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "bank_installment",
+                          // Новым записям — full_payment; legacy payment_method='bank_installment' не форсим (сохранит submit-логика).
+                          payment_method: offerForm.payment_method || "full_payment",
+                          button_label:
+                            offerForm.button_label && offerForm.offer_type === "bank_installment"
+                              ? offerForm.button_label
+                              : (offerForm.button_label || "Оплатить в рассрочку от банка"),
+                          requires_card_tokenization: false,
+                          installment_count: null,
+                          installment_interval_days: null,
+                          first_payment_delay_days: null,
+                          meta: {
+                            ...prevMeta,
+                            bank_installment: {
+                              ...prevBI,
+                              installment_provider: prevBI.installment_provider ?? 'rr',
+                              currency: prevBI.currency ?? 'BYN',
+                              rr_mode: prevBI.rr_mode ?? 'payment_url',
+                              // external_link / link_label / message_html — НЕ трогаем.
+                            },
+                          },
+                        });
                       } else {
                         setOfferForm({
                           ...offerForm,
@@ -1909,6 +1942,7 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                       <SelectItem value="installment">Рассрочка</SelectItem>
                       <SelectItem value="lead">Заявка (без оплаты)</SelectItem>
+                      <SelectItem value="bank_installment">Рассрочка банка</SelectItem>
                     </SelectContent>
                   </Select>
                   {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (
@@ -2067,6 +2101,54 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+
+            {offerForm.offer_type === "bank_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Рассрочка банка
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">Провайдер: Ресурс Развития</Badge>
+                    <Badge variant="secondary">Валюта: BYN</Badge>
+                    <Badge variant="secondary">Режим: внешний payment_url</Badge>
+                  </div>
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                    Runtime-контур РР ещё не включён. Кнопка сейчас работает по старой ссылке
+                    <code className="mx-1">meta.bank_installment.external_link</code> (fallback).
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fallback URL (external_link)</Label>
+                    <Input
+                      type="url"
+                      placeholder="https://pay.rrllc.ru/..."
+                      value={((offerForm.meta as any)?.bank_installment?.external_link ?? "") as string}
+                      onChange={(e) => {
+                        const prevMeta = (offerForm.meta || {}) as any;
+                        const prevBI = (prevMeta.bank_installment || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          meta: {
+                            ...prevMeta,
+                            bank_installment: {
+                              ...prevBI,
+                              external_link: e.target.value || null,
+                            },
+                          },
+                        });
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Legacy-поле. Если пусто — используется дефолтная ссылка из <code>src/lib/bankInstallment.ts</code>.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
 
             {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe) */}
             <OfferAcquiringSettings
