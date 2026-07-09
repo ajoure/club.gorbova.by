@@ -29,6 +29,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useAutowebRoomState } from "@/hooks/useAutowebRoomState";
+import { useAutowebHeartbeat, type AutowebPlayerState } from "@/hooks/useAutowebHeartbeat";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { AutowebTimelineOverlay } from "@/components/live/AutowebTimelineOverlay";
