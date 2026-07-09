@@ -139,7 +139,7 @@ Deno.serve(async (req: Request) => {
     status_raw: created.rrStatusRaw,
     status_internal: "created",
     amount_minor: amountMinor,
-    currency: "RUB",
+    currency,
     note: "Тестовая заявка. Не связана с реальными заказами.",
   });
 });
