@@ -364,6 +364,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
               videoId={state.kinescope_video_id}
               startSeconds={state.resume.enabled ? state.resume.last_video_position_seconds : 0}
               onTimeUpdate={handleTimeUpdate}
+              onPlayerStateChange={handlePlayerStateChange}
               viewerControls={state.viewer_controls}
             />
           ) : (
