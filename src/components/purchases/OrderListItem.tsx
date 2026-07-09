@@ -355,14 +355,14 @@ export function OrderListItem({ order }: OrderListItemProps) {
             size="sm"
             onClick={generateDoc}
             disabled={isGenerating}
-            title="Сформировать документ (присвоит номер)"
+            title="Сформировать документ и сразу скачать PDF (присвоит номер)"
           >
             {isGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Sparkles className="h-4 w-4" />
             )}
-            <span className="hidden sm:inline ml-1">Сформировать</span>
+            <span className="hidden sm:inline ml-1">Сформировать и скачать</span>
           </Button>
         )}
 
