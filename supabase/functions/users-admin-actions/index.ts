@@ -679,32 +679,90 @@ serve(async (req: Request): Promise<Response> => {
 
         const emailOwner = await findAuthUserByEmail();
         if (emailOwner && emailOwner.id !== targetUserId) {
-          return new Response(
-            JSON.stringify({
-              error: "Email already in use",
-              message: "Этот email уже используется другим пользователем",
-              conflictUserId: emailOwner.id,
-            }),
-            {
-              status: 409,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
+          // Проверяем, есть ли у этого auth-user'а профиль в public.profiles.
+          // Если нет — это orphan (профиль уже удалён админом), безопасно снести
+          // auth-запись и продолжить смену email.
+          const { data: ownerProfile } = await supabaseAdmin
+            .from("profiles")
+            .select("id")
+            .eq("user_id", emailOwner.id)
+            .maybeSingle();
+
+          if (!ownerProfile) {
+            console.log(`[change_email] Cleaning orphan auth user ${emailOwner.id} for email ${normalizedNewEmail}`);
+            const { error: orphanDelErr } = await supabaseAdmin.auth.admin.deleteUser(emailOwner.id);
+            if (orphanDelErr) {
+              console.error("Failed to delete orphan auth user:", orphanDelErr);
+              return new Response(
+                JSON.stringify({
+                  error: "Email already in use",
+                  message: "Этот email занят удалённой auth-записью, не удалось её очистить автоматически. Обратитесь к super_admin.",
+                  conflictUserId: emailOwner.id,
+                }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
             }
-          );
+            await logAction("users.delete_orphan_auth", null, {
+              deleted_auth_user_id: emailOwner.id,
+              deleted_email: normalizedNewEmail,
+              trigger: "change_email_autocleanup",
+            });
+          } else {
+            return new Response(
+              JSON.stringify({
+                error: "Email already in use",
+                message: "Этот email уже используется другим пользователем",
+                conflictUserId: emailOwner.id,
+              }),
+              { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
         }
 
         // Update email in auth.users via Admin API
         // email_confirm: true means no verification email needed (admin verified)
-        const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
+        let { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
           targetUserId,
           { email: normalizedNewEmail, email_confirm: true }
         );
+
+        // Fallback: если listUsers pagination пропустила запись и Supabase вернул
+        // duplicate — пробуем найти и удалить orphan ещё раз, затем повторить update.
+        if (authError) {
+          const msg0 = (authError.message || "").toLowerCase();
+          if (msg0.includes("duplicate") || msg0.includes("already") || msg0.includes("registered")) {
+            const retryOwner = await findAuthUserByEmail();
+            if (retryOwner && retryOwner.id !== targetUserId) {
+              const { data: retryProfile } = await supabaseAdmin
+                .from("profiles")
+                .select("id")
+                .eq("user_id", retryOwner.id)
+                .maybeSingle();
+              if (!retryProfile) {
+                const { error: delErr2 } = await supabaseAdmin.auth.admin.deleteUser(retryOwner.id);
+                if (!delErr2) {
+                  await logAction("users.delete_orphan_auth", null, {
+                    deleted_auth_user_id: retryOwner.id,
+                    deleted_email: normalizedNewEmail,
+                    trigger: "change_email_autocleanup_retry",
+                  });
+                  const retry = await supabaseAdmin.auth.admin.updateUserById(
+                    targetUserId,
+                    { email: normalizedNewEmail, email_confirm: true }
+                  );
+                  authError = retry.error ?? null;
+                }
+              }
+            }
+          }
+        }
 
         if (authError) {
           console.error("Update auth email error:", authError);
 
           // If uniqueness check missed (pagination), still convert duplicate-email failure into 409
           const msg = (authError.message || "").toLowerCase();
-          if (msg.includes("duplicate") || msg.includes("already") || msg.includes("email")) {
+          if (msg.includes("duplicate") || msg.includes("already") || msg.includes("registered")) {
             return new Response(
               JSON.stringify({
                 error: "Email already in use",
