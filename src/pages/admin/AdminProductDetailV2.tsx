@@ -2150,19 +2150,23 @@ export default function AdminProductDetailV2() {
             )}
 
 
-            {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe) */}
-            <OfferAcquiringSettings
-              value={(offerForm.meta as any)?.acquiring}
-              onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
-              isInstallment={offerForm.payment_method === "internal_installment"}
-              isSubscription={
-                offerForm.payment_method !== "internal_installment" && (
-                  offerForm.offer_type === "trial" ||
-                  offerForm.offer_type === "preregistration" ||
-                  Boolean((offerForm.meta as any)?.recurring?.is_recurring)
-                )
-              }
-            />
+            {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe).
+                Sprint A: скрыто для bank_installment — банковская рассрочка (РР) не проходит
+                через карточный эквайринг bePaid/Stripe. */}
+            {offerForm.offer_type !== "bank_installment" && (
+              <OfferAcquiringSettings
+                value={(offerForm.meta as any)?.acquiring}
+                onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
+                isInstallment={offerForm.payment_method === "internal_installment"}
+                isSubscription={
+                  offerForm.payment_method !== "internal_installment" && (
+                    offerForm.offer_type === "trial" ||
+                    offerForm.offer_type === "preregistration" ||
+                    Boolean((offerForm.meta as any)?.recurring?.is_recurring)
+                  )
+                }
+              />
+            )}
             </TabsContent>
 
 
