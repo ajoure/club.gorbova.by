@@ -328,7 +328,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
