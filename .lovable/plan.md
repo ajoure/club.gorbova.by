@@ -1,237 +1,240 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Заголовок отчета исправить на обязательный формат:**
+1. **Убрать “ответ поддержки РР” из предусловий.**  
+Это не блокер. Если тестовые ключи уже внесены в карточку интеграции и включен тестовый режим, подрядчик обязан запускать E2E-проверку на текущих данных.
 
-```txt
-Отчет о выполненной работе: backend core-интеграция Ресурс Развития без product wiring
-```
+Предусловие:
 
-Не `Отчет о выполнении`.
+В карточке интеграции РР включен test mode и сохранены test credentials.
 
-2. `rr-notification` **ограничить только test-ledger сценариями.**  
-Чтобы публичный endpoint нельзя было случайно использовать как production webhook:
+&nbsp;
 
-```txt
-rr-notification в этом этапе:
-- принимает только external_id с префиксом rr_test_;
-- обновляет только существующую запись в rr_test_ledger;
-- если external_id не найден в rr_test_ledger — не создает платеж, заказ или новую business-запись;
-- максимум пишет redacted security log;
-- не эмитит domain_events.
-```
+Ответ поддержки РР НЕ является предварительным блокером.
 
-3. **В** `rr-test-create-order` **явно запретить любые реальные данные клиента.**
+Если API РР вернет ошибку, подрядчик фиксирует точный redacted response и отдельно пишет, что именно нужно уточнить у РР.
 
-```txt
-Для test createOrder использовать только фиктивные данные:
-- external_id = rr_test_<uuid>;
-- amount_minor = 990000;
-- currency = RUB;
-- meta.test = true;
-- buyer/client_info не передавать, если API позволяет;
-- если API требует buyer fields — использовать synthetic test data без реальных ФИО, телефонов, email клиентов.
-```
+2. **Шаг “ждать поддержку” заменить на “сначала пробовать”.**
 
-4. `rr_test_ledger.raw_last` **хранить только redacted payload.**  
-Не просто “редактированные ответы”, а строго:
+Порядок:
 
-```txt
-raw_last хранит только redacted JSON:
-- ключи;
-- статусы;
-- request_id;
-- commission;
-- payment_url допустим только если это test URL;
-- без secret/signature/token/auth headers;
-- без PII;
-- без полных raw request headers.
-```
+1. Проверить, что test credentials читаются из integration_instances/config_secrets.
 
-5. **Добавить CHECK/guard для test-ledger.**
+2. Запустить rr-test-create-order.
 
-```sql
-external_id LIKE 'rr_test_%'
-currency = 'RUB'
-```
+3. Если createOrder успешен — продолжить E2E.
 
-И лучше добавить CHECK по статусам:
+4. Если createOrder падает — остановиться и дать отчет:
 
-```txt
-created | pending | paid | canceled | failed | expired
-```
+   - endpoint;
 
-6. **Не называть** `paid` **в UI как реальную оплату.**  
-В admin UI для `rr_test_ledger` показывать:
+   - HTTP status;
 
-```txt
-Тестовый статус: paid / authorized
-```
+   - error code/message от РР;
 
-а не «Оплачено» без пояснения. Иначе админ может спутать с реальной оплатой.
+   - redacted payload;
 
-7. `rr-http.ts` **не должен логировать полный URL, если query может содержать чувствительные данные.**  
-Формулировка:
+   - что именно нужно спросить у РР.
 
-```txt
-Логировать только host + pathname + method + status + duration.
-Query string полностью отбрасывать.
-```
+3. **Не писать “никаких боевых кредов РР” как будто их нет.**  
+Правильно:
 
-8. `rr-notification` **с невалидной подписью:**  
-В план добавить, что при `401` не должно быть обновления `rr_test_ledger`. Только redacted security log.
-9. **Idempotency уточнить.**  
-Для webhook/notification:
+Боевые креды могут быть сохранены в карточке, но в этом этапе запрещено их использовать. Все edge functions принудительно работают только с mode=test.
 
-```txt
-idempotency_key = provider:rr + external_id + status_raw + sign_hash_short
-```
+4. **Убрать shop_id, если его нет в текущей карточке и discovery-контракте.**  
+Использовать только фактические поля интеграции:
 
-При повторе того же notification — не создавать дублирующих логических обновлений, только фиксировать duplicate/ignored в техническом логе.
+test_login
 
-10. **В DoD добавить проверку отсутствия** `domain_events`**.**
+test_password
 
-```txt
-SQL-проверка: за время тестов не появились новые domain_events, связанные с rr_test_*.
-```
+battle_login
 
-11. **В DoD пункт 6 уточнить: “без изменений строк” должен считаться по контрольному snapshot до/после.**
+battle_password
 
-```txt
-Перед тестом снять counts/max(updated_at) по payments_v2, orders_v2, provider_events, payment_provider_settings, acquiring_connections, domain_events.
-После теста подтвердить, что они не изменились.
-```
+secret_key
 
-12. `integration_sync_logs` **допустимы только как технический лог.**  
-В отчете отдельно показать:
+mode = test
 
-```txt
-integration_sync_logs содержит rr_order / rr_notification только с redacted payload_meta.
-```
+Если API РР реально требует дополнительный shop_id, подрядчик должен показать источник из документации и вернуть отдельный вопрос.
 
-13. **Следующий этап не должен называться “product wiring”, если core не прошел test e2e.**  
-Зафиксировать:
+5. **Не требовать “реальную нотификацию от РР” как единственный вариант.**  
+Нужно проверить оба сценария:
 
-```txt
-Следующий этап возможен только после успешного test createOrder + getOrderStatus + валидного notification + проверки комиссии.
-```
+A. Симулированная валидная notification по формуле подписи — обязательно.
+
+B. Реальная notification от РР — если РР отправляет ее в test flow.
+
+Иначе тест может зависнуть из-за отсутствия callback со стороны РР, хотя handler уже можно доказать.
+
+6. **Комиссию проверять через getOrderStatus, не через поддержку.**
+
+commission_minor:
+
+- если getOrderStatus вернул commission — сохранить и показать SQL proof;
+
+- если commission отсутствует — зафиксировать raw статус/ответ РР redacted и оставить commission_minor=null.
+
+7. **Исправить заголовок отчета.**
+
+Отчет о выполненной работе: E2E runtime proof Ресурс Развития
+
+Не Отчёт о выполнении.
+
+8. **Добавить прямое требование: не придумывать внешние блокеры.**
+
+Подрядчик не должен писать “ждем поддержку РР”, если нет фактического запроса, фактической ошибки API или конкретного недостающего параметра. Любой blocker должен быть подтвержден runtime response или ссылкой на документацию.
+
+**Исправленная формулировка для подрядчика**
+
+План принимается с правкой: не ждать поддержку РР заранее.
+
+&nbsp;
+
+Тестовые и боевые ключи уже внесены в карточку интеграции. Сейчас включен test mode. Следующий шаг — запустить E2E на существующих test credentials.
+
+&nbsp;
+
+Если createOrder/getOrderStatus/notification не работают, нужно не писать “ждем поддержку”, а дать конкретный технический отчет:
+
+- какой endpoint вызван;
+
+- какой HTTP status;
+
+- какой error code/message вернул РР;
+
+- какой redacted request/response;
+
+- что именно нужно уточнить у РР.
+
+&nbsp;
+
+До фактической ошибки API никаких внешних блокеров нет.
+
+&nbsp;
+
+Product wiring, PublicPayPage, OfferAcquiringSettings, реальные payments_v2/orders_v2 и выдачу доступов не трогать.
 
 С этими правками план можно выполнять.
 
 &nbsp;
 
-План: backend core-интеграция Ресурс Развития без product wiring
+# План: E2E runtime proof «Ресурс Развития» после активации test-режима
 
 ## Цель
 
-Технически включить работу с API РР (createOrder, getOrderStatus, notification/webhook, подпись, статусы, комиссия) в изолированном core-слое. Без влияния на продажи, продукты, публичную страницу оплаты и реальные заказы. Только test mode, только admin, только технические логи.
+Доказать, что core-слой РР реально работает end-to-end на тестовом контуре РР: заявка создаётся, статус получается, нотификация валидируется, комиссия сохраняется. Только после этого можно обсуждать product wiring.
 
-## Жёсткие запреты (в коде и в отчёте по этому этапу)
+## Жёсткие запреты (не меняется с прошлого этапа)
 
-Следующее НЕ создаётся, НЕ редактируется, НЕ трогается:
+- Никаких изменений в `PublicPayPage`, `OfferAcquiringSettings`, продуктовых кнопках, офферах.
+- Никаких записей в `payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `access_grant_ledger`, `entitlements`.
+- Никакой выдачи доступов, никакого влияния на статистику и продажи.
+- Никаких «боевых» кредов РР. Только test-креды.
+- Никаких новых миграций боевых таблиц. Разрешены только add-only правки `rr_test_ledger`, если всплывёт нехватка поля (например, `commission_raw`).
 
-- `PublicPayPage` и любые публичные страницы оплаты;
-- `OfferAcquiringSettings` и любые настройки эквайринга офферов;
-- кнопки/выбор РР на карточках продуктов, офферов, лендингах;
-- автоматическое добавление РР в список доступных провайдеров продукта;
-- любые записи в `payments_v2` / `orders_v2` в контексте реального заказа клиента;
-- завершение реальных заказов (`orders_v2.status = paid` и т.п.);
-- выдача доступов / entitlement flow;
-- расширение `payment_provider_settings` для боевого выбора РР;
-- изменение публичной статистики платежей (`rr` в общих отчётах о выручке);
-- боевые креды РР — только `test_mode`.
+## Предусловия (блокеры, без которых план не стартует)
 
-Если в ходе реализации выяснится, что для core-функции нужно тронуть что-то из этого списка — работа останавливается, вопрос выносится отдельным планом.
+1. Ответ поддержки РР по test-режиму:
+  - host / базовый URL (боевой vs тестовый);
+  - способ активации (отдельный аккаунт, флаг, sandbox-shop);
+  - тестовые креды: login / password для Basic Auth, shop id/секрет для подписи нотификаций;
+  - подтверждение, что тестовые заявки не идут в реальный процессинг.
+2. Подтверждение политики повторов webhook и поведения `createOrder` при повторном `external_id` (нужно для интерпретации результатов, не для кода).
 
-## Разрешённый scope
+Пока предусловия не закрыты — шаги 3–8 не выполняются. Никаких «пусть подрядчик пока сам придумает креды».
 
-Только backend-core + admin-only test action. Никакой пользовательской поверхности.
+## Шаги
 
-### 1. Adapter layer (изолированный)
+### 1. Ввод test-кред через UI
 
-Каталог: `supabase/functions/_shared/rr/`.
+- Админ открывает Интеграции → Разное → «Ресурс Развития».
+- Включает `test_mode = true`.
+- Вводит test-креды в существующие поля (login, password, shop_id, notification secret). Секреты идут в `config_secrets`, не в `config`.
+- Сохраняет. Проверяем:
+  - секреты замаскированы обратно;
+  - `integration_instances.status` не выставляется в `connected` автоматически;
+  - никаких новых секретов в `.env` / edge secrets руками не добавляем.
 
-- `rr-adapter.ts` — реализация `RRPaymentProviderAdapter` строго по `docs/integrations/rr/adapter-contract.md`:
-  - `createOrder({ amount_minor, currency: 'RUB', external_id, return_url, notification_url, meta })` → `{ rr_request_id, payment_url, raw }`;
-  - `getOrderStatus(rr_request_id)` → `{ status_raw, status_internal, commission_minor?, paid_at?, raw }`;
-  - `verifyNotificationSignature(payload, headers)` → `{ valid, external_id, status_raw, raw }`;
-  - `mapStatus(status_raw)` → внутренний enum (`created | pending | paid | canceled | failed | expired`).
-- `rr-config.ts` — безопасное чтение `integration_instances` + `config_secrets` через service-role. Ни один секрет не логируется, не возвращается в ответы, не попадает в `payload_meta`.
-- `rr-http.ts` — тонкий HTTP-клиент к API РР (Basic Auth, timeouts, retry только на сетевых ошибках, без retry на 4xx). Логирует только метод, URL без query-секретов, статус, длительность.
+### 2. Sanity-проверка чтения кред
 
-Adapter не знает про `orders_v2`, `payments_v2`, продукты, офферы, клиентов. Он получает на вход суммы и id, возвращает данные РР. Точка.
+- Из `rr-test-create-order` (admin-only) сделать pre-flight: убедиться, что `rr-config` отдаёт непустые креды и host соответствует test-контуру. Логи — без секретов.
 
-### 2. Edge functions (test-only)
+### 3. `createOrder` → получение `payment_url`
 
-Все три функции — admin-only (JWT + RBAC `has_role(auth.uid(), 'admin')`), `verify_jwt` по умолчанию, CORS по стандартам проекта.
+- В карточке РР нажать «Создать тестовую заявку 9 900 ₽».
+- Ожидаемо:
+  - `external_id` вида `rr_test_<uuid>`;
+  - HTTP 200 от РР;
+  - в `rr_test_ledger` появляется строка со `status_internal='pending'`, `payment_url` заполнен, `rr_request_id` заполнен;
+  - в `integration_sync_logs` есть запись `entity_type='rr_order'`, `direction='outbound'`, `result='success'`, без секретов в `payload_meta`.
+- Runtime proof: скриншот карточки + SQL `select ... from rr_test_ledger order by created_at desc limit 1`.
 
-- `rr-test-create-order` — admin вызывает вручную из карточки интеграции. Принимает `{ amount_minor, currency: 'RUB' }` (по умолчанию 990000/RUB для соответствия минимуму РР). Генерирует свой `external_id` вида `rr_test_<uuid>`. Вызывает `adapter.createOrder`. Возвращает `{ rr_request_id, payment_url, external_id }`. Пишет запись в технический ledger (см. п.3). Ничего не пишет в `orders_v2`/`payments_v2`.
-- `rr-test-get-status` — принимает `rr_request_id` или `external_id`, вызывает `adapter.getOrderStatus`, обновляет запись в ledger. Ничего не пишет в `orders_v2`/`payments_v2`.
-- `rr-notification` — публичный endpoint (без JWT) для приёма notification от РР. Проверяет подпись через `adapter.verifyNotificationSignature`. При невалидной подписи — 401 + запись в `integration_sync_logs` с `result='error'`. При валидной — обновляет ledger, пишет `integration_sync_logs` `direction='inbound'`, `result='success'`. Никаких действий над `orders_v2`, `payments_v2`, entitlement, письмами клиенту. Idempotency по `external_id` + `status_raw`.
+### 4. Открытие `payment_url` вручную (без автоматики)
 
-### 3. Технический ledger (изолированная таблица)
+- Админ вручную открывает `payment_url`, доводит тестовую оплату до финала по инструкции РР (test-карта из их доков).
+- Никакой автоматизации оплаты, никакой имитации карт.
 
-Миграция создаёт **новую** таблицу `rr_test_ledger` — отдельно от `payments_v2`/`orders_v2`, чтобы гарантированно не смешаться с реальными продажами:
+### 5. `getOrderStatus` — pull-проверка
 
-```text
-rr_test_ledger
-  id uuid pk
-  external_id text unique not null
-  rr_request_id text
-  amount_minor bigint
-  currency text  -- RUB
-  status_internal text  -- created|pending|paid|canceled|failed|expired
-  status_raw text
-  commission_minor bigint null
-  payment_url text
-  created_by uuid  -- admin who triggered
-  created_at timestamptz default now()
-  updated_at timestamptz default now()
-  last_notification_at timestamptz null
-  raw_last jsonb  -- редактированные ответы РР без секретов
+- В карточке нажать «Проверить статус» для последней записи.
+- Ожидаемо:
+  - `status_raw` изменился на терминальный по маппингу РР;
+  - `status_internal` пересчитан адаптером;
+  - `commission_minor` заполнен, если РР вернул комиссию (иначе — `null`, факт зафиксировать в отчёте);
+  - `updated_at` обновлён;
+  - лог в `integration_sync_logs` (`entity_type='rr_order'`, success).
+
+### 6. `rr-notification` — push-проверка
+
+- Дождаться реальной нотификации от РР по webhook URL функции `rr-notification`.
+- Ожидаемо:
+  - подпись проходит проверку → HTTP 200;
+  - `rr_test_ledger.last_notification_at` обновлён;
+  - `status_internal` совпадает с тем, что получили в шаге 5 (или переводит запись в терминальный статус, если pull ещё не догнал);
+  - `commission_minor` заполнен, если пришёл;
+  - идемпотентность: повтор той же нотификации (если РР ретраит) не создаёт дублей и не откатывает статус;
+  - лог `entity_type='rr_notification'`, `direction='inbound'`.
+- Негативный кейс: подделанная нотификация (изменённый payload) → HTTP 401, запись в ledger не меняется, есть лог с `result='error'`.
+
+### 7. SQL-proof отсутствия сайд-эффектов
+
+Выполнить и приложить к отчёту:
+
+```sql
+select count(*) from rr_test_ledger;          -- > 0
+select count(*) from payments_v2 where provider = 'rr';           -- = 0
+select count(*) from orders_v2 where meta::text ilike '%rr_test_%'; -- = 0
+select count(*) from provider_events where provider = 'rr';       -- = 0
+select count(*) from access_grant_ledger where source ilike '%rr%'; -- = 0
 ```
 
-Grants: `authenticated` — только SELECT через RLS (`has_role(auth.uid(),'admin')`); `service_role` — ALL. RLS ENABLE + политика admin-only на SELECT. Никаких INSERT/UPDATE от клиента — только через edge-функции service-role.
+Плюс grep по кодовой базе: ни `PublicPayPage`, ни `OfferAcquiringSettings`, ни продуктовые компоненты не изменены с прошлого этапа.
 
-Таблица явно называется `rr_test_ledger` (а не `rr_payments`), чтобы её нельзя было спутать с production-платежами и случайно подключить к отчётам.
+### 8. Security-проверка
 
-### 4. Admin UI (только внутри существующей карточки интеграции)
-
-Файл: `src/components/integrations/rr/RRSettingsCard.tsx` — расширяется, новые страницы не создаются.
-
-- Секция «Тестовое подключение» появляется только когда `credentialsReady && test mode`.
-- Кнопки:
-  - «Создать тестовую заявку 9 900 ₽» → `rr-test-create-order`, показывает `payment_url` и `external_id`, кнопка «Открыть в новой вкладке».
-  - «Проверить статус» рядом с каждой записью → `rr-test-get-status`.
-- Мини-таблица последних 20 записей `rr_test_ledger` (external_id, статус, сумма, комиссия, updated_at).
-- Явная плашка сверху секции: «Тестовый режим. Заявки не связаны с реальными заказами и не влияют на продажи и статистику».
-
-Никаких изменений в списке продуктов, офферах, `OfferAcquiringSettings`, публичных страницах.
-
-### 5. Логи и безопасность
-
-- Все запросы/ответы РР — через `integration_sync_logs` с `entity_type='rr_order'`/`rr_notification`. В `payload_meta` только: метод, endpoint (без query-секретов), status_raw, external_id, длительность. Никаких токенов, паролей, `secret_key`, полной подписи, персональных данных клиента.
-- `config_secrets` читается только service-role внутри edge-функций. Никогда не возвращается в HTTP-ответах, не пишется в логи, не попадает во фронт.
-- `rr-notification` — публичная, но обязательный signature check до любой записи в ledger.
+- `integration_sync_logs.payload_meta` для всех `rr_*` записей не содержит: `password`, `secret`, `Authorization`, `Basic` , номера карт, PII плательщика.
+- Ответы edge-функций не возвращают секреты.
+- Консоль браузера чиста от секретов.
 
 ## Definition of Done
 
-1. Adapter реализован и покрыт unit-тестами на `mapStatus` и `verifyNotificationSignature` (positive + negative).
-2. `rr-test-create-order` в test mode возвращает валидный `payment_url` РР (runtime proof — curl edge function + запись в `rr_test_ledger`).
-3. `rr-test-get-status` возвращает статус по существующей тестовой заявке (runtime proof).
-4. `rr-notification` принимает симулированный notification от РР, проверяет подпись, обновляет ledger (runtime proof — 200 при валидной подписи, 401 при подделанной).
-5. В `rr_test_ledger` появляются записи с корректными статусами и (если РР вернул) commission_minor.
-6. SQL-проверка: `payments_v2`, `orders_v2`, `provider_events`, `payment_provider_settings`, `acquiring_connections` — **без изменений строк** за время реализации.
-7. Grep-проверка: `PublicPayPage`, `OfferAcquiringSettings`, продуктовые компоненты, публичная страница оплаты — **без diff**.
-8. Секреты не появляются ни в `integration_sync_logs.payload_meta`, ни в ответах edge-функций, ни в консоли браузера.
-9. bePaid и Stripe flows не затронуты — smoke check по существующим тестам/страницам.
-10. Отчёт на русском, начинается с «Отчет о выполнении:», содержит runtime proof (curl + SQL), список изменённых файлов, явное подтверждение всех запретов из раздела «Жёсткие запреты».
+Все пункты обязательны:
 
-## Открытые вопросы (не блокируют старт, но фиксируются в отчёте)
+- В `rr_test_ledger` минимум 1 запись, прошедшая полный жизненный цикл: `pending → paid` (или эквивалент по маппингу РР).
+- `payment_url` получен от РР и открывается.
+- `getOrderStatus` подтвердил терминальный статус.
+- Валидная `rr-notification` принята (HTTP 200), поддельная — отклонена (HTTP 401).
+- `commission_minor` либо заполнен реальным значением от РР, либо явно зафиксировано, что РР его не возвращает в test-режиме (со ссылкой на ответ поддержки/доку).
+- SQL-proof из шага 7 подтверждает нулевое влияние на боевые таблицы.
+- Секреты не утекли ни в логи, ни в ответы, ни в UI.
+- Отчёт оформлен как «Отчёт о выполнении: E2E runtime proof РР» с SQL-выводами и скриншотами карточки.
 
-- Активация тестового режима у РР (host/аккаунт/флаг) — если поддержка РР ещё не ответила, `rr-test-create-order` реализуется, но e2e-proof помечается как pending до получения test-кред.
-- Политика retry для webhook — фиксируется как «доверяем retry со стороны РР, наш handler идемпотентен по external_id».
-- Поведение `createOrder` при повторном `external_id` — проверяется в рамках DoD п.2.
+## Что явно НЕ входит в этот план
 
-## Следующий этап (НЕ входит в этот план)
+- `rr-create-checkout` для боевых заказов.
+- Привязка РР к продуктам / офферам / публичным кнопкам.
+- Записи в `payments_v2` / `orders_v2` / выдача доступов.
+- Отображение РР в общей статистике продаж и комиссий.
+- Продовые креды.
 
-Product wiring: где показывать кнопку РР, для каких продуктов/офферов, условия (валюта, минимальная сумма), проведение реальных платежей в `payments_v2`, отражение комиссии в статистике, выдача доступов через entitlement flow. Согласуется отдельным планом только после стабильного core.
+Всё это — отдельный следующий план «Product wiring РР», который стартует только после закрытия DoD этого плана.
