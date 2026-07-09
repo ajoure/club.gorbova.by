@@ -28,3 +28,6 @@ verify_jwt = false
 
 [functions.notify-order-purchased]
 verify_jwt = false
+
+[functions.autoweb-session-heartbeat]
+verify_jwt = true
