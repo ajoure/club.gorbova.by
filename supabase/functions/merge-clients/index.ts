@@ -358,6 +358,7 @@ serve(async (req) => {
         .from("profiles")
         .update({
           is_archived: true,
+          status: "archived", // <-- важно: список контактов фильтрует по status != 'archived'
           merged_to_profile_id: masterProfileId,
           duplicate_flag: "none",
           // Очистить Telegram чтобы не было конфликтов при поиске
@@ -366,7 +367,7 @@ serve(async (req) => {
         })
         .eq("id", profileId);
     }
-    console.log(`[merge-clients] Archived and cleared ${mergedProfileIds.length} merged profiles`);
+    console.log(`[merge-clients] Archived (status+is_archived) and cleared ${mergedProfileIds.length} merged profiles`);
 
     // Убедиться, что master АКТИВЕН
     await supabase
