@@ -380,6 +380,7 @@ export default function AdminContacts() {
     hasNextPage,
     isFetchingNextPage,
     refetch,
+    error: profilesError,
   } = useInfiniteQuery({
     queryKey: ["admin-contacts-profiles", activePreset, debouncedSearch],
     queryFn: async ({ pageParam = 0 }) => {
@@ -409,18 +410,23 @@ export default function AdminContacts() {
       // - Вкладка «Дубли» больше не зависит от устаревшего duplicate_flag.
       // - Обычные вкладки не показывают уже объединённые/архивные записи.
       if (activePreset === "duplicates") {
-        const getDuplicateProfiles = supabase.rpc as unknown as (
-          fn: string,
-          args: Record<string, unknown>
-        ) => Promise<{ data: unknown[] | null; error: Error | null }>;
-
-        const { data, error } = await getDuplicateProfiles("get_duplicate_contact_profiles", {
-          p_limit: PAGE_SIZE,
-          p_offset: pageParam,
-          p_search: debouncedSearch || null,
-        });
-        if (error) throw error;
-        const rows = data || [];
+        // FIX-1: call rpc as a method on supabase to preserve `this` context.
+        // A detached reference (const fn = supabase.rpc) loses `this` and throws
+        // synchronously inside supabase-js, which made useInfiniteQuery silently
+        // fail with an empty list and never send an HTTP request.
+        const { data, error } = await (supabase.rpc as any)(
+          "get_duplicate_contact_profiles",
+          {
+            p_limit: PAGE_SIZE,
+            p_offset: pageParam,
+            p_search: debouncedSearch || null,
+          }
+        );
+        if (error) {
+          console.error("[AdminContacts] duplicate profiles RPC failed", error);
+          throw error;
+        }
+        const rows = (data as unknown[]) || [];
         return {
           rows,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
@@ -479,6 +485,20 @@ export default function AdminContacts() {
     getNextPageParam: (lastPage) => lastPage.nextOffset,
     initialPageParam: 0,
   });
+
+  // Surface RPC/query errors so пустой список не выглядит как "0 дублей".
+  const shownErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!profilesError) {
+      shownErrorRef.current = null;
+      return;
+    }
+    const msg = (profilesError as Error)?.message || String(profilesError);
+    if (shownErrorRef.current === msg) return;
+    shownErrorRef.current = msg;
+    console.error("[AdminContacts] profiles query failed", { preset: activePreset, error: profilesError });
+    toast.error(`Не удалось загрузить контакты: ${msg}`);
+  }, [profilesError, activePreset]);
 
   // Flat array of all loaded profiles
   const allProfiles = useMemo(

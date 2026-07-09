@@ -1,4 +1,4 @@
-import { Component, ReactNode } from "react";
+import { Component, ErrorInfo, ReactNode } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -12,18 +12,18 @@ interface State {
   message: string;
 }
 
-const RELOAD_FLAG = "__lazy_chunk_reloaded__";
+const RELOAD_TS_KEY = "__lazy_chunk_reload_ts__";
+const RELOAD_TTL_MS = 60_000; // разрешаем повторный reload раз в 60 сек, без бесконечного цикла
 
 /**
  * Catches dynamic-import / chunk-load failures (typically caused by a stale
  * SPA shell pointing to a chunk hash that no longer exists on the CDN after
- * a fresh deploy) and triggers a single full page reload.
+ * a fresh deploy) and triggers a full page reload — but не чаще одного раза
+ * в 60 секунд, чтобы избежать reload-loop на реально битой сборке.
  *
- * Guards:
- * - Only triggers on chunk-load signatures (ChunkLoadError, "Failed to fetch
- *   dynamically imported module", "Importing a module script failed").
- * - Never reloads more than once per session (sessionStorage flag).
- * - Re-throws any other error so the regular error path is unaffected.
+ * Runtime-ошибки, не относящиеся к chunk-load, всплывают как окно ошибки и
+ * подробно логируются в консоль вместе с pathname и component stack —
+ * это даёт адресный сигнал для последующего фикса.
  */
 export class LazyErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, isChunkError: false, message: "" };
@@ -36,31 +36,50 @@ export class LazyErrorBoundary extends Component<Props, State> {
     };
   }
 
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+
     if (!LazyErrorBoundary.isChunkLoadError(error)) {
-      console.error("[LazyErrorBoundary] route render failed:", error);
+      console.error("[LazyErrorBoundary] route render failed", {
+        pathname,
+        errorName: error?.name,
+        message: error?.message,
+        stack: error?.stack,
+        componentStack: errorInfo?.componentStack,
+      });
       return;
     }
 
-    let alreadyReloaded = false;
+    // TTL guard: reload разрешён, если с прошлого reload прошло больше RELOAD_TTL_MS.
+    let lastReloadAt = 0;
     try {
-      alreadyReloaded = sessionStorage.getItem(RELOAD_FLAG) === "1";
+      const raw = sessionStorage.getItem(RELOAD_TS_KEY);
+      lastReloadAt = raw ? Number(raw) || 0 : 0;
     } catch {
-      // sessionStorage unavailable (private mode, etc.) — fall through
+      // sessionStorage unavailable (private mode, etc.)
     }
 
-    if (alreadyReloaded) {
-      console.error("[LazyErrorBoundary] chunk load failed twice, giving up:", error);
+    const now = Date.now();
+    if (lastReloadAt && now - lastReloadAt < RELOAD_TTL_MS) {
+      console.error("[LazyErrorBoundary] chunk load failed within TTL, giving up", {
+        pathname,
+        lastReloadAt,
+        deltaMs: now - lastReloadAt,
+        message: error.message,
+      });
       return;
     }
 
     try {
-      sessionStorage.setItem(RELOAD_FLAG, "1");
+      sessionStorage.setItem(RELOAD_TS_KEY, String(now));
     } catch {
       /* ignore */
     }
 
-    console.warn("[LazyErrorBoundary] stale chunk detected, reloading once:", error.message);
+    console.warn("[LazyErrorBoundary] stale chunk detected, reloading once", {
+      pathname,
+      message: error.message,
+    });
     // Defer to next tick so React can finish the render cycle
     setTimeout(() => window.location.reload(), 0);
   }
