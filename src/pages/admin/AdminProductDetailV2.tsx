@@ -2102,6 +2102,54 @@ export default function AdminProductDetailV2() {
               </Card>
             )}
 
+            {offerForm.offer_type === "bank_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Рассрочка банка
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">Провайдер: Ресурс Развития</Badge>
+                    <Badge variant="secondary">Валюта: BYN</Badge>
+                    <Badge variant="secondary">Режим: внешний payment_url</Badge>
+                  </div>
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                    Runtime-контур РР ещё не включён. Кнопка сейчас работает по старой ссылке
+                    <code className="mx-1">meta.bank_installment.external_link</code> (fallback).
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fallback URL (external_link)</Label>
+                    <Input
+                      type="url"
+                      placeholder="https://pay.rrllc.ru/..."
+                      value={((offerForm.meta as any)?.bank_installment?.external_link ?? "") as string}
+                      onChange={(e) => {
+                        const prevMeta = (offerForm.meta || {}) as any;
+                        const prevBI = (prevMeta.bank_installment || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          meta: {
+                            ...prevMeta,
+                            bank_installment: {
+                              ...prevBI,
+                              external_link: e.target.value || null,
+                            },
+                          },
+                        });
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Legacy-поле. Если пусто — используется дефолтная ссылка из <code>src/lib/bankInstallment.ts</code>.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+
             {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe) */}
             <OfferAcquiringSettings
               value={(offerForm.meta as any)?.acquiring}
