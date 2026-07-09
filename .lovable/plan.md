@@ -1,57 +1,176 @@
-План: «Сформировать и скачать» в /purchases — авто-загрузка PDF после генерации
+да, согласен, с учетом правок:
 
-## Diagnose (что реально происходит у Юлии Иванько)
+## **Добавить в Sprint 2.1 входные данные**
 
-- Заказ REBILL-168b5101 (04.07.2026) — платёж bepaid, payer_type=individual, документ b224ec18 уже сгенерирован (тот же document_id воспроизводится идемпотентно 5 раз за 3 дня — она давит кнопку заново).
-- Edge function `canonical-document-generate-strict` в её сессии отрабатывает успешно (audit `document.generated` 07.07, 08.07 ×3, 09.07). Ошибок в БД / audit_logs / provider_events нет.
-- Front (src/components/purchases/OrderListItem.tsx) в `generateDoc()`:
-  1. вызывает `canonical-document-generate-strict` → success;
-  2. кидает toast «Документ сформирован»;
-  3. вызывает `refetch()` списка документов;
-  4. НИЧЕГО не скачивает и НЕ отправляет.
-- Далее пользователь должен вручную открыть дропдаун «Документы» → «Скачать PDF». Юлия этого шага не находит: с её точки зрения «нажала — ничего не произошло», хотя toast мелькнул. В скрине саппорт-переписки она пишет ровно: «Нажала кнопку "сформировать", но ничего не сформировалось». Проблема — исключительно UX: одна кнопка, а действий два.
-- Ответ edge-функции уже содержит всё нужное для авто-скачивания: `document_id`, `file_mime: 'application/pdf'`, `download_url` (см. index.ts:2476–2489).
+```txt
+Для runtime proof использовать продукт:
+«Ценный бухгалтер. Первая ступень 2.0».
 
-## Root cause
+На продукте должно быть 3 тарифа, и на каждом должна быть legacy-кнопка «Рассрочка от банка» / offer_type='bank_installment'.
 
-`OrderListItem.generateDoc` не завершает пользовательский сценарий. Кнопка называется «Сформировать», а поведение обрывается на присвоении номера — без визуального результата (файла).
+Тестировать публичный flow сначала на первом тарифе.
+```
 
-## Scope (что меняем)
+## **Уточнить порядок проверки**
 
-Только фронт, только один файл — `src/components/purchases/OrderListItem.tsx`. Никаких изменений в БД, RLS, edge functions, шаблонах документов, других UI-путях (админка, AI-документы, пакеты — не трогаем).
+```txt
+1. Найти продукт «Ценный бухгалтер. Первая ступень 2.0».
+2. Найти все тарифы этого продукта.
+3. Проверить, что у всех 3 тарифов есть bank_installment offer.
+4. Зафиксировать в proof-отчете:
+   - tariff_id;
+   - tariff name;
+   - tariff price / offer amount;
+   - bank_installment offer_id;
+   - external_link;
+   - meta.bank_installment.
+5. Начать runtime proof с первого тарифа.
+```
 
-## Изменения
+## **Важная проверка по суммам**
 
-1. Кнопка «Сформировать» → «Сформировать и скачать»
-   - `title="Сформировать документ и сразу скачать PDF (присвоит номер)"`
-   - Метка на десктопе: «Сформировать и скачать» (мобилка — иконка Sparkles, без текста, как сейчас).
-2. `generateDoc()` после успешного ответа:
-   - взять `data.document_id` из ответа edge-функции;
-   - вызвать `downloadDocumentBlob(document_id, 'pdf')` (уже импортирован в файле для `downloadDoc`);
-   - если download вернул `ok: false` — показать toast.error с его message, но НЕ отменять refetch (документ уже создан, будет виден в дропдауне);
-   - toast.success текст изменить на «Документ сформирован — скачивание началось»;
-   - refetch выполнить в parallel/после (не блокировать пользователя).
-3. Fallback без document_id (edge вернул success, но без id — гипотетически): оставить старое поведение (только refetch + toast), чтобы не терять контракт совместимости.
-4. Ошибочные ветки (throw) — без изменений.
+Добавить отдельный пункт в SQL/admin proof:
 
-## Не в scope
+```txt
+Для всех 3 тарифов продукта «Ценный бухгалтер. Первая ступень 2.0» сверить:
+- стоимость тарифа;
+- сумму на кнопке «Рассрочка от банка»;
+- amount в tariff_offers;
+- публично отображаемую сумму на кнопке/карточке.
 
-- Не трогаем «Документы» дропдаун (Скачать/Отправить на почту/Telegram) — работает как есть.
-- Не трогаем `SubscriptionDocumentActions`, `DealDocumentsPanel`, `PackageGenerationPanel` — там другой сценарий (сделки/пакеты/подписки), там уже есть отдельные потоки.
-- Не меняем идемпотентность edge-функции. Повторный клик «Сформировать и скачать» просто повторно скачает тот же PDF (id не меняется — safe).
-- Не переименовываем `bank_installment` и не трогаем текущие спринты РР.
+Ожидаемо: по каждому тарифу стоимость должна совпадать со своей настройкой, без подстановки общей/чужой суммы.
+```
 
-## Verify (DoD)
+## **Runtime public proof**
 
-1. `tsgo --noEmit` — 0 ошибок.
-2. Playwright под аккаунтом dev (пароль 123456) на `/my/purchases`:
-   - если у пользователя есть заказ без документа и с включённым шаблоном → клик «Сформировать и скачать» → браузер получает PDF (проверить в network — GET к storage signed URL), toast «скачивание началось», кнопка «Сформировать» пропадает, появляется дропдаун «Документы».
-   - если ни одного подходящего заказа нет — верифицировать на аккаунте Юлии Иванько нельзя (её единственный незакрытый заказ уже имеет документ); тогда достаточно проверить, что build проходит и код path в `generateDoc` вызывает `downloadDocumentBlob` (unit-inspection).
-3. Snapshot счётчиков БД (`ai_generated_documents`, `orders_v2`, `audit_logs`) до/после Playwright-проверки — должен вырасти ровно на количество новых генераций и `document.generated` audit-записей; никаких `document.generate_blocked_*` не появится.
-4. Сообщить пользователю: попросить Юлию нажать обновлённую кнопку — PDF должен упасть в загрузки браузера немедленно.
+```txt
+Публичный runtime proof выполнить на первом тарифе:
+- кнопка «Рассрочка от банка» отображается рядом с правильной стоимостью;
+- клик открывает meta.bank_installment.external_link;
+- нет запросов к installment-initiate / rr-*;
+- публичный flow остается legacy external_link.
+```
 
-## Технические заметки
+## **Остальные 2 тарифа**
 
-- `downloadDocumentBlob(id, kind)` возвращает `{ ok: true } | { ok: false, message }`; уже используется для существующих документов (см. `downloadDoc` в том же файле).
-- Ответ edge-функции: см. `supabase/functions/canonical-document-generate-strict/index.ts:2476–2489`.
-- RLS `ai_generated_documents` разрешает владельцу (profile_id → auth.uid()) SELECT — проверено для Юлии (profile 5478b052 ↔ user 01464367): всё ок, доступ к скачиванию не блокируется.
+По двум остальным тарифам в Sprint 2.1 достаточно read-only проверки:
+
+```txt
+- кнопка bank_installment существует;
+- сумма соответствует тарифу;
+- external_link/meta не повреждены;
+- UI админки открывает «Рассрочка банка».
+```
+
+Кликать публичный flow по всем трем тарифам необязательно, если первый тариф доказал legacy-поведение, а остальные два проверены по данным и UI.
+
+## **Что ответить подрядчику**
+
+```txt
+План Sprint 2.1 согласован с уточнением.
+
+Для теста использовать продукт «Ценный бухгалтер. Первая ступень 2.0». Там должно быть 3 тарифа, и на каждом должна быть кнопка «Рассрочка от банка».
+
+Нужно:
+1. Найти этот продукт и все 3 тарифа.
+2. По каждому тарифу зафиксировать tariff_id, название, стоимость, bank_installment offer_id, amount, external_link, meta.bank_installment.
+3. Проверить, что сумма кнопки рассрочки соответствует именно своему тарифу.
+4. Полный public runtime proof выполнить на первом тарифе:
+   - клик по кнопке открывает legacy external_link;
+   - нет запросов к installment-initiate / rr-*;
+   - публичный flow не изменился.
+5. По двум остальным тарифам достаточно read-only proof: кнопка есть, сумма правильная, meta/external_link не повреждены.
+6. Ничего не сохранять и не менять, кроме удаления inactive тестовой кнопки, если она была создана ранее.
+
+После этого Sprint 2.1 можно закрывать и переходить к плану Sprint 3.
+
+План: Sprint 2.1 — runtime proof UI/meta кнопки «Рассрочка банка»
+```
+
+## Контекст
+
+Sprint 2 по коду закрыт. Осталось доказать, что:
+
+1. UI редактора корректно отображает «Рассрочка банка» и её info-card для существующей legacy-кнопки (2 записи в БД).
+2. Публичный flow legacy `bank_installment` кнопки не сломан — по-прежнему открывает `meta.bank_installment.external_link` и не дёргает никаких РР-функций.
+3. Никаких изменений данных в БД не произошло между «до» и «после» проверки.
+
+Sprint 2.1 — **read-only proof**. Ни строчки кода не меняем.
+
+## Шаги
+
+### 1. SQL snapshot BEFORE
+
+Через psql зафиксировать счётчики (в одном UNION ALL, чтобы совпадали до/после):
+
+- `tariff_offers` total и WHERE `offer_type='bank_installment'`
+- `orders_v2` total
+- `payments_v2` total
+- `provider_events` total и WHERE `provider='rr'`
+- `domain_events` total
+- `entitlements` total
+- `access_grant_ledger` total
+
+Плюс отдельно — dump `meta->'bank_installment'` для двух существующих `bank_installment`-офферов (id + external_link + installment_provider + rr_mode + currency), чтобы сравнить один к одному.
+
+### 2. Admin UI proof (Playwright, /admin/products-v2/...)
+
+Открыть страницу продукта, содержащего одну из двух `bank_installment` записей. Скриншоты:
+
+- селект «Тип кнопки» показывает «Рассрочка банка»;
+- Info-Card виден с badges «Провайдер: Ресурс Развития / Валюта: BYN / Режим: внешний payment_url»;
+- поле `fallback_url` содержит существующий `external_link`;
+- amber-alert про disabled runtime отображается.
+
+Ничего не сохранять, форму закрыть без submit — proof только на чтение.
+
+### 3. Public flow proof (Playwright, публичная страница тарифа)
+
+Определить публичный URL для продукта с legacy `bank_installment` кнопкой (через `site_pages` / `site_domain_bindings` или ссылка от пользователя). Playwright headless:
+
+- открыть публичную страницу;
+- дождаться рендера pricing-секции;
+- инспектировать DOM кнопки: `href` / `onClick` должен вести на `meta.bank_installment.external_link`;
+- открыть DevTools Network (page.on('request')) → **отфильтровать по URL substring**: не должно быть ни одного запроса к `installment-initiate`, `rr-webhook`, `rr-test-*`, `rr-notification`, `rr-create-checkout`, `rr-*`;
+- кликнуть по кнопке, проверить, что открывается именно `external_link` (target `_blank` или navigation);
+- скриншот кнопки + скриншот перехода на внешний URL (или зафиксировать `page.on('popup')` URL).
+
+### 4. SQL snapshot AFTER
+
+Повторить те же запросы из шага 1. Diff должен быть **0** по всем счётчикам (никаких новых `orders_v2`, `payments_v2`, `provider_events`, `domain_events`, `entitlements`, `access_grant_ledger`, `tariff_offers`). `meta->'bank_installment'` для двух записей — byte-to-byte идентично снапшоту до.
+
+### 5. Тестовая кнопка (если создавалась)
+
+Проверить в БД, есть ли `tariff_offers` с `is_active=false` и `installment_provider='rr'` / `rr_mode='payment_url'`, созданные в рамках Sprint 2 discovery. Если есть — оставить `is_active=false` и УДАЛИТЬ через `supabase--insert` DELETE, зафиксировать before/after count.
+
+### 6. Отчёт
+
+Сохранить `.lovable/proofs/2026-07-09-rr-sprint-2.1-runtime-proof.md`:
+
+- SQL snapshots before/after;
+- скрины admin UI (пути);
+- скрины/логи Network из Playwright с подтверждением отсутствия РР-вызовов;
+- вывод: Sprint 2.1 закрыт → готовы к Sprint 3.
+
+## Что НЕ делаем в Sprint 2.1
+
+- Не пишем `installment-initiate`, `rr-webhook`, resolver, admin payments UI — это Sprint 3–5.
+- Не меняем БД (кроме удаления одной тестовой inactive-кнопки, если она есть).
+- Не трогаем `_shared/rr/*`, тестовый контур `rr_test_ledger` / `rr-test-*` / `rr-notification`.
+- Не переименовываем `bank_installment`, не удаляем legacy `external_link` из meta.
+- Не включаем `rr_mode='runtime'` ни на одной кнопке.
+- Не трогаем `bepaid-webhook`, `bepaid-polling`, Stripe pipeline.
+- Не задеваем master-sprint bePaid orphan recovery (он в бэклоге).
+
+## Требуемые входные данные от пользователя
+
+Прежде чем гонять Playwright по публичной странице, мне нужен адрес одной из двух легаси-кнопок `bank_installment` — какой продукт/тариф использовать для теста (или разрешение выбрать любой из двух по своему усмотрению — по `tariff_offers` найду сам).
+
+## DoD
+
+1. `.lovable/proofs/2026-07-09-rr-sprint-2.1-runtime-proof.md` создан со всеми артефактами.
+2. Snapshot before === after по 7 счётчикам.
+3. Network public flow не содержит запросов к `installment-initiate` / `rr-*`.
+4. Legacy `external_link` в двух `bank_installment` записях не изменён.
+5. Если была тестовая inactive-кнопка — удалена, count `tariff_offers` вернулся к discovery-снапшоту.
+6. Отчёт зафиксирован → пользователь даёт добро на Sprint 3.
