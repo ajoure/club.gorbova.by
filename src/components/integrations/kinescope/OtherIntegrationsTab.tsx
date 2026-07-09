@@ -6,6 +6,7 @@ import { GoogleMapsSettingsCard } from "@/components/integrations/google-maps/Go
 import { GrpLookupSettingsCard } from "@/components/integrations/grp-lookup/GrpLookupSettingsCard";
 import { VochiSettingsCard } from "@/components/integrations/vochi/VochiSettingsCard";
 import { WebSmsSettingsCard } from "@/components/integrations/websms/WebSmsSettingsCard";
+import { RRSettingsCard } from "@/components/integrations/rr/RRSettingsCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function OtherIntegrationsTab() {
