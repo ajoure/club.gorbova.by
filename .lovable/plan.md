@@ -188,3 +188,89 @@ access_grant_ledger
 - Идемпотентность в `rr-notification` — по ключу `(external_id, status_raw)` с проверкой перед `UPDATE` на `rr_test_ledger`; повторный apply возвращает 200 и пишет `duplicate` в `integration_sync_logs.status`.
 - Bad-signature путь — уже существующая MD5-проверка в `rr-adapter.ts` (`blueimp-md5`); нужно лишь убедиться, что при провале пишется `integration_sync_logs` с `direction='inbound'`, `status='error'`, `error_code='invalid_signature'` и redacted телом.
 - Все скрипты Playwright — под `/tmp/browser/rr_stepN/`, скриншоты — туда же.
+---
+
+## Отчет о выполненной работе: закрытие runtime-проверок Ресурс Развития без поддержки
+
+Дата: 2026-07-09 20:20 UTC. Все действия — в изолированном контуре (`rr_test_ledger`, `integration_sync_logs`). Боевые таблицы не затронуты (snapshot before/after ниже).
+
+### Snapshot before/after (боевые таблицы)
+
+| Таблица | count before | count after | max(created_at) before | max(created_at) after |
+|---|---|---|---|---|
+| payments_v2 | 6267 | 6267 | 2026-07-09 15:30:17 | 2026-07-09 15:30:17 |
+| orders_v2 | 4082 | 4082 | 2026-07-09 17:23:19 | 2026-07-09 17:23:19 |
+| provider_events | 35 | 35 | 2026-07-02 18:48:29 | 2026-07-02 18:48:29 |
+| domain_events | 2134 | 2134 | 2026-07-09 14:28:27 | 2026-07-09 14:28:27 |
+| entitlements | 986 | 986 | 2026-07-08 20:35:34 | 2026-07-08 20:35:34 |
+| subscriptions_v2 | 1334 | 1334 | 2026-07-09 15:30:19 | 2026-07-09 15:30:19 |
+| access_grant_ledger | 271750 | 271750 | 2026-07-09 20:15:05 | 2026-07-09 20:15:05 |
+| rr_test_ledger | 6 | 7 | — | +1 (rr_test_6d40dee1, тест-заявка) |
+
+Ни одна боевая таблица не изменилась.
+
+### Шаг 1. «Ошибка оплаты» — runtime behavior test-mode
+
+- Ledger row `rr_test_3d3e10d6-a2bc-46a3-8856-abb49466404a` (кнопка «Ошибка оплаты» была нажата ранее).
+- `rr-test-get-status` → `status_raw=new`, `status_internal=created`, `commission_minor=0`, webhook не приходит (`last_notification_at=NULL`).
+- Вывод: в test-mode кнопка «Ошибка оплаты» не триггерит webhook и не меняет статус. **Не блокер** — сценарий `failed` уже покрыт кнопкой «Отклонить рассрочку» (`rejected → failed`).
+
+### Шаг 2. Идемпотентность webhook — доказана
+
+Инструмент: новая admin-only функция `rr-test-simulate-webhook` (секрет не покидает backend, MD5-подпись считается на сервере, наружу уходит только hash).
+
+- Целевой заказ: `rr_test_ead30092-...` (уже в статусе `authorized`).
+- Валидный payload с `newStatus=authorized` отправлен дважды подряд:
+  - Первый вызов: `HTTP 200 { success:true, duplicate:true }`.
+  - Второй вызов: `HTTP 200 { success:true, duplicate:true }`.
+- В `rr_test_ledger` дублей нет, `status_internal=paid` не откатился.
+- В `integration_sync_logs` — две записи `rr_notification_duplicate`, `result=skipped`, `idempotency_key_short=rr_test_ead30092-...:aut...`.
+
+### Шаг 3. Bad signature — отклоняется 4xx с security log
+
+- Тот же payload с намеренно повреждённой подписью (`mutate_sign=true`).
+- Ответ `rr-notification`: **`HTTP 401 { error: "invalid_signature" }`**.
+- `rr_test_ledger` не изменился (тот же `status_raw=authorized`, `commission=9000`).
+- В `integration_sync_logs`: запись `rr_notification_bad_signature`, `direction=inbound`, `result=error`, `error_message=invalid_signature`. Секрет и полный payload не сохранены — только `expected_short`/`provided_short` префиксы.
+
+### Шаг 4. Повторный `createOrder` с тем же `external_id` — задокументировано
+
+- В `rr-test-create-order` добавлен test-only параметр `external_id_override` (guards: admin/superadmin, префикс `rr_test_`, длина ≤128, только при `cfg.mode='test'` — гарантия от `loadRRTestConfig`). Ledger дедуплицируется: если строка уже есть, вторая не создаётся; фиксируется только событие в `integration_sync_logs` с `override_used=true`, `ledger_row_existed=true`.
+- Первый createOrder на `rr_test_6d40dee1-...`: `HTTP 200`, `payment_url` получен.
+- Повторный createOrder с тем же `external_id_override`: **`HTTP 502 { error: "id заказа должен быть уникальным! Уже есть заказ с таким id в РР2" }`** (сам РР возвращает 400).
+- `rr_test_ledger` — по этому external_id ровно **1 строка**, не размножилась.
+
+**Retry policy v1:** на дубль `createOrder` — **не ретраить**. Читать состояние заявки через `getOrderStatus` по тому же `external_id`. Идемпотентность createOrder на стороне РР — жёсткая (unique constraint), сама заявка не возвращается повторно.
+
+### Шаг 5. `authorized_partially` — правило v1 зафиксировано
+
+- Ledger row `rr_test_bb97cb1a-...` — `status_raw=authorized_partially`, `commission_minor=4500`.
+- `rr-test-get-status` спустя ~2 часа после создания: `status_raw=authorized_partially` (не изменилось), `status_internal=pending` (не изменилось). Новых inbound webhook не приходило.
+- Правило v1 (уже в коде `mapStatus` в `_shared/rr/rr-adapter.ts`):
+  - `authorized_partially → pending`,
+  - заказ **не** завершать, доступы **не** выдавать,
+  - переход в `paid` только при последующем `authorized` / `authorized_all` (маппится в `paid`).
+- Код уже реализует правило — изменения не требуются.
+
+### Что закрыто
+
+- createOrder (BYN, Basic Auth, изолированный `rr_test_ledger`) ✓
+- Все 4 сценария: `authorized → paid`, `authorized_partially → pending`, `rejected → failed`, «Ошибка оплаты» = runtime behavior ✓
+- Реальные webhook от РР — MD5-подпись проходит ✓
+- **Идемпотентность webhook** — доказана (200/duplicate) ✓
+- **Bad signature** — 401 + security log ✓
+- **Повторный createOrder** — 400 от РР, retry policy зафиксирована ✓
+- **authorized_partially** — правило v1 зафиксировано ✓
+- Боевые таблицы (`payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2`, `access_grant_ledger`) — 0 новых/изменённых строк ✓
+
+### Открытые вопросы, если остались
+
+Runtime-путём не проверено:
+- Досылает ли РР `authorized`/`authorized_all` webhook автоматически после `authorized_partially` спустя длительное время (часы/сутки). Наблюдение за 2 часа — не досылает. Если понадобится доавторизация — это отдельная задача для v2 (либо ручной trigger, либо периодический `getOrderStatus`-poller).
+
+Письмо в поддержку РР **не отправляется**. Все runtime-проверки закрыты без блокеров.
+
+### Файлы изменены
+
+- `supabase/functions/rr-test-create-order/index.ts` — добавлен `external_id_override` + дедуп ledger.
+- `supabase/functions/rr-test-simulate-webhook/index.ts` — новая admin-only функция для runtime-тестов webhook (валидный/повреждённый sign).
