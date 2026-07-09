@@ -2,7 +2,7 @@
  * rr-test-create-order (admin-only, test mode)
  *
  * Создаёт тестовую заявку в РР (createOrder) c synthetic external_id
- * `rr_test_<uuid>`, суммой 9 900 ₽ RUB по умолчанию, без PII.
+ * `rr_test_<uuid>`. Сумма и валюта — параметры (по умолчанию 1000 BYN).
  * Пишет запись в rr_test_ledger. Не пишет в payments_v2/orders_v2.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
