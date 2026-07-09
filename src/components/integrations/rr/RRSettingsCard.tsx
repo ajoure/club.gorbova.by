@@ -472,8 +472,7 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
           ) : (
             <div className="text-center py-4">
               <p className="text-muted-foreground mb-4">
-                Подключите «Ресурс Развития» для приёма оплаты в рассрочку по
-                RUB-заказам от 9 900 ₽.
+                Подключите «Ресурс Развития» для приёма оплаты в рассрочку.
               </p>
               <Button onClick={() => setDialogOpen(true)}>
                 <Wallet className="h-4 w-4 mr-2" />
