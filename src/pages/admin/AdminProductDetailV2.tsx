@@ -1942,6 +1942,7 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                       <SelectItem value="installment">Рассрочка</SelectItem>
                       <SelectItem value="lead">Заявка (без оплаты)</SelectItem>
+                      <SelectItem value="bank_installment">Рассрочка банка</SelectItem>
                     </SelectContent>
                   </Select>
                   {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (
