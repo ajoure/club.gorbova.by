@@ -29,6 +29,13 @@ interface DuplicateCase {
   status: string;
 }
 
+function applyVisibleProfileFilter(query: any) {
+  return query
+    .eq("is_archived", false)
+    .neq("status", "archived")
+    .is("merged_to_profile_id", null);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -93,11 +100,12 @@ async function detectByEmail(supabase: SupabaseClient<any>, email: string, profi
   const normalizedEmail = email.toLowerCase().trim();
 
   // Find profiles with the same email
-  const { data: matchingProfiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id, user_id, email, phone, full_name, created_at")
-    .ilike("email", normalizedEmail)
-    .eq("is_archived", false);
+  const { data: matchingProfiles, error: profilesError } = await applyVisibleProfileFilter(
+    supabase
+      .from("profiles")
+      .select("id, user_id, email, phone, full_name, created_at")
+      .ilike("email", normalizedEmail)
+  );
 
   if (profilesError) {
     console.error("Error fetching profiles by email:", profilesError);
@@ -186,11 +194,12 @@ async function detectByPhone(supabase: SupabaseClient<any>, phone: string, profi
   const normalizedPhone = phone.replace(/[\s\-\(\)]/g, "");
 
   // Find profiles with the same phone but different emails
-  const { data: matchingProfiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id, user_id, email, phone, full_name, created_at")
-    .ilike("phone", `%${normalizedPhone.slice(-9)}%`) // Match last 9 digits
-    .eq("is_archived", false);
+  const { data: matchingProfiles, error: profilesError } = await applyVisibleProfileFilter(
+    supabase
+      .from("profiles")
+      .select("id, user_id, email, phone, full_name, created_at")
+      .ilike("phone", `%${normalizedPhone.slice(-9)}%`) // Match last 9 digits
+  );
 
   if (profilesError) {
     console.error("Error fetching profiles:", profilesError);
@@ -308,11 +317,12 @@ async function detectByCard(supabase: SupabaseClient<any>, cardMask: string, car
   console.log(`Detecting duplicates by card: mask=${cardMask}, holder=${cardHolder}`);
   
   // Find profiles with matching card mask
-  const { data: profiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id, user_id, email, phone, full_name, created_at, card_masks, card_holder_names")
-    .eq("is_archived", false)
-    .contains("card_masks", [cardMask]);
+  const { data: profiles, error: profilesError } = await applyVisibleProfileFilter(
+    supabase
+      .from("profiles")
+      .select("id, user_id, email, phone, full_name, created_at, card_masks, card_holder_names")
+      .contains("card_masks", [cardMask])
+  );
 
   if (profilesError) {
     console.error("Error fetching profiles by card:", profilesError);
