@@ -658,7 +658,13 @@ serve(async (req) => {
       last_check_at: new Date().toISOString(),
       error_message: errorMessage,
     };
-    if (!isRrPending) {
+    if (isRrPending) {
+      // RR: credentials в порядке, но реальный API-тест ещё не реализован.
+      // Держим статус "disconnected" (не connected и не error) — честный
+      // промежуточный статус до появления backend-адаптера.
+      updatePayload.status = "disconnected";
+      updatePayload.error_message = null;
+    } else {
       updatePayload.status = success ? "connected" : "error";
     }
 
