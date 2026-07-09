@@ -153,11 +153,17 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   };
 
   const handleCreateTestOrder = async () => {
+    const amountNum = parseFloat(testAmount.replace(",", "."));
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      toast.error("Введите корректную сумму");
+      return;
+    }
+    const amountMinor = Math.round(amountNum * 100);
     setIsCreatingTest(true);
     try {
       const { data, error } = await supabase.functions.invoke(
         "rr-test-create-order",
-        { body: { amount_minor: 990000, currency: "RUB" } },
+        { body: { amount_minor: amountMinor, currency: testCurrency } },
       );
       if (error || !data?.success) {
         toast.error(
