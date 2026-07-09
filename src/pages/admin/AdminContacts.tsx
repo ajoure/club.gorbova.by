@@ -486,6 +486,20 @@ export default function AdminContacts() {
     initialPageParam: 0,
   });
 
+  // Surface RPC/query errors so пустой список не выглядит как "0 дублей".
+  const shownErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!profilesError) {
+      shownErrorRef.current = null;
+      return;
+    }
+    const msg = (profilesError as Error)?.message || String(profilesError);
+    if (shownErrorRef.current === msg) return;
+    shownErrorRef.current = msg;
+    console.error("[AdminContacts] profiles query failed", { preset: activePreset, error: profilesError });
+    toast.error(`Не удалось загрузить контакты: ${msg}`);
+  }, [profilesError, activePreset]);
+
   // Flat array of all loaded profiles
   const allProfiles = useMemo(
     () => profilesData?.pages.flatMap((p) => p.rows) || [],
