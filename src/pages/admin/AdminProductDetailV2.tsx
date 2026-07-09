@@ -1854,7 +1854,7 @@ export default function AdminProductDetailV2() {
                         ? "installment"
                         : offerForm.offer_type
                     }
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment") => {
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment" | "bank_installment") => {
                       if (v === "installment") {
                         // Кнопка «Рассрочка» = pay_now + internal_installment.
                         // Очищаем meta.recurring (взаимоисключение типов кнопки).
