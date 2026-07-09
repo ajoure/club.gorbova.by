@@ -79,6 +79,8 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const [isChecking, setIsChecking] = useState(false);
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [testAmount, setTestAmount] = useState<string>("1000");
+  const [testCurrency, setTestCurrency] = useState<"BYN" | "RUB">("BYN");
 
   const queryClient = useQueryClient();
   const { deleteInstance } = useIntegrationMutations();
