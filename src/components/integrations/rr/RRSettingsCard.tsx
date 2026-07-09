@@ -55,11 +55,17 @@ interface RRTestLedgerRow {
   updated_at: string;
 }
 
-function formatRub(minor: number): string {
+const CURRENCY_SYMBOL: Record<string, string> = {
+  RUB: "₽",
+  BYN: "Br",
+};
+
+function formatAmount(minor: number, currency: string): string {
+  const sym = CURRENCY_SYMBOL[currency] ?? currency;
   return (minor / 100).toLocaleString("ru-RU", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }) + " ₽";
+  }) + " " + sym;
 }
 
 function testStatusLabel(row: RRTestLedgerRow): string {
