@@ -131,12 +131,12 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
             <div className="flex items-center gap-3">
               <div
                 className={`p-2 rounded-lg ${
-                  isConnected ? "bg-primary/10" : "bg-muted"
+                  isBackendConnected ? "bg-primary/10" : "bg-muted"
                 }`}
               >
                 <Wallet
                   className={`h-5 w-5 ${
-                    isConnected ? "text-primary" : "text-muted-foreground"
+                    isBackendConnected ? "text-primary" : "text-muted-foreground"
                   }`}
                 />
               </div>
@@ -146,14 +146,14 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                   {instance && (
                     <Badge
                       variant={
-                        isConnected
+                        isBackendConnected
                           ? "default"
                           : hasError
                             ? "destructive"
                             : "secondary"
                       }
                     >
-                      {isConnected ? (
+                      {isBackendConnected ? (
                         <>
                           <Check className="h-3 w-3 mr-1" />
                           Подключено
@@ -163,6 +163,8 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                           <X className="h-3 w-3 mr-1" />
                           Ошибка
                         </>
+                      ) : isPartial && credentialsReady ? (
+                        "Настроено частично · backend не подключен"
                       ) : (
                         "Настроено"
                       )}
