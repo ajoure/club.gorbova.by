@@ -242,6 +242,35 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
     setPlaybackSeconds((prev) => (Math.abs(prev - seconds) >= 0.5 ? seconds : prev));
   }, []);
 
+  // Phase A: минимальный player-state bridge для heartbeat guard'а.
+  // idle → ready → playing → paused/ended. autoplay_blocked ставим отдельно,
+  // если через 6s после mount плеер так и не сообщил playing/ready.
+  const [playerState, setPlayerState] = useState<AutowebPlayerState>("idle");
+  const playbackStartedRef = useRef(false);
+  const handlePlayerStateChange = useCallback((next: AutowebPlayerState) => {
+    setPlayerState((prev) => (prev === next ? prev : next));
+    if (next === "playing") playbackStartedRef.current = true;
+  }, []);
+  // autoplay-blocked детектор: если phase=live, video задан, но 6s нет ни playing, ни ready.
+  useEffect(() => {
+    if (!(state?.phase === "live" || state?.phase === "replay")) return;
+    if (!state?.kinescope_video_id) return;
+    const id = window.setTimeout(() => {
+      if (!playbackStartedRef.current && playerState !== "ready" && playerState !== "playing") {
+        setPlayerState("autoplay_blocked");
+      }
+    }, 6000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.phase, state?.kinescope_video_id]);
+
+  useAutowebHeartbeat({
+    sessionId: sessionId ?? null,
+    playerState,
+    currentTimeSeconds: playbackSeconds,
+    playbackStarted: playbackStartedRef.current,
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
