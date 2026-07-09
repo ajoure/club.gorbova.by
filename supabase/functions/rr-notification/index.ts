@@ -47,10 +47,14 @@ Deno.serve(async (req: Request) => {
 
   const supabaseAdmin = createServiceClient();
 
+  let cfg;
+  try { cfg = await loadRRTestConfig(supabaseAdmin); }
+  catch (e) { return errorResponse((e as Error).message, 503); }
+
   // Guard 1: только тестовые external_id
   if (!externalId.startsWith("rr_test_")) {
     await supabaseAdmin.from("integration_sync_logs").insert({
-      instance_id: null as unknown as string, // недоступно на этом этапе — лог всё равно нужен
+      instance_id: cfg.instanceId,
       entity_type: "rr_notification",
       direction: "inbound",
       object_id: externalId || null,
@@ -58,13 +62,9 @@ Deno.serve(async (req: Request) => {
       result: "error",
       error_message: "non_test_external_id_rejected",
       payload_meta: { event_type: eventType, new_status_short: newStatus.slice(0, 32) },
-    }).then(() => {}, () => {});
+    });
     return errorResponse("non_test_external_id_not_accepted_at_this_stage", 400);
   }
-
-  let cfg;
-  try { cfg = await loadRRTestConfig(supabaseAdmin); }
-  catch (e) { return errorResponse((e as Error).message, 503); }
 
   // Guard 2: проверка подписи
   const verify = await verifyNotificationSignature({
