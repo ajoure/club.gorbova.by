@@ -35,6 +35,7 @@ export function OtherIntegrationsTab() {
         <GrpLookupSettingsCard />
         <VochiSettingsCard />
         <WebSmsSettingsCard />
+        <RRSettingsCard instance={rrInstance} />
       </div>
     </div>
   );
