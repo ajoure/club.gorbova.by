@@ -2171,6 +2171,20 @@ export default function AdminProductDetailV2() {
 
 
             <TabsContent value="renewal" className="space-y-4 mt-4">
+            {offerForm.offer_type === "bank_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Автопродление</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    Банковская рассрочка не является подпиской. Условия, срок и график
+                    платежей определяет банк / «Ресурс Развития». Настройки автопродления
+                    для этого типа кнопки не применяются.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
               <Card>
                 <CardHeader className="pb-2">
