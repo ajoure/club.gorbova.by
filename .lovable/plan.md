@@ -1,132 +1,175 @@
 ## да, согласен, с учетом правок:
 
-1. **Исправить противоречие по количеству файлов.**  
-В начале написано «только один файл», но дальше добавлен `RRSettingsCard.tsx`. Правильно:
+1. **Исправить противоречие в п.4.**  
+В начале указано: «никакого кода интеграции, миграций, edge functions в этом шаге не создаётся», но далее допускается временная edge function `rr-discovery-probe`.
+  &nbsp;
+  Правильно зафиксировать так:
 
 ```txt
-Изменяются только 2 файла:
-1. supabase/functions/integration-healthcheck/index.ts
-2. src/components/integrations/rr/RRSettingsCard.tsx
+В этом шаге не создаются production edge functions, миграции и payment-flow код.
+Допускается только временная superadmin-only discovery edge function rr-discovery-probe, если без неё невозможно проверить test API РР. Она не является частью production-интеграции и должна быть удалена в этом же PR.
 ```
 
-2. **Не ставить** `status = connected` **в pending-режиме.**  
-Финально оставить выбранную тобой «чистую» альтернативу:
+2. **Probe-функцию не создавать автоматически.**  
+Сначала изучить документацию. Создавать `rr-discovery-probe` только если:
+  - документации недостаточно;
+  - есть сохранённые test credentials;
+  - невозможно подтвердить stop-guards без runtime-вызова.
+3. **Добавить запрет на запись runtime probe в** `integration_logs`**, если там нет безопасной redaction-гарантии.**  
+Формулировка:
 
 ```txt
-При credentials configured, но без реального API-теста РР:
-- integration_instances.status не переводить в connected;
-- error_message = null;
-- last_check_at = now();
-- responseData.api_test = "pending_backend";
-- UI показывает «Настроено частично · backend не подключен».
+Если текущий механизм integration_logs не гарантирует redaction raw API responses, ответы РР не писать в integration_logs. Вместо этого приложить локальный redacted summary в discovery.md: только названия полей, типы, статусы, request_id, без PII, токенов, подписей и секретов.
 ```
 
-Иначе будет ложный статус «Подключено».
-
-3. **Уточнить** `success`**.**  
-Для HTTP/healthcheck результата можно вернуть:
+4. **В stop-guards добавить отдельный пункт по персональным данным.**
 
 ```txt
-success = true
-api_test = "pending_backend"
+7. API РР не требует передачи лишних персональных данных сверх минимально необходимых для заявки и уже имеющихся в order/contact — да/нет.
 ```
 
-Но это должно означать только: **локальная проверка наличия credentials прошла**, а не то, что интеграция реально подключена к API РР.
+Если РР требует паспортные данные, адрес, место работы или иные sensitive данные на нашей стороне — это отдельный legal/security scope, не включать в v1 без доп. согласования.
 
-4. **В отчете использовать точный обязательный заголовок без “ё”:**
+5. **В adapter-contract не фиксировать** `payment_provider_settings` **как обязательную новую таблицу.**  
+У нас уже есть карточка интеграции через `integration_instances/config/config_secrets`. Поэтому формулировка должна быть:
 
 ```txt
-Отчет о выполненной работе: регистрация provider rr в integration-healthcheck
+Настройки provider rr переиспользуют существующую карточку integration_instances provider='rr'. Новую payment_provider_settings не создавать, если discovery не докажет необходимость отдельной payment-domain settings table.
 ```
 
-Это важно, потому что в проектных правилах обязательная маркировка отчета задана именно как `Отчет о выполненной работе`.  
+6. **Гейт PublicPayPage уточнить по источникам настроек.**
 
-5. **В** `payload_meta` **лучше не писать** `login_last4`**.**  
-Даже если это не пароль, сейчас в мини-шаге это лишний риск. Оставить только:
-
-```json
-{
-  "provider": "rr",
-  "mode": "test",
-  "credentials_status": "configured",
-  "api_test": "pending_backend"
-}
+```txt
+RUB && amount >= 990000 minor units && allow_rr на offer/product/payment link && integration_instances(provider='rr') exists && credentials configured && not disabled.
 ```
 
-6. **Discovery/реальные вызовы API РР не добавлять в этот мини-шаг.**  
-Правильно: этот шаг только убирает `unknown provider: rr` и делает честный промежуточный статус. Checkout/webhook/adapter остаются в следующем шаге.
+7. **В DoD добавить machine-check по отсутствию production-кода.**
+
+```txt
+Подтвердить, что в этом шаге не изменены payments_v2, orders_v2, provider_events, PublicPayPage, OfferAcquiringSettings и не созданы production edge functions rr-create-checkout/rr-webhook/rr-sync-status.
+```
+
+8. **Отчет должен быть на русском и с точным заголовком:**
+
+```txt
+Отчет о выполненной работе: Discovery API Ресурс Развития и контракт backend-адаптера rr
+```
 
 С этими правками план можно выполнять.
 
 &nbsp;
 
-План: регистрация provider `rr` в integration-healthcheck (мини-шаг)
+План: Discovery API «Ресурс Развития» и контракт backend-адаптера `rr`
 
-Цель — убрать ошибку «Неизвестный провайдер: rr» в кнопке «Проверить подключение» и дать честный промежуточный статус, пока backend платёжного flow не реализован. Никакого checkout/webhook в этом шаге.
+Цель — собрать проверяемые факты об API РР и зафиксировать контракт адаптера **до** написания `rr-create-checkout` / `rr-webhook`. Никакого кода интеграции, миграций, edge functions в этом шаге не создаётся. Итог — документ `docs/integrations/rr/discovery.md` + `docs/integrations/rr/adapter-contract.md`, ссылки на первоисточники, и решение go/no-go по каждому stop-guard.
 
-### 1. Что меняется
+### 1. Источники (обязательно проверить и зафиксировать URL + дату снятия)
 
-Только один файл: `supabase/functions/integration-healthcheck/index.ts`.
+- Публичная документация: `https://partner.rrllc.ru/public-api-v20/docs/` — все разделы (auth, orders, statuses, webhook, cancellation, commission).
+- Публичный сайт РР — модель работы для клиента (для sanity-check UX-предпосылок 9 900 ₽ / RUB / рассрочка).
+- При наличии — test-креды в `integration_instances.config_secrets` (провайдер `rr`, `mode=test`). Реальные вызовы делаем ТОЛЬКО в test-режиме и ТОЛЬКО из edge function `rr-discovery-probe` (см. п.4), никогда с фронта, никогда с боевыми ключами.
 
-Добавить `case "rr":` перед `default:` (строка ~600), логика:
+### 2. Что зафиксировать в `docs/integrations/rr/discovery.md`
 
-1. Читать сохранённые креды из БД service-role клиентом по `instance_id`:
-  ```
-   supabaseAdmin
-     .from("integration_instances")
-     .select("config, config_secrets")
-     .eq("id", instance_id)
-     .single()
-  ```
-   — секреты лежат в `config_secrets`, не в присланном `config` (важно: фронт их не отправляет).
-2. Валидация:
-  - `mode` (`test` | `battle`) — из `config.mode`, дефолт `test`;
-  - `secret_key` присутствует в `config_secrets`;
-  - для активного режима — соответствующий `login` (`test_login`/`battle_login`) в `config` и пароль (`test_password`/`battle_password`) в `config_secrets`.
-3. Если чего-то не хватает → `success=false`, `errorMessage="Ключи не заданы полностью для режима <mode>"`.
-4. Если всё на месте — API-тест РР не выполняем (backend adapter появится в следующем спринте по утверждённому плану). Возвращаем:
-  - `success = true`;
-  - `responseData = { mode, credentials_status: "configured", api_test: "pending_backend", note: "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР." }`.
-5. Ничего в лог/ответ/`payload_meta` НЕ пишем из секретов — только маркеры (`credentials_status`, `mode`, `login_last4` опционально из логина, никогда из пароля/ключа).
+Для каждого пункта — цитата/скрин из доков + вывод «использовать / не подходит / нужно уточнение у РР».
 
-### 2. Security-инварианты (подтвердить в отчёте)
+**2.1 Авторизация**
 
-- `config_secrets` читается только service-role клиентом внутри edge function.
-- В `integration_logs.payload_meta` пишутся только `mode`, `credentials_status`, `api_test`. Никаких паролей/секретного ключа/логинов.
-- В ответ фронту (JSON) уходят только эти же маркеры — секреты не возвращаются.
-- В `console.log` — только `provider: rr, mode, has_credentials: true/false`. Никаких значений секретов.
-- Frontend уже не отображает секреты (dialog хранит их только в локальном state до сохранения; после save state сбрасывается).
+- Схема: login + password + secret_key + подпись + timestamp.
+- Алгоритм подписи: конкретная формула (какие поля, какой порядок, какой hash, где передаётся — header/body).
+- TTL/rewind timestamp.
+- Раздельные endpoint/host для test и battle.
 
-### 3. UI-корректировка статусов (тот же PR)
+**2.2 Создание заявки / платёжной ссылки**
 
-`src/components/integrations/rr/RRSettingsCard.tsx`:
+- Endpoint(-ы): create request → get payment page/URL.
+- Обязательные поля: сумма (единицы!), валюта, описание, external_id/merchant_order_id, return_url, notification_url, покупатель (какие поля минимум).
+- Минимальная сумма (подтвердить порог 9 900 RUB).
+- Валюта: только RUB?
+- Возвращаемые поля: `rr_request_id`, `payment_url`, срок жизни ссылки.
+- Идемпотентность: поддерживается ли header/поле; какой ключ РР считает уникальным.
 
-- Пока `api_test === "pending_backend"` — бейдж «Настроено частично · backend не подключен» (variant `secondary`), а не «Подключено».
-- Тост «Проверить подключение»: `«Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.»` вместо ошибки.
-- Статус в БД пусть остаётся `connected` для last_check_at, но лейбл в UI считает по `config.api_test`.
+**2.3 Статусы**
 
-Альтернатива, более чистая: edge-функция ставит `status = "connected"` только когда пройден реальный API-тест; в pending-случае оставляет прежний статус и пишет `error_message = null`, `last_check_at = now()`. Так карточка не будет ложно-«Подключена». Выберу этот вариант — он честнее и не требует нового поля.
+- Полный список статусов с описанием.
+- Явно выделить: какие статусы = **финальная оплата/фондирование** (единственные, по которым завершаем заказ), какие промежуточные, какие терминальные-неуспешные.
+- Есть ли отдельный статус «одобрено но не оплачено» vs «профинансировано».
 
-### 4. Runtime proof (в build-режиме)
+**2.4 Webhook / callback**
 
-1. Playwright: логин `123456` → `/admin/integrations/other` → карточка «Ресурс Развития» → «Настройки» → сохранить minimal `mode=test`, `test_login`, `test_password`, `secret_key` → скриншот успешного сохранения.
-2. Клик «Проверить подключение» → скриншот тоста «Ключи сохранены…», НЕ «Неизвестный провайдер: rr».
-3. Открыть Настройки повторно → все поля секретов пустые с placeholder «•••••••• (не менять)» — proof, что секреты не возвращаются во фронт.
-4. SQL-proof (psql через exec):
-  - `select provider, status, error_message, last_check_at, config from integration_instances where provider='rr';` — секретов в `config` нет.
-  - `select event_type, result, error_message, payload_meta from integration_logs where instance_id=<id> order by created_at desc limit 3;` — в `payload_meta` только `mode`/`credentials_status`, без значений.
-5. DevTools network-запрос `POST /functions/v1/integration-healthcheck` — в ответе `data` нет паролей/ключа.
+- URL регистрируется на стороне РР или передаётся в каждом запросе?
+- Метод, content-type, retry-политика РР.
+- Подпись webhook: алгоритм, поле, где секрет.
+- Стабильный external id в payload (для idempotency в `provider_events`).
+- Список событий, которые РР шлёт.
 
-### 5. Что НЕ делаем в этом мини-шаге
+**2.5 Статус-запрос (pull)**
 
-- Не создаём `rr-create-checkout`, `rr-webhook`, `rr-sync-status`.
-- Не добавляем `provider='rr'` в `payments_v2` enum/CHECK.
-- Не трогаем `provider_events`, `payment_provider_settings`, `PublicPayPage`, `OfferAcquiringSettings`.
-- Не выполняем реальные вызовы RR API (нет discovery по документации).
+- Endpoint для polling статуса по `rr_request_id`.
+- Rate limit.
+
+**2.6 Отмена / возврат**
+
+- Endpoint отмены, при каких статусах допустим.
+- Возврат — есть ли API или только через кабинет.
+
+**2.7 Комиссия**
+
+- В каком ответе приходит комиссия (create/status/webhook/statement).
+- Единицы, знак, налоговый учёт.
+- Достаточно ли для записи в `payments_v2` (поле для комиссии).
+
+**2.8 Ошибки**
+
+- Формат ошибок, коды, human-message.
+- Ретраибельные vs терминальные.
+
+### 3. Stop-guards (go/no-go)
+
+Для каждого — явный вывод в документе. Если хоть один = **NO** → останавливаемся и возвращаем отчёт, backend не начинаем.
+
+1. Есть подпись webhook — да/нет.
+2. Однозначно определён «финальный оплачено/профинансировано» статус — да/нет.
+3. Есть стабильный external id для idempotency в `provider_events` — да/нет.
+4. Не требуется iframe с sensitive-данными на нашем фронте (только redirect на РР) — да/нет.
+5. Можно протестировать полный flow на test-кредах без реальных денег — да/нет.
+6. Есть API комиссии ИЛИ явно фиксируем «комиссия не сохраняется, только статус» — да/нет.
+
+### 4. Живая проверка на test-кредах (опционально, только если п.1.credentials есть)
+
+Одноразовая edge function `rr-discovery-probe` (создаётся временно, удаляется после discovery):
+
+- Superadmin-only auth guard.
+- Только методы: auth-ping, create test request на 9 900 RUB с фиктивным `external_id=discovery-<uuid>`, get status, cancel.
+- НИЧЕГО не пишет в `payments_v2` / `orders_v2` / `provider_events`.
+- Логирует ответы РР в `integration_logs` **с redaction**: только структура (ключи, типы, статусы), никаких PII, никаких токенов/подписей.
+- Результат прикладывается к discovery.md как «runtime evidence: &nbsp;, &nbsp;».
+
+Если после discovery решение go — probe-функция удаляется в этом же PR.
+
+### 5. Контракт backend-адаптера `docs/integrations/rr/adapter-contract.md`
+
+На основе discovery зафиксировать (без кода):
+
+- Интерфейс `RRPaymentProviderAdapter` (методы: `createCheckout`, `handleWebhookEvent`, `fetchStatus`, `cancel`, `mapStatus`).
+- Маппинг статусов РР → внутренние `payments_v2.status` / `orders_v2.status`.
+- Ключ идемпотентности webhook → `provider_events.external_id`.
+- Формула комиссии → `payments_v2.provider_fee_minor` (или «not stored»).
+- Список необходимых миграций (add-only): `payments_v2.provider` расширить `'rr'`, `orders_v2.provider` при наличии, `payment_provider_settings` row для `rr` с `allow_rr`, `rr_min_amount_minor=990000`, `rr_currency='RUB'`.
+- Список edge functions следующего шага: `rr-create-checkout`, `rr-webhook`, опционально `rr-sync-status` (cron).
+- Гейт на `PublicPayPage`: RUB && amount ≥ 9 900 ₽ && `allow_rr` && instance `rr` exists.
+- Что НЕ поддерживаем в v1: подписки/recurring, валюты кроме RUB, ручной расчёт комиссии, выдача доступов из webhook (только через canonical entitlement flow после финального статуса).
 
 ### 6. Definition of Done
 
-- Кнопка «Проверить подключение» не возвращает «Неизвестный провайдер: rr».
-- В pending-режиме карточка показывает «Настроено частично · backend не подключен», а не «Подключено».
-- SQL/network/логи не содержат секретов.
-- Отчёт начинается строкой: **«Отчёт о выполненной работе: регистрация provider rr в integration-healthcheck»**, содержит runtime proof по пунктам 4.1–4.5, secret-guard checklist по разделу 2, список изменённых файлов (2 файла), явное «не сделано» по разделу 5 и next-step ссылку на утверждённый в `.lovable/plan.md` backend-план (adapter + `rr-create-checkout` + `rr-webhook` + кнопка 9 900 RUB на PublicPayPage).
+- Файлы `docs/integrations/rr/discovery.md` и `docs/integrations/rr/adapter-contract.md` созданы, каждый пункт п.2 закрыт цитатой/ссылкой и датой.
+- По каждому stop-guard из п.3 — явный вердикт.
+- Если запускалась probe — приложены redacted-логи и функция удалена.
+- Отчёт начинается строкой: **«Отчет о выполненной работе: Discovery API Ресурс Развития и контракт backend-адаптера rr»**, содержит: список изменённых файлов, вердикт go/no-go, список открытых вопросов к РР (если есть), явный next-step (либо «backend implementation по контракту», либо «блок: нужен ответ от РР по …»).
+
+### 7. Что НЕ делаем в этом шаге
+
+- Не создаём `rr-create-checkout`, `rr-webhook`, `rr-sync-status` (кроме одноразовой probe при необходимости).
+- Не меняем схему БД (`payments_v2`, `provider_events`, `payment_provider_settings`, `orders_v2`).
+- Не трогаем `PublicPayPage`, `OfferAcquiringSettings`.
+- Не сохраняем ничего в `payments_v2` / `orders_v2` даже во время probe.
