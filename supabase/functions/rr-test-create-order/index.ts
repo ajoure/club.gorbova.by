@@ -60,9 +60,11 @@ Deno.serve(async (req: Request) => {
   const amountMinor = Number.isFinite(payload.amount_minor) &&
       (payload.amount_minor ?? 0) > 0
     ? Math.round(payload.amount_minor as number)
-    : 990000;
-  const currency = (payload.currency ?? "RUB").toUpperCase();
-  if (currency !== "RUB") return errorResponse("currency_must_be_rub", 400);
+    : 100000; // 1000.00 по умолчанию
+  const currency = (payload.currency ?? "BYN").toUpperCase();
+  if (!["BYN", "RUB"].includes(currency)) {
+    return errorResponse("currency_not_supported_in_test", 400);
+  }
 
   let cfg;
   try {
