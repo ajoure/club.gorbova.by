@@ -2,7 +2,7 @@
  * rr-test-create-order (admin-only, test mode)
  *
  * Создаёт тестовую заявку в РР (createOrder) c synthetic external_id
- * `rr_test_<uuid>`, суммой 9 900 ₽ RUB по умолчанию, без PII.
+ * `rr_test_<uuid>`. Сумма и валюта — параметры (по умолчанию 1000 BYN).
  * Пишет запись в rr_test_ledger. Не пишет в payments_v2/orders_v2.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -60,9 +60,11 @@ Deno.serve(async (req: Request) => {
   const amountMinor = Number.isFinite(payload.amount_minor) &&
       (payload.amount_minor ?? 0) > 0
     ? Math.round(payload.amount_minor as number)
-    : 990000;
-  const currency = (payload.currency ?? "RUB").toUpperCase();
-  if (currency !== "RUB") return errorResponse("currency_must_be_rub", 400);
+    : 100000; // 1000.00 по умолчанию
+  const currency = (payload.currency ?? "BYN").toUpperCase();
+  if (!["BYN", "RUB"].includes(currency)) {
+    return errorResponse("currency_not_supported_in_test", 400);
+  }
 
   let cfg;
   try {
@@ -84,7 +86,7 @@ Deno.serve(async (req: Request) => {
   const created = await rrCreateOrder(cfg, {
     externalId,
     amountMinor,
-    currency: "RUB",
+    currency,
     notificationUrl,
     correlationId,
   });
@@ -96,7 +98,7 @@ Deno.serve(async (req: Request) => {
     external_id: externalId,
     rr_request_id: created.rrRequestId ?? null,
     amount_minor: amountMinor,
-    currency: "RUB",
+    currency,
     status_internal: created.ok ? "created" : "failed",
     status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
     payment_url: created.paymentUrl ?? null,
@@ -137,7 +139,7 @@ Deno.serve(async (req: Request) => {
     status_raw: created.rrStatusRaw,
     status_internal: "created",
     amount_minor: amountMinor,
-    currency: "RUB",
+    currency,
     note: "Тестовая заявка. Не связана с реальными заказами.",
   });
 });

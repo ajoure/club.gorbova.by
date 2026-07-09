@@ -55,11 +55,17 @@ interface RRTestLedgerRow {
   updated_at: string;
 }
 
-function formatRub(minor: number): string {
+const CURRENCY_SYMBOL: Record<string, string> = {
+  RUB: "₽",
+  BYN: "Br",
+};
+
+function formatAmount(minor: number, currency: string): string {
+  const sym = CURRENCY_SYMBOL[currency] ?? currency;
   return (minor / 100).toLocaleString("ru-RU", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }) + " ₽";
+  }) + " " + sym;
 }
 
 function testStatusLabel(row: RRTestLedgerRow): string {
@@ -73,6 +79,8 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const [isChecking, setIsChecking] = useState(false);
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [testAmount, setTestAmount] = useState<string>("1000");
+  const [testCurrency, setTestCurrency] = useState<"BYN" | "RUB">("BYN");
 
   const queryClient = useQueryClient();
   const { deleteInstance } = useIntegrationMutations();
@@ -145,11 +153,17 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   };
 
   const handleCreateTestOrder = async () => {
+    const amountNum = parseFloat(testAmount.replace(",", "."));
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      toast.error("Введите корректную сумму");
+      return;
+    }
+    const amountMinor = Math.round(amountNum * 100);
     setIsCreatingTest(true);
     try {
       const { data, error } = await supabase.functions.invoke(
         "rr-test-create-order",
-        { body: { amount_minor: 990000, currency: "RUB" } },
+        { body: { amount_minor: amountMinor, currency: testCurrency } },
       );
       if (error || !data?.success) {
         toast.error(
@@ -261,7 +275,7 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-sm mt-1">
-                  Рассрочка для RUB-заказов от 9 900 ₽. Ключи вводятся здесь,
+                  Рассрочка платежей. Ключи вводятся здесь,
                   хранятся зашифрованно.
                 </CardDescription>
               </div>
@@ -369,17 +383,46 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                     отдельной технической таблице <code className="font-mono">rr_test_ledger</code>.
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="space-y-2">
                     <div className="text-sm font-medium">Тестовое подключение</div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleCreateTestOrder}
-                      disabled={isCreatingTest}
-                    >
-                      <Play className={`h-4 w-4 mr-2 ${isCreatingTest ? "animate-pulse" : ""}`} />
-                      Создать тестовую заявку 9 900 ₽
-                    </Button>
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Сумма</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={testAmount}
+                          onChange={(e) => setTestAmount(e.target.value)}
+                          className="h-9 w-28 rounded-md border border-input bg-background px-3 text-sm"
+                          disabled={isCreatingTest}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Валюта</label>
+                        <select
+                          value={testCurrency}
+                          onChange={(e) => setTestCurrency(e.target.value as "BYN" | "RUB")}
+                          className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"
+                          disabled={isCreatingTest}
+                        >
+                          <option value="BYN">BYN</option>
+                          <option value="RUB">RUB</option>
+                        </select>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCreateTestOrder}
+                        disabled={isCreatingTest}
+                      >
+                        <Play className={`h-4 w-4 mr-2 ${isCreatingTest ? "animate-pulse" : ""}`} />
+                        Создать тестовую заявку
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Сумма и валюта задаются вручную. В боевом сценарии они будут
+                      браться из настроек продукта/тарифа.
+                    </p>
                   </div>
 
                   {ledger.length === 0 ? (
@@ -393,9 +436,9 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                           <div className="min-w-0 flex-1">
                             <div className="font-mono truncate">{row.external_id}</div>
                             <div className="text-muted-foreground">
-                              {formatRub(row.amount_minor)} · {testStatusLabel(row)}
+                              {formatAmount(row.amount_minor, row.currency)} · {testStatusLabel(row)}
                               {row.commission_minor != null && (
-                                <> · комиссия {formatRub(row.commission_minor)}</>
+                                <> · комиссия {formatAmount(row.commission_minor, row.currency)}</>
                               )}
                             </div>
                           </div>
@@ -429,8 +472,7 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
           ) : (
             <div className="text-center py-4">
               <p className="text-muted-foreground mb-4">
-                Подключите «Ресурс Развития» для приёма оплаты в рассрочку по
-                RUB-заказам от 9 900 ₽.
+                Подключите «Ресурс Развития» для приёма оплаты в рассрочку.
               </p>
               <Button onClick={() => setDialogOpen(true)}>
                 <Wallet className="h-4 w-4 mr-2" />
