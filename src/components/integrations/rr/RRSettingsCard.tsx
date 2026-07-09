@@ -49,7 +49,6 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const { deleteInstance } = useIntegrationMutations();
 
   const config = (instance?.config ?? {}) as Record<string, unknown>;
-  const isConnected = instance?.status === "connected";
   const hasError = instance?.status === "error";
   const mode = (config.mode as string) || "test";
   const testConfigured = !!config.test_password_configured;
@@ -61,6 +60,13 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const activeLogin = mode === "battle" ? battleLogin : testLogin;
   const activePasswordConfigured =
     mode === "battle" ? battleConfigured : testConfigured;
+
+  // Пока backend-адаптер РР не подключён, статус "connected" не выставляется.
+  // Показываем честный промежуточный статус.
+  const credentialsReady =
+    secretConfigured && !!activeLogin && activePasswordConfigured;
+  const isBackendConnected = instance?.status === "connected";
+  const isPartial = !!instance && !isBackendConnected && !hasError;
 
   const handleHealthCheck = async () => {
     if (!instance) return;
@@ -80,7 +86,11 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
         );
         return;
       }
-      if (data?.success) {
+      if (data?.success && data?.data?.api_test === "pending_backend") {
+        toast.success(
+          "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
+        );
+      } else if (data?.success) {
         toast.success("«Ресурс Развития» подключён");
       } else {
         toast.error(`Ошибка: ${data?.error || "проверка не пройдена"}`);
