@@ -383,17 +383,46 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                     отдельной технической таблице <code className="font-mono">rr_test_ledger</code>.
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="space-y-2">
                     <div className="text-sm font-medium">Тестовое подключение</div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleCreateTestOrder}
-                      disabled={isCreatingTest}
-                    >
-                      <Play className={`h-4 w-4 mr-2 ${isCreatingTest ? "animate-pulse" : ""}`} />
-                      Создать тестовую заявку 9 900 ₽
-                    </Button>
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Сумма</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={testAmount}
+                          onChange={(e) => setTestAmount(e.target.value)}
+                          className="h-9 w-28 rounded-md border border-input bg-background px-3 text-sm"
+                          disabled={isCreatingTest}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Валюта</label>
+                        <select
+                          value={testCurrency}
+                          onChange={(e) => setTestCurrency(e.target.value as "BYN" | "RUB")}
+                          className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"
+                          disabled={isCreatingTest}
+                        >
+                          <option value="BYN">BYN</option>
+                          <option value="RUB">RUB</option>
+                        </select>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCreateTestOrder}
+                        disabled={isCreatingTest}
+                      >
+                        <Play className={`h-4 w-4 mr-2 ${isCreatingTest ? "animate-pulse" : ""}`} />
+                        Создать тестовую заявку
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Сумма и валюта задаются вручную. В боевом сценарии они будут
+                      браться из настроек продукта/тарифа.
+                    </p>
                   </div>
 
                   {ledger.length === 0 ? (
@@ -407,9 +436,9 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                           <div className="min-w-0 flex-1">
                             <div className="font-mono truncate">{row.external_id}</div>
                             <div className="text-muted-foreground">
-                              {formatRub(row.amount_minor)} · {testStatusLabel(row)}
+                              {formatAmount(row.amount_minor, row.currency)} · {testStatusLabel(row)}
                               {row.commission_minor != null && (
-                                <> · комиссия {formatRub(row.commission_minor)}</>
+                                <> · комиссия {formatAmount(row.commission_minor, row.currency)}</>
                               )}
                             </div>
                           </div>
