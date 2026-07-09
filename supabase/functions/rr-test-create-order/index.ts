@@ -51,7 +51,11 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
   if (!roleRow) return errorResponse("forbidden_admin_only", 403);
 
-  let payload: { amount_minor?: number; currency?: string } = {};
+  let payload: {
+    amount_minor?: number;
+    currency?: string;
+    external_id_override?: string;
+  } = {};
   try {
     payload = await req.json();
   } catch {
@@ -72,8 +76,22 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     return errorResponse((e as Error).message, 400);
   }
+  // cfg.mode гарантированно === 'test' (loadRRTestConfig throws иначе).
 
-  const externalId = `rr_test_${crypto.randomUUID()}`;
+  // external_id_override: test-only, admin-only, префикс rr_test_.
+  // Позволяет прогнать повторный createOrder с уже использованным id
+  // для проверки поведения РР (duplicate/same-order/new-order).
+  const overrideRaw = String(payload.external_id_override ?? "").trim();
+  let externalId: string;
+  if (overrideRaw) {
+    if (!overrideRaw.startsWith("rr_test_") || overrideRaw.length > 128) {
+      return errorResponse("external_id_override_invalid", 400);
+    }
+    // cfg.mode уже === 'test', role уже admin/superadmin — guard-ы выше.
+    externalId = overrideRaw;
+  } else {
+    externalId = `rr_test_${crypto.randomUUID()}`;
+  }
   const correlationId = crypto.randomUUID();
 
   const projectRef = (Deno.env.get("SUPABASE_URL") ?? "").match(
