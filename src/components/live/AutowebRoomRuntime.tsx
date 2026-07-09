@@ -60,11 +60,13 @@ function AutowebKinescopePlayer({
   videoId,
   startSeconds,
   onTimeUpdate,
+  onPlayerStateChange,
   viewerControls,
 }: {
   videoId: string;
   startSeconds: number;
   onTimeUpdate: (seconds: number) => void;
+  onPlayerStateChange?: (state: AutowebPlayerState) => void;
   viewerControls: AutowebViewerControls;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -77,20 +79,14 @@ function AutowebKinescopePlayer({
     const u = new URL(`https://kinescope.io/embed/${videoId}`);
     if (startSeconds > 0) u.searchParams.set("t", String(Math.floor(startSeconds)));
     u.searchParams.set("autoplay", "1");
-    // Controls (панель плеера) скрываем целиком только если И пауза, И перемотка запрещены.
-    // Если разрешено что-то одно — оставляем controls, а лишнее прячем overlay-guard'ом.
     if (!allowPause && !allowSeek) {
       u.searchParams.set("controls", "false");
     }
-    // Hotkeys управляют клавиатурными Space/←/→. Разрешаем только если хотя бы одно из них
-    // фактически доступно; иначе — глушим, чтобы клавиатура не обходила UI-запрет.
     u.searchParams.set("hotkeys", allowPause || allowSeek ? "true" : "false");
-    // Скорость и настройки — отдельным флагом.
     if (!allowSpeed) {
       u.searchParams.set("speed", "false");
       u.searchParams.set("settings", "false");
     }
-    // Всегда — никаких субтитров/PiP на автовебе.
     u.searchParams.set("subtitles", "false");
     u.searchParams.set("captions", "false");
     u.searchParams.set("pip", "false");
@@ -98,20 +94,33 @@ function AutowebKinescopePlayer({
     return u.toString();
   }, [videoId, startSeconds, allowPause, allowSeek, allowSpeed]);
 
-  // Слушаем timeupdate/postMessage от Kinescope плеера.
+  // Минимальный Kinescope postMessage bridge (Фаза A): читаем только playing/paused/ended
+  // + currentTime. Полный SDK не подключаем.
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       try {
         if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
         const data: any = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (!data) return;
+
         const t: number | undefined =
-          data?.data?.currentTime ??
-          data?.currentTime ??
-          data?.time ??
-          undefined;
-        if (typeof t === "number" && isFinite(t)) {
-          onTimeUpdate(t);
+          data?.data?.currentTime ?? data?.currentTime ?? data?.time ?? undefined;
+        if (typeof t === "number" && isFinite(t)) onTimeUpdate(t);
+
+        // Kinescope шлёт события вида {event: 'play'|'pause'|'ended'|'ready'|'timeupdate'}
+        // либо {type: 'kinescope:...'}. Нормализуем.
+        const raw: string =
+          data?.event ?? data?.type ?? data?.data?.event ?? data?.data?.type ?? "";
+        const evt = String(raw).toLowerCase();
+        if (!onPlayerStateChange) return;
+        if (evt.includes("play") && !evt.includes("playing_stopped") && !evt.includes("pause")) {
+          onPlayerStateChange("playing");
+        } else if (evt.includes("pause")) {
+          onPlayerStateChange("paused");
+        } else if (evt.includes("end")) {
+          onPlayerStateChange("ended");
+        } else if (evt.includes("ready") || evt.includes("canplay")) {
+          onPlayerStateChange("ready");
         }
       } catch {
         // ignore malformed messages
@@ -119,10 +128,10 @@ function AutowebKinescopePlayer({
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [onTimeUpdate]);
+  }, [onTimeUpdate, onPlayerStateChange]);
 
-  // Fallback: если Kinescope не шлёт postMessage — оцениваем время по монотонному счётчику,
-  // сбрасываемому только при смене видео. Не абсолютно точно, но достаточно для timed-replay.
+  // Fallback-таймер прогресса — на случай если Kinescope не шлёт postMessage.
+  // Player-state НЕ угадываем: heartbeat guard требует явного playing от плеера.
   useEffect(() => {
     let mounted = true;
     const startedAt = Date.now();
