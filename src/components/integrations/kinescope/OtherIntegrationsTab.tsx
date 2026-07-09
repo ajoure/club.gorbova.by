@@ -6,6 +6,7 @@ import { GoogleMapsSettingsCard } from "@/components/integrations/google-maps/Go
 import { GrpLookupSettingsCard } from "@/components/integrations/grp-lookup/GrpLookupSettingsCard";
 import { VochiSettingsCard } from "@/components/integrations/vochi/VochiSettingsCard";
 import { WebSmsSettingsCard } from "@/components/integrations/websms/WebSmsSettingsCard";
+import { RRSettingsCard } from "@/components/integrations/rr/RRSettingsCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function OtherIntegrationsTab() {
@@ -13,6 +14,7 @@ export function OtherIntegrationsTab() {
 
   const kinescopeInstance = instances?.find((i) => i.provider === "kinescope") || null;
   const hosterByInstance = instances?.find((i) => i.provider === "hosterby") || null;
+  const rrInstance = instances?.find((i) => i.provider === "rr") || null;
 
   if (isLoading) {
     return (
@@ -33,6 +35,7 @@ export function OtherIntegrationsTab() {
         <GrpLookupSettingsCard />
         <VochiSettingsCard />
         <WebSmsSettingsCard />
+        <RRSettingsCard instance={rrInstance} />
       </div>
     </div>
   );

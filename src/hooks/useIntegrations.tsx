@@ -184,6 +184,32 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
   },
   {
+    id: "rr",
+    name: "Ресурс Развития",
+    icon: "Wallet",
+    category: "other",
+    description:
+      "Рассрочка «Ресурс Развития» для RUB-заказов от 9 900 ₽. Тест/боевой режим, secret key, логин/пароль.",
+    secretFieldKeys: ["test_password", "battle_password", "secret_key"],
+    fields: [
+      {
+        key: "mode",
+        label: "Режим",
+        type: "select",
+        required: true,
+        options: [
+          { value: "test", label: "Тестовый" },
+          { value: "battle", label: "Боевой" },
+        ],
+      },
+      { key: "test_login", label: "Логин (тестовый)", type: "text", required: false, placeholder: "test-login" },
+      { key: "test_password", label: "Пароль (тестовый)", type: "password", required: false },
+      { key: "battle_login", label: "Логин (боевой)", type: "text", required: false, placeholder: "battle-login" },
+      { key: "battle_password", label: "Пароль (боевой)", type: "password", required: false },
+      { key: "secret_key", label: "Секретный ключ", type: "password", required: true, placeholder: "Секретный ключ для подписи запросов" },
+    ],
+  },
+  {
     id: "apix_instagram_dm",
     name: "Instagram (ApiX-Drive)",
     icon: "Instagram",

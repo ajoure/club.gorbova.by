@@ -1,161 +1,157 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **FIX-1 принимается как основной root-fix для вкладки «Дубли».**  
-Detached-вызов RPC нужно убрать. Вызов должен быть только через инстанс:
+1. **Убрать из плана формулировку про ввод секретов через Supabase /** `add_secret` **администратором.**  
+Администратор не должен видеть или использовать Supabase, env, secrets CLI, Edge Function secrets или любые технические коды.
+2. **Все настройки РР должны выполняться только из UI-карточки интеграции** в разделе:
 
-```ts
-const { data, error } = await supabase.rpc(
-  "get_duplicate_contact_profiles",
-  {
-    p_limit: PAGE_SIZE,
-    p_offset: pageParam,
-    p_search: debouncedSearch || null,
-  }
-);
+```txt
+Админка → Интеграции → Разное → Ресурс Развития
 ```
 
-2. **Добавить явный error-surface для RPC дублей.**  
-Если `get_duplicate_contact_profiles` вернул `error`, не показывать просто пустой список. Нужно:
-  - `console.error("[AdminContacts] duplicate profiles RPC failed", error)`;
-  - показать UI-состояние ошибки или toast;
-  - не маскировать ошибку под «0 дублей».
-3. **Проверить** `enabled` **/ queryKey для** `useInfiniteQuery`**.**  
-В отчете доказать, что при `activePreset === "duplicates"` query реально включается и `queryKey` меняется при поиске. Иначе можно починить `rpc`, но запрос всё равно не уйдёт.
-4. **FIX-2 считать mitigation + diagnostics, не полноценным root-fix** `/admin/deals`**.**  
-TTL для chunk reload и расширенный `console.error` — ок. Но если причина runtime-ошибка в `AdminDeals`, этот патч её не чинит. В отчете так и указать:
+3. **Карточка интеграции должна быть как у остальных интеграций**: Kinescope, [hoster.by](http://hoster.by), Gotenberg и т.д.  
+Внутри карточки должны быть понятные поля:
 
-```text
-/admin/deals: добавлен diagnostic/anti-stale-chunk guard; если появится stack runtime-ошибки — отдельный адресный patch.
+```txt
+Режим: Тестовый / Боевой
+Логин тестовый
+Пароль тестовый
+Логин боевой
+Пароль боевой
+Секретный ключ
+Включено / Выключено
+Проверить подключение
+Сохранить
+Удалить / Отключить
+Статус: Подключено / Ошибка / Не настроено
 ```
 
-5. **LazyErrorBoundary логировать не только** `error.stack`**, но и** `componentStack`**.**
+4. **Безопасное хранение всё равно остается обязательным**, но это внутренняя реализация.  
+UI принимает значения, backend сохраняет их безопасно: secrets vault / encrypted storage / Supabase secrets-compatible layer — выбрать по текущей архитектуре проекта. В обычной БД нельзя хранить пароли и secret key открытым текстом.
+5. **В UI нельзя показывать сохраненные секреты обратно.**  
+После сохранения показывать только маску:
 
-```ts
-console.error("[LazyErrorBoundary] route render failed", {
-  pathname: window.location.pathname,
-  errorName: error.name,
-  message: error.message,
-  stack: error.stack,
-  componentStack: errorInfo.componentStack,
-});
+```txt
+Логин: battle-gorbova
+Пароль: ••••••••••••
+Секретный ключ: ••••••••••••
+Ключи: configured
 ```
 
-6. **TTL reload guard сделать без reload-loop.**  
-Логика:
+6. **Добавить secure update-flow:**
+  - если администратор оставил поле пароля/ключа пустым — старое значение сохраняется;
+  - если ввел новое значение — оно заменяет старое;
+  - должна быть кнопка «Проверить подключение»;
+  - результат проверки показывается в карточке понятным текстом.
+7. **Раздел 1 текущего плана заменить на такой текст:**
 
-```text
-если chunk-load и lastReloadAt отсутствует или старше 60 сек → записать timestamp и reload;
-если меньше 60 сек → показать окно ошибки;
+```txt
+### 1. Credentials / UI Settings Guard
+
+Все учетные данные РР вводятся администратором только через карточку интеграции в UI:
+
+Админка → Интеграции → Разное → Ресурс Развития.
+
+Администратор не должен работать с Supabase Secrets, env-переменными, SQL, CLI или техническими кодами.
+
+Карточка должна содержать:
+- режим: test / battle;
+- тестовый логин;
+- тестовый пароль;
+- боевой логин;
+- боевой пароль;
+- секретный ключ;
+- enabled / disabled;
+- кнопку «Проверить подключение»;
+- статус подключения;
+- дату последней проверки;
+- текст последней ошибки, если проверка не прошла.
+
+Секреты не отображаются обратно после сохранения. В UI показываются только masked значения и статус configured.
+
+Backend обязан хранить секреты безопасно: не в открытом виде, не в логах, не в миграциях, не в frontend bundle, не в provider_events, не в audit_logs.
+
+В отчете запрещено повторять реальные значения логинов, паролей и secret key. Допустимо писать только:
+- test credentials configured;
+- battle credentials configured;
+- secret key configured;
+- connection test passed / failed.
 ```
 
-Не делать бесконечные reload каждые 60 секунд на одной и той же битой сборке.
+8. **В Discovery добавить отдельную проверку:**  
+есть ли уже в проекте secure-механизм сохранения ключей из UI для Kinescope / [hoster.by](http://hoster.by) / Google Maps / Gotenberg. Его нужно переиспользовать, а не создавать новый параллельный механизм. Это соответствует правилу переиспользования существующих таблиц, RPC, edge functions и UI-компонентов.  
+9. **В DoD добавить:**
 
-7. **DoD по** `/admin/deals` **расширить двумя сценариями.**
-
-```text
-1. Прямая загрузка /admin/deals.
-2. Переход внутри SPA на /admin/deals из другого admin-раздела.
+```txt
+Администратор полностью настраивает РР из карточки интеграции в UI.
+Ни один шаг настройки не требует Supabase, env, SQL, CLI или участия разработчика после деплоя.
 ```
 
-8. **Proof по «Дубли» должен включать network-запрос.**
-
-```text
-Playwright proof:
-- после клика по «Дубли» есть HTTP-запрос к get_duplicate_contact_profiles;
-- response 200;
-- первая страница содержит >0 строк;
-- UI показывает Показано >0.
-```
-
-9. **Не привязывать ожидаемое количество первой страницы к 100 как обязательный факт.**  
-Если `PAGE_SIZE` изменится или поиск/фильтр даст меньше, тест не должен ложно падать. Достаточно `> 0` и соответствия RPC-response.
-10. **Убрать из плана лишние ссылки на autoweb / FP-1..FP-4.**  
-Они не относятся к этому патчу. В разделе «Что НЕ делаем» достаточно:
-
-```text
-Не трогаем БД, RPC, edge-функции, схемы, роли, write-path оплат/доступов.
-```
-
-11. **В отчете указать границу scope.**
-
-```text
-Патч чинит загрузку вкладки «Дубли» и улучшает диагностику LazyErrorBoundary.
-Патч не меняет алгоритм поиска дублей, RPC, данные контактов и сделки.
-```
-
-После этих правок план можно выполнять.
+Архитектурно остальная часть плана остается корректной: РР должен идти через adapter layer, а не как логика внутри bePaid/Stripe; завершение заказа и выдача доступов должны идти через canonical payment/order/entitlement flow.  
 
 &nbsp;
 
-План: починить вкладку «Дубли» и убрать окно «Страница не загрузилась»
+План: интеграция «Ресурс Развития» (РР) как отдельный payment provider
 
-## Диагноз
+### 0. Discovery (обязательно перед кодом)
 
-### 1) Вкладка «Дубли» — 0 контактов при «Всего: 337»
+- Изучить [https://partner.rrllc.ru/public-api-v20/docs/](https://partner.rrllc.ru/public-api-v20/docs/) и зафиксировать в отчёте: endpoints (создание заявки, статус, webhook/callback, отмена, комиссия, sandbox/prod), схему авторизации (login/password + secret key + подпись/timestamp), полный список статусов и какие из них = реальная оплата/финансирование, обязательные поля заявки, наличие idempotency key, наличие webhook signature.
+- Пройти по проекту и зафиксировать текущие точки: `payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `payment_links`; edge functions bePaid/Stripe (create checkout, webhook); UI: `PublicPayPage`, `PaymentsIntegrationsPanel`, `OfferAcquiringSettings`, `AdminIntegrations` (вкладка «Разное»); наличие общего `PaymentProviderAdapter`.
+- Stop-guard: если нет webhook signature, непонятен «финальный» статус, нет стабильного external id для idempotency, требуется iframe с sensitive-данными на фронте, или нельзя протестировать на test-кредах — остановиться и вернуть discovery-отчёт.
 
-- Счётчик badge (99+) и `Всего: 337` берутся из RPC `get_contact_tab_counts` — он работает и возвращает корректные 337.
-- Сам список берётся из RPC `get_duplicate_contact_profiles`. Проверено `curl`-ом через PostgREST — RPC возвращает данные.
-- Runtime-проверка через Playwright: после клика по «Дубли» **вообще не уходит HTTP-запрос** к `get_duplicate_contact_profiles`. Ни ошибки в сети, ни 4xx/5xx — запроса просто нет.
-- Причина в `src/pages/admin/AdminContacts.tsx` (строки 411–421): метод `supabase.rpc` отвязан от контекста `this`:
-  ```ts
-  const getDuplicateProfiles = supabase.rpc as unknown as (fn, args) => Promise<…>;
-  const { data, error } = await getDuplicateProfiles("get_duplicate_contact_profiles", {...});
-  ```
-  При таком detached-вызове `supabase-js` теряет `this` и внутренне падает синхронно — `useInfiniteQuery` уходит в error-state молча (без `throwOnError`), UI показывает пустой список. Именно поэтому в сети нет запроса вообще.
+### 1. Secrets / Credentials Guard
 
-### 2) `/admin/deals` — окно «Страница не загрузилась»
+Всё хранится только в Supabase Secrets, не в БД/UI/логах/миграциях:
+`RR_TEST_LOGIN`, `RR_TEST_PASSWORD`, `RR_BATTLE_LOGIN`, `RR_BATTLE_PASSWORD`, `RR_SECRET_KEY`, `RR_MODE=test|battle`. В отчёте — только `RR_* configured`, без значений. Запрос секретов — через `add_secret` после подтверждения пользователя, отдельным сообщением.
 
-- Это UI от `LazyErrorBoundary` (`src/components/system/LazyErrorBoundary.tsx`). Он ловит два класса ошибок:
-  - `ChunkLoadError` / «Failed to fetch dynamically imported module» → авто-reload один раз, потом сдаётся и показывает окно.
-  - Любые другие рантайм-ошибки в дереве route → сразу показывает окно (без reload).
-- В моей preview-сессии `/admin/deals` открывается корректно, список сделок рендерится (скриншот в /tmp). Значит на проде это либо:
-  - устаревший SPA-shell после последнего деплоя, ссылающийся на удалённый чанк (`ChunkLoadError`), — тогда одного reload не хватило,
-  - либо runtime-исключение внутри `AdminDeals`, которое не воспроизводится под моей учёткой (зависит от данных/прав).
-- Без прод-логов нельзя точечно указать строку. Поэтому нужно (а) добавить нормальный сигнал в консоль/лог, (б) сделать guard более снисходительным к chunk-load (сбрасывать флаг через TTL, а не пожизненно на сессию).
+### 2. Архитектурное решение
 
-## Что меняем
+- Новый провайдер `provider = 'rr'`, лейбл «Ресурс Развития». Не переиспользовать bepaid/stripe, не писать RR-логику внутри их функций, не завершать заказ из UI, не выдавать доступы напрямую из callback.
+- Adapter layer `RRPaymentProviderAdapter` с методами: `createCheckoutSession`, `verifyWebhookSignature`, `parseWebhookEvent`, `mapExternalStatusToInternalStatus`, `getApplicationStatus`. Подключить через существующий общий интерфейс, если он есть.
+- Event-driven поток: RR callback → `provider_events` insert → signature/idempotency → update payment/order projection → emit `payment_succeeded/failed/pending` → existing entitlement/fulfillment flow. Никаких прямых grant-ов доступов из webhook.
 
-### FIX-1 — вкладка «Дубли» реально грузит данные
+### 3. DDL / миграции (add-only)
 
-Файл: `src/pages/admin/AdminContacts.tsx`, ветка `if (activePreset === "duplicates")` (сейчас строки 411–427).
+- Расширить CHECK/enum `payments_v2.provider` значением `rr` (bepaid/stripe не трогать).
+- `payment_provider_settings` (переиспользовать существующую, если есть; иначе создать с GRANT + RLS по стандарту): `provider`, `mode`, `is_enabled`, `settings jsonb`, `metadata jsonb`. Секреты в таблицу НЕ пишем.
+- Offer/product acquiring settings: `allow_rr boolean default false`, `rr_min_amount_minor integer default 990000` (9 900 RUB в копейках), `rr_mode_override` nullable. Если уже есть `allowed_providers` — добавить `rr` туда.
+- `provider_events`: поддержка `provider='rr'`, `external_event_id`, `external_order_id/rr_application_id`, `raw_payload`, `signature_validated_at`, `processing_status`, `idempotency_key` (расширить add-only при необходимости).
+- `payments_v2`: `provider_payment_id/rr_application_id`, `provider_status`, `gross_amount`, `fee_amount` (nullable), `net_amount`, `currency='RUB'`, `paid_at/funded_at`, `metadata.rr`. Если комиссия неизвестна — `fee_amount=null`, `metadata.rr_fee_status='unknown_until_reconciliation'`.
 
-- Убираем detached-обёртку `getDuplicateProfiles`.
-- Вызываем RPC напрямую на инстансе клиента, как это уже сделано для `get_profiles_with_paid_orders`:
-  ```ts
-  const { data, error } = await (supabase.rpc as any)(
-    "get_duplicate_contact_profiles",
-    { p_limit: PAGE_SIZE, p_offset: pageParam, p_search: debouncedSearch || null }
-  );
-  ```
-  (cast `as any` только на метод — контекст `supabase` сохраняется, потому что вызов идёт как метод.)
-- Возвращаемый массив маппим тем же способом, что и раньше (`rows`, `nextOffset`).
-- Больше ничего в этом файле не трогаем — SoT-инварианты (`recorded_webinar` как legacy-контейнер, `metadata jsonb` в `live_event_sessions`) не затрагиваются, потому что правка чисто фронтовая.
+### 4. Edge Functions
 
-### FIX-2 — снятие фантомного окна ошибки на `/admin/deals`
+- `rr-create-checkout`: валидация публичного токена/order, currency=RUB, amount ≥ 9900 RUB, `allow_rr=true`, provider enabled, отсутствие активной pending RR-заявки; создание заявки в RR API; вставка `payments_v2` (pending, provider='rr', `provider_payment_id`); `provider_events`+audit; возврат URL RR.
+- `rr-webhook`: raw body → verify signature → save в `provider_events` → idempotency → поиск payment/order **только по UUID/external_id** (не по email/телефону/ФИО) → маппинг статуса. Промежуточные — только обновление provider_status. Финальный paid/funded — mark payment success, fee (если пришёл), завершение заказа через существующий Order/PaymentService, `payment_succeeded` domain event → доступы через existing fulfillment. Отказ/отмена — payment failed/cancelled, order не завершать. Ошибки — `domain_executions`.
+- `rr-sync-status` (fallback): ручной admin action + scheduled reconciliation, не источник истины.
 
-Файл: `src/components/system/LazyErrorBoundary.tsx` (add-only, поведение по умолчанию не ломаем).
+### 5. UI
 
-- В `componentDidCatch` для не-chunk ошибок начинаем всегда логировать `error.stack` и текущий `location.pathname` в `console.error` с меткой `[LazyErrorBoundary] route render failed`, чтобы прод-логи чётко указывали место падения (это уже частично есть — расширяем полем `pathname` и `error.name`).
-- Для chunk-load ошибок: заменяем «один раз за сессию» на «один раз в 60 секунд» — храним таймстамп в `sessionStorage` вместо булева флага. Это убирает ситуацию, когда после первого фонового reload флаг остаётся навсегда и второе появление stale-chunk сразу показывает окно.
-- Реальный runtime-баг в `AdminDeals`, если он существует у пользователя, всплывёт в консоли с полным stack — тогда починим адресно во втором проходе.
+- Публичная страница оплаты (`PublicPayPage`): кнопка «Оплатить в рассрочку через Ресурс Развития» видна только при `provider rr enabled AND allow_rr AND currency=RUB AND amount ≥ 9900 RUB AND order not paid`. Иначе — вообще не рендерить. Клик → редирект на hosted page РР (свою форму на первом этапе НЕ делаем).
+- Админка «Интеграции → Разное» (по аналогии с Kinescope/hoster.by/Gotenberg): карточка «Ресурс Развития» с полями UI (login/password/secret key — ввод через secure form `add_secret`, значения не отображаются; переключатель test/battle; enabled/disabled; индикатор «Ключи: configured»; кнопки «Проверить», «Настройки», «Удалить»).
+- Offer/product acquiring settings (`OfferAcquiringSettings`): чекбокс «Разрешить Ресурс Развития», min amount 9900 RUB (read-only подсказка), tooltip про RUB.
+- В карточке заказа/платежа: `provider=Ресурс Развития`, статус заявки, `rr_application_id`, комиссия (если известна), ссылка на provider event (admin/superadmin).
 
-### FIX-3 — минимальный proof-run
+### 6. Статистика
 
-После правок:
+Фильтр provider поддерживает `rr`, `all` = bePaid+Stripe+RR. В выручку — только финальные paid/funded. Комиссия — только из API, без выдуманных расчётов.
 
-1. Playwright: заходим на `/admin/contacts`, кликаем «Дубли», ждём запрос `get_duplicate_contact_profiles`, проверяем что `Показано: > 0` (ожидаем 100 на первой странице из 337).
-2. Playwright: заходим на `/admin/deals`, ждём таблицу, проверяем что окно «Страница не загрузилась» не появляется. Логируем консоль — если есть runtime-ошибка, репортим в отчёте.
-3. UI-скриншоты обоих экранов кладём в отчёт.
+### 7. Тесты (test mode, runtime proof)
 
-## Что НЕ делаем в этом патче
+Order 9900+ RUB → кнопка видна; <9900 → скрыта; EUR/PLN/BYN → скрыта; checkout создаёт payment row pending; повторный клик не даёт дубли при active pending; webhook pending/failed/cancelled не завершает заказ; paid/funded завершает через canonical flow; доступ выдаётся через existing entitlement; bePaid/Stripe не изменились. Приложить SQL-proof, логи, скриншоты.
 
-- Не трогаем `autoweb-*` edge-функции, `live_event_sessions`, SoT-инварианты, `recorded_webinar`, FP-1..FP-4 план — они остаются как есть.
-- Не переписываем `useInfiniteQuery` / архитектуру пагинации.
-- Не переносим client-side дедупликацию `computedDuplicateIds` — RPC уже отдаёт правильный набор.
-- Не добавляем pg_cron/новые таблицы/новые роли.
+### 8. Definition of Done
 
-## DoD
+Всё из раздела 10 исходного ТЗ: provider `rr`, секреты только в env, кнопка по правилам 9900 RUB, test-mode checkout, signature+idempotency, order завершается только на финальном статусе, fee сохраняется когда доступен, доступы через existing entitlement, provider_events/executions для audit/retry, статистика поддерживает rr/all, bePaid/Stripe не сломаны, отчёт на русском с runtime proof.
 
-- Клик по «Дубли» показывает список профилей-дублей, `Показано` ≠ 0.
-- На `/admin/deals` при обычной навигации не появляется окно «Страница не загрузилась»; при реальной ошибке в консоли есть stack с pathname.
-- Никаких изменений в SoT, schema, edge-функциях эфира и в порядке FP-1..FP-4.
+### Порядок исполнения
+
+1. Discovery + отчёт по API РР и текущей архитектуре.
+2. Запрос секретов через `add_secret` (после подтверждения).
+3. Миграции (провайдер, provider settings, offer flags, provider_events/payments поля).
+4. Adapter + edge functions (`rr-create-checkout`, `rr-webhook`, `rr-sync-status`).
+5. UI: карточка в «Интеграции → Разное», acquiring settings, кнопка на PublicPayPage, отображение в заказах/платежах.
+6. Статистика + фильтры.
+7. Test-run + runtime proof + отчёт на русском.
+
+### Что не делаем в этом спринте
+
+Подписки/рекуррент через РР, валюты кроме RUB, автоподключение всех продуктов, ручной расчёт комиссии, параллельный checkout pipeline, отдельная таблица заказов РР, выдача доступов из webhook, хранение секретов в БД/UI, боевой запуск до test proof.
