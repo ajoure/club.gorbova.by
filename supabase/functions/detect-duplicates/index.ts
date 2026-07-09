@@ -97,7 +97,9 @@ async function detectByEmail(supabase: SupabaseClient<any>, email: string, profi
     .from("profiles")
     .select("id, user_id, email, phone, full_name, created_at")
     .ilike("email", normalizedEmail)
-    .eq("is_archived", false);
+    .eq("is_archived", false)
+    .neq("status", "archived")
+    .is("merged_to_profile_id", null);
 
   if (profilesError) {
     console.error("Error fetching profiles by email:", profilesError);
@@ -190,7 +192,9 @@ async function detectByPhone(supabase: SupabaseClient<any>, phone: string, profi
     .from("profiles")
     .select("id, user_id, email, phone, full_name, created_at")
     .ilike("phone", `%${normalizedPhone.slice(-9)}%`) // Match last 9 digits
-    .eq("is_archived", false);
+    .eq("is_archived", false)
+    .neq("status", "archived")
+    .is("merged_to_profile_id", null);
 
   if (profilesError) {
     console.error("Error fetching profiles:", profilesError);
@@ -311,8 +315,10 @@ async function detectByCard(supabase: SupabaseClient<any>, cardMask: string, car
   const { data: profiles, error: profilesError } = await supabase
     .from("profiles")
     .select("id, user_id, email, phone, full_name, created_at, card_masks, card_holder_names")
+    .contains("card_masks", [cardMask])
     .eq("is_archived", false)
-    .contains("card_masks", [cardMask]);
+    .neq("status", "archived")
+    .is("merged_to_profile_id", null);
 
   if (profilesError) {
     console.error("Error fetching profiles by card:", profilesError);
