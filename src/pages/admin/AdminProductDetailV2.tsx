@@ -1892,6 +1892,35 @@ export default function AdminProductDetailV2() {
                             },
                           },
                         });
+                      } else if (v === "bank_installment") {
+                        // Рассрочка банка (РР): add-only meta.bank_installment,
+                        // ВСЕ существующие ключи meta сохраняются, включая legacy external_link.
+                        const prevMeta = (offerForm.meta || {}) as any;
+                        const prevBI = (prevMeta.bank_installment || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "bank_installment",
+                          // Новым записям — full_payment; legacy payment_method='bank_installment' не форсим (сохранит submit-логика).
+                          payment_method: offerForm.payment_method || "full_payment",
+                          button_label:
+                            offerForm.button_label && offerForm.offer_type === "bank_installment"
+                              ? offerForm.button_label
+                              : (offerForm.button_label || "Оплатить в рассрочку от банка"),
+                          requires_card_tokenization: false,
+                          installment_count: null,
+                          installment_interval_days: null,
+                          first_payment_delay_days: null,
+                          meta: {
+                            ...prevMeta,
+                            bank_installment: {
+                              ...prevBI,
+                              installment_provider: prevBI.installment_provider ?? 'rr',
+                              currency: prevBI.currency ?? 'BYN',
+                              rr_mode: prevBI.rr_mode ?? 'payment_url',
+                              // external_link / link_label / message_html — НЕ трогаем.
+                            },
+                          },
+                        });
                       } else {
                         setOfferForm({
                           ...offerForm,
