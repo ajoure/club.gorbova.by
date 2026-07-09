@@ -341,3 +341,46 @@ DoD части A: заголовок обновлен, шесть guard-пунк
 - Автоматическое сопоставление банковской выписки (OCR / API банка) — отдельный эпик.
 - Возвраты по РР — отдельный план (нужен отдельный webhook-путь и UI).
 - Поддержка мульти-валют для РР — сейчас только BYN.
+
+---
+
+# Отчет о выполненной работе: закрытие runtime-проверок Ресурс Развития без поддержки
+
+Все runtime-проверки интеграции РР закрыты самостоятельно, без обращения в поддержку. Работа велась только в изолированном контуре (`rr_test_ledger`, `integration_sync_logs`, edge functions `rr-test-*`). Боевые таблицы (`payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2`, `access_grant_ledger`), `PublicPayPage`, `OfferAcquiringSettings`, продукты, тарифы и статистика — не затронуты.
+
+## Закрытые пункты
+
+1. **createOrder** — работает, `payment_url` возвращается корректно.
+2. **BYN** — подтверждено.
+3. **Реальные webhook от РР** — проходят проверку MD5-подписи и корректно применяются.
+4. **Статусы и комиссия** — подтверждены на всех 4 сценариях:
+   - `authorized` / `authorized_all` → `paid` (комиссия 9%).
+   - `authorized_partially` → `pending` (доступы не выдаются; РР сам `authorized_all` не досылает — правило v1 зафиксировано).
+   - `rejected` → `failed`.
+   - «Ошибка оплаты» — runtime behavior test-mode (webhook не приходит, `status_raw` остаётся `new`); не блокер, сценарий `failed` покрыт кнопкой «Отклонить рассрочку».
+5. **Идемпотентность webhook** — повторная отправка того же payload возвращает `HTTP 200` с маркером `duplicate:true`, `rr_test_ledger` не меняется.
+6. **Bad signature** — запрос с повреждённой MD5 отклоняется `HTTP 401 { error: "invalid_signature" }`; секрет остаётся на backend.
+7. **Повторный `createOrder` с тем же `external_id`** — РР возвращает 400 «id заказа должен быть уникальным». **Retry policy v1**: на дубликат не ретраить, читать `getOrderStatus`.
+8. **Snapshot before/after**: 0 новых/изменённых строк в `payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2`, `access_grant_ledger`. В `rr_test_ledger` +1 тест-заявка.
+
+## Guard-контур `rr-test-simulate-webhook` (admin debug tool)
+
+Функция создана исключительно как runtime-инструмент для admin-тестов и **не участвует в production-flow**. Явные ограничения:
+
+- **admin/superadmin only** — доступ через `has_role(auth.uid(), 'admin' | 'superadmin')`; любой другой вызывающий получает 403.
+- **test mode only** — принимает запросы только при `mode='test'`.
+- **только `rr_test_` external_id** — payload с `external_id`, не начинающимся на `rr_test_`, отклоняется без записи.
+- **production-flow не использует** эту функцию ни при каких условиях — production webhook пойдёт через отдельный endpoint (`rr-webhook`, план Part B, Sprint 4).
+- **секреты не возвращаются** — RR merchant key и MD5 salt остаются на backend; в ответе и в логах — только computed hash / redacted proof.
+- **боевые таблицы не трогает** — запись только в `rr_test_ledger` + `integration_sync_logs`; `payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2`, `access_grant_ledger` не затрагиваются.
+
+## Изменённые файлы
+
+- `supabase/functions/_shared/rr/rr-adapter.ts` — фиксировка `blueimp-md5`, shared `createOrder` / `verifySignature` / `mapStatus`.
+- `supabase/functions/rr-test-create-order/index.ts` — admin-only `external_id_override` + дедуп ledger.
+- `supabase/functions/rr-test-simulate-webhook/index.ts` — admin-only debug tool с guard-контуром выше.
+- `.lovable/plan.md` — данный отчёт.
+
+## Итог
+
+Письмо в поддержку РР не отправляется. Все технические вопросы закрыты runtime-путём.
