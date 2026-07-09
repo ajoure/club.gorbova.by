@@ -66,13 +66,13 @@ export function OfferRowCompact({
 
   const isPrimary = offer.is_primary && offer.offer_type === "pay_now";
   const canBePrimary = offer.offer_type === "pay_now" && offer.is_active && !isPrimary;
-  const isInstallment = offer.payment_method === "internal_installment";
-  const isBankInstallment = offer.payment_method === "bank_installment";
+  const isBankInstallmentOffer = offer.offer_type === "bank_installment";
+  // Внутренняя рассрочка N платежей: только для payment_method='internal_installment'
+  // и не пересекается с банковской рассрочкой (offer_type='bank_installment').
+  const isInstallment = offer.payment_method === "internal_installment" && !isBankInstallmentOffer;
+  const isBankInstallment = isBankInstallmentOffer || offer.payment_method === "bank_installment";
 
-  // Calculate installment info (Stage L0a-2):
-  // — max_months из meta.installment.max_months (fallback на legacy installment_count);
-  // — preview суммы при максимальном сроке: round half-up до целых BYN;
-  // — итог рассрочки = perPayment * maxMonths.
+  // Calculate installment info (Stage L0a-2) — только для внутренней рассрочки.
   const getInstallmentInfo = () => {
     if (!isInstallment) return null;
     const maxMonths = (offer.meta as any)?.installment?.max_months ?? offer.installment_count ?? null;
@@ -97,11 +97,19 @@ export function OfferRowCompact({
       {/* Left: Type badge + Label */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge 
+          <Badge
             variant={offer.offer_type === "trial" ? "secondary" : offer.offer_type === "preregistration" ? "outline" : "default"}
             className={offer.offer_type === "preregistration" ? "shrink-0 border-amber-500 text-amber-600" : "shrink-0"}
           >
-            {offer.offer_type === "trial" ? "Trial" : offer.offer_type === "preregistration" ? "Предзапись" : "Оплата"}
+            {offer.offer_type === "trial"
+              ? "Trial"
+              : offer.offer_type === "preregistration"
+                ? "Предзапись"
+                : offer.offer_type === "bank_installment"
+                  ? "Рассрочка банка"
+                  : offer.offer_type === "lead"
+                    ? "Заявка"
+                    : "Оплата"}
           </Badge>
           {isPrimary && (
             <Badge variant="outline" className="shrink-0 border-primary text-primary gap-1">
@@ -118,7 +126,7 @@ export function OfferRowCompact({
           {isBankInstallment && (
             <Badge variant="outline" className="shrink-0 border-blue-500 text-blue-600 gap-1">
               <CreditCard className="h-3 w-3" />
-              Банк
+              РР · BYN
             </Badge>
           )}
         </div>

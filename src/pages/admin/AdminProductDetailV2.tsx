@@ -2150,23 +2150,41 @@ export default function AdminProductDetailV2() {
             )}
 
 
-            {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe) */}
-            <OfferAcquiringSettings
-              value={(offerForm.meta as any)?.acquiring}
-              onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
-              isInstallment={offerForm.payment_method === "internal_installment"}
-              isSubscription={
-                offerForm.payment_method !== "internal_installment" && (
-                  offerForm.offer_type === "trial" ||
-                  offerForm.offer_type === "preregistration" ||
-                  Boolean((offerForm.meta as any)?.recurring?.is_recurring)
-                )
-              }
-            />
+            {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe).
+                Sprint A: скрыто для bank_installment — банковская рассрочка (РР) не проходит
+                через карточный эквайринг bePaid/Stripe. */}
+            {offerForm.offer_type !== "bank_installment" && (
+              <OfferAcquiringSettings
+                value={(offerForm.meta as any)?.acquiring}
+                onChange={(next) => setOfferForm({ ...offerForm, meta: { ...(offerForm.meta as any), acquiring: next } })}
+                isInstallment={offerForm.payment_method === "internal_installment"}
+                isSubscription={
+                  offerForm.payment_method !== "internal_installment" && (
+                    offerForm.offer_type === "trial" ||
+                    offerForm.offer_type === "preregistration" ||
+                    Boolean((offerForm.meta as any)?.recurring?.is_recurring)
+                  )
+                }
+              />
+            )}
             </TabsContent>
 
 
             <TabsContent value="renewal" className="space-y-4 mt-4">
+            {offerForm.offer_type === "bank_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Автопродление</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    Банковская рассрочка не является подпиской. Условия, срок и график
+                    платежей определяет банк / «Ресурс Развития». Настройки автопродления
+                    для этого типа кнопки не применяются.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
               <Card>
                 <CardHeader className="pb-2">
