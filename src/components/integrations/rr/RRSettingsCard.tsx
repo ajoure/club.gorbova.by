@@ -230,10 +230,10 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                     </span>
                     <span className="ml-1.5 text-xs">{lastCheckFormatted}</span>
                     <Badge
-                      variant={isConnected ? "outline" : "destructive"}
+                      variant={isBackendConnected ? "outline" : "destructive"}
                       className="ml-2 text-xs"
                     >
-                      {isConnected ? "OK" : hasError ? "ERROR" : "—"}
+                      {isBackendConnected ? "OK" : hasError ? "ERROR" : "—"}
                     </Badge>
                   </div>
                 )}
