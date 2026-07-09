@@ -909,7 +909,11 @@ export default function AdminContacts() {
     getItemId: (contact) => contact.id,
   });
 
-  // Bulk delete mutation
+  // Bulk delete mutation.
+  // Ниже стратегия: сначала подчищаем зависимости без ON DELETE CASCADE, потом
+  // пробуем hard-delete profiles. Если FK всё-таки блокирует — падаем на
+  // soft-delete (status='archived' + is_archived=true), чтобы контакт исчез
+  // из активного списка вместо застревания "ничего не произошло".
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       const profilesToDelete = contacts?.filter(c => ids.includes(c.id)) || [];
@@ -917,6 +921,15 @@ export default function AdminContacts() {
 
       await supabase.from("duplicate_cases").update({ master_profile_id: null }).in("master_profile_id", ids);
       await supabase.from("client_duplicates").delete().in("profile_id", ids);
+
+      // Зависимости на profiles.id без CASCADE/SET NULL — обнуляем/удаляем.
+      await supabase.from("email_threads").update({ profile_id: null } as any).in("profile_id", ids);
+      await supabase.from("instagram_contacts").update({ profile_id: null } as any).in("profile_id", ids);
+      await supabase.from("telegram_invite_links").update({ profile_id: null } as any).in("profile_id", ids);
+      await supabase.from("ai_document_generation_batches").delete().in("profile_id", ids);
+      await supabase.from("ban_cases").delete().in("profile_id", ids);
+      await supabase.from("merge_history").delete().in("master_profile_id", ids);
+      await supabase.from("merge_history").delete().in("merged_profile_id", ids);
 
       if (userIds.length > 0) {
         const { data: orders } = await supabase.from("orders_v2").select("id").in("user_id", userIds);
@@ -937,13 +950,27 @@ export default function AdminContacts() {
       }
 
       await supabase.from("payment_reconcile_queue").update({ matched_profile_id: null }).in("matched_profile_id", ids);
+
       const { error } = await supabase.from("profiles").delete().in("id", ids);
-      if (error) throw error;
-      
-      return ids.length;
+      if (error) {
+        // Fallback: не смогли жёстко удалить (осталась FK-зависимость) — архивируем.
+        console.warn("[bulk-delete] hard delete blocked, falling back to archive:", error.message);
+        const { error: archErr } = await supabase
+          .from("profiles")
+          .update({ status: "archived", is_archived: true })
+          .in("id", ids);
+        if (archErr) throw archErr;
+        return { count: ids.length, archived: true as const };
+      }
+
+      return { count: ids.length, archived: false as const };
     },
-    onSuccess: (count) => {
-      toast.success(`Удалено ${count} контактов`);
+    onSuccess: (result) => {
+      toast.success(
+        result.archived
+          ? `Архивировано ${result.count} контактов (жёсткое удаление заблокировано связанными данными)`
+          : `Удалено ${result.count} контактов`
+      );
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["admin-contacts-orders"] });
