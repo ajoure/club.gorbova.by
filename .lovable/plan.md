@@ -1,179 +1,271 @@
 # да, согласен, с учетом правок:
 
-1. **Discovery принимается как Sprint 1**, но пункт 10 с проверкой БД нужно исправить.  
-Нельзя писать:
+## **1. Sprint 2 можно выполнять, но только как UI/meta sprint**
+
+Scope корректный:
+
+```txt
+AdminProductDetailV2.tsx only
+без edge functions
+без миграций
+без orders_v2/payments_v2/provider_events/domain_events
+без public production flow
+без rr-webhook/installment-initiate
+```
+
+## **2. Runtime proof через новую кнопку — только inactive**
+
+Пункт с созданием новой кнопки нужно уточнить. Нельзя создавать активную тестовую кнопку на публичном продукте, даже временно.
+
+Заменить:
+
+```txt
+создать новую кнопку с типом «Рассрочка банка», сохранить
+```
+
+на:
+
+```txt
+создать новую тестовую кнопку с типом «Рассрочка банка» только в is_active=false, сохранить, проверить БД, затем удалить.
+```
+
+Если UI не позволяет создать inactive сразу — не создавать тестовую кнопку на публичном тарифе. Тогда proof делать через существующую `bank_installment`-запись без изменения публичного поведения.
+
+## **3. Snapshot должен быть before/after после cleanup**
+
+Так как тестовая кнопка создаётся и удаляется, итоговый snapshot должен быть именно после удаления.
+
+Добавить:
+
+```txt
+Снять snapshot:
+1. до теста;
+2. после создания тестовой кнопки;
+3. после удаления тестовой кнопки.
+
+Итоговый after-cleanup должен совпадать с before по count tariff_offers.
+```
+
+Боевые таблицы проверить не только count, но и отсутствие новых строк за окно теста:
 
 ```sql
-SELECT count(*) FROM tariff_offers, orders_v2, payments_v2
+SELECT 'orders_v2' AS t, count(*), max(created_at), max(updated_at) FROM orders_v2
+UNION ALL SELECT 'payments_v2', count(*), max(created_at), max(updated_at) FROM payments_v2
+UNION ALL SELECT 'provider_events', count(*), max(created_at), max(updated_at) FROM provider_events
+UNION ALL SELECT 'domain_events', count(*), max(created_at), max(updated_at) FROM domain_events;
 ```
 
-Это cross join и даст бессмысленное число.
 
-Правильно:
 
-```sql
-SELECT 'tariff_offers' AS table_name, count(*) FROM tariff_offers
-UNION ALL
-SELECT 'orders_v2', count(*) FROM orders_v2
-UNION ALL
-SELECT 'payments_v2', count(*) FROM payments_v2
-UNION ALL
-SELECT 'provider_events', count(*) FROM provider_events
-UNION ALL
-SELECT 'domain_events', count(*) FROM domain_events;
-```
+## **4. Не затирать существующий**
 
-2. **В deliverable добавить, что discovery должен быть зафиксирован как отчет, а не как план.**
+`meta.bank_installment`
+
+В `onValueChange` и save обязательно сохранить все старые поля:
 
 ```txt
-Отчет о выполненной работе: Discovery существующего installment/product buttons flow для РР
+external_link
+link_label
+message_html
+installment.max_months
+lead_form
+acquiring
+recurring
+любые неизвестные ключи meta
 ```
 
-3. **Перед Sprint 2 обязательно закрыть пункт про** `installment_payments`**.**  
-Он не может оставаться “не подтвержденным”, потому что может быть уже существующим контуром рассрочек. Нужно добавить в Sprint 1 discovery:
+Нельзя пересобрать `meta` только из новых полей.
+
+
+
+
+
+## **5.**
+
+`payment_method` **для legacy-записей не менять**
+
+Для новых `bank_installment` допустимо `payment_method='full_payment'`, но для существующих записей нельзя автоматически менять старое значение.
+
+Добавить правило:
 
 ```txt
-Проверить таблицу installment_payments:
-- поля;
-- связи с orders_v2/payments_v2/tariff_offers;
-- используется ли сейчас internal_installment / bePaid;
-- можно ли ее трогать;
-- нужно ли ее исключить из РР v1.
+Если открыта существующая bank_installment-запись и у нее payment_method='bank_installment', сохранить это значение как есть, если пользователь явно не менял другие поля.
 ```
 
-4. **Перед Sprint 2 проверить источник комиссии в** `/admin/payments`**.**  
-Это критично для product wiring, иначе можно записать комиссию в `meta`, а UI ее не увидит.
 
-Добавить discovery:
+
+
+
+## **6. Read-only**
+
+`currency=BYN` **допустимо только для Sprint 2**
+
+Зафиксировать:
 
 ```txt
-Найти, откуда UI /admin/payments берет колонку «Комиссия»:
-- отдельная колонка;
-- meta;
-- расчет;
-- provider-specific mapping.
+В Sprint 2 currency='BYN' только meta-настройка для будущего РР-flow.
+Production amount/currency пока не используются для createOrder.
 ```
 
-5. **Не добавлять** `commission_policy` **в Sprint 2.**  
-На этом этапе достаточно:
+## **7. Public visual check — только legacy external_link**
+
+Публичная страница не должна начать вызывать новый РР-runtime. Проверять нужно именно это:
 
 ```txt
-provider = rr
-external_link / payment_url mode
-currency
-amount_minor из тарифа/кнопки
+Публичная кнопка bank_installment по-прежнему открывает meta.bank_installment.external_link / legacy fallback.
+Никаких вызовов installment-initiate, rr-webhook, rr-test-* нет.
 ```
 
-`commission_policy` — отдельная финансовая логика, не нужна для первого wiring.
-
-6. `bank_installment` **не переименовывать в БД и не менять старый flow.**  
-В Sprint 2 только добавить управление существующим типом в UI:
+## **8. Формат отчета после выполнения**
 
 ```txt
-offer_type='bank_installment'
-label в UI: Рассрочка банка
+Отчет о выполненной работе: Sprint 2 — add-only UI и meta-поля для кнопки «Рассрочка банка»
 ```
 
-Старый внешний URL оставить как fallback/legacy до отдельного cleanup.
+## **Итог**
 
-7. **В Sprint 2 запретить массовую миграцию существующих 2 записей.**  
-Сначала только UI + add-only поля/meta, затем отдельный runtime proof на одном выбранном тарифе.
-8. **Для будущего** `installment-initiate` **source of truth должен быть** `tariff_offers.id`**.**  
-Не `product_id + tariff_id + button_id` как свободная комбинация. Правильно:
-
-```txt
-Вход: tariff_offer_id
-```
-
-А уже по нему подтягивать tariff/product/amount/currency/meta.
-
-После этих правок Sprint 1 можно считать корректным discovery и переходить к плану Sprint 2.
+План можно выполнять после этих уточнений. Главное: **не активировать новую кнопку на публичном продукте**, не затирать legacy `meta`, не менять production-flow и не создавать edge/backend wiring в этом спринте.
 
 &nbsp;
 
-План Sprint 1: Discovery — существующий installment/product buttons flow
+План: Sprint 2 — add-only UI и meta-поля для кнопки «Рассрочка банка»
 
-**Статус:** Sprint 0 (правка отчета) закрыт. Ниже — только фактические находки из репозитория и БД, без изменений.
+## Цель
 
-## 1. Модель кнопки продукта — уже существует, называется `tariff_offers`
+Дать возможность через UI редактора кнопки (`AdminProductDetailV2.tsx`) создавать/редактировать оффер типа `bank_installment` и хранить в `meta` add-only настройки будущего РР-flow (`installment_provider`, `installment_currency`, `rr_mode`). Никаких боевых edge-функций, orders_v2/payments_v2 и production-flow не трогаем.
 
-Таблица `public.tariff_offers` (27 полей, актуальные для нас):
+## Файлы, которые будут изменены (только фронт)
 
-- `offer_type` (text, без enum-check в БД): фактические значения — `pay_now, trial, preregistration, lead, bank_installment`.
-- `payment_method` (text): `full_payment, internal_installment, bank_installment`.
-- `button_label, amount, is_active, is_primary, sort_order, tariff_id`.
-- `installment_count, installment_interval_days, first_payment_delay_days` — для internal (bepaid).
-- `meta jsonb` — уже содержит вложенные `bank_installment.{external_link,link_label,message_html}`, `installment.{max_months}`, `recurring.{...}`, `lead_form.{...}`, `acquiring.{...}`.
-- `reentry_amount` — цена повторного вступления.
+1. `src/pages/admin/AdminProductDetailV2.tsx` — единственный редактируемый файл.
 
-## 2. Существующий «Заявка на рассрочку» = `offer_type='bank_installment'`
+Никакие другие файлы (шаблоны кнопок на публичных страницах, edge functions, миграции) не меняются.
 
-В БД уже 2 записи с `offer_type='bank_installment'` на 2 тарифах. Рендерится в:
+## Изменения в `AdminProductDetailV2.tsx` (add-only)
 
-- `src/lib/bankInstallment.ts` — хелпер `readBankInstallmentMeta(offer)`; **дефолтная ссылка** захардкожена: `https://pay.rrllc.ru/katerina-gorbova-credit`.
-- `src/components/lead/LeadRequestDialog.tsx` — показывает кнопку с этой ссылкой (target=_blank).
-- Точки использования: `src/pages/SitePageBySlug.tsx`, `src/pages/TariffPricing.tsx`, `src/components/landing/UniversalPricingSection.tsx`, `src/components/landing/ProductLanding.tsx`, `src/components/landing/TariffCard.tsx`, `src/components/live/LiveEventProductCta.tsx`.
+### 2.1. Расширить тип `offerForm.offer_type`
 
-Текущий flow «банковской рассрочки» = внешний URL, без createOrder / webhook / payments.
+Строка 331 сейчас:
 
-## 3. Редактор кнопки — `src/pages/admin/AdminProductDetailV2.tsx`
+```ts
+offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead",
+```
 
-Модалка «Редактировать кнопку» / «Новая кнопка оплаты» (строки 1795–2010). Селект «Тип кнопки» показывает **5 значений**:
+Расширить объединение до:
 
-- `pay_now` → «Оплата (полная стоимость)»
-- `trial` → «Trial (пробный период)»
-- `preregistration` → «Предзапись (привязка карты)»
-- `installment` (виртуальный ключ = `pay_now + payment_method='internal_installment'`) → «Рассрочка»
-- `lead` → «Заявка (без оплаты)»
+```ts
+offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment",
+```
 
-`**bank_installment` в UI-селекте отсутствует.** На вкладке «Оплата» есть RadioGroup с `bank_installment` (строки 1993–1999), но помечен `opacity-70` и подпись «настроим позже». То есть в UI ещё нет полноценного управления «Рассрочка банка».
+Плюс аналогично в другом месте (открытие диалога — `openOfferDialog`, ~ строки 495, 525). Существующая запись `bank_installment` в БД теперь корректно грузится в форму (сейчас грузится, но TS-тип неточен — легально add-only).
 
-Настройки CRM-воронки/стадий (`crm_funnel_id`, `stage_new`, `stage_success`, `stage_failed`) — на вкладке «Дополнительно» (в скриншоте видно `pipeline_id`, `pipeline_stage_id` из `orders_v2`). Их можно переиспользовать целиком, не плодить дубли.
+### 2.2. Добавить пункт селекта «Тип кнопки»
 
-## 4. RR shared-модуль — готов
+Строки 1907–1911 сейчас:
 
-`supabase/functions/_shared/rr/`:
+```tsx
+<SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
+<SelectItem value="trial">Trial (пробный период)</SelectItem>
+<SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
+<SelectItem value="installment">Рассрочка</SelectItem>
+<SelectItem value="lead">Заявка (без оплаты)</SelectItem>
+```
 
-- `rr-config.ts` — `loadRRTestConfig`, `createServiceClient`.
-- `rr-adapter.ts` — `createOrder`, `rrGetOrderStatus`, `verifyNotificationSignature`, `mapStatus`, `redactRRResponse`.
+После `lead` добавить:
 
-`supabase/functions/`:
+```tsx
+<SelectItem value="bank_installment">Рассрочка банка</SelectItem>
+```
 
-- `rr-notification` — **уже занят** как test-only endpoint (принимает только `rr_test_*` external_id, пишет в `rr_test_ledger`).
-- `rr-test-create-order`, `rr-test-get-status`, `rr-test-simulate-webhook` — admin/test инструменты, боевые таблицы не трогают.
+Значение селекта (строки 1848–1852) уже возвращает `offerForm.offer_type` для нестандартных случаев, поэтому `bank_installment` будет корректно подсвечиваться.
 
-**Вывод:** production webhook нельзя переиспользовать `rr-notification`, нужен отдельный endpoint `rr-webhook` (согласно правкам к плану).
+### 2.3. Ветка обработки выбора `bank_installment`
 
-## 5. Access-grant pipeline — единая точка входа существует
+В `onValueChange` селекта (строки 1853–1900) добавить `else if (v === "bank_installment") { ... }`:
 
-`supabase/functions/grant-access-for-order/index.ts` — вызывается из `bepaid-webhook` (7 мест вызова) как единственный writer выдачи доступов. Использует `writeLedgerEntry` из `_shared/fulfillment-executor.ts` и `syncSecondaryProductAccessForUser` из `_shared/product-access-grants.ts`. Именно её должна вызывать будущая production-функция `rr-webhook` — никакой параллельной ветки.
+- `offer_type: "bank_installment"`
+- `payment_method: "full_payment"` (не путать с легаси-значением `payment_method='bank_installment'` — оно старое, оставляем как есть если уже стоит; для новых записей ставим `full_payment`, чтобы не пересекаться с bepaid installment).
+- `button_label`: если пусто или дефолтное — «Оплатить в рассрочку от банка». Иначе не переопределяем.
+- `requires_card_tokenization: false`
+- `installment_count / interval / delay: null`
+- `meta`: merge без удаления существующих ключей, добавить:
+  ```ts
+  bank_installment: {
+    ...(prev.meta?.bank_installment || {}),
+    installment_provider: prev.meta?.bank_installment?.installment_provider ?? 'rr',
+    currency: prev.meta?.bank_installment?.currency ?? 'BYN',
+    rr_mode: prev.meta?.bank_installment?.rr_mode ?? 'payment_url',
+    // external_link НЕ трогаем — это старый fallback
+  }
+  ```
 
-## 6. Схема боевых таблиц — расширений почти не требуется
+### 2.4. Секция настроек «Рассрочка банка» на вкладке (не обязательная UI-панель, минимальный вариант)
 
-- `orders_v2`: 36 полей, `provider text` (без CHECK, без enum), `provider_payment_id text`, `pipeline_id, pipeline_stage_id` уже есть — CRM-роутинг встроен.
-- `payments_v2`: 31 поле, `provider text`, `installment_number int`, `is_recurring bool`, `transaction_type text`, `origin text`, `meta jsonb`.
-- `provider_events`: 14 полей, `provider text`, `event_id text`, `idempotency_key`, `signature_valid`, `processing_status` — идемпотентность из коробки.
-- Фактические значения `provider` в `payments_v2`: `bepaid, stripe, admin_test, admin, "", historical_import, getcourse`. Значения `rr` пока нет.
+Добавить один Card, показываемый только при `offerForm.offer_type === 'bank_installment'`, размещённый рядом с блоком настроек рассрочки (после строки 2003). Содержит только чтение/редактирование add-only полей:
 
-**Add-only ход**: провайдер `rr` вводится значением text — миграция enum-check не требуется. Комиссия РР пишется в существующее поле, надо решить какое (`meta.commission_minor` — самый безопасный add-only путь; либо добавить колонку `commission_minor int`, если такой ещё нет — проверить).
+- Read-only badge: «Провайдер: Ресурс Развития» (значение зашито `installment_provider='rr'`, поле не редактируемое в Sprint 2).
+- Read-only badge: «Валюта: BYN».
+- Read-only badge: «Режим: внешний payment_url».
+- Info-alert: «Runtime-контур РР ещё не включён. Кнопка сейчас работает по старой ссылке `meta.bank_installment.external_link` (fallback).»
+- Input «Fallback URL (external_link)» — редактирование существующего `meta.bank_installment.external_link` (это уже используется старым flow — не ломаем).
 
-## 7. Что осталось не подтверждённым (для следующего шага)
+Никаких кнопок «Тестировать РР», «Создать заказ», «Отправить webhook» на этой панели быть НЕ должно.
 
-- Нужно ли для комиссии РР **отдельная колонка** `commission_minor` в `payments_v2`, или писать только в `meta`. Существующая колонка «Комиссия» в UI `/admin/payments` — надо посмотреть, откуда берётся.
-- Формат `provider_events.event_id` для РР — принять `external_id + status` (как сейчас в rr-test) или `external_id + notification_id`.
-- Публичный контур входа: где именно кнопка «Рассрочка банка» становится триггером `installment-initiate` — компоненты `TariffCard`/`LeadRequestDialog`/`SitePageBySlug` уже импортируют bank_installment. Плюс `live/LiveEventProductCta.tsx` — вебинарные кнопки.
-- Есть ли отдельная таблица `installment_payments` (в списке таблиц видно) — что она содержит и как связана с текущим bank_installment.
+### 2.5. Ветка сохранения (submit)
 
-## 8. Что НЕ меняется в этом Sprint
+В функции сохранения оффера (строки ~662–685) поле `payment_method` для `bank_installment` не форсировать — писать то, что в форме (`payment_method: offerForm.payment_method || 'full_payment'`). Условие `offer_type === "pay_now" ? offerForm.payment_method : "full_payment"` (строка 682) — добавить исключение для `bank_installment`, чтобы не затирать существующее значение.
 
-Никакие файлы, миграции, edge functions не тронуты. Это только discovery-отчёт.
+## Что НЕ меняется
 
-## 9. Deliverable
+- `tariff_offers.offer_type` в БД — переименования нет, миграции нет.
+- Публичный рендер `bank_installment` (`SitePageBySlug`, `TariffPricing`, `UniversalPricingSection`, `TariffCard`, `ProductLanding`, `LeadRequestDialog`, `LiveEventProductCta`) — не трогается.
+- `src/lib/bankInstallment.ts` — не трогается; старый external_link продолжает работать как есть.
+- Существующие 2 записи `bank_installment` в БД — не мигрируются, не скрываются, не редактируются автоматически.
+- Никаких edge functions (`rr-webhook`, `rr-create-checkout`, `installment-initiate` и т.п.) не создаётся.
+- `orders_v2 / payments_v2 / provider_events / entitlements` не пишутся.
 
-Записать этот discovery в `.lovable/discovery/2026-07-09-rr-product-wiring-discovery.md` для сверки перед Sprint 2 (add-only поля кнопки).
+## Порядок работы (Diagnose → Plan → Dry run → Execute → Verify)
 
-## 10. Definition of Done Sprint 1
+1. Diagnose: закрыто в Sprint 1 discovery.
+2. Plan: этот документ.
+3. Dry run: перечисленные изменения выше — только TS-типы и JSX-элементы, миграций нет; риск = визуальный.
+4. Execute: 3 точечных `line_replace` в `AdminProductDetailV2.tsx`.
+5. Verify: перечислено ниже.
 
-- Файл `.lovable/discovery/2026-07-09-rr-product-wiring-discovery.md` создан с содержимым п.1–7.
-- Ни одна строка в БД не изменена (verify: `SELECT count(*) FROM tariff_offers, orders_v2, payments_v2` до/после — совпадает; и без того ничего не выполнялось).
-- Пользователь подтверждает discovery перед стартом Sprint 2, где вводятся add-only поля и `bank_installment` появится в селекте UI редактора.
+## Verify (runtime proof)
+
+Runtime proof выполняем только на **одной выбранной кнопке одного тарифа** (тарифы для проверки — существующие `543940b1-99da-47f3-accc-671ad5b11afe` или `9bc81736-e7e5-48db-9925-b866427a98e1`; **работаем только с ОДНИМ**).
+
+Snapshot до/после (обязательно, чтобы подтвердить no-op на боевых таблицах):
+
+```sql
+SELECT 'tariff_offers' AS t, count(*) FROM tariff_offers
+UNION ALL SELECT 'orders_v2', count(*) FROM orders_v2
+UNION ALL SELECT 'payments_v2', count(*) FROM payments_v2
+UNION ALL SELECT 'provider_events', count(*) FROM provider_events
+UNION ALL SELECT 'domain_events', count(*) FROM domain_events;
+```
+
+Ожидается: `orders_v2 / payments_v2 / provider_events / domain_events` — без изменений. `tariff_offers` — только UPDATE meta одной строки, count не меняется.
+
+Шаги proof:
+
+1. Открыть `/admin/products/<slug>` → выбрать тариф → «Редактировать кнопку» на существующей `bank_installment`-записи.
+2. Убедиться, что селект показывает «Рассрочка банка» (значение подставлено корректно из БД).
+3. В новом окне создать новую кнопку с типом «Рассрочка банка», сохранить.
+4. Проверить в БД: `SELECT id, offer_type, payment_method, meta->'bank_installment' FROM tariff_offers WHERE id=<новый id>` — должно быть `offer_type='bank_installment'`, `meta.bank_installment.installment_provider='rr'`, `currency='BYN'`, `rr_mode='payment_url'`.
+5. Открыть публичный URL продукта — убедиться, что старая ссылка на РР (`external_link`) по-прежнему работает (visual check).
+6. **Затем удалить тестовую кнопку**, чтобы не оставлять мусор в prod. Существующие 2 записи не трогаем.
+
+## Риски
+
+- TS-компиляция: расширение union `offer_type` может задеть другие места. Найдено: типы объявлены локально в форме, глобальных типов offer_type в клиенте нет — только `usePublicProduct.tsx`, `TariffCard.tsx` (публичный рендер не трогаем).
+- Устаревшая RadioGroup `bank_installment` в разделе «Способ оплаты» (строки 1993–1999) — оставляем как есть, помечена opacity-70; отдельный cleanup вне scope.
+
+## Definition of Done Sprint 2
+
+- В UI редактора кнопки появляется пункт «Рассрочка банка», выбор корректно записывает `offer_type='bank_installment'` + meta.bank_installment.{installment_provider='rr', currency='BYN', rr_mode='payment_url'}.
+- Открытие существующей `bank_installment`-записи корректно подставляет значение в селект.
+- Snapshot счётчиков `orders_v2 / payments_v2 / provider_events / domain_events` — без изменений.
+- Существующий публичный flow по external_link не сломан (visual check на публичной странице).
+- Runtime proof выполнен на одной тестовой кнопке, тестовая кнопка удалена.
+- Ни одна edge function не создана и не изменена.
