@@ -1,256 +1,161 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. В Фазе A.verify добавь отдельный обязательный сценарий **one_time + уже прошедший scheduled_at**:
-  - первый вход после времени старта;
-  - auto-create personal session;
-  - self-heal;
-  - отсутствие duplicate-start и duplicate-scenario-start.
-2. В Фазе A.verify зафиксируй отдельный proof для **multi-tab одного и того же пользователя** и **двух разных пользователей**:
-  - один пользователь, две вкладки;
-  - два пользователя, две независимые session;
-  - heartbeat не должен смешивать эти кейсы.
-3. В SQL/event proof Фазы A отдельно приложи:
-  &nbsp;
-  &nbsp;
-  - `live_event_sessions.status / started_at / ended_at / viewer_user_id / mode`;
-  - lifecycle поля/метки room/event/scenario;
-  - heartbeat timestamp sequence;
-  - audit events в хронологическом порядке.  
-  Без этого accepted не ставить.
-4. В Фазе B добавь отдельный gate:
-  - **scenario не стартует** до первого подтвержденного playback event;
-  - **scenario не уходит вперед по wall-clock**, если player time недоступен и autoplay заблокирован.
-5. В Фазе B viewer_controls проверь не только матрицей true/false, но и **повторным входом в ту же session**:
-  - `resume_from_last_position=true`;
-  - `resume_from_last_position=false`;
-  - `allow_rewatch_before_end=false/true`.
-6. В Фазе C для history/live merge добавь отдельный proof:
-  - новые комментарии текущих зрителей пишутся только в `autoweb live_event_id`;
-  - `source_live_event_id` остается read-only;
-  - в source-event после теста нет новых записей от текущего просмотра.  
-  Это нужно подтвердить SQL до/после, не только UI.
-7. В Фазе C viewer counters зафиксируй как инвариант:
-  - simulated count влияет только на отображение;
-  - не влияет на access;
-  - не влияет на chat;
-  - не влияет на moderation;
-  - не создает rows в sessions/participants.  
-  Это нужно вынести в отдельный proof-блок.
-8. В Фазе D для `launches_end_at` добавь 3 отдельных сценария:
-  - до дедлайна — новый запуск создается;
-  - после дедлайна — новый запуск не создается;
-  - уже начатая session после дедлайна продолжает работать штатно.
-9. В Фазе D для replay toggle зафиксируй обязательную проверку **во всех точках gate одновременно**:
-  - список эфиров;
-  - `/live/:slug`;
-  - invite/direct link;
-  - server resolve.  
-  Если хотя бы одна точка открыта — фаза не accepted.
-10. В Фазе D для test mode добавь жесткий инвариант:
+1. **FIX-1 принимается как основной root-fix для вкладки «Дубли».**  
+Detached-вызов RPC нужно убрать. Вызов должен быть только через инстанс:
+
+```ts
+const { data, error } = await supabase.rpc(
+  "get_duplicate_contact_profiles",
+  {
+    p_limit: PAGE_SIZE,
+    p_offset: pageParam,
+    p_search: debouncedSearch || null,
+  }
+);
+```
+
+2. **Добавить явный error-surface для RPC дублей.**  
+Если `get_duplicate_contact_profiles` вернул `error`, не показывать просто пустой список. Нужно:
+  - `console.error("[AdminContacts] duplicate profiles RPC failed", error)`;
+  - показать UI-состояние ошибки или toast;
+  - не маскировать ошибку под «0 дублей».
+3. **Проверить** `enabled` **/ queryKey для** `useInfiniteQuery`**.**  
+В отчете доказать, что при `activePreset === "duplicates"` query реально включается и `queryKey` меняется при поиске. Иначе можно починить `rpc`, но запрос всё равно не уйдёт.
+4. **FIX-2 считать mitigation + diagnostics, не полноценным root-fix** `/admin/deals`**.**  
+TTL для chunk reload и расширенный `console.error` — ок. Но если причина runtime-ошибка в `AdminDeals`, этот патч её не чинит. В отчете так и указать:
+
+```text
+/admin/deals: добавлен diagnostic/anti-stale-chunk guard; если появится stack runtime-ошибки — отдельный адресный patch.
+```
+
+5. **LazyErrorBoundary логировать не только** `error.stack`**, но и** `componentStack`**.**
+
+```ts
+console.error("[LazyErrorBoundary] route render failed", {
+  pathname: window.location.pathname,
+  errorName: error.name,
+  message: error.message,
+  stack: error.stack,
+  componentStack: errorInfo.componentStack,
+});
+```
+
+6. **TTL reload guard сделать без reload-loop.**  
+Логика:
+
+```text
+если chunk-load и lastReloadAt отсутствует или старше 60 сек → записать timestamp и reload;
+если меньше 60 сек → показать окно ошибки;
+```
+
+Не делать бесконечные reload каждые 60 секунд на одной и той же битой сборке.
+
+7. **DoD по** `/admin/deals` **расширить двумя сценариями.**
+
+```text
+1. Прямая загрузка /admin/deals.
+2. Переход внутри SPA на /admin/deals из другого admin-раздела.
+```
+
+8. **Proof по «Дубли» должен включать network-запрос.**
+
+```text
+Playwright proof:
+- после клика по «Дубли» есть HTTP-запрос к get_duplicate_contact_profiles;
+- response 200;
+- первая страница содержит >0 строк;
+- UI показывает Показано >0.
+```
+
+9. **Не привязывать ожидаемое количество первой страницы к 100 как обязательный факт.**  
+Если `PAGE_SIZE` изменится или поиск/фильтр даст меньше, тест не должен ложно падать. Достаточно `> 0` и соответствия RPC-response.
+10. **Убрать из плана лишние ссылки на autoweb / FP-1..FP-4.**  
+Они не относятся к этому патчу. В разделе «Что НЕ делаем» достаточно:
+
+```text
+Не трогаем БД, RPC, edge-функции, схемы, роли, write-path оплат/доступов.
+```
+
+11. **В отчете указать границу scope.**
+
+```text
+Патч чинит загрузку вкладки «Дубли» и улучшает диагностику LazyErrorBoundary.
+Патч не меняет алгоритм поиска дублей, RPC, данные контактов и сделки.
+```
+
+После этих правок план можно выполнять.
 
 &nbsp;
 
-- никаких production audit/lifecycle/session side effects;
-- все тестовые действия либо отдельным флагом, либо отдельным контуром state, но без влияния на боевой эфир.
+План: починить вкладку «Дубли» и убрать окно «Страница не загрузилась»
 
-11. В Фазе E добавь обязательный regression-check по уже сделанным вещам:
+## Диагноз
 
-- `source_live_event_id`;
-- one_time auto-session;
-- селектор source live_stream в админке;
-- viewer_controls в one_time;
-- existing history/live foundation.  
-Это не потерять.
+### 1) Вкладка «Дубли» — 0 контактов при «Всего: 337»
 
-12. В общий rule приемки добавь:
+- Счётчик badge (99+) и `Всего: 337` берутся из RPC `get_contact_tab_counts` — он работает и возвращает корректные 337.
+- Сам список берётся из RPC `get_duplicate_contact_profiles`. Проверено `curl`-ом через PostgREST — RPC возвращает данные.
+- Runtime-проверка через Playwright: после клика по «Дубли» **вообще не уходит HTTP-запрос** к `get_duplicate_contact_profiles`. Ни ошибки в сети, ни 4xx/5xx — запроса просто нет.
+- Причина в `src/pages/admin/AdminContacts.tsx` (строки 411–421): метод `supabase.rpc` отвязан от контекста `this`:
+  ```ts
+  const getDuplicateProfiles = supabase.rpc as unknown as (fn, args) => Promise<…>;
+  const { data, error } = await getDuplicateProfiles("get_duplicate_contact_profiles", {...});
+  ```
+  При таком detached-вызове `supabase-js` теряет `this` и внутренне падает синхронно — `useInfiniteQuery` уходит в error-state молча (без `throwOnError`), UI показывает пустой список. Именно поэтому в сети нет запроса вообще.
 
-- без **UI proof + runtime proof + SQL/event proof** одновременно статус только `partial`;
-- переход к следующей фазе запрещен.
+### 2) `/admin/deals` — окно «Страница не загрузилась»
 
-После этих правок план можно считать финальным и идти в Фазу A.verify.
+- Это UI от `LazyErrorBoundary` (`src/components/system/LazyErrorBoundary.tsx`). Он ловит два класса ошибок:
+  - `ChunkLoadError` / «Failed to fetch dynamically imported module» → авто-reload один раз, потом сдаётся и показывает окно.
+  - Любые другие рантайм-ошибки в дереве route → сразу показывает окно (без reload).
+- В моей preview-сессии `/admin/deals` открывается корректно, список сделок рендерится (скриншот в /tmp). Значит на проде это либо:
+  - устаревший SPA-shell после последнего деплоя, ссылающийся на удалённый чанк (`ChunkLoadError`), — тогда одного reload не хватило,
+  - либо runtime-исключение внутри `AdminDeals`, которое не воспроизводится под моей учёткой (зависит от данных/прав).
+- Без прод-логов нельзя точечно указать строку. Поэтому нужно (а) добавить нормальный сигнал в консоль/лог, (б) сделать guard более снисходительным к chunk-load (сбрасывать флаг через TTL, а не пожизненно на сессию).
 
-&nbsp;
+## Что меняем
 
-План: закрытие спринта Автовебинар по фазам
+### FIX-1 — вкладка «Дубли» реально грузит данные
 
-Работа идёт строго по фазам. Каждая фаза принимается отдельным proof-пакетом. Следующая фаза не стартует, пока предыдущая не accepted.
+Файл: `src/pages/admin/AdminContacts.tsx`, ветка `if (activePreset === "duplicates")` (сейчас строки 411–427).
 
----
+- Убираем detached-обёртку `getDuplicateProfiles`.
+- Вызываем RPC напрямую на инстансе клиента, как это уже сделано для `get_profiles_with_paid_orders`:
+  ```ts
+  const { data, error } = await (supabase.rpc as any)(
+    "get_duplicate_contact_profiles",
+    { p_limit: PAGE_SIZE, p_offset: pageParam, p_search: debouncedSearch || null }
+  );
+  ```
+  (cast `as any` только на метод — контекст `supabase` сохраняется, потому что вызов идёт как метод.)
+- Возвращаемый массив маппим тем же способом, что и раньше (`rows`, `nextOffset`).
+- Больше ничего в этом файле не трогаем — SoT-инварианты (`recorded_webinar` как legacy-контейнер, `metadata jsonb` в `live_event_sessions`) не затрагиваются, потому что правка чисто фронтовая.
 
-## Фаза A.verify — приёмка уже реализованной Фазы A
+### FIX-2 — снятие фантомного окна ошибки на `/admin/deals`
 
-**Цель:** доказать, что `autoweb-session-heartbeat` + auto-open/auto-start работают корректно, и присвоить Фазе A статус accepted.
+Файл: `src/components/system/LazyErrorBoundary.tsx` (add-only, поведение по умолчанию не ломаем).
 
-### Diagnose
+- В `componentDidCatch` для не-chunk ошибок начинаем всегда логировать `error.stack` и текущий `location.pathname` в `console.error` с меткой `[LazyErrorBoundary] route render failed`, чтобы прод-логи чётко указывали место падения (это уже частично есть — расширяем полем `pathname` и `error.name`).
+- Для chunk-load ошибок: заменяем «один раз за сессию» на «один раз в 60 секунд» — храним таймстамп в `sessionStorage` вместо булева флага. Это убирает ситуацию, когда после первого фонового reload флаг остаётся навсегда и второе появление stale-chunk сразу показывает окно.
+- Реальный runtime-баг в `AdminDeals`, если он существует у пользователя, всплывёт в консоли с полным stack — тогда починим адресно во втором проходе.
 
-- Прочитать текущий код: `useAutowebHeartbeat`, `autoweb-session-heartbeat/index.ts`, `AutowebRoomRuntime`, точки записи `auto_room_opened_at` / `auto_playback_started_at` / lifecycle transitions.
-- Проверить, что нет второго heartbeat-пути, дублирующего сигнал.
-- Проверить guard: `scenario_started` пишется только после подтверждённого `player_state='playing'`.
+### FIX-3 — минимальный proof-run
 
-### Execute
+После правок:
 
-- Код не менять. Только точечные фикс-патчи, если proof найдёт дефект (double-start, гонка multi-tab, отсутствие self-heal после refresh).
+1. Playwright: заходим на `/admin/contacts`, кликаем «Дубли», ждём запрос `get_duplicate_contact_profiles`, проверяем что `Показано: > 0` (ожидаем 100 на первой странице из 337).
+2. Playwright: заходим на `/admin/deals`, ждём таблицу, проверяем что окно «Страница не загрузилась» не появляется. Логируем консоль — если есть runtime-ошибка, репортим в отчёте.
+3. UI-скриншоты обоих экранов кладём в отчёт.
 
-### Verify (proof-пакет)
+## Что НЕ делаем в этом патче
 
-Для каждого из 4 режимов (`one_time`, `scheduled`, `just_in_time`, `on_demand`):
+- Не трогаем `autoweb-*` edge-функции, `live_event_sessions`, SoT-инварианты, `recorded_webinar`, FP-1..FP-4 план — они остаются как есть.
+- Не переписываем `useInfiniteQuery` / архитектуру пагинации.
+- Не переносим client-side дедупликацию `computedDuplicateIds` — RPC уже отдаёт правильный набор.
+- Не добавляем pg_cron/новые таблицы/новые роли.
 
-- UI proof: auto-open комнаты, auto-start после подтверждённого playback, refresh без дублей, multi-tab без дублей.
-- Runtime proof: self-heal после повторного входа, нет double-start, нет double-scenario-start.
-- SQL/event proof: срезы по `live_event_sessions`, lifecycle transitions, heartbeat timestamps, audit trail.
+## DoD
 
-### DoD
-
-- Фаза A получает статус **accepted**.
-- Собран proof-пакет (UI + runtime + SQL).
-- Без accepted Фаза B не начинается.
-
-### STOP-guards
-
-- Не переписывать lifecycle.
-- Не создавать новый heartbeat/service/runtime path.
-- Не расширять границы: без editor, без viewer counters, без chat isolation, без test mode, без replay-access patch.
-
----
-
-## Фаза B — Плеер, таймкод, autoplay, viewer_controls
-
-### Diagnose
-
-- Текущий SoT времени: player currentTime vs wall-clock fallback; кто читает time для comments/buttons/scenario.
-- Где именно ломается: autoplay, late join, resume, pause/seek/speed restrictions.
-
-### Execute
-
-- Единый SoT playback time: primary = player currentTime; fallback = session-relative clock только если player time недоступен.
-- Autoplay fallback: `autoplay_blocked` → CTA «Нажмите, чтобы начать просмотр» → scenario стартует только после реального playback.
-- Viewer controls строго из `autoweb_config.viewer_controls`: `allow_pause`, `allow_seek`, `allow_speed_control`, `resume_from_last_position`, `allow_rewatch_before_end`.
-- Late join → актуальный таймкод.
-- Source unavailable → no live, no scenario.
-
-### Verify
-
-- Матрица включений/выключений всех 5 viewer_controls.
-- Autoplay blocked → CTA → manual start.
-- Late join → сцена в правильной точке.
-- Source unavailable → комната не считается live.
-
-### DoD
-
-- Runtime подчиняется `viewer_controls`.
-- Late join и resume идут от фактического player time.
-- Автовебинар не считается live, если видео реально не стартовало.
-
-### STOP-guards
-
-- Не вводить parallel viewer-control flags.
-- Не делать отдельный runtime для autoplay fallback.
-
----
-
-## Фаза C — Social layer: history/live merge, chat isolation, viewer counters
-
-### Diagnose
-
-- Что читается из `source_live_event_id`, что пишется в текущий `live_event_id`, как сортируется лента.
-- Текущий контур viewer counters: real online, displayed, кто считается.
-
-### Execute
-
-- History/live merge: history = read-only from source, новые сообщения = только current autoweb event, merge по playback time.
-- Нативная лента зрителю без визуального разделения; staff — optional indicator.
-- Chat isolation: зритель видит свои + сценарные/system; staff видит всё.
-- Viewer counters: real для staff; displayed для зрителя; simulated только presentation-layer, без fake sessions/participants.
-- Настройки: показывать/не показывать онлайн, базовое число, точки роста/падения, preview-график.
-
-### Verify
-
-- История тянется из source, новые сообщения пишутся только в autoweb event.
-- Chat isolation работает.
-- Viewer sees displayed, admin sees real, simulated не создают sessions.
-
-### DoD
-
-- Историческая и живая лента выглядят нативно.
-- Source-event не загрязняется.
-- Real vs displayed разведены.
-
-### STOP-guards
-
-- Не клонировать comments/questions в autoweb event.
-- Не создавать fake sessions ради viewer count.
-
----
-
-## Фаза D — Editor / runtime finish
-
-### Diagnose
-
-- Существующий editor timed-comments/buttons/scenario.
-- Replay gate на всех точках: список эфиров, `/live/:slug`, invite/token path, edge resolve.
-- Где ломается end-of-webinar.
-
-### Execute
-
-- `launches_end_at`.
-- Replay access toggle: отключение записи закрывает доступ сразу и везде.
-- Editor: edit/reorder/retime existing scenario; CRUD timed-comments; CRUD timed-buttons.
-- Bulk shift (comments / buttons / all) с preview перед apply.
-- Test mode: seek/pause/jump/sync preview, без влияния на production lifecycle/sessions/integrations.
-- End-of-webinar: stop video, stop scenario, hide scripted comments/buttons, показать «Вебинар завершён», no restart on reopen.
-
-### Verify
-
-- `launches_end_at` блокирует новые запуски.
-- Replay disabled моментально закрывает доступ.
-- Button появляется только в scheduled time.
-- Bulk shift preview работает.
-- Test mode изолирован.
-- Ended webinar не рестартует.
-
-### DoD
-
-- Все пункты Execute реально работают в UI и в БД.
-
-### STOP-guards
-
-- Не вводить новый editor store/schema без доказанной необходимости.
-- Не трогать LiveEventLegacy.
-
----
-
-## Фаза E — Финальная регрессия
-
-### Обязательный чек-лист
-
-- LiveEventLegacy.
-- Обычный `live_stream`.
-- `one_time`, `scheduled`, `just_in_time`, `on_demand`.
-- Access rules, invite links.
-- Existing replay behavior.
-- Existing admin editor paths.
-- Existing comments/questions runtime.
-
-### Финальный proof-пакет
-
-UI proof + runtime proof + SQL/event proof + regression proof.
-
-### Финальный статус
-
-Спринт закрыт только если **все 5** приняты: A.verify, B, C, D, E.
-
----
-
-## Зафиксировано как существующее (не дублировать)
-
-`autoweb-session-heartbeat`, `autoweb-room-state`, `autoweb-create-personal-session`, `source_live_event_id`, `viewer_controls` в `autoweb_config`, `AutowebRoomRuntime`, existing audit path, existing history/live foundation.
-
-## Текущее состояние
-
-- Discovery accepted.
-- Фаза A code applied, awaiting proof acceptance.
-- Фазы B/C/D/E не начаты.
-
-## Следующий шаг
-
-После approve этого плана — сразу выполнить **Фазу A.verify** и вернуть proof-пакет. Только после accepted переходить к Фазе B.
+- Клик по «Дубли» показывает список профилей-дублей, `Показано` ≠ 0.
+- На `/admin/deals` при обычной навигации не появляется окно «Страница не загрузилась»; при реальной ошибке в консоли есть stack с pathname.
+- Никаких изменений в SoT, schema, edge-функциях эфира и в порядке FP-1..FP-4.

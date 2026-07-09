@@ -409,18 +409,23 @@ export default function AdminContacts() {
       // - Вкладка «Дубли» больше не зависит от устаревшего duplicate_flag.
       // - Обычные вкладки не показывают уже объединённые/архивные записи.
       if (activePreset === "duplicates") {
-        const getDuplicateProfiles = supabase.rpc as unknown as (
-          fn: string,
-          args: Record<string, unknown>
-        ) => Promise<{ data: unknown[] | null; error: Error | null }>;
-
-        const { data, error } = await getDuplicateProfiles("get_duplicate_contact_profiles", {
-          p_limit: PAGE_SIZE,
-          p_offset: pageParam,
-          p_search: debouncedSearch || null,
-        });
-        if (error) throw error;
-        const rows = data || [];
+        // FIX-1: call rpc as a method on supabase to preserve `this` context.
+        // A detached reference (const fn = supabase.rpc) loses `this` and throws
+        // synchronously inside supabase-js, which made useInfiniteQuery silently
+        // fail with an empty list and never send an HTTP request.
+        const { data, error } = await (supabase.rpc as any)(
+          "get_duplicate_contact_profiles",
+          {
+            p_limit: PAGE_SIZE,
+            p_offset: pageParam,
+            p_search: debouncedSearch || null,
+          }
+        );
+        if (error) {
+          console.error("[AdminContacts] duplicate profiles RPC failed", error);
+          throw error;
+        }
+        const rows = (data as unknown[]) || [];
         return {
           rows,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
