@@ -597,18 +597,74 @@ serve(async (req) => {
         break;
       }
 
+      case "rr": {
+        // Читаем креды из БД service-role: config_secrets НЕ передаются фронтом.
+        const { data: inst, error: instErr } = await supabaseAdmin
+          .from("integration_instances")
+          .select("config, config_secrets")
+          .eq("id", instance_id)
+          .single();
+
+        if (instErr || !inst) {
+          errorMessage = "Инстанс не найден";
+          break;
+        }
+
+        const cfg = (inst.config ?? {}) as Record<string, unknown>;
+        const secrets = (inst.config_secrets ?? {}) as Record<string, unknown>;
+        const mode = ((cfg.mode as string) || "test") === "battle" ? "battle" : "test";
+        const hasSecretKey = typeof secrets.secret_key === "string" && (secrets.secret_key as string).length > 0;
+        const loginKey = mode === "battle" ? "battle_login" : "test_login";
+        const passKey = mode === "battle" ? "battle_password" : "test_password";
+        const hasLogin = typeof cfg[loginKey] === "string" && (cfg[loginKey] as string).length > 0;
+        const hasPassword = typeof secrets[passKey] === "string" && (secrets[passKey] as string).length > 0;
+
+        console.log(`rr healthcheck: mode=${mode}, has_credentials=${hasSecretKey && hasLogin && hasPassword}`);
+
+        if (!hasSecretKey || !hasLogin || !hasPassword) {
+          errorMessage = `Ключи не заданы полностью для режима ${mode}`;
+          responseData = {
+            provider: "rr",
+            mode,
+            credentials_status: "incomplete",
+            api_test: "pending_backend",
+          };
+        } else {
+          // Локальная проверка наличия credentials прошла. Реальный API-тест РР
+          // будет добавлен вместе с backend-адаптером — до тех пор pending.
+          success = true;
+          responseData = {
+            provider: "rr",
+            mode,
+            credentials_status: "configured",
+            api_test: "pending_backend",
+            note: "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
+          };
+        }
+        break;
+      }
+
       default:
         errorMessage = `Неизвестный провайдер: ${provider}`;
     }
 
-    // Update instance status in database
+    // Update instance status in database.
+    // Special-case RR pending_backend: не переводим в "connected", т.к. реальный
+    // API-тест ещё не выполнен — иначе будет ложное "Подключено".
+    const isRrPending =
+      provider === "rr" && (responseData as Record<string, unknown>).api_test === "pending_backend";
+
+    const updatePayload: Record<string, unknown> = {
+      last_check_at: new Date().toISOString(),
+      error_message: errorMessage,
+    };
+    if (!isRrPending) {
+      updatePayload.status = success ? "connected" : "error";
+    }
+
     const { error: updateError } = await supabaseAdmin
       .from("integration_instances")
-      .update({
-        status: success ? "connected" : "error",
-        last_check_at: new Date().toISOString(),
-        error_message: errorMessage,
-      })
+      .update(updatePayload)
       .eq("id", instance_id);
 
     if (updateError) {
