@@ -1,175 +1,237 @@
-## да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Исправить противоречие в п.4.**  
-В начале указано: «никакого кода интеграции, миграций, edge functions в этом шаге не создаётся», но далее допускается временная edge function `rr-discovery-probe`.
-  &nbsp;
-  Правильно зафиксировать так:
+1. **Заголовок отчета исправить на обязательный формат:**
 
 ```txt
-В этом шаге не создаются production edge functions, миграции и payment-flow код.
-Допускается только временная superadmin-only discovery edge function rr-discovery-probe, если без неё невозможно проверить test API РР. Она не является частью production-интеграции и должна быть удалена в этом же PR.
+Отчет о выполненной работе: backend core-интеграция Ресурс Развития без product wiring
 ```
 
-2. **Probe-функцию не создавать автоматически.**  
-Сначала изучить документацию. Создавать `rr-discovery-probe` только если:
-  - документации недостаточно;
-  - есть сохранённые test credentials;
-  - невозможно подтвердить stop-guards без runtime-вызова.
-3. **Добавить запрет на запись runtime probe в** `integration_logs`**, если там нет безопасной redaction-гарантии.**  
+Не `Отчет о выполнении`.
+
+2. `rr-notification` **ограничить только test-ledger сценариями.**  
+Чтобы публичный endpoint нельзя было случайно использовать как production webhook:
+
+```txt
+rr-notification в этом этапе:
+- принимает только external_id с префиксом rr_test_;
+- обновляет только существующую запись в rr_test_ledger;
+- если external_id не найден в rr_test_ledger — не создает платеж, заказ или новую business-запись;
+- максимум пишет redacted security log;
+- не эмитит domain_events.
+```
+
+3. **В** `rr-test-create-order` **явно запретить любые реальные данные клиента.**
+
+```txt
+Для test createOrder использовать только фиктивные данные:
+- external_id = rr_test_<uuid>;
+- amount_minor = 990000;
+- currency = RUB;
+- meta.test = true;
+- buyer/client_info не передавать, если API позволяет;
+- если API требует buyer fields — использовать synthetic test data без реальных ФИО, телефонов, email клиентов.
+```
+
+4. `rr_test_ledger.raw_last` **хранить только redacted payload.**  
+Не просто “редактированные ответы”, а строго:
+
+```txt
+raw_last хранит только redacted JSON:
+- ключи;
+- статусы;
+- request_id;
+- commission;
+- payment_url допустим только если это test URL;
+- без secret/signature/token/auth headers;
+- без PII;
+- без полных raw request headers.
+```
+
+5. **Добавить CHECK/guard для test-ledger.**
+
+```sql
+external_id LIKE 'rr_test_%'
+currency = 'RUB'
+```
+
+И лучше добавить CHECK по статусам:
+
+```txt
+created | pending | paid | canceled | failed | expired
+```
+
+6. **Не называть** `paid` **в UI как реальную оплату.**  
+В admin UI для `rr_test_ledger` показывать:
+
+```txt
+Тестовый статус: paid / authorized
+```
+
+а не «Оплачено» без пояснения. Иначе админ может спутать с реальной оплатой.
+
+7. `rr-http.ts` **не должен логировать полный URL, если query может содержать чувствительные данные.**  
 Формулировка:
 
 ```txt
-Если текущий механизм integration_logs не гарантирует redaction raw API responses, ответы РР не писать в integration_logs. Вместо этого приложить локальный redacted summary в discovery.md: только названия полей, типы, статусы, request_id, без PII, токенов, подписей и секретов.
+Логировать только host + pathname + method + status + duration.
+Query string полностью отбрасывать.
 ```
 
-4. **В stop-guards добавить отдельный пункт по персональным данным.**
+8. `rr-notification` **с невалидной подписью:**  
+В план добавить, что при `401` не должно быть обновления `rr_test_ledger`. Только redacted security log.
+9. **Idempotency уточнить.**  
+Для webhook/notification:
 
 ```txt
-7. API РР не требует передачи лишних персональных данных сверх минимально необходимых для заявки и уже имеющихся в order/contact — да/нет.
+idempotency_key = provider:rr + external_id + status_raw + sign_hash_short
 ```
 
-Если РР требует паспортные данные, адрес, место работы или иные sensitive данные на нашей стороне — это отдельный legal/security scope, не включать в v1 без доп. согласования.
+При повторе того же notification — не создавать дублирующих логических обновлений, только фиксировать duplicate/ignored в техническом логе.
 
-5. **В adapter-contract не фиксировать** `payment_provider_settings` **как обязательную новую таблицу.**  
-У нас уже есть карточка интеграции через `integration_instances/config/config_secrets`. Поэтому формулировка должна быть:
+10. **В DoD добавить проверку отсутствия** `domain_events`**.**
 
 ```txt
-Настройки provider rr переиспользуют существующую карточку integration_instances provider='rr'. Новую payment_provider_settings не создавать, если discovery не докажет необходимость отдельной payment-domain settings table.
+SQL-проверка: за время тестов не появились новые domain_events, связанные с rr_test_*.
 ```
 
-6. **Гейт PublicPayPage уточнить по источникам настроек.**
+11. **В DoD пункт 6 уточнить: “без изменений строк” должен считаться по контрольному snapshot до/после.**
 
 ```txt
-RUB && amount >= 990000 minor units && allow_rr на offer/product/payment link && integration_instances(provider='rr') exists && credentials configured && not disabled.
+Перед тестом снять counts/max(updated_at) по payments_v2, orders_v2, provider_events, payment_provider_settings, acquiring_connections, domain_events.
+После теста подтвердить, что они не изменились.
 ```
 
-7. **В DoD добавить machine-check по отсутствию production-кода.**
+12. `integration_sync_logs` **допустимы только как технический лог.**  
+В отчете отдельно показать:
 
 ```txt
-Подтвердить, что в этом шаге не изменены payments_v2, orders_v2, provider_events, PublicPayPage, OfferAcquiringSettings и не созданы production edge functions rr-create-checkout/rr-webhook/rr-sync-status.
+integration_sync_logs содержит rr_order / rr_notification только с redacted payload_meta.
 ```
 
-8. **Отчет должен быть на русском и с точным заголовком:**
+13. **Следующий этап не должен называться “product wiring”, если core не прошел test e2e.**  
+Зафиксировать:
 
 ```txt
-Отчет о выполненной работе: Discovery API Ресурс Развития и контракт backend-адаптера rr
+Следующий этап возможен только после успешного test createOrder + getOrderStatus + валидного notification + проверки комиссии.
 ```
 
 С этими правками план можно выполнять.
 
 &nbsp;
 
-План: Discovery API «Ресурс Развития» и контракт backend-адаптера `rr`
+План: backend core-интеграция Ресурс Развития без product wiring
 
-Цель — собрать проверяемые факты об API РР и зафиксировать контракт адаптера **до** написания `rr-create-checkout` / `rr-webhook`. Никакого кода интеграции, миграций, edge functions в этом шаге не создаётся. Итог — документ `docs/integrations/rr/discovery.md` + `docs/integrations/rr/adapter-contract.md`, ссылки на первоисточники, и решение go/no-go по каждому stop-guard.
+## Цель
 
-### 1. Источники (обязательно проверить и зафиксировать URL + дату снятия)
+Технически включить работу с API РР (createOrder, getOrderStatus, notification/webhook, подпись, статусы, комиссия) в изолированном core-слое. Без влияния на продажи, продукты, публичную страницу оплаты и реальные заказы. Только test mode, только admin, только технические логи.
 
-- Публичная документация: `https://partner.rrllc.ru/public-api-v20/docs/` — все разделы (auth, orders, statuses, webhook, cancellation, commission).
-- Публичный сайт РР — модель работы для клиента (для sanity-check UX-предпосылок 9 900 ₽ / RUB / рассрочка).
-- При наличии — test-креды в `integration_instances.config_secrets` (провайдер `rr`, `mode=test`). Реальные вызовы делаем ТОЛЬКО в test-режиме и ТОЛЬКО из edge function `rr-discovery-probe` (см. п.4), никогда с фронта, никогда с боевыми ключами.
+## Жёсткие запреты (в коде и в отчёте по этому этапу)
 
-### 2. Что зафиксировать в `docs/integrations/rr/discovery.md`
+Следующее НЕ создаётся, НЕ редактируется, НЕ трогается:
 
-Для каждого пункта — цитата/скрин из доков + вывод «использовать / не подходит / нужно уточнение у РР».
+- `PublicPayPage` и любые публичные страницы оплаты;
+- `OfferAcquiringSettings` и любые настройки эквайринга офферов;
+- кнопки/выбор РР на карточках продуктов, офферов, лендингах;
+- автоматическое добавление РР в список доступных провайдеров продукта;
+- любые записи в `payments_v2` / `orders_v2` в контексте реального заказа клиента;
+- завершение реальных заказов (`orders_v2.status = paid` и т.п.);
+- выдача доступов / entitlement flow;
+- расширение `payment_provider_settings` для боевого выбора РР;
+- изменение публичной статистики платежей (`rr` в общих отчётах о выручке);
+- боевые креды РР — только `test_mode`.
 
-**2.1 Авторизация**
+Если в ходе реализации выяснится, что для core-функции нужно тронуть что-то из этого списка — работа останавливается, вопрос выносится отдельным планом.
 
-- Схема: login + password + secret_key + подпись + timestamp.
-- Алгоритм подписи: конкретная формула (какие поля, какой порядок, какой hash, где передаётся — header/body).
-- TTL/rewind timestamp.
-- Раздельные endpoint/host для test и battle.
+## Разрешённый scope
 
-**2.2 Создание заявки / платёжной ссылки**
+Только backend-core + admin-only test action. Никакой пользовательской поверхности.
 
-- Endpoint(-ы): create request → get payment page/URL.
-- Обязательные поля: сумма (единицы!), валюта, описание, external_id/merchant_order_id, return_url, notification_url, покупатель (какие поля минимум).
-- Минимальная сумма (подтвердить порог 9 900 RUB).
-- Валюта: только RUB?
-- Возвращаемые поля: `rr_request_id`, `payment_url`, срок жизни ссылки.
-- Идемпотентность: поддерживается ли header/поле; какой ключ РР считает уникальным.
+### 1. Adapter layer (изолированный)
 
-**2.3 Статусы**
+Каталог: `supabase/functions/_shared/rr/`.
 
-- Полный список статусов с описанием.
-- Явно выделить: какие статусы = **финальная оплата/фондирование** (единственные, по которым завершаем заказ), какие промежуточные, какие терминальные-неуспешные.
-- Есть ли отдельный статус «одобрено но не оплачено» vs «профинансировано».
+- `rr-adapter.ts` — реализация `RRPaymentProviderAdapter` строго по `docs/integrations/rr/adapter-contract.md`:
+  - `createOrder({ amount_minor, currency: 'RUB', external_id, return_url, notification_url, meta })` → `{ rr_request_id, payment_url, raw }`;
+  - `getOrderStatus(rr_request_id)` → `{ status_raw, status_internal, commission_minor?, paid_at?, raw }`;
+  - `verifyNotificationSignature(payload, headers)` → `{ valid, external_id, status_raw, raw }`;
+  - `mapStatus(status_raw)` → внутренний enum (`created | pending | paid | canceled | failed | expired`).
+- `rr-config.ts` — безопасное чтение `integration_instances` + `config_secrets` через service-role. Ни один секрет не логируется, не возвращается в ответы, не попадает в `payload_meta`.
+- `rr-http.ts` — тонкий HTTP-клиент к API РР (Basic Auth, timeouts, retry только на сетевых ошибках, без retry на 4xx). Логирует только метод, URL без query-секретов, статус, длительность.
 
-**2.4 Webhook / callback**
+Adapter не знает про `orders_v2`, `payments_v2`, продукты, офферы, клиентов. Он получает на вход суммы и id, возвращает данные РР. Точка.
 
-- URL регистрируется на стороне РР или передаётся в каждом запросе?
-- Метод, content-type, retry-политика РР.
-- Подпись webhook: алгоритм, поле, где секрет.
-- Стабильный external id в payload (для idempotency в `provider_events`).
-- Список событий, которые РР шлёт.
+### 2. Edge functions (test-only)
 
-**2.5 Статус-запрос (pull)**
+Все три функции — admin-only (JWT + RBAC `has_role(auth.uid(), 'admin')`), `verify_jwt` по умолчанию, CORS по стандартам проекта.
 
-- Endpoint для polling статуса по `rr_request_id`.
-- Rate limit.
+- `rr-test-create-order` — admin вызывает вручную из карточки интеграции. Принимает `{ amount_minor, currency: 'RUB' }` (по умолчанию 990000/RUB для соответствия минимуму РР). Генерирует свой `external_id` вида `rr_test_<uuid>`. Вызывает `adapter.createOrder`. Возвращает `{ rr_request_id, payment_url, external_id }`. Пишет запись в технический ledger (см. п.3). Ничего не пишет в `orders_v2`/`payments_v2`.
+- `rr-test-get-status` — принимает `rr_request_id` или `external_id`, вызывает `adapter.getOrderStatus`, обновляет запись в ledger. Ничего не пишет в `orders_v2`/`payments_v2`.
+- `rr-notification` — публичный endpoint (без JWT) для приёма notification от РР. Проверяет подпись через `adapter.verifyNotificationSignature`. При невалидной подписи — 401 + запись в `integration_sync_logs` с `result='error'`. При валидной — обновляет ledger, пишет `integration_sync_logs` `direction='inbound'`, `result='success'`. Никаких действий над `orders_v2`, `payments_v2`, entitlement, письмами клиенту. Idempotency по `external_id` + `status_raw`.
 
-**2.6 Отмена / возврат**
+### 3. Технический ledger (изолированная таблица)
 
-- Endpoint отмены, при каких статусах допустим.
-- Возврат — есть ли API или только через кабинет.
+Миграция создаёт **новую** таблицу `rr_test_ledger` — отдельно от `payments_v2`/`orders_v2`, чтобы гарантированно не смешаться с реальными продажами:
 
-**2.7 Комиссия**
+```text
+rr_test_ledger
+  id uuid pk
+  external_id text unique not null
+  rr_request_id text
+  amount_minor bigint
+  currency text  -- RUB
+  status_internal text  -- created|pending|paid|canceled|failed|expired
+  status_raw text
+  commission_minor bigint null
+  payment_url text
+  created_by uuid  -- admin who triggered
+  created_at timestamptz default now()
+  updated_at timestamptz default now()
+  last_notification_at timestamptz null
+  raw_last jsonb  -- редактированные ответы РР без секретов
+```
 
-- В каком ответе приходит комиссия (create/status/webhook/statement).
-- Единицы, знак, налоговый учёт.
-- Достаточно ли для записи в `payments_v2` (поле для комиссии).
+Grants: `authenticated` — только SELECT через RLS (`has_role(auth.uid(),'admin')`); `service_role` — ALL. RLS ENABLE + политика admin-only на SELECT. Никаких INSERT/UPDATE от клиента — только через edge-функции service-role.
 
-**2.8 Ошибки**
+Таблица явно называется `rr_test_ledger` (а не `rr_payments`), чтобы её нельзя было спутать с production-платежами и случайно подключить к отчётам.
 
-- Формат ошибок, коды, human-message.
-- Ретраибельные vs терминальные.
+### 4. Admin UI (только внутри существующей карточки интеграции)
 
-### 3. Stop-guards (go/no-go)
+Файл: `src/components/integrations/rr/RRSettingsCard.tsx` — расширяется, новые страницы не создаются.
 
-Для каждого — явный вывод в документе. Если хоть один = **NO** → останавливаемся и возвращаем отчёт, backend не начинаем.
+- Секция «Тестовое подключение» появляется только когда `credentialsReady && test mode`.
+- Кнопки:
+  - «Создать тестовую заявку 9 900 ₽» → `rr-test-create-order`, показывает `payment_url` и `external_id`, кнопка «Открыть в новой вкладке».
+  - «Проверить статус» рядом с каждой записью → `rr-test-get-status`.
+- Мини-таблица последних 20 записей `rr_test_ledger` (external_id, статус, сумма, комиссия, updated_at).
+- Явная плашка сверху секции: «Тестовый режим. Заявки не связаны с реальными заказами и не влияют на продажи и статистику».
 
-1. Есть подпись webhook — да/нет.
-2. Однозначно определён «финальный оплачено/профинансировано» статус — да/нет.
-3. Есть стабильный external id для idempotency в `provider_events` — да/нет.
-4. Не требуется iframe с sensitive-данными на нашем фронте (только redirect на РР) — да/нет.
-5. Можно протестировать полный flow на test-кредах без реальных денег — да/нет.
-6. Есть API комиссии ИЛИ явно фиксируем «комиссия не сохраняется, только статус» — да/нет.
+Никаких изменений в списке продуктов, офферах, `OfferAcquiringSettings`, публичных страницах.
 
-### 4. Живая проверка на test-кредах (опционально, только если п.1.credentials есть)
+### 5. Логи и безопасность
 
-Одноразовая edge function `rr-discovery-probe` (создаётся временно, удаляется после discovery):
+- Все запросы/ответы РР — через `integration_sync_logs` с `entity_type='rr_order'`/`rr_notification`. В `payload_meta` только: метод, endpoint (без query-секретов), status_raw, external_id, длительность. Никаких токенов, паролей, `secret_key`, полной подписи, персональных данных клиента.
+- `config_secrets` читается только service-role внутри edge-функций. Никогда не возвращается в HTTP-ответах, не пишется в логи, не попадает во фронт.
+- `rr-notification` — публичная, но обязательный signature check до любой записи в ledger.
 
-- Superadmin-only auth guard.
-- Только методы: auth-ping, create test request на 9 900 RUB с фиктивным `external_id=discovery-<uuid>`, get status, cancel.
-- НИЧЕГО не пишет в `payments_v2` / `orders_v2` / `provider_events`.
-- Логирует ответы РР в `integration_logs` **с redaction**: только структура (ключи, типы, статусы), никаких PII, никаких токенов/подписей.
-- Результат прикладывается к discovery.md как «runtime evidence: &nbsp;, &nbsp;».
+## Definition of Done
 
-Если после discovery решение go — probe-функция удаляется в этом же PR.
+1. Adapter реализован и покрыт unit-тестами на `mapStatus` и `verifyNotificationSignature` (positive + negative).
+2. `rr-test-create-order` в test mode возвращает валидный `payment_url` РР (runtime proof — curl edge function + запись в `rr_test_ledger`).
+3. `rr-test-get-status` возвращает статус по существующей тестовой заявке (runtime proof).
+4. `rr-notification` принимает симулированный notification от РР, проверяет подпись, обновляет ledger (runtime proof — 200 при валидной подписи, 401 при подделанной).
+5. В `rr_test_ledger` появляются записи с корректными статусами и (если РР вернул) commission_minor.
+6. SQL-проверка: `payments_v2`, `orders_v2`, `provider_events`, `payment_provider_settings`, `acquiring_connections` — **без изменений строк** за время реализации.
+7. Grep-проверка: `PublicPayPage`, `OfferAcquiringSettings`, продуктовые компоненты, публичная страница оплаты — **без diff**.
+8. Секреты не появляются ни в `integration_sync_logs.payload_meta`, ни в ответах edge-функций, ни в консоли браузера.
+9. bePaid и Stripe flows не затронуты — smoke check по существующим тестам/страницам.
+10. Отчёт на русском, начинается с «Отчет о выполнении:», содержит runtime proof (curl + SQL), список изменённых файлов, явное подтверждение всех запретов из раздела «Жёсткие запреты».
 
-### 5. Контракт backend-адаптера `docs/integrations/rr/adapter-contract.md`
+## Открытые вопросы (не блокируют старт, но фиксируются в отчёте)
 
-На основе discovery зафиксировать (без кода):
+- Активация тестового режима у РР (host/аккаунт/флаг) — если поддержка РР ещё не ответила, `rr-test-create-order` реализуется, но e2e-proof помечается как pending до получения test-кред.
+- Политика retry для webhook — фиксируется как «доверяем retry со стороны РР, наш handler идемпотентен по external_id».
+- Поведение `createOrder` при повторном `external_id` — проверяется в рамках DoD п.2.
 
-- Интерфейс `RRPaymentProviderAdapter` (методы: `createCheckout`, `handleWebhookEvent`, `fetchStatus`, `cancel`, `mapStatus`).
-- Маппинг статусов РР → внутренние `payments_v2.status` / `orders_v2.status`.
-- Ключ идемпотентности webhook → `provider_events.external_id`.
-- Формула комиссии → `payments_v2.provider_fee_minor` (или «not stored»).
-- Список необходимых миграций (add-only): `payments_v2.provider` расширить `'rr'`, `orders_v2.provider` при наличии, `payment_provider_settings` row для `rr` с `allow_rr`, `rr_min_amount_minor=990000`, `rr_currency='RUB'`.
-- Список edge functions следующего шага: `rr-create-checkout`, `rr-webhook`, опционально `rr-sync-status` (cron).
-- Гейт на `PublicPayPage`: RUB && amount ≥ 9 900 ₽ && `allow_rr` && instance `rr` exists.
-- Что НЕ поддерживаем в v1: подписки/recurring, валюты кроме RUB, ручной расчёт комиссии, выдача доступов из webhook (только через canonical entitlement flow после финального статуса).
+## Следующий этап (НЕ входит в этот план)
 
-### 6. Definition of Done
-
-- Файлы `docs/integrations/rr/discovery.md` и `docs/integrations/rr/adapter-contract.md` созданы, каждый пункт п.2 закрыт цитатой/ссылкой и датой.
-- По каждому stop-guard из п.3 — явный вердикт.
-- Если запускалась probe — приложены redacted-логи и функция удалена.
-- Отчёт начинается строкой: **«Отчет о выполненной работе: Discovery API Ресурс Развития и контракт backend-адаптера rr»**, содержит: список изменённых файлов, вердикт go/no-go, список открытых вопросов к РР (если есть), явный next-step (либо «backend implementation по контракту», либо «блок: нужен ответ от РР по …»).
-
-### 7. Что НЕ делаем в этом шаге
-
-- Не создаём `rr-create-checkout`, `rr-webhook`, `rr-sync-status` (кроме одноразовой probe при необходимости).
-- Не меняем схему БД (`payments_v2`, `provider_events`, `payment_provider_settings`, `orders_v2`).
-- Не трогаем `PublicPayPage`, `OfferAcquiringSettings`.
-- Не сохраняем ничего в `payments_v2` / `orders_v2` даже во время probe.
+Product wiring: где показывать кнопку РР, для каких продуктов/офферов, условия (валюта, минимальная сумма), проведение реальных платежей в `payments_v2`, отражение комиссии в статистике, выдача доступов через entitlement flow. Согласуется отдельным планом только после стабильного core.
