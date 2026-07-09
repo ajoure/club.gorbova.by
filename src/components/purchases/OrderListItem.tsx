@@ -120,8 +120,23 @@ export function OrderListItem({ order }: OrderListItemProps) {
       );
       if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (data?.error) throw new Error(normalizeEdgeFunctionError(null, data));
-      toast.success("Документ сформирован");
-      await refetch();
+
+      const newDocId: string | undefined = data?.document_id;
+      // Обновим список в фоне, чтобы дропдаун «Документы» появился сразу.
+      refetch().catch(() => { /* non-blocking */ });
+
+      if (newDocId) {
+        const kind = String(data?.file_mime || "").includes("wordprocessingml") ? "docx" : "pdf";
+        const r = await downloadDocumentBlob(newDocId, kind);
+        if (r.ok === false) {
+          toast.error(`Документ сформирован, но не удалось скачать: ${r.message}`);
+        } else {
+          toast.success("Документ сформирован — скачивание началось");
+        }
+      } else {
+        // Fallback (edge вернул success без id): показать нейтральный toast.
+        toast.success("Документ сформирован");
+      }
     } catch (e: any) {
       console.error("[generateDoc]", e);
       toast.error(e?.message || "Не удалось сформировать документ");
@@ -340,14 +355,14 @@ export function OrderListItem({ order }: OrderListItemProps) {
             size="sm"
             onClick={generateDoc}
             disabled={isGenerating}
-            title="Сформировать документ (присвоит номер)"
+            title="Сформировать документ и сразу скачать PDF (присвоит номер)"
           >
             {isGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Sparkles className="h-4 w-4" />
             )}
-            <span className="hidden sm:inline ml-1">Сформировать</span>
+            <span className="hidden sm:inline ml-1">Сформировать и скачать</span>
           </Button>
         )}
 
