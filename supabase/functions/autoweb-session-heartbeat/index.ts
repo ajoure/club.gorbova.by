@@ -29,6 +29,14 @@
 // Add-only metadata SoT (никогда не удаляем существующие ключи):
 //   auto_room_opened_at, auto_started_at, auto_ended_at,
 //   last_heartbeat_at, last_player_state, last_current_time_seconds, last_noop_reason
+//
+// INVARIANT (Phase A.verify, FP-2/FP-3 Variant A — add-only, 2026-07-09):
+//   • SoT режима: live_events.autoweb_mode. Поля autoweb_config.mode не существует.
+//   • event_type='recorded_webinar' допустим в whitelist ТОЛЬКО как legacy-контейнер
+//     для autoweb_mode='one_time'. Исключать recorded_webinar из whitelist ЗАПРЕЩЕНО —
+//     это сломает legacy one_time-поток (дефект D4, Variant A).
+//   • Для recorded_webinar никакие autoweb-режимы кроме one_time не поддерживаются;
+//     scheduled/JIT/on_demand для recorded_webinar считать невалидной конфигурацией.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
