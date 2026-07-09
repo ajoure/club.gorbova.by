@@ -275,7 +275,7 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-sm mt-1">
-                  Рассрочка для RUB-заказов от 9 900 ₽. Ключи вводятся здесь,
+                  Рассрочка платежей. Ключи вводятся здесь,
                   хранятся зашифрованно.
                 </CardDescription>
               </div>
