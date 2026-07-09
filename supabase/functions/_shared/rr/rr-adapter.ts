@@ -87,7 +87,7 @@ export async function verifyNotificationSignature(input: {
 export interface RRCreateOrderInput {
   externalId: string; // должен начинаться с rr_test_
   amountMinor: number;
-  currency: "RUB";
+  currency: string; // передаётся как есть в РР; фактическая поддержка валют выясняется runtime-тестом
   notificationUrl: string;
   completeUrl?: string;
   failUrl?: string;
