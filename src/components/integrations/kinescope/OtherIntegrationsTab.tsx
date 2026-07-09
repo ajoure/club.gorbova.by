@@ -14,6 +14,7 @@ export function OtherIntegrationsTab() {
 
   const kinescopeInstance = instances?.find((i) => i.provider === "kinescope") || null;
   const hosterByInstance = instances?.find((i) => i.provider === "hosterby") || null;
+  const rrInstance = instances?.find((i) => i.provider === "rr") || null;
 
   if (isLoading) {
     return (
