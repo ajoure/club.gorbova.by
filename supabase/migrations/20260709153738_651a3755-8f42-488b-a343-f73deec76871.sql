@@ -1,0 +1,2 @@
+ALTER TABLE public.rr_test_ledger DROP CONSTRAINT IF EXISTS rr_test_ledger_currency_rub;
+ALTER TABLE public.rr_test_ledger ADD CONSTRAINT rr_test_ledger_currency_allowed CHECK (currency IN ('BYN','RUB'));
