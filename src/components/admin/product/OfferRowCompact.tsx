@@ -11,7 +11,7 @@ import { ru } from "date-fns/locale";
 interface OfferRowCompactProps {
   offer: {
     id: string;
-    offer_type: "pay_now" | "trial" | "preregistration" | "lead";
+    offer_type: "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment";
     button_label: string;
     amount: number;
     reentry_amount?: number | null;
