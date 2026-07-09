@@ -39,28 +39,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // RBAC check - STRICTLY require subscriptions.edit permission
-    const { data: hasPermission } = await supabase.rpc('has_permission', { 
-      _user_id: user.id, 
-      _permission: 'subscriptions.edit' 
-    });
-    
-    // Strict check: permission MUST be exactly true
-    if (hasPermission !== true) {
-      // Fallback: check for super_admin role
-      const { data: isSuperAdmin } = await supabase.rpc('has_role', { 
-        _user_id: user.id, 
-        _role: 'super_admin' 
+    // RBAC check — accept subscriptions.edit permission OR admin/super_admin role (v2)
+    const [permRes, superV2Res, adminV2Res] = await Promise.all([
+      supabase.rpc('has_permission', { _user_id: user.id, _permission: 'subscriptions.edit' }),
+      supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' }),
+      supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' }),
+    ]);
+
+    const allowed =
+      permRes.data === true ||
+      superV2Res.data === true ||
+      adminV2Res.data === true;
+
+    if (!allowed) {
+      console.warn('[admin-batch-disable-auto-renew] forbidden', {
+        user_id: user.id,
+        perm: permRes.data, perm_err: permRes.error?.message,
+        super_v2: superV2Res.data, super_err: superV2Res.error?.message,
+        admin_v2: adminV2Res.data, admin_err: adminV2Res.error?.message,
       });
-      
-      if (isSuperAdmin !== true) {
-        return new Response(JSON.stringify({ 
-          error: 'Forbidden: subscriptions.edit permission required' 
-        }), { 
-          status: 403, 
-          headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-      }
+      return new Response(JSON.stringify({
+        error: 'Forbidden: subscriptions.edit permission required'
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     }
 
     const { subscription_ids, dry_run, reason }: RequestBody = await req.json();
