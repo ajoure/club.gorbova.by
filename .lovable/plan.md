@@ -1,176 +1,256 @@
 # да, согласен, с учетом правок:
 
-1. В Фазе 0 добавь отдельный подпункт: зафиксировать точные SoT-поля и переходы для `room`, `event`, `player`, `scenario` с mapping `поле БД/edge → UI-status`. Иначе дальше легко смешать статусы и снова получить ложный `В эфире`.
-2. В Фазе A зафиксируй жёсткое правило:
-  - сценарий не имеет права стартовать раньше фактического старта видео;
-  - `room_open` и `video_playing` — не одно и то же;
-  - `live` для зрителя показывается только после подтверждённого playback start либо после явного fallback-CTA.
-3. В Фазе B добавь в DoD обязательную проверку по всем 4 режимам:
-  - `one_time`
-  - `scheduled`
-  - `just_in_time`
-  - `on_demand`
-  Не только один сценарий. Иначе снова можно починить только часть режимов.
-4. В Фазе C по simulated viewers допиши:
-  - цифра должна быть детерминированной в рамках одной session/window, чтобы при refresh не прыгать хаотично;
-  - simulated count — только presentation layer, без записей в sessions/messages/questions/audit как реальные зрители.
-5. По изоляции чата допиши отдельно:
-  - исторические сообщения source-event тоже должны уважать режим изоляции для обычного зрителя;
-  - staff продолжает видеть полный merged feed.
-6. В Фазе D по `launches_end_at` допиши:
-  - блокируются только новые старты и новые personal sessions;
-  - уже активная сессия, начавшаяся до дедлайна, доигрывает до конца без принудительного обрыва.
-7. По replay access toggle добавь явную проверку всех точек:
-  - пользовательский список эфиров;
+1. В Фазе A.verify добавь отдельный обязательный сценарий **one_time + уже прошедший scheduled_at**:
+  - первый вход после времени старта;
+  - auto-create personal session;
+  - self-heal;
+  - отсутствие duplicate-start и duplicate-scenario-start.
+2. В Фазе A.verify зафиксируй отдельный proof для **multi-tab одного и того же пользователя** и **двух разных пользователей**:
+  - один пользователь, две вкладки;
+  - два пользователя, две независимые session;
+  - heartbeat не должен смешивать эти кейсы.
+3. В SQL/event proof Фазы A отдельно приложи:
+  &nbsp;
+  &nbsp;
+  - `live_event_sessions.status / started_at / ended_at / viewer_user_id / mode`;
+  - lifecycle поля/метки room/event/scenario;
+  - heartbeat timestamp sequence;
+  - audit events в хронологическом порядке.  
+  Без этого accepted не ставить.
+4. В Фазе B добавь отдельный gate:
+  - **scenario не стартует** до первого подтвержденного playback event;
+  - **scenario не уходит вперед по wall-clock**, если player time недоступен и autoplay заблокирован.
+5. В Фазе B viewer_controls проверь не только матрицей true/false, но и **повторным входом в ту же session**:
+  - `resume_from_last_position=true`;
+  - `resume_from_last_position=false`;
+  - `allow_rewatch_before_end=false/true`.
+6. В Фазе C для history/live merge добавь отдельный proof:
+  - новые комментарии текущих зрителей пишутся только в `autoweb live_event_id`;
+  - `source_live_event_id` остается read-only;
+  - в source-event после теста нет новых записей от текущего просмотра.  
+  Это нужно подтвердить SQL до/после, не только UI.
+7. В Фазе C viewer counters зафиксируй как инвариант:
+  - simulated count влияет только на отображение;
+  - не влияет на access;
+  - не влияет на chat;
+  - не влияет на moderation;
+  - не создает rows в sessions/participants.  
+  Это нужно вынести в отдельный proof-блок.
+8. В Фазе D для `launches_end_at` добавь 3 отдельных сценария:
+  - до дедлайна — новый запуск создается;
+  - после дедлайна — новый запуск не создается;
+  - уже начатая session после дедлайна продолжает работать штатно.
+9. В Фазе D для replay toggle зафиксируй обязательную проверку **во всех точках gate одновременно**:
+  - список эфиров;
   - `/live/:slug`;
-  - direct/invite links;
-  - server resolve/gate;
-  - autoweb runtime после завершения.
-  Не только UI-скрытие.
-8. По test mode добавь жёсткий guard:
-  - не писать production comments/questions/participants;
-  - не менять реальные lifecycle-поля;
-  - не влиять на real viewer counters;
-  - любые тестовые следы либо не писать вообще, либо писать только в уже существующий безопасный test-only контур, если он реально есть.
-9. В общий DoD добавь backward compatibility:
-  - существующие уже созданные автовебинары без новых настроек не должны ломаться;
-  - `LiveEventLegacy` и live-stream сценарии — обязательный regression proof.
-10. В конце плана добавь правило сдачи по фазам:
-
-- каждая фаза закрывается только при наличии одновременно UI proof + runtime proof + SQL/event proof;
-- без этого статус фазы только `partial`.
-
-Если хочешь, я могу сразу превратить это в финальный текст для [lovable.dev](http://lovable.dev) без комментариев, в готовом виде для отправки.
+  - invite/direct link;
+  - server resolve.  
+  Если хотя бы одна точка открыта — фаза не accepted.
+10. В Фазе D для test mode добавь жесткий инвариант:
 
 &nbsp;
 
-План: Доработка автовебинарной комнаты (runtime, плеер, сценарий, social-layer)
+- никаких production audit/lifecycle/session side effects;
+- все тестовые действия либо отдельным флагом, либо отдельным контуром state, но без влияния на боевой эфир.
 
-## Ключевые инварианты (STOP-guards)
+11. В Фазе E добавь обязательный regression-check по уже сделанным вещам:
 
-- НЕ создавать: новые таблицы сценариев/viewers/lifecycle/viewer_controls; параллельный runtime; вторую механику запуска room/session/video/scenario; fake viewer sessions для simulated count.
-- НЕ переписывать `LiveEventLegacy`.
-- НЕ клонировать source comments/questions/buttons/scenario в autoweb-event.
-- Reuse обязателен: `live_events`, `live_event_sessions`, `autoweb_config`, `viewer_controls`, `source_live_event_id`, `autoweb-room-state`, `autoweb-create-personal-session`, `AutowebRoomRuntime`, `LiveEventComments/Questions/Scenario/RoomBlocks`, `RoomParticipantsList`, существующий audit path.
-- Новые сущности допускаются только с доказательством, что reuse невозможен (пишется в Discovery-отчёте фазы).
+- `source_live_event_id`;
+- one_time auto-session;
+- селектор source live_stream в админке;
+- viewer_controls в one_time;
+- existing history/live foundation.  
+Это не потерять.
 
-## Фаза 0 — Discovery (обязательно перед кодом)
+12. В общий rule приемки добавь:
 
-Read-only аудит с письменным отчётом по каждому пункту (existing SoT / gaps / reuse plan):
+- без **UI proof + runtime proof + SQL/event proof** одновременно статус только `partial`;
+- переход к следующей фазе запрещен.
 
-1. Runtime start/lifecycle автовебинаров (self-heal, cron, race conditions).
-2. `autoweb-room-state`, `autoweb-create-personal-session`, `autoweb-resolve-sessions`, `autoweb-generate-occurrences`.
-3. Kinescope integration: доступный currentTime, postMessage bridge, SDK возможности.
-4. Scenario runtime + timed comments/CTA (где источник времени, как считается).
-5. Viewer counters (реальные vs отображаемые), где считаются, кто пишет.
-6. Replay access logic: пользовательский список эфиров, `/live/:slug`, invite/direct links, серверный gate.
-7. Chat/questions runtime + существующие merge history/live.
-8. Test/admin-only pathways.
-9. Существующие audit hooks.
+После этих правок план можно считать финальным и идти в Фазу A.verify.
 
-**Gate:** без утверждённого discovery-отчёта следующие фазы не начинаются.
+&nbsp;
 
-## State model и SoT времени (сквозной инвариант)
+План: закрытие спринта Автовебинар по фазам
 
-Четыре независимых контура: **room** (scheduled/room_open/waiting_for_video/live/ended/source_unavailable/test_mode), **event** (scheduled/live/ended/replay_available), **player** (idle/loading/playing/paused/autoplay_blocked/ended/error), **scenario** (idle/armed/running/paused/completed/blocked_by_video/test_mode).
+Работа идёт строго по фазам. Каждая фаза принимается отдельным proof-пакетом. Следующая фаза не стартует, пока предыдущая не accepted.
 
-**Канонический источник таймкода:** фактический `currentTime` плеера; fallback — session-relative wall clock только когда плеер не отдал время. Все timed-элементы (comments/buttons/scenario/late join/resume/end) читают ОДИН источник.
+---
 
-## Фаза A — Runtime lifecycle + автозапуск
+## Фаза A.verify — приёмка уже реализованной Фазы A
 
-Scope:
+**Цель:** доказать, что `autoweb-session-heartbeat` + auto-open/auto-start работают корректно, и присвоить Фазе A статус accepted.
 
-- Автооткрытие комнаты, авто-старт эфира/видео/сценария, авто-завершение.
-- Self-heal в runtime (SoT): lazy-start догоняет lifecycle при входе после `scheduled_at`, работает после рестарта.
-- Cron/worker — только ускоритель, не SoT.
-- Guards: no double start, no double scenario boot, no duplicate room-open transition, повторный вход не рестартует эфир.
+### Diagnose
 
-Приёмка фазы A: авто-старт без дублей + self-heal proof (SQL lifecycle transitions).
+- Прочитать текущий код: `useAutowebHeartbeat`, `autoweb-session-heartbeat/index.ts`, `AutowebRoomRuntime`, точки записи `auto_room_opened_at` / `auto_playback_started_at` / lifecycle transitions.
+- Проверить, что нет второго heartbeat-пути, дублирующего сигнал.
+- Проверить guard: `scenario_started` пишется только после подтверждённого `player_state='playing'`.
 
-## Фаза B — Плеер, таймкод, late join, viewer_controls
+### Execute
 
-Scope:
+- Код не менять. Только точечные фикс-патчи, если proof найдёт дефект (double-start, гонка multi-tab, отсутствие self-heal после refresh).
 
-- Единый SoT playback time.
-- Late join → фактический currentTime, показ только актуальных timed-элементов.
-- Resume from last position по `viewer_controls.resume_from_last_position`.
-- Autoplay fallback: если браузер блокирует — сценарий НЕ стартует по wall-clock, показывается CTA «Нажмите, чтобы начать просмотр», после ручного play — синхронизация по currentTime.
-- Kinescope controls: reuse `autoweb_config.viewer_controls` (allow_pause/seek/speed_control, resume_from_last_position, allow_rewatch_before_end). Никаких новых флагов для тех же ограничений.
-- Test mode для админа: seek/pause/speed разрешены, полностью изолирован от production.
-- Source unavailable: понятная ошибка, сценарий/эфир не переводятся в live.
+### Verify (proof-пакет)
 
-Приёмка фазы B: runtime proof по late-join, resume, autoplay-block, обёртка `viewer_controls`.
+Для каждого из 4 режимов (`one_time`, `scheduled`, `just_in_time`, `on_demand`):
 
-## Фаза C — Комната и social-layer
+- UI proof: auto-open комнаты, auto-start после подтверждённого playback, refresh без дублей, multi-tab без дублей.
+- Runtime proof: self-heal после повторного входа, нет double-start, нет double-scenario-start.
+- SQL/event proof: срезы по `live_event_sessions`, lifecycle transitions, heartbeat timestamps, audit trail.
 
-Scope:
+### DoD
 
-- History/live merge: history по `source_live_event_id` (read-only), новые сообщения текущих зрителей — только в текущий `live_event_id`. В source ничего не пишется.
-- Тайминг: исторические сообщения/вопросы всплывают только когда их время ≤ playback time.
-- Staff-only source-indicator (history/live) — для зрителя лента нативная.
-- Изоляция чата (`autoweb_config.chat_isolation` или существующий эквивалент): обычный зритель видит только свои + сценарные + системные; staff/модераторы видят всё.
-- Viewer counts:
-  - Реальные метрики для staff (без admin/moderator/test/технич.).
-  - Отображаемая цифра: live-stream — реальные, autowebinar — simulated (presentation-only, БЕЗ fake sessions, БЕЗ влияния на access/chat/moderation/metrics).
-  - Настройки: «Показывать зрителям количество онлайн», «Задать количество зрителей», точки роста/падения в %, preview-график.
-- Sim viewers НЕ создают sessions.
+- Фаза A получает статус **accepted**.
+- Собран proof-пакет (UI + runtime + SQL).
+- Без accepted Фаза B не начинается.
 
-Приёмка фазы C: изоляция + merge + separation viewer counters (SQL proof).
+### STOP-guards
 
-## Фаза D — Editor, сценарий, завершение, доступ к записи
+- Не переписывать lifecycle.
+- Не создавать новый heartbeat/service/runtime path.
+- Не расширять границы: без editor, без viewer counters, без chat isolation, без test mode, без replay-access patch.
 
-Scope:
+---
 
-- Editor (доработка существующего): редактирование сценария/времени/порядка, CRUD timed-comments и timed-buttons, reorder.
-- Кнопки/комментарии живут в source-event; autoweb только реплеит (без клонирования).
-- Кнопка появляется ТОЛЬКО в момент по таймингу, не при открытии комнаты.
-- Bulk shift (add-only): сдвиг comments/buttons/всех элементов с preview до применения.
-- Автозавершение: стоп видео/сценария, скрыть scripted comments/CTA, сессия завершена, показать «Вебинар завершен». После завершения повторный вход не рестартует ничего.
-- `launches_end_at` (новое поле): после наступления — новые personal sessions не создаются, входы в незапущенные — блок; уже начатые не убивать; корректный статус.
-- Replay access toggle: серверный gate закрывает список эфиров, `/live/:slug`, invite/direct links; админ продолжает видеть. Проверка на всех точках, не только UI.
-- Массовый сдвиг сценария — add-only относительно текущей модели.
+## Фаза B — Плеер, таймкод, autoplay, viewer_controls
 
-Приёмка фазы D: editor CRUD + bulk shift preview + replay-gate proof (server-side).
+### Diagnose
 
-## Аудит (сквозной)
+- Текущий SoT времени: player currentTime vs wall-clock fallback; кто читает time для comments/buttons/scenario.
+- Где именно ломается: autoplay, late join, resume, pause/seek/speed restrictions.
 
-Через существующий безопасный audit path (client insert запрещён):
+### Execute
 
-- Runtime: room opened, webinar started, video started, autoplay blocked, scenario started/completed, webinar ended, source unavailable, replay toggled, viewer_controls violations.
-- Editor: scenario/comment/button CRUD, bulk shift preview/apply, test mode start/stop, viewer display config, chat isolation, `launches_end_at` changed.
+- Единый SoT playback time: primary = player currentTime; fallback = session-relative clock только если player time недоступен.
+- Autoplay fallback: `autoplay_blocked` → CTA «Нажмите, чтобы начать просмотр» → scenario стартует только после реального playback.
+- Viewer controls строго из `autoweb_config.viewer_controls`: `allow_pause`, `allow_seek`, `allow_speed_control`, `resume_from_last_position`, `allow_rewatch_before_end`.
+- Late join → актуальный таймкод.
+- Source unavailable → no live, no scenario.
 
-## Порядок реализации (нарушать нельзя)
+### Verify
 
-1. lifecycle + auto-start + statuses (A)
-2. video start + autoplay fallback + viewer_controls (B)
-3. timed scenario runtime + late join + resume (B)
-4. history/live merge + chat isolation (C)
-5. viewer counts + simulated presentation (C)
-6. launches_end_at (D)
-7. replay access toggle (D)
-8. editor improvements (D)
-9. test mode (D)
-10. audit hardening (сквозное)
+- Матрица включений/выключений всех 5 viewer_controls.
+- Autoplay blocked → CTA → manual start.
+- Late join → сцена в правильной точке.
+- Source unavailable → комната не считается live.
 
-## DoD и proof (3 группы, обязательны на каждой фазе)
+### DoD
 
-**A. UI proof** — скрины/видео admin settings, runtime states, viewer controls, scenario editor, test mode, viewer count settings, chat isolation, replay toggle.
+- Runtime подчиняется `viewer_controls`.
+- Late join и resume идут от фактического player time.
+- Автовебинар не считается live, если видео реально не стартовало.
 
-**B. Runtime proof** — auto-start, no double-start, autoplay fallback, late join, resume, seek/pause/speed по конфигу, timed comments/buttons, end-of-webinar, launches_end_at, replay disabled instantly.
+### STOP-guards
 
-**C. SQL/event proof** — session rows, lifecycle transitions, audit logs, отсутствие duplicate starts, отсутствие live writes в `source_live_event_id`, правильное закрытие replay, separation viewer counters, отсутствие fake sessions.
+- Не вводить parallel viewer-control flags.
+- Не делать отдельный runtime для autoplay fallback.
 
-## Критерии приёмки спринта
+---
 
-Все 13 пунктов из §22 плана заказчика одновременно выполнены + все фазы приняты последовательно + Discovery-отчёты приложены + no regressions в `LiveEventLegacy` и live-stream сценариях.
+## Фаза C — Social layer: history/live merge, chat isolation, viewer counters
 
-## Технические заметки
+### Diagnose
 
-- Формат сообщений: только «План:» / «Отчет о выполнении:» (docs/ENGINEERING_RULES.md).
-- Порядок: Diagnose → Plan → Dry run → Execute → Verify на каждой фазе.
-- Каждая фаза — отдельный патч с приёмкой; переход к следующей только после утверждения предыдущей.
-- Перед созданием новых RPC/edge/table/enum/cron — проверка на существующее (дубли запрещены).
+- Что читается из `source_live_event_id`, что пишется в текущий `live_event_id`, как сортируется лента.
+- Текущий контур viewer counters: real online, displayed, кто считается.
 
-## Первый шаг после утверждения плана
+### Execute
 
-Фаза 0 (Discovery) — read-only отчёт по 9 пунктам аудита с картой reuse/gaps и предложением конкретных точек изменения. Без правок кода.
+- History/live merge: history = read-only from source, новые сообщения = только current autoweb event, merge по playback time.
+- Нативная лента зрителю без визуального разделения; staff — optional indicator.
+- Chat isolation: зритель видит свои + сценарные/system; staff видит всё.
+- Viewer counters: real для staff; displayed для зрителя; simulated только presentation-layer, без fake sessions/participants.
+- Настройки: показывать/не показывать онлайн, базовое число, точки роста/падения, preview-график.
+
+### Verify
+
+- История тянется из source, новые сообщения пишутся только в autoweb event.
+- Chat isolation работает.
+- Viewer sees displayed, admin sees real, simulated не создают sessions.
+
+### DoD
+
+- Историческая и живая лента выглядят нативно.
+- Source-event не загрязняется.
+- Real vs displayed разведены.
+
+### STOP-guards
+
+- Не клонировать comments/questions в autoweb event.
+- Не создавать fake sessions ради viewer count.
+
+---
+
+## Фаза D — Editor / runtime finish
+
+### Diagnose
+
+- Существующий editor timed-comments/buttons/scenario.
+- Replay gate на всех точках: список эфиров, `/live/:slug`, invite/token path, edge resolve.
+- Где ломается end-of-webinar.
+
+### Execute
+
+- `launches_end_at`.
+- Replay access toggle: отключение записи закрывает доступ сразу и везде.
+- Editor: edit/reorder/retime existing scenario; CRUD timed-comments; CRUD timed-buttons.
+- Bulk shift (comments / buttons / all) с preview перед apply.
+- Test mode: seek/pause/jump/sync preview, без влияния на production lifecycle/sessions/integrations.
+- End-of-webinar: stop video, stop scenario, hide scripted comments/buttons, показать «Вебинар завершён», no restart on reopen.
+
+### Verify
+
+- `launches_end_at` блокирует новые запуски.
+- Replay disabled моментально закрывает доступ.
+- Button появляется только в scheduled time.
+- Bulk shift preview работает.
+- Test mode изолирован.
+- Ended webinar не рестартует.
+
+### DoD
+
+- Все пункты Execute реально работают в UI и в БД.
+
+### STOP-guards
+
+- Не вводить новый editor store/schema без доказанной необходимости.
+- Не трогать LiveEventLegacy.
+
+---
+
+## Фаза E — Финальная регрессия
+
+### Обязательный чек-лист
+
+- LiveEventLegacy.
+- Обычный `live_stream`.
+- `one_time`, `scheduled`, `just_in_time`, `on_demand`.
+- Access rules, invite links.
+- Existing replay behavior.
+- Existing admin editor paths.
+- Existing comments/questions runtime.
+
+### Финальный proof-пакет
+
+UI proof + runtime proof + SQL/event proof + regression proof.
+
+### Финальный статус
+
+Спринт закрыт только если **все 5** приняты: A.verify, B, C, D, E.
+
+---
+
+## Зафиксировано как существующее (не дублировать)
+
+`autoweb-session-heartbeat`, `autoweb-room-state`, `autoweb-create-personal-session`, `source_live_event_id`, `viewer_controls` в `autoweb_config`, `AutowebRoomRuntime`, existing audit path, existing history/live foundation.
+
+## Текущее состояние
+
+- Discovery accepted.
+- Фаза A code applied, awaiting proof acceptance.
+- Фазы B/C/D/E не начаты.
+
+## Следующий шаг
+
+После approve этого плана — сразу выполнить **Фазу A.verify** и вернуть proof-пакет. Только после accepted переходить к Фазе B.
