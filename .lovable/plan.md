@@ -1,257 +1,190 @@
 да, согласен, с учетом правок:
 
-1. **Убрать участие пользователя из шагов.**  
-По payment_url открывается тестовая страница РР с кнопками симуляции:
+1. **Не использовать** `acquiring_connections` **в guard-е.**  
+В текущем core РР источник настроек — карточка интеграции:
 
-Авторизовать рассрочку
+```txt
+integration_instances + config + config_secrets
+```
 
-Частично авторизовать рассрочку
+Заменить:
 
-Отклонить рассрочку
+```txt
+mode = 'test' в acquiring_connections
+```
 
-Ошибка оплаты
+на:
 
-Подрядчик должен сам открыть эту ссылку и сам выполнить тесты. Пользователь ничего нажимать не должен.
+```txt
+mode = 'test' в integration_instances.config для provider='rr'
+```
 
-2. **Письмо в поддержку сейчас не нужно.**  
-Страница уже показывает тестовый режим и сценарии симуляции. Значит, сначала надо полностью прогнать E2E через эту страницу.  
-Письмо в поддержку оставлять только если после runtime-теста появится конкретная ошибка API или непонятный статус.
-3. **Шаг 4 переписать так:**
+2. **Webhook idempotency делать не только по** `(external_id, status_raw)`**.**  
+Этого мало. Один и тот же статус может прийти повторно с другим payload. Правильнее:
 
-Шаг 4. Тестовая симуляция статусов на payment_url
+```txt
+idempotency_key = provider:rr + external_id + status_raw + sign_hash_short
+```
 
-&nbsp;
+При повторе — `200`, ledger не откатывается, в `integration_sync_logs` маркер `duplicate` / `already_applied`.
 
-Подрядчик сам открывает payment_url:
+3. **Не требовать оригинальные секретные headers/body из** `integration_sync_logs`**.**  
+Если лог уже redacted, его нельзя использовать как источник для полного replay. Для теста webhook:
 
-[https://pay.rrllc.ru/pay/246efad7fc7b1a22fdc63650f30d5864](https://pay.rrllc.ru/pay/246efad7fc7b1a22fdc63650f30d5864)
+```txt
+- взять external_id/status_raw из ledger/logs;
+- сформировать новый test payload по documented MD5-формуле;
+- подписать его текущим secret_key внутри backend/test-call;
+- отправить в rr-notification.
+```
 
-&nbsp;
+Не сохранять и не вытаскивать полные raw headers с подписью из логов.
 
-И последовательно проверяет сценарии тестовой страницы РР:
+4. `external_id_override` **— только test-only и без риска дублей в** `rr_test_ledger`**.**  
+Уточнить поведение функции:
 
-1. Авторизовать рассрочку — основной happy path.
+```txt
+Если external_id_override уже есть в rr_test_ledger:
+- не создавать вторую ledger-строку;
+- выполнить вызов РР;
+- записать результат в integration_sync_logs;
+- обновить существующую строку только если это безопасно и не ломает историю.
+```
 
-2. Частично авторизовать рассрочку — partial status.
+Лучше тестировать повтор так:
 
-3. Отклонить рассрочку — failed/canceled status.
+```txt
+1. Сгенерировать новый rr_test_<uuid>.
+2. Вызвать createOrder с ним первый раз.
+3. Вызвать createOrder с ним второй раз.
+4. Зафиксировать ответ РР.
+```
 
-4. Ошибка оплаты — error status.
+5. `authorized_partially` **не “в коде адаптера/маппере” менять, если уже корректно.**  
+Нужно только подтвердить правило:
 
-&nbsp;
+```txt
+authorized_partially → pending
+не paid
+не выдавать доступ
+не завершать заказ
+```
 
-Для каждого сценария:
+Если код уже так делает — не менять, только зафиксировать в `.lovable/plan.md` / discovery docs.
 
-- вызвать rr-test-get-status;
+6. **“0 записей” заменить на snapshot before/after.**  
+В боевых таблицах могут быть существующие записи. Проверять не абсолютный ноль, а отсутствие новых/измененных строк за окно теста:
 
-- зафиксировать status_raw;
+```sql
+-- before/after snapshot:
+count(*), max(created_at), max(updated_at)
+```
 
-- status_internal;
+По таблицам:
 
-- commission_minor;
+```txt
+payments_v2
+orders_v2
+provider_events
+domain_events
+entitlements
+subscriptions_v2
+access_grant_ledger
+```
 
-- redacted response;
+7. **Письмо в поддержку не готовить автоматически.**  
+Верно: не отправлять и не готовить письмо, пока runtime-тесты не выявили конкретный blocker. В отчете допустим только раздел:
 
-- проверить, пришла ли rr-notification;
+```txt
+Открытые вопросы, если остались
+```
 
-- проверить integration_sync_logs.
+8. **Отчет после выполнения оформить строго так:**
 
-4. **Не создавать записи в provider_events.**  
-В плане сейчас есть ошибка:
+```txt
+Отчет о выполненной работе: закрытие runtime-проверок Ресурс Развития без поддержки
+```
 
-provider_events (тестовый неймспейс) содержит событие
+## **Итог**
 
-Так делать нельзя. На текущем этапе разрешены только:
-
-rr_test_ledger
-
-integration_sync_logs
-
-provider_events не трогать вообще.
-
-5. **Симулированный webhook всё равно проверить отдельно.**
-
-Шаг 5. Симулированный webhook
-
-&nbsp;
-
-Подрядчик сам вызывает rr-notification:
-
-- валидная подпись → HTTP 200;
-
-- повтор того же payload → идемпотентность, без дублей;
-
-- неверная подпись → HTTP 401/4xx, ledger не меняется.
-
-6. **Реальный webhook от РР проверить после клика “Авторизовать рассрочку”.**  
-Если webhook не приходит — не писать в поддержку сразу, а сначала зафиксировать:
-
-- какой callback URL был передан в createOrder;
-
-- есть ли notification в logs;
-
-- был ли HTTP request на rr-notification;
-
-- что вернул getOrderStatus после авторизации.
-
-7. **DoD обновить:**
-
-DoD:
-
-- подрядчик сам открыл payment_url;
-
-- happy path “Авторизовать рассрочку” пройден;
-
-- rr-test-get-status показал финальный статус;
-
-- commission_minor заполнен или redacted response показывает, что commission не пришла;
-
-- rr-notification проверен реальным callback, если он пришел;
-
-- симулированный валидный webhook проверен обязательно;
-
-- плохая подпись отклоняется;
-
-- повтор webhook не создает дублей;
-
-- provider_events, payments_v2, orders_v2, domain_events, entitlements не изменились;
-
-- PublicPayPage, OfferAcquiringSettings, продукты и тарифы не тронуты.
-
-**Сообщение подрядчику**
-
-План нужно исправить.
+План можно выполнять после этих правок. Главное: всё остается только в `rr_test_ledger` и `integration_sync_logs`; `PublicPayPage`, продукты, реальные платежи, доступы и статистику не трогать.
 
 &nbsp;
 
-Я открыл payment_url. Там тестовая страница РР с кнопками симуляции:
+План: закрыть оставшиеся runtime-проверки РР самостоятельно, без обращения в поддержку. Все действия — только в изолированном контуре (`rr_test_ledger`, `integration_sync_logs`, edge functions `rr-test-*` и `rr-notification`). Боевые таблицы (`payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2`), `PublicPayPage`, `OfferAcquiringSettings`, продукты, тарифы, доступы и статистику — не трогать.
 
-- Авторизовать рассрочку;
+## Шаг 1. Сценарий «Ошибка оплаты» (runtime behavior)
 
-- Частично авторизовать рассрочку;
+1. Создать новый заказ через `rr-test-create-order` (BYN, префикс `rr_test_`).
+2. Открыть `payment_url` через Playwright, нажать «Ошибка оплаты».
+3. Через 5–10 сек вызвать `rr-test-get-status` по этому `external_id`.
+4. Зафиксировать в `rr_test_ledger` и в отчёте:
+  - `status_raw` от РР,
+  - `status_internal`,
+  - пришёл ли webhook в `integration_sync_logs` (inbound `rr_notification`),
+  - redacted копию response.
+5. Вывод: если `status_raw` остаётся `new`/`created` и webhook не приходит — зафиксировать как **runtime behavior test-mode**, не блокер (сценарий `failed` уже покрыт кнопкой «Отклонить рассрочку»).
 
-- Отклонить рассрочку;
+## Шаг 2. Идемпотентность webhook
 
-- Ошибка оплаты.
+1. Взять payload одного уже успешно принятого inbound `rr_notification` из `integration_sync_logs` (redacted копию тела + оригинальные заголовки/подпись).
+2. Отправить тот же самый payload в `rr-notification` **2 раза подряд** через `curl_edge_functions`.
+3. Проверить и зафиксировать:
+  - оба ответа HTTP 200,
+  - `rr_test_ledger` по этому `external_id` — без дублей (одна строка, `status_internal` не откатился),
+  - `integration_sync_logs` содержит вторую запись с маркером `duplicate`/`ignored`/`already_applied` (или эквивалентом безопасного повтора).
+4. Если сейчас в `rr-notification` нет явной защиты от повторов — добавить её на уровне обработчика (проверка по `(external_id, status_raw, signature)` перед апдейтом `rr_test_ledger`), только в пределах test-контура.
 
-&nbsp;
+## Шаг 3. Плохая подпись
 
-Значит, письмо в поддержку сейчас не нужно. Не надо ждать пользователя и не надо писать про тестовые карты.
+1. Взять тот же payload из шага 2.
+2. Изменить один символ в MD5-подписи (или в одном из подписываемых полей, оставив старую подпись) и отправить в `rr-notification`.
+3. Проверить и зафиксировать:
+  - HTTP 4xx (ожидаемо 401),
+  - `rr_test_ledger` не изменился,
+  - в `integration_sync_logs` появилась запись с redacted security-маркером (`invalid_signature`), без утечки секрета и полного тела.
 
-&nbsp;
+## Шаг 4. Повторный `createOrder` с тем же `external_id`
 
-Открой эту ссылку сам и прогони E2E через тестовые кнопки РР:
+1. Проверить текущую `rr-test-create-order`: если `external_id` всегда генерируется внутри — добавить **test-only** опциональный параметр `external_id_override` со строгими guard-ами:
+  - только префикс `rr_test_`,
+  - только роль admin/superadmin (`has_role`),
+  - только `mode = 'test'` в `acquiring_connections`,
+  - категорически не трогает `payments_v2`/`orders_v2`/`provider_events`/`domain_events`.
+2. Вызвать `rr-test-create-order` дважды с одним и тем же `external_id_override` (значение из ранее успешной заявки).
+3. Зафиксировать фактический ответ РР одним из вариантов:
+  - вернулась та же заявка (тот же `payment_url`/id),
+  - вернулась ошибка (`duplicate`/`already_exists`),
+  - создалась новая заявка с новым id.
+4. По результату описать **retry policy** для v1 в `.lovable/plan.md` (например: «на дубль — не ретраить, читать `getOrderStatus`»).
 
-1. Нажми «Авторизовать рассрочку».
+## Шаг 5. `authorized_partially` — runtime фиксация
 
-2. Проверь rr-test-get-status.
+1. Взять уже существующий заказ со `status_raw = authorized_partially`.
+2. Через ~10–15 минут ещё раз вызвать `rr-test-get-status`, зафиксировать:
+  - изменился ли `status_raw` (пришёл ли `authorized`/`authorized_all` без действий),
+  - появились ли новые inbound `rr_notification` в `integration_sync_logs`,
+  - остался ли `status_internal = pending`.
+3. Зафиксировать правило v1 в коде адаптера/маппере статусов и в `.lovable/plan.md`:
+  - `authorized_partially → pending`, заказ **не** завершать, доступы **не** выдавать,
+  - переход в `paid` только при последующем `authorized`/`authorized_all` от РР.
 
-3. Проверь, пришел ли rr-notification.
+## Definition of Done
 
-4. Зафиксируй status_raw/status_internal/commission_minor.
+- По каждому из 5 шагов — redacted proof: строка(и) `rr_test_ledger` + записи `integration_sync_logs` (входящие/исходящие) с временными метками.
+- В `.lovable/plan.md` обновлён раздел «Что закрыто / Что открыто»:
+  - «Ошибка оплаты» — задокументировано как runtime behavior,
+  - идемпотентность webhook — доказана,
+  - плохая подпись — отклоняется 4xx с security log,
+  - повтор `createOrder` — задокументированное поведение + retry policy v1,
+  - `authorized_partially` — правило v1 зафиксировано в коде и в плане.
+- 0 записей в `payments_v2`, `orders_v2`, `provider_events`, `domain_events`, `entitlements`, `subscriptions_v2` за окно тестирования.
+- Письмо в поддержку РР **не** отправляется. Если после шагов 1–5 останется вопрос, который принципиально нельзя решить runtime-путём — он оформляется отдельным пунктом с redacted proof, и только тогда планируется письмо.
 
-5. Отдельно проверь симулированный webhook с валидной подписью, повтор webhook и плохую подпись.
+## Технические детали (для инженера)
 
-6. Проверь partial/decline/error сценарии, чтобы adapter правильно маппил статусы.
-
-&nbsp;
-
-Важно: provider_events не трогать. В этом этапе разрешены только rr_test_ledger и integration_sync_logs.
-
-&nbsp;
-
-PublicPayPage, OfferAcquiringSettings, продукты, тарифы, payments_v2, orders_v2, domain_events, entitlements, выдачу доступов и статистику не трогать.
-
-&nbsp;
-
-Письмо в поддержку готовить только если после фактического теста будет конкретная ошибка API или непонятный статус. Тогда приложить redacted response и точный вопрос.
-
-&nbsp;
-
-# План: корректный жизненный цикл тестовой заявки РР (шаги 4–7)
-
-## Контекст и корректировка
-
-Шаг 3 `createOrder` принят: заявка `rr_test_4bfcc667...` на 1000 BYN создана, `payment_url` получен, Basic Auth + `test-gorbova` работают, боевые таблицы (`payments_v2`, `orders_v2`, `provider_events`, `domain_events`, entitlements) не затронуты.
-
-**Ошибка предыдущего отчёта:** РР — это не карточный эквайринг. `payment_url` — это страница оформления заявки на рассрочку/кредит, а не страница оплаты картой. Требование «оплатить тестовой картой» некорректно и снимается.
-
-## Что реально закрыто
-
-- `createOrder` (Basic Auth, BYN, изолированный `rr_test_ledger`)
-- `payment_url` получен
-- Product wiring и боевые таблицы не тронуты
-
-## Что открыто
-
-- `getOrderStatus` по созданной заявке
-- Перевод заявки в финальный статус (`authorized` / `authorized_all`)
-- `commission_minor` после финального статуса
-- Реальный webhook от РР в test-контуре
-- Симулированный валидный webhook (по формуле подписи из документации)
-- Идемпотентность webhook
-- Повторный `createOrder` с тем же `external_id`
-
----
-
-## Шаг 4. Разведка `payment_url` (пользователь + AI)
-
-**Пользователь:** открывает `https://pay.rrllc.ru/pay/246efad7fc7b1a22fdc63650f30d5864` и фиксирует (скриншот/описание):
-
-- какая форма показана (заявка на рассрочку, ввод телефона, СМС-код, ФИО и т.п.);
-- есть ли тестовые данные / кнопка «завершить как одобрено»;
-- меняется ли статус автоматически или требуется действие на стороне РР.
-
-**AI:** параллельно вызывает `rr-test-get-status` по созданной заявке (уже сейчас, до любых действий на `payment_url`) и фиксирует в отчёте:
-
-- `status_raw`, `status_internal`, `commission_minor`, `redacted response`;
-- обновляет строку в `rr_test_ledger`.
-
-Никаких «оплат картой» пользователю не предлагается.
-
-## Шаг 5. Симулированный валидный webhook (AI, без внешних зависимостей)
-
-AI формирует тестовый payload по MD5-формуле из адаптера РР и вызывает `rr-notification` дважды одинаковым payload:
-
-- 1-й вызов — HTTP 200, запись обновлена, `provider_events` (тестовый неймспейс) содержит событие;
-- 2-й вызов — HTTP 200, идемпотентность: без дублирующих сайд-эффектов.
-
-Дополнительно — 1 вызов с искажённой подписью → HTTP 4xx, MD5-guard сработал.
-
-Всё строго в изолированном `rr_test_ledger`; `payments_v2` / `orders_v2` / `domain_events` не трогаются.
-
-## Шаг 6. Финальный статус (блокируется РР)
-
-Если после шага 4 заявка не переходит в `authorized` / `authorized_all` самостоятельно — эту часть закрыть без действий пользователя нельзя. AI фиксирует redacted proof текущего состояния и переходит к шагу 7.
-
-## Шаг 7. Обновлённое письмо в поддержку РР
-
-AI переписывает письмо, убирая всё про «тестовые карты» и оставляя только реально открытые вопросы:
-
-1. Как в test-режиме перевести заявку `external_id=rr_test_4bfcc667...` (request_id — приложить) в финальный статус `authorized` / `authorized_all` для проверки `getOrderStatus`, webhook и `commission`?
-2. Кто и где меняет статус тестовой заявки — клиент на `payment_url`, менеджер РР, админка РР?
-3. Отправляет ли РР webhook (`notification`) в test-режиме, и на какой URL он настроен для интеграции `test-gorbova`?
-4. Как получить/проверить `commission` в тестовой заявке?
-5. Что формально означают `authorized` и `authorized_all` в терминах жизненного цикла заявки?
-6. Как ведёт себя повторный `createOrder` с тем же `external_id` — идемпотентность или новая заявка?
-
-Из письма удаляются: запрос тестовых карт, любые упоминания «оплаты картой», уже подтверждённые пункты (Basic Auth, BYN, `test-gorbova`).
-
----
-
-## Что AI НЕ трогает
-
-`PublicPayPage`, `OfferAcquiringSettings`, `payments_v2`, `orders_v2`, `provider_events` (боевой неймспейс), `domain_events`, продукты, тарифы, выдача доступов, статистика. Всё — только в `rr_test_ledger` и `integration_sync_logs`.
-
-## DoD
-
-- `rr_test_ledger` содержит актуальный `status_raw` / `status_internal` / `commission_minor` после `getOrderStatus`;
-- симулированный webhook: 200 / идемпотентность / 4xx на плохой подписи — задокументированы;
-- письмо в поддержку РР готово в правильной формулировке (без «тестовых карт»);
-- 0 записей от РР в боевых таблицах за окно теста;
-- redacted proof по каждому пункту приложен.
-
-## От пользователя нужно
-
-1. Открыть `payment_url`, описать, что за форма и какие действия доступны (скриншот приветствуется).
-2. Написать «готово» — AI выполнит шаги 4 (`getOrderStatus`) и 5 (симулированный webhook) и подготовит итоговое письмо в РР.
+- Все edge-вызовы — только `rr-test-create-order`, `rr-test-get-status`, `rr-notification`.
+- `external_id_override` — добавляется в `rr-test-create-order` за guard-ом `has_role(auth.uid(),'admin') AND mode='test' AND external_id LIKE 'rr_test_%'`.
+- Идемпотентность в `rr-notification` — по ключу `(external_id, status_raw)` с проверкой перед `UPDATE` на `rr_test_ledger`; повторный apply возвращает 200 и пишет `duplicate` в `integration_sync_logs.status`.
+- Bad-signature путь — уже существующая MD5-проверка в `rr-adapter.ts` (`blueimp-md5`); нужно лишь убедиться, что при провале пишется `integration_sync_logs` с `direction='inbound'`, `status='error'`, `error_code='invalid_signature'` и redacted телом.
+- Все скрипты Playwright — под `/tmp/browser/rr_stepN/`, скриншоты — туда же.
