@@ -97,11 +97,19 @@ export function OfferRowCompact({
       {/* Left: Type badge + Label */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge 
+          <Badge
             variant={offer.offer_type === "trial" ? "secondary" : offer.offer_type === "preregistration" ? "outline" : "default"}
             className={offer.offer_type === "preregistration" ? "shrink-0 border-amber-500 text-amber-600" : "shrink-0"}
           >
-            {offer.offer_type === "trial" ? "Trial" : offer.offer_type === "preregistration" ? "Предзапись" : "Оплата"}
+            {offer.offer_type === "trial"
+              ? "Trial"
+              : offer.offer_type === "preregistration"
+                ? "Предзапись"
+                : offer.offer_type === "bank_installment"
+                  ? "Рассрочка банка"
+                  : offer.offer_type === "lead"
+                    ? "Заявка"
+                    : "Оплата"}
           </Badge>
           {isPrimary && (
             <Badge variant="outline" className="shrink-0 border-primary text-primary gap-1">
@@ -118,7 +126,7 @@ export function OfferRowCompact({
           {isBankInstallment && (
             <Badge variant="outline" className="shrink-0 border-blue-500 text-blue-600 gap-1">
               <CreditCard className="h-3 w-3" />
-              Банк
+              РР · BYN
             </Badge>
           )}
         </div>
