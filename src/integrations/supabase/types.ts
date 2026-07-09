@@ -18554,6 +18554,79 @@ export type Database = {
           profile_id: string
         }[]
       }
+      get_duplicate_contact_profiles: {
+        Args: { p_limit?: number; p_offset?: number; p_search?: string }
+        Returns: {
+          avatar_url: string | null
+          birth_date: string | null
+          card_holder_names: Json | null
+          card_masks: Json | null
+          city: string | null
+          club_exit_at: string | null
+          club_exit_reason: string | null
+          communication_style: Json | null
+          consent_given_at: string | null
+          consent_version: string | null
+          country: string | null
+          created_at: string
+          duplicate_flag: string | null
+          duplicate_group_id: string | null
+          email: string | null
+          emails: Json | null
+          external_id_amo: string | null
+          external_id_gc: string | null
+          first_name: string | null
+          full_name: string | null
+          gc_registered_at: string | null
+          id: string
+          import_batch_id: string | null
+          instagram_url: string | null
+          is_archived: boolean | null
+          last_name: string | null
+          last_seen_at: string | null
+          loyalty_ai_summary: string | null
+          loyalty_analyzed_messages_count: number | null
+          loyalty_auto_update: boolean | null
+          loyalty_proofs: Json | null
+          loyalty_score: number | null
+          loyalty_status_reason: string | null
+          loyalty_updated_at: string | null
+          marketing_consent: boolean | null
+          merged_to_profile_id: string | null
+          meta: Json
+          onboarding_completed_at: string | null
+          onboarding_dismissed_at: string | null
+          phone: string | null
+          phones: Json | null
+          position: string | null
+          primary_in_group: boolean | null
+          reentry_penalty_waived: boolean
+          reentry_penalty_waived_at: string | null
+          reentry_penalty_waived_by: string | null
+          reentry_pricing_applies_from: string | null
+          sentiment_history: Json | null
+          source: string | null
+          status: string
+          telegram_last_check_at: string | null
+          telegram_last_error: string | null
+          telegram_link_bot_id: string | null
+          telegram_link_status: string | null
+          telegram_linked_at: string | null
+          telegram_user_id: number | null
+          telegram_username: string | null
+          timezone: string | null
+          updated_at: string
+          user_id: string | null
+          vochi_sip_extension: string | null
+          was_club_member: boolean | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_inbox_dialogs_v1: {
         Args: { p_limit?: number; p_offset?: number; p_search?: string }
         Returns: {
