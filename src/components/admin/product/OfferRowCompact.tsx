@@ -66,13 +66,13 @@ export function OfferRowCompact({
 
   const isPrimary = offer.is_primary && offer.offer_type === "pay_now";
   const canBePrimary = offer.offer_type === "pay_now" && offer.is_active && !isPrimary;
-  const isInstallment = offer.payment_method === "internal_installment";
-  const isBankInstallment = offer.payment_method === "bank_installment";
+  const isBankInstallmentOffer = offer.offer_type === "bank_installment";
+  // Внутренняя рассрочка N платежей: только для payment_method='internal_installment'
+  // и не пересекается с банковской рассрочкой (offer_type='bank_installment').
+  const isInstallment = offer.payment_method === "internal_installment" && !isBankInstallmentOffer;
+  const isBankInstallment = isBankInstallmentOffer || offer.payment_method === "bank_installment";
 
-  // Calculate installment info (Stage L0a-2):
-  // — max_months из meta.installment.max_months (fallback на legacy installment_count);
-  // — preview суммы при максимальном сроке: round half-up до целых BYN;
-  // — итог рассрочки = perPayment * maxMonths.
+  // Calculate installment info (Stage L0a-2) — только для внутренней рассрочки.
   const getInstallmentInfo = () => {
     if (!isInstallment) return null;
     const maxMonths = (offer.meta as any)?.installment?.max_months ?? offer.installment_count ?? null;
