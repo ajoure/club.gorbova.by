@@ -146,6 +146,8 @@ Deno.serve(async (req: Request) => {
       external_id: externalId,
       correlation_id: correlationId,
       status_raw: created.rrStatusRaw ?? null,
+      override_used: overrideRaw ? true : false,
+      ledger_row_existed: existingLedger ? true : false,
     },
   });
 
