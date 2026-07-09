@@ -13418,6 +13418,57 @@ export type Database = {
         }
         Relationships: []
       }
+      rr_test_ledger: {
+        Row: {
+          amount_minor: number
+          commission_minor: number | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          external_id: string
+          id: string
+          last_notification_at: string | null
+          payment_url: string | null
+          raw_last: Json | null
+          rr_request_id: string | null
+          status_internal: string
+          status_raw: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          commission_minor?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          external_id: string
+          id?: string
+          last_notification_at?: string | null
+          payment_url?: string | null
+          raw_last?: Json | null
+          rr_request_id?: string | null
+          status_internal?: string
+          status_raw?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          commission_minor?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          external_id?: string
+          id?: string
+          last_notification_at?: string | null
+          payment_url?: string | null
+          raw_last?: Json | null
+          rr_request_id?: string | null
+          status_internal?: string
+          status_raw?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       scrape_logs: {
         Row: {
           completed_at: string | null
