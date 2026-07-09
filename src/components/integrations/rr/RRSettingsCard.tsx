@@ -49,7 +49,6 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const { deleteInstance } = useIntegrationMutations();
 
   const config = (instance?.config ?? {}) as Record<string, unknown>;
-  const isConnected = instance?.status === "connected";
   const hasError = instance?.status === "error";
   const mode = (config.mode as string) || "test";
   const testConfigured = !!config.test_password_configured;
@@ -61,6 +60,13 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const activeLogin = mode === "battle" ? battleLogin : testLogin;
   const activePasswordConfigured =
     mode === "battle" ? battleConfigured : testConfigured;
+
+  // Пока backend-адаптер РР не подключён, статус "connected" не выставляется.
+  // Показываем честный промежуточный статус.
+  const credentialsReady =
+    secretConfigured && !!activeLogin && activePasswordConfigured;
+  const isBackendConnected = instance?.status === "connected";
+  const isPartial = !!instance && !isBackendConnected && !hasError;
 
   const handleHealthCheck = async () => {
     if (!instance) return;
@@ -80,7 +86,11 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
         );
         return;
       }
-      if (data?.success) {
+      if (data?.success && data?.data?.api_test === "pending_backend") {
+        toast.success(
+          "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
+        );
+      } else if (data?.success) {
         toast.success("«Ресурс Развития» подключён");
       } else {
         toast.error(`Ошибка: ${data?.error || "проверка не пройдена"}`);
@@ -121,12 +131,12 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
             <div className="flex items-center gap-3">
               <div
                 className={`p-2 rounded-lg ${
-                  isConnected ? "bg-primary/10" : "bg-muted"
+                  isBackendConnected ? "bg-primary/10" : "bg-muted"
                 }`}
               >
                 <Wallet
                   className={`h-5 w-5 ${
-                    isConnected ? "text-primary" : "text-muted-foreground"
+                    isBackendConnected ? "text-primary" : "text-muted-foreground"
                   }`}
                 />
               </div>
@@ -136,14 +146,14 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                   {instance && (
                     <Badge
                       variant={
-                        isConnected
+                        isBackendConnected
                           ? "default"
                           : hasError
                             ? "destructive"
                             : "secondary"
                       }
                     >
-                      {isConnected ? (
+                      {isBackendConnected ? (
                         <>
                           <Check className="h-3 w-3 mr-1" />
                           Подключено
@@ -153,6 +163,8 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                           <X className="h-3 w-3 mr-1" />
                           Ошибка
                         </>
+                      ) : isPartial && credentialsReady ? (
+                        "Настроено частично · backend не подключен"
                       ) : (
                         "Настроено"
                       )}
@@ -218,10 +230,10 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                     </span>
                     <span className="ml-1.5 text-xs">{lastCheckFormatted}</span>
                     <Badge
-                      variant={isConnected ? "outline" : "destructive"}
+                      variant={isBackendConnected ? "outline" : "destructive"}
                       className="ml-2 text-xs"
                     >
-                      {isConnected ? "OK" : hasError ? "ERROR" : "—"}
+                      {isBackendConnected ? "OK" : hasError ? "ERROR" : "—"}
                     </Badge>
                   </div>
                 )}
