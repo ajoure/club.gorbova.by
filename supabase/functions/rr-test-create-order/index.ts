@@ -111,18 +111,27 @@ Deno.serve(async (req: Request) => {
 
   const redacted = redactRRResponse(created.http.json);
 
-  // Insert ledger record. Пишем даже при ошибке — для аудита test-попытки.
-  await supabaseAdmin.from("rr_test_ledger").insert({
-    external_id: externalId,
-    rr_request_id: created.rrRequestId ?? null,
-    amount_minor: amountMinor,
-    currency,
-    status_internal: created.ok ? "created" : "failed",
-    status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
-    payment_url: created.paymentUrl ?? null,
-    created_by: userId,
-    raw_last: redacted,
-  });
+  // Ledger: если строка уже есть (override с повтором), не создаём дубль,
+  // просто пишем событие в integration_sync_logs. Иначе — insert.
+  const { data: existingLedger } = await supabaseAdmin
+    .from("rr_test_ledger")
+    .select("id")
+    .eq("external_id", externalId)
+    .maybeSingle();
+
+  if (!existingLedger) {
+    await supabaseAdmin.from("rr_test_ledger").insert({
+      external_id: externalId,
+      rr_request_id: created.rrRequestId ?? null,
+      amount_minor: amountMinor,
+      currency,
+      status_internal: created.ok ? "created" : "failed",
+      status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
+      payment_url: created.paymentUrl ?? null,
+      created_by: userId,
+      raw_last: redacted,
+    });
+  }
 
   await supabaseAdmin.from("integration_sync_logs").insert({
     instance_id: cfg.instanceId,
