@@ -1,176 +1,371 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-## **Добавить в Sprint 2.1 входные данные**
+## **1. Sprint A можно выполнять**
 
-```txt
-Для runtime proof использовать продукт:
-«Ценный бухгалтер. Первая ступень 2.0».
+План вернулся в правильный scope: **нормализовать UI банковской рассрочки**, не начинать `installment-initiate`, `rr-webhook`, платежи, доступы и CRM.
 
-На продукте должно быть 3 тарифа, и на каждом должна быть legacy-кнопка «Рассрочка от банка» / offer_type='bank_installment'.
+Это корректный промежуточный шаг перед полноценным Sprint B.
 
-Тестировать публичный flow сначала на первом тарифе.
-```
+---
 
-## **Уточнить порядок проверки**
+## **2. Исправить противоречие в пункте 2.1**
 
-```txt
-1. Найти продукт «Ценный бухгалтер. Первая ступень 2.0».
-2. Найти все тарифы этого продукта.
-3. Проверить, что у всех 3 тарифов есть bank_installment offer.
-4. Зафиксировать в proof-отчете:
-   - tariff_id;
-   - tariff name;
-   - tariff price / offer amount;
-   - bank_installment offer_id;
-   - external_link;
-   - meta.bank_installment.
-5. Начать runtime proof с первого тарифа.
-```
-
-## **Важная проверка по суммам**
-
-Добавить отдельный пункт в SQL/admin proof:
+Сейчас написано:
 
 ```txt
-Для всех 3 тарифов продукта «Ценный бухгалтер. Первая ступень 2.0» сверить:
-- стоимость тарифа;
-- сумму на кнопке «Рассрочка от банка»;
-- amount в tariff_offers;
-- публично отображаемую сумму на кнопке/карточке.
-
-Ожидаемо: по каждому тарифу стоимость должна совпадать со своей настройкой, без подстановки общей/чужой суммы.
+{offerForm.offer_type !== "bank_installment" && offerForm.offer_type !== "lead" && offerForm.offer_type !== "preregistration" && (
+  <OfferAcquiringSettings ... />
+)}
 ```
 
-## **Runtime public proof**
+Но далее сказано:
 
 ```txt
-Публичный runtime proof выполнить на первом тарифе:
-- кнопка «Рассрочка от банка» отображается рядом с правильной стоимостью;
-- клик открывает meta.bank_installment.external_link;
-- нет запросов к installment-initiate / rr-*;
-- публичный flow остается legacy external_link.
+lead/preregistration тоже не эквайринг — оставим текущее поведение, если они уже там показаны, не меняем; главное — вырезать для bank_installment
 ```
 
-## **Остальные 2 тарифа**
+Это противоречие. Для Sprint A не надо менять `lead` и `preregistration`.
 
-По двум остальным тарифам в Sprint 2.1 достаточно read-only проверки:
+Заменить на:
+
+```tsx
+{offerForm.offer_type !== "bank_installment" && (
+  <OfferAcquiringSettings ... />
+)}
+```
+
+То есть в этом спринте **только вырезать** `OfferAcquiringSettings` **для** `bank_installment`. Остальные типы не трогать.
+
+---
+
+## **3. SQL UPDATE допустим, но только с backup snapshot**
+
+Перед UPDATE обязательно снять полный snapshot конкретного оффера:
+
+```sql
+SELECT *
+FROM tariff_offers
+WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74';
+```
+
+И в отчет добавить old/new по 4 полям:
 
 ```txt
-- кнопка bank_installment существует;
-- сумма соответствует тарифу;
-- external_link/meta не повреждены;
-- UI админки открывает «Рассрочка банка».
+payment_method: internal_installment → full_payment
+installment_count: 6 → NULL
+installment_interval_days: 30 → NULL
+first_payment_delay_days: <old> → NULL
 ```
 
-Кликать публичный flow по всем трем тарифам необязательно, если первый тариф доказал legacy-поведение, а остальные два проверены по данным и UI.
+Если `first_payment_delay_days` уже `NULL`, так и написать.
 
-## **Что ответить подрядчику**
+---
+
+## **4. Не называть UPDATE “миграцией”**
+
+В плане правильно написано “SQL UPDATE”, но в отчете подрядчик не должен назвать это миграцией. Это **точечный data-fix одной записи**, а не schema migration.
+
+Формулировка:
 
 ```txt
-План Sprint 2.1 согласован с уточнением.
-
-Для теста использовать продукт «Ценный бухгалтер. Первая ступень 2.0». Там должно быть 3 тарифа, и на каждом должна быть кнопка «Рассрочка от банка».
-
-Нужно:
-1. Найти этот продукт и все 3 тарифа.
-2. По каждому тарифу зафиксировать tariff_id, название, стоимость, bank_installment offer_id, amount, external_link, meta.bank_installment.
-3. Проверить, что сумма кнопки рассрочки соответствует именно своему тарифу.
-4. Полный public runtime proof выполнить на первом тарифе:
-   - клик по кнопке открывает legacy external_link;
-   - нет запросов к installment-initiate / rr-*;
-   - публичный flow не изменился.
-5. По двум остальным тарифам достаточно read-only proof: кнопка есть, сумма правильная, meta/external_link не повреждены.
-6. Ничего не сохранять и не менять, кроме удаления inactive тестовой кнопки, если она была создана ранее.
-
-После этого Sprint 2.1 можно закрывать и переходить к плану Sprint 3.
-
-План: Sprint 2.1 — runtime proof UI/meta кнопки «Рассрочка банка»
+Data-fix одной bank_installment-записи тарифа «Бухгалтер»
 ```
 
-## Контекст
+---
 
-Sprint 2 по коду закрыт. Осталось доказать, что:
 
-1. UI редактора корректно отображает «Рассрочка банка» и её info-card для существующей legacy-кнопки (2 записи в БД).
-2. Публичный flow legacy `bank_installment` кнопки не сломан — по-прежнему открывает `meta.bank_installment.external_link` и не дёргает никаких РР-функций.
-3. Никаких изменений данных в БД не произошло между «до» и «после» проверки.
 
-Sprint 2.1 — **read-only proof**. Ни строчки кода не меняем.
 
-## Шаги
 
-### 1. SQL snapshot BEFORE
+## **5.**
 
-Через psql зафиксировать счётчики (в одном UNION ALL, чтобы совпадали до/после):
+`OfferRowCompact` **должен различать bank installment и internal installment**
 
-- `tariff_offers` total и WHERE `offer_type='bank_installment'`
-- `orders_v2` total
-- `payments_v2` total
-- `provider_events` total и WHERE `provider='rr'`
-- `domain_events` total
-- `entitlements` total
-- `access_grant_ledger` total
+Правило для `OfferRowCompact`:
 
-Плюс отдельно — dump `meta->'bank_installment'` для двух существующих `bank_installment`-офферов (id + external_link + installment_provider + rr_mode + currency), чтобы сравнить один к одному.
+```txt
+offer_type='bank_installment'
+→ показывать «Рассрочка банка · РР · BYN»
+→ показывать amount/button_label
+→ НЕ показывать «до N мес»
+→ НЕ считать платежи по installment_count
+```
 
-### 2. Admin UI proof (Playwright, /admin/products-v2/...)
+А для внутренней рассрочки оставить старое поведение:
 
-Открыть страницу продукта, содержащего одну из двух `bank_installment` записей. Скриншоты:
+```txt
+offer_type='pay_now' AND payment_method='internal_installment'
+→ прежняя логика «до N мес × X BYN»
+```
 
-- селект «Тип кнопки» показывает «Рассрочка банка»;
-- Info-Card виден с badges «Провайдер: Ресурс Развития / Валюта: BYN / Режим: внешний payment_url»;
-- поле `fallback_url` содержит существующий `external_link`;
-- amber-alert про disabled runtime отображается.
+---
 
-Ничего не сохранять, форму закрыть без submit — proof только на чтение.
+## **6. Проверка публичной страницы через iframe должна быть корректной**
 
-### 3. Public flow proof (Playwright, публичная страница тарифа)
+Так как `gorbova.by/cb` рендерит Tilda HTML внутри sandbox iframe, в proof надо не требовать обычный DOM parent-доступ.
 
-Определить публичный URL для продукта с legacy `bank_installment` кнопкой (через `site_pages` / `site_domain_bindings` или ссылка от пользователя). Playwright headless:
+Добавить:
 
-- открыть публичную страницу;
-- дождаться рендера pricing-секции;
-- инспектировать DOM кнопки: `href` / `onClick` должен вести на `meta.bank_installment.external_link`;
-- открыть DevTools Network (page.on('request')) → **отфильтровать по URL substring**: не должно быть ни одного запроса к `installment-initiate`, `rr-webhook`, `rr-test-*`, `rr-notification`, `rr-create-checkout`, `rr-*`;
-- кликнуть по кнопке, проверить, что открывается именно `external_link` (target `_blank` или navigation);
-- скриншот кнопки + скриншот перехода на внешний URL (или зафиксировать `page.on('popup')` URL).
+```txt
+Если Playwright не может напрямую прочитать DOM внутри sandbox iframe, проверять через:
+- iframe locator, если доступен;
+- postMessage flow;
+- popup/navigation URL после клика;
+- network request log parent page.
+```
 
-### 4. SQL snapshot AFTER
+Главное доказать:
 
-Повторить те же запросы из шага 1. Diff должен быть **0** по всем счётчикам (никаких новых `orders_v2`, `payments_v2`, `provider_events`, `domain_events`, `entitlements`, `access_grant_ledger`, `tariff_offers`). `meta->'bank_installment'` для двух записей — byte-to-byte идентично снапшоту до.
+```txt
+клик по кнопке → external_link pay.rrllc.ru
+нет вызовов installment-initiate / rr-*.
+```
 
-### 5. Тестовая кнопка (если создавалась)
+---
 
-Проверить в БД, есть ли `tariff_offers` с `is_active=false` и `installment_provider='rr'` / `rr_mode='payment_url'`, созданные в рамках Sprint 2 discovery. Если есть — оставить `is_active=false` и УДАЛИТЬ через `supabase--insert` DELETE, зафиксировать before/after count.
+## **7. Проверить все 3 тарифа, но data-fix только один**
 
-### 6. Отчёт
+Правильно:
 
-Сохранить `.lovable/proofs/2026-07-09-rr-sprint-2.1-runtime-proof.md`:
+```txt
+Бухгалтер — data-fix 4 полей
+Главный бухгалтер — read-only snapshot
+Бизнес-леди — read-only snapshot
+```
 
-- SQL snapshots before/after;
-- скрины admin UI (пути);
-- скрины/логи Network из Playwright с подтверждением отсутствия РР-вызовов;
-- вывод: Sprint 2.1 закрыт → готовы к Sprint 3.
+Запрещено “заодно” править два других оффера, если в snapshot не найден критический дефект и нет отдельного согласования.
 
-## Что НЕ делаем в Sprint 2.1
+---
 
-- Не пишем `installment-initiate`, `rr-webhook`, resolver, admin payments UI — это Sprint 3–5.
-- Не меняем БД (кроме удаления одной тестовой inactive-кнопки, если она есть).
-- Не трогаем `_shared/rr/*`, тестовый контур `rr_test_ledger` / `rr-test-*` / `rr-notification`.
-- Не переименовываем `bank_installment`, не удаляем legacy `external_link` из meta.
-- Не включаем `rr_mode='runtime'` ни на одной кнопке.
-- Не трогаем `bepaid-webhook`, `bepaid-polling`, Stripe pipeline.
-- Не задеваем master-sprint bePaid orphan recovery (он в бэклоге).
+## **8. Боевые таблицы проверять before/after с max timestamps**
 
-## Требуемые входные данные от пользователя
+В DoD добавить не только счетчики, но и timestamp-проверку:
 
-Прежде чем гонять Playwright по публичной странице, мне нужен адрес одной из двух легаси-кнопок `bank_installment` — какой продукт/тариф использовать для теста (или разрешение выбрать любой из двух по своему усмотрению — по `tariff_offers` найду сам).
+```sql
+SELECT 'orders_v2' AS t, count(*), max(created_at), max(updated_at) FROM orders_v2
+UNION ALL SELECT 'payments_v2', count(*), max(created_at), max(updated_at) FROM payments_v2
+UNION ALL SELECT 'provider_events', count(*), max(created_at), max(updated_at) FROM provider_events
+UNION ALL SELECT 'domain_events', count(*), max(created_at), max(updated_at) FROM domain_events
+UNION ALL SELECT 'entitlements', count(*), max(created_at), max(updated_at) FROM entitlements
+UNION ALL SELECT 'access_grant_ledger', count(*), max(created_at), max(updated_at) FROM access_grant_ledger;
+```
 
-## DoD
+Если `max_updated_at` меняется из-за фоновой системы, в отчете отдельно указать, что новых строк нет и изменение не связано с РР.
 
-1. `.lovable/proofs/2026-07-09-rr-sprint-2.1-runtime-proof.md` создан со всеми артефактами.
-2. Snapshot before === after по 7 счётчикам.
-3. Network public flow не содержит запросов к `installment-initiate` / `rr-*`.
-4. Legacy `external_link` в двух `bank_installment` записях не изменён.
-5. Если была тестовая inactive-кнопка — удалена, count `tariff_offers` вернулся к discovery-снапшоту.
-6. Отчёт зафиксирован → пользователь даёт добро на Sprint 3.
+---
+
+## **9. Runtime proof не должен включать сохранение формы**
+
+В админке:
+
+```txt
+открыть → проверить → скрин → закрыть
+```
+
+Не нажимать “Сохранить”, кроме точечного SQL data-fix по согласованному офферу.
+
+---
+
+## **10. Формат отчета после выполнения**
+
+Использовать точный заголовок:
+
+```txt
+Отчет о выполненной работе: Sprint A — нормализация UI кнопки «Рассрочка от банка»
+```
+
+---
+
+## **Итог**
+
+План можно выполнять после этих правок.
+
+Ключевые ограничения:
+
+```txt
+- Sprint A = только UI-normalization + один data-fix
+- не начинать installment-initiate
+- не начинать rr-webhook
+- не создавать payments_v2/orders_v2
+- не выдавать доступы
+- не трогать CRM/payment pipeline
+- не смешивать bank_installment с bePaid/internal_installment
+
+
+План: Sprint A — нормализация UI кнопки «Рассрочка от банка»
+```
+
+## 0. Область
+
+Только продукт **«Ценный бухгалтер. Первая ступень 2.0»** (`7101ed3c-...`) и его 3 тарифа: Бухгалтер / Главный бухгалтер / Бизнес-леди.
+
+Затрагиваем:
+
+- `src/pages/admin/AdminProductDetailV2.tsx` — редактор оффера (диалог offer_type)
+- `src/components/admin/product/OfferRowCompact.tsx` — превью строки оффера в списке
+- один SQL UPDATE на существующий bank_installment оффер тарифа «Бухгалтер»
+
+НЕ трогаем:
+
+- public flow (`UniversalPricingSection`, `TariffCard`, `SitePageBySlug`, `LeadRequestDialog`, `bankInstallment.ts`)
+- edge functions (`installment-initiate` не создаём, `rr-webhook` не создаём, `rr-notification` не трогаем)
+- схему БД, RLS, миграции, RR-подключение
+- bePaid / Stripe / internal_installment ветки (кроме того, что для `bank_installment` они больше не показываются)
+
+Legacy external_link должен продолжать работать байт-в-байт как сейчас — это доказано Sprint 2.1.
+
+---
+
+## 1. Что уже правильно (оставить как есть)
+
+В редакторе оффера уже реализовано:
+
+- селект `offer_type` содержит `bank_installment` (label «Рассрочка банка»)
+- при выборе `bank_installment` форма сбрасывает `installment_count/interval_days/first_payment_delay_days = null`, `requires_card_tokenization = false`, `payment_method = 'full_payment'` (если не был другой)
+- на вкладке **Оплата** для `bank_installment` показывается отдельная info-card «Рассрочка банка» с бейджами (Ресурс Развития / BYN / внешний payment_url), amber-alert про legacy и поле `Fallback URL (external_link)` в `meta.bank_installment.external_link`
+- radio «Способ приёма оплаты» (`full_payment` / `bank_installment` / …) показывается только для `offer_type='pay_now'` — для `bank_installment` он уже скрыт
+- блок «Внутренняя рассрочка N платежей» показывается только для `pay_now + internal_installment` — для `bank_installment` уже скрыт
+
+## 2. Что чинить в UI редактора оффера (`AdminProductDetailV2.tsx`)
+
+Для `offer_type='bank_installment'` в текущем UI ещё «протекает» посторонняя логика. Правки — только condition-gate, без изменения submit-логики.
+
+### 2.1. Вкладка «Оплата» — `OfferAcquiringSettings` (строки ~2153-2165)
+
+Сейчас `<OfferAcquiringSettings ... />` рендерится всегда, включая `bank_installment`. Это блок настроек bePaid/Stripe карточного эквайринга — для банковской рассрочки РР он нерелевантен.
+
+Обернуть в:
+
+```
+{offerForm.offer_type !== "bank_installment" && offerForm.offer_type !== "lead" && offerForm.offer_type !== "preregistration" && (
+  <OfferAcquiringSettings ... />
+)}
+```
+
+(lead/preregistration тоже не эквайринг — оставим текущее поведение, если они уже там показаны, не меняем; главное — вырезать для `bank_installment`).
+
+### 2.2. Вкладка «Автопродление» (`renewal`, строки ~2169-…)
+
+Внутри уже стоит гейт `offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment"` — для `bank_installment` тело не рендерится. Показать в этой вкладке подсказку-заглушку для `bank_installment`:
+
+```
+{offerForm.offer_type === "bank_installment" && (
+  <Card>… «Банковская рассрочка не является подписочной. Условия
+  и срок определяет банк/Ресурс Развития.» …</Card>
+)}
+```
+
+### 2.3. Вкладка «Дополнительно» (`extra`, строки ~2657-2723)
+
+- «Блокировать виртуальные карты» уже гейтчено `payment_method === 'internal_installment'` — для `bank_installment` не показывается. ОК.
+- Остальные блоки (`GetCourse код`, `OfferWelcomeMessageEditor`, `OfferCrmRoutingSection`, `OfferAutomationRulesSection`, is_active, is_primary) — оставить, они общие. `is_primary` уже гейтчен `pay_now` — для `bank_installment` скрыт. ОК.
+
+### 2.4. Селект `offer_type` — надпись «Рассрочка» (строка ~1859)
+
+В обработчике при выборе «Рассрочка» (внутренней) сейчас корректно ставится `pay_now + internal_installment`. Оставить без изменений.
+
+### 2.5. submit-логика (`handleSaveOffer`, строки ~572-691)
+
+Не трогать. Она уже:
+
+- для `bank_installment` пишет `payment_method` из формы (по умолчанию `full_payment`),
+- обнуляет `installment_count/interval/delay`,
+- сохраняет `meta.bank_installment.*`.
+
+## 3. Что чинить в списке офферов (`OfferRowCompact.tsx`)
+
+Открыть и добавить branch для `offer_type === 'bank_installment'`:
+
+- бейдж «Рассрочка банка · РР · BYN»
+- НЕ показывать «до N мес × X BYN» математику (она валидна только для `payment_method === 'internal_installment'`)
+- показывать `button_label` и `amount` из `tariff_offers` (SoT = БД)
+
+Detail — уточнить при чтении файла на build-фазе.
+
+## 4. Data-fix для существующего оффера «Бухгалтер»
+
+Один точечный UPDATE (через insert-tool) — только один оффер, только очистка нерелевантных полей внутренней рассрочки:
+
+```sql
+UPDATE tariff_offers
+SET payment_method = 'full_payment',
+    installment_count = NULL,
+    installment_interval_days = NULL,
+    first_payment_delay_days = NULL,
+    updated_at = now()
+WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74'
+  AND offer_type = 'bank_installment';
+```
+
+`meta.bank_installment.*` (external_link, installment_provider, currency, rr_mode='payment_url') — не трогаем, они уже корректны.
+
+Офферы «Главный бухгалтер» (`2a07af43…`) и «Бизнес-леди» (`4f64def7…`) уже:
+
+- `payment_method='full_payment'`
+- `installment_count/interval/delay = NULL`
+
+По ним UPDATE не нужен. Проверим read-only снапшотом до/после.
+
+## 5. Discovery-снапшот всех 3 тарифов (BEFORE + AFTER)
+
+`supabase--read_query` до и после UPDATE. По каждому bank_installment оффер зафиксировать в отчёте:
+
+```
+tariff_id, tariff.name, tariff.code,
+offer_id, button_label, amount, currency, payment_method,
+installment_count, installment_interval_days, first_payment_delay_days,
+meta.bank_installment.installment_provider,
+meta.bank_installment.currency,
+meta.bank_installment.rr_mode,
+meta.bank_installment.external_link
+```
+
+Дельта проверяется только по офферу «Бухгалтер»: 4 поля.
+
+## 6. Runtime proof (Playwright, read-only для публики)
+
+1. **Админка** (`/admin/products-v2/7101ed3c...?tab=offers`) — открыть по одному все 3 bank_installment оффера:
+  - селект `offer_type` = «Рассрочка банка»
+  - info-card «Рассрочка банка» с бейджами Ресурс Развития / BYN / внешний payment_url
+  - amber-alert про legacy present
+  - fallback external_link заполнен
+  - НЕТ radio «Способ приёма оплаты»
+  - НЕТ блока «Внутренняя рассрочка N платежей»
+  - НЕТ `OfferAcquiringSettings` (bePaid/Stripe)
+  - вкладка «Автопродление» показывает подсказку про банковскую рассрочку
+  - скриншот каждого
+2. **Публичная страница** (`https://gorbova.by/cb`) — по каждой из 3 кнопок:
+  - клик открывает `pay.rrllc.ru/...` (external_link)
+  - Network НЕ содержит запросов к `installment-initiate`/`rr-*`
+  - скриншот
+3. **SQL AFTER-снапшот** = байт-в-байт BEFORE для 2-х тарифов; для «Бухгалтера» — только 4 ожидаемых дельты.
+
+## 7. DoD Sprint A
+
+- UI редактора оффера для `offer_type='bank_installment'` не показывает: radio способ оплаты bePaid/Stripe, внутреннюю рассрочку N платежей, `OfferAcquiringSettings`, virtual-card блокировку.
+- Вкладка «Автопродление» для `bank_installment` содержит явную подсказку (не подписка).
+- `OfferRowCompact` для `bank_installment` не показывает «до N мес × X BYN».
+- Оффер «Бухгалтер» нормализован SQL-UPDATE'ом (4 поля).
+- BEFORE/AFTER снапшот трёх тарифов приложен.
+- Playwright screenshots админки (3 оффера) и публичного клика (3 кнопки) приложены.
+- Публичный legacy external_link работает без вызовов `installment-initiate`/`rr-*`.
+- Никаких изменений в `orders_v2 / payments_v2 / provider_events / domain_events / entitlements / access_grant_ledger` (счётчики совпадают до/после).
+- Отчёт: `.lovable/proofs/2026-07-09-rr-sprint-A-bank-installment-ui-normalize.md`.
+
+## 8. Что НЕ делаем в Sprint A
+
+- `installment-initiate`, `rr-webhook`, `rr-*` edge-функции
+- `payments_v2` для РР, `grant-access-for-order`, CRM stage transitions
+- `rr_mode='runtime'` — все офферы остаются `rr_mode='payment_url'`
+- переименование `bank_installment` в БД
+- удаление `DEFAULT_BANK_INSTALLMENT_LINK` из `src/lib/bankInstallment.ts`
+- ручные платежи
+- изменения bePaid/Stripe/internal_installment веток
+- миграции БД / RLS / GRANT
+
+## 9. Технические файлы, которые будут изменены
+
+- `src/pages/admin/AdminProductDetailV2.tsx` — 2 condition-gate правки (§2.1, §2.2)
+- `src/components/admin/product/OfferRowCompact.tsx` — branch для `bank_installment` (§3)
+- SQL UPDATE через insert-tool (§4)
+- отчёт-файл `.lovable/proofs/2026-07-09-rr-sprint-A-*.md`
