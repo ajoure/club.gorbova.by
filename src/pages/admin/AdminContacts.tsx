@@ -409,7 +409,12 @@ export default function AdminContacts() {
       // - Вкладка «Дубли» больше не зависит от устаревшего duplicate_flag.
       // - Обычные вкладки не показывают уже объединённые/архивные записи.
       if (activePreset === "duplicates") {
-        const { data, error } = await (supabase as any).rpc("get_duplicate_contact_profiles", {
+        const getDuplicateProfiles = supabase.rpc as unknown as (
+          fn: string,
+          args: Record<string, unknown>
+        ) => Promise<{ data: unknown[] | null; error: Error | null }>;
+
+        const { data, error } = await getDuplicateProfiles("get_duplicate_contact_profiles", {
           p_limit: PAGE_SIZE,
           p_offset: pageParam,
           p_search: debouncedSearch || null,
