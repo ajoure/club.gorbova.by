@@ -51,7 +51,11 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
   if (!roleRow) return errorResponse("forbidden_admin_only", 403);
 
-  let payload: { amount_minor?: number; currency?: string } = {};
+  let payload: {
+    amount_minor?: number;
+    currency?: string;
+    external_id_override?: string;
+  } = {};
   try {
     payload = await req.json();
   } catch {
@@ -72,8 +76,22 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     return errorResponse((e as Error).message, 400);
   }
+  // cfg.mode гарантированно === 'test' (loadRRTestConfig throws иначе).
 
-  const externalId = `rr_test_${crypto.randomUUID()}`;
+  // external_id_override: test-only, admin-only, префикс rr_test_.
+  // Позволяет прогнать повторный createOrder с уже использованным id
+  // для проверки поведения РР (duplicate/same-order/new-order).
+  const overrideRaw = String(payload.external_id_override ?? "").trim();
+  let externalId: string;
+  if (overrideRaw) {
+    if (!overrideRaw.startsWith("rr_test_") || overrideRaw.length > 128) {
+      return errorResponse("external_id_override_invalid", 400);
+    }
+    // cfg.mode уже === 'test', role уже admin/superadmin — guard-ы выше.
+    externalId = overrideRaw;
+  } else {
+    externalId = `rr_test_${crypto.randomUUID()}`;
+  }
   const correlationId = crypto.randomUUID();
 
   const projectRef = (Deno.env.get("SUPABASE_URL") ?? "").match(
@@ -93,18 +111,27 @@ Deno.serve(async (req: Request) => {
 
   const redacted = redactRRResponse(created.http.json);
 
-  // Insert ledger record. Пишем даже при ошибке — для аудита test-попытки.
-  await supabaseAdmin.from("rr_test_ledger").insert({
-    external_id: externalId,
-    rr_request_id: created.rrRequestId ?? null,
-    amount_minor: amountMinor,
-    currency,
-    status_internal: created.ok ? "created" : "failed",
-    status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
-    payment_url: created.paymentUrl ?? null,
-    created_by: userId,
-    raw_last: redacted,
-  });
+  // Ledger: если строка уже есть (override с повтором), не создаём дубль,
+  // просто пишем событие в integration_sync_logs. Иначе — insert.
+  const { data: existingLedger } = await supabaseAdmin
+    .from("rr_test_ledger")
+    .select("id")
+    .eq("external_id", externalId)
+    .maybeSingle();
+
+  if (!existingLedger) {
+    await supabaseAdmin.from("rr_test_ledger").insert({
+      external_id: externalId,
+      rr_request_id: created.rrRequestId ?? null,
+      amount_minor: amountMinor,
+      currency,
+      status_internal: created.ok ? "created" : "failed",
+      status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
+      payment_url: created.paymentUrl ?? null,
+      created_by: userId,
+      raw_last: redacted,
+    });
+  }
 
   await supabaseAdmin.from("integration_sync_logs").insert({
     instance_id: cfg.instanceId,
@@ -119,6 +146,8 @@ Deno.serve(async (req: Request) => {
       external_id: externalId,
       correlation_id: correlationId,
       status_raw: created.rrStatusRaw ?? null,
+      override_used: overrideRaw ? true : false,
+      ledger_row_existed: existingLedger ? true : false,
     },
   });
 
