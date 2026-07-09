@@ -380,6 +380,7 @@ export default function AdminContacts() {
     hasNextPage,
     isFetchingNextPage,
     refetch,
+    error: profilesError,
   } = useInfiniteQuery({
     queryKey: ["admin-contacts-profiles", activePreset, debouncedSearch],
     queryFn: async ({ pageParam = 0 }) => {
