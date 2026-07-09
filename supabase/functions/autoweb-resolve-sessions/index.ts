@@ -10,6 +10,17 @@
 //     (live-resolve / autoweb-room-state в Sprint B), а не здесь.
 //   • Соответствует UX: незарегистрированный пользователь должен видеть «ближайшие старты»
 //     и выбрать слот ПЕРЕД регистрацией.
+//
+// INVARIANT (Phase A.verify, FP-2/FP-3 Variant A — add-only, 2026-07-09):
+//   • SoT режима: live_events.autoweb_mode (единственный канон).
+//     Поля autoweb_config.mode НЕ существует и НЕ используется — любые упоминания
+//     считать ложной тревогой (см. отчёт A.verify, дефект D3).
+//   • event_type='recorded_webinar' допустим ТОЛЬКО как legacy-контейнер для
+//     autoweb_mode='one_time'. Никакие другие autoweb-сценарии (scheduled/JIT/on_demand)
+//     для recorded_webinar НЕ поддерживаются — это гарантирует обратную совместимость
+//     one_time-эфиров без миграции данных (см. дефект D4, Variant A).
+//   • Массовая миграция recorded_webinar → autowebinar отложена до отдельного спринта
+//     (нужен надёжный критерий отличия legacy-one_time от обычного recorded-видео).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
