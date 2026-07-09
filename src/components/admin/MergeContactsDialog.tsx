@@ -109,8 +109,13 @@ export function MergeContactsDialog({
     },
     onSuccess: () => {
       toast.success(`Объединено ${contacts.length} контактов`);
-      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      // Инвалидируем реальные ключи AdminContacts (не путать со старым 'admin-contacts')
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-total"] });
       queryClient.invalidateQueries({ queryKey: ["duplicate-cases"] });
+      queryClient.invalidateQueries({ queryKey: ["duplicate-count"] });
+      queryClient.invalidateQueries({ queryKey: ["client-duplicates"] });
       onOpenChange(false);
       onSuccess?.();
     },
