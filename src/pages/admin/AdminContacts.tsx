@@ -405,23 +405,54 @@ export default function AdminContacts() {
       }
 
       // Standard profiles query with server-side filters
+      // PATCH-DUPLICATES-UI-SOT:
+      // - Вкладка «Дубли» больше не зависит от устаревшего duplicate_flag.
+      // - Обычные вкладки не показывают уже объединённые/архивные записи.
+      if (activePreset === "duplicates") {
+        const { data, error } = await (supabase as any).rpc("get_duplicate_contact_profiles", {
+          p_limit: PAGE_SIZE,
+          p_offset: pageParam,
+          p_search: debouncedSearch || null,
+        });
+        if (error) throw error;
+        const rows = data || [];
+        return {
+          rows,
+          nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+        };
+      }
+
       let query = supabase
         .from("profiles")
         .select("*");
 
       // Server-side preset filters
       if (activePreset === "active") {
-        query = query.not("user_id", "is", null).neq("status", "archived");
+        query = query
+          .not("user_id", "is", null)
+          .eq("is_archived", false)
+          .neq("status", "archived")
+          .is("merged_to_profile_id", null);
       } else if (activePreset === "noAccount") {
-        query = query.is("user_id", null).neq("status", "archived");
-      } else if (activePreset === "duplicates") {
-        query = query.not("duplicate_flag", "is", null).neq("duplicate_flag", "none");
+        query = query
+          .is("user_id", null)
+          .eq("is_archived", false)
+          .neq("status", "archived")
+          .is("merged_to_profile_id", null);
     } else if (activePreset === "archived") {
-      query = query.eq("status", "archived");
+      query = query.or("status.eq.archived,is_archived.eq.true,merged_to_profile_id.not.is.null");
     } else if (activePreset === "banned") {
-      query = query.eq("status", "banned");
+      query = query
+        .eq("status", "banned")
+        .eq("is_archived", false)
+        .is("merged_to_profile_id", null);
+    } else if (activePreset === "all") {
+      query = query
+        .eq("is_archived", false)
+        .neq("status", "archived")
+        .is("merged_to_profile_id", null);
     }
-    // "all" — no extra filter
+    // "all" — все видимые неархивные контакты
 
       // Server-side search
       if (debouncedSearch) {
@@ -975,6 +1006,7 @@ export default function AdminContacts() {
       queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["admin-contacts-orders"] });
       queryClient.invalidateQueries({ queryKey: ["admin-contacts-total"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-tab-counts"] });
       queryClient.invalidateQueries({ queryKey: ["duplicate-count"] });
     },
     onError: (error) => {
