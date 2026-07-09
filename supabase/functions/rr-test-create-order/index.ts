@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
   const created = await rrCreateOrder(cfg, {
     externalId,
     amountMinor,
-    currency: "RUB",
+    currency,
     notificationUrl,
     correlationId,
   });
@@ -98,7 +98,7 @@ Deno.serve(async (req: Request) => {
     external_id: externalId,
     rr_request_id: created.rrRequestId ?? null,
     amount_minor: amountMinor,
-    currency: "RUB",
+    currency,
     status_internal: created.ok ? "created" : "failed",
     status_raw: created.rrStatusRaw ?? (created.ok ? null : "create_failed"),
     payment_url: created.paymentUrl ?? null,
