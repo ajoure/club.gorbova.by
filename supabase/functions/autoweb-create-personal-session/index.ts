@@ -8,6 +8,15 @@
 //                  → пользователь не может «накликать» пачку параллельных on-demand сессий
 //
 // Это сильнее, чем старый «60 секунд», и соответствует согласованному time-bucket подходу.
+//
+// INVARIANT (Phase A.verify, FP-2/FP-3 Variant A — add-only, 2026-07-09):
+//   • SoT режима: live_events.autoweb_mode. Поля autoweb_config.mode не существует.
+//   • event_type='recorded_webinar' допустим ТОЛЬКО как legacy-контейнер для
+//     autoweb_mode='one_time'. Персональные сессии (JIT/on_demand) для recorded_webinar
+//     НЕ создаются — этот код-путь предназначен только для event_type='autowebinar'.
+//   • Legacy one_time-поток НЕ проходит через эту функцию (см. AutowebSessionSelector:
+//     one_time авто-создаётся отдельной веткой), поэтому изменение whitelist здесь
+//     совместимость не ломает.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
