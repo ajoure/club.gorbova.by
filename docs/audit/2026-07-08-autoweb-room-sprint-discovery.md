@@ -491,3 +491,46 @@ Discovery-отчёт считается **submitted**, но **не accepted**, �
   regression-smoke на приёмке каждой фазы.
 
 **Gate-статус:** `submitted` (не `accepted`). Ждём явного утверждения discovery + proof-матрицы A.
+
+---
+
+## §17. Phase A — Implementation log
+
+Реализовано (add-only, без миграций и новых таблиц):
+
+**Edge function:** `supabase/functions/autoweb-session-heartbeat/index.ts` (~230 строк, `verify_jwt=true` в `supabase/config.toml`).
+Единственная точка записи lifecycle-фактов autoweb-сессии. НЕ мержится с `live-session-heartbeat` / `live-event-lifecycle`.
+
+**Add-only session metadata SoT** (никакие существующие ключи не удаляются):
+- `auto_room_opened_at`, `auto_started_at`, `auto_ended_at`
+- `autoplay_blocked_at`
+- `last_heartbeat_at`, `last_player_state`, `last_current_time_seconds`, `last_noop_reason`
+
+**Guard-контракт (жёсткий):**
+- `status: pending → live` и `auto_started_at` — CAS `WHERE status='pending' AND metadata->>'auto_started_at' IS NULL`, ставится **только** при `player_state='playing' AND playback_started=true AND wall_clock>=starts_at`.
+- `autoplay_blocked`: НЕ пишет `auto_started_at`, НЕ переводит status в live; фиксируется `autoplay_blocked_at` (CAS, один раз) + audit `autoplay_blocked`.
+- `status: → ended` — CAS `WHERE status IN ('pending','live') AND metadata->>'auto_ended_at' IS NULL`, срабатывает при `player_state='ended' OR wall_clock>=ends_at`.
+- `guard_scenario_needs_playback:<state>` — noop-причина для paused/idle/ready до старта.
+
+**Anti-spam heartbeat (compare-and-set):**
+- `last_player_state` — только при смене.
+- `last_current_time_seconds` — только при |Δ|≥2s либо смене state.
+- `last_heartbeat_at` — только при смене state либо каждые ≥60s.
+- `last_noop_reason` — только при смене причины; audit `autoweb_self_heal_noop` — тоже только при смене.
+
+**Admin/event visibility:** статус для админки — `live_event_sessions.status` (уже читается существующими admin-view'ами). Событие эфира не трогаем: session.status='live' достаточно (event-level status для autowebinar не является SoT факта запуска — авторан per-session). Refresh не нужен: heartbeat обновляет status атомарно при первом подтверждённом playback.
+
+**Клиент:**
+- `src/hooks/useAutowebHeartbeat.ts` — тонкий 10s poller, single-flight, ref-based state (interval не пересоздаётся).
+- `src/components/live/AutowebRoomRuntime.tsx`:
+  - Минимальный Kinescope postMessage-bridge: parse `play|pause|end|ready` → `AutowebPlayerState`.
+  - `autoplay_blocked` детектор: 6s без `ready`/`playing` при phase∈{live,replay} и заданном video_id.
+  - `useAutowebHeartbeat` подключён с `sessionId + playerState + currentTimeSeconds + playbackStarted`.
+
+**Границы Фазы A (соблюдены):** нет editor, нет viewer count, нет chat isolation, нет test mode, нет replay-access patch, нет полного Kinescope SDK.
+
+**Proof-матрица A — требуется прогон** (не выполнен агентом; должен быть выполнен вручную/QA до accept):
+- 4 режима (one_time / scheduled / just_in_time / on_demand) × 3 артефакта (UI screencast + SQL snapshot `live_event_sessions.{status, metadata}` + `audit_logs` slice) + admin-status screenshot.
+- Negative-cases: refresh страницы, multi-tab (одна сессия), restart runtime после auto_started_at, autoplay_blocked, source_unavailable, повторный heartbeat не создаёт дубль `auto_webinar_started` (CAS).
+
+Gate: до подтверждения прогона proof-матрицы Фаза A — `submitted`, не `accepted`.
