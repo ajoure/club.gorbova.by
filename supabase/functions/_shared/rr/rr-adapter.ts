@@ -57,13 +57,10 @@ export function mapStatus(raw: string | null | undefined): RRStatusInternal {
 }
 
 async function md5Hex(input: string): Promise<string> {
-  // Deno не поддерживает MD5 через WebCrypto (subtle) — используем std/md5.
-  const { Md5 } = await import(
-    "https://deno.land/std@0.224.0/hash/md5.ts"
-  );
-  const h = new Md5();
-  h.update(input);
-  return h.toString();
+  // Deno WebCrypto не поддерживает MD5 — используем npm-пакет.
+  const mod = await import("npm:blueimp-md5@2.19.0");
+  const md5 = (mod.default ?? mod) as (s: string) => string;
+  return md5(input);
 }
 
 export async function verifyNotificationSignature(input: {
