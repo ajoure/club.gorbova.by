@@ -79,7 +79,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
-import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { AdminVoiceRecorder } from "./chat/AdminVoiceRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
@@ -212,7 +211,6 @@ export function ContactTelegramChat({
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
-  const keyboardInset = useVisualViewportInset();
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -1820,13 +1818,7 @@ export function ContactTelegramChat({
         {/* Input — shrink-0 в нижней части flex-контейнера. Без sticky:
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
-        <div
-          className="pt-1 border-t shrink-0 bg-background"
-          style={{
-            paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + ${keyboardInset}px)`,
-            transition: "padding-bottom 120ms ease-out",
-          }}
-        >
+        <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
           {activeBots.length > 1 && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
@@ -1868,11 +1860,11 @@ export function ContactTelegramChat({
               </button>
             </div>
           )}
-          <div className="flex gap-2">
-          <div className="flex flex-col gap-1">
+          <div className="flex items-end gap-2">
+          <div className="flex shrink-0 flex-col gap-1">
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <Button variant="ghost" size="sm" className="h-9 w-9 p-0 shrink-0">
                   <Smile className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -1893,7 +1885,7 @@ export function ContactTelegramChat({
             
             <DropdownMenu open={showMediaMenu} onOpenChange={setShowMediaMenu}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <Button variant="ghost" size="sm" className="h-9 w-9 p-0 shrink-0">
                   <Paperclip className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -2019,14 +2011,14 @@ export function ContactTelegramChat({
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="Введите сообщение..."
-            className="min-h-[60px] max-h-[120px] resize-none flex-1"
+            className="min-h-[56px] max-h-[112px] resize-none flex-1 overflow-y-auto leading-snug"
             disabled={sendMutation.isPending || isUploading}
           />
-          <div className="flex flex-col gap-1 items-end">
+          <div className="flex shrink-0 flex-col gap-1 items-end">
             <Button
               onClick={handleSend}
               disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || !selectedBotId}
-              className="h-auto"
+              className="h-12 w-12 p-0 shrink-0"
               title={!selectedBotId ? "Выберите бота для отправки" : undefined}
             >
               <Send className="w-4 h-4" />
