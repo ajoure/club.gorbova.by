@@ -13418,6 +13418,27 @@ export type Database = {
         }
         Relationships: []
       }
+      rr_public_rate_limits: {
+        Row: {
+          bucket_key: string
+          count: number
+          updated_at: string
+          window_started_at: string
+        }
+        Insert: {
+          bucket_key: string
+          count?: number
+          updated_at?: string
+          window_started_at?: string
+        }
+        Update: {
+          bucket_key?: string
+          count?: number
+          updated_at?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
       rr_test_ledger: {
         Row: {
           amount_minor: number
@@ -19260,6 +19281,31 @@ export type Database = {
           telegram_user_id: number
           user_id: string
         }[]
+      }
+      rr_get_or_create_pending_order: {
+        Args: {
+          _amount: number
+          _currency: string
+          _customer_email: string
+          _customer_ip: string
+          _customer_phone: string
+          _email_norm: string
+          _meta: Json
+          _offer_id: string
+          _phone_norm: string
+          _product_id: string
+          _tariff_id: string
+          _user_id: string
+        }
+        Returns: {
+          order_id: string
+          order_number: string
+          was_reused: boolean
+        }[]
+      }
+      rr_public_rate_limit_hit: {
+        Args: { _key: string; _max: number; _window_seconds: number }
+        Returns: boolean
       }
       safe_delete_document_package: {
         Args: { _package_id: string }
