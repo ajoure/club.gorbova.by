@@ -1,0 +1,8 @@
+timestamp: 20260710T085430Z
+orders_v2_rr|0
+provider_events_rr|5
+payments_v2|6276
+entitlements|993
+access_grant_ledger|273736
+telegram_access_grants|2089
+domain_events_order|0
