@@ -12611,7 +12611,7 @@ export type Database = {
           signature_valid: boolean
         }
         Insert: {
-          account_code: string
+          account_code?: string
           created_at?: string
           event_id: string
           event_type: string
