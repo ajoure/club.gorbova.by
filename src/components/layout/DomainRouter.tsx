@@ -70,6 +70,15 @@ export function DomainHomePage() {
   }, [hostname, shouldCheckSiteBuilder, retryNonce]);
 
 
+  // Hooks below must stay before any conditional returns. On custom domains the
+  // first render exits while Site Builder is still checking; calling this hook
+  // only after that check completes causes React's "rendered more hooks" crash.
+  const shouldResolveLegacyProductDomain =
+    shouldCheckSiteBuilder && siteBuilderChecked && !siteBuilderError && !siteBuilderPage;
+  const { data: productData, isLoading, error } = usePublicProduct(
+    shouldResolveLegacyProductDomain ? domain : null,
+  );
+
   // Course domain → show course landing (legacy, unchanged)
   if (isCourseDomain) {
     return <CourseAccountant />;
@@ -109,11 +118,8 @@ export function DomainHomePage() {
     const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
     return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
   }
-
-
   // ─── Legacy: Product domain resolution ───
-  // Fetch product data for the current domain (only for product subdomains)
-  const { data: productData, isLoading, error } = usePublicProduct(domain);
+  // Fetch product data for the current domain (only after Site Builder misses)
 
   // Loading state for product domains
   if (isLoading) {
