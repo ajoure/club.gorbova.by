@@ -13,7 +13,7 @@ interface State {
 }
 
 const RELOAD_TS_KEY = "__lazy_chunk_reload_ts__";
-const RELOAD_TTL_MS = 60_000; // разрешаем повторный reload раз в 60 сек, без бесконечного цикла
+const RELOAD_TTL_MS = 10 * 60_000; // максимум один auto-reload за 10 минут, без циклов
 const MEMORY_RELOAD_TS_KEY = "__lazyChunkReloadTs";
 
 /**
@@ -80,6 +80,7 @@ export class LazyErrorBoundary extends Component<Props, State> {
         deltaMs: now - lastReloadAt,
         message: error.message,
       });
+      this.setState({ isChunkError: false });
       return;
     }
 
@@ -88,6 +89,7 @@ export class LazyErrorBoundary extends Component<Props, State> {
         pathname,
         message: error.message,
       });
+      this.setState({ isChunkError: false });
       return;
     }
 
@@ -99,6 +101,7 @@ export class LazyErrorBoundary extends Component<Props, State> {
         pathname,
         message: error.message,
       });
+      this.setState({ isChunkError: false });
       return;
     }
 
