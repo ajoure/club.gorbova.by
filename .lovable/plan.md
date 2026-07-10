@@ -1,624 +1,557 @@
 # да, согласен, с учетом правок:
 
-План закрывает большинство дефектов предыдущей реализации, но в текущем виде остаётся один архитектурный блокер: **двойной сбой post-call persistence всё ещё может привести к повторному** `rrCreateOrder`.
 
-## **1. Добавить durable pre-call marker до обращения к РР**
 
-Текущая схема:
 
-```text
-orders_v2 создан
-→ create_order_requested записан
-→ rrCreateOrder
-→ запись результата/marker
-```
 
-Если РР уже обработал запрос, а затем дважды упали:
+## **1. Не устанавливать**
 
-```text
-rr_mark_upstream_unknown
-```
+`upstream_outcome='created'` **до успешной финализации**
 
-или:
+В блоке 3 предложено:
+
+`rr_reconcile_confirm_created` выставит `upstream_outcome='created'` до делегирования в canonical
+
+Такой порядок создаёт ложное промежуточное состояние. Если canonical finalize завершится ошибкой или будет обработан exception, заказ не должен остаться с утверждением `upstream_outcome='created'`.
+
+Требуемый порядок должен быть атомарным:
 
 ```text
-rr_mark_local_persist_failed
+проверка ambiguous source-state
+→ canonical success transition
+→ upstream_outcome='created'
+→ reconciliation_status='confirmed_created'
+→ upstream_call_state='completed'
+→ create_order_succeeded
+→ reconciliation_confirmed_created
+→ commit
 ```
 
-ответ `local_state_unconfirmed` сам по себе не защищает от следующего submit. Через временное окно обычный pending перестанет переиспользоваться, и может быть создан новый `orders_v2.id`.
+Ни один success-marker не записывается до гарантированной успешной финализации.
 
-До вызова РР необходимо атомарно записывать в сам заказ durable pre-call marker, например:
+### **Предпочтительная реализация**
 
-```json
-{
-  "rr": {
-    "upstream_call_state": "started",
-    "upstream_call_started_at": "...",
-    "upstream_call_correlation_id": "..."
-  }
-}
-```
-
-Порядок:
+Вынести единое изменение success-state во внутреннюю SQL-функцию:
 
 ```text
-создание orders_v2
-→ atomic rr_mark_call_started
-→ durable create_order_requested
-→ только после подтверждения обеих записей rrCreateOrder
+rr_finalize_created_order_internal(...)
 ```
 
-`rr_get_or_create_pending_order` должен без временного окна переиспользовать любой pending-заказ с:
+Она:
+
+- не получает `EXECUTE` для `anon`, `authenticated`, `service_role`;
+- вызывается только из `rr_finalize_created_order` и `rr_reconcile_confirm_created`;
+- является единственным writer канонического success-state.
+
+Публичные wrappers выполняют свои source-state guards, затем вызывают internal helper в той же транзакции.
+
+Это не новая бизнес-сущность и не новая edge-функция, а технический SQL helper. Если helper не создаётся, необходимо явно показать, как исключено дублирование canonical update logic между двумя RPC.
+
+
+
+
+
+## **2. Уточнить смысл**
+
+`upstream_call_state='started'` **после полного post-call persistence failure**
+
+В тесте №4 указано:
+
+marker double failure → `upstream_call_state` не остаётся `started` навсегда
+
+Это противоречит fail-closed модели.
+
+Если после внешнего вызова не удалось записать ни:
+
+- `upstream_outcome='unknown'`;
+- ни `local_persist_failed`;
+
+то единственное достоверное durable состояние — ранее записанное:
 
 ```text
 upstream_call_state='started'
 ```
 
-до появления terminal результата:
+Оно **обязано сохраниться**, пока reconciler или оператор не установит подтверждённый исход. Именно это предотвращает второй `rrCreateOrder`.
+
+Исправить тест №4:
 
 ```text
-created
-rejected
-not_created
-operator allow_new_order
-```
-
-Тогда даже при полном отказе post-call persistence следующий submit получит тот же `order_id` и будет заблокирован для reconciliation.
-
-### **Mapping**
-
-```text
-две попытки post-call marker + HTTP 500
-→ pre-call durable call_started + post-call marker retries
-```
-
-`HTTP 500 local_state_unconfirmed` остаётся необходимым alert-контрактом, но не является механизмом идемпотентности.
-
-
-
-
-
-## **2. Не считать**
-
-`provider_events.create_order_requested` **достаточным durable guard**
-
-Само событие уже записывается до вызова РР, но reuse RPC его не анализирует. Есть два допустимых варианта:
-
-### **Предпочтительно**
-
-Хранить `upstream_call_state='started'` в `orders_v2.meta.rr`, чтобы reuse не зависел от join с ledger.
-
-### **Альтернатива**
-
-Reuse RPC проверяет существование `provider_events`:
-
-```text
-create_order_requested
-```
-
-без последующего terminal event.
-
-Этот вариант сложнее и менее предпочтителен. Источником текущего состояния должен оставаться `orders_v2`, ledger — доказательством перехода.
-
-## **3. Закрыть прямой вызов canonical finalizer из ambiguous state**
-
-В §1 canonical `rr_finalize_created_order` допускает:
-
-```text
-pending + upstream_outcome='unknown'
-```
-
-с оговоркой «вызывается только через `rr_reconcile_confirm_created`». Но обе функции доступны `service_role`, поэтому технически canonical RPC можно вызвать напрямую и обойти reconciliation guards.
-
-Закрепить один вариант.
-
-### **Вариант A — предпочтительный**
-
-`rr_finalize_created_order` допускает только:
-
-```text
-pending
-AND upstream_outcome IS NULL
-```
-
-или:
-
-```text
-pending
-AND local_persist_failed=true
-```
-
-Для ambiguous state `rr_reconcile_confirm_created` выполняет ту же внутреннюю canonical SQL-функцию, которая не выдана наружу:
-
-```text
-rr_finalize_created_order_internal
-```
-
-Internal helper:
-
-- не получает `GRANT EXECUTE` ролям API;
-- вызывается только публичными service-role wrappers;
-- остаётся единственным SQL writer канонического success-state.
-
-### **Вариант B**
-
-Добавить обязательный `_transition_source` с allowlist:
-
-```text
-happy_path
-recovery
-reconciler
-operator
-```
-
-и проверять соответствие source-state. При изменении сигнатуры обязательно удалить или закрыть старый overload.
-
-Одной документальной оговорки «только через wrapper» недостаточно.
-
-
-
-## **4. Явно обработать изменение сигнатуры**
-
-`rr_operator_resolve`
-
-В v2 функция имела сигнатуру без `_evidence`. В v3 для `allow_new_order` указана обязательная `_evidence`, но в разделе файлов не определено, как изменится SQL signature.
-
-Нельзя просто создать новую перегрузку и оставить старую небезопасную функцию callable.
-
-Зафиксировать:
-
-```text
-старый rr_operator_resolve(uuid,text,text,text,text,text)
-→ DROP FUNCTION либо REVOKE ALL
-```
-
-Новая сигнатура, например:
-
-```sql
-rr_operator_resolve(
-  _order_id uuid,
-  _resolution text,
-  _actor text,
-  _payment_url text,
-  _rr_request_id text,
-  _note text,
-  _evidence jsonb
-)
-```
-
-После миграции доказать отсутствие доступного старого overload через `pg_proc` и `has_function_privilege`.
-
-То же правило применяется ко всем функциям, сигнатуры которых меняются.
-
-
-
-
-
-## **5. Определить режим блокировки**
-
-`rr_finalize_order_not_created` **до Gate A.2**
-
-План требует:
-
-```text
-attempts >= минимум из provider contract
-```
-
-но одновременно говорит, что `rr_provider_contract.md` остаётся незаполненным.
-
-Следовательно, минимальное значение пока не определено.
-
-До Gate A.2 функция должна быть fail-closed. Например:
-
-```text
-rr_not_created_contract_not_enabled
-```
-
-пока server-side config не содержит:
-
-```json
-{
-  "not_created_resolution_enabled": true,
-  "contract_version": "...",
-  "minimum_attempts": 3,
-  "grace_period_seconds": 300,
-  "accepted_provider_codes": ["..."]
-}
-```
-
-Не принимать threshold из `_evidence`: caller не должен сам определять достаточность доказательств.
-
-Runtime-тест Gate A.1 может проверить:
-
-- пустой/неполный evidence отклоняется;
-- функция отклоняется при выключенном provider contract;
-- разрешение возможно только после test-only включения policy в preview environment.
-
-В production функция до Gate A.2 должна оставаться фактически заблокированной.
-
-
-
-
-
-## **6.**
-
-`rr_operator_resolve('allow_new_order')` **также должен быть contract-gated**
-
-Операторское решение не должно обходить неопределённый provider contract только наличием `_note` и произвольного `_evidence`.
-
-Для `allow_new_order` определить один из вариантов:
-
-- доступ только superadmin через отдельную непубличную edge с сильным audit;
-- обязательный explicit override-флаг;
-- отдельный RPC `rr_operator_force_allow_new_order`, не используемый автоматическим reconciler;
-- подтверждение actor identity сервером, а не свободным `_actor text`.
-
-Передача `_actor` аргументом небезопасна: service-role caller может указать любое имя.
-
-Предпочтительно:
-
-```text
-actor_id / actor_email определяется edge из проверенного JWT
-→ передаётся RPC
-→ audit сохраняет auth subject
-```
-
-До появления защищённого operator endpoint прямой вызов RPC не считать полноценным операторским процессом.
-
-## **7. Retry marker RPC должен проверять итоговое состояние, а не только отсутствие ошибки**
-
-После controlled retry желательно прочитать заказ и подтвердить postcondition:
-
-Для ambiguous:
-
-```text
-upstream_outcome='unknown'
-AND reconciliation_status='pending'
-AND upstream_call_state='started'
-```
-
-Для recovery:
-
-```text
-local_persist_failed=true
-AND rr_payment_url_recovered=<expected URL>
-```
-
-RPC может вернуть без ошибки из-за идемпотентного/terminal guard, но не записать ожидаемое состояние. Edge должен проверять фактический результат либо RPC должна возвращать typed result:
-
-```json
-{
-  "ok": true,
-  "state": "unknown_marked"
-}
-```
-
-а не `RETURNS void`.
-
-
-
-## **8. Не логировать полный provider response в**
-
-`local_state_unconfirmed`
-
-В alert/audit сохранять только redacted payload:
-
-```text
-order_id
-correlation_id
-failure_kind
-http_status
-provider_request_id при наличии
-stage
-```
-
-Не сохранять:
-
-- полный `payment_url`;
-- полный provider response;
-- email/phone/name;
-- credentials;
-- raw exception с возможными connection strings.
-
-В текущем плане это в целом подразумевается, но нужно включить в DoD и negative proof.
-
-## **9. Audit-события лучше вынести в service-role RPC**
-
-Для:
-
-```text
-recovery_blocked_no_url
-create_order_recovered
-local_state_unconfirmed
-```
-
-предпочтительно создать единый RPC, например:
-
-```text
-rr_insert_idempotent_audit_event
-```
-
-с allowlist event types и:
-
-```sql
-ON CONFLICT (idempotency_key) DO NOTHING
-```
-
-Это исключит повторение небезопасных прямых insert-блоков в edge.
-
-RPC не должна принимать произвольный `provider`, `event_type` и `related_order_id` без проверки связи с RR-order.
-
-## **10. Усилить доказательство отсутствия production writes**
-
-Сравнение только:
-
-```sql
-max(created_at), count(*)
-```
-
-недостаточно:
-
-- строка могла быть создана и удалена;
-- количество могло измениться из-за реального пользователя;
-- `max(created_at)` мог измениться независимо от работы подрядчика.
-
-Добавить:
-
-```text
-точное время начала/окончания работ
-список order_id/provider_event id за этот интервал
-offer_id
-correlation_id
-source/runtime marker
-```
-
-И доказать отсутствие строк с test-correlation prefix или Gate A.1 v3 marker.
-
-Production snapshot должен быть read-only. Никаких cleanup DELETE для сокрытия тестовых строк.
-
-## **11. Уточнить fault injection для integration test №9**
-
-Фраза:
-
-искусственная ошибка `rr_mark_upstream_unknown`
-
-должна иметь безопасный способ реализации.
-
-Допустимо только в preview/test:
-
-- dependency injection;
-- test-only environment flag;
-- временная test schema/function с rollback;
-- mock Supabase repository;
-- отдельная test migration, не попадающая в production migration chain.
-
-Запрещено:
-
-- временно ломать production grants;
-- заменять production RPC на падающую;
-- тестировать через удаление таблиц/constraint;
-- оставлять test hook доступным после теста.
-
-Артефакт должен показать включение и удаление fault-injection механизма.
-
-## **12. Расширить integration tests pre-call guard**
-
-К 10 тестам добавить:
-
-### **Тест 11 — post-call marker полностью недоступен**
-
-```text
-call_started записан
-→ mock РР возвращает ambiguous
-→ rr_mark_upstream_unknown падает дважды
+post-call marker падает дважды
 → HTTP 500 local_state_unconfirmed
-→ повторный submit через 10 минут/31 минуту
+→ upstream_call_state остаётся started
+→ повторный submit через 10 и 31 минуту
 → тот же order_id
+→ HTTP 503 rr_call_in_flight
 → 0 дополнительных rrCreateOrder
 ```
 
-### **Тест 12 — call_started не записан**
+Переход из `started` в `outcome_unknown` или `completed_unpersisted` проверяется только когда соответствующий marker RPC успешно выполнен.
+
+## **3. Разделить два сценария post-call marker failure**
+
+Нужны отдельные тесты:
+
+### **3.1 Marker полностью не записан**
 
 ```text
-rr_mark_call_started падает
-→ rrCreateOrder не вызывается
-→ HTTP 503/500 persist_failed_pre_call
+rrCreateOrder завершён
+→ marker RPC падает дважды
+→ state остаётся started
+→ следующий submit блокируется как rr_call_in_flight
 ```
 
-### **Тест 13 — terminal state снимает pre-call block**
+### **3.2 Первая попытка marker упала, retry успешен**
 
 ```text
-call_started
-→ canonical created
-→ повторный submit возвращает существующий URL
-→ не остаётся reconciliation block
+rrCreateOrder завершён
+→ первая marker-запись упала
+→ retry записал outcome_unknown либо completed_unpersisted
+→ следующий submit попадает в reconciliation либо recovery
+→ не попадает в rr_call_in_flight
 ```
 
-Именно эти тесты доказывают fail-closed идемпотентность при полном post-call DB failure.
+Иначе тест №4 смешивает два разных постусловия.
 
-## **13. Скорректировать DoD**
+Матрицу увеличить до **14 тестов** либо объединить доказательства как два явно раздельных subcase теста №4.
 
-Добавить обязательные условия:
+## **4. Typed result должен проверяться не только в edge**
 
-- до каждого `rrCreateOrder` подтверждён durable `upstream_call_state='started'`;
-- любой заказ с `upstream_call_state='started'` и без terminal outcome переиспользуется без временного окна;
-- двойной сбой post-call marker не позволяет создать новый `order_id`;
-- старые overload изменённых RPC удалены или полностью закрыты;
-- direct canonical finalizer не может обойти ambiguous reconciliation guards;
-- `rr_finalize_order_not_created` отключён до server-side активации подтверждённого provider contract;
-- operator actor берётся из проверенного auth context, а не доверяется произвольному текстовому аргументу;
-- integration suite включает минимум 13 сценариев после добавления pre-call failure tests.
+Typed state необходим, но RPC также должны обеспечивать строгую семантику.
 
-## **Итоговый статус плана**
+Например, `rr_mark_call_started` не должен возвращать:
 
-После добавления durable pre-call marker и указанных guard-уточнений план можно запускать.
+```json
+{ "ok": true, "state": "terminal" }
+```
 
-Без pre-call marker повторный `rrCreateOrder` всё ещё возможен при сценарии:
+как эквивалент успешного pre-call перехода.
+
+Допустимые подходы:
+
+- вернуть `ok:false, state:'terminal'`;
+- либо оставить `ok:true`, но edge обязан принимать только `state='call_started'`.
+
+В плане выбран второй подход. Зафиксировать его для всех RPC:
+
+
+| **RPC**            | **Допустимый success-state для текущего действия**   |
+| ------------------ | ---------------------------------------------------- |
+| pre-call           | только `call_started`                                |
+| unknown marker     | `unknown_marked` или `already_unknown`               |
+| recovery marker    | `persist_failed_marked` или `already_persist_failed` |
+| canonical finalize | `finalized` или совместимый `already_created`        |
+| rejection          | `rejected` или совместимый `already_rejected`        |
+
+
+Слово «совместимый» означает проверку фактического payload:
+
+- тот же URL;
+- тот же rejection code;
+- тот же lifecycle outcome.
+
+Один только текст `already_*` недостаточен.
+
+## **5. При unexpected typed state перечитывание должно быть fail-closed**
+
+В блоке 4 сказано:
+
+перечитать заказ и вернуть фактическое состояние
+
+Добавить точный mapping:
+
+
+| **Прочитанное состояние**            | **Ответ**                                             |
+| ------------------------------------ | ----------------------------------------------------- |
+| `created` + валидный URL             | 200 с существующим URL                                |
+| `local_persist_failed=true`          | 503 `rr_recovery_pending` либо выполнить recovery     |
+| `upstream_outcome='unknown'`         | 503 `rr_reconciliation_pending`                       |
+| `upstream_call_state='started'`      | 503 `rr_call_in_flight`                               |
+| `failed/rejected`                    | 502 `rr_create_order_rejected`                        |
+| `failed/not_created`                 | terminal response без нового вызова в текущем request |
+| противоречивое/неизвестное состояние | 500 `local_state_unconfirmed`                         |
+| ошибка SELECT                        | 500 `rr_state_recheck_failed`                         |
+
+
+После unexpected state внешний `rrCreateOrder` запрещён независимо от результата reread.
+
+## **6. Исправить operator branch в reuse-приоритете**
+
+В блоке 2 указано:
 
 ```text
-РР принял запрос
-→ canonical finalize упал
-→ recovery/unknown marker дважды упал
-→ временное pending reuse истекло
-→ новый submit создал новый order_id
+operator_resolution ∈ (keep_blocked, allow_new_order)
 ```
 
-Поэтому текущая редакция корректно устраняет большую часть найденных дефектов, но ещё не закрывает главный fail-closed инвариант Gate A.1.
+`allow_new_order` переводит старый заказ в terminal `failed`, поэтому такой заказ не должен возвращаться reuse RPC и не должен обрабатываться как reuse-ветка.
+
+Правильная модель:
+
+```text
+operator_resolution='keep_blocked'
+→ reuse того же заказа без временного окна
+→ HTTP 503
+
+operator_resolution='confirm_created'
+→ initiation_status='created'
+→ возврат существующего URL
+
+operator_resolution='allow_new_order'
+→ старый заказ terminal
+→ не является reuse-кандидатом
+→ следующий отдельный submit может создать новый order_id
+```
+
+Убрать `allow_new_order` из runtime reuse-order edge.
+
+
+
+
+
+## **7.**
+
+`not_started` **либо реально записывать, либо не объявлять persisted-значением**
+
+Сейчас initial meta содержит `initiation_status='pending'`, но `upstream_call_state='not_started'` явно не записывается.
+
+Нужно выбрать:
+
+- добавить `upstream_call_state:'not_started'` в `initialMeta`;
+- либо определить, что отсутствие ключа семантически эквивалентно `not_started`.
+
+Предпочтительно записывать явно, чтобы runtime proof и state machine не зависели от `NULL`-семантики.
+
+Добавить тест:
+
+```text
+новый order до pre-call marker
+→ upstream_call_state='not_started'
+```
+
+## **8. Recovery URL должен повторно валидироваться перед canonical finalize**
+
+Recovered URL читается из БД, но его нельзя автоматически считать безопасным только потому, что он когда-то был получен от adapter.
+
+Перед возвратом клиенту и перед canonical finalize проверить:
+
+```text
+тип string
+непустой
+https
+без username/password
+```
+
+Использовать общий helper валидации, чтобы happy path и recovery не расходились.
+
+При невалидном recovered URL:
+
+```text
+HTTP 503 rr_recovery_pending
+audit recovery_blocked_invalid_url
+rrCreateOrder запрещён
+```
+
+Если новый audit type не добавляется, использовать существующий `recovery_blocked_no_url` с redacted `reason='invalid_url'`.
+
+## **9. Integration tests должны проверять реальный edge, а не только SQL RPC**
+
+Формулировка:
+
+Deno test-модуль в preview/test Supabase
+
+должна включать два уровня.
+
+### **SQL integration**
+
+Проверяет:
+
+- RPC transitions;
+- guards;
+- events;
+- idempotency;
+- grants.
+
+### **Edge integration**
+
+Вызывает deployed preview edge и проверяет:
+
+- HTTP status/body;
+- число вызовов mock RR;
+- повторный submit;
+- polling/reuse priority;
+- typed-result unexpected state;
+- fault injection.
+
+Мокирование только функции `rrCreateOrder` внутри unit test не доказывает поведение реально развернутой edge-функции.
+
+## **10. Зафиксировать безопасный fault injection**
+
+Для тестов marker failure и unexpected typed states указать механизм:
+
+```text
+только preview/test
+test-only dependency injection либо test schema
+включение по secret server-side flag
+недоступно из публичного payload
+после теста hook удалён/выключен
+production deployment hook не содержит
+```
+
+Нельзя делать failure mode управляемым полем публичного запроса.
+
+В `integration_tests.md` приложить:
+
+- способ включения;
+- способ подтверждения test environment;
+- способ выключения;
+- итоговую проверку отсутствия активного hook.
+
+## **11. Production snapshot не должен включать тестовый прогон**
+
+Последовательность должна быть такой:
+
+```text
+production snapshot before
+→ применение production-safe migration/code
+→ production snapshot after
+```
+
+Все 13/14 integration tests выполняются отдельно в preview/test и не входят в production interval.
+
+`production_diff.txt` должен показывать:
+
+- отсутствие новых RR orders/events с correlation marker работы;
+- отдельно допустимые реальные пользовательские строки, если они появились параллельно;
+- отсутствие cleanup/delete.
+
+Простое требование «diff ожидаем пусто» может быть невыполнимо, если в это время реальный пользователь создаст заявку. Нужен attribution по correlation/runtime/source, а не только абсолютный count.
+
+## **12. Полная privilege matrix должна учитывать новые internal helpers**
+
+Если создаётся `rr_finalize_created_order_internal`, проверить:
+
+```text
+anon=false
+authenticated=false
+service_role=false
+PUBLIC=false
+```
+
+Также проверить owner и `prosecdef`.
+
+Internal helper не должен случайно получить default `EXECUTE` для `PUBLIC`.
+
+## **13. Уточнить итоговый PASS**
+
+Gate A.1 v3.1 получает PASS только если:
+
+- исправлены state priority и semantic call states;
+- direct ambiguous canonical finalize невозможен;
+- typed-state checks работают в deployed preview edge;
+- полный post-call marker failure оставляет durable `started` block;
+- successful marker retry переводит заказ в recovery/reconciliation state;
+- пройдены все SQL и edge integration tests;
+- production proof подтверждает отсутствие тестовых writes;
+- нет активного test/fault-injection hook;
+- полный runtime proof приложен.
+
+## **Обновлённая тестовая матрица**
+
+Минимум **14 сценариев**:
+
+1. Happy path.
+2. Idempotent finalize с тем же URL.
+3. URL conflict.
+4. Post-call marker падает дважды: durable `started`, повтор через 31 минуту — без нового RR call.
+5. Первая marker-запись падает, retry успешен: переход в `outcome_unknown` или `completed_unpersisted`.
+6. Recovery не перехватывается `rr_call_in_flight`.
+7. Ambiguous не перехватывается `rr_call_in_flight`.
+8. Pre-call marker failure: внешний вызов отсутствует.
+9. Terminal result из `rr_mark_call_started`: внешний вызов отсутствует.
+10. Direct ambiguous canonical finalize запрещён.
+11. Reconcile из не-ambiguous запрещён.
+12. `not_created` contract disabled.
+13. `allow_new_order` contract disabled.
+14. Safe-default 4xx classifier.
+
+Дополнительно внутри сценариев 4–9 подтвердить correlation evidence и точное количество mock RR calls.
+
+После внесения этих уточнений план можно запускать. Gate A.2 и Gate B остаются заблокированными до фактического PASS Gate A.1 v3.1.
 
 &nbsp;
 
-План: Gate A.1 v3 — устранение блокеров backend contract
+План: Gate A.1 v3.1 — исправление state priority и integration proof
 
-Область: только backend (SQL миграция + edge `public-rr-installment-initiate` + адаптер РР + runtime-артефакты). Sprint C не открывать. Gate A.2 и Gate B остаются BLOCKED до PASS этого плана. React-код не меняется. Production `orders_v2`/`provider_events` не создавать.
+Ответ на вердикт ревью. Все 5 блокеров + пробелы runtime proof закрываются одной итерацией. Integration tests выполняются в рамках Gate A.1 v3.1 (не переносятся в A.2).
 
-## 1. Blocker A1.1 — canonical finalizer postcondition
+Работа только на существующих сущностях: `orders_v2.meta.rr`, `provider_events`, RPC уже созданные в миграции `20260710204120_*`. Новых таблиц, enum-типов, edge-функций не создаём. Все артефакты и комментарии — на русском.
 
-Новая миграция полностью заменяет тело `public.rr_finalize_created_order` (не только `SET search_path`). Постусловие для success-ветки:
+## Блок 1. Модель `upstream_call_state` (Блокер №1, №2)
 
-- `initiation_status = 'created'`
-- `payment_url = <canonical https url>`
-- `meta.rr.local_persist_failed = false` (маркер снят; сырое поле `local_persist_error` остаётся для forensics)
-- `meta.rr.upstream_outcome = null` (нормализация ambiguous)
-- `meta.rr.reconciliation_status = 'confirmed_created'`
-- `meta.rr.provider_request_id` — реальный `json.id` или null; fallback на `external_id` запрещён
+Зафиксировать конечный набор значений в `meta.rr.upstream_call_state`:
 
-Guard-переходы:
-
-- если текущий `initiation_status = 'created'` и `payment_url` совпадает — идемпотентный no-op (обновляется только `meta.rr.reconciliation_status` при необходимости), event не дублируется;
-- если `initiation_status = 'created'` и `payment_url` отличается — `RAISE EXCEPTION 'rr_finalize_url_conflict'`;
-- если `initiation_status = 'failed'` (rejected/not_created) — `RAISE EXCEPTION 'rr_finalize_from_terminal_forbidden'`;
-- допустимые source-состояния: `pending` (happy path и recovery), `pending + local_persist_failed=true` (recovery), `pending + upstream_outcome='unknown'` (вызывается только через `rr_reconcile_confirm_created`).
-
-Event `create_order_succeeded` — идемпотентный insert с `idempotency_key = '<order_id>:create_order_succeeded'`, дубликат — `ON CONFLICT DO NOTHING`. Второй writer для recovery не создаётся; recovery-ветка edge вызывает именно этот canonical finalizer.
-
-## 2. Blocker A1.2 — durable failure persistence
-
-Каждый marker/finalizer RPC в edge проверяется на ошибку. Нельзя отвечать клиенту так, будто durable state записан.
-
-Изменения в `supabase/functions/public-rr-installment-initiate/index.ts`:
-
-- `rr_mark_local_persist_failed` — при ошибке: одна controlled retry attempt (тот же RPC, короткий backoff). Если снова ошибка — response `HTTP 500 { error: "local_state_unconfirmed", order_id }`, structured log `create_order_persist_failed_marker_failed`, best-effort audit event `local_state_unconfirmed` (без `throw` в клиента как `local_persist_failed`). Клиенту НЕ отдаётся статус, при котором он воспринимает состояние как безопасно сохранённое.
-- `rr_mark_upstream_unknown` — та же схема: 1 retry, при повторной ошибке — `HTTP 500 { error: "local_state_unconfirmed" }`, а не `504 rr_upstream_unknown`. Ambiguous-состояние без durable маркера НЕ считается защищённым.
-- `rr_finalize_order_rejected` — при ошибке 1 retry, затем `HTTP 500 { error: "local_state_unconfirmed" }`. Клиент не получает `502 rr_upstream_rejected` без подтверждённой durable записи.
-- `rr_finalize_created_order` (happy path) — при ошибке пытается `rr_mark_local_persist_failed` (см. выше). Если и этот RPC не подтверждён durable — `HTTP 500 { error: "local_state_unconfirmed" }`.
-- Критические reads: reuse-lookup после `rr_get_or_create_pending_order` и polling reused-заказа проверяют `.error` явно. Ошибки БД возвращаются как `HTTP 500 { error: "rr_reuse_state_read_failed" }` / `rr_reuse_poll_read_failed` со structured log; не маскируются под `rr_reuse_wait_timeout` и пустое состояние.
-
-Audit alert: во всех ветках `local_state_unconfirmed` — best-effort insert в `provider_events` с типом `local_state_unconfirmed` + structured console.error `[ALERT]` (без PII).
-
-## 3. Blocker A1.3 — state guards в terminal/reconcile RPC
-
-Миграция дополняет тела следующих функций строгими source-state guards. Идемпотентный повтор того же перехода с идентичным payload разрешён; попытка изменить уже принятое решение — ошибка.
-
-### 3.1 `rr_reconcile_confirm_created`
-
-Разрешён только при:
-
-```
-initiation_status = 'pending'
-AND meta.rr.upstream_outcome = 'unknown'
-AND meta.rr.reconciliation_status IN ('pending','operator_required')
+```text
+not_started            — заказ создан, вызов РР ещё не начат
+started                — pre-call marker записан, вызов РР в процессе
+outcome_unknown        — вызов завершён, исход неопределён (timeout/5xx/invalid)
+completed_unpersisted  — РР вернул created, но canonical finalize упал
+completed              — терминальное состояние post-call зафиксировано локально
 ```
 
-Иначе — `RAISE EXCEPTION 'rr_reconcile_invalid_source_state'`. Идемпотентность: если заказ уже `created` с тем же `payment_url` — no-op success; иной URL — `rr_reconcile_url_conflict`.
+Новая миграция (следующая по timestamp) обновляет тела следующих RPC — сигнатуры и grants не меняются:
 
-### 3.2 `rr_finalize_order_not_created`
 
-Разрешён только из ambiguous:
+| RPC                             | Дополнительно устанавливает                                  |
+| ------------------------------- | ------------------------------------------------------------ |
+| `rr_mark_call_started`          | `upstream_call_state='started'` (уже есть)                   |
+| `rr_mark_upstream_unknown`      | `upstream_call_state='outcome_unknown'`                      |
+| `rr_mark_local_persist_failed`  | `upstream_call_state='completed_unpersisted'`                |
+| `rr_finalize_created_order`     | `upstream_call_state='completed'` (уже есть)                 |
+| `rr_finalize_order_rejected`    | `upstream_call_state='completed'`                            |
+| `rr_finalize_order_not_created` | `upstream_call_state='completed'`                            |
+| `rr_reconcile_confirm_created`  | `upstream_call_state='completed'` (через canonical finalize) |
 
+
+Все RPC дополнительно возвращают `jsonb` c типизированным `state`:
+
+- `rr_mark_call_started` → `'call_started'` | `'terminal'` | `'already_started'`
+- `rr_mark_upstream_unknown` → `'unknown_marked'` | `'already_unknown'` | `'terminal'`
+- `rr_mark_local_persist_failed` → `'persist_failed_marked'` | `'already_persist_failed'` | `'terminal'`
+- `rr_finalize_order_rejected` → `'rejected'` | `'already_rejected'`
+- `rr_finalize_order_not_created` → `'not_created'` | `'already_not_created'` | `'contract_disabled'`
+- `rr_finalize_created_order` → `'finalized'` | `'already_created'`
+
+## Блок 2. Reuse-приоритет в edge (Блокер №1, №2)
+
+Изменить порядок ветвлений в `supabase/functions/public-rr-installment-initiate/index.ts` строго на:
+
+```text
+1. initiation_status='created' + валидный payment_url          → возврат существующего URL
+2. operator_resolution ∈ (keep_blocked, allow_new_order)       → соответствующий ответ
+3. local_persist_failed=true                                    → recovery finalize
+4. upstream_outcome='unknown'                                   → HTTP 503 rr_reconciliation_pending
+5. upstream_call_state='started' (только не покрытое выше)      → HTTP 503 rr_call_in_flight
+6. новый заказ / concurrency pending window                     → happy path
 ```
-initiation_status = 'pending'
-AND meta.rr.upstream_outcome = 'unknown'
-AND meta.rr.reconciliation_status IN ('pending','operator_required')
+
+Ключевое: после блока 1 миграции состояния `completed_unpersisted` и `outcome_unknown` больше не совпадают с `started`, поэтому ветка `rr_call_in_flight` перехватывает только реальный in-flight pre-call.
+
+Обновить `state_machine.md`, `recovery_contract.md`, `ambiguous_upstream_contract.md` в соответствии с новым порядком.
+
+## Блок 3. Закрыть прямой ambiguous → created через canonical (Блокер №3)
+
+В `rr_finalize_created_order` добавить guard:
+
+```sql
+IF v_status = 'pending'
+   AND (v_meta#>>'{rr,upstream_outcome}') IS NOT NULL
+   AND (v_meta#>>'{rr,upstream_outcome}') <> 'created'
+   AND COALESCE((v_meta#>>'{rr,local_persist_failed}')::boolean, false) = false
+THEN
+  RAISE EXCEPTION 'rr_finalize_ambiguous_source_forbidden' USING ERRCODE='22023';
+END IF;
 ```
 
-Иначе — `rr_not_created_invalid_source_state`. Обязательная валидация `_evidence jsonb` контракта: обязательные поля `provider_error_code text`, `http_status int`, `attempts int (>=минимум из провайдер-контракта)`, `first_checked_at timestamptz`, `last_checked_at timestamptz`, `endpoint_mode text ('test'|'prod')`. Пустой `{}` отклоняется — `rr_not_created_evidence_invalid`. До Gate A.2 RPC остаётся недоступным рабочему reconciler (только через runtime proof).
+Разрешённые source-state:
 
-### 3.3 `rr_operator_resolve`
+- `pending` + `upstream_outcome IS NULL` (happy path)
+- `pending` + `local_persist_failed=true` (recovery)
+- `created` с тем же URL (идемпотентность)
 
-Guards по каждому `_resolution`:
+`rr_reconcile_confirm_created` продолжает быть единственным входом для ambiguous → created; внутри он выставит `upstream_outcome='created'` **до** делегирования в canonical, чтобы пройти guard (согласовать порядок операций в теле функции).
 
-- `confirm_created` — только из `pending + upstream_outcome='unknown' + reconciliation_status IN ('pending','operator_required')`; делегирует `rr_reconcile_confirm_created` (обязателен `_payment_url`);
-- `allow_new_order` — только из `pending + upstream_outcome='unknown' + reconciliation_status IN ('pending','operator_required')`; обязательные `_evidence` + `_note`; переводит заказ в terminal `failed` с `operator_resolution='allow_new_order'`;
-- `keep_blocked` — только из `pending + upstream_outcome='unknown'` (без `resolved`);
-Повтор того же `_resolution` с тем же payload — идемпотентный no-op. Иное решение поверх уже принятого — `rr_operator_resolution_override_forbidden` (замена только через отдельную будущую audited override RPC — вне этого гейта).
+## Блок 4. Typed-result checks в edge (Блокер №4)
 
-### 3.4 `rr_finalize_order_rejected`
+В `public-rr-installment-initiate/index.ts` заменить все проверки `result.ok === true` на пары `ok + ожидаемый state`:
 
-Разрешён только из:
 
-```
-initiation_status = 'pending'
-AND meta.rr.upstream_outcome IS NULL
-AND meta.rr.local_persist_failed IS NOT TRUE
-```
+| Вызов                                        | Ожидаемый `state` для продолжения                      |
+| -------------------------------------------- | ------------------------------------------------------ |
+| `rr_mark_call_started` (перед rrCreateOrder) | `'call_started'`                                       |
+| `rr_finalize_created_order` (happy/recovery) | `'finalized'` | `'already_created'`                    |
+| `rr_mark_upstream_unknown`                   | `'unknown_marked'` | `'already_unknown'`               |
+| `rr_mark_local_persist_failed`               | `'persist_failed_marked'` | `'already_persist_failed'` |
+| `rr_finalize_order_rejected`                 | `'rejected'` | `'already_rejected'`                    |
 
-Иначе — `rr_rejected_invalid_source_state`. Идемпотентный повтор для того же `provider_error_code` — no-op.
 
-## 4. Blocker A1.4 — conservative rejection classifier
+При любом другом state:
 
-В `supabase/functions/_shared/rr/rr-adapter.ts` / `rr-http.ts` `outcomeClass` пересматривается. До заполнения `gate_a1/rr_provider_contract.md`:
+- НЕ выполнять `rrCreateOrder`;
+- перечитать заказ через `orders_v2` select;
+- вернуть фактическое terminal/blocking состояние клиенту.
 
-- пустой allowlist `RR_DOCUMENTED_REJECTION_CODES: Array<{ httpStatus: number; providerCode: string }>` = `[]`;
-- `upstream_rejected` возвращается ТОЛЬКО при точном совпадении `(httpStatus, json.error.code)` с элементом allowlist;
-- любые 4xx без совпадения (включая 400/401/403/404/409/422 с произвольным `error`) → `upstream_outcome_unknown` с `failureKind='http'`;
-- 408/425/429/5xx/timeout/network/invalid_json → `upstream_outcome_unknown` с соответствующим `failureKind`;
-- 2xx без валидного `payment_url` → `upstream_outcome_unknown` с `failureKind='invalid_response'`.
+Единичный retry (`callWithSingleRetry`) сохраняется, но проверка расширяется на `state`, а не только на `error`/`ok`.
 
-Ссылка в коде на `rr_provider_contract.md`: без заполненного документа allowlist остаётся пустым, и все rejection-заявления невозможны. Это осознанный safe-default.
+## Блок 5. Integration tests в preview/test DB (Блокер №5)
 
-## 5. Blocker A1.5 — runtime proof миграции
+Не переносить в A.2. Создать `supabase/functions/rr-test-create-order/*_test.ts` или отдельный Deno test-модуль, покрывающий 13 сценариев в изолированной preview/test Supabase (production `orders_v2`/`provider_events` не трогаем).
 
-После применения миграции собрать в `docs/audit/2026-07-10-sprint-b-runtime-proof/gate_a1_v3/runtime_proof/`:
+Матрица тестов:
 
-- `functiondef_before.txt` / `functiondef_after.txt` — `pg_get_functiondef` для всех затронутых RPC (`rr_finalize_created_order`, `rr_reconcile_confirm_created`, `rr_finalize_order_not_created`, `rr_operator_resolve`, `rr_finalize_order_rejected`, `rr_mark_upstream_unknown`, `rr_mark_local_persist_failed`, `rr_get_or_create_pending_order`);
-- `proconfig.txt` — `SELECT proname, proconfig FROM pg_proc WHERE proname LIKE 'rr\_%'`;
-- `owner_and_security.txt` — `proowner`, `prosecdef`;
-- `grants.txt` — `SELECT grantee, privilege_type FROM information_schema.routine_privileges WHERE routine_name LIKE 'rr\_%'`;
-- `has_function_privilege.txt` — проверки `EXECUTE` для `anon`, `authenticated`, `service_role` по каждой RPC;
-- `no_production_writes.txt` — `SELECT max(created_at), count(*) FROM orders_v2 WHERE meta->'rr' IS NOT NULL` до/после миграции, тот же контроль для `provider_events`;
-- `integration_tests.md` — минимум контролируемых state-transition тестов в preview/test DB (не production):
-  1. happy path: pending → created, snapshot `meta.rr` — все поля нормализованы;
-  2. recovery: искусственный `local_persist_failed=true` + recovered URL → повторный submit → `local_persist_failed=false`, `reconciliation_status='confirmed_created'`, один `create_order_succeeded`, ноль повторных `createOrder`;
-  3. ambiguous: `rr_mark_upstream_unknown` → `rr_reconcile_confirm_created` — success; повторный вызов с иным URL — `rr_reconcile_url_conflict`;
-  4. guard `rr_reconcile_confirm_created` из `failed` → `rr_reconcile_invalid_source_state`;
-  5. guard `rr_finalize_order_not_created` из `rejected` → `rr_not_created_invalid_source_state`;
-  6. guard `rr_operator_resolve('allow_new_order')` из `created` → forbidden;
-  7. guard `rr_finalize_order_rejected` из `local_persist_failed=true` → forbidden;
-  8. classifier: 401/403/404/409/422 с `error` → все `upstream_outcome_unknown`, не `upstream_rejected`;
-  9. durable failure: искусственная ошибка `rr_mark_upstream_unknown` → edge отвечает `HTTP 500 local_state_unconfirmed`, не `504 rr_upstream_unknown`;
+1. Happy path: pending → created; provider_events содержит `create_order_succeeded`.
+2. Идемпотентный повтор finalize с тем же URL → `already_created`, без второго provider_event.
+3. Finalize с другим URL → `rr_finalize_url_conflict`.
+4. Post-call marker double failure → HTTP 500 `local_state_unconfirmed`, `upstream_call_state` не остаётся `started` навсегда (второй submit после успешной записи маркера → recovery/reconciliation).
+5. Recovery flow: `local_persist_failed=true` → следующий submit вызывает canonical finalize (НЕ `rr_call_in_flight`).
+6. Ambiguous flow: `upstream_outcome='unknown'` → следующий submit → HTTP 503 `rr_reconciliation_pending` (НЕ `rr_call_in_flight`).
+7. Pre-call marker failure → HTTP 503 `persist_failed_pre_call`, `rrCreateOrder` не вызывается.
+8. Pre-call marker для terminal-заказа → state `terminal`, edge НЕ вызывает `rrCreateOrder`, возвращает фактическое состояние.
+9. Прямой вызов `rr_finalize_created_order` на ambiguous-заказе → `rr_finalize_ambiguous_source_forbidden`.
+10. `rr_reconcile_confirm_created` из НЕ-ambiguous source → guard error.
+11. `rr_finalize_order_not_created` с выключенным флагом → `contract_disabled`.
+12. `rr_operator_resolve('allow_new_order')` с выключенным флагом → `contract_disabled`.
+13. Safe-default classifier: 4xx с кодом вне пустого allowlist → `upstream_outcome_unknown`, а не `rejected`.
 
-10. idempotent recovery: 5 параллельных повторов `local_persist_failed`-заказа → 1 `order_id`, 0 `rrCreateOrder`, 1 `create_order_succeeded`.
+Каждый тест сохраняет: input payload, correlation_id, финальное состояние `orders_v2.meta.rr`, список записей `provider_events` за интервал. Отчёт — `gate_a1_v3_1/runtime_proof/integration_tests.md`.
 
-Все тесты — только в preview/test Supabase environment. Production fixture запрещён.
+## Блок 6. Дополнение runtime proof
 
-## 6. Уточнение audit-events
+В `docs/audit/2026-07-10-sprint-b-runtime-proof/gate_a1_v3_1/runtime_proof/`:
 
-`recovery_blocked_no_url` и `create_order_recovered` пишутся с детерминированным `idempotency_key = '<order_id>:<event_type>'` через `INSERT ... ON CONFLICT (idempotency_key) DO NOTHING`. Ошибки логируются, но НЕ маскируются под success. В отчёте формулировка: «детерминированный idempotency_key; duplicate — DO NOTHING; иные ошибки логируются как audit_write_failed».
+- `privilege_matrix.txt` — полная матрица `function × {anon, authenticated, service_role}` по всем 11 RR-RPC (`has_function_privilege`).
+- `functiondef_all.txt` — `pg_get_functiondef` для всех изменённых RPC (полные тела после миграции v3.1).
+- `production_snapshot_before.txt` и `production_snapshot_after.txt` — по каждому: `count(*)` + список `id, created_at` для `orders_v2 WHERE provider='rr'` и `provider_events WHERE provider='rr'` за интервал миграции; timestamps начала/конца.
+- `production_diff.txt` — diff строк `before` vs `after` (ожидаем пусто).
+- `integration_tests.md` — отчёт по 13 тестам (см. блок 5).
+- `README.md` — сводка v3.1, ссылки на артефакты, статусы всех блокеров.
 
-## 7. Документация и статусы
+## Блок 7. Обновление документации и статуса
 
-- `gate_a1/README.md` — обновить: убрать формулировку PARTIAL PASS, зафиксировать Gate A.1 v3 в работе;
-- `gate_a1/state_machine.md` — таблица guards с exception-кодами;
-- `gate_a1/recovery_contract.md` — postcondition из §1, снятие маркера;
-- `gate_a1/ambiguous_upstream_contract.md` — правила durable failure и response `local_state_unconfirmed`;
-- `gate_a1/rr_provider_contract.md` — оставить не заполненным; зафиксировать, что до заполнения allowlist rejection пуст;
-- `ERRATA_and_gate_status.md` — новый раздел «Gate A.1 v3», корректный статус: Implementation PARTIAL / Acceptance FAIL до артефактов runtime proof; Sprint B FAIL, Sprint C не открывать;
-- Финальный `REPORT_v3.md` с ссылками на все runtime-артефакты и intergation tests.
+- `ERRATA_and_gate_status.md`: секция «Gate A.1 v3.1» с фактическими статусами блокеров и общим Sprint B — FAIL до полного A.2.
+- `gate_a1_v3/README.md`: пометка «superseded by v3.1».
+- `state_machine.md`: обновлённая таблица переходов с `upstream_call_state` и порядком reuse-веток.
+- `.lovable/plan.md`: краткая запись «Gate A.1 v3.1 доставлен, A.2 остаётся BLOCKED до отдельного согласования».
 
-## Файлы (только на согласование, без правки в plan mode)
+## Что НЕ входит в v3.1
 
-- новая миграция `supabase/migrations/<ts>_gate_a1_v3.sql` — тела RPC (§1, §3);
-- `supabase/functions/public-rr-installment-initiate/index.ts` — обработка ошибок RPC, response-коды (§2), reuse/poll error handling, audit ON CONFLICT-семантика (§6);
-- `supabase/functions/_shared/rr/rr-adapter.ts` + `rr-http.ts` — classifier §4 + пустой allowlist;
-- `docs/audit/2026-07-10-sprint-b-runtime-proof/gate_a1_v3/**` — runtime proof, integration tests, обновлённые контрактные документы;
-- обновление `ERRATA_and_gate_status.md`.
+- Reconciler edge-функция и её тесты — Gate A.2.
+- Реальные вызовы РР provider — Gate A.2 (в v3.1 РР адаптер мокается на уровне HTTP).
+- Retry/backoff policy для reconciler — Gate A.2.
+- `rr_provider_contract.md` заполнение реальным поведением РР — Gate A.2.
+- UI patch и public E2E — Gate B.
 
-## Definition of Done (Gate A.1 v3)
+## Технический раздел
 
-- миграция применена, приложены `pg_get_functiondef`, `proconfig`, owner, grants, `has_function_privilege`;
-- ни один из 10 integration tests не падает в preview/test DB;
-- ни одна production `orders_v2`/`provider_events` строка не создана (snapshot до/после);
-- edge ни в одной ветке не возвращает «безопасный» статус без подтверждённой durable записи;
-- `rr_provider_contract.md` явно помечает allowlist пустым, поэтому `upstream_rejected` временно недостижим — это осознанный safe-default до Gate A.2.
+Файлы, которые будут изменены/созданы после одобрения:
 
-Только после полного PASS этого плана открывается Gate A.2 (working reconciler + подтверждённый provider contract). Gate B остаётся BLOCKED.
+- `supabase/migrations/<new_ts>_gate_a1_v3_1.sql` — обновление тел 7 RPC (значения `upstream_call_state`, типизированные `state` в возврате, guard в `rr_finalize_created_order`, корректировка порядка в `rr_reconcile_confirm_created`).
+- `supabase/functions/public-rr-installment-initiate/index.ts` — новый порядок reuse-веток, typed-result checks.
+- `supabase/functions/rr-test-create-order/state_machine_test.ts` (или аналог) — 13 integration tests.
+- Документы в `docs/audit/2026-07-10-sprint-b-runtime-proof/gate_a1_v3_1/` (README + runtime_proof/*).
+- Обновление `ERRATA_and_gate_status.md`, `state_machine.md`, `.lovable/plan.md`.
+
+Не изменяются:
+
+- Сигнатуры RPC.
+- Grants/ownership (остаются service_role only).
+- `rr-adapter.ts`/`rr-http.ts` (safe-default classifier и redaction уже приняты).
+- Contract flags (остаются выключенными).
+
+## DoD Gate A.1 v3.1
+
+1. Миграция применена, все 7 RPC содержат новые значения `upstream_call_state` и типизированные `state`; `rr_finalize_created_order` отклоняет ambiguous source.
+2. Edge выполняет reuse-ветки в утверждённом порядке и проверяет typed `state` перед `rrCreateOrder` и после каждого критичного RPC.
+3. Все 13 integration tests пройдены в preview/test DB; отчёт с evidence приложен.
+4. Runtime proof полный: privilege matrix (11×3), functiondef всех RPC, before/after snapshots production с пустым diff.
+5. Документы `state_machine.md`, `ERRATA_and_gate_status.md`, `gate_a1_v3_1/README.md` обновлены и внутренне согласованы.
+6. Sprint B статус: FAIL (до A.2). Sprint C не начинать. Gate B BLOCKED.
