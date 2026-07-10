@@ -84,11 +84,13 @@ export async function rrHttpPost(
 
     const durationMs = Date.now() - started;
     let json: unknown = null;
+    let parseError = false;
     const text = await resp.text();
     try {
       json = text ? JSON.parse(text) : null;
     } catch {
       json = { raw: text };
+      parseError = true;
     }
 
     return {
@@ -96,15 +98,20 @@ export async function rrHttpPost(
       status: resp.status,
       json,
       durationMs,
+      parseError,
       safeCallDescriptor: safeDescriptor(url, resp.status, durationMs),
     };
   } catch (e) {
     const durationMs = Date.now() - started;
+    const aborted = (e as Error).name === "AbortError" ||
+      /aborted/i.test((e as Error).message ?? "");
     return {
       ok: false,
       status: 0,
       json: { error: { text: (e as Error).message, code: "network_error" } },
       durationMs,
+      aborted,
+      networkError: !aborted,
       safeCallDescriptor: safeDescriptor(url, 0, durationMs),
     };
   } finally {
