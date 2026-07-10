@@ -1662,18 +1662,6 @@ export function ContactTelegramChat({
     return <FileText className="w-4 h-4" />;
   };
 
-  if (!telegramUserId) {
-    return (
-      <Card className="border-dashed">
-        <CardContent className="py-8 text-center text-muted-foreground">
-          <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>Telegram не привязан</p>
-          <p className="text-sm mt-1">Клиент должен привязать свой Telegram аккаунт</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   // V1.3: stable handlers passed to memoized bubbles.
   // All lookups by db id use `latestMessagesRef` to keep deps [].
   const handleReplyById = useCallback((id: string) => {
@@ -1705,6 +1693,18 @@ export function ContactTelegramChat({
   const handleMediaRefresh = useCallback(() => {
     refetchMessages();
   }, [refetchMessages]);
+
+  if (!telegramUserId) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-8 text-center text-muted-foreground">
+          <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p>Telegram не привязан</p>
+          <p className="text-sm mt-1">Клиент должен привязать свой Telegram аккаунт</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <TooltipProvider>
