@@ -2,7 +2,7 @@
 
 > **Status update (2026-07-10, после ревью): Sprint B — FAIL.** Идентифицировано **6** follow-up замечаний (см. `ERRATA_and_gate_status.md`). Из них в текущем Gate A закрыты замечания №3 (honeypot), №4 (persistence hardening — атомарный RPC `rr_finalize_created_order`), №6 (имя миграции). Замечания №1 (public E2E на `gorbova.by/cb`), №2 (полный negative runtime proof по Sprint B контрактам), №5 (изоляция test fixture) переносятся в Gate B — отдельное согласование. Sprint C **не начинать**.
 >
-> **Errata по имени миграции concurrency-фикса:** фактически `supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql` (в §2b, §8 и §7-инвентаре ранее ошибочно указывалось `20260710085555_...`).
+> **Errata по имени миграции concurrency-фикса:** фактически `supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql` (в §2b, §8 и §7-инвентаре ранее ошибочно указывалось `20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql`).
 
 Дата: 2026-07-10
 Ответственный: инженер (Lovable)
@@ -54,7 +54,7 @@ WHERE id IN ('b4761274-246b-4b3f-9679-c2c05732494e',
 
 **Причина:** в `rr_get_or_create_pending_order` условие reuse требовало `meta.rr.initiation_status = 'created'`. Этот статус выставляется edge-функцией **после** HTTP-вызова РР и `UPDATE orders_v2` — вне advisory-lock. Пять параллельных RPC внутри лока последовательно не находили reuse-кандидата (все предыдущие ещё имели `initiation_status='pending'`) и INSERT-или каждый свою строку.
 
-### 2b. Фикс (миграция `20260710085555_...sql`)
+### 2b. Фикс (миграция `20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql`)
 
 `rr_get_or_create_pending_order` теперь принимает reuse для двух состояний:
 
@@ -229,7 +229,7 @@ $ rg -n "grant-access-for-order|payments_v2.*insert|telegram_access_grants.*inse
 
 ## 8. Инвентарь изменений
 
-- **Миграция**: `supabase/migrations/20260710085555_*` — правит `rr_get_or_create_pending_order` (reuse принимает in-flight pending, ORDER BY предпочитает готовые).
+- **Миграция**: `supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql` — правит `rr_get_or_create_pending_order` (reuse принимает in-flight pending, ORDER BY предпочитает готовые).
 - **Edge**: `supabase/functions/public-rr-installment-initiate/index.ts` — при `wasReused=true` без готового `payment_url` polling до 15 сек, ранние выходы `504 rr_reuse_wait_timeout` / `502 rr_create_order_failed_upstream`.
 - Другие функции и данные не менялись.
 
