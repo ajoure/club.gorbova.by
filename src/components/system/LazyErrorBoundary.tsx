@@ -14,6 +14,7 @@ interface State {
 
 const RELOAD_TS_KEY = "__lazy_chunk_reload_ts__";
 const RELOAD_TTL_MS = 60_000; // разрешаем повторный reload раз в 60 сек, без бесконечного цикла
+const MEMORY_RELOAD_TS_KEY = "__lazyChunkReloadTs";
 
 /**
  * Catches dynamic-import / chunk-load failures (typically caused by a stale
@@ -51,12 +52,24 @@ export class LazyErrorBoundary extends Component<Props, State> {
     }
 
     // TTL guard: reload разрешён, если с прошлого reload прошло больше RELOAD_TTL_MS.
+    // Важно: если storage недоступен (iOS standalone/private mode/webview), нельзя
+    // делать автоматический reload — иначе stale chunk превращается в бесконечный цикл.
     let lastReloadAt = 0;
+    let canPersistReloadMarker = false;
     try {
       const raw = sessionStorage.getItem(RELOAD_TS_KEY);
       lastReloadAt = raw ? Number(raw) || 0 : 0;
+      canPersistReloadMarker = true;
     } catch {
-      // sessionStorage unavailable (private mode, etc.)
+      // sessionStorage unavailable (private mode, standalone webview, etc.)
+    }
+
+    if (!lastReloadAt) {
+      try {
+        lastReloadAt = Number((window as any)[MEMORY_RELOAD_TS_KEY]) || 0;
+      } catch {
+        /* ignore */
+      }
     }
 
     const now = Date.now();
@@ -70,10 +83,23 @@ export class LazyErrorBoundary extends Component<Props, State> {
       return;
     }
 
+    if (!canPersistReloadMarker) {
+      console.error("[LazyErrorBoundary] chunk load failed and reload marker storage is unavailable, giving up", {
+        pathname,
+        message: error.message,
+      });
+      return;
+    }
+
     try {
       sessionStorage.setItem(RELOAD_TS_KEY, String(now));
+      (window as any)[MEMORY_RELOAD_TS_KEY] = now;
     } catch {
-      /* ignore */
+      console.error("[LazyErrorBoundary] chunk load failed and reload marker write failed, giving up", {
+        pathname,
+        message: error.message,
+      });
+      return;
     }
 
     console.warn("[LazyErrorBoundary] stale chunk detected, reloading once", {
