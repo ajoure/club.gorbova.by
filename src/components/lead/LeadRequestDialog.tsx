@@ -77,6 +77,7 @@ export function LeadRequestDialog({
   bankLinkUrl,
   bankLinkLabel,
   bankMessageHtml,
+  bankInstallmentRuntime,
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
