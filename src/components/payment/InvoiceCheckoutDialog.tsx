@@ -236,7 +236,7 @@ export function InvoiceCheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[720px] max-h-[92vh] p-0 flex flex-col gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-[720px] max-h-[92vh] max-h-[92dvh] p-0 flex flex-col gap-0 overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
