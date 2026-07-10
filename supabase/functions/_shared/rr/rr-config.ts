@@ -65,3 +65,47 @@ export async function loadRRTestConfig(
     secretKey,
   };
 }
+
+/**
+ * Sprint B loader: возвращает конфиг РР по текущему mode интеграции
+ * (test | battle). Не требует явного test-only guard'а — вызывается
+ * из initiate/webhook flow, где режим определяется карточкой интеграции.
+ */
+export async function loadRRConfig(
+  supabaseAdmin: SupabaseClient,
+): Promise<RRResolvedConfig> {
+  const { data, error } = await supabaseAdmin
+    .from("integration_instances")
+    .select("id, config, config_secrets, status")
+    .eq("provider", "rr")
+    .maybeSingle();
+
+  if (error) throw new Error(`rr_config_read_failed: ${error.message}`);
+  if (!data) throw new Error("rr_instance_not_configured");
+
+  const config = (data.config ?? {}) as Record<string, unknown>;
+  const secrets = (data.config_secrets ?? {}) as Record<string, unknown>;
+  const mode: "test" | "battle" =
+    (config.mode as string) === "battle" ? "battle" : "test";
+
+  const login = String(
+    (mode === "battle" ? config.battle_login : config.test_login) ?? "",
+  ).trim();
+  const password = String(
+    (mode === "battle" ? secrets.battle_password : secrets.test_password) ?? "",
+  ).trim();
+  const secretKey = String(secrets.secret_key ?? "").trim();
+
+  if (!login || !password || !secretKey) {
+    throw new Error(`rr_${mode}_credentials_incomplete`);
+  }
+
+  return {
+    instanceId: data.id as string,
+    mode,
+    baseUrl: "https://pay.rrllc.ru/api/v2",
+    login,
+    password,
+    secretKey,
+  };
+}
