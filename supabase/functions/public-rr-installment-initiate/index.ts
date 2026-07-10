@@ -182,9 +182,15 @@ Deno.serve(async (req: Request) => {
     },
   };
 
+  const { data: orderNumberData } = await supabaseAdmin.rpc(
+    "generate_order_number",
+  );
+  const orderNumber = String(orderNumberData ?? `RR-${externalIdPlaceholder()}`);
+
   const { data: order, error: orderErr } = await supabaseAdmin
     .from("orders_v2")
     .insert({
+      order_number: orderNumber,
       product_id: product.id,
       tariff_id: tariff.id,
       offer_id: offerId,
