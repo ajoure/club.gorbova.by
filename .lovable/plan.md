@@ -1,88 +1,83 @@
-Просто почини все  ей счет не отправляй  пусть сама еще раз отправит себе с сайта выбранный тариф. Причем тут ип, если она на юрлицо выставляла счет? Скажи в итоге, где нужно исправить мне настройки кнопок  
+План:
 
-&nbsp;
+1. Проблема
+- В контакт-центре снова появляется уведомление «Страница не загрузилась» / перезагрузка.
+- На мобильном поле ввода Telegram-чата смещается при открытии клавиатуры, из-за чего не видно сообщения и невозможно нормально вставлять/набирать текст.
+- Визуальная часть контакт-центра «прыгает»: список/чат/панели меняют высоту и положение.
 
-План: восстановление счетов «Оплатить от ЮЛ» на «Ценный бухгалтер» + ручная выписка счёта Юлии Станкевич
+2. Диагностика
+- `docs/ENGINEERING_RULES.md` прочитан, порядок работ: Diagnose → Plan → Dry run → Execute → Verify.
+- Проверены компоненты контакт-центра:
+  - `src/pages/admin/AdminCommunication.tsx`
+  - `src/components/admin/communication/InboxTabContent.tsx`
+  - `src/components/admin/communication/unified/UnifiedInboxView.tsx`
+  - `src/components/admin/ContactTelegramChat.tsx`
+  - `src/components/system/LazyErrorBoundary.tsx`
+- Главная найденная причина мобильной поломки: `ContactTelegramChat` добавляет к composer `paddingBottom = safe-area + keyboardInset`, где `keyboardInset` берётся из `visualViewport`. На iOS/Android это поднимает composer внутри уже ограниченного flex-контейнера, уменьшает область сообщений и провоцирует скачки/невидимое поле ввода.
+- Дополнительный риск: мобильные обёртки контакт-центра используют `h-full` внутри карточек/панелей, но не закрепляют высоту на `100dvh` для режима чата. При открытии клавиатуры браузер меняет visual viewport, и вся карточка пересчитывается.
+- По `LazyErrorBoundary`: после первого фикса reload ограничен TTL, но для chunk-load ошибки fallback всё ещё показывает спиннер и может инициировать `window.location.reload()`. Если ошибка не chunk, показывается «Страница не загрузилась». Нужно зафиксировать поведение так, чтобы не было бесконечной перезагрузки и чтобы лог был диагностируемый.
+- Консольные snapshot-логи по `LazyErrorBoundary` в текущем состоянии не содержат явной ошибки, поэтому фикс будет UI-stability + hardening error boundary, без изменения backend/payment/message workflow.
 
-## Diagnose (что уже проверено)
+3. Предлагаемое решение
+- В `ContactTelegramChat.tsx` убрать автоматическое прибавление `keyboardInset` к нижнему padding composer. Composer должен быть жёстким нижним элементом flex-контейнера, а не «ездить» вслед за клавиатурой.
+- Сделать composer стабильным:
+  - `shrink-0`, `min-h`, предсказуемая высота;
+  - textarea с фиксированным диапазоном высоты и `overflow-y-auto`;
+  - кнопки отправки/эмодзи/файла не растягивают строку;
+  - нижний padding только `env(safe-area-inset-bottom)`, без visualViewport-сдвига.
+- Для мобильного Telegram-чата в `InboxTabContent.tsx` закрепить контейнер чата на viewport-safe высоте: `h-[100dvh]`/`max-h-[100dvh]`, `overflow-hidden`, без внешних карточных отступов, которые съедают место при клавиатуре.
+- Для unified-вида `UnifiedInboxView.tsx` применить тот же принцип к мобильному выбранному чату, чтобы не было расхождения между обычной Telegram-вкладкой и единой лентой.
+- В `LazyErrorBoundary.tsx` усилить защиту от reload-loop:
+  - для chunk-load ошибки после одной попытки показывать понятный экран с кнопкой ручного обновления, а не оставлять вечный спиннер;
+  - увеличить TTL/использовать session marker так, чтобы частые ошибки не перезагружали страницу каждые несколько секунд;
+  - логировать pathname/message, но не запускать повторный auto-reload в цикле.
 
-**Продукт:** «Ценный бухгалтер | 1 ступень 2.0» (`products_v2.id = 7101ed3c-…`, домен `cb.gorbova.by`).
+4. Изменяемые компоненты
+- UI-компоненты:
+  - `src/components/admin/ContactTelegramChat.tsx`
+  - `src/components/admin/communication/InboxTabContent.tsx`
+  - `src/components/admin/communication/unified/UnifiedInboxView.tsx`
+  - `src/components/system/LazyErrorBoundary.tsx`
+- Таблицы, RPC, edge functions, cron/jobs: не изменяются.
+- Сообщения, платежи, доступы, заказы: не изменяются.
 
-**Оффер invoice-only:**
+5. Что не будет изменено
+- Не трогаю отправку Telegram-сообщений через backend-функцию.
+- Не трогаю RPC чтения сообщений и список диалогов.
+- Не меняю права, роли, RLS, платежи, счета, продукты.
+- Не меняю дизайн всего контакт-центра, только стабилизацию layout/composer/error-boundary.
 
-- Тариф «Бухгалтер» → offer `7cc42c7b-…` «Оплатить от ЮЛ», 1650 BYN, `pay_now`.
-- Тариф «Главный бухгалтер» → offer `8db9492e-…` «Оплатить от ЮЛ», 1950 BYN.
-- Тариф «Бизнес-леди» → отсутствует (это отдельная задача, вне scope).
+6. Dry-run
+- До правок: воспроизвести `/admin/communication?tab=inbox` в мобильном viewport через Playwright, открыть чат, сфокусировать textarea, вставить длинный текст, проверить bounding boxes composer/textarea/messages.
+- Проверить, что console не содержит React hook/order errors и `LazyErrorBoundary route render failed`.
+- После правок: повторить тот же сценарий и сравнить:
+  - composer остаётся видимым;
+  - textarea видна при фокусе;
+  - список сообщений не исчезает;
+  - нет автоматических reload каждые несколько секунд.
 
-`detectInvoiceOnlyOffer` для обоих возвращает `isInvoiceOnly=true`, `SitePageBySlug` открывает `InvoiceCheckoutDialog`. Edge-функция `invoice-checkout-issue` жива, последний удачный прогон — заказ `ORD-26-00272` (08.07, admin-тест) → PDF сгенерирован (`document_number=0807/1`), email+Telegram отправлены (`invoice_checkout.document_send_completed`).
+7. Execute
+- Внести минимальные изменения в указанные 4 файла.
+- Не создавать новые компоненты/таблицы/воркфлоу.
+- Не менять бизнес-логику отправки/чтения сообщений.
 
-**Заказ Юлии Станкевич** (`profile 8c6b458e-…`, email `yul.winbet.88@gmail.com`, user `f7690c11-…`):
+8. STOP-guards
+- Остановиться и не править backend, если проблема воспроизводится только как UI-layout.
+- Остановиться перед любыми изменениями в RPC/edge/database, если нет явной ошибки backend.
+- Остановиться, если Playwright покажет, что активен не Telegram-контакт-центр, а другой канал/страница.
+- Не делать массовых миграций или сбросов данных.
 
-- 09.07 17:00 создана запись `client_legal_details.aab58182-…` — ООО «Вандер Лаб», УНП 193767876.
-- Ни одной записи `orders_v2` для этого user за 07–09.07 нет; ни одного `invoice_checkout.*` в `audit_logs`; ни одного вызова `invoice-checkout-issue` в edge-логах.
-- Вывод: она заполнила форму реквизитов (это создало запись в `client_legal_details`), но до шага «Подтверждение → Сформировать счёт» не дошла. На мобильном (её скрин с iPhone) `DialogContent max-h-[92vh] overflow-y-auto` без sticky-footer — кнопки навигации оказались за нижним краем viewport, и «окно смещено», как она и описала в переписке.
+9. DoD
+- На мобильном viewport контакт-центр открывает выбранный Telegram-чат без визуального развала.
+- При фокусе textarea composer остаётся видимым и закреплённым внизу панели.
+- Можно вставить длинный текст из буфера, textarea не пропадает, кнопка отправки остаётся доступной.
+- Сообщения остаются видимыми и прокручиваемыми.
+- Авто-перезагрузка не повторяется циклом; при chunk-error максимум одна автоматическая попытка, затем ручной fallback.
+- Проверка Playwright + console snapshot подтверждают отсутствие нового crash/reload-loop.
 
-**Найденный сопутствующий баг (не блокер, но чинить):**
+10. Риски и зависимости
+- Поведение экранной клавиатуры в реальном iOS Safari отличается от headless Chromium; поэтому фикс делается через более надёжную стратегию: не двигать composer visualViewport-инсетом вообще.
+- Если отдельная ошибка загрузки страницы окажется не chunk-load, потребуется следующий targeted patch по конкретному stack trace.
 
-- Заказ `ORD-26-00275` (08.07, admin-тест, offer «Главный бухгалтер · Оплатить от ЮЛ», payer=`entrepreneur`) упал: `invoice_checkout.document_generate_failed` → `document_template_not_configured / no_template`.
-- Причина: в `meta.document_scenarios` этого offer есть только сценарии `payer_type=legal_entity` + один отключённый `individual`. Для ИП (`entrepreneur`) ни сценария, ни `template_id` нет, поэтому `canonical-document-generate-strict` не находит шаблон. То же самое у offer «Бухгалтер · Оплатить от ЮЛ». В `InvoiceCheckoutDialog` при этом ИП по-прежнему доступен как payer.
-
-## Что делаем (Sprint I)
-
-### 1. Fix UI — sticky footer в InvoiceCheckoutDialog
-
-`src/components/payment/InvoiceCheckoutDialog.tsx`:
-
-- Обернуть контент шагов `payer`/`confirm` в `flex flex-col`, вынести панель с кнопками (`Назад`, `Далее` / `Сформировать счёт`) в `sticky bottom-0 bg-background pt-3 border-t` внутри `DialogContent`.
-- На `DialogContent` оставить `max-h-[92vh]`, но переключить внутренний скролл: скроллится middle-часть, footer остаётся видимым.
-- На шаге `success` кнопку скачать/закрыть также сделать sticky, чтобы PDF-ссылка не терялась.
-
-### 2. Fix scenario coverage для ИП (payer_type=entrepreneur)
-
-- В `InvoiceCheckoutDialog` при выборе плательщика скрывать/дизейблить записи `client_type='entrepreneur'`, если в `offer.meta.document_scenarios` нет ни одного включённого сценария с `payer_type='entrepreneur' && payment_channels=['bank_transfer']`. Показывать подсказку «Для этого оффера пока доступна оплата только от юрлица».
-- В `detectInvoiceOnlyOffer` — не трогать (детект оффера остаётся тем же).
-- Никаких изменений в самих офферах через SQL в этом спринте не делаем: сценарий для ИП — отдельное решение владельца (нужен ли шаблон отдельного договора). Отчёт зафиксирует список офферов без entrepreneur-сценария.
-
-### 3. Ручная выписка счёта Юлии
-
-- Через `supabase--curl_edge_functions` вызвать `invoice-checkout-issue` от её JWT нельзя (нет её сессии). Поэтому идём напрямую: вызвать edge-функцию `invoice-checkout-issue` — не подходит (требует Bearer user). Используем существующий путь без нового кода:
-  1. `INSERT` строки в `orders_v2` со всеми полями, которые ставит функция (`status='draft'`, `payer_type='legal_entity'`, `offer_id=7cc42c7b-…` (тариф «Бухгалтер», 1650 BYN — самый ходовой; уточнить у владельца в отчёте, если нужен другой тариф), `profile_id=8c6b458e-…`, `user_id=f7690c11-…`, `customer_email='yul.winbet.88@gmail.com'`, `meta.checkout_kind='invoice'`, `meta.legal_details_id=aab58182-…`, `purchase_snapshot`, `crm_routing_snapshot` по offer).
-  2. Вызвать `canonical-document-generate-strict` с `pre_payment_invoice: true` для нового `order_id` (через `supabase--curl_edge_functions` с service role, без user JWT — функция это поддерживает для admin вызовов).
-  3. Вызвать `canonical-document-send` для полученного `document_id` (`send_email: true`, `send_telegram: true`).
-  4. Проверить `audit_logs` (`document.generated`, `invoice_checkout.document_send_completed`), убедиться что PDF в `ai_generated_documents` есть и `email_sent=true`.
-- Если тариф под сомнением — сначала уточнить у владельца в отчёте, не менять «Главный бухгалтер»/«Бизнес-леди» без подтверждения.
-
-### 4. Verify
-
-- Playwright на `cb.gorbova.by`, mobile viewport 390×844: открыть тариф «Бухгалтер», нажать «Оплатить от ЮЛ» под тестовым юзером → на шагах `payer` и `confirm` кнопки «Далее» / «Сформировать счёт» видны без скролла; после «Сформировать счёт» — шаг `success` с видимой кнопкой «Скачать PDF».
-- Скриншоты `1_payer.png`, `2_confirm.png`, `3_success.png` под iPhone-viewport.
-- В `orders_v2` — тестовый draft-order создан, `audit_logs` содержит цепочку `order_created → document.generated → document_send_completed`.
-- Отдельно проверить: при выборе плательщика ИП для offer без entrepreneur-сценария — запись задизейблена + подсказка.
-
-### 5. Отчёт
-
-`.lovable/proofs/2026-07-10-invoice-checkout-mobile-fix-and-yulia-invoice.md`:
-
-- Diagnose (что нашли, ссылки на записи `orders_v2`, `audit_logs`, `client_legal_details`).
-- Diff UI-фикса + entrepreneur-gate.
-- Playwright before/after скрины mobile-viewport.
-- Ручная выписка: `order_id`, `document_id`, `document_number`, `pdf_url`, статусы `email_sent` / `telegram_sent`.
-- Список офферов без entrepreneur-сценария (для будущего Sprint II — решение владельца по шаблону договора для ИП).
-
-## Что НЕ делаем в этом спринте
-
-- Не трогаем `tariff_offers.meta.document_scenarios` через SQL (это решение владельца).
-- Не меняем `canonical-document-generate-strict`, `canonical-document-send`, `resolveOfferRouting`.
-- Не создаём новых edge-функций.
-- Не меняем логику `detectInvoiceOnlyOffer` и `pickOfferForFlow`.
-- Не меняем логику подписок / оплат bePaid / installment / lead — только invoice-only flow.
-- Не выдаём Юлии никаких доступов (`entitlements`, telegram-club) — счёт до оплаты, доступы — после реального банковского платежа (существующий webhook).
-
-## DoD
-
-- Кнопки «Далее» и «Сформировать счёт» в `InvoiceCheckoutDialog` видны на iPhone-viewport без прокрутки на всех шагах.
-- Плательщик ИП недоступен для offer без entrepreneur-сценария (нет тихих 409 «no_template»).
-- Юлии Станкевич отправлен PDF-счёт от ООО «Вандер Лаб» на email + Telegram; в `audit_logs` есть подтверждающие записи.
-- Отчёт в `.lovable/proofs/`.
-
-Подтвердите (или скорректируйте тариф — «Бухгалтер» 1650 BYN по умолчанию), и я перехожу к выполнению.
+11. Требуется дополнительная информация
+- Не требуется для начала выполнения. Скриншот подтверждает мобильную проблему с composer; код уже показывает вероятную причину с `keyboardInset`.
