@@ -44,3 +44,14 @@
 5. Финальный отчёт `REPORT_v2.md`.
 
 Только после Gate A.2 PASS открывается Gate B (UI patch + public E2E + negative proofs v2).
+## Gate A.1 v3 — статус после доставки
+
+Дата: 2026-07-10 20:41 UTC.
+
+- Миграция `202607102040_gate_a1_v3.sql` применена; runtime-артефакты в `gate_a1_v3/runtime_proof/`.
+- Edge `public-rr-installment-initiate` полностью переработан: pre-call durable marker, retry marker RPC, HTTP 500 `local_state_unconfirmed` при неподтверждённом durable state, аудит через `rr_insert_idempotent_audit_event`.
+- Adapter `_shared/rr/rr-adapter.ts`: пустой `RR_DOCUMENTED_REJECTION_CODES`, redacted `link`.
+
+Открытые пункты для Gate A.2 см. `gate_a1_v3/README.md §Что вынесено в Gate A.2`.
+
+Общий статус: **Sprint B FAIL**, Sprint C **не открывать**, Gate B **BLOCKED**.

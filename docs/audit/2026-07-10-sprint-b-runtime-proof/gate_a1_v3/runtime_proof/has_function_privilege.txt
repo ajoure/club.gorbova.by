@@ -1,0 +1,15 @@
+                   role_fn                   | can_exec 
+---------------------------------------------+----------
+ anon: rr_finalize_created_order             | f
+ authenticated: rr_finalize_created_order    | f
+ service_role: rr_finalize_created_order     | t
+ anon: rr_mark_call_started                  | f
+ authenticated: rr_mark_call_started         | f
+ service_role: rr_mark_call_started          | t
+ anon: rr_operator_resolve                   | f
+ authenticated: rr_operator_resolve          | f
+ service_role: rr_operator_resolve           | t
+ anon: rr_finalize_order_not_created         | f
+ service_role: rr_finalize_order_not_created | t
+(11 rows)
+

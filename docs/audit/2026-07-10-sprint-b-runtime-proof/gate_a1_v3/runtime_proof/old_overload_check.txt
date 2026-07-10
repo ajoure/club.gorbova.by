@@ -1,0 +1,5 @@
+                 check                 | found 
+---------------------------------------+-------
+ old operator_resolve overload exists? |     0
+(1 row)
+

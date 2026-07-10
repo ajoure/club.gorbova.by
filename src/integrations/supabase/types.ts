@@ -19291,15 +19291,11 @@ export type Database = {
           _rr_request_id: string
           _rr_status_raw: string
         }
-        Returns: {
-          already_created: boolean
-          finalized: boolean
-          order_id: string
-        }[]
+        Returns: Json
       }
       rr_finalize_order_not_created: {
         Args: { _evidence: Json; _order_id: string }
-        Returns: undefined
+        Returns: Json
       }
       rr_finalize_order_rejected: {
         Args: {
@@ -19308,8 +19304,9 @@ export type Database = {
           _reason_code: string
           _response_snippet: Json
         }
-        Returns: undefined
+        Returns: Json
       }
+      rr_get_config_flag: { Args: { _key: string }; Returns: boolean }
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
@@ -19331,6 +19328,14 @@ export type Database = {
           was_reused: boolean
         }[]
       }
+      rr_insert_idempotent_audit_event: {
+        Args: { _event_type: string; _order_id: string; _payload: Json }
+        Returns: undefined
+      }
+      rr_mark_call_started: {
+        Args: { _correlation_id: string; _order_id: string }
+        Returns: Json
+      }
       rr_mark_local_persist_failed: {
         Args: {
           _error_text: string
@@ -19338,7 +19343,7 @@ export type Database = {
           _payment_url: string
           _rr_request_id: string
         }
-        Returns: undefined
+        Returns: Json
       }
       rr_mark_upstream_unknown: {
         Args: {
@@ -19348,18 +19353,19 @@ export type Database = {
           _order_id: string
           _provider_request_id: string
         }
-        Returns: undefined
+        Returns: Json
       }
       rr_operator_resolve: {
         Args: {
           _actor: string
+          _evidence: Json
           _note: string
           _order_id: string
           _payment_url: string
           _resolution: string
           _rr_request_id: string
         }
-        Returns: undefined
+        Returns: Json
       }
       rr_public_rate_limit_hit: {
         Args: { _key: string; _max: number; _window_seconds: number }
@@ -19374,7 +19380,7 @@ export type Database = {
           _rr_request_id: string
           _rr_status_raw: string
         }
-        Returns: undefined
+        Returns: Json
       }
       safe_delete_document_package: {
         Args: { _package_id: string }
