@@ -1,0 +1,48 @@
+rr_finalize_created_order(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|anon|f
+rr_finalize_created_order(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|authenticated|f
+rr_finalize_created_order(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|PUBLIC|f
+rr_finalize_created_order(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|service_role|t
+rr_finalize_created_order_internal(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text, _source text)|anon|f
+rr_finalize_created_order_internal(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text, _source text)|authenticated|f
+rr_finalize_created_order_internal(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text, _source text)|PUBLIC|f
+rr_finalize_created_order_internal(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text, _source text)|service_role|f
+rr_finalize_order_not_created(_order_id uuid, _evidence jsonb)|anon|f
+rr_finalize_order_not_created(_order_id uuid, _evidence jsonb)|authenticated|f
+rr_finalize_order_not_created(_order_id uuid, _evidence jsonb)|PUBLIC|f
+rr_finalize_order_not_created(_order_id uuid, _evidence jsonb)|service_role|t
+rr_finalize_order_rejected(_order_id uuid, _reason_code text, _http_status integer, _response_snippet jsonb)|anon|f
+rr_finalize_order_rejected(_order_id uuid, _reason_code text, _http_status integer, _response_snippet jsonb)|authenticated|f
+rr_finalize_order_rejected(_order_id uuid, _reason_code text, _http_status integer, _response_snippet jsonb)|PUBLIC|f
+rr_finalize_order_rejected(_order_id uuid, _reason_code text, _http_status integer, _response_snippet jsonb)|service_role|t
+rr_get_config_flag(_key text)|anon|f
+rr_get_config_flag(_key text)|authenticated|f
+rr_get_config_flag(_key text)|PUBLIC|f
+rr_get_config_flag(_key text)|service_role|t
+rr_get_or_create_pending_order(_offer_id uuid, _user_id uuid, _email_norm text, _phone_norm text, _product_id uuid, _tariff_id uuid, _amount numeric, _currency text, _customer_email text, _customer_phone text, _customer_ip text, _meta jsonb)|anon|f
+rr_get_or_create_pending_order(_offer_id uuid, _user_id uuid, _email_norm text, _phone_norm text, _product_id uuid, _tariff_id uuid, _amount numeric, _currency text, _customer_email text, _customer_phone text, _customer_ip text, _meta jsonb)|authenticated|f
+rr_get_or_create_pending_order(_offer_id uuid, _user_id uuid, _email_norm text, _phone_norm text, _product_id uuid, _tariff_id uuid, _amount numeric, _currency text, _customer_email text, _customer_phone text, _customer_ip text, _meta jsonb)|PUBLIC|f
+rr_get_or_create_pending_order(_offer_id uuid, _user_id uuid, _email_norm text, _phone_norm text, _product_id uuid, _tariff_id uuid, _amount numeric, _currency text, _customer_email text, _customer_phone text, _customer_ip text, _meta jsonb)|service_role|t
+rr_insert_idempotent_audit_event(_order_id uuid, _event_type text, _payload jsonb)|anon|f
+rr_insert_idempotent_audit_event(_order_id uuid, _event_type text, _payload jsonb)|authenticated|f
+rr_insert_idempotent_audit_event(_order_id uuid, _event_type text, _payload jsonb)|PUBLIC|f
+rr_insert_idempotent_audit_event(_order_id uuid, _event_type text, _payload jsonb)|service_role|t
+rr_mark_call_started(_order_id uuid, _correlation_id text)|anon|f
+rr_mark_call_started(_order_id uuid, _correlation_id text)|authenticated|f
+rr_mark_call_started(_order_id uuid, _correlation_id text)|PUBLIC|f
+rr_mark_call_started(_order_id uuid, _correlation_id text)|service_role|t
+rr_mark_local_persist_failed(_order_id uuid, _payment_url text, _rr_request_id text, _error_text text)|anon|f
+rr_mark_local_persist_failed(_order_id uuid, _payment_url text, _rr_request_id text, _error_text text)|authenticated|f
+rr_mark_local_persist_failed(_order_id uuid, _payment_url text, _rr_request_id text, _error_text text)|PUBLIC|f
+rr_mark_local_persist_failed(_order_id uuid, _payment_url text, _rr_request_id text, _error_text text)|service_role|t
+rr_mark_upstream_unknown(_order_id uuid, _provider_request_id text, _failure_kind text, _http_status integer, _correlation_id text)|anon|f
+rr_mark_upstream_unknown(_order_id uuid, _provider_request_id text, _failure_kind text, _http_status integer, _correlation_id text)|authenticated|f
+rr_mark_upstream_unknown(_order_id uuid, _provider_request_id text, _failure_kind text, _http_status integer, _correlation_id text)|PUBLIC|f
+rr_mark_upstream_unknown(_order_id uuid, _provider_request_id text, _failure_kind text, _http_status integer, _correlation_id text)|service_role|t
+rr_operator_resolve(_order_id uuid, _resolution text, _actor text, _payment_url text, _rr_request_id text, _note text, _evidence jsonb)|anon|f
+rr_operator_resolve(_order_id uuid, _resolution text, _actor text, _payment_url text, _rr_request_id text, _note text, _evidence jsonb)|authenticated|f
+rr_operator_resolve(_order_id uuid, _resolution text, _actor text, _payment_url text, _rr_request_id text, _note text, _evidence jsonb)|PUBLIC|f
+rr_operator_resolve(_order_id uuid, _resolution text, _actor text, _payment_url text, _rr_request_id text, _note text, _evidence jsonb)|service_role|t
+rr_reconcile_confirm_created(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|anon|f
+rr_reconcile_confirm_created(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|authenticated|f
+rr_reconcile_confirm_created(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|PUBLIC|f
+rr_reconcile_confirm_created(_order_id uuid, _payment_url text, _rr_request_id text, _rr_status_raw text, _raw_last jsonb, _correlation_id text)|service_role|t

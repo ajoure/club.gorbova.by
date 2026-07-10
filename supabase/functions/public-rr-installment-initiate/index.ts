@@ -1,32 +1,39 @@
 /**
- * public-rr-installment-initiate (Sprint B / Gate A.1 v3 hardened)
+ * public-rr-installment-initiate (Sprint B / Gate A.1 v3.1 hardened)
  *
  * Инвариант fail-closed: НИКОГДА не отдавать клиенту "безопасный" статус
  * без подтверждённой durable записи. Если БД не отвечает — HTTP 500
  * local_state_unconfirmed, а не 502/503/504.
  *
- * Ключевое отличие v3: pre-call durable marker (rr_mark_call_started)
- * пишется ДО обращения к банку. Заказ с активным маркером всегда
- * переиспользуется той же identity (без временных окон), пока не наступит
- * terminal outcome. Это гарантирует, что даже двойной сбой post-call
- * marker не приведёт к повторному createOrder.
+ * v3.1 отличия от v3:
+ *  1) Post-call marker RPC явно переводят upstream_call_state в семантику:
+ *     - unknown_marked        → outcome_unknown
+ *     - persist_failed_marked → completed_unpersisted
+ *     - rejected/finalized/not_created → completed
+ *     Порядок reuse-веток теперь строго различает эти состояния и не
+ *     заворачивает recovery/ambiguous в rr_call_in_flight.
+ *  2) Проверки RPC-результатов расширены: не только ok+error, но и
+ *     ожидаемый typed state. Любой другой state → fail-closed reread.
+ *  3) Recovered URL валидируется тем же способом, что happy path.
+ *  4) operator_resolution='allow_new_order' не входит в reuse-ветку
+ *     (RPC уже переводит заказ в terminal 'failed' и исключает его из
+ *     reuse-кандидатов).
  *
- * Ветки reuse (rr_get_or_create_pending_order):
- *  A.1 upstream_call_state='started' без terminal → 503 rr_call_in_flight;
- *  A.  local_persist_failed=true + recovered URL → canonical finalizer → 200;
- *      без recovered URL → 503 rr_recovery_pending;
- *  B.  upstream_outcome='unknown' → 503 rr_reconciliation_pending;
- *  C.  operator resolved: confirm_created+URL → 200; keep_blocked → 503.
- *  D.  свежий pending (concurrency happy-path) → polling или готовый URL.
+ * Приоритет reuse-веток (rr_get_or_create_pending_order → was_reused=true):
+ *   1. initiation_status='created' + валидный payment_url → 200 (существующий URL)
+ *   2. operator_resolution='confirm_created' + URL → 200; 'keep_blocked' → 503
+ *   3. local_persist_failed=true → recovery finalize → 200
+ *   4. upstream_outcome='unknown' → 503 rr_reconciliation_pending
+ *   5. upstream_call_state='started' (в этом порядке — только оставшийся in-flight) → 503 rr_call_in_flight
+ *   6. concurrency happy-path pending → polling
  *
- * Ветки нового заказа:
- *  1. Атомарная запись create_order_requested (fail-fast: 503).
- *  2. rr_mark_call_started — pre-call durable marker (1 retry).
- *     При неудаче: 500 local_state_unconfirmed, rrCreateOrder НЕ вызывается.
- *  3. rrCreateOrder → outcomeClass:
- *     upstream_created  → rr_finalize_created_order (retry + persist_failed marker) → 200;
- *     upstream_rejected → rr_finalize_order_rejected (retry) → 502 или 500;
- *     upstream_outcome_unknown → rr_mark_upstream_unknown (retry) → 504 или 500.
+ * Ветки нового заказа (was_reused=false):
+ *   1. rr_mark_call_started (1 retry). Ожидаемый state='call_started'.
+ *      Любой другой → rrCreateOrder НЕ вызывается, fail-closed reread.
+ *   2. rrCreateOrder → outcomeClass:
+ *      upstream_created  → rr_finalize_created_order (retry + persist_failed marker) → 200
+ *      upstream_rejected → rr_finalize_order_rejected (retry) → 502 или 500
+ *      upstream_outcome_unknown → rr_mark_upstream_unknown (retry) → 504 или 500
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
@@ -73,6 +80,23 @@ function getClientIp(req: Request): string {
     req.headers.get("x-real-ip") || "unknown";
 }
 
+/**
+ * Единый валидатор payment_url. Используется как для happy path (в adapter),
+ * так и для recovered URL перед canonical finalize.
+ * Правила: непустая строка, https, без basic-auth (user:pass@host).
+ */
+function isSafePaymentUrl(u: unknown): u is string {
+  if (typeof u !== "string" || u.length === 0) return false;
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== "https:") return false;
+    if (parsed.username.length > 0 || parsed.password.length > 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type SbAdmin = ReturnType<typeof createServiceClient>;
 
 async function rateLimitOrDeny(
@@ -115,44 +139,83 @@ async function auditEvent(
 ): Promise<void> {
   const { error } = await supabaseAdmin.rpc(
     "rr_insert_idempotent_audit_event",
-    {
-      _order_id: orderId,
-      _event_type: eventType,
-      _payload: payload,
-    },
+    { _order_id: orderId, _event_type: eventType, _payload: payload },
   );
   if (error) {
     console.error(JSON.stringify({
       stage: "audit_event_write_failed",
-      order_id: orderId,
-      event_type: eventType,
-      error: error.message,
+      order_id: orderId, event_type: eventType, error: error.message,
     }));
   }
 }
 
-// Redacted ALERT log для local_state_unconfirmed.
-// Никаких PII / полных URL / raw response.
+// Redacted ALERT log. Никаких PII / полных URL / raw response.
 function alertLocalStateUnconfirmed(
-  orderId: string,
-  correlationId: string,
-  stage: string,
-  failureKind: string | null,
-  httpStatus: number | null,
-  providerRequestId: string | null,
-  errorMsg: string,
+  orderId: string, correlationId: string, stage: string,
+  failureKind: string | null, httpStatus: number | null,
+  providerRequestId: string | null, errorMsg: string,
 ): void {
   console.error(JSON.stringify({
-    metric: "rr_local_state_unconfirmed",
-    level: "ALERT",
-    order_id: orderId,
-    correlation_id: correlationId,
-    stage,
-    failure_kind: failureKind,
-    http_status: httpStatus,
+    metric: "rr_local_state_unconfirmed", level: "ALERT",
+    order_id: orderId, correlation_id: correlationId, stage,
+    failure_kind: failureKind, http_status: httpStatus,
     provider_request_id: providerRequestId,
     error_short: (errorMsg || "").slice(0, 200),
   }));
+}
+
+/**
+ * Fail-closed reread: когда любая RPC вернула неожиданный typed state,
+ * читаем актуальное состояние заказа и возвращаем клиенту ответ,
+ * соответствующий фактическому durable состоянию. rrCreateOrder больше НЕ
+ * вызывается в текущем запросе.
+ */
+async function failClosedReread(
+  supabaseAdmin: SbAdmin, orderId: string, correlationId: string, stage: string,
+): Promise<Response> {
+  const { data: row, error } = await supabaseAdmin
+    .from("orders_v2").select("meta").eq("id", orderId).maybeSingle();
+  if (error || !row) {
+    alertLocalStateUnconfirmed(
+      orderId, correlationId, `${stage}:reread`,
+      null, null, null, error?.message ?? "row_not_found",
+    );
+    return errorResponse("rr_state_recheck_failed", 500);
+  }
+  const rr = ((row.meta as any)?.rr ?? {}) as Record<string, unknown>;
+  const initStatus = rr.initiation_status as string | undefined;
+  const url = rr.payment_url as string | undefined;
+  const upstream = rr.upstream_outcome as string | undefined;
+  const persistFailed = rr.local_persist_failed === true ||
+    rr.local_persist_failed === "true";
+  const callState = rr.upstream_call_state as string | undefined;
+
+  if (initStatus === "created" && isSafePaymentUrl(url)) {
+    return jsonResponse({
+      payment_url: url, order_id: orderId, reused: true,
+      source: "reread_created",
+    });
+  }
+  if (initStatus === "failed" && upstream === "rejected") {
+    return errorResponse("rr_create_order_rejected", 502);
+  }
+  if (initStatus === "failed" && upstream === "not_created") {
+    return errorResponse("rr_create_order_not_created", 502);
+  }
+  if (persistFailed) {
+    return errorResponse("rr_recovery_pending", 503);
+  }
+  if (upstream === "unknown") {
+    return errorResponse("rr_reconciliation_pending", 503);
+  }
+  if (callState === "started") {
+    return errorResponse("rr_call_in_flight", 503);
+  }
+  alertLocalStateUnconfirmed(
+    orderId, correlationId, `${stage}:unknown_state`, null, null, null,
+    `initiation_status=${initStatus} upstream=${upstream} callState=${callState}`,
+  );
+  return errorResponse("local_state_unconfirmed", 500);
 }
 
 Deno.serve(async (req: Request) => {
@@ -268,6 +331,7 @@ Deno.serve(async (req: Request) => {
       runtime: "sprintB",
       mode: cfg.mode,
       initiation_status: "pending",
+      upstream_call_state: "not_started",
       correlation_id: correlationId,
       contact: { name: nameRaw, phone: phoneRaw, email, phone_norm: phoneNorm },
       comment,
@@ -277,25 +341,18 @@ Deno.serve(async (req: Request) => {
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
     "rr_get_or_create_pending_order",
     {
-      _offer_id: offerId,
-      _user_id: userId,
-      _email_norm: email,
-      _phone_norm: phoneNorm,
-      _product_id: product.id,
-      _tariff_id: tariff.id,
-      _amount: amountNumeric,
-      _currency: currency,
-      _customer_email: email,
-      _customer_phone: phoneRaw,
-      _customer_ip: ip,
-      _meta: initialMeta,
+      _offer_id: offerId, _user_id: userId,
+      _email_norm: email, _phone_norm: phoneNorm,
+      _product_id: product.id, _tariff_id: tariff.id,
+      _amount: amountNumeric, _currency: currency,
+      _customer_email: email, _customer_phone: phoneRaw,
+      _customer_ip: ip, _meta: initialMeta,
     },
   );
 
   if (rpcErr || !rpcData || rpcData.length === 0) {
     return errorResponse(
-      `order_create_failed:${rpcErr?.message ?? "no_rpc_data"}`,
-      500,
+      `order_create_failed:${rpcErr?.message ?? "no_rpc_data"}`, 500,
     );
   }
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
@@ -303,10 +360,7 @@ Deno.serve(async (req: Request) => {
   // ============== REUSE ==============
   if (wasReused) {
     const { data: reusedOrder, error: reuseReadErr } = await supabaseAdmin
-      .from("orders_v2")
-      .select("meta")
-      .eq("id", externalId)
-      .maybeSingle();
+      .from("orders_v2").select("meta").eq("id", externalId).maybeSingle();
     if (reuseReadErr) {
       console.error(JSON.stringify({
         stage: "reuse_state_read", order_id: externalId,
@@ -324,17 +378,17 @@ Deno.serve(async (req: Request) => {
     const operatorResolution = rr.operator_resolution as string | undefined;
     const callState = rr.upstream_call_state as string | undefined;
 
-    // A.1 pre-call marker активен и не завершён — call in-flight.
-    if (
-      callState === "started" &&
-      initStatus !== "created" && initStatus !== "failed"
-    ) {
-      return errorResponse("rr_call_in_flight", 503);
+    // Приоритет v3.1 (Блокеры №1, №2):
+    // 1) created + валидный URL
+    if (initStatus === "created" && isSafePaymentUrl(url)) {
+      return jsonResponse({
+        payment_url: url, order_id: externalId, reused: true,
+      });
     }
 
-    // C: operator resolution
+    // 2) operator resolution (allow_new_order уже не reuse — заказ terminal failed)
     if (reconStatus === "resolved") {
-      if (operatorResolution === "confirm_created" && url) {
+      if (operatorResolution === "confirm_created" && isSafePaymentUrl(url)) {
         return jsonResponse({
           payment_url: url, order_id: externalId, reused: true,
           source: "operator_confirm_created",
@@ -346,22 +400,19 @@ Deno.serve(async (req: Request) => {
       return errorResponse("rr_operator_pending", 503);
     }
 
-    // B: ambiguous upstream ждёт reconciler
-    if (upstreamOutcome === "unknown") {
-      return errorResponse("rr_reconciliation_pending", 503);
-    }
-
-    // A: recovery
+    // 3) recovery flow (Блокер №1: НЕ должно перехватываться rr_call_in_flight)
     if (localPersistFailed) {
       const recoveredUrl = rr.rr_payment_url_recovered as string | undefined;
       const recoveredReqId = rr.rr_request_id_recovered as string | null | undefined;
-      if (!recoveredUrl || recoveredUrl.length === 0) {
+      // Амандмент №8: recovered URL валидируется тем же helper.
+      if (!isSafePaymentUrl(recoveredUrl)) {
         await auditEvent(supabaseAdmin, externalId, "recovery_blocked_no_url", {
           correlation_id: correlationId,
+          reason: recoveredUrl ? "invalid_url" : "no_url",
         });
         return errorResponse("rr_recovery_pending", 503);
       }
-      const { error: finErr } = await callWithSingleRetry(async () =>
+      const { data: finData, error: finErr } = await callWithSingleRetry(async () =>
         await supabaseAdmin.rpc("rr_finalize_created_order", {
           _order_id: externalId,
           _payment_url: recoveredUrl,
@@ -381,6 +432,13 @@ Deno.serve(async (req: Request) => {
         });
         return errorResponse("local_state_unconfirmed", 500);
       }
+      // Typed-state check: expect finalized | already_created.
+      const finState = (finData as any)?.state as string | undefined;
+      if (finState !== "finalized" && finState !== "already_created") {
+        return await failClosedReread(
+          supabaseAdmin, externalId, correlationId, "recovery_finalize_state",
+        );
+      }
       await auditEvent(supabaseAdmin, externalId, "create_order_recovered", {
         correlation_id: correlationId,
       });
@@ -390,11 +448,24 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // D: обычный concurrency reuse
+    // 4) ambiguous → reconciliation pending
+    if (upstreamOutcome === "unknown") {
+      return errorResponse("rr_reconciliation_pending", 503);
+    }
+
+    // 5) pre-call marker всё ещё активен без пост-call outcome — call in-flight
+    if (
+      callState === "started" &&
+      initStatus !== "created" && initStatus !== "failed"
+    ) {
+      return errorResponse("rr_call_in_flight", 503);
+    }
+
+    // 6) concurrency happy-path poll
     const deadline = Date.now() + 15_000;
     let curUrl = url;
     let curStatus = initStatus;
-    while (Date.now() < deadline && (curStatus !== "created" || !curUrl)) {
+    while (Date.now() < deadline && (curStatus !== "created" || !isSafePaymentUrl(curUrl))) {
       await new Promise((r) => setTimeout(r, 400));
       const { data: pollOrder, error: pollErr } = await supabaseAdmin
         .from("orders_v2").select("meta").eq("id", externalId).maybeSingle();
@@ -416,13 +487,8 @@ Deno.serve(async (req: Request) => {
       if (pr.local_persist_failed === true || pr.local_persist_failed === "true") {
         return errorResponse("rr_recovery_pending", 503);
       }
-      if ((pr.upstream_call_state as string | undefined) === "started" &&
-          curStatus !== "created") {
-        // всё ещё call in flight у соседнего запроса — продолжаем poll.
-        continue;
-      }
     }
-    if (!curUrl) return errorResponse("rr_reuse_wait_timeout", 504);
+    if (!isSafePaymentUrl(curUrl)) return errorResponse("rr_reuse_wait_timeout", 504);
     return jsonResponse({ payment_url: curUrl, order_id: externalId, reused: true });
   }
 
@@ -441,7 +507,6 @@ Deno.serve(async (req: Request) => {
     related_order_id: externalId,
   });
   if (reqInsert.error) {
-    // Уникальное нарушение — приемлемо (идемпотентно): продолжаем.
     const msg = reqInsert.error.message || "";
     if (!/duplicate key|idempotency_key/i.test(msg)) {
       console.error(JSON.stringify({
@@ -453,12 +518,9 @@ Deno.serve(async (req: Request) => {
   }
 
   // 2. Pre-call durable marker — ОБЯЗАТЕЛЬНО ДО rrCreateOrder.
-  //    Гарантирует, что при любом дальнейшем сбое reuse RPC вернёт
-  //    именно этот заказ (без временных окон).
   const { data: callStartData, error: callStartErr } = await callWithSingleRetry(
     async () => await supabaseAdmin.rpc("rr_mark_call_started", {
-      _order_id: externalId,
-      _correlation_id: correlationId,
+      _order_id: externalId, _correlation_id: correlationId,
     }),
   );
   if (callStartErr) {
@@ -466,16 +528,16 @@ Deno.serve(async (req: Request) => {
       externalId, correlationId, "mark_call_started",
       null, null, null, callStartErr.message,
     );
-    // rrCreateOrder НЕ вызываем — банк не тронут.
     return errorResponse("persist_failed_pre_call", 503);
   }
   const callStartResult = (callStartData ?? {}) as Record<string, unknown>;
-  if (callStartResult.ok !== true) {
-    alertLocalStateUnconfirmed(
-      externalId, correlationId, "mark_call_started_result",
-      null, null, null, `unexpected_result:${JSON.stringify(callStartResult).slice(0, 100)}`,
+  // Блокер №4: строгая typed-state проверка. Продолжаем ТОЛЬКО при state='call_started'.
+  // Любой другой (terminal, already_started, произвольный) → fail-closed reread,
+  // rrCreateOrder НЕ вызывается.
+  if (callStartResult.ok !== true || callStartResult.state !== "call_started") {
+    return await failClosedReread(
+      supabaseAdmin, externalId, correlationId, "mark_call_started_state",
     );
-    return errorResponse("persist_failed_pre_call", 503);
   }
 
   const projectRef = (Deno.env.get("SUPABASE_URL") ?? "").match(
@@ -493,7 +555,7 @@ Deno.serve(async (req: Request) => {
 
   // 4. Классификация исхода.
   if (rrRes.outcomeClass === "upstream_rejected") {
-    const { error: rejErr } = await callWithSingleRetry(async () =>
+    const { data: rejData, error: rejErr } = await callWithSingleRetry(async () =>
       await supabaseAdmin.rpc("rr_finalize_order_rejected", {
         _order_id: externalId,
         _reason_code: rrRes.errorText ?? "rr_upstream_rejected",
@@ -511,11 +573,17 @@ Deno.serve(async (req: Request) => {
       });
       return errorResponse("local_state_unconfirmed", 500);
     }
+    const rejState = (rejData as any)?.state as string | undefined;
+    if (rejState !== "rejected" && rejState !== "already_rejected") {
+      return await failClosedReread(
+        supabaseAdmin, externalId, correlationId, "reject_finalize_state",
+      );
+    }
     return errorResponse("rr_create_order_rejected", 502);
   }
 
   if (rrRes.outcomeClass === "upstream_outcome_unknown") {
-    const { error: unkErr } = await callWithSingleRetry(async () =>
+    const { data: unkData, error: unkErr } = await callWithSingleRetry(async () =>
       await supabaseAdmin.rpc("rr_mark_upstream_unknown", {
         _order_id: externalId,
         _provider_request_id: rrRes.providerRequestId,
@@ -534,21 +602,34 @@ Deno.serve(async (req: Request) => {
       });
       return errorResponse("local_state_unconfirmed", 500);
     }
+    const unkState = (unkData as any)?.state as string | undefined;
+    if (unkState !== "unknown_marked" && unkState !== "already_unknown") {
+      return await failClosedReread(
+        supabaseAdmin, externalId, correlationId, "mark_unknown_state",
+      );
+    }
     return errorResponse("rr_upstream_unknown", 504);
   }
 
-  // upstream_created — payment_url валиден (adapter гарантирует).
+  // upstream_created — payment_url валиден (adapter гарантирует; дублируем check).
   const paymentUrl = rrRes.paymentUrl!;
+  if (!isSafePaymentUrl(paymentUrl)) {
+    alertLocalStateUnconfirmed(
+      externalId, correlationId, "adapter_returned_unsafe_url",
+      rrRes.failureKind, rrRes.status, rrRes.providerRequestId, "unsafe_url",
+    );
+    return await failClosedReread(
+      supabaseAdmin, externalId, correlationId, "unsafe_url",
+    );
+  }
   const providerRequestId = rrRes.providerRequestId;
 
-  const { error: finalizeErr } = await callWithSingleRetry(async () =>
+  const { data: finData, error: finalizeErr } = await callWithSingleRetry(async () =>
     await supabaseAdmin.rpc("rr_finalize_created_order", {
-      _order_id: externalId,
-      _payment_url: paymentUrl,
+      _order_id: externalId, _payment_url: paymentUrl,
       _rr_request_id: providerRequestId,
       _rr_status_raw: rrRes.rrStatusRaw ?? null,
-      _raw_last: redacted,
-      _correlation_id: correlationId,
+      _raw_last: redacted, _correlation_id: correlationId,
     })
   );
 
@@ -561,10 +642,9 @@ Deno.serve(async (req: Request) => {
       payment_url_present: true, error: finalizeErr.message,
     }));
 
-    const { error: markErr } = await callWithSingleRetry(async () =>
+    const { data: markData, error: markErr } = await callWithSingleRetry(async () =>
       await supabaseAdmin.rpc("rr_mark_local_persist_failed", {
-        _order_id: externalId,
-        _payment_url: paymentUrl,
+        _order_id: externalId, _payment_url: paymentUrl,
         _rr_request_id: providerRequestId,
         _error_text: finalizeErr.message.slice(0, 500),
       })
@@ -572,7 +652,8 @@ Deno.serve(async (req: Request) => {
 
     if (markErr) {
       // Ни canonical finalize, ни recovery marker не подтверждены.
-      // fail-closed: pre-call marker всё равно активен → reuse вернёт этот же заказ.
+      // Pre-call marker сохранён (upstream_call_state='started') — reuse вернёт этот заказ
+      // как rr_call_in_flight, пока reconciler/оператор не разрешит.
       alertLocalStateUnconfirmed(
         externalId, correlationId, "persist_failed_marker",
         rrRes.failureKind, rrRes.status, providerRequestId,
@@ -583,9 +664,20 @@ Deno.serve(async (req: Request) => {
       });
       return errorResponse("local_state_unconfirmed", 500);
     }
-
-    // marker durable записан.
+    const markState = (markData as any)?.state as string | undefined;
+    if (markState !== "persist_failed_marked" && markState !== "already_persist_failed") {
+      return await failClosedReread(
+        supabaseAdmin, externalId, correlationId, "persist_failed_marker_state",
+      );
+    }
     return errorResponse("local_persist_failed", 502);
+  }
+
+  const finState = (finData as any)?.state as string | undefined;
+  if (finState !== "finalized" && finState !== "already_created") {
+    return await failClosedReread(
+      supabaseAdmin, externalId, correlationId, "finalize_state",
+    );
   }
 
   return jsonResponse({

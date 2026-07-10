@@ -19293,6 +19293,18 @@ export type Database = {
         }
         Returns: Json
       }
+      rr_finalize_created_order_internal: {
+        Args: {
+          _correlation_id: string
+          _order_id: string
+          _payment_url: string
+          _raw_last: Json
+          _rr_request_id: string
+          _rr_status_raw: string
+          _source: string
+        }
+        Returns: Json
+      }
       rr_finalize_order_not_created: {
         Args: { _evidence: Json; _order_id: string }
         Returns: Json
