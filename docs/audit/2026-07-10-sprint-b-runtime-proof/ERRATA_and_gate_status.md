@@ -46,12 +46,27 @@
 Только после Gate A.2 PASS открывается Gate B (UI patch + public E2E + negative proofs v2).
 ## Gate A.1 v3 — статус после доставки
 
-Дата: 2026-07-10 20:41 UTC.
+Дата: 2026-07-10 20:41 UTC. **Superseded by v3.1.**
 
-- Миграция `202607102040_gate_a1_v3.sql` применена; runtime-артефакты в `gate_a1_v3/runtime_proof/`.
-- Edge `public-rr-installment-initiate` полностью переработан: pre-call durable marker, retry marker RPC, HTTP 500 `local_state_unconfirmed` при неподтверждённом durable state, аудит через `rr_insert_idempotent_audit_event`.
+- Миграция `20260710204120_*.sql` применена; runtime-артефакты в `gate_a1_v3/runtime_proof/`.
+- Edge `public-rr-installment-initiate` переработан: pre-call durable marker, retry marker RPC, HTTP 500 `local_state_unconfirmed`, аудит через `rr_insert_idempotent_audit_event`.
 - Adapter `_shared/rr/rr-adapter.ts`: пустой `RR_DOCUMENTED_REJECTION_CODES`, redacted `link`.
+- Обнаружены критические ошибки приоритета state machine (см. Gate A.1 v3.1).
 
-Открытые пункты для Gate A.2 см. `gate_a1_v3/README.md §Что вынесено в Gate A.2`.
+## Gate A.1 v3.1 — статус после доставки
 
-Общий статус: **Sprint B FAIL**, Sprint C **не открывать**, Gate B **BLOCKED**.
+Дата: 2026-07-10 21:14 UTC.
+
+- Миграция `20260710211440_*.sql` применена. Все затронутые RPC подтверждены runtime-артефактами в `gate_a1_v3_1/runtime_proof/`.
+- Блокеры №1, №2, №3, №4 закрыты (см. `gate_a1_v3_1/README.md`).
+- Блокер №5 (14 integration tests) — **PARTIAL**: SQL-контракт подтверждён runtime; полный edge-integration suite с fault-injection отложен до согласования механизма (амандмент №10 плана).
+- Обновлён `gate_a1/state_machine.md` — новая модель `upstream_call_state` и порядок reuse-веток.
+
+**Статусы:**
+- Gate A.1 v3.1 implementation: **PASS**
+- Gate A.1 v3.1 acceptance: **PARTIAL PASS** (SQL contract PASS, edge integration suite отложен)
+- Gate A.2: **BLOCKED**
+- Gate B: **BLOCKED**
+- Sprint B: **FAIL**
+- Sprint C: **не начинать**
+
