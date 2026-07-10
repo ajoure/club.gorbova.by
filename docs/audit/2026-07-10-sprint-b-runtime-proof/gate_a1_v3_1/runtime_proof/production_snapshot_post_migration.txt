@@ -1,0 +1,48 @@
+=== SNAPSHOT AT ===
+2026-07-10T21:15:28Z
+
+=== orders_v2 provider=rr count ===
+9
+
+=== orders_v2 provider=rr id, created_at, meta_rr_present ===
+008196f7-4e6b-421d-8bf2-f15177efd200|2026-07-10 08:54:43.350655+00|true
+02cef40c-f6df-456a-be0b-16490c72c7fd|2026-07-10 08:54:58.305762+00|true
+b55cd922-d00e-45e9-8a66-6e202781e31a|2026-07-10 08:54:58.308955+00|true
+f79099f0-9465-46e0-81d7-40ca98074399|2026-07-10 08:54:58.347275+00|true
+b64d1230-fb87-48d2-ad1c-c2892ece5f71|2026-07-10 08:54:58.381378+00|true
+d8c69937-4be5-457e-8db3-135ec89e7ee8|2026-07-10 08:54:58.456938+00|true
+64a4bb54-6e0b-4eda-a96a-9ad5b9e9d075|2026-07-10 08:56:38.204843+00|true
+e840d765-0aa9-4d06-b4b3-06aa1c192196|2026-07-10 08:56:55.666987+00|true
+4f112109-2fb0-4deb-ad7f-959cb629d1d6|2026-07-10 14:13:42.224405+00|true
+
+=== provider_events provider=rr count ===
+27
+
+=== provider_events provider=rr id, event_type, related_order_id, processed_at ===
+2523c384-8969-4629-acb0-9ec42ba280d4|webhook_notification_received|1aa66c5e-64ea-48b8-bfb4-64b7f4e4cf27|2026-07-10 08:22:15.799+00
+e4d4bf92-802b-4420-b4b8-1cb7fd0e147d|create_order_succeeded|b4761274-246b-4b3f-9679-c2c05732494e|2026-07-10 08:23:24.797+00
+8915df5b-cc0d-43d0-9f44-311903341111|create_order_succeeded|008196f7-4e6b-421d-8bf2-f15177efd200|2026-07-10 08:54:43.891+00
+c6b68743-b70f-42e8-b756-1ef2a5cb954c|create_order_succeeded|f79099f0-9465-46e0-81d7-40ca98074399|2026-07-10 08:54:58.802+00
+0ab6d74d-3c5a-4c36-8b28-0739b5913b74|create_order_succeeded|02cef40c-f6df-456a-be0b-16490c72c7fd|2026-07-10 08:54:58.805+00
+79394017-9761-4719-8c2d-eec9880748df|create_order_succeeded|b64d1230-fb87-48d2-ad1c-c2892ece5f71|2026-07-10 08:54:58.842+00
+3c06db84-9f23-43c7-8e89-6abc2c1c7bb7|create_order_succeeded|b55cd922-d00e-45e9-8a66-6e202781e31a|2026-07-10 08:54:58.899+00
+8921eb12-1156-403b-879f-23d7d7ad5c9e|create_order_succeeded|d8c69937-4be5-457e-8db3-135ec89e7ee8|2026-07-10 08:54:59.059+00
+d700633b-2557-4e21-b26a-f6b087c679d6|create_order_succeeded|64a4bb54-6e0b-4eda-a96a-9ad5b9e9d075|2026-07-10 08:56:38.694+00
+a969d823-6e55-4e3e-a32e-04e4bb38c36a|create_order_succeeded|e840d765-0aa9-4d06-b4b3-06aa1c192196|2026-07-10 08:56:56.121+00
+15bbe614-25e6-4648-ba20-68c8ae36c492|create_order_succeeded|4f112109-2fb0-4deb-ad7f-959cb629d1d6|2026-07-10 14:13:42.9+00
+ba16d80f-4add-4eff-82b5-23c29aca87db|webhook_notification_received|4f112109-2fb0-4deb-ad7f-959cb629d1d6|2026-07-10 14:14:04.316+00
+9f8023d4-9fba-4e36-9d7a-44ef7d235265|create_order_requested|f79099f0-9465-46e0-81d7-40ca98074399|
+dd27bcf4-2d42-4529-862e-91a338e2cf76|create_order_requested|b55cd922-d00e-45e9-8a66-6e202781e31a|
+c49e5f6a-d738-4ad7-9cef-7dcd89575c03|create_order_requested|b64d1230-fb87-48d2-ad1c-c2892ece5f71|
+d2e3bf1d-bd09-4236-92d4-b5d6b405936c|create_order_requested|d8c69937-4be5-457e-8db3-135ec89e7ee8|
+1e32764c-969b-4f05-9f7c-3b54b51388d9|create_order_requested|64a4bb54-6e0b-4eda-a96a-9ad5b9e9d075|
+8ed89f78-08d4-479a-99b8-064d0c6eab87|create_order_requested|e840d765-0aa9-4d06-b4b3-06aa1c192196|
+74ad75f6-a053-4008-a43d-3193407a1565|create_order_requested|4f112109-2fb0-4deb-ad7f-959cb629d1d6|
+fe475ba6-774c-44db-8ba3-f603578e5f43|webhook_bad_signature||
+6528f10a-c3e7-4f9f-8f1e-f8588d56b1e5|webhook_bad_signature||
+4013ec57-e2bf-4c5c-8e93-963bab84346d|webhook_bad_signature||
+ed42a4e9-fdf7-4f2d-a4eb-57108cb9ff59|webhook_bad_signature||
+9913594e-4532-4194-9848-b0ca5f2ef8f8|create_order_requested|008196f7-4e6b-421d-8bf2-f15177efd200|
+07f7c544-3fd5-4d73-88f3-351dea08c93e|webhook_unknown_order||
+22e4c935-c16f-4cb7-9369-e7ee7248d404|create_order_requested|b4761274-246b-4b3f-9679-c2c05732494e|
+02c7e775-54db-4acb-8ba4-4cbf4fcf08f3|create_order_requested|02cef40c-f6df-456a-be0b-16490c72c7fd|
