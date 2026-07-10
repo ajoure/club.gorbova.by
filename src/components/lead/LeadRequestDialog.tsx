@@ -19,6 +19,8 @@ import { TelegramCompactCard } from "@/components/telegram/TelegramCompactCard";
 import {
   useTelegramLinkStatus,
 } from "@/hooks/useTelegramLink";
+import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
+import { startBankInstallment } from "@/lib/startBankInstallment";
 
 interface LeadRequestDialogProps {
   open: boolean;
@@ -37,6 +39,13 @@ interface LeadRequestDialogProps {
   bankLinkUrl?: string;
   bankLinkLabel?: string;
   bankMessageHtml?: string;
+  /**
+   * Sprint B: если оффер настроен на runtime-провайдера (РР),
+   * submit ведёт в public-rr-installment-initiate и клиент редиректится
+   * на payment_url. Legacy external_link используется только как fallback
+   * при ошибке runtime.
+   */
+  bankInstallmentRuntime?: BankInstallmentRuntime;
 }
 
 type Step = "auth" | "details" | "telegram" | "success";
