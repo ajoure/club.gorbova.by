@@ -623,10 +623,10 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   if (isMobile) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {selected ? (
           <>
-            <div className="p-2 border-b flex items-center gap-2">
+            <div className="p-2 border-b flex items-center gap-2 shrink-0">
               <Button variant="ghost" size="icon" onClick={() => setSelectedKey(null)}>
                 <ArrowLeft className="h-4 w-4" />
               </Button>
@@ -635,7 +635,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 <SourceBadge key={s} source={s} label={selected.channels[s]?.sourceRow.sourceLabel ?? null} />
               ))}
             </div>
-            <div className="flex-1 min-h-0">{rightPanel}</div>
+            <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden">{rightPanel}</div>
           </>
         ) : (
           dialogList

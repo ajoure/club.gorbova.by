@@ -1263,7 +1263,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                 {dialogListContent}
               </div>
             ) : (
-              <div className="flex flex-col h-full min-h-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-x-hidden">
+              <div className="flex flex-col h-full max-h-full min-h-0 bg-card/60 backdrop-blur-xl border border-border/30 shadow-xl overflow-hidden">
                 {chatPanelContent}
               </div>
             )}
