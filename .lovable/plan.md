@@ -1,608 +1,437 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-В целом направление уже правильное: это первый спринт, где начинается **реальная интеграция**, а не только UI. Но есть несколько архитектурных моментов, которые сейчас лучше исправить, иначе потом придется переделывать Sprint C и D.
+## **1. Добавить защиту от конкурентного двойного создания заказа**
+
+Текущая схема:
+
+```txt
+SELECT reusable pending order
+→ если не найден — INSERT orders_v2
+```
+
+не защищает от двух одновременных запросов. Оба могут не увидеть заказ и создать по одной заявке РР.
+
+До включения runtime нужен транзакционный guard. Предпочтительный вариант:
+
+```txt
+RPC rr_get_or_create_pending_order(...)
+```
+
+RPC должна в одной транзакции:
+
+1. Получить advisory lock по нормализованному ключу заявки.
+2. Повторно найти reusable order.
+3. Вернуть существующий заказ либо создать ровно один новый.
+4. Возвращать признак `created | reused`.
+
+Ключ:
+
+```txt
+provider='rr'
++ tariff_offer_id
++ user_id либо normalized contact identity
++ временное окно
+```
+
+Нельзя полагаться только на rate limit: он ограничивает частоту, но не обеспечивает идемпотентность при параллельных запросах.
+
+---
+
+## **2. Уточнить нормализацию телефона**
+
+Формулировка:
+
+```txt
+только цифры (+ ведущий '+', отбрасываем)
+```
+
+неоднозначна.
+
+Зафиксировать канон:
+
+```txt
+phone_norm = только цифры;
+пробелы, скобки, дефисы и ведущий «+» удаляются;
+допустимая длина — согласованный диапазон, например 9–15 цифр.
+```
+
+Исходный телефон можно хранить для операционной работы, но сравнение и rate limit выполняются только по `phone_norm`.
+
+---
+
+## **3. Rate limit должен учитывать несколько независимых измерений**
+
+Один hash от:
+
+```txt
+offer_id | phone | email | ip
+```
+
+позволит обходить лимит сменой любого одного значения.
+
+Минимально проверять отдельные buckets:
+
+```txt
+rr_initiate:ip:<hash(ip)>
+rr_initiate:contact:<hash(phone_norm|email_norm)>
+rr_initiate:offer_contact:<hash(offer_id|phone_norm|email_norm)>
+```
+
+Например:
+
+- IP: согласованный предел в минуту;
+- контакт: 5 запросов в минуту;
+- оффер + контакт: 5 запросов в минуту.
+
+Конкретные значения можно оставить мягкими, но защита должна быть устойчивой.
+
+---
+
+## **4. Укрепить SECURITY DEFINER RPC**
+
+Для `rr_public_rate_limit_hit` и транзакционной RPC обязательно:
+
+```sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+```
+
+Также:
+
+```txt
+REVOKE ALL ON FUNCTION ... FROM PUBLIC;
+REVOKE ALL ON FUNCTION ... FROM anon;
+REVOKE ALL ON FUNCTION ... FROM authenticated;
+GRANT EXECUTE ON FUNCTION ... TO service_role;
+```
+
+Таблица `rr_public_rate_limits`:
+
+- без клиентских политик;
+- без grants для `anon` и `authenticated`;
+- с CHECK `count >= 0`;
+- предусмотреть периодическую очистку старых buckets либо допустимый cleanup при очередном RPC-вызове.
 
 ---
 
 
 
-# **1. Не создавать отдельную таблицу**
+## **5. Failed order нельзя оставлять семантически обычным**
 
-`rr_installment_requests`
+`pending`
 
-Это самая большая правка.
+При ошибке `createOrder` статус может остаться существующим `pending`, если новый статус вводить нельзя, но в `meta` должны быть однозначные признаки:
 
-Сейчас предлагается:
-
-```
-rr_installment_requests
-```
-
-Я бы **не создавал новую сущность**.
-
-У вас уже есть:
-
-- `orders_v2`
-- `provider_events`
-- `payments_v2`
-- CRM
-- access pipeline
-
-Новая таблица станет вторым источником правды.
-
-Лучше:
-
-- `orders_v2` — главный объект заявки;
-- `provider_events` — вся история общения с РР;
-- временные данные РР хранить в `orders_v2.meta.rr`.
-
-Тогда Sprint C просто продолжит этот же заказ.
-
-Иначе потом придется синхронизировать:
-
-```
-rr_installment_requests
-↓
-
-orders_v2
-↓
-
-payments_v2
-```
-
-Это лишняя цепочка.
-
----
-
-
-
-# **2. Не создавать**
-
-`rr_live_*`
-
-Сейчас предлагается
-
-```
-rr_live_<uuid>
-```
-
-Лучше сразу использовать
-
-```
-orders_v2.id
-```
-
-или
-
-```
-orders_v2.public_token
-```
-
-как `external_id`.
-
-Тогда:
-
-```
-РР
-↓
-
-external_id
-
-↓
-
-orders_v2
-```
-
-находится напрямую.
-
-Не нужны никакие дополнительные таблицы поиска.
-
----
-
-
-
-
-
-# **3.**
-
-`orders_v2` **создавать сразу правильно**
-
-Не
-
-```
-pending_installment
-```
-
-если такого статуса нет.
-
-Лучше оставить существующий статус.
-
-Например
-
-```
-pending
-```
-
-а различать поток по
-
-```
-meta.flow="rr_installment"
-```
-
-или
-
-```
-payment_provider="rr"
-```
-
-Не стоит плодить новые статусы, если они отличаются только способом оплаты.
-
----
-
-
-
-# **4. Notification URL не должен быть**
-
-`rr-notification-noop`
-
-Это временное решение потом придется выбрасывать.
-
-Лучше сразу сделать
-
-```
-rr-webhook
-```
-
-но внутри него сейчас выполнить только:
-
-```
-verify signature
-
-↓
-
-provider_events
-
-↓
-
-orders_v2.meta.rr.last_notification
-
-↓
-
-return 200
-```
-
-Без:
-
-- payments
-- access
-- CRM
-
-Тогда Sprint C просто расширит существующую функцию.
-
-Не придется менять callback URL у РР.
-
----
-
-# **5. Provider events нужно использовать уже сейчас**
-
-После успешного createOrder обязательно писать
-
-```
-provider_events
-
-provider = rr
-
-event = create_order_requested
-
-event = create_order_succeeded
-```
-
-Это уже ваш стандарт проекта.
-
-Не надо откладывать до Sprint C.
-
----
-
-# **6. Не использовать test loader**
-
-Сейчас написано
-
-```
-loadRRTestConfig
-```
-
-Лучше уже сейчас использовать
-
-```
-loadRRConfig()
-```
-
-которая сама смотрит
-
-```
-mode=test
-
-или
-
-mode=battle
-```
-
-из карточки интеграции.
-
-Иначе потом снова придется переписывать.
-
----
-
-# **7. Не нужен rate limit “в памяти”**
-
-Edge Functions масштабируются.
-
-In-memory rate limit работать надежно не будет.
-
-Лучше:
-
-- использовать существующий limiter проекта;
-- либо пока вообще убрать из Sprint B.
-
----
-
-# **8. Не передавать amount в rrCreateOrder вручную**
-
-Источник истины только один:
-
-```
-tariff_offer_id
-
-↓
-
-tariff_offers
-
-↓
-
-amount
-
-currency
-
-product
-
-tariff
-```
-
-Даже внутри edge.
-
-Никаких ручных вычислений.
-
----
-
-# **9. Fallback делать только если createOrder не создался**
-
-Сейчас написано
-
-```
-если ошибка
-
-↓
-
-external_link
-```
-
-Нужно уточнить.
-
-Правило:
-
-```
-если createOrder вернул payment_url
-
-↓
-
-только payment_url
-```
-
-Если
-
-```
-RR недоступен
-
-или
-
-ошибка API
-
-↓
-
-fallback external_link
-```
-
-Нельзя показывать обе ссылки одновременно.
-
----
-
-# **10. LeadRequestDialog не должен знать ничего про RR**
-
-Лучше сделать небольшой resolver.
-
-Сейчас получается:
-
-```
-LeadRequestDialog
-
-↓
-
-if rr_runtime ...
-
-↓
-
-edge
-
-↓
-
-redirect
-```
-
-Лучше:
-
-```
-LeadRequestDialog
-
-↓
-
-startBankInstallment()
-
-↓
-
-resolver
-
-↓
-
-legacy
-
-или
-
-runtime RR
-```
-
-Тогда потом можно подключить другого кредитного провайдера без переписывания UI.
-
----
-
-# **11. Заказ должен быть идемпотентным**
-
-Добавить обязательный guard.
-
-Если пользователь:
-
-```
-дважды нажал кнопку
-
-или
-
-обновил страницу
-```
-
-то не создавать второй
-
-```
-orders_v2
-```
-
-Проверять существующий незавершенный заказ для этого `tariff_offer_id` и контакта (или использовать идемпотентный токен), чтобы возвращать уже созданную заявку.
-
----
-
-# **12. Это уже не Sprint B, а начало мастер-плана**
-
-В конце добавить явный переход:
-
-```
-Sprint B
-↓
-createOrder
-↓
-orders_v2 (pending)
-↓
-provider_events
-↓
-redirect payment_url
-
-Sprint C
-↓
-rr-webhook
-↓
-payments_v2
-↓
-grant-access-for-order
-
-Sprint D
-↓
-CRM
-↓
-ручные платежи
-↓
-статистика
-↓
-финальная интеграция
-```
-
-Так подрядчик не потеряет общую архитектуру и не начнет изобретать параллельные сущности.
-
-Эти правки сохраняют основной замысел Sprint B, но делают его продолжением единого master-плана без появления лишних таблиц, временных endpoint’ов и повторной переработки в следующих спринтах.
-
-&nbsp;
-
-План: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов
-
-## Цель
-
-Включить публичный flow «Рассрочка банка (РР)» ровно на одном согласованном `tariff_offer_id` тарифа «Бухгалтер». Клиент по кнопке в лендинге получает `payment_url` от РР, но:
-
-- платёж не проводится нашей системой,
-- `payments_v2` не создаётся,
-- доступы, entitlements, CRM success-flow, уведомления об успехе — не запускаются,
-- боевой webhook (`rr-webhook`) не создаётся,
-- остальные два тарифа «Бухгалтера» продолжают работать через legacy `external_link`.
-
-Runtime включается флагом на конкретном оффере; всё остальное остаётся без изменений.
-
-## Границы (жёсткие)
-
-- Source of truth платежа — `tariff_offer_id`. Сервер сам читает `tariff_offers` (amount, currency, tariff_id, product_id).
-- Клиент передаёт только `tariff_offer_id` + минимальные PII из формы заявки (имя, телефон, email, comment) — сумма/валюта/продукт с клиента НЕ принимаются.
-- Создаётся только заказ в промежуточном статусе (`orders_v2.status = 'pending_installment'` или эквивалент `pending`) + запись в отдельной таблице заявок РР.
-- `payments_v2` НЕ создаётся.
-- `grant-access-for-order`, `entitlements`, telegram-invite, CRM success-flow, notification success — НЕ вызываются.
-- `rr-webhook` (боевой) — НЕ создаётся в этом спринте.
-- Никаких изменений в общих payment-функциях (`_shared/create-payment-checkout.ts`, `public-checkout`, `bepaid-webhook`, `admin-create-public-link` и т.п.).
-- Все две тарифа «Бухгалтера» без флага runtime — работают ровно как сейчас (legacy `external_link` через `LeadRequestDialog`).
-
-## Diagnose (текущее состояние)
-
-- В админке уже есть `offer_type='bank_installment'` с `meta.bank_installment.{external_link,link_label,message_html}`.
-- Публичные лендинги (`UniversalPricingSection`, `TariffPricing`, `ProductLanding`, `SitePageBySlug`) для этого типа открывают `LeadRequestDialog` с `bankLinkUrl` из `readBankInstallmentMeta`. Ссылка — статический legacy `external_link` (default `pay.rrllc.ru/...`).
-- Есть готовый RR-адаптер: `_shared/rr/rr-adapter.ts` (`rrCreateOrder`), `_shared/rr/rr-config.ts` (`loadRRTestConfig`), test-функции `rr-test-create-order`, `rr-test-get-status`, `rr-test-simulate-webhook`, таблица `rr_test_ledger`. Прод-конфига РР ещё нет.
-- Sprint A: `bank_installment` отделён от bePaid/Stripe и внутренней рассрочки в UI, data-fix применён точечно на оффере «Бухгалтера».
-
-## Design (что добавляем)
-
-### 1. Флаг runtime на оффере (add-only, без новых enum)
-
-Runtime включается наличием в `tariff_offers.meta.bank_installment.rr_runtime` объекта:
-
-```
+```json
 {
-  "enabled": true,
-  "mode": "initiate_only",     // фиксируем строкой, чтобы позже расширяться без миграции
-  "provider": "rr"
+  "flow": "rr_installment",
+  "rr": {
+    "initiation_status": "failed",
+    "error_code": "...",
+    "error_at": "..."
+  }
 }
 ```
 
-Только офферы с `meta.bank_installment.rr_runtime.enabled === true` идут в новый flow. Остальные `bank_installment` офферы (включая два других тарифа «Бухгалтера») продолжают открывать `external_link`.
+Успешный заказ:
 
-Data-fix — руками одному согласованному `tariff_offer_id` тарифа «Бухгалтер». Отдельной миграции схемы не требуется.
-
-### 2. Новая таблица заявок РР (публичный слой)
-
-`public.rr_installment_requests` — изолирована от `payments_v2`, `installment_payments`, `rr_test_ledger`.
-
-Поля (только доменные):
-
-- `tariff_offer_id uuid not null`
-- `tariff_id uuid`, `product_id uuid` (резолвится сервером из оффера, для аналитики)
-- `order_v2_id uuid` (ссылка на промежуточный `orders_v2`)
-- `external_id text not null unique` (`rr_live_<uuid>`; префикс отделяет от `rr_test_`)
-- `amount_minor int not null`, `currency text not null`
-- `status text not null` — `pending | rr_created | rr_error`
-- `rr_request_id text`, `rr_status_raw text`, `payment_url text`
-- `contact_name text`, `contact_phone text`, `contact_email text`, `comment text`
-- `user_id uuid null` (если публично залогинен)
-- `correlation_id uuid not null`
-- `raw_last jsonb` (redacted-ответ РР через `redactRRResponse`)
-- `error_text text`
-
-Grants + RLS:
-
-- `GRANT SELECT, INSERT, UPDATE ON ... TO authenticated;`
-- `GRANT ALL ... TO service_role;`
-- НЕТ `GRANT` для `anon` (пишет только edge с service role).
-- RLS: `SELECT/UPDATE` — только `has_role(auth.uid(),'admin'|'superadmin')`; `INSERT` — запрещён клиенту (только через service role в edge). Никаких публичных policy.
-
-### 3. Промежуточный заказ в `orders_v2`
-
-Создаётся ровно один `orders_v2` через service role:
-
-- `status = 'pending_installment'` (используем уже существующий статус `pending`, если `pending_installment` не в enum — фиксируем строку в `meta.flow='rr_installment_initiate'`),
-- `amount`, `currency`, `tariff_id`, `product_id`, `tariff_offer_id` — из оффера,
-- `meta`:
-  ```
-  {
-    "flow": "rr_installment_initiate",
-    "rr": { "external_id": "...", "correlation_id": "...", "runtime": "sprintB" },
-    "grant_access_skip": true,
-    "notification_skip": true,
-    "crm_success_skip": true
+```json
+{
+  "rr": {
+    "initiation_status": "created",
+    "payment_url": "...",
+    "external_id": "..."
   }
-  ```
-- НЕ вызывать `grant-access-for-order`, НЕ пушить в CRM success, НЕ дергать telegram-invite/entitlements.
+}
+```
 
-### 4. Новая edge-функция `public-rr-installment-initiate`
+Reuse допускается только при:
 
-`supabase/functions/public-rr-installment-initiate/index.ts`, `verify_jwt = false` (публичный вызов из лендинга; auth опционален — если есть JWT, пишем `user_id`).
+```txt
+initiation_status='created'
+payment_url непустой
+error отсутствует
+```
 
-Логика:
+Failed order не возвращать клиенту как успешный и не передавать в будущий Sprint C как активную заявку.
 
-1. CORS + rate-limit (по IP и по `tariff_offer_id`, простая проверка через существующие механики или временная in-memory защита — минимально: 1 запрос / 10 сек с IP).
-2. Валидация тела (zod): `tariff_offer_id (uuid)`, `contact_name (1..255)`, `contact_phone`, `contact_email (email)`, `comment (opt, <=2000)`, `honeypot (opt)`.
-3. Резолв оффера через service role:
-  - `tariff_offers` join `tariffs`, `products_v2`;
-  - guard: `offer_type='bank_installment'` AND `meta->bank_installment->rr_runtime->>'enabled' = 'true'` AND `meta->bank_installment->rr_runtime->>'mode' = 'initiate_only'` AND `is_active`;
-  - guard: тариф/продукт активны;
-  - иначе → `403 rr_runtime_disabled`.
-4. Загрузка конфига РР: сейчас используем `loadRRTestConfig` (mode=`test`), т.к. `initiate_only` подразумевает test-эндпоинт РР без списаний. Если в дальнейшем понадобится прод, добавим loader отдельно — вне Sprint B.
-5. Создать `orders_v2` (промежуточный).
-6. Вставить `rr_installment_requests` (`status='pending'`).
-7. Вызвать `rrCreateOrder({ externalId: 'rr_live_<uuid>' , amountMinor, currency, notificationUrl: <публичный URL функции-заглушки rr-notification-noop, чтобы РР не звонил в чувствительные функции>, correlationId })`.
-8. По ответу РР:
-  - ok → `rr_installment_requests.status='rr_created'`, `payment_url`, `raw_last`; `orders_v2.meta.rr.payment_url=...`; ответ `{ payment_url }`.
-  - !ok → `status='rr_error'`, `error_text`, `orders_v2.meta.rr.error=...`; ответ `502 rr_error`.
-9. Аудит-лог через существующий механизм (`audit_logs` или структурированный `console.log` по стандарту edge-functions).
+---
 
-Явно НЕ делаем: не пишем в `payments_v2`, не пишем в `installment_payments`, не трогаем `rr_test_ledger` (это test-функции), не вызываем `grant-access-for-order`.
 
-### 5. Notification URL (заглушка)
 
-`supabase/functions/rr-notification-noop/index.ts`, `verify_jwt=false`:
+## **6. Не записывать чувствительные PII в**
 
-- принимает POST от РР,
-- НЕ обновляет `orders_v2`, НЕ выдаёт доступы,
-- пишет полученный payload (redacted) в `rr_installment_requests.raw_last` по `external_id` (для диагностики),
-- возвращает `200 ok`.
+`provider_events`
 
-Это временный приёмник до боевого `rr-webhook` (Sprint C).
+Правильно, что имя, телефон, email и комментарий не входят в payload событий.
 
-### 6. Клиент (UI)
+Для `orders_v2.meta.rr.contact` дополнительно подтвердить:
 
-Публичные точки: `UniversalPricingSection`, `TariffPricing`, `ProductLanding`, `SitePageBySlug`.
+- комментарий ограничен по длине;
+- HTML удаляется или хранится как plain text;
+- данные не попадают в `console.log`;
+- edge response не возвращает PII;
+- ошибки РР проходят redaction;
+- `provider_events` содержит только технические идентификаторы и статусы.
 
-Изменение: в `LeadRequestDialog` для `bank_installment` при наличии `offer.meta.bank_installment.rr_runtime.enabled === true` вместо открытия `bankLinkUrl` — вызывать edge `public-rr-installment-initiate` с формы (имя/телефон/email/комментарий) и:
+---
 
-- на success — `window.location.href = payment_url` (или показать кнопку «Перейти к оплате»),
-- на error — тост «Не удалось инициировать заявку, попробуйте ещё раз или воспользуйтесь резервной ссылкой», плюс fallback-кнопка на legacy `external_link` (если он есть у оффера).
+## **7. Идемпотентность webhook — использовать hash подписи**
 
-Для офферов без `rr_runtime.enabled` — поведение НЕ меняется (legacy `external_link` через `readBankInstallmentMeta`).
+Не хранить полную подпись в `idempotency_key`.
 
-Feature-detection делается локально в компоненте — новых глобальных фич-флагов не вводим.
+Вместо:
 
-## Dry run
+```txt
+external_id + newStatus + sign
+```
 
-1. В preview открыть лендинг тарифа «Бухгалтер» → у согласованного оффера кнопка ведёт в диалог заявки.
-2. Заполнить форму → edge вернёт `payment_url` от РР test-эндпоинта.
-3. Проверить в БД: появился `orders_v2` в `pending_installment` с `meta.flow='rr_installment_initiate'`, появилась запись в `rr_installment_requests` (`status='rr_created'`), в `payments_v2` — ничего, `installment_payments` — ничего, `entitlements`/`telegram_access_grants` — ничего.
-4. У остальных двух тарифов «Бухгалтера» — старый flow с `external_link` работает как раньше.
-5. `rr-notification-noop` при внешнем POST-е обновляет `raw_last` и не трогает заказ.
+использовать:
 
-## Execute (порядок реализации в build mode)
+```txt
+rr:<external_id>:<status_raw>:<sign_hash_short>
+```
 
-1. Миграция: таблица `rr_installment_requests` + GRANTs + RLS (только admin/superadmin читают; INSERT только через service role).
-2. Edge: `public-rr-installment-initiate` + `rr-notification-noop` (в `supabase/functions/*`, автодеплой).
-3. UI: доработка `LeadRequestDialog` (или тонкий адаптер вокруг него) — детект `rr_runtime.enabled` и вызов edge.
-4. Data-fix (после подтверждения admin): в согласованном `tariff_offer_id` тарифа «Бухгалтер» проставить `meta.bank_installment.rr_runtime = { enabled:true, mode:'initiate_only', provider:'rr' }`.
+Полная подпись не должна попадать в:
 
-## Verify (DoD)
+- `provider_events`;
+- `orders_v2.meta`;
+- `integration_sync_logs`;
+- console logs.
 
-- Регрессия UI Sprint A: `OfferRowCompact` не показывает фиктивную разбивку — не сломано.
-- `SELECT count(*) FROM payments_v2 WHERE order_id IN (SELECT id FROM orders_v2 WHERE meta->>'flow'='rr_installment_initiate');` → 0.
-- `SELECT count(*) FROM installment_payments WHERE order_id IN (...);` → 0.
-- `SELECT count(*) FROM entitlements WHERE order_id IN (...);` → 0.
-- `SELECT count(*) FROM telegram_access_grants WHERE order_id IN (...);` → 0.
-- В `rr_installment_requests` появляются записи только для одного включённого оффера; у двух других офферов «Бухгалтера» — 0 записей и работает legacy `external_link`.
-- `public-checkout`, `_shared/create-payment-checkout.ts`, `bepaid-webhook`, `admin-create-public-link` — diff пустой.
-- `rr-notification-noop` не изменяет `orders_v2.status` и не выдаёт доступов.
-- Пароль preview-admin используется только для ручной проверки; никаких секретов в коде.
+---
 
-## Что НЕ делаем в Sprint B
+## **8. Bad-signature event не должен создавать конфликт с неизвестным заказом**
 
-- Не создаём `rr-webhook` (боевой обработчик успеха).
-- Не переводим `orders_v2` в `paid` по инициации.
-- Не выдаём доступы, не шлём notifications, не пушим CRM success.
-- Не меняем существующие payment-функции и `_shared/create-payment-checkout.ts`.
-- Не меняем поведение офферов без флага runtime.
-- Не расширяем enum'ы (`offer_type`, `payment_method`, `payment_plan_type`).
-- Не трогаем `rr_test_ledger` и test-функции РР.
+Для невалидной подписи порядок должен быть:
+
+```txt
+получить минимальные технические поля
+→ проверить подпись
+→ при invalid вернуть 401
+→ записать redacted security event/log
+→ НЕ читать и НЕ обновлять order
+```
+
+Если `provider_events` требует обязательной связи с заказом, bad signature писать в безопасный технический лог, а не создавать фиктивную связь.
+
+---
+
+## **9. Уточнить поведение неизвестного заказа**
+
+После валидной подписи, но при неизвестном `external_id`:
+
+```txt
+HTTP 200
+ignored='unknown_order'
+никаких INSERT/UPDATE в orders_v2/payments_v2
+```
+
+Разрешен один redacted `provider_event` или технический лог, если схема позволяет событие без заказа.
+
+---
+
+## **10. Исправить формулировку про остальные офферы**
+
+В E2E написано:
+
+```txt
+2-й и 3-й офферы тарифа «Бухгалтер»
+```
+
+Правильно:
+
+```txt
+офферы двух остальных тарифов продукта:
+- «Главный бухгалтер»;
+- «Бизнес-леди».
+```
+
+Они должны продолжать работать через legacy `external_link`.
+
+---
+
+## **11. Data-fix выполнять последним и иметь rollback**
+
+До включения runtime:
+
+1. Развернуть migration/RPC.
+2. Развернуть hardened edge-функции.
+3. Проверить функции напрямую в preview на оффере без runtime.
+4. Снять полный backup `meta` согласованного оффера.
+5. Только затем применить `jsonb_set`.
+
+В отчет включить rollback:
+
+```sql
+UPDATE tariff_offers
+SET meta = <полный сохраненный BEFORE meta>
+WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74';
+```
+
+Отключение runtime должно быть возможно также быстрым add-only merge:
+
+```json
+{
+  "enabled": false,
+  "provider": "rr",
+  "mode": "initiate_only"
+}
+```
+
+Legacy `external_link` при этом остается рабочим.
+
+---
+
+## **12. Расширить E2E proof негативными сценариями**
+
+Кроме happy path и reuse проверить:
+
+```txt
+- другой контакт → новый order;
+- тот же email с другим user_id → старой заявкой не переиспользуется;
+- отсутствующий/неактивный offer → 403/404;
+- offer без rr_runtime.enabled → rr_runtime_disabled;
+- подмена amount/currency в request игнорируется или отклоняется;
+- honeypot заполнен → отказ без создания order;
+- rate limit → 429 без нового order и без вызова РР;
+- ошибка createOrder → failed meta, без payment_url и без reuse;
+- CORS preflight работает.
+```
+
+---
+
+## **13. Проверить отсутствие бизнес-сайд-эффектов не только по count**
+
+Снять before/after:
+
+```txt
+payments_v2
+entitlements
+access_grant_ledger
+telegram_access_grants
+domain_events
+CRM/deal logs
+success notifications
+```
+
+Дополнительно доказать:
+
+```txt
+grant-access-for-order не вызывался;
+CRM success-stage не менялся;
+успешные email/Telegram-уведомления не отправлялись.
+```
+
+---
+
+## **14. Формат итогового отчета**
+
+```txt
+Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов
+```
+
+В отчете отдельно разделить:
+
+```txt
+1. Изменения кода и БД
+2. Data-fix одного оффера
+3. Happy-path proof
+4. Idempotency/concurrency proof
+5. Security и negative proof
+6. No-side-effects proof
+7. Legacy proof двух остальных тарифов
+8. Rollback
+9. Что остается для Sprint C
+```
+
+После этих дополнений план можно выполнять. Sprint C не начинать до полного E2E, включая конкурентную идемпотентность, rate limit и подтверждение отсутствия платежей, доступов и CRM success-flow.
+
+&nbsp;
+
+План: Sprint B — hardening, data-fix и E2E runtime proof
+
+## 0. Проверка оффера (SQL, до изменений)
+
+Оффер `15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74` подтверждён:
+
+- `offer_type='bank_installment'`, `is_active=true`
+- `amount=1650.00`, `currency='BYN'` (продуктовая валюта)
+- Тариф `Бухгалтер`, продукт `Ценный бухгалтер | 1 ступень 2.0`
+- `meta.bank_installment` уже содержит `external_link`, `link_label`, `message_html`, `rr_mode`, `installment_provider`, `currency` — эти ключи трогать нельзя.
+
+## 1. Migration 1 — durable rate limit + hardening infra
+
+Создать `public.rr_public_rate_limits`:
+
+- `bucket_key text primary key` — `rr_initiate:<sha256(offer_id|phone_norm|email_norm|ip)>`
+- `window_started_at timestamptz`, `count int`, `updated_at timestamptz`
+- GRANT только `service_role`; RLS enabled, политик нет.
+- RPC `rr_public_rate_limit_hit(_key text, _window_seconds int, _max int) returns boolean` (SECURITY DEFINER) — upsert-инкремент в окне; возвращает true если лимит не превышен.
+
+## 2. Правка `public-rr-installment-initiate` (hardening)
+
+1. **Нормализация PII**: `email = lower/trim`; `phone_norm = только цифры (+ ведущий '+', отбрасываем)`; длина/формат валидируются.
+2. **Идемпотентность (пересобрать правило)**: pending заказ переиспользуется только если ВСЕ выполнено:
+  - тот же `offer_id`,
+  - `status='pending'` AND `provider='rr'` AND `meta.flow='rr_installment'`,
+  - `meta.rr.payment_url` не пуст,
+  - `meta.rr.error` отсутствует,
+  - `user_id` совпадает (оба NULL или равны),
+  - Совпадает нормализованный email ИЛИ нормализованный телефон (при наличии обоих — оба),
+  - `created_at >= now() - interval '30 minutes'`.
+  Иначе — создаём новый.
+3. **Порядок операций**: pending order → `create_order_requested` event → `rrCreateOrder` → success: сохранить `payment_url` в meta + `create_order_succeeded`; fail: пометить `meta.rr.error`, `create_order_failed`, вернуть 502 (заказ остаётся pending, но с флагом error — не переиспользуется reuse-логикой).
+4. **Rate limit**: перед созданием заказа — вызов RPC `rr_public_rate_limit_hit` с ключом от `(offer|phone_norm|email_norm|ip)` (окно 60 сек, макс 5). Отказ → 429.
+5. **PII redaction**: `provider_events.payload` не содержит name/phone/email/comment (уже так); в `orders_v2.meta.rr.contact` — оставляем (нужно для операционной работы, доступ только через RLS).
+6. **CORS**: origin оставить `*` для paylink-совместимости лендингов на кастомных доменах (нельзя ограничить без потери работоспособности lovable.app превью + кастомных доменов); честно зафиксировать в отчёте.
+
+## 3. Правка `rr-webhook` (guard-ы)
+
+Ужесточить фильтр заказа:
+
+- `order.provider = 'rr'` AND `meta.flow = 'rr_installment'` AND `id = payload.id`;
+- иначе `200 { ignored: 'not_rr_installment' }` без побочных эффектов;
+- неизвестный `external_id` → `200 { ignored: 'unknown_order' }`, никаких INSERT в orders_v2;
+- bad signature → 401 + `webhook_bad_signature` event;
+- duplicate по `(external_id, newStatus, sign)` → `200 { duplicate: true }` без обновления meta;
+- idempotency_key событий уже уникален — сохраняется.
+
+## 4. Migration 2 — add-only merge `rr_runtime` на согласованном оффере
+
+Один точечный UPDATE с `jsonb_set` через `meta.bank_installment.rr_runtime`:
+
+```
+UPDATE tariff_offers
+SET meta = jsonb_set(meta, '{bank_installment,rr_runtime}',
+      '{"enabled":true,"provider":"rr","mode":"initiate_only"}'::jsonb, true)
+WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74'
+  AND offer_type = 'bank_installment' AND is_active
+  AND (meta->'bank_installment'->>'external_link') IS NOT NULL;
+```
+
+Все прочие ключи `meta.bank_installment.*` сохраняются.
+
+## 5. E2E runtime proof
+
+Playwright по `https://gorbova.by/cb`:
+
+1. Клик на тариф «Бухгалтер» → диалог лида;
+2. Заполнить форму, submit → перехватить сеть на `public-rr-installment-initiate`;
+3. Проверить `payment_url` в ответе, редирект на `pay.rrllc.ru`;
+4. Повторный submit того же контакта → `reused=true`, тот же `order_id`;
+5. SQL-снимки: `orders_v2` (создан pending, provider='rr', meta.flow='rr_installment', amount=1650, currency=BYN, payment_url в meta.rr); `provider_events` (`create_order_requested` + `create_order_succeeded`); `payments_v2` — 0 записей; `entitlements`, `access_grant_ledger` — без изменений;
+6. Inert webhook — 4 сценария curl через `supabase--curl_edge_functions`: valid, duplicate, bad signature, unknown order;
+7. Проверить, что 2-й и 3-й офферы тарифа «Бухгалтер» продолжают открывать `external_link`.
+
+## Итоговый заголовок отчёта
+
+«Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов».
+
+## DoD
+
+- Оба edge deployed;
+- Rate-limit таблица + RPC развёрнуты;
+- Data-fix применён точечно, `external_link` не затронут;
+- E2E проведён, screenshots + SQL-снимки в отчёте;
+- Sprint C не начат.
