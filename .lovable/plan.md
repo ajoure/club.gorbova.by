@@ -1,437 +1,415 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-## **1. Добавить защиту от конкурентного двойного создания заказа**
+## **1. Исправить rate-limit proof**
 
-Текущая схема:
-
-```txt
-SELECT reusable pending order
-→ если не найден — INSERT orders_v2
-```
-
-не защищает от двух одновременных запросов. Оба могут не увидеть заказ и создать по одной заявке РР.
-
-До включения runtime нужен транзакционный guard. Предпочтительный вариант:
+Текущая проверка не сработает:
 
 ```txt
-RPC rr_get_or_create_pending_order(...)
+6 запросов с разными контактами с одного IP → 6-й должен вернуть 429
 ```
 
-RPC должна в одной транзакции:
+Для IP-bucket установлен лимит `20/60 сек`, а contact/offer-contact buckets при разных контактах не превышаются. Поэтому шестой запрос не обязан возвращать `429`.
 
-1. Получить advisory lock по нормализованному ключу заявки.
-2. Повторно найти reusable order.
-3. Вернуть существующий заказ либо создать ровно один новый.
-4. Возвращать признак `created | reused`.
-
-Ключ:
+Использовать один из корректных сценариев:
 
 ```txt
-provider='rr'
-+ tariff_offer_id
-+ user_id либо normalized contact identity
-+ временное окно
+A. IP-limit:
+21 запрос с 21 разным тестовым контактом с одного IP;
+ожидаемо 21-й → HTTP 429.
+
+B. Contact-limit:
+6 запросов с одним контактом;
+ожидаемо 6-й → HTTP 429.
 ```
 
-Нельзя полагаться только на rate limit: он ограничивает частоту, но не обеспечивает идемпотентность при параллельных запросах.
+Вариант B допустим, только если rate-limit выполняется **до reuse-return**. В отчете показать фактический порядок.
 
----
+## **2. Load-тесты не проводить на боевом публичном оффере**
 
-## **2. Уточнить нормализацию телефона**
+Concurrency из пяти запросов и rate-limit из 21 запроса не должны создавать десятки `orders_v2` и заявок РР на production-оффере.
 
-Формулировка:
+Разделить среды:
 
 ```txt
-только цифры (+ ведущий '+', отбрасываем)
+Живой gorbova.by/cb:
+- один happy path;
+- один sequential reuse;
+- проверка двух legacy-тарифов.
+
+Preview/dev с отдельным test-only offer:
+- concurrency;
+- rate-limit;
+- createOrder failure;
+- inactive/runtime-disabled cases.
 ```
 
-неоднозначна.
-
-Зафиксировать канон:
+Test-only offer должен быть:
 
 ```txt
-phone_norm = только цифры;
-пробелы, скобки, дефисы и ведущий «+» удаляются;
-допустимая длина — согласованный диапазон, например 9–15 цифр.
+is_active=false для публичного сайта;
+доступен edge-тесту только через отдельный безопасный test guard;
+mode=test;
+помечен meta.test_fixture=true.
 ```
 
-Исходный телефон можно хранить для операционной работы, но сравнение и rate limit выполняются только по `phone_norm`.
+Нельзя временно отключать или портить рабочий оффер тарифа «Бухгалтер» ради негативных тестов.
 
----
+## **3. Не подменять production environment для проверки ошибки РР**
 
-## **3. Rate limit должен учитывать несколько независимых измерений**
+Не менять `RR_API_BASE` или production secrets.
 
-Один hash от:
+Допустимые варианты:
 
 ```txt
-offer_id | phone | email | ip
+- отдельный dev/preview deployment;
+- изолированный test integration instance;
+- backend-only fault injection, доступный только service_role/admin,
+  только mode=test и только test_fixture offer.
 ```
 
-позволит обходить лимит сменой любого одного значения.
+Запрещен публично управляемый параметр вроде `force_error=true`.
 
-Минимально проверять отдельные buckets:
+Если безопасного изолированного механизма нет, этот кейс подтвердить unit/integration-тестом адаптера и не изменять production-конфигурацию.
+
+
+
+## **4. Сначала установить точную причину разных**
+
+`order_id`
+
+До любых миграций:
 
 ```txt
-rr_initiate:ip:<hash(ip)>
-rr_initiate:contact:<hash(phone_norm|email_norm)>
-rr_initiate:offer_contact:<hash(offer_id|phone_norm|email_norm)>
+- восстановить полный второй UUID;
+- показать оба сырых HTTP-ответа;
+- показать обе строки orders_v2;
+- показать нормализованные identity fields;
+- показать provider_events;
+- определить: опечатка отчета или реальный баг.
 ```
 
-Например:
+Не выполнять новую миграцию RPC «на всякий случай».
 
-- IP: согласованный предел в минуту;
-- контакт: 5 запросов в минуту;
-- оффер + контакт: 5 запросов в минуту.
+Если это опечатка — исправить отчет и повторить proof.  
+Если баг подтвержден — только тогда patch RPC.
 
-Конкретные значения можно оставить мягкими, но защита должна быть устойчивой.
 
----
 
-## **4. Укрепить SECURITY DEFINER RPC**
+## **5. Не добавлять неоднозначное поле**
 
-Для `rr_public_rate_limit_hit` и транзакционной RPC обязательно:
+`resolved_from_order_id`
+
+Для reused-response достаточно:
+
+```json
+{
+  "order_id": "...",
+  "payment_url": "...",
+  "reused": true
+}
+```
+
+В `provider_events` допустимо:
+
+```txt
+reused=true
+resolved_order_id=<тот же order_id>
+```
+
+Но нельзя создавать впечатление, что запрос сначала создал один заказ, а затем был «перенаправлен» на другой.
+
+Кроме того, reuse-запрос не должен создавать второй комплект:
+
+```txt
+create_order_requested
+create_order_succeeded
+```
+
+Для него лучше отдельное техническое событие:
+
+```txt
+create_order_reused
+```
+
+либо вообще только структурированный audit-log.
+
+## **6. Concurrency DoD уточнить**
+
+Для пяти параллельных запросов ожидается:
+
+```txt
+- delta orders_v2 = 1;
+- вызов rrCreateOrder = 1;
+- create_order_requested = 1;
+- create_order_succeeded = 1;
+- все 5 ответов содержат один order_id;
+- все 5 ответов содержат один payment_url;
+- ровно один ответ reused=false;
+- четыре ответа reused=true.
+```
+
+Proof «один вызов РР» должен основываться не только на `console.log`, а на устойчивом техническом событии или correlation proof без PII.
+
+## **7. Не выполнять широкое удаление rate-limit buckets**
+
+Запрещено:
 
 ```sql
-SECURITY DEFINER
-SET search_path = public, pg_temp
+DELETE FROM rr_public_rate_limits
+WHERE bucket_key LIKE 'rr_initiate:%';
 ```
 
-Также:
+Это удалит реальные rate-limit buckets пользователей.
+
+Для тестов использовать уникальный marker/hash и удалять только конкретные тестовые ключи:
+
+```sql
+DELETE FROM rr_public_rate_limits
+WHERE bucket_key = ANY(:exact_test_bucket_keys);
+```
+
+Либо дождаться естественного истечения окна.
+
+## **8. Negative proof не должен менять рабочие офферы**
+
+Исправить сценарии:
 
 ```txt
-REVOKE ALL ON FUNCTION ... FROM PUBLIC;
-REVOKE ALL ON FUNCTION ... FROM anon;
-REVOKE ALL ON FUNCTION ... FROM authenticated;
-GRANT EXECUTE ON FUNCTION ... TO service_role;
+rr_runtime_disabled:
+использовать один из двух legacy bank_installment-офферов без runtime.
+
+missing offer:
+случайный UUID.
+
+inactive offer:
+использовать заранее созданный test fixture в preview/dev,
+не переключать is_active рабочего оффера.
+
+foreign provider order:
+использовать изолированную test fixture,
+не посылать webhook на реальный bePaid-order.
 ```
 
-Таблица `rr_public_rate_limits`:
+## **9. Исправить формулировку по legacy-тарифам**
 
-- без клиентских политик;
-- без grants для `anon` и `authenticated`;
-- с CHECK `count >= 0`;
-- предусмотреть периодическую очистку старых buckets либо допустимый cleanup при очередном RPC-вызове.
-
----
-
-
-
-## **5. Failed order нельзя оставлять семантически обычным**
-
-`pending`
-
-При ошибке `createOrder` статус может остаться существующим `pending`, если новый статус вводить нельзя, но в `meta` должны быть однозначные признаки:
-
-```json
-{
-  "flow": "rr_installment",
-  "rr": {
-    "initiation_status": "failed",
-    "error_code": "...",
-    "error_at": "..."
-  }
-}
-```
-
-Успешный заказ:
-
-```json
-{
-  "rr": {
-    "initiation_status": "created",
-    "payment_url": "...",
-    "external_id": "..."
-  }
-}
-```
-
-Reuse допускается только при:
+Не:
 
 ```txt
-initiation_status='created'
-payment_url непустой
-error отсутствует
+два других оффера «Бухгалтера»
 ```
 
-Failed order не возвращать клиенту как успешный и не передавать в будущий Sprint C как активную заявку.
-
----
-
-
-
-## **6. Не записывать чувствительные PII в**
-
-`provider_events`
-
-Правильно, что имя, телефон, email и комментарий не входят в payload событий.
-
-Для `orders_v2.meta.rr.contact` дополнительно подтвердить:
-
-- комментарий ограничен по длине;
-- HTML удаляется или хранится как plain text;
-- данные не попадают в `console.log`;
-- edge response не возвращает PII;
-- ошибки РР проходят redaction;
-- `provider_events` содержит только технические идентификаторы и статусы.
-
----
-
-## **7. Идемпотентность webhook — использовать hash подписи**
-
-Не хранить полную подпись в `idempotency_key`.
-
-Вместо:
+А:
 
 ```txt
-external_id + newStatus + sign
-```
-
-использовать:
-
-```txt
-rr:<external_id>:<status_raw>:<sign_hash_short>
-```
-
-Полная подпись не должна попадать в:
-
-- `provider_events`;
-- `orders_v2.meta`;
-- `integration_sync_logs`;
-- console logs.
-
----
-
-## **8. Bad-signature event не должен создавать конфликт с неизвестным заказом**
-
-Для невалидной подписи порядок должен быть:
-
-```txt
-получить минимальные технические поля
-→ проверить подпись
-→ при invalid вернуть 401
-→ записать redacted security event/log
-→ НЕ читать и НЕ обновлять order
-```
-
-Если `provider_events` требует обязательной связи с заказом, bad signature писать в безопасный технический лог, а не создавать фиктивную связь.
-
----
-
-## **9. Уточнить поведение неизвестного заказа**
-
-После валидной подписи, но при неизвестном `external_id`:
-
-```txt
-HTTP 200
-ignored='unknown_order'
-никаких INSERT/UPDATE в orders_v2/payments_v2
-```
-
-Разрешен один redacted `provider_event` или технический лог, если схема позволяет событие без заказа.
-
----
-
-## **10. Исправить формулировку про остальные офферы**
-
-В E2E написано:
-
-```txt
-2-й и 3-й офферы тарифа «Бухгалтер»
-```
-
-Правильно:
-
-```txt
-офферы двух остальных тарифов продукта:
+bank_installment-офферы двух остальных тарифов продукта:
 - «Главный бухгалтер»;
 - «Бизнес-леди».
 ```
 
-Они должны продолжать работать через legacy `external_link`.
+## **10. Public E2E проводить через фактический iframe/postMessage flow**
 
----
-
-## **11. Data-fix выполнять последним и иметь rollback**
-
-До включения runtime:
-
-1. Развернуть migration/RPC.
-2. Развернуть hardened edge-функции.
-3. Проверить функции напрямую в preview на оффере без runtime.
-4. Снять полный backup `meta` согласованного оффера.
-5. Только затем применить `jsonb_set`.
-
-В отчет включить rollback:
-
-```sql
-UPDATE tariff_offers
-SET meta = <полный сохраненный BEFORE meta>
-WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74';
-```
-
-Отключение runtime должно быть возможно также быстрым add-only merge:
-
-```json
-{
-  "enabled": false,
-  "provider": "rr",
-  "mode": "initiate_only"
-}
-```
-
-Legacy `external_link` при этом остается рабочим.
-
----
-
-## **12. Расширить E2E proof негативными сценариями**
-
-Кроме happy path и reuse проверить:
+На `gorbova.by/cb` кнопки находятся в sandbox iframe. Proof должен учитывать реальную цепочку:
 
 ```txt
-- другой контакт → новый order;
-- тот же email с другим user_id → старой заявкой не переиспользуется;
-- отсутствующий/неактивный offer → 403/404;
-- offer без rr_runtime.enabled → rr_runtime_disabled;
-- подмена amount/currency в request игнорируется или отклоняется;
-- honeypot заполнен → отказ без создания order;
-- rate limit → 429 без нового order и без вызова РР;
-- ошибка createOrder → failed meta, без payment_url и без reuse;
-- CORS preflight работает.
+iframe action
+→ postMessage lovable:site-action
+→ SitePageBySlug
+→ LeadRequestDialog
+→ startBankInstallment
+→ public-rr-installment-initiate
+→ redirect pay.rrllc.ru
 ```
 
----
-
-## **13. Проверить отсутствие бизнес-сайд-эффектов не только по count**
-
-Снять before/after:
+Для наблюдения сети использовать:
 
 ```txt
-payments_v2
-entitlements
-access_grant_ledger
-telegram_access_grants
-domain_events
-CRM/deal logs
-success notifications
+page.on('request')
+page.on('response')
+page.on('popup')
 ```
 
-Дополнительно доказать:
+`page.route()` не нужен, если запрос нельзя модифицировать или блокировать.
+
+## **11. Защитить живой proof от повторной заявки**
+
+Для production happy path использовать отдельный явно тестовый контакт и один проход.
+
+После теста:
+
+- не удалять order без отдельного разрешения;
+- отметить его в `meta` как runtime proof, если такой add-only marker предусмотрен;
+- не переводить заявку в финальный статус;
+- не нажимать кнопки авторизации РР;
+- сохранить `order_id` в отчете для дальнейшего Sprint C или контролируемой очистки.
+
+Нельзя массово удалять `orders_v2` или `provider_events`.
+
+## **12. Snapshot side effects уточнить**
+
+Проверять отсутствие новых строк, связанных именно с тестовыми RR-order IDs, а не требовать абсолютной неизменности живых таблиц.
 
 ```txt
-grant-access-for-order не вызывался;
-CRM success-stage не менялся;
-успешные email/Telegram-уведомления не отправлялись.
+payments_v2 по test order IDs = 0
+entitlements по test order IDs = 0
+access_grant_ledger по test order IDs = 0
+domain_events по test order IDs = 0
+CRM success activity по test order IDs = 0
 ```
 
----
+Для `telegram_access_grants`, если нет `order_id`, нужен proof отсутствия вызова writer-функции плюс snapshot по пользователю/контакту теста.
 
-## **14. Формат итогового отчета**
+Название `crm_activity_log` использовать только после подтверждения, что такая таблица реально существует. Иначе указать фактический SoT CRM-аудита из discovery.
+
+## **13. Уточнить expected response для honeypot**
+
+Возврат `HTTP 200` допустим как антибот-маскировка, но DoD должен требовать:
 
 ```txt
-Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов
+- order не создан;
+- provider_event не создан;
+- РР не вызван;
+- response не раскрывает причину блокировки.
 ```
 
-В отчете отдельно разделить:
+## **14. Итоговый порядок**
 
 ```txt
-1. Изменения кода и БД
-2. Data-fix одного оффера
-3. Happy-path proof
-4. Idempotency/concurrency proof
-5. Security и negative proof
-6. No-side-effects proof
-7. Legacy proof двух остальных тарифов
-8. Rollback
-9. Что остается для Sprint C
+1. Разобрать расхождение order_id.
+2. Исправить только подтвержденный баг.
+3. Sequential reuse proof.
+4. Concurrency и rate-limit в preview/dev на test fixture.
+5. Negative tests в preview/dev.
+6. Один public happy path на gorbova.by/cb.
+7. Проверить legacy flow «Главного бухгалтера» и «Бизнес-леди».
+8. Снять scoped no-side-effects proof.
+9. Сформировать итоговый отчет.
 ```
 
-После этих дополнений план можно выполнять. Sprint C не начинать до полного E2E, включая конкурентную идемпотентность, rate limit и подтверждение отсутствия платежей, доступов и CRM success-flow.
+После этих правок план можно выполнять. Sprint C не начинать, пока не доказаны одинаковый `order_id` при reuse, один вызов РР при concurrency и полный публичный путь через `gorbova.by/cb`.
 
 &nbsp;
 
-План: Sprint B — hardening, data-fix и E2E runtime proof
+План: Закрытие Sprint B — устранение блокера идемпотентности и полный runtime E2E proof
 
-## 0. Проверка оффера (SQL, до изменений)
+### 0. Diagnose (блокер идемпотентности)
 
-Оффер `15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74` подтверждён:
+Первым делом — SQL-разбор двух order_id из предыдущего отчета:
 
-- `offer_type='bank_installment'`, `is_active=true`
-- `amount=1650.00`, `currency='BYN'` (продуктовая валюта)
-- Тариф `Бухгалтер`, продукт `Ценный бухгалтер | 1 ступень 2.0`
-- `meta.bank_installment` уже содержит `external_link`, `link_label`, `message_html`, `rr_mode`, `installment_provider`, `currency` — эти ключи трогать нельзя.
+```sql
+SELECT id, user_id, provider, status,
+       meta->'rr'->>'payment_url'    AS payment_url,
+       meta->'rr'->>'initiation_status' AS init_status,
+       meta->>'flow'                 AS flow,
+       (meta->'contact'->>'email_norm') AS email_norm,
+       (meta->'contact'->>'phone_norm') AS phone_norm,
+       tariff_offer_id, amount, currency, created_at
+FROM public.orders_v2
+WHERE id IN ('b4761274-246b-4b3f-9679-c2c05732494e',
+             '1aa66c5e-...') -- восстановить полный UUID
+ORDER BY created_at;
 
-## 1. Migration 1 — durable rate limit + hardening infra
-
-Создать `public.rr_public_rate_limits`:
-
-- `bucket_key text primary key` — `rr_initiate:<sha256(offer_id|phone_norm|email_norm|ip)>`
-- `window_started_at timestamptz`, `count int`, `updated_at timestamptz`
-- GRANT только `service_role`; RLS enabled, политик нет.
-- RPC `rr_public_rate_limit_hit(_key text, _window_seconds int, _max int) returns boolean` (SECURITY DEFINER) — upsert-инкремент в окне; возвращает true если лимит не превышен.
-
-## 2. Правка `public-rr-installment-initiate` (hardening)
-
-1. **Нормализация PII**: `email = lower/trim`; `phone_norm = только цифры (+ ведущий '+', отбрасываем)`; длина/формат валидируются.
-2. **Идемпотентность (пересобрать правило)**: pending заказ переиспользуется только если ВСЕ выполнено:
-  - тот же `offer_id`,
-  - `status='pending'` AND `provider='rr'` AND `meta.flow='rr_installment'`,
-  - `meta.rr.payment_url` не пуст,
-  - `meta.rr.error` отсутствует,
-  - `user_id` совпадает (оба NULL или равны),
-  - Совпадает нормализованный email ИЛИ нормализованный телефон (при наличии обоих — оба),
-  - `created_at >= now() - interval '30 minutes'`.
-  Иначе — создаём новый.
-3. **Порядок операций**: pending order → `create_order_requested` event → `rrCreateOrder` → success: сохранить `payment_url` в meta + `create_order_succeeded`; fail: пометить `meta.rr.error`, `create_order_failed`, вернуть 502 (заказ остаётся pending, но с флагом error — не переиспользуется reuse-логикой).
-4. **Rate limit**: перед созданием заказа — вызов RPC `rr_public_rate_limit_hit` с ключом от `(offer|phone_norm|email_norm|ip)` (окно 60 сек, макс 5). Отказ → 429.
-5. **PII redaction**: `provider_events.payload` не содержит name/phone/email/comment (уже так); в `orders_v2.meta.rr.contact` — оставляем (нужно для операционной работы, доступ только через RLS).
-6. **CORS**: origin оставить `*` для paylink-совместимости лендингов на кастомных доменах (нельзя ограничить без потери работоспособности lovable.app превью + кастомных доменов); честно зафиксировать в отчёте.
-
-## 3. Правка `rr-webhook` (guard-ы)
-
-Ужесточить фильтр заказа:
-
-- `order.provider = 'rr'` AND `meta.flow = 'rr_installment'` AND `id = payload.id`;
-- иначе `200 { ignored: 'not_rr_installment' }` без побочных эффектов;
-- неизвестный `external_id` → `200 { ignored: 'unknown_order' }`, никаких INSERT в orders_v2;
-- bad signature → 401 + `webhook_bad_signature` event;
-- duplicate по `(external_id, newStatus, sign)` → `200 { duplicate: true }` без обновления meta;
-- idempotency_key событий уже уникален — сохраняется.
-
-## 4. Migration 2 — add-only merge `rr_runtime` на согласованном оффере
-
-Один точечный UPDATE с `jsonb_set` через `meta.bank_installment.rr_runtime`:
-
-```
-UPDATE tariff_offers
-SET meta = jsonb_set(meta, '{bank_installment,rr_runtime}',
-      '{"enabled":true,"provider":"rr","mode":"initiate_only"}'::jsonb, true)
-WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74'
-  AND offer_type = 'bank_installment' AND is_active
-  AND (meta->'bank_installment'->>'external_link') IS NOT NULL;
+SELECT id, related_order_id, provider, event_type, processing_status,
+       payload->'reused' AS reused_flag, created_at
+FROM public.provider_events
+WHERE related_order_id IN (...)
+ORDER BY created_at;
 ```
 
-Все прочие ключи `meta.bank_installment.*` сохраняются.
+Возможные причины и фиксы:
 
-## 5. E2E runtime proof
+- **A. Ошибка в отчете (опечатка UUID)** — задокументировать, приложить сырые ответы.
+- **B. Баг возврата `order_id**` в `rr_get_or_create_pending_order`: RPC возвращает id вставленной строки при race до advisory lock, а не строки, выигравшей lock. Фикс — внутри SECURITY DEFINER функции:
+  1. `pg_advisory_xact_lock(hashtext(bucket_key))` первым шагом;
+  2. под локом делать `SELECT ... FOR UPDATE` по `(offer_id, email_norm/phone_norm, status='pending', provider='rr', created_at >= now()-interval '30 min', meta->'rr'->>'payment_url' IS NOT NULL)`;
+  3. если найден — вернуть его id + `reused=true`;
+  4. только затем `INSERT` и возврат нового id + `reused=false`.
+- **C. Несогласованность ключа reuse** (адрес/телефон нормализованы по-разному между reuse-lookup и insert) — унифицировать нормализацию до вызова RPC.
 
-Playwright по `https://gorbova.by/cb`:
+DoD: два одинаковых submit возвращают идентичные `order_id` и `payment_url`; в БД ровно одна строка `orders_v2` за окно.
 
-1. Клик на тариф «Бухгалтер» → диалог лида;
-2. Заполнить форму, submit → перехватить сеть на `public-rr-installment-initiate`;
-3. Проверить `payment_url` в ответе, редирект на `pay.rrllc.ru`;
-4. Повторный submit того же контакта → `reused=true`, тот же `order_id`;
-5. SQL-снимки: `orders_v2` (создан pending, provider='rr', meta.flow='rr_installment', amount=1650, currency=BYN, payment_url в meta.rr); `provider_events` (`create_order_requested` + `create_order_succeeded`); `payments_v2` — 0 записей; `entitlements`, `access_grant_ledger` — без изменений;
-6. Inert webhook — 4 сценария curl через `supabase--curl_edge_functions`: valid, duplicate, bad signature, unknown order;
-7. Проверить, что 2-й и 3-й офферы тарифа «Бухгалтер» продолжают открывать `external_link`.
+### 1. Backend patch (при подтвержденном баге)
 
-## Итоговый заголовок отчёта
+- Поправить `rr_get_or_create_pending_order` (миграция) — детерминированный порядок: lock → select-for-update → insert.
+- В `public-rr-installment-initiate/index.ts` — единая нормализация email/phone до RPC; в ответе всегда `{ order_id, payment_url, reused }` из значения RPC, без пересборки.
+- Добавить в `provider_events.payload` явное поле `reused: boolean` и `resolved_from_order_id` для аудита.
 
-«Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов».
+### 2. Runtime proof скрипты (Playwright + Deno) — вся серия
 
-## DoD
+Скрипты кладу под `/tmp/browser/sprint_b/` + JSON-отчеты в `docs/audit/2026-07-10-sprint-b-runtime-proof/`.
 
-- Оба edge deployed;
-- Rate-limit таблица + RPC развёрнуты;
-- Data-fix применён точечно, `external_link` не затронут;
-- E2E проведён, screenshots + SQL-снимки в отчёте;
+**2.1 Идемпотентность (single client, sequential)**
+Два подряд submit одинаковой формы → сравнить `order_id`, `payment_url`, `reused`; SQL: `count(*) FROM orders_v2 WHERE ...` = 1.
+
+**2.2 Concurrency (parallel)**
+`Promise.all` из 5 одинаковых invoke → ровно 1 новая строка `orders_v2`, ровно 1 `create_order_requested` c `succeeded` в `provider_events`, все 5 ответов с идентичным `order_id`/`payment_url`, один `created` + четыре `reused`. Проверить, что в РР ушел ровно один `createOrder` (по логам edge-функции: `rr_adapter_call` event).
+
+**2.3 Rate-limit (durable)**
+6 запросов с разными контактами (чтобы обойти reuse) с одного IP за <60с → 6-й ответ HTTP 429, `count(orders_v2 delta)=5`, `count(provider_events где event=create_order_requested delta)=5`, `rr_public_rate_limits.hits >= 6`.
+
+**2.4 Public E2E на [https://gorbova.by/cb](https://gorbova.by/cb)**
+Playwright:
+
+- открыть страницу, дождаться карточек;
+- клик по тарифу «Ценный бухгалтер | 1 ступень 2.0» (offer `15ce91ec-...`) → LeadRequestDialog → заполнить → submit;
+- перехватить network: должен уйти `POST .../functions/v1/public-rr-installment-initiate`, ответ содержит `payment_url` с `pay.rrllc.ru`;
+- убедиться в редиректе (или открытии) на `pay.rrllc.ru`, скриншот;
+- вернуться, повторить для двух других офферов «Бухгалтера» — не должно быть вызова `public-rr-installment-initiate`, должен открыться legacy `external_link`.
+
+**2.5 Negative runtime**
+Через `supabase--curl_edge_functions` последовательные кейсы, каждый со снапшотом ответа + SQL:
+
+- `rr_runtime_disabled` — временно снять флаг на тестовом оффере (или использовать другой bank_installment без флага) → 4xx, no order;
+- inactive offer (`is_active=false`) → 4xx, no order;
+- missing offer (случайный UUID) → 4xx;
+- honeypot заполнен → 200/фейковый, но `no order`, `no provider_event succeeded`;
+- createOrder failure — временно подменить `RR_API_BASE` на невалидный endpoint через отдельный тест-инстанс ИЛИ mock: order пишется с `meta.rr.initiation_status='failed'`, повторный submit не переиспользует;
+- webhook: bad signature → 401 + `webhook_bad_signature` без `related_order_id`; duplicate → 200 `{duplicate:true}`; unknown external_id → 200 `{ignored:...}`; foreign provider order (`provider='bepaid'`) → 200 `{ignored:'not_rr_flow'}`;
+- CORS preflight `OPTIONS` → 204 c `Access-Control-Allow-*`.
+
+**2.6 Snapshot до/после (side-effects proof)**
+Обертка вокруг всех тестов:
+
+```sql
+-- snapshot before
+SELECT count(*) FROM payments_v2;
+SELECT count(*) FROM entitlements;
+SELECT count(*) FROM access_grant_ledger;
+SELECT count(*) FROM telegram_access_grants;
+SELECT count(*) FROM domain_events WHERE event_type LIKE 'order.%';
+SELECT count(*) FROM crm_activity_log WHERE created_at >= :t0;
+-- run all runtime tests
+-- snapshot after → diff должен быть ровно 0 по всем 6 счетчикам
+```
+
+Отдельно — grep-proof по коду: `rg -n "telegram_access_grants|grant-access-for-order|payments_v2.*insert" supabase/functions/public-rr-installment-initiate supabase/functions/rr-webhook` → пусто.
+
+### 3. Итоговый отчет
+
+`docs/audit/2026-07-10-sprint-b-runtime-proof/REPORT.md` с разделами 2.1–2.6, для каждого:
+
+- команда/скрипт,
+- сырой ответ (HTTP + JSON),
+- SQL before/after,
+- вердикт PASS/FAIL,
+- ссылки на скриншоты (для 2.4).
+
+Заголовок: «Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов».
+
+### DoD Sprint B
+
+- Блокер order_id объяснен (опечатка) ИЛИ исправлен миграцией + повторный тест PASS.
+- 2.1 идемпотентность PASS с идентичными order_id/payment_url.
+- 2.2 concurrency PASS: 1 order, 1 createOrder, N-1 reused.
+- 2.3 rate-limit PASS: 429 на 6-м.
+- 2.4 public E2E PASS на gorbova.by/cb + два legacy оффера PASS.
+- 2.5 все негативные кейсы PASS.
+- 2.6 diff по 6 таблицам = 0.
 - Sprint C не начат.
+
+### Технические детали
+
+- Все runtime-тесты используют реальный edge endpoint `public-rr-installment-initiate` через `supabase.functions.invoke` или прямой `POST` c anon key; auth не требуется (`verify_jwt=false`).
+- Для concurrency используем один HTTP-клиент с `Promise.all`, чтобы обойти клиентский дедуп.
+- Rate-limit тестируется с разными контактами, но одним IP; для восстановления — `DELETE FROM rr_public_rate_limits WHERE bucket_key LIKE 'rr_initiate:%'` после теста.
+- Для createOrder failure — если нет sandbox-режима у РР, использовать env-переменную `RR_API_BASE_OVERRIDE` на несуществующий хост в отдельном dev-деплое функции; production не трогаем.
+- Playwright скрипт для 2.4 использует `page.route('**/public-rr-installment-initiate', ...)` только для наблюдения (без перехвата ответа), чтобы гарантированно поймать call.
