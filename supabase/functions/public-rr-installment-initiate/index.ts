@@ -100,8 +100,12 @@ Deno.serve(async (req: Request) => {
   }
 
   if (body.website && String(body.website).trim() !== "") {
-    // honeypot — молча возвращаем success без создания заказа.
-    return jsonResponse({ success: true, skipped: "honeypot" });
+    // Honeypot: neutral success response. NO skipped/reason marker in HTTP body,
+    // NO provider_events insert (bot would spam the ledger), NO PII in logs.
+    // Only an obfuscated server-side metric log line for ops visibility.
+    // eslint-disable-next-line no-console
+    console.info(JSON.stringify({ metric: "rr_initiate_honeypot_blocked" }));
+    return jsonResponse({ success: true });
   }
 
   const offerId = String(body.tariff_offer_id ?? "").trim();
@@ -271,7 +275,8 @@ Deno.serve(async (req: Request) => {
   }
 
   // Новый заказ — начинаем инициализацию РР.
-  await supabaseAdmin.from("provider_events").insert({
+  // Persistence hardening: до вызова РР create_order_requested должен быть durable.
+  const reqInsert = await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
     account_code: "rr",
     signature_valid: true,
@@ -288,6 +293,31 @@ Deno.serve(async (req: Request) => {
     processing_status: "pending",
     related_order_id: externalId,
   });
+  if (reqInsert.error) {
+    // Ledger недоступен — RR НЕ вызываем, чтобы не создать external order без аудита.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      stage: "create_order_requested_persist",
+      order_id: externalId,
+      error: reqInsert.error.message,
+    }));
+    // Best-effort пометка. При provider_events downtime UPDATE тоже может упасть — игнорируем.
+    await supabaseAdmin
+      .from("orders_v2")
+      .update({
+        meta: {
+          ...initialMeta,
+          rr: {
+            ...initialMeta.rr,
+            initiation_status: "failed",
+            error_code: "ledger_unavailable_pre_call",
+            error_at: new Date().toISOString(),
+          },
+        },
+      })
+      .eq("id", externalId);
+    return errorResponse("persist_failed_pre_call", 503);
+  }
 
   const projectRef = (Deno.env.get("SUPABASE_URL") ?? "").match(
     /https:\/\/([^.]+)\.supabase\.co/,
@@ -329,8 +359,8 @@ Deno.serve(async (req: Request) => {
 
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
-    account_code: "rr",
-    signature_valid: true,
+      account_code: "rr",
+      signature_valid: true,
       event_id: `${externalId}:create_order_failed`,
       event_type: "create_order_failed",
       idempotency_key: `${externalId}:create_order_failed`,
@@ -347,44 +377,64 @@ Deno.serve(async (req: Request) => {
     return errorResponse("rr_create_order_failed", 502);
   }
 
-  // Success — сохраняем payment_url + initiation_status='created'.
-  const { data: cur2 } = await supabaseAdmin
-    .from("orders_v2").select("meta").eq("id", externalId).maybeSingle();
-  const cur2Meta = (cur2?.meta ?? {}) as any;
-  await supabaseAdmin
-    .from("orders_v2")
-    .update({
-      meta: {
-        ...cur2Meta,
-        rr: {
-          ...(cur2Meta.rr ?? {}),
-          initiation_status: "created",
-          payment_url: rrRes.paymentUrl,
-          rr_request_id: rrRes.rrRequestId ?? externalId,
-          rr_status_raw: rrRes.rrStatusRaw ?? null,
-          raw_last: redacted,
-        },
-      },
-    })
-    .eq("id", externalId);
-
-  await supabaseAdmin.from("provider_events").insert({
-    provider: "rr",
-    account_code: "rr",
-    signature_valid: true,
-    event_id: `${externalId}:create_order_succeeded`,
-    event_type: "create_order_succeeded",
-    idempotency_key: `${externalId}:create_order_succeeded`,
-    payload: {
-      payment_url: rrRes.paymentUrl,
-      rr_request_id: rrRes.rrRequestId ?? externalId,
-      rr_status_raw: rrRes.rrStatusRaw ?? null,
-      raw_last: redacted,
+  // Success path: атомарная финализация через SECURITY DEFINER RPC.
+  // Гарантирует, что UPDATE orders_v2 и INSERT create_order_succeeded
+  // либо оба применяются, либо оба откатываются. HTTP 200 клиенту —
+  // только после подтверждения канонического состояния.
+  const rrRequestId = rrRes.rrRequestId ?? externalId;
+  const { error: finalizeErr } = await supabaseAdmin.rpc(
+    "rr_finalize_created_order",
+    {
+      _order_id: externalId,
+      _payment_url: rrRes.paymentUrl,
+      _rr_request_id: rrRequestId,
+      _rr_status_raw: rrRes.rrStatusRaw ?? null,
+      _raw_last: redacted,
+      _correlation_id: correlationId,
     },
-    processing_status: "processed",
-    processed_at: new Date().toISOString(),
-    related_order_id: externalId,
-  });
+  );
+
+  if (finalizeErr) {
+    // РР уже принял заказ — payment_url реален. Локальная финализация упала.
+    // НЕ ставим initiation_status='failed' (иначе reuse создаст второй RR order).
+    // Оставляем pending (в пределах 120с окна reuse RPC), добавляем recovery marker
+    // и best-effort event create_order_persist_failed для аудита.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      stage: "finalize_persist",
+      order_id: externalId,
+      rr_request_id: rrRequestId,
+      payment_url_present: true,
+      error: finalizeErr.message,
+    }));
+
+    await supabaseAdmin.rpc("rr_mark_local_persist_failed", {
+      _order_id: externalId,
+      _payment_url: rrRes.paymentUrl,
+      _rr_request_id: rrRequestId,
+      _error_text: finalizeErr.message.slice(0, 500),
+    });
+
+    await supabaseAdmin.from("provider_events").insert({
+      provider: "rr",
+      account_code: "rr",
+      signature_valid: true,
+      event_id: `${externalId}:create_order_persist_failed:${Date.now()}`,
+      event_type: "create_order_persist_failed",
+      idempotency_key: `${externalId}:create_order_persist_failed`,
+      payload: {
+        rr_request_id: rrRequestId,
+        payment_url_len: rrRes.paymentUrl.length,
+        error: finalizeErr.message,
+        raw_last: redacted,
+      },
+      processing_status: "failed",
+      processing_error: finalizeErr.message.slice(0, 500),
+      related_order_id: externalId,
+    });
+
+    return errorResponse("local_persist_failed", 502);
+  }
 
   return jsonResponse({
     payment_url: rrRes.paymentUrl,

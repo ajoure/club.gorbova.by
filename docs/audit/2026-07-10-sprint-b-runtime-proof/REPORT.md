@@ -1,5 +1,9 @@
 # Отчет о выполненной работе: Sprint B — public flow installment-initiate для РР без проведения платежа и выдачи доступов
 
+> **Status update (2026-07-10, после ревью): Sprint B — FAIL.** Идентифицировано **6** follow-up замечаний (см. `ERRATA_and_gate_status.md`). Из них в текущем Gate A закрыты замечания №3 (honeypot), №4 (persistence hardening — атомарный RPC `rr_finalize_created_order`), №6 (имя миграции). Замечания №1 (public E2E на `gorbova.by/cb`), №2 (полный negative runtime proof по Sprint B контрактам), №5 (изоляция test fixture) переносятся в Gate B — отдельное согласование. Sprint C **не начинать**.
+>
+> **Errata по имени миграции concurrency-фикса:** фактически `supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql` (в §2b, §8 и §7-инвентаре ранее ошибочно указывалось `20260710085555_...`).
+
 Дата: 2026-07-10
 Ответственный: инженер (Lovable)
 Оффер runtime: `15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74` (тариф «Бухгалтер», продукт «Ценный бухгалтер | 1 ступень 2.0», 1650 BYN, mode=test)
