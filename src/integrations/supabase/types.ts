@@ -19297,6 +19297,19 @@ export type Database = {
           order_id: string
         }[]
       }
+      rr_finalize_order_not_created: {
+        Args: { _evidence: Json; _order_id: string }
+        Returns: undefined
+      }
+      rr_finalize_order_rejected: {
+        Args: {
+          _http_status: number
+          _order_id: string
+          _reason_code: string
+          _response_snippet: Json
+        }
+        Returns: undefined
+      }
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
@@ -19327,9 +19340,41 @@ export type Database = {
         }
         Returns: undefined
       }
+      rr_mark_upstream_unknown: {
+        Args: {
+          _correlation_id: string
+          _failure_kind: string
+          _http_status: number
+          _order_id: string
+          _provider_request_id: string
+        }
+        Returns: undefined
+      }
+      rr_operator_resolve: {
+        Args: {
+          _actor: string
+          _note: string
+          _order_id: string
+          _payment_url: string
+          _resolution: string
+          _rr_request_id: string
+        }
+        Returns: undefined
+      }
       rr_public_rate_limit_hit: {
         Args: { _key: string; _max: number; _window_seconds: number }
         Returns: boolean
+      }
+      rr_reconcile_confirm_created: {
+        Args: {
+          _correlation_id: string
+          _order_id: string
+          _payment_url: string
+          _raw_last: Json
+          _rr_request_id: string
+          _rr_status_raw: string
+        }
+        Returns: undefined
       }
       safe_delete_document_package: {
         Args: { _package_id: string }
