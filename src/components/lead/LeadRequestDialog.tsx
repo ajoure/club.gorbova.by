@@ -150,6 +150,51 @@ export function LeadRequestDialog({
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     try {
+      // Sprint B: если оффер настроен на runtime bank installment (РР),
+      // идём в public-rr-installment-initiate и редиректим на payment_url.
+      // Legacy external_link не показывается, чтобы не было двух ссылок сразу.
+      if (bankInstallmentRuntime?.enabled) {
+        const email = session?.user?.email || "";
+        if (!email) {
+          throw new Error("email_required");
+        }
+        try {
+          const res = await startBankInstallment({
+            offerId,
+            runtime: bankInstallmentRuntime,
+            legacyBankLinkUrl: bankLinkUrl,
+            legacyBankLinkLabel: bankLinkLabel,
+            legacyBankMessageHtml: bankMessageHtml,
+            contact: {
+              name: details.name.trim(),
+              phone: details.phone.trim(),
+              email,
+              comment: details.comment.trim() || null,
+            },
+          });
+          if (res.mode === "runtime") {
+            window.location.href = res.paymentUrl;
+            return;
+          }
+          // Резолвер вернул legacy — маловероятно при enabled, но подстрахуемся.
+          if (res.bankLinkUrl) {
+            window.location.href = res.bankLinkUrl;
+            return;
+          }
+          throw new Error("no_payment_url_and_no_legacy_link");
+        } catch (rrErr) {
+          console.error("[LeadRequestDialog] rr initiate failed", rrErr);
+          toast.error(
+            "Не удалось создать заявку в банк. Открываем резервную страницу оформления.",
+          );
+          if (bankLinkUrl) {
+            window.location.href = bankLinkUrl;
+            return;
+          }
+          throw rrErr;
+        }
+      }
+
       const { data, error } = await supabase.functions.invoke(
         "submit-lead-request",
         {
