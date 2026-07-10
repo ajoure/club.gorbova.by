@@ -185,7 +185,9 @@ Deno.serve(async (req: Request) => {
   const { data: orderNumberData } = await supabaseAdmin.rpc(
     "generate_order_number",
   );
-  const orderNumber = String(orderNumberData ?? `RR-${externalIdPlaceholder()}`);
+  const orderNumber = String(
+    orderNumberData ?? `RR-${crypto.randomUUID().slice(0, 8)}`,
+  );
 
   const { data: order, error: orderErr } = await supabaseAdmin
     .from("orders_v2")
