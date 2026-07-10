@@ -19282,6 +19282,21 @@ export type Database = {
           user_id: string
         }[]
       }
+      rr_finalize_created_order: {
+        Args: {
+          _correlation_id: string
+          _order_id: string
+          _payment_url: string
+          _raw_last: Json
+          _rr_request_id: string
+          _rr_status_raw: string
+        }
+        Returns: {
+          already_created: boolean
+          finalized: boolean
+          order_id: string
+        }[]
+      }
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
@@ -19302,6 +19317,15 @@ export type Database = {
           order_number: string
           was_reused: boolean
         }[]
+      }
+      rr_mark_local_persist_failed: {
+        Args: {
+          _error_text: string
+          _order_id: string
+          _payment_url: string
+          _rr_request_id: string
+        }
+        Returns: undefined
       }
       rr_public_rate_limit_hit: {
         Args: { _key: string; _max: number; _window_seconds: number }
