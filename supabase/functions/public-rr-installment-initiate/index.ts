@@ -257,6 +257,8 @@ Deno.serve(async (req: Request) => {
   // Новый заказ — начинаем инициализацию РР.
   await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
+    account_code: "rr",
+    signature_valid: true,
     event_id: `${externalId}:create_order_requested`,
     event_type: "create_order_requested",
     idempotency_key: `${externalId}:create_order_requested`,
@@ -311,6 +313,8 @@ Deno.serve(async (req: Request) => {
 
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
+    account_code: "rr",
+    signature_valid: true,
       event_id: `${externalId}:create_order_failed`,
       event_type: "create_order_failed",
       idempotency_key: `${externalId}:create_order_failed`,
@@ -350,6 +354,8 @@ Deno.serve(async (req: Request) => {
 
   await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
+    account_code: "rr",
+    signature_valid: true,
     event_id: `${externalId}:create_order_succeeded`,
     event_type: "create_order_succeeded",
     idempotency_key: `${externalId}:create_order_succeeded`,
