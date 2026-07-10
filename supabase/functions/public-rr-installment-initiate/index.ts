@@ -100,8 +100,12 @@ Deno.serve(async (req: Request) => {
   }
 
   if (body.website && String(body.website).trim() !== "") {
-    // honeypot — молча возвращаем success без создания заказа.
-    return jsonResponse({ success: true, skipped: "honeypot" });
+    // Honeypot: neutral success response. NO skipped/reason marker in HTTP body,
+    // NO provider_events insert (bot would spam the ledger), NO PII in logs.
+    // Only an obfuscated server-side metric log line for ops visibility.
+    // eslint-disable-next-line no-console
+    console.info(JSON.stringify({ metric: "rr_initiate_honeypot_blocked" }));
+    return jsonResponse({ success: true });
   }
 
   const offerId = String(body.tariff_offer_id ?? "").trim();
