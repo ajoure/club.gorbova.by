@@ -84,6 +84,7 @@ Deno.serve(async (req: Request) => {
     const signHashShort = sign ? await sha256Short(sign) : "empty";
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
+      account_code: "rr",
       event_id: `rr:badsig:${signHashShort}:${Date.now()}`,
       event_type: "webhook_bad_signature",
       idempotency_key: `rr:badsig:${signHashShort}:${newStatus}:${externalId || "no_id"}`,
@@ -131,6 +132,7 @@ Deno.serve(async (req: Request) => {
     // чтобы повторные unknown-нотификации не спамили.
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
+      account_code: "rr",
       event_id: `${externalId}:unknown:${signHashShort}`,
       event_type: "webhook_unknown_order",
       idempotency_key: idempotencyKey,
@@ -145,6 +147,7 @@ Deno.serve(async (req: Request) => {
   if (order.provider !== "rr" || meta?.flow !== "rr_installment") {
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
+      account_code: "rr",
       event_id: `${externalId}:not_rr_flow:${signHashShort}`,
       event_type: "webhook_not_rr_installment",
       idempotency_key: idempotencyKey,
@@ -172,6 +175,7 @@ Deno.serve(async (req: Request) => {
 
   await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
+      account_code: "rr",
     event_id: `${externalId}:notify:${newStatus}:${signHashShort}`,
     event_type: "webhook_notification_received",
     idempotency_key: idempotencyKey,
