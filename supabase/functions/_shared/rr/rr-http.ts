@@ -24,6 +24,10 @@ export interface RRHttpCallResult {
   status: number;
   json: unknown;
   durationMs: number;
+  /** Транспортные флаги — для классификации в adapter. */
+  aborted?: boolean;
+  networkError?: boolean;
+  parseError?: boolean;
   /** Безопасное описание запроса для лога/audit. Без query, без секретов. */
   safeCallDescriptor: {
     method: "POST";
