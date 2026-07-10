@@ -466,7 +466,14 @@ export function ChatMediaMessage({
       document.body.removeChild(a);
     };
 
+    const isOfficeDoc = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(fileName || "");
     const handleOpenInNewTab = () => {
+      if (isOfficeDoc && fileUrl) {
+        // Office/RTF файлы браузер не умеет открывать — показываем через Office Online Viewer
+        const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}`;
+        window.open(viewerUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
       window.open(fileUrl!, "_blank", "noopener,noreferrer");
     };
 
