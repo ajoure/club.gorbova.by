@@ -31,3 +31,9 @@ verify_jwt = false
 
 [functions.autoweb-session-heartbeat]
 verify_jwt = true
+
+[functions.public-rr-installment-initiate]
+verify_jwt = false
+
+[functions.rr-webhook]
+verify_jwt = false
