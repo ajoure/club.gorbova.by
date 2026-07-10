@@ -1,22 +1,29 @@
 /**
- * public-rr-installment-initiate (Sprint B)
+ * public-rr-installment-initiate (Sprint B — hardened)
  *
- * ЖЁСТКИЕ ГРАНИЦЫ Sprint B:
- *  - Создаёт только orders_v2 (status='pending', meta.flow='rr_installment')
- *    и провайдерскую заявку в РР через createOrder.
+ * SoT: tariff_offer_id + контакт. amount/currency/tariff/product сервер читает
+ * сам, клиент их не передаёт. external_id для РР = orders_v2.id.
+ *
+ * Границы Sprint B:
+ *  - Создаёт только orders_v2 (status='pending', meta.flow='rr_installment',
+ *    meta.rr.initiation_status='created'|'failed').
  *  - НЕ создаёт payments_v2, entitlements, telegram-доступы, CRM success.
  *  - НЕ вызывает grant-access-for-order.
- *  - external_id для РР = orders_v2.id (единый source of truth, никаких rr_live_*).
- *  - amount/currency/tariff_id/product_id читаются сервером из tariff_offers;
- *    клиент передаёт только tariff_offer_id + контактные данные.
- *  - Runtime включается только на офферах с
- *    meta.bank_installment.rr_runtime.enabled === true.
- *  - Идемпотентность: если у того же оффера+email уже есть pending заказ
- *    с валидным payment_url младше 30 минут — возвращаем его повторно.
+ *
+ * Hardening:
+ *  1) Нормализация PII: email lower/trim; phone_norm — только цифры, 9..15.
+ *  2) Идемпотентность через RPC rr_get_or_create_pending_order (advisory lock).
+ *     Reuse только для того же (offer, user_id, email_norm, phone_norm),
+ *     с непустым payment_url, initiation_status='created', возрастом < 30 мин.
+ *  3) Failed createOrder переводит заказ в meta.rr.initiation_status='failed' —
+ *     не переиспользуется reuse-логикой.
+ *  4) Durable rate limit (таблица + RPC): 3 независимых bucket'а
+ *     — ip, contact(phone|email), offer+contact.
+ *  5) PII не попадает в provider_events.payload и в ответы клиенту.
+ *  6) Honeypot поле website.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
-  corsHeaders,
   handleCorsPreflightRequest,
   jsonResponse,
   errorResponse,
@@ -40,7 +47,45 @@ interface InitiatePayload {
   phone?: string;
   email?: string;
   comment?: string | null;
-  website?: string; // honeypot
+  website?: string;
+}
+
+function normalizePhone(raw: string): string {
+  return raw.replace(/\D+/g, "");
+}
+
+function stripHtml(s: string): string {
+  return s.replace(/<[^>]*>/g, "").slice(0, 2000);
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const buf = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getClientIp(req: Request): string {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0].trim();
+  return req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-real-ip") || "unknown";
+}
+
+async function rateLimitOrDeny(
+  supabaseAdmin: ReturnType<typeof createServiceClient>,
+  buckets: { key: string; window: number; max: number }[],
+): Promise<{ ok: true } | { ok: false; bucket: string }> {
+  for (const b of buckets) {
+    const { data, error } = await supabaseAdmin.rpc(
+      "rr_public_rate_limit_hit",
+      { _key: b.key, _window_seconds: b.window, _max: b.max },
+    );
+    if (error) continue; // fail-open on rate-limit backend error, no exception
+    if (data === false) return { ok: false, bucket: b.key.split(":")[1] || "?" };
+  }
+  return { ok: true };
 }
 
 Deno.serve(async (req: Request) => {
@@ -54,24 +99,23 @@ Deno.serve(async (req: Request) => {
     return errorResponse("invalid_json", 400);
   }
 
-  // honeypot
-  if (body.website && body.website.trim() !== "") {
+  if (body.website && String(body.website).trim() !== "") {
+    // honeypot — молча возвращаем success без создания заказа.
     return jsonResponse({ success: true, skipped: "honeypot" });
   }
 
   const offerId = String(body.tariff_offer_id ?? "").trim();
-  const name = String(body.name ?? "").trim();
-  const phone = String(body.phone ?? "").trim();
-  const email = String(body.email ?? "").trim().toLowerCase();
-  const comment = body.comment == null
-    ? null
-    : String(body.comment).slice(0, 2000);
+  const nameRaw = String(body.name ?? "").trim().slice(0, 200);
+  const phoneRaw = String(body.phone ?? "").trim().slice(0, 64);
+  const emailRaw = String(body.email ?? "").trim();
+  const email = emailRaw.toLowerCase();
+  const commentRaw = body.comment == null ? null : String(body.comment);
+  const comment = commentRaw == null ? null : stripHtml(commentRaw);
 
   if (!UUID_RE.test(offerId)) return errorResponse("tariff_offer_id_invalid", 400);
-  if (name.length < 1 || name.length > 200) {
-    return errorResponse("name_invalid", 400);
-  }
-  if (phone.length < 5 || phone.length > 32) {
+  if (nameRaw.length < 1) return errorResponse("name_invalid", 400);
+  const phoneNorm = normalizePhone(phoneRaw);
+  if (phoneNorm.length < 9 || phoneNorm.length > 15) {
     return errorResponse("phone_invalid", 400);
   }
   if (!EMAIL_RE.test(email) || email.length > 200) {
@@ -79,8 +123,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseAdmin = createServiceClient();
+  const ip = getClientIp(req);
 
-  // Опциональная авторизация: если есть JWT — читаем user_id, иначе public flow.
+  // Опциональная авторизация: user_id — только для reuse-scope.
   let userId: string | null = null;
   const authHeader = req.headers.get("Authorization") ?? "";
   if (authHeader.startsWith("Bearer ")) {
@@ -98,7 +143,18 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // Резолв оффера + тарифа + продукта (source of truth — server-side).
+  // Rate limits (durable, DB-backed). fail-open при ошибке RPC.
+  const contactHash = await sha256Hex(`${phoneNorm}|${email}`);
+  const ipHash = await sha256Hex(ip);
+  const offerContactHash = await sha256Hex(`${offerId}|${phoneNorm}|${email}`);
+  const rl = await rateLimitOrDeny(supabaseAdmin, [
+    { key: `rr_initiate:ip:${ipHash}`, window: 60, max: 20 },
+    { key: `rr_initiate:contact:${contactHash}`, window: 60, max: 5 },
+    { key: `rr_initiate:offer_contact:${offerContactHash}`, window: 60, max: 5 },
+  ]);
+  if (!rl.ok) return errorResponse(`rate_limited:${rl.bucket}`, 429);
+
+  // Резолв оффера (server-side SoT).
   const { data: offer, error: offerErr } = await supabaseAdmin
     .from("tariff_offers")
     .select(
@@ -114,8 +170,7 @@ Deno.serve(async (req: Request) => {
     return errorResponse("offer_not_bank_installment", 403);
   }
 
-  const rrRuntime =
-    (offer.meta as any)?.bank_installment?.rr_runtime ?? null;
+  const rrRuntime = (offer.meta as any)?.bank_installment?.rr_runtime ?? null;
   if (!rrRuntime?.enabled || rrRuntime.provider !== "rr") {
     return errorResponse("rr_runtime_disabled", 403);
   }
@@ -139,36 +194,10 @@ Deno.serve(async (req: Request) => {
     return errorResponse((e as Error).message, 503);
   }
 
-  // Идемпотентность: ищем существующий pending заказ по (offer_id + email)
-  // с уже полученным payment_url младше 30 минут.
-  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  const { data: existing } = await supabaseAdmin
-    .from("orders_v2")
-    .select("id, meta, created_at")
-    .eq("offer_id", offerId)
-    .eq("status", "pending")
-    .eq("customer_email", email)
-    .gte("created_at", cutoff)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (existing) {
-    const existingMeta = (existing.meta ?? {}) as any;
-    const existingUrl = existingMeta?.rr?.payment_url as string | undefined;
-    if (existingMeta?.flow === "rr_installment" && existingUrl) {
-      return jsonResponse({
-        payment_url: existingUrl,
-        order_id: existing.id,
-        reused: true,
-      });
-    }
-  }
-
   const correlationId = crypto.randomUUID();
 
-  // 1) Создаём orders_v2 (промежуточный)
-  const insertMeta = {
+  // Concurrent-safe reuse-or-create через RPC (advisory lock).
+  const initialMeta = {
     flow: "rr_installment",
     grant_access_skip: true,
     notification_skip: true,
@@ -176,49 +205,56 @@ Deno.serve(async (req: Request) => {
     rr: {
       runtime: "sprintB",
       mode: cfg.mode,
+      initiation_status: "pending",
       correlation_id: correlationId,
-      contact: { name, phone, email },
+      // PII операционного контакта — только для operator-view (RLS orders_v2).
+      contact: { name: nameRaw, phone: phoneRaw, email, phone_norm: phoneNorm },
       comment,
     },
   };
 
-  const { data: orderNumberData } = await supabaseAdmin.rpc(
-    "generate_order_number",
-  );
-  const orderNumber = String(
-    orderNumberData ?? `RR-${crypto.randomUUID().slice(0, 8)}`,
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+    "rr_get_or_create_pending_order",
+    {
+      _offer_id: offerId,
+      _user_id: userId,
+      _email_norm: email,
+      _phone_norm: phoneNorm,
+      _product_id: product.id,
+      _tariff_id: tariff.id,
+      _amount: amountNumeric,
+      _currency: currency,
+      _customer_email: email,
+      _customer_phone: phoneRaw,
+      _customer_ip: ip,
+      _meta: initialMeta,
+    },
   );
 
-  const { data: order, error: orderErr } = await supabaseAdmin
-    .from("orders_v2")
-    .insert({
-      order_number: orderNumber,
-      product_id: product.id,
-      tariff_id: tariff.id,
-      offer_id: offerId,
-      base_price: amountNumeric,
-      final_price: amountNumeric,
-      currency,
-      status: "pending",
-      provider: "rr",
-      customer_email: email,
-      customer_phone: phone,
-      user_id: userId,
-      meta: insertMeta,
-    })
-    .select("id")
-    .single();
-
-  if (orderErr || !order) {
+  if (rpcErr || !rpcData || rpcData.length === 0) {
     return errorResponse(
-      `order_create_failed:${orderErr?.message ?? "unknown"}`,
+      `order_create_failed:${rpcErr?.message ?? "no_rpc_data"}`,
       500,
     );
   }
+  const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
 
-  const externalId = order.id as string;
+  if (wasReused) {
+    // Reuse — RPC уже проверил initiation_status='created' + payment_url.
+    const { data: reusedOrder } = await supabaseAdmin
+      .from("orders_v2")
+      .select("meta")
+      .eq("id", externalId)
+      .maybeSingle();
+    const url = (reusedOrder?.meta as any)?.rr?.payment_url as string | undefined;
+    return jsonResponse({
+      payment_url: url,
+      order_id: externalId,
+      reused: true,
+    });
+  }
 
-  // 2) provider_events: create_order_requested
+  // Новый заказ — начинаем инициализацию РР.
   await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
     event_id: `${externalId}:create_order_requested`,
@@ -235,7 +271,6 @@ Deno.serve(async (req: Request) => {
     related_order_id: externalId,
   });
 
-  // 3) createOrder в РР. Notification URL — наша rr-webhook (Sprint B: noop-приёмник).
   const projectRef = (Deno.env.get("SUPABASE_URL") ?? "").match(
     /https:\/\/([^.]+)\.supabase\.co/,
   )?.[1];
@@ -250,20 +285,25 @@ Deno.serve(async (req: Request) => {
     notificationUrl,
     correlationId,
   });
-
   const redacted = redactRRResponse(rrRes.http.json);
 
   if (!rrRes.ok || !rrRes.paymentUrl) {
+    // Пометить заказ как failed: не reusable.
+    const { data: cur } = await supabaseAdmin
+      .from("orders_v2").select("meta").eq("id", externalId).maybeSingle();
+    const curMeta = (cur?.meta ?? {}) as any;
     await supabaseAdmin
       .from("orders_v2")
       .update({
         meta: {
-          ...insertMeta,
+          ...curMeta,
           rr: {
-            ...insertMeta.rr,
-            error: rrRes.errorText ?? "rr_create_order_failed",
-            raw_last: redacted,
+            ...(curMeta.rr ?? {}),
+            initiation_status: "failed",
+            error_code: rrRes.errorText ?? "rr_create_order_failed",
+            error_at: new Date().toISOString(),
             http_status: rrRes.status,
+            raw_last: redacted,
           },
         },
       })
@@ -287,14 +327,18 @@ Deno.serve(async (req: Request) => {
     return errorResponse("rr_create_order_failed", 502);
   }
 
-  // 4) success: сохраняем payment_url в meta + provider_events succeeded
+  // Success — сохраняем payment_url + initiation_status='created'.
+  const { data: cur2 } = await supabaseAdmin
+    .from("orders_v2").select("meta").eq("id", externalId).maybeSingle();
+  const cur2Meta = (cur2?.meta ?? {}) as any;
   await supabaseAdmin
     .from("orders_v2")
     .update({
       meta: {
-        ...insertMeta,
+        ...cur2Meta,
         rr: {
-          ...insertMeta.rr,
+          ...(cur2Meta.rr ?? {}),
+          initiation_status: "created",
           payment_url: rrRes.paymentUrl,
           rr_request_id: rrRes.rrRequestId ?? externalId,
           rr_status_raw: rrRes.rrStatusRaw ?? null,
