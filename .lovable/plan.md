@@ -1,371 +1,88 @@
-# да, согласен, с учетом правок:
+Просто почини все  ей счет не отправляй  пусть сама еще раз отправит себе с сайта выбранный тариф. Причем тут ип, если она на юрлицо выставляла счет? Скажи в итоге, где нужно исправить мне настройки кнопок  
 
-## **1. Sprint A можно выполнять**
+&nbsp;
 
-План вернулся в правильный scope: **нормализовать UI банковской рассрочки**, не начинать `installment-initiate`, `rr-webhook`, платежи, доступы и CRM.
+План: восстановление счетов «Оплатить от ЮЛ» на «Ценный бухгалтер» + ручная выписка счёта Юлии Станкевич
 
-Это корректный промежуточный шаг перед полноценным Sprint B.
+## Diagnose (что уже проверено)
 
----
+**Продукт:** «Ценный бухгалтер | 1 ступень 2.0» (`products_v2.id = 7101ed3c-…`, домен `cb.gorbova.by`).
 
-## **2. Исправить противоречие в пункте 2.1**
+**Оффер invoice-only:**
 
-Сейчас написано:
+- Тариф «Бухгалтер» → offer `7cc42c7b-…` «Оплатить от ЮЛ», 1650 BYN, `pay_now`.
+- Тариф «Главный бухгалтер» → offer `8db9492e-…` «Оплатить от ЮЛ», 1950 BYN.
+- Тариф «Бизнес-леди» → отсутствует (это отдельная задача, вне scope).
 
-```txt
-{offerForm.offer_type !== "bank_installment" && offerForm.offer_type !== "lead" && offerForm.offer_type !== "preregistration" && (
-  <OfferAcquiringSettings ... />
-)}
-```
+`detectInvoiceOnlyOffer` для обоих возвращает `isInvoiceOnly=true`, `SitePageBySlug` открывает `InvoiceCheckoutDialog`. Edge-функция `invoice-checkout-issue` жива, последний удачный прогон — заказ `ORD-26-00272` (08.07, admin-тест) → PDF сгенерирован (`document_number=0807/1`), email+Telegram отправлены (`invoice_checkout.document_send_completed`).
 
-Но далее сказано:
+**Заказ Юлии Станкевич** (`profile 8c6b458e-…`, email `yul.winbet.88@gmail.com`, user `f7690c11-…`):
 
-```txt
-lead/preregistration тоже не эквайринг — оставим текущее поведение, если они уже там показаны, не меняем; главное — вырезать для bank_installment
-```
+- 09.07 17:00 создана запись `client_legal_details.aab58182-…` — ООО «Вандер Лаб», УНП 193767876.
+- Ни одной записи `orders_v2` для этого user за 07–09.07 нет; ни одного `invoice_checkout.*` в `audit_logs`; ни одного вызова `invoice-checkout-issue` в edge-логах.
+- Вывод: она заполнила форму реквизитов (это создало запись в `client_legal_details`), но до шага «Подтверждение → Сформировать счёт» не дошла. На мобильном (её скрин с iPhone) `DialogContent max-h-[92vh] overflow-y-auto` без sticky-footer — кнопки навигации оказались за нижним краем viewport, и «окно смещено», как она и описала в переписке.
 
-Это противоречие. Для Sprint A не надо менять `lead` и `preregistration`.
+**Найденный сопутствующий баг (не блокер, но чинить):**
 
-Заменить на:
+- Заказ `ORD-26-00275` (08.07, admin-тест, offer «Главный бухгалтер · Оплатить от ЮЛ», payer=`entrepreneur`) упал: `invoice_checkout.document_generate_failed` → `document_template_not_configured / no_template`.
+- Причина: в `meta.document_scenarios` этого offer есть только сценарии `payer_type=legal_entity` + один отключённый `individual`. Для ИП (`entrepreneur`) ни сценария, ни `template_id` нет, поэтому `canonical-document-generate-strict` не находит шаблон. То же самое у offer «Бухгалтер · Оплатить от ЮЛ». В `InvoiceCheckoutDialog` при этом ИП по-прежнему доступен как payer.
 
-```tsx
-{offerForm.offer_type !== "bank_installment" && (
-  <OfferAcquiringSettings ... />
-)}
-```
+## Что делаем (Sprint I)
 
-То есть в этом спринте **только вырезать** `OfferAcquiringSettings` **для** `bank_installment`. Остальные типы не трогать.
+### 1. Fix UI — sticky footer в InvoiceCheckoutDialog
 
----
+`src/components/payment/InvoiceCheckoutDialog.tsx`:
 
-## **3. SQL UPDATE допустим, но только с backup snapshot**
+- Обернуть контент шагов `payer`/`confirm` в `flex flex-col`, вынести панель с кнопками (`Назад`, `Далее` / `Сформировать счёт`) в `sticky bottom-0 bg-background pt-3 border-t` внутри `DialogContent`.
+- На `DialogContent` оставить `max-h-[92vh]`, но переключить внутренний скролл: скроллится middle-часть, footer остаётся видимым.
+- На шаге `success` кнопку скачать/закрыть также сделать sticky, чтобы PDF-ссылка не терялась.
 
-Перед UPDATE обязательно снять полный snapshot конкретного оффера:
+### 2. Fix scenario coverage для ИП (payer_type=entrepreneur)
 
-```sql
-SELECT *
-FROM tariff_offers
-WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74';
-```
+- В `InvoiceCheckoutDialog` при выборе плательщика скрывать/дизейблить записи `client_type='entrepreneur'`, если в `offer.meta.document_scenarios` нет ни одного включённого сценария с `payer_type='entrepreneur' && payment_channels=['bank_transfer']`. Показывать подсказку «Для этого оффера пока доступна оплата только от юрлица».
+- В `detectInvoiceOnlyOffer` — не трогать (детект оффера остаётся тем же).
+- Никаких изменений в самих офферах через SQL в этом спринте не делаем: сценарий для ИП — отдельное решение владельца (нужен ли шаблон отдельного договора). Отчёт зафиксирует список офферов без entrepreneur-сценария.
 
-И в отчет добавить old/new по 4 полям:
+### 3. Ручная выписка счёта Юлии
 
-```txt
-payment_method: internal_installment → full_payment
-installment_count: 6 → NULL
-installment_interval_days: 30 → NULL
-first_payment_delay_days: <old> → NULL
-```
+- Через `supabase--curl_edge_functions` вызвать `invoice-checkout-issue` от её JWT нельзя (нет её сессии). Поэтому идём напрямую: вызвать edge-функцию `invoice-checkout-issue` — не подходит (требует Bearer user). Используем существующий путь без нового кода:
+  1. `INSERT` строки в `orders_v2` со всеми полями, которые ставит функция (`status='draft'`, `payer_type='legal_entity'`, `offer_id=7cc42c7b-…` (тариф «Бухгалтер», 1650 BYN — самый ходовой; уточнить у владельца в отчёте, если нужен другой тариф), `profile_id=8c6b458e-…`, `user_id=f7690c11-…`, `customer_email='yul.winbet.88@gmail.com'`, `meta.checkout_kind='invoice'`, `meta.legal_details_id=aab58182-…`, `purchase_snapshot`, `crm_routing_snapshot` по offer).
+  2. Вызвать `canonical-document-generate-strict` с `pre_payment_invoice: true` для нового `order_id` (через `supabase--curl_edge_functions` с service role, без user JWT — функция это поддерживает для admin вызовов).
+  3. Вызвать `canonical-document-send` для полученного `document_id` (`send_email: true`, `send_telegram: true`).
+  4. Проверить `audit_logs` (`document.generated`, `invoice_checkout.document_send_completed`), убедиться что PDF в `ai_generated_documents` есть и `email_sent=true`.
+- Если тариф под сомнением — сначала уточнить у владельца в отчёте, не менять «Главный бухгалтер»/«Бизнес-леди» без подтверждения.
 
-Если `first_payment_delay_days` уже `NULL`, так и написать.
+### 4. Verify
 
----
+- Playwright на `cb.gorbova.by`, mobile viewport 390×844: открыть тариф «Бухгалтер», нажать «Оплатить от ЮЛ» под тестовым юзером → на шагах `payer` и `confirm` кнопки «Далее» / «Сформировать счёт» видны без скролла; после «Сформировать счёт» — шаг `success` с видимой кнопкой «Скачать PDF».
+- Скриншоты `1_payer.png`, `2_confirm.png`, `3_success.png` под iPhone-viewport.
+- В `orders_v2` — тестовый draft-order создан, `audit_logs` содержит цепочку `order_created → document.generated → document_send_completed`.
+- Отдельно проверить: при выборе плательщика ИП для offer без entrepreneur-сценария — запись задизейблена + подсказка.
 
-## **4. Не называть UPDATE “миграцией”**
+### 5. Отчёт
 
-В плане правильно написано “SQL UPDATE”, но в отчете подрядчик не должен назвать это миграцией. Это **точечный data-fix одной записи**, а не schema migration.
+`.lovable/proofs/2026-07-10-invoice-checkout-mobile-fix-and-yulia-invoice.md`:
 
-Формулировка:
+- Diagnose (что нашли, ссылки на записи `orders_v2`, `audit_logs`, `client_legal_details`).
+- Diff UI-фикса + entrepreneur-gate.
+- Playwright before/after скрины mobile-viewport.
+- Ручная выписка: `order_id`, `document_id`, `document_number`, `pdf_url`, статусы `email_sent` / `telegram_sent`.
+- Список офферов без entrepreneur-сценария (для будущего Sprint II — решение владельца по шаблону договора для ИП).
 
-```txt
-Data-fix одной bank_installment-записи тарифа «Бухгалтер»
-```
+## Что НЕ делаем в этом спринте
 
----
+- Не трогаем `tariff_offers.meta.document_scenarios` через SQL (это решение владельца).
+- Не меняем `canonical-document-generate-strict`, `canonical-document-send`, `resolveOfferRouting`.
+- Не создаём новых edge-функций.
+- Не меняем логику `detectInvoiceOnlyOffer` и `pickOfferForFlow`.
+- Не меняем логику подписок / оплат bePaid / installment / lead — только invoice-only flow.
+- Не выдаём Юлии никаких доступов (`entitlements`, telegram-club) — счёт до оплаты, доступы — после реального банковского платежа (существующий webhook).
 
+## DoD
 
+- Кнопки «Далее» и «Сформировать счёт» в `InvoiceCheckoutDialog` видны на iPhone-viewport без прокрутки на всех шагах.
+- Плательщик ИП недоступен для offer без entrepreneur-сценария (нет тихих 409 «no_template»).
+- Юлии Станкевич отправлен PDF-счёт от ООО «Вандер Лаб» на email + Telegram; в `audit_logs` есть подтверждающие записи.
+- Отчёт в `.lovable/proofs/`.
 
-
-
-## **5.**
-
-`OfferRowCompact` **должен различать bank installment и internal installment**
-
-Правило для `OfferRowCompact`:
-
-```txt
-offer_type='bank_installment'
-→ показывать «Рассрочка банка · РР · BYN»
-→ показывать amount/button_label
-→ НЕ показывать «до N мес»
-→ НЕ считать платежи по installment_count
-```
-
-А для внутренней рассрочки оставить старое поведение:
-
-```txt
-offer_type='pay_now' AND payment_method='internal_installment'
-→ прежняя логика «до N мес × X BYN»
-```
-
----
-
-## **6. Проверка публичной страницы через iframe должна быть корректной**
-
-Так как `gorbova.by/cb` рендерит Tilda HTML внутри sandbox iframe, в proof надо не требовать обычный DOM parent-доступ.
-
-Добавить:
-
-```txt
-Если Playwright не может напрямую прочитать DOM внутри sandbox iframe, проверять через:
-- iframe locator, если доступен;
-- postMessage flow;
-- popup/navigation URL после клика;
-- network request log parent page.
-```
-
-Главное доказать:
-
-```txt
-клик по кнопке → external_link pay.rrllc.ru
-нет вызовов installment-initiate / rr-*.
-```
-
----
-
-## **7. Проверить все 3 тарифа, но data-fix только один**
-
-Правильно:
-
-```txt
-Бухгалтер — data-fix 4 полей
-Главный бухгалтер — read-only snapshot
-Бизнес-леди — read-only snapshot
-```
-
-Запрещено “заодно” править два других оффера, если в snapshot не найден критический дефект и нет отдельного согласования.
-
----
-
-## **8. Боевые таблицы проверять before/after с max timestamps**
-
-В DoD добавить не только счетчики, но и timestamp-проверку:
-
-```sql
-SELECT 'orders_v2' AS t, count(*), max(created_at), max(updated_at) FROM orders_v2
-UNION ALL SELECT 'payments_v2', count(*), max(created_at), max(updated_at) FROM payments_v2
-UNION ALL SELECT 'provider_events', count(*), max(created_at), max(updated_at) FROM provider_events
-UNION ALL SELECT 'domain_events', count(*), max(created_at), max(updated_at) FROM domain_events
-UNION ALL SELECT 'entitlements', count(*), max(created_at), max(updated_at) FROM entitlements
-UNION ALL SELECT 'access_grant_ledger', count(*), max(created_at), max(updated_at) FROM access_grant_ledger;
-```
-
-Если `max_updated_at` меняется из-за фоновой системы, в отчете отдельно указать, что новых строк нет и изменение не связано с РР.
-
----
-
-## **9. Runtime proof не должен включать сохранение формы**
-
-В админке:
-
-```txt
-открыть → проверить → скрин → закрыть
-```
-
-Не нажимать “Сохранить”, кроме точечного SQL data-fix по согласованному офферу.
-
----
-
-## **10. Формат отчета после выполнения**
-
-Использовать точный заголовок:
-
-```txt
-Отчет о выполненной работе: Sprint A — нормализация UI кнопки «Рассрочка от банка»
-```
-
----
-
-## **Итог**
-
-План можно выполнять после этих правок.
-
-Ключевые ограничения:
-
-```txt
-- Sprint A = только UI-normalization + один data-fix
-- не начинать installment-initiate
-- не начинать rr-webhook
-- не создавать payments_v2/orders_v2
-- не выдавать доступы
-- не трогать CRM/payment pipeline
-- не смешивать bank_installment с bePaid/internal_installment
-
-
-План: Sprint A — нормализация UI кнопки «Рассрочка от банка»
-```
-
-## 0. Область
-
-Только продукт **«Ценный бухгалтер. Первая ступень 2.0»** (`7101ed3c-...`) и его 3 тарифа: Бухгалтер / Главный бухгалтер / Бизнес-леди.
-
-Затрагиваем:
-
-- `src/pages/admin/AdminProductDetailV2.tsx` — редактор оффера (диалог offer_type)
-- `src/components/admin/product/OfferRowCompact.tsx` — превью строки оффера в списке
-- один SQL UPDATE на существующий bank_installment оффер тарифа «Бухгалтер»
-
-НЕ трогаем:
-
-- public flow (`UniversalPricingSection`, `TariffCard`, `SitePageBySlug`, `LeadRequestDialog`, `bankInstallment.ts`)
-- edge functions (`installment-initiate` не создаём, `rr-webhook` не создаём, `rr-notification` не трогаем)
-- схему БД, RLS, миграции, RR-подключение
-- bePaid / Stripe / internal_installment ветки (кроме того, что для `bank_installment` они больше не показываются)
-
-Legacy external_link должен продолжать работать байт-в-байт как сейчас — это доказано Sprint 2.1.
-
----
-
-## 1. Что уже правильно (оставить как есть)
-
-В редакторе оффера уже реализовано:
-
-- селект `offer_type` содержит `bank_installment` (label «Рассрочка банка»)
-- при выборе `bank_installment` форма сбрасывает `installment_count/interval_days/first_payment_delay_days = null`, `requires_card_tokenization = false`, `payment_method = 'full_payment'` (если не был другой)
-- на вкладке **Оплата** для `bank_installment` показывается отдельная info-card «Рассрочка банка» с бейджами (Ресурс Развития / BYN / внешний payment_url), amber-alert про legacy и поле `Fallback URL (external_link)` в `meta.bank_installment.external_link`
-- radio «Способ приёма оплаты» (`full_payment` / `bank_installment` / …) показывается только для `offer_type='pay_now'` — для `bank_installment` он уже скрыт
-- блок «Внутренняя рассрочка N платежей» показывается только для `pay_now + internal_installment` — для `bank_installment` уже скрыт
-
-## 2. Что чинить в UI редактора оффера (`AdminProductDetailV2.tsx`)
-
-Для `offer_type='bank_installment'` в текущем UI ещё «протекает» посторонняя логика. Правки — только condition-gate, без изменения submit-логики.
-
-### 2.1. Вкладка «Оплата» — `OfferAcquiringSettings` (строки ~2153-2165)
-
-Сейчас `<OfferAcquiringSettings ... />` рендерится всегда, включая `bank_installment`. Это блок настроек bePaid/Stripe карточного эквайринга — для банковской рассрочки РР он нерелевантен.
-
-Обернуть в:
-
-```
-{offerForm.offer_type !== "bank_installment" && offerForm.offer_type !== "lead" && offerForm.offer_type !== "preregistration" && (
-  <OfferAcquiringSettings ... />
-)}
-```
-
-(lead/preregistration тоже не эквайринг — оставим текущее поведение, если они уже там показаны, не меняем; главное — вырезать для `bank_installment`).
-
-### 2.2. Вкладка «Автопродление» (`renewal`, строки ~2169-…)
-
-Внутри уже стоит гейт `offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment"` — для `bank_installment` тело не рендерится. Показать в этой вкладке подсказку-заглушку для `bank_installment`:
-
-```
-{offerForm.offer_type === "bank_installment" && (
-  <Card>… «Банковская рассрочка не является подписочной. Условия
-  и срок определяет банк/Ресурс Развития.» …</Card>
-)}
-```
-
-### 2.3. Вкладка «Дополнительно» (`extra`, строки ~2657-2723)
-
-- «Блокировать виртуальные карты» уже гейтчено `payment_method === 'internal_installment'` — для `bank_installment` не показывается. ОК.
-- Остальные блоки (`GetCourse код`, `OfferWelcomeMessageEditor`, `OfferCrmRoutingSection`, `OfferAutomationRulesSection`, is_active, is_primary) — оставить, они общие. `is_primary` уже гейтчен `pay_now` — для `bank_installment` скрыт. ОК.
-
-### 2.4. Селект `offer_type` — надпись «Рассрочка» (строка ~1859)
-
-В обработчике при выборе «Рассрочка» (внутренней) сейчас корректно ставится `pay_now + internal_installment`. Оставить без изменений.
-
-### 2.5. submit-логика (`handleSaveOffer`, строки ~572-691)
-
-Не трогать. Она уже:
-
-- для `bank_installment` пишет `payment_method` из формы (по умолчанию `full_payment`),
-- обнуляет `installment_count/interval/delay`,
-- сохраняет `meta.bank_installment.*`.
-
-## 3. Что чинить в списке офферов (`OfferRowCompact.tsx`)
-
-Открыть и добавить branch для `offer_type === 'bank_installment'`:
-
-- бейдж «Рассрочка банка · РР · BYN»
-- НЕ показывать «до N мес × X BYN» математику (она валидна только для `payment_method === 'internal_installment'`)
-- показывать `button_label` и `amount` из `tariff_offers` (SoT = БД)
-
-Detail — уточнить при чтении файла на build-фазе.
-
-## 4. Data-fix для существующего оффера «Бухгалтер»
-
-Один точечный UPDATE (через insert-tool) — только один оффер, только очистка нерелевантных полей внутренней рассрочки:
-
-```sql
-UPDATE tariff_offers
-SET payment_method = 'full_payment',
-    installment_count = NULL,
-    installment_interval_days = NULL,
-    first_payment_delay_days = NULL,
-    updated_at = now()
-WHERE id = '15ce91ec-5dc1-4abf-9fab-9c97dc1e6b74'
-  AND offer_type = 'bank_installment';
-```
-
-`meta.bank_installment.*` (external_link, installment_provider, currency, rr_mode='payment_url') — не трогаем, они уже корректны.
-
-Офферы «Главный бухгалтер» (`2a07af43…`) и «Бизнес-леди» (`4f64def7…`) уже:
-
-- `payment_method='full_payment'`
-- `installment_count/interval/delay = NULL`
-
-По ним UPDATE не нужен. Проверим read-only снапшотом до/после.
-
-## 5. Discovery-снапшот всех 3 тарифов (BEFORE + AFTER)
-
-`supabase--read_query` до и после UPDATE. По каждому bank_installment оффер зафиксировать в отчёте:
-
-```
-tariff_id, tariff.name, tariff.code,
-offer_id, button_label, amount, currency, payment_method,
-installment_count, installment_interval_days, first_payment_delay_days,
-meta.bank_installment.installment_provider,
-meta.bank_installment.currency,
-meta.bank_installment.rr_mode,
-meta.bank_installment.external_link
-```
-
-Дельта проверяется только по офферу «Бухгалтер»: 4 поля.
-
-## 6. Runtime proof (Playwright, read-only для публики)
-
-1. **Админка** (`/admin/products-v2/7101ed3c...?tab=offers`) — открыть по одному все 3 bank_installment оффера:
-  - селект `offer_type` = «Рассрочка банка»
-  - info-card «Рассрочка банка» с бейджами Ресурс Развития / BYN / внешний payment_url
-  - amber-alert про legacy present
-  - fallback external_link заполнен
-  - НЕТ radio «Способ приёма оплаты»
-  - НЕТ блока «Внутренняя рассрочка N платежей»
-  - НЕТ `OfferAcquiringSettings` (bePaid/Stripe)
-  - вкладка «Автопродление» показывает подсказку про банковскую рассрочку
-  - скриншот каждого
-2. **Публичная страница** (`https://gorbova.by/cb`) — по каждой из 3 кнопок:
-  - клик открывает `pay.rrllc.ru/...` (external_link)
-  - Network НЕ содержит запросов к `installment-initiate`/`rr-*`
-  - скриншот
-3. **SQL AFTER-снапшот** = байт-в-байт BEFORE для 2-х тарифов; для «Бухгалтера» — только 4 ожидаемых дельты.
-
-## 7. DoD Sprint A
-
-- UI редактора оффера для `offer_type='bank_installment'` не показывает: radio способ оплаты bePaid/Stripe, внутреннюю рассрочку N платежей, `OfferAcquiringSettings`, virtual-card блокировку.
-- Вкладка «Автопродление» для `bank_installment` содержит явную подсказку (не подписка).
-- `OfferRowCompact` для `bank_installment` не показывает «до N мес × X BYN».
-- Оффер «Бухгалтер» нормализован SQL-UPDATE'ом (4 поля).
-- BEFORE/AFTER снапшот трёх тарифов приложен.
-- Playwright screenshots админки (3 оффера) и публичного клика (3 кнопки) приложены.
-- Публичный legacy external_link работает без вызовов `installment-initiate`/`rr-*`.
-- Никаких изменений в `orders_v2 / payments_v2 / provider_events / domain_events / entitlements / access_grant_ledger` (счётчики совпадают до/после).
-- Отчёт: `.lovable/proofs/2026-07-09-rr-sprint-A-bank-installment-ui-normalize.md`.
-
-## 8. Что НЕ делаем в Sprint A
-
-- `installment-initiate`, `rr-webhook`, `rr-*` edge-функции
-- `payments_v2` для РР, `grant-access-for-order`, CRM stage transitions
-- `rr_mode='runtime'` — все офферы остаются `rr_mode='payment_url'`
-- переименование `bank_installment` в БД
-- удаление `DEFAULT_BANK_INSTALLMENT_LINK` из `src/lib/bankInstallment.ts`
-- ручные платежи
-- изменения bePaid/Stripe/internal_installment веток
-- миграции БД / RLS / GRANT
-
-## 9. Технические файлы, которые будут изменены
-
-- `src/pages/admin/AdminProductDetailV2.tsx` — 2 condition-gate правки (§2.1, §2.2)
-- `src/components/admin/product/OfferRowCompact.tsx` — branch для `bank_installment` (§3)
-- SQL UPDATE через insert-tool (§4)
-- отчёт-файл `.lovable/proofs/2026-07-09-rr-sprint-A-*.md`
+Подтвердите (или скорректируйте тариф — «Бухгалтер» 1650 BYN по умолчанию), и я перехожу к выполнению.
