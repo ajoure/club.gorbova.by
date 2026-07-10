@@ -82,23 +82,51 @@ export async function verifyNotificationSignature(input: {
 }
 
 export interface RRCreateOrderInput {
-  externalId: string; // должен начинаться с rr_test_
+  externalId: string; // локальный orders_v2.id
   amountMinor: number;
-  currency: string; // передаётся как есть в РР; фактическая поддержка валют выясняется runtime-тестом
+  currency: string;
   notificationUrl: string;
   completeUrl?: string;
   failUrl?: string;
   correlationId: string;
 }
 
+export type RRFailureKind =
+  | "timeout"
+  | "network"
+  | "invalid_json"
+  | "http"
+  | "invalid_response"
+  | null;
+
+export type RROutcomeClass =
+  | "upstream_created"
+  | "upstream_rejected"
+  | "upstream_outcome_unknown";
+
 export interface RRCreateOrderResult {
   ok: boolean;
   status: number;
-  rrRequestId?: string;
-  paymentUrl?: string;
+  /** Реальный json.id из ответа РР. Никогда не подставляем externalId. */
+  providerRequestId: string | null;
+  paymentUrl: string | null;
   rrStatusRaw?: string;
   errorText?: string;
   http: RRHttpCallResult;
+  failureKind: RRFailureKind;
+  outcomeClass: RROutcomeClass;
+}
+
+function classifyPaymentUrl(url: unknown): url is string {
+  if (typeof url !== "string" || url.length === 0) return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    if (u.username || u.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function rrCreateOrder(
@@ -113,17 +141,12 @@ export async function rrCreateOrder(
       amount: amountRub,
       currency: input.currency,
       items: [
-        {
-          name: "RR core test order",
-          quantity: 1,
-          price: amountRub,
-        },
+        { name: "RR core test order", quantity: 1, price: amountRub },
       ],
     },
     notification_url: input.notificationUrl,
     complete_url: input.completeUrl,
     fail_url: input.failUrl,
-    // client_info намеренно не передаём — тестовая заявка без PII.
   };
 
   const res = await rrHttpPost({
@@ -135,19 +158,58 @@ export async function rrCreateOrder(
     correlationId: input.correlationId,
   });
 
+  // failureKind — по типу транспортного/протокольного сбоя, не по тексту.
+  let failureKind: RRFailureKind = null;
+  const httpAny = res as unknown as {
+    failureKind?: RRFailureKind;
+    parseError?: boolean;
+    aborted?: boolean;
+    networkError?: boolean;
+  };
+  if (httpAny.aborted) failureKind = "timeout";
+  else if (httpAny.networkError) failureKind = "network";
+  else if (httpAny.parseError) failureKind = "invalid_json";
+  else if (!res.ok) failureKind = "http";
+
   const json = (res.json ?? {}) as Record<string, unknown>;
   const err = (json.error ?? null) as Record<string, unknown> | null;
+  const rawId = json.id;
+  const providerRequestId = typeof rawId === "string" && rawId.length > 0
+    ? rawId
+    : null;
+  const paymentUrl = classifyPaymentUrl(json.link) ? (json.link as string) : null;
+
+  // Классификация исхода.
+  let outcomeClass: RROutcomeClass;
+  if (res.ok && !err && paymentUrl) {
+    outcomeClass = "upstream_created";
+  } else if (res.ok && !err && !paymentUrl) {
+    // 2xx без валидного link — нарушение контракта провайдера.
+    outcomeClass = "upstream_outcome_unknown";
+    failureKind = "invalid_response";
+  } else if (res.status >= 400 && res.status < 500 && err &&
+    ![408, 425, 429].includes(res.status)) {
+    // Документированный validation rejection: 4xx с error телом (кроме retryable).
+    outcomeClass = "upstream_rejected";
+  } else {
+    // timeout / network / 5xx / 408 / 425 / 429 / invalid_json / 4xx без error →
+    // консервативно: outcome_unknown.
+    outcomeClass = "upstream_outcome_unknown";
+  }
 
   return {
-    ok: res.ok && !err,
+    ok: outcomeClass === "upstream_created",
     status: res.status,
-    rrRequestId: (json.id as string) ?? input.externalId,
-    paymentUrl: json.link as string | undefined,
+    providerRequestId,
+    paymentUrl,
     rrStatusRaw: json.status as string | undefined,
     errorText: err ? String(err.text ?? "rr_error") : undefined,
     http: res,
+    failureKind,
+    outcomeClass,
   };
 }
+
 
 export interface RRGetStatusResult {
   ok: boolean;
