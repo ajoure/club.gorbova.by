@@ -236,8 +236,8 @@ export function InvoiceCheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[720px] max-h-[92vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[720px] max-h-[92vh] p-0 flex flex-col gap-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Счёт на оплату — {productName}
@@ -249,7 +249,7 @@ export function InvoiceCheckoutDialog({
         </DialogHeader>
 
         {step === "auth" && (
-          <div className="pt-2">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
             <InlineAuthForm
               contextNote="Чтобы выписать счёт, войдите или зарегистрируйтесь"
               onAuthenticated={() => setStep("payer")}
@@ -258,24 +258,24 @@ export function InvoiceCheckoutDialog({
         )}
 
         {step === "payer" && !showAddForm && (
-          <div className="space-y-4 pt-2">
-            {isLoadingLegal ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin" />
-              </div>
-            ) : payers.length === 0 ? (
-              <Card className="p-6 text-center space-y-3">
-                <Building2 className="h-10 w-10 mx-auto text-muted-foreground opacity-60" />
-                <div className="text-sm">
-                  У вас пока нет реквизитов для выставления счёта. Добавьте
-                  организацию или ИП — данные подтянутся автоматически по УНП.
+          <>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {isLoadingLegal ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin" />
                 </div>
-                <Button onClick={() => setShowAddForm(true)} className="gap-2">
-                  <Plus className="h-4 w-4" /> Добавить организацию или ИП
-                </Button>
-              </Card>
-            ) : (
-              <>
+              ) : payers.length === 0 ? (
+                <Card className="p-6 text-center space-y-3">
+                  <Building2 className="h-10 w-10 mx-auto text-muted-foreground opacity-60" />
+                  <div className="text-sm">
+                    У вас пока нет реквизитов для выставления счёта. Добавьте
+                    организацию или ИП — данные подтянутся автоматически по УНП.
+                  </div>
+                  <Button onClick={() => setShowAddForm(true)} className="gap-2">
+                    <Plus className="h-4 w-4" /> Добавить организацию или ИП
+                  </Button>
+                </Card>
+              ) : (
                 <RadioGroup
                   value={selectedPayerId ?? ""}
                   onValueChange={(v) => setSelectedPayerId(v)}
@@ -311,26 +311,27 @@ export function InvoiceCheckoutDialog({
                     );
                   })}
                 </RadioGroup>
-
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setShowAddForm(true)}>
-                    <Plus className="h-4 w-4 mr-1" /> Добавить организацию или ИП
-                  </Button>
-                  <Button
-                    className="ml-auto"
-                    disabled={!selectedPayerId}
-                    onClick={() => setStep("confirm")}
-                  >
-                    Далее
-                  </Button>
-                </div>
-              </>
+              )}
+            </div>
+            {payers.length > 0 && (
+              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setShowAddForm(true)}>
+                  <Plus className="h-4 w-4 mr-1" /> Добавить организацию или ИП
+                </Button>
+                <Button
+                  className="ml-auto"
+                  disabled={!selectedPayerId}
+                  onClick={() => setStep("confirm")}
+                >
+                  Далее
+                </Button>
+              </div>
             )}
-          </div>
+          </>
         )}
 
         {step === "payer" && showAddForm && (
-          <div className="space-y-4 pt-2">
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             <div className="flex items-center justify-between">
               <Button
                 variant="ghost"
@@ -356,37 +357,38 @@ export function InvoiceCheckoutDialog({
         )}
 
         {step === "confirm" && selectedPayer && (
-          <div className="space-y-4 pt-2">
-            <Card className="p-4 space-y-3">
-              <div className="text-sm">
-                <div className="text-muted-foreground">Продукт</div>
-                <div className="font-medium">
-                  {productName}
-                  {tariffName ? ` · ${tariffName}` : ""}
-                </div>
-              </div>
-              <div className="text-sm">
-                <div className="text-muted-foreground">Плательщик</div>
-                <div className="font-medium">{getDisplayName(selectedPayer)}</div>
-                {getUnp(selectedPayer) && (
-                  <div className="text-xs text-muted-foreground">
-                    УНП {getUnp(selectedPayer)}
+          <>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <Card className="p-4 space-y-3">
+                <div className="text-sm">
+                  <div className="text-muted-foreground">Продукт</div>
+                  <div className="font-medium">
+                    {productName}
+                    {tariffName ? ` · ${tariffName}` : ""}
                   </div>
-                )}
-              </div>
-              <div className="text-sm">
-                <div className="text-muted-foreground">К оплате</div>
-                <div className="font-medium text-lg">
-                  {amount} {currency}
                 </div>
-              </div>
-              <div className="text-xs text-muted-foreground pt-2 border-t">
-                После нажатия кнопки будет создан заказ, сформирован PDF-счёт
-                и отправлен на email плательщика (а также в Telegram, если он привязан).
-              </div>
-            </Card>
-
-            <div className="flex gap-2">
+                <div className="text-sm">
+                  <div className="text-muted-foreground">Плательщик</div>
+                  <div className="font-medium">{getDisplayName(selectedPayer)}</div>
+                  {getUnp(selectedPayer) && (
+                    <div className="text-xs text-muted-foreground">
+                      УНП {getUnp(selectedPayer)}
+                    </div>
+                  )}
+                </div>
+                <div className="text-sm">
+                  <div className="text-muted-foreground">К оплате</div>
+                  <div className="font-medium text-lg">
+                    {amount} {currency}
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground pt-2 border-t">
+                  После нажатия кнопки будет создан заказ, сформирован PDF-счёт
+                  и отправлен на email плательщика (а также в Telegram, если он привязан).
+                </div>
+              </Card>
+            </div>
+            <div className="shrink-0 border-t bg-background px-6 py-3 flex gap-2">
               <Button
                 variant="outline"
                 onClick={() => setStep("payer")}
@@ -408,7 +410,7 @@ export function InvoiceCheckoutDialog({
                 )}
               </Button>
             </div>
-          </div>
+          </>
         )}
 
         {step === "success" && result && (() => {
@@ -416,65 +418,69 @@ export function InvoiceCheckoutDialog({
           const displayDate = formatDate(result.document_issued_at);
           const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
           return (
-            <div className="space-y-4 pt-2 text-center">
-              <div className="flex justify-center">
-                <CheckCircle2 className="h-12 w-12 text-green-600" />
-              </div>
-              <div>
-                <div className="text-lg font-semibold">
-                  Счёт № {displayNumber} сформирован
+            <>
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-center">
+                <div className="flex justify-center">
+                  <CheckCircle2 className="h-12 w-12 text-green-600" />
                 </div>
-                <div className="text-sm text-muted-foreground mt-1">
-                  Отправка на email и в Telegram запущена и придёт в течение
-                  нескольких минут. Также PDF можно скачать сразу.
-                </div>
-              </div>
-              <Card className="p-3 text-left text-sm bg-muted/40">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
-                      При оплате в назначении платежа укажите
-                    </div>
-                    <div className="font-medium break-words select-all">
-                      {purposeText}
-                    </div>
+                <div>
+                  <div className="text-lg font-semibold">
+                    Счёт № {displayNumber} сформирован
                   </div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Отправка на email и в Telegram запущена и придёт в течение
+                    нескольких минут. Также PDF можно скачать сразу.
+                  </div>
+                </div>
+                <Card className="p-3 text-left text-sm bg-muted/40">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1">
+                      <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
+                        При оплате в назначении платежа укажите
+                      </div>
+                      <div className="font-medium break-words select-all">
+                        {purposeText}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(purposeText);
+                          toast.success("Скопировано");
+                        } catch {
+                          toast.error("Не удалось скопировать");
+                        }
+                      }}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-col sm:flex-row gap-2">
+                {result.document_id && (
                   <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0"
+                    variant="outline"
                     onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(purposeText);
-                        toast.success("Скопировано");
-                      } catch {
-                        toast.error("Не удалось скопировать");
+                      const r = await downloadDocumentBlob(result.document_id!, "pdf");
+                      if (r.ok === false) {
+                        toast.error(r.message);
+                      } else {
+                        toast.success("Скачивание началось");
                       }
                     }}
                   >
-                    <Copy className="h-4 w-4" />
+                    <Download className="h-4 w-4 mr-1" /> Скачать PDF
                   </Button>
-                </div>
-              </Card>
-              {result.document_id && (
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    const r = await downloadDocumentBlob(result.document_id!, "pdf");
-                    if (r.ok === false) {
-                      toast.error(r.message);
-                    } else {
-                      toast.success("Скачивание началось");
-                    }
-                  }}
-                >
-                  <Download className="h-4 w-4 mr-1" /> Скачать PDF
+                )}
+                <Button className="sm:ml-auto" onClick={() => handleClose(false)}>
+                  Готово
                 </Button>
-              )}
-              <Button className="w-full" onClick={() => handleClose(false)}>
-                Готово
-              </Button>
-            </div>
+              </div>
+            </>
           );
         })()}
 
