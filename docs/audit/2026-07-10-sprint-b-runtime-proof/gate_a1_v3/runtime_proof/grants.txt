@@ -1,0 +1,16 @@
+           routine_name           |   grantee    | privilege_type 
+----------------------------------+--------------+----------------
+ rr_finalize_created_order        | sandbox_exec | EXECUTE
+ rr_finalize_order_not_created    | sandbox_exec | EXECUTE
+ rr_finalize_order_rejected       | sandbox_exec | EXECUTE
+ rr_get_config_flag               | sandbox_exec | EXECUTE
+ rr_get_or_create_pending_order   | sandbox_exec | EXECUTE
+ rr_insert_idempotent_audit_event | sandbox_exec | EXECUTE
+ rr_mark_call_started             | sandbox_exec | EXECUTE
+ rr_mark_local_persist_failed     | sandbox_exec | EXECUTE
+ rr_mark_upstream_unknown         | sandbox_exec | EXECUTE
+ rr_operator_resolve              | sandbox_exec | EXECUTE
+ rr_public_rate_limit_hit         | sandbox_exec | EXECUTE
+ rr_reconcile_confirm_created     | sandbox_exec | EXECUTE
+(12 rows)
+

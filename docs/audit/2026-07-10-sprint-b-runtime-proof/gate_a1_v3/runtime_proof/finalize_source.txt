@@ -1,0 +1,64 @@
+          proname          |                                              prosrc                                              
+---------------------------+--------------------------------------------------------------------------------------------------
+ rr_finalize_created_order |                                                                                                 +
+                           | DECLARE                                                                                         +
+                           |   v_meta jsonb; v_provider text; v_flow text; v_status text;                                    +
+                           |   v_existing_url text; v_upstream text;                                                         +
+                           | BEGIN                                                                                           +
+                           |   IF _order_id IS NULL OR _payment_url IS NULL OR length(trim(_payment_url)) = 0 THEN           +
+                           |     RAISE EXCEPTION 'rr_finalize_invalid_input' USING ERRCODE='22023';                          +
+                           |   END IF;                                                                                       +
+                           |   SELECT provider, meta INTO v_provider, v_meta                                                 +
+                           |     FROM public.orders_v2 WHERE id = _order_id FOR UPDATE;                                      +
+                           |   IF NOT FOUND THEN RAISE EXCEPTION 'rr_finalize_order_not_found' USING ERRCODE='P0002'; END IF;+
+                           |   v_flow := v_meta->>'flow';                                                                    +
+                           |   IF v_provider IS DISTINCT FROM 'rr' OR v_flow IS DISTINCT FROM 'rr_installment' THEN          +
+                           |     RAISE EXCEPTION 'rr_finalize_wrong_provider_or_flow' USING ERRCODE='22023';                 +
+                           |   END IF;                                                                                       +
+                           |   v_status := v_meta#>>'{rr,initiation_status}';                                                +
+                           |   v_existing_url := v_meta#>>'{rr,payment_url}';                                                +
+                           |   v_upstream := v_meta#>>'{rr,upstream_outcome}';                                               +
+                           |                                                                                                 +
+                           |   IF v_status = 'created' AND v_existing_url = _payment_url THEN                                +
+                           |     RETURN jsonb_build_object('ok', true, 'state','already_created','idempotent', true);        +
+                           |   END IF;                                                                                       +
+                           |   IF v_status = 'created' AND v_existing_url IS DISTINCT FROM _payment_url THEN                 +
+                           |     RAISE EXCEPTION 'rr_finalize_url_conflict' USING ERRCODE='22023';                           +
+                           |   END IF;                                                                                       +
+                           |   IF v_status = 'failed' THEN                                                                   +
+                           |     RAISE EXCEPTION 'rr_finalize_from_terminal_forbidden' USING ERRCODE='22023';                +
+                           |   END IF;                                                                                       +
+                           |                                                                                                 +
+                           |   v_meta := jsonb_set(                                                                          +
+                           |     COALESCE(v_meta,'{}'::jsonb), '{rr}',                                                       +
+                           |     COALESCE(v_meta->'rr','{}'::jsonb) || jsonb_build_object(                                   +
+                           |       'initiation_status','created',                                                            +
+                           |       'payment_url',       _payment_url,                                                        +
+                           |       'rr_request_id',     _rr_request_id,                                                      +
+                           |       'rr_status_raw',     _rr_status_raw,                                                      +
+                           |       'raw_last',          COALESCE(_raw_last,'{}'::jsonb),                                     +
+                           |       'finalized_at',      to_jsonb(now()),                                                     +
+                           |       'local_persist_failed', false,                                                            +
+                           |       'upstream_outcome',  'created',                                                           +
+                           |       'reconciliation_status','confirmed_created',                                              +
+                           |       'upstream_call_state','completed'                                                         +
+                           |     ), true                                                                                     +
+                           |   );                                                                                            +
+                           |   UPDATE public.orders_v2 SET meta = v_meta, updated_at = now() WHERE id = _order_id;           +
+                           |   INSERT INTO public.provider_events(                                                           +
+                           |     provider, account_code, signature_valid, event_id, event_type, idempotency_key,             +
+                           |     payload, processing_status, processed_at, related_order_id                                  +
+                           |   ) VALUES (                                                                                    +
+                           |     'rr','rr',true,                                                                             +
+                           |     _order_id::text||':create_order_succeeded','create_order_succeeded',                        +
+                           |     _order_id::text||':create_order_succeeded',                                                 +
+                           |     jsonb_build_object('payment_url_present', true,'rr_request_id',_rr_request_id,              +
+                           |       'rr_status_raw',_rr_status_raw,'raw_last',COALESCE(_raw_last,'{}'::jsonb),                +
+                           |       'correlation_id',_correlation_id,'from_upstream',v_upstream),                             +
+                           |     'processed', now(), _order_id                                                               +
+                           |   ) ON CONFLICT (idempotency_key) DO NOTHING;                                                   +
+                           |   RETURN jsonb_build_object('ok', true, 'state','finalized','idempotent', false);               +
+                           | END;                                                                                            +
+                           | 
+(1 row)
+
