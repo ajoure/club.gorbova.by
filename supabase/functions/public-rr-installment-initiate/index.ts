@@ -240,13 +240,29 @@ Deno.serve(async (req: Request) => {
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
 
   if (wasReused) {
-    // Reuse — RPC уже проверил initiation_status='created' + payment_url.
-    const { data: reusedOrder } = await supabaseAdmin
-      .from("orders_v2")
-      .select("meta")
-      .eq("id", externalId)
-      .maybeSingle();
-    const url = (reusedOrder?.meta as any)?.rr?.payment_url as string | undefined;
+    // Reuse: RPC вернул либо уже готовый (initiation_status='created' + payment_url),
+    // либо ещё инициализирующийся (pending, <120с). Во втором случае polling — up to 15s.
+    const deadline = Date.now() + 15_000;
+    let url: string | undefined;
+    let initStatus: string | undefined;
+    while (Date.now() < deadline) {
+      const { data: reusedOrder } = await supabaseAdmin
+        .from("orders_v2")
+        .select("meta")
+        .eq("id", externalId)
+        .maybeSingle();
+      const rr = (reusedOrder?.meta as any)?.rr ?? {};
+      url = rr.payment_url as string | undefined;
+      initStatus = rr.initiation_status as string | undefined;
+      if (initStatus === "created" && url) break;
+      if (initStatus === "failed") {
+        return errorResponse("rr_create_order_failed_upstream", 502);
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (!url) {
+      return errorResponse("rr_reuse_wait_timeout", 504);
+    }
     return jsonResponse({
       payment_url: url,
       order_id: externalId,
