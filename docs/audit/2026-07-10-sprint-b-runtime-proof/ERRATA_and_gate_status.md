@@ -1,44 +1,46 @@
-# Sprint B — Errata и статус после review
+# Sprint B — Errata и Gate-статус (обновлено после ревью Gate A.1 v1)
 
-Дата ревью: 2026-07-10
+Дата: 2026-07-10
 Автор: Lovable engineer
 
-## Статус спринта: **FAIL** — требуется follow-up validation и UI-wiring
+## Общий статус спринта
 
-Ревьюер идентифицировал **6 замечаний** (в предыдущей формулировке ошибочно записано 5):
+**Sprint B — FAIL.** Sprint C **не начинать**.
 
-| # | Замечание | Категория | Gate |
-|---|-----------|-----------|------|
-| 1 | Public E2E выполнен не на согласованном URL (`gorbova.by/cb`), а на `cb.gorbova.by`. | UI wiring | B |
-| 2 | Negative runtime proofs неполные (inactive offer, real createOrder failure, valid-signature duplicate/unknown/foreign — не покрыты). | Runtime | A→B |
-| 3 | Honeypot раскрывает причину блокировки полем `skipped:"honeypot"`. Нарушает согласованный контракт. | Backend | **A — исправлено** |
-| 4 | Persistence hardening отсутствует — ошибки INSERT/UPDATE после успешного `createOrder` в РР могут привести ко второй заявке при повторе. | Backend | **A — исправлено** |
-| 5 | Изоляция тестовой среды нарушена — 8 production-строк `orders_v2` на боевом РР-оффере. Test fixture не создан. | Инфраструктура | A |
-| 6 | Неверное имя миграции в отчёте (`20260710085555_*` вместо `20260710085550_3d877fb1-...sql`). | Документация | **A — исправлено** |
+## Gate-статус
 
-## Errata по имени миграции
+| Gate | Статус | Условие закрытия |
+|---|---|---|
+| A (первичный hardening: honeypot, persistence, atomic finalize) | PASS | — |
+| A.1 (durable recovery, ambiguous, atomic rejected, hardening, discovery) | **PARTIAL PASS / PASS WITH BLOCKER** | backend contract закрыт; reconciler и integration proofs вынесены в A.2 |
+| A.2 (working reconciler, RR contract, retry policy, 11 integration tests в preview/test env) | **NOT STARTED** — обязателен до Gate B | см. `gate_a1/README.md` |
+| B (UI patch, deploy, public E2E, negative proofs v2) | **BLOCKED** до Gate A.2 PASS | — |
 
-Фактическое имя миграции concurrency-фикса:
+## Errata предыдущих отчётов
 
-```
-supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql
-```
+- Фактическое имя миграции concurrency-фикса: `supabase/migrations/20260710085550_3d877fb1-215b-4219-a311-d84952134c83.sql`. В `REPORT.md` встречалось `20260710085555_*` — опечатка, физического второго файла нет.
+- Gate A.1 v1 содержал ошибки, устранённые в v2:
+  - `contact_hash` — не вводится; identity остаётся `offer_id + user_id + email_norm + phone_norm`;
+  - JSON-path для recovery-полей — только `meta->'rr'->>'...'`, не `meta->>'...'`;
+  - сигнатура `rr_get_or_create_pending_order` **не меняется**;
+  - recovery выполняется через canonical `rr_finalize_created_order`, не через отдельный `rr_recover_persist_failed_order` (последний **не создавался** в этой итерации);
+  - reconciler использует существующий `rrGetOrderStatus` из `_shared/rr/rr-adapter.ts`; никакой `rrClient.ts`/`rrReconcileByExternalId` не добавляется;
+  - `initiation_status='upstream_unknown'` не вводится; всё ambiguous-состояние — только в `meta.rr.upstream_outcome` + `reconciliation_status`;
+  - rejected-state фиксируется атомарным `rr_finalize_order_rejected` (единая транзакция);
+  - `local_persist_failed` — только для сбоя persistence после успешного createOrder, не для rejection.
 
-В `REPORT.md` §2b, §8 и §7-инвентаре указано `20260710085555_...` — это опечатка. Файл на диске один, его SHA-сумма стабильна, никакой второй миграции не существовало.
+## Изменения кода в Gate A.1 v2
 
-## Gate A / Gate B план
+- Migration: расширение `rr_get_or_create_pending_order` (durable-block кандидаты без смены сигнатуры), новые RPC `rr_mark_upstream_unknown`, `rr_finalize_order_rejected`, `rr_finalize_order_not_created`, `rr_reconcile_confirm_created`, `rr_operator_resolve`. Все — `SECURITY DEFINER`, `search_path = public, pg_temp`, `EXECUTE service_role only`, `REVOKE` у `anon`/`authenticated`.
+- Edge `public-rr-installment-initiate`: полная переработка ветвлений (recovery / reconciliation-pending / operator-resolved / new order с классификацией outcomeClass + failureKind).
+- `_shared/rr/rr-adapter.ts` + `rr-http.ts`: убран fallback `json.id ?? externalId`; добавлены `outcomeClass`, `failureKind`, транспортные флаги (`aborted`, `networkError`, `parseError`); валидация `payment_url` (https, без credentials).
 
-- **Gate A (текущий шаг, без изменения UI):**
-  1. Backend persistence hardening через атомарный RPC `rr_finalize_created_order`.
-  2. Honeypot контракт: только `{ success: true }`, без provider_events insert.
-  3. Discovery для test fixture (см. `test_fixture_discovery.md`).
-  4. Discovery для UI-wiring (см. `ui_wiring_discovery.md`).
-  5. Cleanup-скрипт для test-orders (см. `cleanup_test_fixture.sql`) — dry-run only, не выполняется автоматически.
-- **Gate B (отдельное согласование):**
-  1. Минимальный UI patch на страницу `gorbova.by/cb`.
-  2. Deploy.
-  3. Public E2E прогон.
-  4. Полный runtime negative proof по 5 сценариям с реальными Sprint B webhook-контрактами.
-  5. Финальная приёмка Sprint B.
+## Что вынесено в Gate A.2
 
-Sprint C до Gate B PASS не начинать.
+1. Непубличная edge-функция `rr-reconcile-order` (`verify_jwt=true`, service-role/cron only, negative auth tests).
+2. `rr_provider_contract.md` — подтверждение поведения `getOrderStatus`, идемпотентности `createOrder`, definitive `not_found`, retry policy.
+3. Backoff / attempts policy (`reconciliation_attempts`, `next_reconciliation_at`, terminal-guard, alert на `operator_required`).
+4. Integration tests (11 сценариев) в отдельной preview/test Supabase environment. Production `orders_v2`/`provider_events` не создавать.
+5. Финальный отчёт `REPORT_v2.md`.
+
+Только после Gate A.2 PASS открывается Gate B (UI patch + public E2E + negative proofs v2).
