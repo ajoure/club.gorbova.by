@@ -122,7 +122,7 @@ Deno.serve(async (req: Request) => {
   if (!existingLedger) {
     await supabaseAdmin.from("rr_test_ledger").insert({
       external_id: externalId,
-      rr_request_id: created.rrRequestId ?? null,
+      rr_request_id: created.providerRequestId ?? null,
       amount_minor: amountMinor,
       currency,
       status_internal: created.ok ? "created" : "failed",
@@ -163,7 +163,7 @@ Deno.serve(async (req: Request) => {
   return jsonResponse({
     success: true,
     external_id: externalId,
-    rr_request_id: created.rrRequestId,
+    rr_request_id: created.providerRequestId,
     payment_url: created.paymentUrl,
     status_raw: created.rrStatusRaw,
     status_internal: "created",
