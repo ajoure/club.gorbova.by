@@ -19349,6 +19349,15 @@ export type Database = {
         Args: { _correlation_id: string; _order_id: string }
         Returns: Json
       }
+      rr_mark_fulfillment: {
+        Args: {
+          _details?: Json
+          _error?: string
+          _order_id: string
+          _outcome: string
+        }
+        Returns: Json
+      }
       rr_mark_local_persist_failed: {
         Args: {
           _error_text: string
@@ -19377,6 +19386,15 @@ export type Database = {
           _payment_url: string
           _resolution: string
           _rr_request_id: string
+        }
+        Returns: Json
+      }
+      rr_promote_authorized_order: {
+        Args: {
+          _order_id: string
+          _rr_status_raw: string
+          _sign_hash_short: string
+          _source: string
         }
         Returns: Json
       }
