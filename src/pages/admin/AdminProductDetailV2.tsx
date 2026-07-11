@@ -563,6 +563,18 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните обязательные поля");
       return;
     }
+    // Sprint C1 — bank_installment требует явно заданного срока доступа на родительском тарифе.
+    // Fallback default_30d допустим для legacy flows, но для новых/редактируемых RR-офферов запрещён.
+    if (offerForm.offer_type === "bank_installment") {
+      const parentTariff = tariffs?.find((t: any) => t.id === offerForm.tariff_id);
+      const days = parentTariff?.access_days ?? null;
+      if (!(typeof days === "number" && days > 0)) {
+        toast.error(
+          `У тарифа «${parentTariff?.name ?? "?"}» не задан срок доступа. Укажите access_days в настройках тарифа перед включением рассрочки банка.`,
+        );
+        return;
+      }
+    }
     // CRM routing semantic validation (UI mirrors server)
     const crmError = validateCrmRoutingForSave(offerForm.meta?.crm_routing);
     if (crmError) {
