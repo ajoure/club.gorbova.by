@@ -1,22 +1,18 @@
 /**
- * rr-webhook (Sprint B — inert, hardened)
+ * rr-webhook (Sprint C1 — authorized promotion enabled)
  *
- * Порядок обязательный:
- *  1) verify signature — при invalid: 401, redacted event БЕЗ обращения к orders_v2;
+ * Порядок:
+ *  1) verify signature — invalid → 401 без обращения к orders_v2;
  *  2) UUID guard для external_id;
- *  3) idempotency: (external_id + newStatus + sign_hash_short) — duplicate → 200 без эффектов;
+ *  3) idempotency (external_id + newStatus + sign_hash_short) — duplicate → 200;
  *  4) lookup order: only provider='rr' AND meta.flow='rr_installment';
- *     unknown/mismatched → 200 { ignored } без INSERT/UPDATE в orders_v2;
  *  5) append meta.rr.last_notification + provider_events (acknowledged);
- *  6) 200 OK.
+ *  6) Sprint C1: newStatus ∈ {authorized, authorized_all} → promoteAuthorizedRRPayment
+ *     (atomic RPC + retryable grant-access). Прочие статусы — inert.
+ *  7) 200 OK всегда — сбой promotion не блокирует ACK, reconciler повторит.
  *
- * Sprint B принципиально:
- *  - НЕ обновляет orders_v2.status,
- *  - НЕ пишет payments_v2,
- *  - НЕ вызывает grant-access-for-order,
- *  - НЕ триггерит CRM/notifications.
- *
- * Полная подпись НЕ хранится ни в idempotency_key, ни в payload — только SHA-256 short.
+ * Инварианты: повторный webhook на promoted+fulfillment=completed = полный no-op;
+ * hardcode продуктов/тарифов/сумм отсутствует; full sign не хранится.
  */
 import {
   handleCorsPreflightRequest,
@@ -28,9 +24,12 @@ import {
   loadRRConfig,
 } from "../_shared/rr/rr-config.ts";
 import { verifyNotificationSignature } from "../_shared/rr/rr-adapter.ts";
+import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const AUTHORIZE_STATUSES = new Set(["authorized", "authorized_all"]);
 
 async function sha256Short(text: string): Promise<string> {
   const buf = new TextEncoder().encode(text);
@@ -73,7 +72,6 @@ Deno.serve(async (req: Request) => {
     return errorResponse((e as Error).message, 503);
   }
 
-  // 1) Signature FIRST — до любых обращений к orders_v2.
   const verify = await verifyNotificationSignature({
     newStatus,
     salt,
@@ -97,12 +95,10 @@ Deno.serve(async (req: Request) => {
       signature_valid: false,
       processing_status: "rejected",
       processing_error: "invalid_signature",
-      // related_order_id намеренно НЕ проставляем — не создаём фиктивную связь.
     });
     return errorResponse("invalid_signature", 401);
   }
 
-  // 2) UUID guard.
   if (!UUID_RE.test(externalId)) {
     return jsonResponse({ success: true, ignored: "non_uuid_external_id" });
   }
@@ -110,7 +106,6 @@ Deno.serve(async (req: Request) => {
   const signHashShort = await sha256Short(sign);
   const idempotencyKey = `rr:${externalId}:${newStatus}:${signHashShort}`;
 
-  // 3) Duplicate check.
   const { data: dup } = await supabaseAdmin
     .from("provider_events")
     .select("id")
@@ -120,7 +115,6 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ success: true, duplicate: true });
   }
 
-  // 4) Order lookup — только rr + rr_installment.
   const { data: order } = await supabaseAdmin
     .from("orders_v2")
     .select("id, meta, status, provider")
@@ -128,8 +122,6 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (!order) {
-    // Никаких INSERT в orders_v2. Пишем redacted event с idempotency_key,
-    // чтобы повторные unknown-нотификации не спамили.
     await supabaseAdmin.from("provider_events").insert({
       provider: "rr",
       account_code: "rr",
@@ -159,7 +151,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ success: true, ignored: "not_rr_installment" });
   }
 
-  // 5) Append last_notification в meta (без status), event acknowledged.
+  // 5) Append last_notification + acknowledge event.
   const nowIso = new Date().toISOString();
   const rrMeta = { ...(meta.rr ?? {}) };
   rrMeta.last_notification = {
@@ -173,22 +165,19 @@ Deno.serve(async (req: Request) => {
     .update({ meta: { ...meta, rr: rrMeta } })
     .eq("id", externalId);
 
+  const willPromote = AUTHORIZE_STATUSES.has(newStatus);
+
   await supabaseAdmin.from("provider_events").insert({
     provider: "rr",
-      account_code: "rr",
+    account_code: "rr",
     event_id: `${externalId}:notify:${newStatus}:${signHashShort}`,
     event_type: "webhook_notification_received",
     idempotency_key: idempotencyKey,
     payload: {
       event_type: eventType,
       new_status_raw: newStatus,
-      sprint: "B",
-      side_effects: {
-        status_updated: false,
-        payment_created: false,
-        access_granted: false,
-        crm_pushed: false,
-      },
+      sprint: "C1",
+      will_promote: willPromote,
     },
     signature_valid: true,
     processing_status: "acknowledged",
@@ -196,5 +185,26 @@ Deno.serve(async (req: Request) => {
     related_order_id: externalId,
   });
 
-  return jsonResponse({ success: true });
+  // 6) Sprint C1 promotion path — только для authorize статусов.
+  let promotion: unknown = null;
+  if (willPromote) {
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      promotion = await promoteAuthorizedRRPayment(
+        { supabaseAdmin, supabaseUrl, serviceRoleKey },
+        {
+          orderId: externalId,
+          source: "rr-webhook",
+          rrStatusRaw: newStatus,
+          signHashShort,
+        },
+      );
+    } catch (e) {
+      // Non-fatal — reconciler повторит. Webhook возвращает 200 в любом случае.
+      promotion = { ok: false, error: (e as Error).message };
+    }
+  }
+
+  return jsonResponse({ success: true, promotion });
 });
