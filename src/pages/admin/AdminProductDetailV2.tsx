@@ -563,6 +563,18 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните обязательные поля");
       return;
     }
+    // Sprint C1 — bank_installment требует явно заданного срока доступа на родительском тарифе.
+    // Fallback default_30d допустим для legacy flows, но для новых/редактируемых RR-офферов запрещён.
+    if (offerForm.offer_type === "bank_installment") {
+      const parentTariff = tariffs?.find((t: any) => t.id === offerForm.tariff_id);
+      const days = parentTariff?.access_days ?? null;
+      if (!(typeof days === "number" && days > 0)) {
+        toast.error(
+          `У тарифа «${parentTariff?.name ?? "?"}» не задан срок доступа. Укажите access_days в настройках тарифа перед включением рассрочки банка.`,
+        );
+        return;
+      }
+    }
     // CRM routing semantic validation (UI mirrors server)
     const crmError = validateCrmRoutingForSave(offerForm.meta?.crm_routing);
     if (crmError) {
@@ -1951,6 +1963,42 @@ export default function AdminProductDetailV2() {
                     </p>
                   )}
                 </div>
+
+                {/* Sprint C1 — срок доступа (наследуется от родительского тарифа).
+                    Единый источник: tariffs.access_days. Отдельного параметра на оффере нет.
+                    Редактируется через форму тарифа (single source of truth). */}
+                {offerForm.tariff_id && (() => {
+                  const parentTariff = tariffs?.find((t: any) => t.id === offerForm.tariff_id);
+                  const days = parentTariff?.access_days ?? null;
+                  const hasDays = typeof days === "number" && days > 0;
+                  return (
+                    <div className="rounded-md border p-3 space-y-1 bg-muted/40">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Срок доступа:</span>{" "}
+                          {hasDays ? (
+                            <span className="font-medium">{days} дн.</span>
+                          ) : (
+                            <span className="font-medium text-amber-700">не задан</span>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Источник: тариф «{parentTariff?.name ?? "?"}» ({hasDays ? "tariffs.access_days" : "fallback default_30d"})
+                        </span>
+                      </div>
+                      {!hasDays && (
+                        <p className="text-xs text-amber-700">
+                          У тарифа не задан срок доступа. Задайте его в форме тарифа —
+                          для «Рассрочки банка» это обязательно.
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Изменить: закройте это окно и откройте редактирование тарифа
+                        «{parentTariff?.name ?? "?"}». Значение общее для всех офферов тарифа.
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 <Separator />
 
