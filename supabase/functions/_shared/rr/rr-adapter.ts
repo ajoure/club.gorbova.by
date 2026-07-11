@@ -242,6 +242,8 @@ export interface RRGetStatusResult {
   completedAmountMinor?: number;
   commissionMinor?: number | null;
   errorText?: string;
+  errorCode?: string;
+  paymentUrl?: string;
   http: RRHttpCallResult;
 }
 
@@ -272,6 +274,10 @@ export async function rrGetOrderStatus(
     : typeof commissionRaw === "number"
     ? commissionRaw
     : parseFloat(String(commissionRaw)) || 0;
+  const link = typeof json.link === "string" ? json.link : undefined;
+  const errCode = err && typeof err.code !== "undefined"
+    ? String(err.code)
+    : undefined;
 
   return {
     ok: res.ok && !err,
@@ -281,6 +287,8 @@ export async function rrGetOrderStatus(
     completedAmountMinor: Math.round(completed * 100),
     commissionMinor: commission == null ? null : Math.round(commission * 100),
     errorText: err ? String(err.text ?? "rr_error") : undefined,
+    errorCode: errCode,
+    paymentUrl: link,
     http: res,
   };
 }
