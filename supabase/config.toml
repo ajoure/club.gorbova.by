@@ -37,3 +37,6 @@ verify_jwt = false
 
 [functions.rr-webhook]
 verify_jwt = false
+
+[functions.rr-fulfill-order]
+verify_jwt = true
