@@ -130,4 +130,3 @@ Deno.serve(async (req: Request) => {
   return json(200, { ok: result.ok, actor_user_id: userId, result }, cors);
 });
 
-});
