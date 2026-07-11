@@ -124,9 +124,11 @@ export async function promoteAuthorizedRRPayment(
   const timeoutId = setTimeout(() => ac.abort(), 20_000);
 
   let grantStatus = 0;
+  let grantHttpOk = false;
   let grantOk = false;
   let grantError: string | null = null;
   let grantBody: any = null;
+  let grantAlreadyFulfilled = false;
 
   try {
     const resp = await fetch(grantUrl, {
@@ -140,17 +142,24 @@ export async function promoteAuthorizedRRPayment(
       signal: ac.signal,
     });
     grantStatus = resp.status;
+    grantHttpOk = resp.ok;
     try {
       grantBody = await resp.json();
     } catch {
       grantBody = null;
     }
-    // grant-access-for-order returns 200 for both success and known no-ops
-    // (skip_already_fulfilled, no_user_id, etc.). Treat 2xx as ok; the function
-    // itself is idempotent so retries are safe.
-    grantOk = resp.ok;
+    // Success ONLY when function explicitly reports success=true.
+    // already_fulfilled=true with success=true is a confirmed idempotent grant.
+    // Any other 2xx (success=false, warning=no_user_id, missing_product, etc.)
+    // stays retryable — reconciler must retry later.
+    const bodySuccess = grantBody && grantBody.success === true;
+    grantAlreadyFulfilled = !!(grantBody && grantBody.already_fulfilled === true);
+    grantOk = grantHttpOk && bodySuccess;
     if (!grantOk) {
-      grantError = `http_${grantStatus}: ${JSON.stringify(grantBody)?.slice(0, 300)}`;
+      const bodyStr = grantBody ? JSON.stringify(grantBody).slice(0, 400) : "<no-json>";
+      grantError = grantHttpOk
+        ? `grant_not_confirmed: ${bodyStr}`
+        : `http_${grantStatus}: ${bodyStr}`;
     }
   } catch (e) {
     grantError = (e as Error).message;
@@ -159,16 +168,18 @@ export async function promoteAuthorizedRRPayment(
     clearTimeout(timeoutId);
   }
 
-  // 3) Mark fulfillment.
+  // 3) Mark fulfillment. Only 'completed' when grant is CONFIRMED by response body.
   const outcome = grantOk ? "completed" : "failed";
-  await supabaseAdmin.rpc("rr_mark_fulfillment", {
+  const { error: markErr } = await supabaseAdmin.rpc("rr_mark_fulfillment", {
     _order_id: orderId,
     _outcome: outcome,
     _error: grantError,
     _details: {
       source,
       grant_status: grantStatus,
+      grant_http_ok: grantHttpOk,
       grant_success: grantOk,
+      grant_already_fulfilled: grantAlreadyFulfilled,
       grant_response_summary: grantBody
         ? {
             success: grantBody.success ?? null,
@@ -180,6 +191,27 @@ export async function promoteAuthorizedRRPayment(
     },
   });
 
+  if (markErr) {
+    // Marker not persisted — do NOT claim completed. Force retryable state.
+    await recordEvent(supabaseAdmin, orderId, "rr_fulfillment_state_persist_failed", {
+      source,
+      intended_outcome: outcome,
+      grant_status: grantStatus,
+      grant_success: grantOk,
+      grant_error: grantError,
+      mark_error: markErr.message,
+    });
+    return {
+      ok: false,
+      promote_state: state,
+      fulfillment_state: "failed",
+      grant_status: grantStatus,
+      grant_error: `mark_fulfillment_failed: ${markErr.message}`,
+      payment_id: paymentId,
+      details: promote,
+    };
+  }
+
   await recordEvent(
     supabaseAdmin,
     orderId,
@@ -187,6 +219,8 @@ export async function promoteAuthorizedRRPayment(
     {
       source,
       grant_status: grantStatus,
+      grant_http_ok: grantHttpOk,
+      grant_already_fulfilled: grantAlreadyFulfilled,
       grant_error: grantError,
     },
   );
@@ -201,6 +235,7 @@ export async function promoteAuthorizedRRPayment(
     details: promote,
   };
 }
+
 
 async function recordEvent(
   supabaseAdmin: any,
