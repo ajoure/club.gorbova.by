@@ -70,3 +70,41 @@
 - Sprint B: **FAIL**
 - Sprint C: **не начинать**
 
+## Gate A.1 v3.1a — статус подготовки (без runtime)
+
+Дата: 2026-07-11 UTC.
+
+Preview/test Supabase environment ещё не создан. По поправке №1 плана в этом шаге выполнены только discovery, подготовка миграции и статический анализ. Никаких изменений в production БД, edge deploy, backfill, SQL integration tests, edge integration tests и fault injection не выполнялось.
+
+**Draft-артефакты Gate A.1 v3.1a:**
+- `gate_a1_v3_1a/draft/migration_gate_a1_v3_1a.sql`
+- `gate_a1_v3_1a/draft/proposed_edge_diff.md`
+- `gate_a1_v3_1a/draft/sql_test_suite.md` (18 сценариев)
+- `gate_a1_v3_1a/draft/edge_test_suite.md` (16 сценариев)
+- `gate_a1_v3_1a/draft/mock_rr_ledger_contract.md`
+- `gate_a1_v3_1a/draft/fault_injection_architecture.md`
+- `gate_a1_v3_1a/draft/rollback_strategy.md`
+- `gate_a1_v3_1a/draft/runtime_proof_templates.md`
+
+**Артефакт preview:**
+- `preview_environment_setup.md`
+
+**Discovery Gate B (без правок):**
+- `ui_wiring_discovery.artifacts/site_page_cb.json`
+- `ui_wiring_discovery.artifacts/blocks.json`
+- `ui_wiring_discovery.artifacts/renderers.md`
+- `ui_wiring_discovery.artifacts/action_schema.md`
+- `ui_wiring_discovery.artifacts/offer_bindings.md`
+
+**Статусы:**
+- Gate A.1 v3.1a code preparation: **PARTIAL** (только draft-файлы; не применены)
+- Gate A.1 v3.1a runtime execution: **BLOCKED** — preview/test environment отсутствует
+- Gate A.1 acceptance: **FAIL**
+- Gate A.2: **BLOCKED**
+- Gate B discovery: **выполнен**
+- Gate B patch/deploy/E2E: **BLOCKED**
+- Sprint B: **FAIL**
+- Sprint C: **BLOCKED**
+
+Статус `IMPLEMENTED, NOT VERIFIED` к draft-файлам не применяется (файлы не задеплоены и не применены к БД).
+
