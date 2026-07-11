@@ -108,3 +108,27 @@ Preview/test Supabase environment ещё не создан. По поправк�
 
 Статус `IMPLEMENTED, NOT VERIFIED` к draft-файлам не применяется (файлы не задеплоены и не применены к БД).
 
+
+## Gate A.1 v3.1a — обновление после ревью discovery (2026-07-10, поправки заказчика)
+
+Добавлены обязательные артефакты по 6 пунктам ревью:
+
+1. **UI discovery — доказательство цепочки события.** `ui_wiring_discovery.artifacts/event_chain_proof.md`: ссылки на конкретные строки `src/components/shared/HtmlIframePreview.tsx` (304, 362, 368, 378, 386, 847) и `src/pages/SitePageBySlug.tsx` (4, 30, 41–47, 61–72, 74, 77, 136, 150–166, 188–189, 253–254).
+2. **`amount=0` вынесен отдельно.** `ui_wiring_discovery.artifacts/amount_zero_investigation.md`: возможные причины, план проверок (все read-only), обоснование, что discovery не блокируется, но Gate B — блокируется до подтверждения источника суммы.
+3. **Draft migration scope manifest.** `gate_a1_v3_1a/draft/migration_scope_manifest.md`: SHA-256 `5da444ab11ff6391236abc85c19314621e86eaa5dc772881035c0284362444bc`, 474 строки, полный список из 8 функций (1 новая + 7 replace), expected schema diff, anti-scope.
+4. **Runtime proof templates — полный перечень.** `gate_a1_v3_1a/draft/runtime_proof_templates.md` содержит именованный список из 20 файлов (`migration_applied.txt`, `migration_runtime_proof.md`, `functiondef_before.txt`, `functiondef_after.txt`, `proconfig.txt`, `owner_security_matrix.txt`, `privilege_matrix.txt`, `internal_helper_privileges.txt`, `legacy_backfill_before.txt`, `legacy_backfill_after.txt`, `sql_integration_tests.md`, `edge_integration_tests.md`, `mock_rr_ledger.json`, `fault_injection_enable_disable.txt`, `fault_injection_absent_in_production.txt`, `deploy_proof.txt`, `production_snapshot_before.txt`, `production_snapshot_after.txt`, `production_attribution_diff.txt`, `rollback_strategy.md`).
+5. **Preview environment — уточнения.** `preview_environment_setup.md` переписан: добавлены §2 (версии PostgreSQL / Supabase / PostgREST / GoTrue / Deno с процедурой проверки), §3 (синхронизация схем строго через `supabase/migrations/`, порядок применения production-миграций, запрет ручных правок), а также переформулирована ответственность: создание preview-окружения — задача платформы Lovable / владельца инфраструктуры; агент не имеет доступа к management-API Lovable и не может создать preview project, service-role key, Edge Function Secrets. Соответствующий пункт зафиксирован как внешний инфраструктурный блокер (R2).
+6. **Known unresolved risks.** `known_unresolved_risks.md`: R1 provider contract, R2 preview environment (внешний блокер), R3 runtime suite, R4 reconciler, R5 UI wiring, R6 Gate B, плюс R7 (`amount=0`), R8 (расхождение цен Tilda vs DB, вне scope), R9 (fault-injection hook в prod bundle), R10 (backfill не валидирован на реальных данных). Правило снятия — только по ссылке на runtime-артефакт.
+
+### Итоговый статус (без изменений по сути, уточнены формулировки)
+
+- Gate A.1 v3.1a code preparation: **PARTIAL** (draft + manifest + templates готовы).
+- Gate A.1 v3.1a runtime execution: **BLOCKED — внешний инфраструктурный блокер (R2), preview environment отсутствует на стороне Lovable Cloud**.
+- Gate A.1 acceptance: **FAIL**.
+- Gate A.2: **BLOCKED**.
+- Gate B discovery: **выполнен** (см. `ui_wiring_discovery.artifacts/`).
+- Gate B patch/deploy/E2E: **BLOCKED**.
+- Sprint B: **FAIL**.
+- Sprint C: **BLOCKED**.
+
+Никаких production writes, никаких deploy'ев в этом шаге.
