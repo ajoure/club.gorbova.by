@@ -19,12 +19,27 @@ import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+// Admin-only function: restrict CORS to known operator origins. Browser
+// callers from other origins are denied at preflight; server-to-server calls
+// (curl/CLI) ignore CORS entirely.
+const ALLOWED_ORIGINS = new Set<string>([
+  "https://gorbova.by",
+  "https://cb.gorbova.by",
+  "https://gorbova.lovable.app",
+]);
+
+function buildCors(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") ?? "";
+  const allowed = ALLOWED_ORIGINS.has(origin) ? origin : "null";
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Vary": "Origin",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
+  };
+}
+
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
