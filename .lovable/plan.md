@@ -1,490 +1,175 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-План в целом правильный, но перед реализацией нужно исправить несколько критичных моментов. Иначе возможна ситуация: заказ уже `paid`, платёж создан, а доступ не выдан и повторный reconciler больше ничего не делает.
+План в целом правильный. Перед запуском нужно исправить четыре момента.
 
-## **1. Promotion нельзя реализовывать как транзакцию внутри TypeScript**
+## **1. Исправить название тарифа ORD-26-00298**
 
-`_shared/rr/rr-promote-order.ts` не может удерживать одну транзакцию PostgreSQL между:
+В плане указано:
 
-- `SELECT ... FOR UPDATE`;
-- обновлением `orders_v2`;
-- вставкой `payments_v2`;
-- записью `provider_events`.
+2650 BYN — «Руководитель»
 
-Каждый Supabase-запрос из edge — отдельная транзакция.
-
-Нужно создать один атомарный RPC, например:
+По ранее подтверждённым данным это:
 
 ```text
-rr_promote_authorized_order(...)
+ORD-26-00298
+→ Бизнес-леди
+→ 2650 BYN
 ```
 
-Внутри одной SQL-транзакции он должен:
+Использовать фактические product/tariff из заказа, а не название из текста плана.
 
-1. заблокировать заказ `FOR UPDATE`;
-2. проверить provider/flow/state;
-3. перевести заказ в `paid`;
-4. создать одну строку `payments_v2`;
-5. записать promotion-marker;
-6. создать событие `rr_promoted`;
-7. вернуть typed result:
+## **2. Не требовать обязательно «одну новую запись» entitlement/subscription**
 
-```json
-{
-  "state": "promoted | already_promoted | ignored | manual_review | failed",
-  "should_grant_access": true
-}
-```
+Все три заказа принадлежат одному пользователю. `grant-access-for-order` может:
 
-`rr-promote-order.ts` остаётся orchestration-слоем, но не canonical writer.
+- создать новый entitlement;
+- обновить существующий;
+- продлить срок;
+- применить `provider_linked_extend`;
+- не создать subscription для разового продукта.
 
-
-
-## **2. Нельзя прекращать обработку только потому, что заказ уже**
-
-`paid`
-
-Сейчас план говорит:
+Поэтому правильный assert для 297/298:
 
 ```text
-status='paid' → выйти already:true
+доступ соответствует продукту и тарифу заказа;
+применено ожидаемое canonical action;
+нет лишнего или повторного доступа;
+срок рассчитан по правилу тарифа;
+access_grant_ledger фиксирует фактическое действие.
 ```
 
-Но возможен сценарий:
+Не считать ошибкой отсутствие новой строки, если существующий доступ корректно обновлён или продлён. Но обязательно проверить, что обработка второго тарифа не перезаписала доступ первого тарифа некорректно.
+
+## **3. Этап 3 — только после отдельной команды пользователя**
+
+Создание новой заявки через публичную точку создаёт реальную заявку у РР и после `authorized` выдаст реальный доступ и уведомления.
+
+Поэтому после PASS заказов 297/298 остановиться и запросить разрешение на:
+
+- выбранный тариф;
+- email/телефон тестового пользователя;
+- реальное прохождение авторизации у РР;
+- выдачу доступа;
+- отправку email и Telegram.
+
+Эмуляцию подписанного webhook не использовать. Для прямого webhook-path нужен именно реальный подписанный webhook РР, иначе проверяется не фактическая production-цепочка.
+
+## **4. CRM не может быть полностью «не блокирующим» для всего Sprint C**
+
+Для **Sprint C1** отсутствие отдельного CRM write может не блокировать PASS, если подтверждено, что:
+
+- сделка уже создаётся на стадии заявки;
+- после оплаты повторную сделку создавать не требуется;
+- ожидаемое действие — обновление существующей сделки либо отсутствие дополнительного действия.
+
+Но исходная цель Sprint C включала CRM. Поэтому до общего `Sprint C = PASS` нужно зафиксировать одно из трёх:
 
 ```text
-заказ переведён в paid
-→ payment создан
-→ HTTP grant-access-for-order упал
+CRM update после authorized реализован и проверен;
+или существующий pipeline уже получает нужный статус другим canonical flow;
+или CRM явно вынесен в C2/backlog с утверждённым mapping.
 ```
 
-При следующем webhook/reconciler заказ уже `paid`, и доступ больше никогда не будет выдан.
+## **Обновлённый порядок**
 
-Нужен отдельный fulfillment-state, например:
+1. Обработать `ORD-26-00297`.
+2. Проверить фактический grant/extend и идемпотентный повтор.
+3. При полном PASS обработать `ORD-26-00298`.
+4. Проверить, что доступы двух разных тарифов не конфликтуют.
+5. Дать короткий отчёт по двум заказам.
+6. Остановиться перед созданием новой заявки.
+7. После отдельного разрешения выполнить один реальный direct webhook test.
+8. Зафиксировать CRM-контракт.
 
-```json
-meta.rr.fulfillment = {
-  "status": "pending | processing | completed | failed",
-  "attempts": 0,
-  "last_error": null,
-  "completed_at": null
-}
-```
+После этих правок план можно выполнять.
 
-Правило:
-
-- `paid + fulfillment != completed` → повторить `grant-access-for-order`;
-- `paid + fulfillment=completed` → полный no-op;
-- повторный вызов должен быть безопасным благодаря идемпотентности `grant-access-for-order`.
-
-Таким образом, идемпотентность платежа и идемпотентность выдачи доступа проверяются отдельно.
-
-## **3. Зафиксировать retry выдачи доступа**
-
-Ошибка `grant-access-for-order` не должна теряться только в логах.
-
-При ошибке:
-
-- записать `fulfillment.status='failed'`;
-- увеличить `attempts`;
-- сохранить redacted `last_error`;
-- создать `provider_events.event_type='rr_fulfillment_failed'`;
-- reconciler должен повторять выдачу доступа для `paid`, но не fulfilled заказов.
-
-При успехе:
+Текущий статус:
 
 ```text
-fulfillment.status='completed'
-rr_fulfillment_completed
+Sprint C1 backfill path: VERIFIED для ORD-26-00296
+ORD-26-00297/00298: PENDING
+Direct webhook path: PENDING USER APPROVAL
+Sprint C1 overall: IMPLEMENTED, NOT FULLY VERIFIED
+
+План: завершение верификации Sprint C1
 ```
 
-Webhook при этом всё равно отвечает РР `200`, чтобы провайдер не создавал бесконечные повторы.
+## Этап 1 — Backfill ORD-26-00297
 
-## **4. Сверить фактические RR status names**
+Вызвать `rr-fulfill-order` с `{ "order_id": "<id ORD-26-00297>" }` (JWT admin).
 
-В текущем адаптере ранее использовались статусы вроде:
+Проверить в БД по факту (не по коду):
+
+1. `orders_v2.status`: `pending → paid`.
+2. `orders_v2.meta.rr.promotion`: `promoted_at`, `source=rr-fulfill-order`, `rr_status_raw` из подписанного webhook, `sign_hash_short`.
+3. `orders_v2.meta.rr.fulfillment`: `completed`, `attempts=1`, `grant_success=true`.
+4. `payments_v2`: ровно одна строка с `provider=rr`, `status=succeeded`, суммой соответствующей тарифу (1950 BYN — «Главный бухгалтер»).
+5. `entitlements` / `subscriptions_v2`: одна корректная запись согласно тарифу продукта, срок соответствует правилу тарифа.
+6. `access_grant_ledger`: одна строка.
+7. `order_notification_deliveries`: email + telegram = sent (или skipped с явной причиной, не failed).
+8. Повторный вызов `rr-fulfill-order` для того же order_id → `promote_state="already_promoted"`, `should_grant_access=false`, никаких новых строк в `payments_v2`, `entitlements`, `subscriptions_v2`, `access_grant_ledger`, `order_notification_deliveries`; `fulfillment` остаётся `completed`, `attempts=1`.
+
+## Этап 2 — Backfill ORD-26-00298 (stop-on-failure)
+
+Запускать ТОЛЬКО если Этап 1 полностью PASS.
+
+Правила остановки перед вызовом 298:
+
+- любой assert из Этапа 1 не выполнен;
+- появился второй `payments_v2` для 297;
+- лишний entitlement/subscription;
+- повторное уведомление;
+- `fulfillment.status != completed`;
+- любой unexpected side effect.
+
+При stop — отчёт и ожидание решения пользователя, 298 не трогаем.
+
+Если PASS — повторить те же 8 проверок для ORD-26-00298 (сумма 2650 BYN — «Руководитель»), включая идемпотентный повторный вызов.
+
+## Этап 3 — Прямой webhook-path на новой заявке
+
+Цель: подтвердить цепочку без административного вмешательства:
 
 ```text
-authorized
-authorized_all
-authorized_partially
-rejected
-canceled
+new order (pending)
+  → RR authorized webhook (подписанный)
+  → rr-webhook автоматически вызывает promoteAuthorizedRRPayment
+  → orders_v2 → paid
+  → payments_v2 (1 строка)
+  → grant-access-for-order (success=true)
+  → notify-order-purchased (email + telegram)
+  → fulfillment=completed
 ```
 
-В плане указаны:
+Шаги:
 
-```text
-partial_authorized
-declined
-error
-```
+1. Создать новую тестовую заявку через реальную публичную точку (`public-rr-installment-initiate` для одного из тарифов) — новый `order_id`, `provider=rr`, `status=pending`, `payment_url` получен.
+2. Дождаться реального `authorized` webhook от РР (либо, если пользователь предпочитает, воспроизвести подписанный webhook — способ согласовать перед запуском Этапа 3, чтобы не эмулировать подпись без разрешения).
+3. Проверить те же 8 инвариантов, что и в Этапах 1–2, плюс:
+  - `provider_events` содержит запись о принятом webhook;
+  - `meta.rr.promotion.source` НЕ равен `rr-fulfill-order` (должен быть `rr-webhook` или эквивалент);
+  - `rr-webhook` вернул 200;
+  - никаких `rr_fulfillment_state_persist_failed` в meta.
+4. Повторный webhook с тем же `authorized` → идемпотентно, без дублей.
 
-До написания условий нужно взять **фактические значения**, которые реально присылает РР и которые уже используются в `rr-adapter.ts`.
+## Этап 4 — Контракт CRM
 
-Нельзя создавать второй словарь названий.
+Отдельно (не блокирует C1) зафиксировать короткий отчёт:
 
-Нужна единая функция классификации:
+- существующий CRM write-path (если есть) в момент promote;
+- ожидается ли создание/обновление сделки в Sprint C, или это вне scope C1;
+- по факту первого backfill новой CRM-записи не обнаружено — уточнить, это ожидаемо или требует отдельной задачи в backlog Sprint C2.
 
-```text
-mapRRStatusToPromotionAction(rawStatus)
-```
+## Правила выполнения
 
-Возвращает:
+- Оцениваем результат по телу ответа функции (`ok`, `promote_state`, `fulfillment_state`), а не по HTTP 200.
+- Никаких side-effects между Этапами 1 и 2 кроме самого backfill.
+- Этап 3 запускается только после явного PASS Этапов 1 и 2 и подтверждения пользователем способа получения webhook (реальный или контролируемая эмуляция подписанного тела).
 
-```text
-authorize
-manual_review
-fail
-ignore
-```
+## DoD
 
-И применяется одинаково в webhook и reconciler.
-
-
-
-
-
-
-
-## **5. Не помечать заказ**
-
-`failed` **по любому** `error`
-
-Разделить:
-
-- бизнес-отказ провайдера — terminal failed;
-- техническая ошибка webhook/status endpoint — состояние заказа не менять;
-- неизвестный статус — audit + manual review;
-- canceled/rejected — только по подтверждённому контракту РР.
-
-Технический `error` нельзя автоматически превращать в отказ клиента.
-
-## **6. Проверить реальную схему таблиц до миграции**
-
-Перед реализацией подтвердить существование и типы:
-
-```text
-orders_v2.status
-orders_v2.paid_amount
-orders_v2.paid_at
-orders_v2.final_price
-payments_v2.order_id
-payments_v2.provider
-payments_v2.provider_payment_id
-payments_v2.amount
-payments_v2.currency
-payments_v2.status
-```
-
-Поле `reconcile_source` не добавлять предположительно. Если отдельной колонки нет, сохранять:
-
-```text
-meta.rr.promotion.source
-```
-
-То же касается `rr_order_id`: нельзя подставлять локальный `orders_v2.id` в поле, которое декларируется как provider ID, если РР не вернул отдельный ID.
-
-## **7. Unique index — сначала discovery существующих данных**
-
-Перед:
-
-```sql
-CREATE UNIQUE INDEX ...
-```
-
-обязательно проверить, нет ли уже нескольких RR payments на один order.
-
-Если есть — миграция упадёт или потребует отдельного repair.
-
-Также `ON CONFLICT` должен точно соответствовать partial index. Надёжнее использовать:
-
-```text
-idempotency_key = 'rr:payment:<order_id>'
-```
-
-с существующим уникальным контрактом, либо отдельный RPC с обработкой `unique_violation`.
-
-
-
-
-
-## **8.**
-
-`grant-access-for-order` **не считать provider-agnostic без проверки**
-
-Перед вызовом подтвердить, что функция:
-
-- принимает RR order;
-- не требует `payments_v2.provider='bepaid'` или `stripe`;
-- правильно понимает `bank_installment`;
-- использует `orders_v2.product_id/tariff_id/offer_id`;
-- не требует subscription/payment fields, которых нет у RR;
-- не отправляет неправильные чеки или письма;
-- корректно работает для разовой покупки и подписки.
-
-Если внутри есть provider-specific guards, нужен минимальный add-only RR branch.
-
-## **9. Подтвердить универсальность для любого продукта**
-
-Это обязательное дополнение пользователя.
-
-В backend запрещены hardcode:
-
-```text
-/cb
-buh
-gl_buh
-biz-l
-конкретные product_id
-конкретные tariff_id
-конкретные offer_id
-1650 / 1950 / 2650
-```
-
-Canonical flow должен получать всё из заказа:
-
-```text
-orders_v2.offer_id
-→ tariff_offers
-→ tariff
-→ product
-→ amount/final_price/currency
-→ grant-access-for-order
-```
-
-Критерии универсальности:
-
-1. Для любого продукта можно создать `tariff_offer` с:
-
-```text
-offer_type='bank_installment'
-meta.bank_installment.rr_runtime.enabled=true
-provider='rr'
-```
-
-2. В конструкторе кнопки можно выбрать действие «Рассрочка банка» и конкретный оффер либо тариф.
-3. Frontend передаёт UUID `tariff_offer_id`.
-4. Backend не знает slug страницы, название тарифа и HTML-key.
-5. Цена берётся из выбранного оффера/созданного заказа, а не из текста кнопки или Tilda HTML.
-6. Выдача доступа определяется продуктом и тарифом заказа, а не страницей `cb`.
-
-Добавить статическую проверку по репозиторию: в новых backend-файлах отсутствуют ID и названия трёх текущих тарифов.
-
-## **10. Добавить generic acceptance test**
-
-Кроме трёх тарифов `cb`, нужен хотя бы один proof универсальности без реальной покупки:
-
-- создать или найти другой тестовый продукт/оффер в безопасной среде;
-- сформировать вызов initiation с его `tariff_offer_id`;
-- доказать, что backend резолвит его без изменений кода.
-
-Если безопасно создать второй продукт невозможно, достаточно на текущем этапе:
-
-- unit/static test с другим произвольным UUID fixture;
-- доказательство отсутствия hardcode;
-- проверка общего resolver.
-
-Но перед объявлением всей RR-интеграции универсальной желательно пройти реальный сценарий на другом продукте в будущем.
-
-## **11. Осторожно с шестью выдачами доступа**
-
-План предлагает:
-
-- создать три новые заявки;
-- затем backfill трёх старых `ORD-26-00296/297/298`.
-
-Это потенциально выдаст одному пользователю шесть наборов эффектов:
-
-- entitlements;
-- subscriptions;
-- Telegram;
-- email;
-- CRM.
-
-Сначала выполнить controlled reconcile **только одного** старого заказа и проверить:
-
-- какой доступ выдан;
-- не создана ли лишняя подписка;
-- не продлён ли существующий доступ неожиданно;
-- какие уведомления отправлены.
-
-После успешного результата отдельно разрешить остальные два backfill.
-
-Три новые реальные заявки также не создавать автоматически. Сначала один тариф, затем остальные после проверки.
-
-
-
-
-
-## **12. Не включать**
-
-`declined/error` **write-path одновременно с authorized без необходимости**
-
-Sprint C лучше разбить функционально:
-
-### **C1 — authorized promotion**
-
-```text
-authorized
-→ paid
-→ payment
-→ grant access
-```
-
-### **C2 — manual/negative statuses**
-
-```text
-partial/rejected/canceled/unknown
-→ manual review или controlled failure
-```
-
-Для завершения основного бизнес-сценария критичен C1. Отрицательные статусы не должны задерживать запуск, но должны быть fail-closed и не выдавать доступ.
-
-## **13. Обновлённый минимальный runtime-порядок**
-
-1. Реализовать atomic promotion RPC.
-2. Реализовать fulfillment retry state.
-3. Подключить webhook и reconciler.
-4. Type-check/build.
-5. Controlled reconcile одного существующего заказа.
-6. Проверить:
-  - `orders_v2.status=paid`;
-  - ровно один `payments_v2`;
-  - нужный entitlement/subscription;
-  - корректные Telegram/email/CRM effects;
-  - `fulfillment=completed`.
-7. Повторить webhook/reconcile и подтвердить отсутствие дублей.
-8. После PASS проверить остальные два тарифа.
-9. Отдельно принять решение по backfill оставшихся старых заказов.
-
-## **Итог**
-
-План можно запускать после внесения этих изменений.
-
-Ключевые обязательные правки:
-
-- promotion-state сохраняется атомарным SQL RPC;
-- выдача доступа имеет отдельный retryable fulfillment-state;
-- `paid` не означает автоматически, что доступ уже выдан;
-- используются реальные RR status names;
-- никаких hardcode страницы `cb` и трёх тарифов;
-- вся логика строится через `offer_id → tariff → product`;
-- тестирование начинать с одного controlled заказа, а не сразу с шести.
-
-Статус до физической проверки:
-
-```text
-Sprint C: IMPLEMENTED, NOT VERIFIED
-```
-
-Sprint C получает PASS только после подтверждения и платежа, и фактической выдачи доступа без дублей.
-
-&nbsp;
-
-План: Sprint C — write-path после RR `authorized`
-
-## Цель
-
-Замкнуть цикл заказа РР: `authorized` → `orders_v2.status=paid` → `payments_v2` → `grant-access-for-order` → доступы/подписки/Telegram/email/CRM. Строго идемпотентно.
-
-Границы:
-
-- никаких изменений в UI на `gorbova.by/cb` — работа только в edge + БД;
-- никаких изменений в `public-rr-installment-initiate` (Sprint B): контракт создания заявки не трогаем;
-- дизайн сайта не ломаем.
-
-## Инварианты (жёсткие)
-
-1. Повторный webhook с тем же `external_id` + `newStatus` + `sign_hash_short` — обрабатывается идемпотентно (уже реализовано в Sprint B, сохраняем).
-2. Повторный вход в write-path на уже `paid` заказе:
-  - НЕ создаёт вторую строку `payments_v2` (guard по `orders_v2.id` + `provider='rr'`);
-  - НЕ вызывает `grant-access-for-order` повторно, если `orders_v2.status='paid'` — используем ту же защиту, что у bepaid-webhook (`orderV2.status !== 'paid'`).
-  - Если `grant-access-for-order` всё же вызвана — она сама режет повтор через `skip_already_fulfilled` / `provider_linked_extend` (существующая логика).
-3. Продвижение `status → paid` разрешено ТОЛЬКО из терминальных статусов РР (`authorized` для полного, `partial_authorized` — если продукт это допускает; пока считаем только `authorized` как paid, `partial_authorized` кладём в manual_review, `declined/error` → `failed`).
-4. Никаких срезов доступа из webhook напрямую — только через `grant-access-for-order` (canonical write-path).
-
-## Архитектура
-
-Общая функция промоушена: `_shared/rr/rr-promote-order.ts` — вызывается из двух точек входа:
-
-- `rr-webhook` — при `newStatus=authorized` перестаёт быть inert и вызывает promote;
-- `rr-reconcile-order` — уже read-only; после Sprint C сам решает, звать promote или нет, на основе последнего known РР-статуса.
-
-Обе точки входа сериализуются через SELECT ... FOR UPDATE на `orders_v2.id`, чтобы гонка webhook↔reconciler не создала двойного эффекта.
-
-## Шаги promote (атомарно, в одной транзакции где возможно)
-
-```
-INPUT: orderId (uuid), rr_status (authorized|partial_authorized|declined|error), source ('webhook'|'reconciler'), sign_hash_short
-```
-
-1. Загрузить `orders_v2` FOR UPDATE + проверить `provider='rr'` и `meta.rr.flow='rr_installment'`.
-2. Если `status='paid'` → выйти с `{ ok:true, already:true }` (это и есть anti-duplicate).
-3. Если `rr_status` не терминальный → выйти `{ ok:true, ignored:true }`.
-4. Для `authorized`:
-  - `UPDATE orders_v2 SET status='paid', paid_amount=final_price, paid_at=now(), reconcile_source=source WHERE id=orderId AND status<>'paid'` (RETURNING count → 0 значит гонка проиграна, выходим).
-  - `INSERT INTO payments_v2 (order_id, provider='rr', status='succeeded', amount, currency, provider_payment_id=rr_order_id, meta={ sign_hash_short, source }) ON CONFLICT (order_id) WHERE provider='rr' DO NOTHING` — потребует partial-unique-индекс (миграция).
-  - Аппенд в `orders_v2.meta.rr.promotion` = `{ at, source, sign_hash_short }`.
-5. Для `partial_authorized` — `meta.rr.manual_review=true`, `status` не менять, доступы не выдавать, писать audit-запись; никаких side-effects.
-6. Для `declined` / `error` — `orders_v2.status='failed'`, доступы не выдавать.
-7. Вызов `grant-access-for-order` через HTTP fetch (service_role):
-  - только для `authorized` и только если шаг 4 реально изменил строку;
-  - body: `{ orderId, source: 'rr-webhook' | 'rr-reconciler' }`;
-  - таймаут 15s, ошибка → non-fatal (лог + запись в `provider_events`), потому что webhook всё равно 200, а reconciler повторит.
-8. Записать в `provider_events` (event_type='rr_promoted', payload — redacted).
-
-## Миграция БД (одна)
-
-- Partial unique index: `CREATE UNIQUE INDEX payments_v2_rr_one_per_order ON payments_v2 (order_id) WHERE provider='rr' AND status='succeeded';` — гарантирует один платёж РР на заказ.
-- Опционально: CHECK/trigger на `orders_v2` запрещающий переход `paid → любой другой` для `provider='rr'` без manual override (защита от отката).
-- GRANT-ы для новых RPC (если появятся); write-path работает под service_role — anon/authenticated к нему не имеют доступа.
-
-## Edge functions — правки
-
-1. `supabase/functions/_shared/rr/rr-promote-order.ts` — новый (единственный writer).
-2. `supabase/functions/rr-webhook/index.ts` — снимаем «inert» ограничение только для `authorized/declined/error`, вызываем promote. Docblock переписать.
-3. `supabase/functions/rr-reconcile-order/index.ts` — расширить: если последний известный статус РР `authorized`, а `orders_v2.status != 'paid'` — звать promote. Остаётся admin-only.
-4. `bepaid-webhook` — не трогаем.
-5. `grant-access-for-order` — не трогаем (уже принимает orderId, provider-agnostic).
-
-## Тесты (обязательно перед PASS)
-
-Локально (Deno type-check + unit) + runtime в production под контролем:
-
-- T1: одиночный webhook `authorized` на свежий заказ → `status=paid`, `payments_v2` 1 строка, `entitlements`/`subscriptions_v2` выданы, Telegram invite отправлен если применимо.
-- T2: повторный webhook той же подписью → 200 идемпотентный, никаких новых строк, `grant-access-for-order` не звана.
-- T3: webhook + reconciler одновременно → ровно один переход `paid`, одна `payments_v2`.
-- T4: reconciler на заказе где webhook уже отработал → no-op.
-- T5: `partial_authorized` → manual_review, доступы НЕ выданы.
-- T6: `declined` → `status=failed`.
-- T7: RR request_signature invalid → 401, никаких эффектов (как в Sprint B).
-
-Runtime-проверка теми же 3 тарифами (buh/gl_buh/biz-l) с новым email, чтобы не пересечься с уже выданными в Sprint B заказами. После проверки — короткий отчёт по факту 3-х выданных подписок/доступов + отсутствие дублей.
-
-## Что делаем с уже созданными в Sprint B заказами
-
-`ORD-26-00296 / 00297 / 00298` (Сергей Федорчук, [7500084@gmail.com](mailto:7500084@gmail.com)) — сейчас `pending`, но РР уже `authorized`. После деплоя Sprint C делаем один controlled reconcile-run по этим трём order_id вручную (админ-инструмент `rr-reconcile-order` уже есть). Это единственный backfill в Sprint C и он ограничен списком из 3 конкретных id.
-
-## Deliverables
-
-1. Миграция БД (partial-unique-index + опциональный trigger).
-2. `_shared/rr/rr-promote-order.ts`.
-3. Правка `rr-webhook` (снятие inert для терминальных статусов).
-4. Правка `rr-reconcile-order` (write-режим по флагу).
-5. Deno type-check + build проходят.
-6. Ручной runtime-тест на 3 новых тарифных заявках + backfill 3 старых.
-7. Короткий отчёт (5 пунктов, как в правилах отчётности).
-
-## Порядок работы (стандартный)
-
-1. Discover (уже сделано выше — контракты `bepaid-webhook` и `grant-access-for-order` разобраны).
-2. Миграция → approve → apply.
-3. Deploy `_shared/rr/rr-promote-order.ts` + правки двух edge.
-4. Type-check.
-5. Runtime-тест на новых 3 заявках.
-6. Controlled backfill 3 существующих.
-7. Отчёт.
-
-Sprint C статус до ручной верификации: **IMPLEMENTED, NOT VERIFIED**.
-После успешного теста: **VERIFIED, PASS**.
+- ORD-26-00297: PASS по всем 8 пунктам + идемпотентность.
+- ORD-26-00298: PASS по всем 8 пунктам + идемпотентность.
+- Прямой webhook-path на новой заявке: PASS.
+- Контракт CRM зафиксирован (verified / вне scope / backlog).
+- Итоговый статус: `Sprint C1: VERIFIED (backfill + direct webhook)`.
