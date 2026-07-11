@@ -1,0 +1,25 @@
+{
+  "id": "d5a5c2e0-9e4c-4e6c-b9bc-1e4bd264d656",
+  "slug": "cb",
+  "public_id": "SITE-000021",
+  "title": "ЦБ 2.0 2026",
+  "status": "published",
+  "product_id": "7101ed3c-7839-4a74-ad95-aa0660369b22",
+  "domain_binding": {
+    "domain": "gorbova.by",
+    "is_primary": false,
+    "is_home": false
+  },
+  "workspace_id": "00000000-0000-0000-0000-000000000000",
+  "updated_at": "2026-07-08T13:03:29.59568+00:00",
+  "published_at": "2026-07-06T12:30:59.67+00:00",
+  "blocks_summary": {
+    "n_top_level_blocks": 1,
+    "top_block_id": "3ae64c6b-8ccb-4022-a108-d2dd58ecde0d",
+    "top_block_type": "html",
+    "content_keys": ["code"],
+    "html_length_chars": 3015292,
+    "source": "импортированный дамп Tilda (project3478460, page 52339523)"
+  },
+  "note": "Страница состоит из одного html-блока с внешним Tilda-разметом. Structured block-schema отсутствует — все CTA живут внутри raw HTML."
+}

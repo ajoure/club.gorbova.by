@@ -1,0 +1,15 @@
+[
+  {
+    "index": 0,
+    "id": "3ae64c6b-8ccb-4022-a108-d2dd58ecde0d",
+    "type": "html",
+    "content_keys": ["code"],
+    "html_length_chars": 3015292,
+    "cta_summary": {
+      "data-lovable-action=\"open-bank-installment\"": 3,
+      "data-lovable-action=\"open-installment\"": 3,
+      "tariff_keys_encountered": ["buh", "gl_buh", "biz-l"]
+    },
+    "note": "Единственный блок страницы. Полное тело сохранять в git не следует (3+ MB Tilda-разметки); фактический HTML доступен только через SELECT из site_pages."
+  }
+]
