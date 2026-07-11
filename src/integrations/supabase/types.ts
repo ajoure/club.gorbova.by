@@ -19344,6 +19344,7 @@ export type Database = {
         Args: { _event_type: string; _order_id: string; _payload: Json }
         Returns: undefined
       }
+      rr_is_safe_payment_url: { Args: { _url: string }; Returns: boolean }
       rr_mark_call_started: {
         Args: { _correlation_id: string; _order_id: string }
         Returns: Json
