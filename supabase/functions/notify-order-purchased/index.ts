@@ -76,20 +76,33 @@ Deno.serve(async (req) => {
 
   // ── Service-role-only guard ─────────────────────────────────────────────
   // verify_jwt=true уже отсёк неподписанные запросы. Здесь запрещаем всё,
-  // кроме role='service_role' в claims.
+  // кроме role='service_role'.
+  //
+  // ВНИМАНИЕ: getClaims() валидирует токен через JWKS (asymmetric signing keys)
+  // и НЕ принимает статические HS256 legacy-ключи (service_role/anon).
+  // Поэтому service_role JWT (который используется для внутренних вызовов)
+  // сначала проверяем прямым сравнением с SUPABASE_SERVICE_ROLE_KEY,
+  // и только если это не он — валидируем как обычный signing-keys JWT.
   const authHeader = req.headers.get('Authorization') || ''
   if (!authHeader.toLowerCase().startsWith('bearer ')) {
     return json({ error: 'unauthorized' }, 401)
   }
   const token = authHeader.slice(7).trim()
-  try {
-    const verifier = createClient(supabaseUrl, anonKey)
-    const { data: claimsRes, error: claimsErr } = await verifier.auth.getClaims(token)
-    const role = (claimsRes as any)?.claims?.role
-    if (claimsErr || role !== 'service_role') {
-      return json({ error: 'forbidden', reason: 'service_role_required' }, 403)
+
+  let isServiceRole = false
+  if (token && svcKey && token === svcKey) {
+    isServiceRole = true
+  } else {
+    try {
+      const verifier = createClient(supabaseUrl, anonKey)
+      const { data: claimsRes, error: claimsErr } = await verifier.auth.getClaims(token)
+      const role = (claimsRes as any)?.claims?.role
+      if (!claimsErr && role === 'service_role') isServiceRole = true
+    } catch (_e) {
+      // fall through to forbidden
     }
-  } catch (_e) {
+  }
+  if (!isServiceRole) {
     return json({ error: 'forbidden', reason: 'service_role_required' }, 403)
   }
 
