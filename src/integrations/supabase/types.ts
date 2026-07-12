@@ -11650,6 +11650,60 @@ export type Database = {
         }
         Relationships: []
       }
+      payments_legacy_archive: {
+        Row: {
+          amount_at_archive: number | null
+          archive_batch_id: string | null
+          archive_reason: string
+          archived_at: string
+          archived_by: string | null
+          classification: string
+          currency_at_archive: string | null
+          id: string
+          legacy_category: string
+          notes: string | null
+          order_id_at_archive: string | null
+          origin_at_archive: string | null
+          original_payment_id: string
+          original_row: Json
+          provider_at_archive: string | null
+        }
+        Insert: {
+          amount_at_archive?: number | null
+          archive_batch_id?: string | null
+          archive_reason: string
+          archived_at?: string
+          archived_by?: string | null
+          classification: string
+          currency_at_archive?: string | null
+          id?: string
+          legacy_category: string
+          notes?: string | null
+          order_id_at_archive?: string | null
+          origin_at_archive?: string | null
+          original_payment_id: string
+          original_row: Json
+          provider_at_archive?: string | null
+        }
+        Update: {
+          amount_at_archive?: number | null
+          archive_batch_id?: string | null
+          archive_reason?: string
+          archived_at?: string
+          archived_by?: string | null
+          classification?: string
+          currency_at_archive?: string | null
+          id?: string
+          legacy_category?: string
+          notes?: string | null
+          order_id_at_archive?: string | null
+          origin_at_archive?: string | null
+          original_payment_id?: string
+          original_row?: Json
+          provider_at_archive?: string | null
+        }
+        Relationships: []
+      }
       payments_sync_runs: {
         Row: {
           created_at: string
@@ -11712,10 +11766,15 @@ export type Database = {
           card_last4: string | null
           created_at: string
           currency: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_reason: string | null
+          deletion_context: Json | null
           error_message: string | null
           id: string
           import_ref: string | null
           installment_number: number | null
+          is_deleted: boolean
           is_recurring: boolean | null
           meta: Json | null
           order_id: string | null
@@ -11745,10 +11804,15 @@ export type Database = {
           card_last4?: string | null
           created_at?: string
           currency?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          deletion_context?: Json | null
           error_message?: string | null
           id?: string
           import_ref?: string | null
           installment_number?: number | null
+          is_deleted?: boolean
           is_recurring?: boolean | null
           meta?: Json | null
           order_id?: string | null
@@ -11778,10 +11842,15 @@ export type Database = {
           card_last4?: string | null
           created_at?: string
           currency?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          deletion_context?: Json | null
           error_message?: string | null
           id?: string
           import_ref?: string | null
           installment_number?: number | null
+          is_deleted?: boolean
           is_recurring?: boolean | null
           meta?: Json | null
           order_id?: string | null
