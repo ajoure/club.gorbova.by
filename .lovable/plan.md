@@ -237,3 +237,43 @@ offer   00000000-c2f0-4e57-0000-300000000001
 - Каждое инженерное сообщение — «План:» или «Отчёт о выполнении:».
 - Diagnose → Plan → Dry run → Execute → Verify. Sprint C2 закрыт по этой цепочке.
 - Cleanup, admin-notify и one-off subscription patch — три независимых follow-up, каждый требует отдельного явного approval.
+
+## Отчёт о выполнении: PATCH-ADMIN-PURCHASE-NOTIFY-V1 — CORRECTION applied
+
+Согласно замечаниям пользователя (correction required) выполнены точечные исправления перед runtime smoke:
+
+### 1. Восстановлена разделённая идемпотентность buyer/admin
+
+Миграция (partial unique indexes) заменяет объединённый `order_notification_deliveries_unique_v2`:
+
+```sql
+DROP INDEX IF EXISTS public.order_notification_deliveries_unique_v2;
+
+CREATE UNIQUE INDEX order_notification_deliveries_unique_buyer
+  ON public.order_notification_deliveries (order_id, channel, notification_type)
+  WHERE channel IN ('email', 'telegram');
+
+CREATE UNIQUE INDEX order_notification_deliveries_unique_admin
+  ON public.order_notification_deliveries (order_id, channel, notification_type, recipient)
+  WHERE channel = 'telegram_admin';
+```
+
+`upsertDelivery` приведён в соответствие: для `email`/`telegram` lookup существующей строки идёт без фильтра по `recipient` (смена email или Telegram ID не создаёт вторую buyer-delivery). Для `telegram_admin` lookup обязательно с `recipient` (каждый admin получает свою запись).
+
+### 2. Admin DM: добавлены телефон и провайдер
+
+- SELECT `orders_v2` расширен `customer_phone, provider`;
+- Текст admin-DM теперь содержит отдельные строки:
+  - 📧 Email
+  - 📱 Телефон
+  - 💳 Провайдер (rr / bepaid / stripe)
+- Сумма перенесена на 💵 (💳 занята провайдером);
+- Все значения проходят через `escapeHtml`.
+
+### Deploy
+
+`notify-order-purchased` задеплоена. Миграция применена. Runtime smoke разблокирован.
+
+Статус:
+- PATCH-ADMIN-PURCHASE-NOTIFY-V1: CORRECTION APPLIED, READY FOR SMOKE
+- Runtime E2E smoke: UNBLOCKED

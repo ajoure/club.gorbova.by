@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
   // 1. Load order
   const { data: order, error: orderErr } = await supabase
     .from('orders_v2')
-    .select('id, order_number, user_id, profile_id, product_id, tariff_id, customer_email, status, meta, currency, final_price, paid_amount, updated_at')
+    .select('id, order_number, user_id, profile_id, product_id, tariff_id, customer_email, customer_phone, provider, status, meta, currency, final_price, paid_amount, updated_at')
     .eq('id', orderId)
     .maybeSingle()
 
@@ -232,7 +232,11 @@ Deno.serve(async (req) => {
 
   // 5. Delivery helpers
   async function upsertDelivery(channel: 'email' | 'telegram' | 'telegram_admin', recipient: string | null) {
-    const recipientKey = recipient ?? ''
+    // Split idempotency semantics (aligned with partial unique indexes):
+    //   buyer channels (email/telegram): unique by (order_id, channel, notification_type)
+    //   telegram_admin:                  unique by (order_id, channel, notification_type, recipient)
+    const isAdmin = channel === 'telegram_admin'
+
     const { data: inserted, error: insErr } = await supabase
       .from('order_notification_deliveries')
       .insert({
@@ -247,14 +251,18 @@ Deno.serve(async (req) => {
 
     if (inserted) return { row: inserted as any, existed: false }
 
-    const { data: existing } = await supabase
+    let query = supabase
       .from('order_notification_deliveries')
       .select('*')
       .eq('order_id', orderId)
       .eq('channel', channel)
       .eq('notification_type', NOTIFICATION_TYPE)
-      .eq('recipient', recipientKey === '' ? null : recipientKey)
-      .maybeSingle()
+
+    if (isAdmin) {
+      query = query.eq('recipient', recipient ?? '')
+    }
+
+    const { data: existing } = await query.maybeSingle()
 
     if (insErr && !existing) {
       console.error('[notify-order-purchased] delivery insert failed', insErr)
@@ -492,15 +500,21 @@ Deno.serve(async (req) => {
       const priceStr = priceRaw > 0
         ? `${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
         : '—'
-      const buyerLine = recipientName
-        ? `${escapeHtml(recipientName)}${recipientEmail ? ' &lt;' + escapeHtml(recipientEmail) + '&gt;' : ''}`
-        : (recipientEmail ? escapeHtml(recipientEmail) : '—')
+      const buyerLine = recipientName ? escapeHtml(recipientName) : '—'
+      const emailLine = recipientEmail ? `📧 <b>Email:</b> ${escapeHtml(recipientEmail)}\n` : ''
+      const phoneRaw = (order as any).customer_phone || null
+      const phoneLine = phoneRaw ? `📱 <b>Телефон:</b> ${escapeHtml(phoneRaw)}\n` : ''
+      const providerRaw = (order as any).provider || null
+      const providerLine = providerRaw ? `💳 <b>Провайдер:</b> ${escapeHtml(providerRaw)}\n` : ''
       const adminText =
         `💰 <b>Новая оплата</b>\n\n` +
         `👤 <b>Клиент:</b> ${buyerLine}\n` +
+        emailLine +
+        phoneLine +
         `📦 <b>Продукт:</b> ${escapeHtml(productName)}\n` +
         (tariffName ? `🏷 <b>Тариф:</b> ${escapeHtml(tariffName)}\n` : '') +
-        `💳 <b>Сумма:</b> ${escapeHtml(priceStr)}\n` +
+        `💵 <b>Сумма:</b> ${escapeHtml(priceStr)}\n` +
+        providerLine +
         (order.order_number ? `🧾 <b>Заказ:</b> ${escapeHtml(order.order_number)}\n` : '') +
         (accessEndAt ? `🗓 <b>Доступ до:</b> ${escapeHtml(fmtRuDate(accessEndAt))}\n` : '') +
         `\n👉 <a href="https://gorbova.by/admin/orders/${escapeHtml(orderId)}">Открыть заказ</a>`
