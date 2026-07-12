@@ -381,6 +381,53 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                 )}
               </div>
 
+              {/* Granular health status (PATCH-RR-STATUS-TRUTHFUL-V1) */}
+              {hcMeta && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
+                  {[
+                    { key: "backend", label: "Backend", value: hcMeta.checks?.backend?.status, ok: ["ok"], neutral: [] },
+                    { key: "credentials", label: `Реквизиты режима (${mode === "battle" ? "боевой" : "тестовый"})`, value: hcMeta.checks?.credentials?.status, ok: ["configured"], neutral: [] },
+                    { key: "api", label: "API режима", value: hcMeta.checks?.api_reachability?.status, ok: ["ok"], neutral: ["not_verified"] },
+                    { key: "wh_ep", label: "Webhook endpoint", value: hcMeta.checks?.webhook_endpoint?.status, ok: ["configured"], neutral: [] },
+                    { key: "wh_rt", label: "Webhook runtime", value: hcMeta.checks?.webhook_runtime?.status, ok: ["verified"], neutral: ["not_verified"] },
+                  ].map((row) => {
+                    const v = row.value ?? "—";
+                    const cls = row.ok.includes(v)
+                      ? "text-primary"
+                      : row.neutral.includes(v)
+                        ? "text-muted-foreground"
+                        : "text-destructive";
+                    const ru: Record<string, string> = {
+                      ok: "проверен",
+                      configured: "настроены",
+                      verified: "проверен",
+                      not_verified: "ещё не проверен",
+                      not_configured: "не настроено",
+                      error: "ошибка",
+                    };
+                    return (
+                      <div key={row.key} className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">{row.label}:</span>
+                        <span className={`font-medium ${cls}`}>{ru[v] ?? v}</span>
+                      </div>
+                    );
+                  })}
+                  {hcMeta.last_operation && (
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t mt-1">
+                      <span className="text-muted-foreground">Последняя операция:</span>
+                      <span className="text-xs">
+                        {new Date(hcMeta.last_operation.at!).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {hcMeta.last_operation.external_id && (
+                          <span className="ml-1 font-mono">· {hcMeta.last_operation.external_id}</span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
+
               {hasError && instance.error_message && (
                 <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
                   {instance.error_message}
