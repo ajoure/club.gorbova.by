@@ -28,6 +28,7 @@ import {
   rrGetOrderStatus,
 } from "../_shared/rr/rr-adapter.ts";
 import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
+import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
