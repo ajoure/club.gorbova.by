@@ -5907,3 +5907,51 @@ DEPLOY:
 DML:
   0
 ```
+
+---
+
+## PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW — EXECUTED
+
+### Scope (executed, read-only shadow)
+- **Pure helper**: `supabase/functions/_shared/grant-eligibility.ts` — no IO, no DML. Computes `{would_allow, reason, evidence}` per corrected contract.
+- **Canonical providers**: `bepaid | stripe | rr | bank` (corrected from 2-provider list). Payment-level provider check, not order-level.
+- **Exclusions**: `deleted_at`, test/sandbox (provider ∈ admin/admin_test/test/sandbox, `meta.test`, `meta.sandbox`, `meta.livemode=false`, `meta.env='test'|'sandbox'`, `*_test` suffix), refund rows, non-succeeded rows.
+- **Priority order implemented** per spec §Priority (13 rungs).
+- **Handler wiring**: `grant-access-for-order/index.ts` — shadow block placed AFTER auth resolution and order load, BEFORE any grant side-effect. Wrapped in `try/catch`. Emits structured `console.log`; `would_deny_*` / `manual_review_*` → best-effort `audit_logs.insert` action `grant-access-for-order.eligibility_shadow`. No `orders_v2` mutation, no blocking `return`.
+
+### Corrections applied vs. diagnose
+| Diagnose finding | Correction in helper |
+|---|---|
+| Canonical = bepaid+stripe only | Extended to bepaid+stripe+rr+bank; check on `payments_v2.provider` |
+| Refund truth ambiguity | `refund_ambiguity` → `manual_review_financial_truth_pending_c2` (deferred to C2) |
+| paid_with_canonical=2907 grubě | Not used as enforcement baseline |
+| deal_only=true blanket deny | Only exact `meta.source='admin_deal_only'` denies; other `deal_only=true` → `manual_review_legacy_deal_only_semantics` |
+| legacy backfill auto-allow | Removed; → `manual_review_legacy_backfill` |
+| admin gift loose contract | Strict 8-condition contract, admin-only, no canonical succeeded, exact `admin_grant` source, `deal_only!=true` |
+| trial verified | → `manual_review_trial_contract_unverified` |
+| 21 callers | Header corrected to 22 (15 service-role + 6 admin UI + 1 3DS) |
+
+### Enforcement
+`ELIG-C1-SHADOW` produces evidence only. No 403/409 from eligibility, no `orders_v2.meta` update, no env-flag path to enable enforcement. Enforcement remains **BLOCKED** pending C2 financial truth.
+
+### Verification
+- **Unit tests**: `src/test/grantAccessForOrder.eligibilityShadow.test.ts` — 28 tests PASS
+- **Handler invariant**: `src/test/grantAccessForOrder.eligibilityShadow.handlerInvariant.test.ts` — 9 tests PASS
+- **Existing authz tests**: callerAuth 30/30 PASS, handlerOrder 10/10 PASS
+- **Total**: 77/77 PASS
+- **Deploy**: `grant-access-for-order` redeployed
+- **DML**: 0
+
+### Observation gate
+Minimum 48h + at least one natural invocation each for admin standard / payment standard / renewal|3DS. Extend to 7 days if no traffic. No artificial valid-order probes.
+
+### Status
+```
+READ-ONLY DIAGNOSE:      ACCEPTED WITH CORRECTIONS / APPLIED
+ELIG-C1 PURE HELPER:     EXECUTED / TESTS PASS
+SHADOW INTEGRATION:      EXECUTED / INVARIANT VERIFIED
+SHADOW DEPLOY:           EXECUTED (grant-access-for-order)
+ORDER META DML:          0 / NOT PERFORMED
+ENFORCEMENT:             BLOCKED
+C2 FINANCIAL TRUTH:      PENDING
+```

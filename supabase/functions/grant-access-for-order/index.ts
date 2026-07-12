@@ -20,6 +20,7 @@ import {
   detectBranch,
   enforceBranchPolicy,
 } from './caller_auth.ts';
+import { evaluateGrantEligibility } from '../_shared/grant-eligibility.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -350,6 +351,80 @@ Deno.serve(async (req) => {
     const userId = order.user_id;
     const profileId = order.profile_id;
     const productId = order.product_id;
+
+    // ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW ─────────────
+    // Non-blocking shadow eligibility evaluation. READ-ONLY.
+    // MUST NOT influence downstream grant flow, MUST NOT write to
+    // orders_v2, MUST NOT return a blocking status. Verdict is emitted
+    // to console; only would_deny_* / manual_review_* results are also
+    // written to audit_logs (best-effort). Enforcement is deferred to
+    // C2 after financial-truth resolution.
+    try {
+      const shadowUserId = order.user_id || null;
+      const shadowProductId = order.product_id || null;
+      const [paymentsRes, entitlementRes] = await Promise.all([
+        supabase
+          .from('payments_v2')
+          .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id, parent_payment_id')
+          .eq('order_id', orderId),
+        (shadowUserId && shadowProductId)
+          ? supabase
+              .from('entitlements')
+              .select('id, product_id, user_id, expires_at, meta')
+              .eq('user_id', shadowUserId)
+              .eq('product_id', shadowProductId)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      const shadowPayments = (paymentsRes as any)?.data || [];
+      const shadowEntitlement = (entitlementRes as any)?.data || null;
+
+      const shadow = evaluateGrantEligibility({
+        branch,
+        callerType: caller.type,
+        order,
+        payments: shadowPayments,
+        existingEntitlement: shadowEntitlement,
+        claimedSource: _body?.source ?? null,
+        claimedContext: _body?.context ?? null,
+      });
+
+      console.log(JSON.stringify({
+        tag: 'grant-access-for-order.eligibility_shadow',
+        order_id: orderId,
+        branch,
+        caller_type: caller.type,
+        actor_user_id: caller.actorUserId,
+        would_allow: shadow.would_allow,
+        reason: shadow.reason,
+        evidence: shadow.evidence,
+      }));
+
+      if (shadow.reason.startsWith('would_deny_') || shadow.reason.startsWith('manual_review_')) {
+        try {
+          await supabase.from('audit_logs').insert({
+            action: 'grant-access-for-order.eligibility_shadow',
+            ...auditActor,
+            meta: {
+              order_id: orderId,
+              branch,
+              caller_type: caller.type,
+              actor_user_id: caller.actorUserId,
+              would_allow: shadow.would_allow,
+              reason: shadow.reason,
+              canonical_payment_ids: shadow.evidence.canonical_payment_ids,
+              provider_set: shadow.evidence.provider_set,
+              ...claimedMeta,
+              evidence: shadow.evidence,
+            },
+          });
+        } catch (_) { /* audit best-effort; MUST NOT affect grant flow */ }
+      }
+    } catch (_shadowErr) {
+      // Shadow evaluation must never break production flow.
+      console.warn('[eligibility_shadow] evaluation failed');
+    }
+    // ── END ELIG-C1-SHADOW ─────────────────────────────────────────────
 
     // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
     // Demo trial activated by bepaid-create-token's no-card branch must NOT create
