@@ -3271,3 +3271,351 @@ CODE CHANGES:
   STILL BLOCKED
 ```
 
+
+---
+
+## C25 — A1R2 v2 (SQL-reproducible) + C2 revised dry-run + B2.1 authorization (append-only, 2026-07-12)
+
+Три параллельных read-only блока. Ни одного UPDATE/DELETE/INSERT в данные. B2.1 — только schema correction через миграцию.
+
+### C25.1 A1R2 v2 — материализованная классификация 117 admin_from_payment
+
+**Ключевой сигнал (найден и подтверждён):** все 117 строк содержат `meta->>'queue_payment_id'`, ссылающийся на `payment_reconcile_queue` (108) или `payment_reconcile_queue_archive` (9). Через queue получаем **bepaid_uid** (все 117), **tracking_id** (все 117), **matched_order_id** (108/117 непустых), **matched_profile_id** (108/117).
+
+Категоризация выполнена SQL-запросом (см. `.lovable/discovery/a1r2_v2_query.sql` — приведён в C25.5), приоритетно от «сильных» к «слабым» признакам.
+
+#### C25.1.1 Итоговые взаимоисключающие категории
+
+| # | Категория | Count | Признак |
+|---|-----------|-------|---------|
+| 1 | `safe_backfill_confirmed` | 4 | canonical bepaid отсутствует, admin.order_id = queue.matched_order_id, суммы/валюты совпадают, tracking_id уникален |
+| 2 | `archive_exact_duplicate` | 113 | либо canonical bepaid уже существует с тем же bepaid_uid (112), либо дубликат другой admin-safe-backfill строки (1: `ca7cde79`, дубль `9b412ac6`) |
+| 3 | `relink_confirmed` | 0 | — |
+| 4 | `canonical_link_confirmed` | 0 | — |
+| 5 | `nonfinancial_or_test_confirmed` | 0 | — |
+| 6 | `ambiguous_no_change` | 0 | — |
+| **Total** | | **117** | 4 + 113 + 0·4 = 117 ✓ |
+
+Дополнительный флаг `order_id IS NULL`: **11 строк** (10 внутри `archive_exact_duplicate` + 1 `ca7cde79` в той же категории). Отдельной категорией не является.
+
+#### C25.1.2 Разложение категории `archive_exact_duplicate` (113)
+
+| Подкласс | Count | Отношение canonical.order_id ↔ admin.order_id |
+|----------|-------|-----------------------------------------------|
+| canonical_same_order | 26 | equal (admin — точный дубль на правильной сделке) |
+| canonical_admin_orphan | 10 | admin.order_id IS NULL, canonical держит сделку |
+| canonical_diff_order | 76 | admin на другой сделке, canonical на правильной — canonical уже является источником истины |
+| duplicate_of_admin_safe_backfill | 1 | `ca7cde79` дублирует `9b412ac6` по bepaid_uid `19d816de…` |
+| Итого | 113 | |
+
+**Ключевое наблюдение:** все 112 canonical-совпадений имеют **точное** совпадение amount+currency (0 mismatch). Автовыбор безопасен только в архиве — не в relink.
+
+#### C25.1.3 Полные данные 5 non-canonical строк (safe_backfill_confirmed + duplicate)
+
+| # | admin_pid | admin_order | matched_order_id | bepaid_uid | tracking_id | amount | currency | paid_at | категория |
+|---|-----------|-------------|------------------|------------|-------------|--------|----------|---------|-----------|
+| 1 | 496ed05b-9918-4142-9d38-9778ede52153 | 793b6325-d77d-4fc3-abe9-5f3c8b6163a3 | 793b6325… (совпадает) | 63f9a1f9-0c86-47bf-a187-5b017fc95a29 | lead_31229789 | 250.00 | BYN | 2025-12-30 17:06:52+00 | safe_backfill_confirmed |
+| 2 | 9b412ac6-690c-430b-8ce8-71afa057ac78 | da83a233-7bcd-435a-897d-46aa9918e0ff | совпадает | 19d816de-7078-465f-962a-5d8795c374da | lead_3836274 | 350.00 | BYN | 2025-12-30 19:58:15+00 | safe_backfill_confirmed (KEEP) |
+| 3 | 9e158f4b-af9b-4699-823c-61ebc8f2e361 | 95ce7f48-762e-42f5-b2a4-e1970aeffab5 | совпадает | 6badbdad-0896-42dc-ae2f-226dc811a408 | subv2:97892b63-…:order:4b1f3e9d-… | 250.00 | BYN | 2026-07-08 03:01:04+00 | safe_backfill_confirmed |
+| 4 | ca7cde79-9b1d-4d54-8942-64b24139014c | NULL | da83a233-7bcd-435a-897d-46aa9918e0ff | 19d816de-… (== #2) | lead_3836274 | 350.00 | BYN | 2026-03-16 21:00:00+00 | archive_exact_duplicate (дубль #2) |
+| 5 | ce8eedad-eb2e-46f2-a424-3e22f117bd99 | ca1bff14-ca09-4585-9263-02d950cb82ba | совпадает | 3d216612-cacc-4730-80cf-6f29a1bd3525 | lead_3836292 | 195.00 | BYN | 2025-12-31 09:12:56+00 | safe_backfill_confirmed |
+
+**Итог:** 4 safe_backfill (строки 1, 2, 3, 5) + 1 archive_exact_duplicate (строка 4).
+
+#### C25.1.4 Прогноз для `relink_confirmed`
+
+Категория пуста. **Ни одна строка не требует relink**, поскольку:
+- Все 112 строк с canonical bepaid на другом ордере — canonical уже удерживает правильную сделку; удаление/архив admin-строки не меняет order.paid_amount ни на одной стороне (после C2 recalc пересчёт учитывает только canonical).
+- 4 safe_backfill строк уже на корректном ордере (matched_order_id == admin.order_id).
+- 1 duplicate — orphan, при архивации из recalc-пула никакой ордер не теряет платежей.
+
+Impact prediction для всего блока (после будущего C2 + архивации, которые остаются BLOCKED):
+- **paid_amount ни одного canonical ордера не изменится:** admin-строки не участвуют в SoT `recalc_order_totals` (см. C25.2.6 — фильтр `provider IN (bepaid, stripe, rr, bank)`).
+- **access/subscriptions не затрагиваются:** admin-строки не имеют связей с access_grant_ledger / subscriptions_v2 (проверено в C21).
+
+#### C25.1.5 Никаких мутаций
+
+Ни один UPDATE/DELETE/INSERT не выполнен. Все данные получены SELECT-запросами. C25.1 — read-only отчёт.
+
+### C25.2 C2 revised dry-run (read-only baseline)
+
+#### C25.2.1 SoT `target_amount` — реальный порядок
+
+Фактическое распределение по `orders_v2` (4124 ордера):
+- `final_price IS NOT NULL AND > 0`: **3800**
+- `final_price = 0`: **324**
+- `final_price IS NULL`: **0** (колонка NOT NULL с default — только 0/positive)
+- `base_price IS NOT NULL AND > 0`: 3792
+
+**Итоговый SoT-порядок:**
+```
+target_amount := final_price   -- primary (NOT NULL, всегда определён)
+-- fallback ветки НЕ нужны: final_price покрывает 100% ордеров
+-- base_price используется только в admin UI как reference, не в recalc
+```
+`target_amount = 0` (324 ордера) — легитимный кейс (free/gift/promo). Обработка: см. C24.3 + C25.2.5.
+
+Ветка `amount` (столбец `payments_v2.amount`) в SoT ордера не участвует — платежи не задают целевую сумму сделки.
+
+#### C25.2.2 Refund representation matrix (реальные counts)
+
+| Подкатегория | Count | Признак |
+|--------------|-------|---------|
+| parent_only | 5 | `refunded_amount>0` на succeeded parent, refund-row отсутствует |
+| refund_row_only | 26 | есть refund/void row, но parent.refunded_amount=0 |
+| exact_match | 3 | parent.refunded_amount == сумма refund rows |
+| mismatch_parent_greater | 1 | parent.refunded_amount > сумма refund rows |
+| mismatch_refund_rows_greater | 0 | — |
+| refund_rows_with_orphans | 3 | refund row без `reference_payment_id` |
+| **Всего затронутых ордеров** | 35 | (5 + 26 + 3 + 1 = 35 ≠ 33 из-за пересечения orphans с refund_row_only) |
+
+**Правило C2:** при `mismatch_*` или `refund_rows_with_orphans` — `recalc_order_totals` возвращает `refund_data_conflict` без изменения статуса. Автовыбор запрещён.
+
+#### C25.2.3 Отдельные edge-case counts
+
+| Edge case | Count |
+|-----------|-------|
+| currency_mismatch (нескольких валют в payments одного ордера) | **0** |
+| target_amount IS NULL | **0** |
+| target_amount = 0 | **324** |
+| net_paid < 0 (refund_data_conflict candidate) | **1** (см. C25.2.4) |
+
+#### C25.2.4 Baseline simulation — матрица переходов статусов
+
+Прогон формулы C2 против всех 4124 ордеров (read-only, без записей):
+
+| current → proposed | count | комментарий |
+|--------------------|-------|-------------|
+| draft → draft | 34 | нет платежей — без изменений |
+| draft → pending | 24 | появились платежи в failed/refunded — статус обновится |
+| failed → pending | 122 | legacy: order.status='failed' при отсутствии canonical succeeded |
+| lead → lead | 3 | нефинансовые |
+| paid → paid | 3003 | без изменений (стабильная зона) |
+| paid → pending | 649 | **требует внимания** — вероятно admin-only платежи, которые сейчас включаются в gross, но C2 их исключит |
+| paid → refunded | 2 | net_paid=0 и refunded>0 |
+| paid → unexpected_payment_on_free_order | 1 | final_price=0, net_paid>0 — флаг для ручной проверки |
+| partial → paid | 1 | доплата обнаружена |
+| pending → paid | 1 | реальный canonical succeeded не был учтён |
+| pending → pending | 241 | без изменений |
+| refunded → paid | 42 | **требует внимания** — refund_data_conflict candidates |
+| refunded → refunded | 1 | без изменений |
+
+**Аномалии для расследования до C2 execute:**
+- `paid → pending (649)`: массовая деградация. Гипотеза: сейчас `orders_v2.paid_amount` учитывает admin-строки; после C25.1 архивации 117 admin_from_payment часть ордеров потеряет "видимый paid", т.к. canonical bepaid для 4 safe_backfill ещё не создан. **Блокирует C2 execute до Phase A2 (backfill provider→bepaid для 4 safe_backfill).**
+- `refunded → paid (42)`: возможен refund_data_conflict, но также возможен legacy false-refunded. Требует ручного аудита по списку 42 ID (готовится в C26).
+- `failed → pending (122)`: order.status='failed' лишний; C2 не должен автоматически переводить в pending — вместо этого сохранять `failed` пока admin не переопределит через payment_status_overrides.
+
+**Вывод:** C2 EXECUTE **NOT AUTHORIZED**. Формула требует:
+- ветки `paid → pending` при отсутствии canonical → сохранить `paid` + флаг `awaiting_backfill`;
+- ветки `failed → pending` без положительного net_paid → сохранить `failed`;
+- ветки `refunded → paid` → forbid, отметить `refund_data_conflict_review`.
+
+#### C25.2.5 SQL контракт `recalc_order_totals(uuid)` — draft
+
+```sql
+CREATE OR REPLACE FUNCTION public.recalc_order_totals(p_order_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_order         orders_v2%ROWTYPE;
+  v_gross         numeric := 0;
+  v_refunded_rows numeric := 0;
+  v_refunded_par  numeric := 0;
+  v_refunded_tot  numeric := 0;
+  v_net           numeric := 0;
+  v_currencies    int;
+  v_orphan_ref    int;
+  v_mismatch      boolean := false;
+  v_result        jsonb;
+  v_proposed      order_status;
+BEGIN
+  SELECT * INTO v_order FROM orders_v2 WHERE id = p_order_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'order_not_found');
+  END IF;
+
+  -- Currency guard
+  SELECT count(DISTINCT currency) INTO v_currencies
+  FROM payments_v2
+  WHERE order_id = p_order_id
+    AND is_deleted = false
+    AND provider IN ('bepaid','stripe','rr','bank');
+  IF v_currencies > 1 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'currency_mismatch', 'currencies', v_currencies);
+  END IF;
+
+  -- Gross succeeded (canonical providers only)
+  SELECT COALESCE(SUM(amount), 0) INTO v_gross
+  FROM payments_v2
+  WHERE order_id = p_order_id
+    AND is_deleted = false
+    AND provider IN ('bepaid','stripe','rr','bank')
+    AND status = 'succeeded'
+    AND (transaction_type IS NULL OR transaction_type NOT ILIKE '%refund%' AND transaction_type NOT ILIKE '%возврат%');
+
+  -- Refund via separate rows
+  SELECT COALESCE(SUM(amount), 0) INTO v_refunded_rows
+  FROM payments_v2
+  WHERE order_id = p_order_id
+    AND is_deleted = false
+    AND provider IN ('bepaid','stripe','rr','bank')
+    AND (status = 'refunded' OR transaction_type ILIKE '%refund%' OR transaction_type ILIKE '%возврат%');
+
+  -- Refund via parent.refunded_amount
+  SELECT COALESCE(SUM(refunded_amount), 0) INTO v_refunded_par
+  FROM payments_v2
+  WHERE order_id = p_order_id
+    AND is_deleted = false
+    AND provider IN ('bepaid','stripe','rr','bank')
+    AND status = 'succeeded';
+
+  -- Orphan refund rows (no reference_payment_id)
+  SELECT count(*) INTO v_orphan_ref
+  FROM payments_v2
+  WHERE order_id = p_order_id
+    AND is_deleted = false
+    AND (status = 'refunded' OR transaction_type ILIKE '%refund%')
+    AND reference_payment_id IS NULL;
+
+  -- Mismatch check
+  IF v_refunded_par > 0 AND v_refunded_rows > 0 AND v_refunded_par <> v_refunded_rows THEN
+    v_mismatch := true;
+  END IF;
+
+  v_refunded_tot := GREATEST(v_refunded_par, v_refunded_rows);
+  v_net := v_gross - v_refunded_tot;
+
+  IF v_mismatch OR v_orphan_ref > 0 THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'refund_data_conflict',
+      'gross', v_gross, 'refunded_parent', v_refunded_par,
+      'refunded_rows', v_refunded_rows, 'orphan_refund_rows', v_orphan_ref
+    );
+  END IF;
+
+  IF v_net < 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'net_paid_negative', 'net', v_net);
+  END IF;
+
+  -- Status derivation (see C25.2.4 for adjustments)
+  IF v_order.final_price IS NULL THEN
+    v_proposed := v_order.status;   -- preserve
+  ELSIF v_order.final_price = 0 THEN
+    IF v_net > 0 THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'unexpected_payment_on_free_order', 'net', v_net);
+    END IF;
+    v_proposed := v_order.status;   -- preserve nonfinancial
+  ELSIF v_net = 0 AND v_refunded_tot > 0 THEN
+    v_proposed := 'refunded';
+  ELSIF v_net = 0 THEN
+    v_proposed := 'pending';
+  ELSIF v_net >= v_order.final_price THEN
+    v_proposed := 'paid';
+  ELSE
+    v_proposed := 'partial';
+  END IF;
+
+  v_result := jsonb_build_object(
+    'ok', true,
+    'order_id', p_order_id,
+    'gross', v_gross,
+    'refunded_total', v_refunded_tot,
+    'net_paid', v_net,
+    'current_status', v_order.status,
+    'proposed_status', v_proposed,
+    'proposed_paid_amount', v_net
+  );
+
+  -- NB: PHASE C2 IS DRY-RUN ONLY. UPDATE is executed only via C3 gated apply.
+  RETURN v_result;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recalc_order_totals(uuid) TO service_role;
+```
+
+**Не применяется** в этом чекпоинте. Требует правок формулы после C25.2.4-аномалий (paid→pending 649, refunded→paid 42).
+
+#### C25.2.6 Provider whitelist для gross/refund
+
+Только `bepaid, stripe, rr, bank`. `admin`, `admin_test`, `admin_grant`, любые legacy manual — исключаются на уровне WHERE. Это ключевой инвариант, ради которого A1R2 v2 → A2 backfill необходим до C2 execute.
+
+### C25.3 B2.1 — schema correction migration (AUTHORIZED, ready)
+
+Три изменения над `payments_legacy_archive`, зависящие от Approve пользователя:
+1. `UNIQUE(original_payment_id)` — гарантирует однократность архивации одной payment-строки.
+2. `row_checksum text NOT NULL` — sha256 канонического json оригинальной строки для forensics.
+3. `BEFORE UPDATE OR DELETE trigger` — блокирует любые модификации, включая от `service_role`. Immutability enforced на уровне БД, снимая disclosure из C24.1.
+
+DoD после миграции (проверяется отдельным SELECT-блоком, без DML):
+- `SELECT count(*) FROM payments_legacy_archive = 0`
+- test-INSERT под service_role → PASS (потом ROLLBACK внутри той же транзакции)
+- test-UPDATE → BLOCKED (trigger raises)
+- test-DELETE → BLOCKED (trigger raises)
+- `payments_v2` не изменена (row count и schema idempotent)
+
+Миграция ниже — единственный SQL, применяемый в этом чекпоинте.
+
+### C25.4 Статус
+
+```
+PATCH-PAYMENTS-MANAGEMENT-V2:
+
+A1R2 v2:
+  DONE (read-only)
+  117 = 4 safe_backfill_confirmed
+      + 113 archive_exact_duplicate
+      + 0 relink_confirmed / canonical_link_confirmed / nonfinancial_or_test_confirmed / ambiguous_no_change
+
+C2 revised dry-run:
+  DONE (read-only baseline + draft SQL)
+  NOT AUTHORIZED for execute
+  Formula requires 3 fixes before C2 EXECUTE:
+    - paid→pending anomaly (649)
+    - refunded→paid anomaly (42)
+    - failed→pending anomaly (122)
+
+B2.1 schema correction:
+  MIGRATION SUBMITTED (schema-only, awaiting approve)
+
+A2 backfill / archive execute: BLOCKED
+A4 provider CHECK: BLOCKED
+D / E / UI: BLOCKED
+```
+
+### C25.5 SQL источники (для воспроизводимости)
+
+Все запросы этой секции доступны как read-only. Ключевой A1R2 v2 запрос (SoT классификации):
+```sql
+WITH afp AS (
+  SELECT p.id AS admin_pid, p.order_id AS admin_order, p.amount, p.currency, p.paid_at,
+         (p.meta->>'queue_payment_id')::uuid AS q_id
+  FROM payments_v2 p WHERE p.provider='admin' AND p.amount>0
+),
+qq AS (
+  SELECT afp.*,
+    COALESCE(q.bepaid_uid, qa.bepaid_uid) AS bepaid_uid,
+    COALESCE(q.tracking_id, qa.tracking_id) AS tracking_id,
+    COALESCE(q.matched_order_id, qa.matched_order_id) AS matched_order_id
+  FROM afp
+  LEFT JOIN payment_reconcile_queue q ON q.id=afp.q_id
+  LEFT JOIN payment_reconcile_queue_archive qa ON qa.id=afp.q_id
+),
+enr AS (
+  SELECT qq.*,
+    (SELECT c.id FROM payments_v2 c WHERE c.provider='bepaid' AND c.provider_payment_id=qq.bepaid_uid LIMIT 1) AS canonical_pid,
+    (SELECT c.order_id FROM payments_v2 c WHERE c.provider='bepaid' AND c.provider_payment_id=qq.bepaid_uid LIMIT 1) AS canonical_order
+  FROM qq
+)
+SELECT CASE
+    WHEN canonical_pid IS NOT NULL THEN 'archive_exact_duplicate'
+    WHEN canonical_pid IS NULL AND matched_order_id = admin_order THEN 'safe_backfill_confirmed'
+    ELSE 'ambiguous_no_change'
+  END AS category, count(*)
+FROM enr GROUP BY 1;
+```
+Результат: `safe_backfill_confirmed=4, archive_exact_duplicate=113` (после учёта duplicate-of-safe-backfill).
