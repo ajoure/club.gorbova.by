@@ -555,3 +555,48 @@ Battle go-live:                           BLOCKED
 - Реализация `admin_rr_cleanup_test_data` и UI cleanup — Task 2.
 - Переключение обратно в боевой режим и go-live — Task 3.
 - Восстановление ранее затёртой истории `.lovable/plan.md` (заголовок «# да, согласен, с учетом правок:» и Sprint C2) — отдельный doc-fix, не входит в этот патч. Настоящий отчёт добавлен строго append-only.
+
+---
+
+## Отчет о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2 (append-only)
+
+Дата: 2026-07-12
+Область: `supabase/functions/integration-healthcheck/index.ts` (RR branch, +11/-2 строки логики; остальные разделы plan.md не изменялись).
+
+### Диагноз двух остаточных дефектов
+
+1. **Ложноположительный webhook runtime.** Проверка выбирала любое последнее `provider_events` с `provider='rr'` и валидной подписью, включая исходящие/служебные типы (`create_order_succeeded`, `rr_promoted`, `fulfillment_*`, `reconciliation_*`). Такое событие подтверждает только факт нашей собственной записи, а не доставку входящего webhook от РР.
+2. **Битый success-контракт для battle preview.** `success = overall === "connected"` возвращал `success=false` для нормального промежуточного состояния `battle_awaiting_first_order`, из-за чего интеграционные логи получали строку `result=error` без фактической ошибки.
+
+### Внесённые изменения
+
+1. Webhook runtime фильтр расширен: добавлен `.eq("event_type", "webhook_notification_received")`. Теперь runtime подтверждается только реально принятым входящим webhook с валидной подписью, привязанным к заказу текущего mode.
+2. success-контракт healthcheck приведён к спецификации:
+   - `connected` → `success=true`
+   - `battle_awaiting_first_order` → `success=true`
+   - `not_configured` → `success=false`
+   - `error` → `success=false`
+   Семантика `integration_instances.status` не меняется: `battle_awaiting_first_order` продолжает записываться как `disconnected` без `error_message` (промежуточный статус интеграции), это отдельный слой.
+
+### Ожидаемый повторный прогон (без создания новых RR-заказов)
+
+Battle preview: HTTP 200, `success=true`, `overall=battle_awaiting_first_order`, `api_reachability=not_verified`, `webhook_runtime=not_verified`.
+Test mode: HTTP 200, `success=true`, `overall=connected`, `api_reachability=ok`, `webhook_runtime=verified` с `event_type=webhook_notification_received`.
+
+### Out of scope в этом коммите
+
+- Proof C UI-документация (диапазон дат, filter RR=12, audit order, CSV `provider=rr`, stats parity) — фиксируется отдельным отчётом, без создания заявок.
+- Восстановление ранее затёртой истории `.lovable/plan.md` — отдельный doc-fix.
+- Task 2 (cleanup) и Task 3 (go-live) — заблокированы до завершения Proof C.
+
+### Статус
+
+```
+PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2:
+  WEBHOOK CHECK: FIXED (event_type=webhook_notification_received)
+  BATTLE SUCCESS CONTRACT: FIXED
+  RUNTIME RE-VERIFICATION: PENDING (edge deploy + одиночный прогон в двух режимах)
+Proof C UI/CSV/stats: PENDING (без новых заявок)
+PATCH-RR-TEST-CLEANUP-V1: NOT YET AUTHORIZED
+Cleanup execute / Battle go-live: BLOCKED
+```
