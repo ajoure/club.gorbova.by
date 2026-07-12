@@ -1,5 +1,5 @@
 /**
- * rr-webhook (Sprint C1 — authorized promotion enabled)
+ * rr-webhook (Sprint C1 — authorized promotion enabled; Sprint C2 D.2 commission enrichment marker v1)
  *
  * Порядок:
  *  1) verify signature — invalid → 401 без обращения к orders_v2;
