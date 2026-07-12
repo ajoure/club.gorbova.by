@@ -1,688 +1,919 @@
 # да, согласен, с учетом правок:
 
-## 1. Не превращать auth-ошибки в HTTP 200
+План в целом правильный, но до реализации нужно исправить несколько архитектурных моментов. Иначе soft-delete, дедупликация и выдача доступа могут работать противоречиво.
 
-Изоляция подпроверок применяется только **после** успешных:
+# Обязательные правки к плану
 
-- проверки метода;
-- разбора JSON;
-- проверки JWT;
-- проверки роли;
-- загрузки integration instance.
+## 1. Не создавать отдельный discovery-файл
 
-Контракт:
+Раздел:
 
 ```text
-нет/невалидный JWT → 401
-нет super_admin → 403
-не найден instance → 404
-ошибки отдельных RR-проверок → HTTP 200 со structured checks
+.lovable/discovery/payments_management_v2.md
 
 ```
 
-Иначе UI перестанет отличать отсутствие прав от технической ошибки РР.
+убрать.
 
-## 2. Role guard менять только после доказательства
-
-Проверить фактические:
-
-- строки в `roles`;
-- связь пользователя в `user_roles_v2`;
-- сигнатуры `has_role`, `has_role_v2`, `is_super_admin`;
-- helper, который уже используется другими superadmin-only действиями.
-
-Не вводить временную поддержку одновременно `superadmin` и `super_admin`, если в данных нет обеих ролей. Должен остаться один canonical механизм.
-
-## 3. Добавить версию контракта в response
-
-Чтобы исключить повторную ситуацию со старым deploy, healthcheck должен возвращать, например:
-
-```json
-{
-  "data": {
-    "contract_version": "rr-status-truthful-v1-correction"
-  }
-}
-
-```
-
-В отчёте зафиксировать:
+Diagnose и последующие отчёты добавлять в существующий:
 
 ```text
-исходный commit SHA
-deploy timestamp
-contract_version из runtime response
+.lovable/plan.md
 
 ```
 
-Последовательность deploy:
+строго append-only отдельными разделами:
 
 ```text
-integration-healthcheck
-→ прямой runtime probe
-→ frontend publish
-→ проверка через кнопку UI
+## PATCH-PAYMENTS-MANAGEMENT-V2 — DIAGNOSE
+## PATCH-PAYMENTS-MANAGEMENT-V2 — PLAN
+## PATCH-PAYMENTS-MANAGEMENT-V2 — DRY RUN
+## PATCH-PAYMENTS-MANAGEMENT-V2 — EXECUTE
+## PATCH-PAYMENTS-MANAGEMENT-V2 — VERIFY
 
 ```
 
-## 4. `backend=ok` не должен быть безусловным hardcode
+Не создавать новый документ только для discovery.
 
-Допустимое подтверждение backend:
+---
 
-- выполняется актуальная RR-ветка healthcheck;
-- загружен RR adapter;
-- доступны необходимые настройки;
-- есть подтверждённые прошлые RR runtime-события либо действующий read-only status-запрос.
+## 2. Не ослаблять уникальность платежа partial-индексом
 
-Если это нельзя доказать, использовать:
+Предложение:
+
+```sql
+UNIQUE (provider, provider_payment_id)
+WHERE is_deleted = false
+
+```
+
+не принимать автоматически.
+
+Оно позволит после soft-delete создать новую активную строку с тем же внешним ID. Это противоречит recreation guard: повторный webhook потенциально сможет создать второй платёж вместо заблокированного tombstone.
+
+Целевая модель:
 
 ```text
-backend.status = not_verified
+удалённая строка остаётся tombstone
+внешний provider_payment_id остаётся занятым
+повторный webhook на тот же ID → ignored_admin_deleted
+новая строка не создаётся
 
 ```
 
-а не ложное `ok`.
+Поэтому в Diagnose сначала определить существующий dedup key:
 
-## 5. Изолировать подпроверки и добавить timeout
+- `provider_payment_id`;
+- `external_id`;
+- `provider_event_id`;
+- `import_ref`;
+- комбинация provider + external identifier.
 
-Для `rrGetOrderStatus` использовать отдельный timeout. Ошибка или timeout должны давать:
+После этого:
 
-```json
-{
-  "status": "error",
-  "code": "rr_status_timeout",
-  "message": "РР не ответил за установленное время"
-}
+- сохранить глобальную уникальность tombstone;
+- upsert должен находить удалённую строку;
+- если `is_deleted=true`, не восстанавливать её;
+- писать audit/orphan event.
 
-```
+Partial unique допустим только если отдельно создаётся полноценная неизменяемая таблица tombstones с глобальной уникальностью. Для текущего патча это излишне.
 
-Не отдавать в UI:
+---
 
-- логины;
-- пароли;
-- secret key;
-- Authorization headers;
-- полный сырой ответ провайдера.
+## 3. Soft-delete требует обновления всех читателей, не только UI
 
-Полный response body, запрашиваемый в Diagnose, означает **полный ответ нашей edge function**, а не секретные данные провайдера.
-
-## 6. Проверки webhook должны учитывать режим заказа
-
-Старый валидный test-webhook не должен подтверждать battle runtime.
-
-Для `webhook_runtime` искать событие через связанный заказ:
+Недостаточно добавить:
 
 ```text
-provider_events.related_order_id
-→ orders_v2.id
-→ orders_v2.meta.rr.mode = текущий mode
+is_deleted=false
 
 ```
 
-Ожидания:
+в `useUnifiedPayments`.
+
+Нужно провести inventory всех читателей `payments_v2`:
+
+- статистические RPC;
+- серверные hooks;
+- reconciliation;
+- бухгалтерские отчёты;
+- CRM;
+- карточка сделки;
+- CSV;
+- PaymentDocumentsDrawer;
+- refunds;
+- комиссии;
+- recurring lifecycle;
+- admin stats;
+- payment queues.
+
+Каждый финансовый расчёт должен использовать только активные платежи:
+
+```sql
+COALESCE(is_deleted, false) = false
+
+```
+
+Иначе платёж исчезнет из таблицы, но останется в выручке или `paid_amount`.
+
+В Diagnose обязательно дать таблицу:
+
+
+| Reader            | Сейчас учитывает deleted | Требуется изменение |
+| ----------------- | ------------------------ | ------------------- |
+| `/admin/payments` | &nbsp;                   | &nbsp;              |
+| статистика        | &nbsp;                   | &nbsp;              |
+| order totals      | &nbsp;                   | &nbsp;              |
+| reconciliation    | &nbsp;                   | &nbsp;              |
+| CSV               | &nbsp;                   | &nbsp;              |
+| CRM               | &nbsp;                   | &nbsp;              |
+
+
+---
+
+## 4. При soft-delete нужно определить судьбу связи с заказом
+
+План одновременно говорит:
+
+- soft-delete сохраняет запись;
+- платёж отвязывается от сделки.
+
+Это нужно формализовать.
+
+При `payment_only`:
 
 ```text
-test + валидный test event → verified
-battle без battle event → not_verified
+payments_v2.is_deleted = true
+payments_v2.order_id = NULL
+старый order_id сохраняется в deletion_context/audit
 
 ```
 
-Аналогично `last_operation` должна быть mode-specific.
-
-## 7. Правильный порядок проверки режимов
-
-Поскольку интеграция **уже находится в battle**, не нужно сначала возвращать её в test, а потом снова временно переключать.
-
-Порядок:
-
-1. Исправить и задеплоить healthcheck.
-2. В текущем battle-режиме подтвердить:
-  ```text
-  overall = battle_awaiting_first_order
-  credentials = ok
-  api_reachability = not_verified
-  webhook_runtime = not_verified
-
-  ```
-3. Проверить:
-  ```text
-  active non-terminal battle RR orders = 0
-
-  ```
-4. Вернуть интеграцию в `test`.
-5. Проверить test-контракт:
-  ```text
-  overall = connected
-  api_reachability = ok
-  webhook_runtime = verified
-
-  ```
-6. Оставить `mode=test` до завершения cleanup и mode-lock.
-
-## 8. Возврат battle → test делать не миграцией
-
-Не создавать data-миграцию, которая при повторном применении в другом окружении переключит режим интеграции.
-
-Использовать:
-
-- существующий серверный settings-path;
-- либо одноразовый guarded service-role UPDATE;
-- либо SQL-операцию, не коммитящуюся как воспроизводимая schema migration.
-
-Перед UPDATE и после него зафиксировать snapshot `config`, изменяя только:
+Добавить:
 
 ```text
-config.mode: battle → test
+deletion_context jsonb
 
 ```
 
-Логины, пароли и остальные поля не перезаписывать.
+либо сохранить полный before snapshot в `audit_logs`.
 
-## 9. Выбор test-order для API reachability
+В нём должны быть:
 
-Брать не просто последнюю строку `rr_test_ledger`, а последнюю подходящую:
+- прежний `order_id`;
+- profile/contact;
+- company;
+- product/tariff;
+- provider external ID;
+- сумма;
+- валюта.
+
+Контакт и компания физически не меняются и не удаляются.
+
+Если принято решение оставить `order_id` на soft-deleted строке для аудита, тогда это уже не «отвязать». В UI и расчётах она должна полностью игнорироваться. Выбрать один контракт и явно зафиксировать его после Diagnose.
+
+---
+
+## 5. Удаление платежа и сделки должно учитывать другие платежи
+
+Режима:
 
 ```text
-external_id заполнен
-формат external_id допустим для RR status API
-режим test
-запись не является локальным synthetic-only fixture
+payment_only
+payment_and_order
 
 ```
 
-Если подходящего заказа нет:
+недостаточно, если сделка содержит несколько платежей.
+
+Перед удалением показать:
 
 ```text
-api_reachability = not_verified
+По сделке найдено платежей: N
+Текущий платёж: X
+Другие платежи: Y
 
 ```
 
-Это не должно превращаться в необработанное исключение.
+Если есть другие платежи, возможны только явно подтверждённые варианты:
 
-## 10. UI-ошибка должна идти из нормализованного поля
+### A. Только текущий платёж
 
-Каждая подпроверка возвращает единый shape:
+```text
+текущий payment soft-delete
+сделка остаётся
+остальные платежи остаются
+order totals пересчитываются
+
+```
+
+### B. Текущий платёж и сделка, остальные платежи сохранить
+
+```text
+текущий payment soft-delete
+canonical delete-order
+другие payments отвязать от order
+
+```
+
+### C. Сделка и все её платежи
+
+```text
+canonical delete-order
+все связанные payments soft-delete
+
+```
+
+Вариант C должен требовать отдельного подтверждения со списком всех платежей и общей суммой.
+
+Если существующий delete-order helper не поддерживает вариант B, не расширять scope молча: отразить это в Diagnose и предложить минимальное расширение canonical helper.
+
+---
+
+## 6. Добавить обязательный dry-run удаления
+
+До фактического удаления `admin-payment-delete` должен поддерживать:
+
+```text
+dry_run = true
+
+```
+
+Dry-run возвращает:
+
+- платёж;
+- сделку;
+- другие платежи сделки;
+- связанные entitlement sources;
+- subscription lineage;
+- provider events;
+- statement/reconcile связи;
+- что будет soft-deleted;
+- что будет отвязано;
+- что будет пересчитано;
+- что будет заблокировано.
+
+Execute разрешён только с checksum/token результата dry-run, чтобы между preview и удалением не изменился состав связей.
+
+Пример:
+
+```text
+preview_token
+payment_version / updated_at
+order_version / updated_at
+
+```
+
+---
+
+## 7. Ручной grant-access возможен только через сделку/order
+
+План допускает standalone payment и одновременно опциональный grant-access.
+
+Нужно разделить:
+
+### Standalone payment
+
+```text
+order_id = null
+доступ не выдаётся
+
+```
+
+### Payment, связанный со сделкой
+
+```text
+order_id заполнен
+order totals пересчитаны
+полная оплата подтверждена
+grant-access-for-order разрешён
+
+```
+
+Если администратор выбрал продукт/тариф, но не выбрал сделку:
+
+- либо доступ недоступен;
+- либо сначала создаётся canonical order через существующий admin-create-order/deal path.
+
+Создавать entitlement напрямую или вызывать `grant-access-for-order` без полноценного заказа запрещено.
+
+---
+
+## 8. Ручное создание должно иметь свою идемпотентность
+
+Одной проверки `provider_payment_id` недостаточно: администратор может дважды нажать кнопку.
+
+В `admin-payment-create` добавить обязательный:
+
+```text
+idempotency_key
+
+```
+
+Он генерируется UI один раз при открытии/отправке формы и переиспользуется при retry.
+
+Server-side:
+
+```text
+actor_user_id + idempotency_key
+
+```
+
+должны возвращать существующий результат, а не создавать новый платёж.
+
+Дополнительно:
+
+- внешний ID — provider-level dedup;
+- idempotency key — request-level dedup.
+
+---
+
+## 9. Canonical origin нужно сначала проверить
+
+Правило:
+
+```text
+manual_admin
+
+```
+
+логичное, но до миграции нужно проверить текущий CHECK и фактические значения origin.
+
+Не переименовывать существующие origin:
+
+- `rr_installment`;
+- Stripe origins;
+- bePaid origins;
+- imports.
+
+Добавить только:
+
+```text
+manual_admin
+
+```
+
+если его ещё нет.
+
+Метка UI:
+
+```text
+origin = manual_admin → Вручную
+всё остальное → Авто
+
+```
+
+---
+
+## 10. RBAC в плане указан неточно
+
+Не фиксировать:
 
 ```ts
+has_role_v2(uid, 'superadmin')
+
+```
+
+В текущем проекте legacy helper может принимать `superadmin`, а canonical role code в `user_roles_v2` ранее использовался как `super_admin`. Текущий healthcheck, например, вызывает legacy `has_role(..., 'superadmin')`, а не `has_role_v2` с этой строкой.
+
+В Diagnose определить и переиспользовать ровно тот helper, который используется текущим canonical удалением сделки.
+
+Ожидаемый принцип:
+
+```text
+admin OR super_admin
+
+```
+
+Но конкретную функцию и enum не угадывать.
+
+---
+
+## 11. Edge-функции должны быть internal admin-only и не доверять frontend
+
+`admin-payment-create` и `admin-payment-delete` должны:
+
+1. проверить JWT;
+2. получить user ID сервером;
+3. проверить canonical admin role;
+4. загрузить payment/order из БД;
+5. повторно проверить все связи;
+6. не принимать из UI:
+  - контакт как доверенный факт;
+  - сумму сделки;
+  - наличие доступа;
+  - число связанных платежей;
+  - provider mode;
+  - статус полной оплаты.
+
+Frontend передаёт только выбор пользователя. Все последствия рассчитываются сервером.
+
+---
+
+## 12. Для ручного RR нельзя подделывать battle/test как provider event
+
+В форме RR-платежа поле mode не должно автоматически браться из текущего режима интеграции и выглядеть как реальная операция РР.
+
+Ручная запись:
+
+```text
+provider = rr
+origin = manual_admin
+
+```
+
+В metadata:
+
+```json
 {
-  status: "ok" | "not_verified" | "not_configured" | "error",
-  code?: string,
-  message?: string
+  "manual_entry": true,
+  "rr_mode_at_entry": "test|battle",
+  "not_provider_confirmed": true
 }
 
 ```
 
-UI показывает первое критичное сообщение из `checks`, а не парсит произвольные исключения.
+Она не должна:
 
-При частичной ошибке granular-блок должен отображать, например:
+- создавать `provider_events` как будто пришёл webhook;
+- подтверждать RR healthcheck;
+- учитываться как API reachability proof;
+- считаться реальной боевой транзакцией РР.
+
+Аналогично ручные Stripe/bePaid не подтверждают webhook runtime.
+
+---
+
+## 13. Банковская карточка
+
+Для `bank` сделать отдельную полноценную секцию в glassmorphism UI.
+
+Обязательные поля:
+
+- банк;
+- сумма;
+- валюта;
+- дата поступления;
+- плательщик;
+- назначение.
+
+Дополнительные:
+
+- номер платёжного поручения;
+- банковский reference;
+- УНП;
+- номер счёта/инвойса;
+- счёт получателя;
+- комиссия;
+- комментарий.
+
+`bank_name` не ограничивать только Паритетбанком. Значение вводится или выбирается:
 
 ```text
-Backend: подключён
-Реквизиты режима: настроены
-API режима: ошибка — HTTP 401
-Webhook endpoint: настроен
-Webhook runtime: проверен
+Паритетбанк
+другой банк
 
 ```
 
-## 11. Payments proof сохранить до cleanup
-
-В доказательстве C указать не только количество, но и дату/диапазон фильтра UI, чтобы сравнение 12 = 12 было воспроизводимым.
-
-Обязательный audit order:
+Provider при этом всегда:
 
 ```text
-33119dd5-8a92-4533-ab20-fe0f9163ab8b
+bank
 
 ```
 
-Зафиксировать его `payment_id`, сумму, валюту и отображение связанной сделки.
+---
 
-## 12. Документация
+## 14. UI glassmorphism
 
-Append-only означает:
+Использовать существующие дизайн-токены и компоненты проекта, а не отдельную стилизацию.
 
-- прочитать текущий `.lovable/plan.md`;
-- добавить новый раздел в конец;
-- не заменять весь файл;
-- после commit проверить diff: только добавленные строки в документации.
-
-Коммит с очередной полной заменой `.lovable/plan.md` не принимать.
-
-## Итоговый порядок
+Требования:
 
 ```text
-Diagnose HTTP/body/logs/deploy
-→ исправить auth или точный runtime blocker
-→ изолировать checks
-→ deploy edge
-→ battle contract proof
-→ active battle orders = 0
-→ guarded battle→test update
-→ test contract proof
-→ UI proof
-→ payments visibility proof
-→ append-only report
+backdrop-blur
+полупрозрачный background
+тонкая border
+адаптивный dark/light
+мягкая shadow
+без жёстко заданных несистемных цветов
+
+```
+
+Структура CreatePaymentDialog:
+
+```text
+Header
+→ Провайдер
+→ Основные данные
+→ Связи
+→ Данные провайдера
+→ Учёт в сделке
+→ Доступ
+→ Итоговый preview
+→ Сохранить
+
+```
+
+Перед сохранением показать итоговую карточку:
+
+```text
+Создаётся ручной платёж Stripe
+1000 BYN
+Сделка ORD-...
+Будет зачтён в оплату
+После оплаты доступ будет выдан
+
+```
+
+---
+
+## 15. Добавить массовое удаление
+
+Для очистки 12 RR-тестов нужен штатный bulk-flow.
+
+В таблице:
+
+```text
+checkbox rows
+Удалить выбранные
+
+```
+
+Bulk dry-run должен группировать:
+
+- standalone;
+- связанные со сделками;
+- сделки с другими платежами;
+- доступы;
+- blocked items.
+
+По умолчанию bulk выполняет только:
+
+```text
+payment_only
+revoke_access = false
+
+```
+
+Удаление связанных сделок в bulk запрещено либо требует отдельного второго подтверждения по каждой сделке.
+
+Операция должна вернуть результат по каждой строке:
+
+```text
+deleted
+already_deleted
+blocked
+failed
+
+```
+
+---
+
+# Исправленный порядок этапов
+
+```text
+1. Diagnose в .lovable/plan.md
+2. Утверждение точной модели FK/dedup/RBAC
+3. Миграция soft-delete + provider=bank + origin=manual_admin
+4. Обновление всех readers на is_deleted=false
+5. Canonical admin-payment-create
+6. Canonical admin-payment-delete dry-run/execute
+7. Интеграция с существующим delete-order helper
+8. Recreation guard во всех provider upsert/reconcile paths
+9. ProviderBadge + SourceBadge + фильтры
+10. Glass CreatePaymentDialog
+11. Glass DeletePaymentDialog
+12. Bulk delete
+13. Runtime smoke
+14. Удаление 12 RR test payments
+15. RR mode-lock
+16. RR battle go-live
+
+```
+
+# Дополненный DoD
+
+Кроме пунктов плана обязательно подтвердить:
+
+```text
+глобальный dedup tombstone сохранён
+deleted платеж не восстанавливается webhook
+все статистические readers исключают deleted
+manual create защищён idempotency_key
+standalone payment не выдаёт доступ
+grant возможен только через canonical order
+multi-payment deal deletion корректен
+bulk delete 12 RR tests работает
+manual RR/Stripe/bePaid не имитирует provider webhook
 
 ```
 
 Статус:
 
 ```text
-PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION: AUTHORIZED
-PATCH-RR-TEST-CLEANUP-V1: BLOCKED UNTIL A+B+C+D
-Cleanup execute: BLOCKED
-Battle go-live: BLOCKED
-
-
-План: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION
-```
-
-## Текущий статус
+PATCH-PAYMENTS-MANAGEMENT-V2:
+  PLAN APPROVED WITH CORRECTIONS
+  DIAGNOSE AUTHORIZED
+  CODE CHANGES BLOCKED UNTIL DIAGNOSE REPORT
 
 ```
-PATCH-RR-STATUS-TRUTHFUL-V1:
-  CODE IMPLEMENTED
-  TYPECHECK PASS
-  RUNTIME FAIL / NOT VERIFIED
 
-PATCH-RR-TEST-CLEANUP-V1 implementation: NOT YET AUTHORIZED
-Cleanup dry-run/execute: BLOCKED
-Battle go-live: BLOCKED
-```
+Главное: после Diagnose не начинать сразу весь backend. Сначала принести точную карту текущего delete-order helper, dedup-ключей и всех readers `payments_v2`, чтобы согласовать фактическую схему без риска сломать платежи и подписки.
 
-На скриншоте после клика «Проверить подключение»: toast `Ошибка: проверка не пройдена`, все granular-поля `—`, верхний статус `Проверка не выполнена`. UI построен, но healthcheck runtime не доказан. Дополнительно карточка находится в режиме **Боевой** (`battle-gorbova`), что нарушает согласованный порядок — cleanup должен запускаться из `test`.
+&nbsp;
 
-## Шаг 1. Diagnose — root cause текущего toast
+План: PATCH-PAYMENTS-MANAGEMENT-V2
 
-Собрать без изменения кода:
+Формат: Diagnose → Plan → Dry run → Execute → Verify (docs/ENGINEERING_RULES.md).
 
-1. HTTP status и полный response body вызова `integration-healthcheck` при клике «Проверить подключение».
-2. Логи edge function `integration-healthcheck` за окно клика.
-3. Версию задеплоенной функции vs текущий исходник (проверить, что UI не бьёт в старую сборку).
-4. Точную ошибку внутри RR-ветки: какой из подзапросов упал (`rr_test_ledger`, `payments_v2 → orders_v2`, `provider_events`, `rrGetOrderStatus`).
-5. Значение `integration_instances.config.mode` в БД для инстанса РР.
+## 0. Модель провайдеров (жёсткое правило)
 
-Проверить в первую очередь:
+Только 4 провайдера в `payments_v2.provider`:
 
-- Role guard: в старом коде — `superadmin`, canonical в проекте — `super_admin`. Не менять вслепую; подтвердить, что 401/403 приходит именно из-за этого.
-- Не выброшена ли необработанная ошибка из одного read-only чтения, роняющая весь ответ в generic failure.
+- `bepaid`
+- `stripe`
+- `rr`
+- `bank` (новый — ручной учёт банковских оплат по счёту)
 
-## Шаг 2. Fix healthcheck edge function
+Ручной ввод — это НЕ провайдер. Признак способа внесения хранится в `payments_v2.origin`:
 
-Правки в `supabase/functions/integration-healthcheck/index.ts`, RR-ветка:
+- `webhook` / `api` / `file_import` — автомат
+- `manual_admin` — ручной ввод любого из 4 провайдеров
 
-1. **Устойчивость подпроверок.** Каждая подпроверка (`backend`, `credentials`, `api_reachability`, `webhook_endpoint`, `webhook_runtime`, `last_operation`) в собственном `try/catch`. Ошибка одной подпроверки:
-  - пишет в `checks.<name>.status = 'error'` + короткое сообщение;
-  - не прерывает остальные;
-  - HTTP ответ остаётся `200` со структурированным body.
-2. **Role guard**: привести к canonical (`super_admin` через `has_role_v2`/`is_super_admin`), если диагностика подтвердит расхождение.
-3. **Battle до первого заказа** — ожидаемый контракт (не error):
-  ```json
-   {
-     "success": true,
-     "data": {
-       "overall": "battle_awaiting_first_order",
-       "checks": {
-         "backend": { "status": "ok" },
-         "credentials": { "status": "ok" },
-         "api_reachability": { "status": "not_verified" },
-         "webhook_endpoint": { "status": "ok" },
-         "webhook_runtime": { "status": "not_verified" }
-       }
-     }
-   }
-  ```
-4. **Test-mode ожидаемый контракт** (при наличии валидного test-event):
-  ```
-   overall = connected
-   backend = ok, credentials = ok, api_reachability = ok,
-   webhook_endpoint = ok, webhook_runtime = verified,
-   last_operation заполнена
-  ```
+Никаких `manual`, `other`, `custom` как провайдера. Существующий CHECK/enum на `provider` расширяется до `bank`, не более.
 
-## Шаг 3. UI — точная ошибка вместо generic toast
+## 1. Инварианты
 
-`src/components/integrations/rr/RRSettingsCard.tsx`:
+- Подписочная и grant-access логика (Stripe/bePaid/RR) не трогается.
+- Контакт и компания никогда не удаляются вместе с платежом.
+- Сделка удаляется ТОЛЬКО через существующий canonical delete-order helper — новый параллельный удалятор не пишем.
+- Auto-платежи (webhook/api) нельзя редактировать как ручные; удалять — можно с записью tombstone.
+- Soft-delete: `deleted_at`, `deleted_by`, `deleted_reason`, `is_deleted`. Скрытые записи не попадают в UI, статистику, CSV.
+- Recreation guard: при повторном webhook на удалённую запись (по `(provider, provider_payment_id)` или `import_ref`) — не воскрешать, писать в `provider_webhook_orphans` / audit.
+- Каждое создание/удаление в `audit_logs` (кто, что, до/после, причина).
 
-- При `overall = 'error'` или `checks.<x>.status = 'error'` показывать безопасную конкретику из ответа, например:
-  - `Проверка РР не пройдена: API режима — HTTP 401`
-  - `Проверка РР не пройдена: ошибка чтения последней операции`
-- Никаких секретов, паролей, полного тела ответа провайдера в UI.
-- Granular-блок заполняется даже при частичной ошибке (не пять тире).
+## 2. Diagnose (обязательно до кода)
 
-## Шаг 4. Возврат интеграции в test (без пользователя)
+Собрать в короткий отчёт `.lovable/discovery/payments_management_v2.md`:
 
-Перед любой попыткой cleanup:
+1. Canonical delete-order helper: RPC/edge-функция, что она делает с payments_v2, как её вызывает UI карточки сделки.
+2. Все FK и логические связи `payments_v2` → `orders_v2`, `provider_events`, `access_grant_ledger`, `entitlement_sources`, `subscriptions_v2`, `order_notification_deliveries`, `payment_reconcile_queue`, `bepaid_statement_rows`.
+3. Кто пересчитывает `orders_v2.paid_amount / status` (триггер? edge? RPC?). Переиспользовать существующий пересчётчик.
+4. Точки reconcile/upsert для bepaid/stripe/rr, где нужен guard против воскрешения.
+5. Текущее поведение фильтра `provider` в `PaymentsFilters.tsx`, `PaymentsStatsPanel`, CSV-экспорт, `PaymentsTable`.
+6. Есть ли уже enum на `payments_v2.provider` или это text + CHECK.
 
-1. Прочитать `integration_instances.config.mode` для РР.
-2. Если `mode = 'battle'` и активных боевых RR-заказов нет, вернуть `mode = 'test'` миграцией/точечным UPDATE, зафиксировать proof:
-  ```
-   mode = test
-   active battle RR orders = 0
-  ```
-3. Пока `mode = 'battle'`, серверный guard в `admin_rr_cleanup_test_data(..., _dry_run := false)` должен возвращать ошибку. Dry-run разрешён, реальная очистка — нет. Guard добавляется в теле RPC Task 2, но сам факт блока фиксируется уже сейчас.
+Diagnose-отчёт — часть DoD этапа 1.
 
-## Шаг 5. Контрольная точка перед PATCH-RR-TEST-CLEANUP-V1
+## 3. Backend (add-only)
 
-Task 2 не авторизуется, пока не собраны все четыре доказательства:
+### 3.1 Миграция
 
-**A. Healthcheck test-mode:** HTTP 200, `overall=connected`, все пять `checks` = `ok`/`verified`, `last_operation` заполнена.
+- Добавить колонки в `payments_v2`: `is_deleted bool default false`, `deleted_at timestamptz`, `deleted_by uuid`, `deleted_reason text`.
+- Партиальный уникальный индекс `(provider, provider_payment_id) where is_deleted=false and provider_payment_id is not null` — сохранить дедуп, но позволить tombstone.
+- Расширить допустимые значения `provider` до `{bepaid, stripe, rr, bank}` (CHECK или enum add value).
+- Обновить существующие view/RLS/GRANT где нужно фильтровать `is_deleted=false`.
 
-**B. Healthcheck battle preview:** через безопасное чтение конфигурации (или короткое контролируемое переключение с немедленным возвратом) подтвердить `overall = battle_awaiting_first_order`, отсутствие generic error.
+### 3.2 Edge / RPC (canonical)
 
-**C. Payments visibility (proof до удаления):**
+- `admin-payment-create` (edge, admin-only): валидирует provider ∈ 4, origin='manual_admin', создаёт запись, опционально линкует к order, инициирует пересчёт сделки, опционально — grant-access через существующий canonical путь. Никогда не вставляет entitlement напрямую.
+- `admin-payment-delete` (edge, admin-only): режимы `payment_only` | `payment_and_order`. В режиме `payment_and_order` дергает существующий canonical delete-order. Всегда soft-delete платежа, tombstone, audit_log, пересчёт сделки, опционально revoke access через canonical revoke.
+- Guard в reconcile/upsert: перед upsert смотрит tombstone по `(provider, provider_payment_id)` и пропускает воскрешение с записью в orphans/audit.
 
-```
-DB provider=rr / origin=rr_installment: 12
-UI provider=RR: 12
-дублей: 0
-audit order 33119dd5-... виден
-CSV содержит RR
-stats parity подтверждён
-```
+Обе функции идемпотентны; повторный вызов на удалённой записи → no-op с audit.
 
-**D. Mode перед cleanup:** `integration_instances.config.mode = test`.
+## 4. Frontend
 
-Только после A+B+C+D — переход к PATCH-RR-TEST-CLEANUP-V1.
+### 4.1 Общие
 
-## Шаг 6. Документация
+- Провайдер-модель: `type PaymentProvider = 'bepaid' | 'stripe' | 'rr' | 'bank'`, отдельная метка `SourceKind = 'auto' | 'manual'` (по origin).
+- Красивые бейджи 4 провайдеров + маленький sublabel «Авто / Вручную». Единый компонент `ProviderBadge`, `SourceBadge`.
+- Стиль: glassmorphism через существующий `GlassFilterPanel` / стеклянные карточки, консистентно с текущим админом.
 
-- Историю Sprint C2 в `.lovable/plan.md` повторно **не перезаписывать**.
-- Следующий отчёт добавить **append-only** в конец файла отдельным разделом `## PATCH-RR-STATUS-TRUTHFUL-V1 — CORRECTION`.
-- Восстановление ранее затёртого текста и заголовка `# да, согласен, с учетом правок:` — отдельный doc-fix, вне этого патча.
+### 4.2 Фильтры / статистика / CSV
 
-## Definition of Done
+- `PaymentsFilters.tsx`: значения провайдера — `all | bepaid | stripe | rr | bank`. Добавить фильтр «Способ внесения» (`all | auto | manual`).
+- `PaymentsStatsPanel`, `PaymentsTable`, CSV — учитывать 4 провайдера, скрывать `is_deleted=true`.
 
-- Root cause текущего toast зафиксирован (HTTP + body + edge logs + версия функции).
-- Edge function исправлена: подпроверки изолированы, role guard подтверждён, контракты `connected` и `battle_awaiting_first_order` соблюдаются.
-- UI показывает конкретную безопасную ошибку и заполняет granular-блок при частичном сбое.
-- `integration_instances.config.mode = test` восстановлен, active battle RR orders = 0.
-- Собраны proofs A, B, C, D.
-- Отчёт добавлен append-only, история Sprint C2 не тронута.
+### 4.3 Создание платежа
 
-## Out of scope
+- Кнопка «Добавить платёж» в `AdminPaymentsHub` / шапке `PaymentsTabContent`.
+- Drawer/Modal `CreatePaymentDialog` в стеклянном стиле, блоки A–E из ТЗ.
+- Блок C «Данные провайдера» — динамическая схема:
+  - `bepaid`: external id, комиссия, статус, дата;
+  - `stripe`: charge/payment_intent id, комиссия, дата;
+  - `rr`: rr order id, режим (test/battle read-only из настроек);
+  - `bank`: банк, № платёжки, reference, плательщик, УНП, назначение, счёт/инвойс.
+- Блок E: чекбокс «Выдать доступ после сохранения» (активен только при выбранном продукте/тарифе и статусе successful).
+- Отправка → `admin-payment-create`.
 
-- Реализация `admin_rr_cleanup_test_data` и UI cleanup (Task 2).
-- Переключение в боевой режим и go-live (Task 3).
-- Любые изменения backend-логики RR вне healthcheck и mode-guard.
-- Восстановление ранее затёртой истории `.lovable/plan.md` (отдельный doc-fix).
+### 4.4 Удаление платежа
 
-## Технические детали (файлы)
+- Действие «Удалить» в строке таблицы и в `PaymentDocumentsDrawer` (карточке платежа).
+- `DeletePaymentDialog` (glassmorphism):
+  - Показывает провайдер/сумма/дата/контакт/компания/сделка/продукт.
+  - Radio: «Удалить только платёж» / «Удалить платёж и связанную сделку».
+  - Если у сделки есть другие платежи — предупреждение о пересчёте.
+  - Checkbox «Отозвать доступ, выданный этим платежом».
+  - Textarea «Причина удаления» (обязательна).
+- Отправка → `admin-payment-delete`.
+- Если сделки нет — режим фиксирован `payment_only`, radio скрыт.
 
-- `supabase/functions/integration-healthcheck/index.ts` — изоляция подпроверок в RR-ветке, role guard, структурированный ответ при частичной ошибке.
-- `src/components/integrations/rr/RRSettingsCard.tsx` — рендер конкретной ошибки, заполнение granular-блока при `status='error'`.
-- Миграция/точечный UPDATE `integration_instances.config.mode` РР с `battle` → `test` (после подтверждения `active battle RR orders = 0`).
-- `.lovable/plan.md` — append-only секция с отчётом.
+### 4.5 Реестр
+
+- В `PaymentsTable` — новая колонка/бейдж провайдера (4 значения) и метка Авто/Вручную.
+- `is_deleted` не отображаются; отдельный тумблер «Показать удалённые» — вне scope V2 (backlog).
+
+## 5. Порядок исполнения (по этапам ENGINEERING_RULES)
+
+1. **Diagnose** — отчёт `.lovable/discovery/payments_management_v2.md`. Утвердить.
+2. **Backend миграция** (soft-delete колонки + `bank` в provider + индекс) — dry run по linter, apply.
+3. **Edge `admin-payment-create` + `admin-payment-delete**` + guard в reconcile.
+4. **Frontend фильтры/бейджи/CSV** на 4 провайдера + Auto/Manual.
+5. **UI создания** — форма, 4 сценария.
+6. **UI удаления** — confirm-modal с выбором судьбы сделки + revoke access.
+7. **Runtime smoke** (см. §6).
+8. **RR test cleanup** — через новый `admin-payment-delete` (payment_only), без спец-скрипта.
+9. Только после DoD PASS — отдельно RR battle go-live (вне этого патча).
+
+## 6. Runtime smoke (обязательно для DoD)
+
+Создание: ручные bepaid / stripe / rr / bank; bank без сделки; bank со сделкой; частичный платёж; полный платёж с выдачей доступа.
+Удаление: standalone payment; payment_only при существующей сделке; payment_and_order через canonical helper; с revoke access; повторное удаление (идемпотентность); проверка, что webhook на удалённый provider_payment_id не воскрешает запись.
+Реестр: фильтры 4 провайдеров + Auto/Manual; статистика; CSV; soft-deleted невидимы.
+
+## 7. Definition of Done
+
+`PATCH-PAYMENTS-MANAGEMENT-V2: VERIFIED, PASS` со всеми пунктами §18 исходного ТЗ. Отчёт append-only в `.lovable/plan.md`.
+
+## Технические детали
+
+- Схема БД: только add-only колонки + расширение допустимых provider. Никакого drop/rename.
+- Grant/revoke access вызываются исключительно через существующие canonical пути (`grant-access-for-order` и парный revoke), никаких прямых insert в `entitlements` / `access_grant_ledger`.
+- Пересчёт `orders_v2` — через существующий пересчётчик, выявленный на этапе Diagnose. Если такого нет — маленькая SQL-функция `recalc_order_totals(order_id)` add-only.
+- RLS: `admin-payment-create` / `admin-payment-delete` вызывают admin-only проверку `has_role_v2(uid,'admin') OR has_role_v2(uid,'superadmin')` (canonical RBAC v3, как в bepaid-get-receipt).
+- Soft-delete фильтр `is_deleted=false` добавляется в клиентские запросы `payments_v2` и в существующие view.
 ---
 
-# Отчет о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION
+## PATCH-PAYMENTS-MANAGEMENT-V2 — DIAGNOSE
 
-## Root cause (Diagnose)
+Diagnose-отчёт, append-only. Код не менялся, миграций не создавалось. Все данные получены read-only из БД и репозитория.
 
-Пробный `curl /integration-healthcheck` до правок вернул старый контракт:
+### D1. Фактические provider / origin в БД
 
-```json
-{"success":true,"data":{"api_test":"pending_backend","credentials_status":"configured","mode":"battle","note":"Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.","provider":"rr"}}
-```
+`select provider, count(*) from payments_v2 group by 1`:
 
-Итог: исходник в репозитории был обновлён под truthful-контракт, но задеплоенная версия функции оставалась старой. UI ждал `data.overall`, получал `undefined` → падал в generic `toast.error("Ошибка: проверка не пройдена")`. Пять granular-полей заполнялись из `payload_meta` последнего лога, а тот тоже писался в старом shape — отсюда пять тире.
+| provider     | count |
+|--------------|-------|
+| bepaid       | 5955  |
+| admin        | 319   |
+| rr           | 12    |
+| admin_test   | 8     |
+| stripe       | 5     |
 
-Role guard не был причиной: `has_role(user, 'superadmin'::app_role)` в БД делегируется в `has_role_v2(user, 'super_admin')` (CASE-мэппинг в теле функции).
+`select origin, count(*) from payments_v2 group by 1`:
 
-## Правки
+| origin              | count |
+|---------------------|-------|
+| bepaid              | 4315  |
+| statement_sync      | 1672  |
+| card_verification   | 229   |
+| payment_link        | 57    |
+| manual_adjustment   | 13    |
+| rr_installment      | 12    |
+| public_link         | 1     |
+| (NULL)              | остальное |
 
-1. `supabase/functions/integration-healthcheck/index.ts`, RR-ветка полностью переписана:
-   - каждая подпроверка (`backend`, `credentials`, `api_reachability`, `webhook_endpoint`, `webhook_runtime`) в изолированном `try/catch` с единым shape `{status, code?, message?}`;
-   - в ответе — `contract_version = "rr-status-truthful-v1-correction"`;
-   - `webhook_runtime` теперь mode-scoped: событие ищется через `provider_events.related_order_id → orders_v2.meta.rr.mode = текущий mode`. Старый test-event не подтверждает battle;
-   - `last_operation` mode-specific (test → `rr_test_ledger`, battle → `payments_v2` + `orders_v2.meta.rr.mode='battle'`);
-   - `rrGetOrderStatus` обёрнут в `Promise.race` с таймаутом 10 s. Таймаут = `{status:"error", code:"rr_status_timeout"}`;
-   - `backend` = `ok` только если RR-модули импортируются и (при configured credentials) `loadRRConfig` не падает; иначе `error` с конкретным кодом;
-   - в UI-ответ добавлено `error_message` (первая критичная ошибка) — без секретов, без сырого RR-ответа;
-   - auth-guard (JWT + super_admin) применяется до подпроверок и оставлен как есть.
-2. `src/components/integrations/rr/RRSettingsCard.tsx`: toast при `overall="error"` теперь показывает первую критичную подпроверку в формате «Проверка РР не пройдена: API режима — HTTP 401» / «... — РР не ответил за установленное время» / «... — ошибка чтения последней операции». Секреты и полный ответ провайдера не рендерятся.
-3. Одноразовый guarded UPDATE `integration_instances.config.mode`: `battle → test` только при `provider='rr'` и `NOT EXISTS (battle RR orders)`. Идемпотентен, повторное применение — no-op. Логины, пароли и остальные поля не тронуты.
+Выводы:
+1. Целевая модель «4 провайдера {bepaid, stripe, rr, bank}» пока НЕ соответствует данным: 319 строк `provider='admin'` и 8 строк `provider='admin_test'` не входят ни в одну из 4-х корзин. Это унаследованный ручной ввод.
+2. Нужен отдельный шаг backfill/классификация ПЕРЕД включением жёсткого CHECK/enum, иначе миграция упадёт. Backfill не входит в scope V2 и должен быть отдельным подзадачей DIAGNOSE→PLAN до фактической миграции. До backfill CHECK нельзя ужесточать — только расширять список валидных значений допустимо.
+3. `origin='manual_admin'` в БД отсутствует. `manual_adjustment` (13 строк) — семантически близкое legacy-значение, но НЕ равнозначно (использовалось для правок сумм, не для полноценного ручного создания). Не переиспользуем — добавляем новое `manual_admin`.
+4. Никаких `custom / other / manual` в `provider` нет — целевое ограничение не конфликтует с реальными данными за пределами `admin/admin_test`.
 
-## Deploy
+### D2. Схема `payments_v2` и уникальные индексы
 
-- `supabase--deploy_edge_functions(["integration-healthcheck"])` → Successfully deployed.
-- Runtime probe после deploy подтверждает новый `contract_version`.
+Провайдер-статус: `provider text` (без enum, без CHECK — легко расширяемо).
 
-## Proofs
+Существующие UNIQUE-индексы, критичные для дедупа/tombstone-стратегии:
 
-### A. Healthcheck test-mode (после возврата в test)
+- `idx_payments_v2_provider_uid` — `UNIQUE (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL`
+- `idx_payments_v2_provider_unique` — дубликат того же (redundant)
+- `uq_payments_v2_provider_payment` — ещё один дубликат
+- `idx_payments_v2_unique_provider_payment_id` — `UNIQUE (provider_payment_id) WHERE provider_payment_id IS NOT NULL AND provider='bepaid'`
+- `payments_v2_rr_one_succeeded_per_order` — `UNIQUE (order_id) WHERE provider='rr' AND status='succeeded'` — важно: не даст создать второй успешный RR-платёж на один order, даже после soft-delete первого.
 
-```json
-{
-  "success": true,
-  "data": {
-    "contract_version": "rr-status-truthful-v1-correction",
-    "provider": "rr",
-    "mode": "test",
-    "overall": "connected",
-    "checks": {
-      "backend":          { "status": "ok" },
-      "credentials":      { "status": "configured" },
-      "api_reachability": { "status": "ok", "probed_external_id": "rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c" },
-      "webhook_endpoint": { "status": "configured" },
-      "webhook_runtime":  { "status": "verified", "message": "2026-07-12T15:25:37.841307+00:00" }
-    },
-    "last_operation": {
-      "at": "2026-07-11T08:40:22.659706+00:00",
-      "order_id": "4d45d297-6ab6-4380-9212-39691a3d84b6",
-      "external_id": "rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c",
-      "amount_minor": 150000,
-      "currency": "BYN"
-    },
-    "error_message": null
-  },
-  "error": null
-}
-```
+Вывод по правке пункта 2 плана (глобальная уникальность tombstone):
+- Три копии `UNIQUE(provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL` уже дают требуемый глобальный dedup БЕЗ фильтра `is_deleted=false`. Соответственно, план сохраняем: **partial unique по `is_deleted=false` НЕ вводим**. Tombstone-строка остаётся в общем уникальном индексе и блокирует пересоздание с тем же `(provider, provider_payment_id)`.
+- Ре-инкарнация RR-успеха на тот же order физически заблокирована `payments_v2_rr_one_succeeded_per_order`. Для восстановления после soft-delete нужен явный админский flow (в V2 не входит).
+- Три redundant-индекса стоит унифицировать (drop лишних) отдельным cleanup-патчем; в scope V2 не входит.
 
-HTTP 200. Все пять `checks` — `ok`/`configured`/`verified`. `last_operation` заполнена. Webhook runtime подтверждён test-событием (`create_order_succeeded`, signature_valid=true, related_order с `meta.rr.mode='test'`).
+### D3. Foreign keys и каскады
 
-### B. Healthcheck battle preview (до возврата в test)
+`payments_v2` → outbound:
+- `order_id` → `orders_v2(id)` **ON DELETE CASCADE** — критично: удаление ордера физически удаляет все его платежи БД-каскадом. Soft-delete не «переживает» удаление ордера через FK, поэтому в режиме `payment_and_order` фактически будет hard-delete платежей вместе с ордером — это тот же уже используемый путь через `useDealsBulkDelete`.
+- `profile_id` → `profiles(id)` **ON DELETE SET NULL** — контакт можно удалить без сноса платежа. Соответствует инварианту «контакт не удаляется вместе с платежом».
+- `reference_payment_id` → self.
 
-```json
-{
-  "success": false,
-  "data": {
-    "contract_version": "rr-status-truthful-v1-correction",
-    "provider": "rr",
-    "mode": "battle",
-    "overall": "battle_awaiting_first_order",
-    "checks": {
-      "backend":          { "status": "ok" },
-      "credentials":      { "status": "configured" },
-      "api_reachability": { "status": "not_verified", "code": "no_battle_order_yet", "message": "Боевой заказ ещё не выполнен", "probed_external_id": null },
-      "webhook_endpoint": { "status": "configured" },
-      "webhook_runtime":  { "status": "not_verified", "code": "no_battle_events_yet" }
-    },
-    "last_operation": null,
-    "error_message": null
-  },
-  "error": null
-}
-```
+`payments_v2` → inbound (кого сломает hard-delete платежа):
+- `installment_payments.payment_id` — **без ON DELETE**, значит hard-delete упадёт, если есть installment. Для installment-платежей нужен soft-delete (штатный путь V2).
+- `statement_lines.payment_id` — то же, hard-delete упадёт при наличии импорта выписки.
+- `payments_v2.reference_payment_id` — существующий bulk-delete нуллифицирует эти ссылки перед удалением (см. `useDealsBulkDelete`, Step B).
 
-HTTP 200. `overall = battle_awaiting_first_order`, generic error отсутствует, ожидаемый контракт соблюдён.
+Вывод: soft-delete — единственный безопасный универсальный путь. Hard-delete допустим только через существующий caskadny order-delete flow.
 
-### C. Payments visibility (до очистки)
+### D4. Recompute / order totals
 
-```
-DB provider='rr'                          : 12
-DB origin='rr_installment'                : 12
-DB provider='rr' OR origin='rr_installment': 12
-Duplicates (order_id с count>1 в provider='rr'): 0
-Audit order 33119dd5-8a92-4533-ab20-fe0f9163ab8b:
-  payment_id = 1302ac0d-adf4-493e-9b7a-5ec6e192d200
-  provider   = rr
-  origin     = rr_installment
-  status     = succeeded
-```
+- Единственная существующая функция расчёта: `public.get_order_expected_paid(order_id)` — возвращает `SUM(amount) WHERE status='succeeded' AND amount>0`. Она НЕ пишет в `orders_v2` и НЕ учитывает `is_deleted` (колонки нет).
+- Триггеров типа `%recalc%`, `%paid_amount%`, `%order_totals%` в БД **нет**.
+- `orders_v2.paid_amount` пишется прикладной логикой (edge-функциями). Явного «canonical recalc» ни в БД, ни среди edge-функций не найдено (по имени; надо будет допройти на этапе PLAN — `payments-reconcile`, `refunds-recompute-order-status`, `admin-fix-payments-integrity` — кандидаты).
+- Существующая функция `refunds-recompute-order-status/index.ts` пересчитывает статус ордера от refund-логики (не общий recalc).
 
-Диапазон фильтра UI и CSV/stats-parity фиксируются повторным прогоном перед запуском cleanup (следующий отчёт Task 2).
+Вывод: canonical recalc-функция отсутствует. В рамках V2 нужен минимальный `recalc_order_totals(order_id)` (SUM по активным успешным платежам с учётом будущего `is_deleted=false`), либо вызов существующего edge, если PLAN подтвердит его пригодность. Это add-only.
 
-### D. Mode перед cleanup
+### D5. Canonical delete-order helper
 
-```
-integration_instances.provider='rr'
-  id     = f5fff10f-28a6-4e36-acad-6faacee2b2ac
-  alias  = Ресурс Развития
-  mode   = test           ← было battle
-  status = disconnected   ← до следующего клика «Проверить»
-  battle_login preserved, test_login preserved
-  active battle RR orders = 0
-```
+Существующий canonical путь удаления сделки — `src/hooks/useDealsBulkDelete.ts`. Он:
 
-## Решение по переходу
+1. Отменяет GetCourse для paid orders (`getcourse-cancel-deal`).
+2. Удаляет `installment_schedules` → `subscriptions_v2`.
+3. Отзывает TG-доступ, если у user_id нет других активных сделок/подписок.
+4. Удаляет `access_grant_ledger`, `entitlements`.
+5. Нуллифицирует inbound `payments_v2.reference_payment_id`, затем hard-delete `payments_v2` по `order_id`.
+6. Hard-delete `orders_v2`.
+7. Шлёт `send-access-revoked-notification`.
 
-```
-PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION: PASS
-  - CODE IMPLEMENTED
-  - TYPECHECK PASS
-  - RUNTIME VERIFIED (test + battle preview)
-  - MODE RETURNED TO TEST
-PATCH-RR-TEST-CLEANUP-V1 implementation:  AUTHORIZED (proofs A+B+C+D собраны)
-Cleanup execute:                          BLOCKED до отдельного go-signal пользователя
-Battle go-live:                           BLOCKED
-```
+Дополнительно есть edge `admin-purge-payments-by-uid` (server-side purge). Дублирующего SQL RPC нет.
 
-## Out of scope (не сделано намеренно)
+Оценка для V2:
+- Это тот самый путь, который нужно вызывать в режиме `payment_and_order`.
+- Он смешивает «удалить платёж + удалить сделку». Отдельного варианта «удалить сделку, но платежи оставить/переотвязать» (вариант B из правки §5 плана) НЕТ. В scope V2 расширение canonical helper под вариант B считаем **out of scope**, ограничиваемся вариантами A и C:
+  - **A** — «payment_only»: soft-delete конкретного платежа, order остаётся, recalc.
+  - **C** — «payment_and_order»: вызов `useDealsBulkDelete`-эквивалента (нужно вынести в server-side edge `admin-order-delete`, чтобы не дублировать логику на клиенте). Здесь платежи каскадно удаляются на уровне БД (`ON DELETE CASCADE`) — hard-delete, tombstone НЕ создаётся. Это принятый компромисс, зафиксировать в audit.
+- Вариант B добавляется отдельным патчем; в UI dry-run это состояние помечаем как «недоступно в текущей версии», не молча деградируем.
 
-- Реализация `admin_rr_cleanup_test_data` и UI cleanup — Task 2.
-- Переключение обратно в боевой режим и go-live — Task 3.
-- Восстановление ранее затёртой истории `.lovable/plan.md` (заголовок «# да, согласен, с учетом правок:» и Sprint C2) — отдельный doc-fix, не входит в этот патч. Настоящий отчёт добавлен строго append-only.
+### D6. RBAC
 
----
+- Существующая RLS-политика на `payments_v2` использует legacy `has_role(auth.uid(), 'admin' | 'superadmin')` **И** RBAC v3 `has_admin_section_access(auth.uid(), 'payments', 'view'|'manage')`.
+- Enum `app_role` содержит `admin` и `superadmin` (см. политику). Значение `super_admin` (с подчёркиванием) в legacy `has_role` в этой политике **не используется** — это будет ошибкой в edge-функции, повторять паттерн `bepaid-get-receipt` слепо нельзя.
+- `refunds-recompute-order-status` использует прямой `select from user_roles ... in ('super_admin','admin','superadmin')` — оба варианта записаны через ИЛИ.
 
-## Отчет о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2 (append-only)
+Вывод: для новых edge (`admin-payment-create`, `admin-payment-delete`) admin-check делаем через `has_admin_section_access(uid, 'payments', 'manage')` (canonical RBAC v3), НЕ через `has_role_v2`. Это соответствует существующей RLS-политике «RBAC v3: manage payments».
 
-Дата: 2026-07-12
-Область: `supabase/functions/integration-healthcheck/index.ts` (RR branch, +11/-2 строки логики; остальные разделы plan.md не изменялись).
+### D7. Readers `payments_v2` (частичный inventory)
 
-### Диагноз двух остаточных дефектов
+Компоненты и хуки, читающие `payments_v2` (найдено `rg`), которым нужно скрывать `is_deleted=true` после патча:
 
-1. **Ложноположительный webhook runtime.** Проверка выбирала любое последнее `provider_events` с `provider='rr'` и валидной подписью, включая исходящие/служебные типы (`create_order_succeeded`, `rr_promoted`, `fulfillment_*`, `reconciliation_*`). Такое событие подтверждает только факт нашей собственной записи, а не доставку входящего webhook от РР.
-2. **Битый success-контракт для battle preview.** `success = overall === "connected"` возвращал `success=false` для нормального промежуточного состояния `battle_awaiting_first_order`, из-за чего интеграционные логи получали строку `result=error` без фактической ошибки.
+- `src/pages/admin/AdminPayments*.tsx`
+- `src/components/admin/payments/PaymentsTable.tsx`, `PaymentsStatsPanel.tsx`, CSV-экспорт
+- `src/components/admin/DealDetailSheet.tsx` (список платежей в сделке)
+- `src/hooks/useUnifiedPayments*` (если есть)
+- Edge: `payments-reconcile`, `refunds-recompute-order-status`, `admin-payments-diagnostics`, `admin-fix-payments-integrity`, `admin-unlinked-payments-report`, `nightly-payments-invariants`, `grant-access-for-order`, `admin-purge-payments-by-uid`, `admin-materialize-queue-payments`, `payment-methods-*`
 
-### Внесённые изменения
+Полная таблица reader → «учитывает deleted?» → «требуется правка?» будет собрана на этапе PLAN (после утверждения Diagnose). Для V2 обязательным считаем обновление UI-readers + серверных путей, которые пишут `orders_v2.paid_amount` и выдают/отзывают access. Ночные джобы (invariants, diagnostics) — во второй итерации.
 
-1. Webhook runtime фильтр расширен: добавлен `.eq("event_type", "webhook_notification_received")`. Теперь runtime подтверждается только реально принятым входящим webhook с валидной подписью, привязанным к заказу текущего mode.
-2. success-контракт healthcheck приведён к спецификации:
-   - `connected` → `success=true`
-   - `battle_awaiting_first_order` → `success=true`
-   - `not_configured` → `success=false`
-   - `error` → `success=false`
-   Семантика `integration_instances.status` не меняется: `battle_awaiting_first_order` продолжает записываться как `disconnected` без `error_message` (промежуточный статус интеграции), это отдельный слой.
+### D8. Grant-access
 
-### Ожидаемый повторный прогон (без создания новых RR-заказов)
+- Canonical выдача — `grant-access-for-order` (edge). Требует полноценный `orders_v2`. Прямых insert в `entitlements`/`access_grant_ledger` из V2-кода не будет.
+- Ручной платёж → доступ только при: выбранной сделке (`order_id NOT NULL`), `status='succeeded'`, суммарные успешные платежи закрывают `orders_v2.paid_amount ≥ order.amount`. Проверка выполняется на сервере в `admin-payment-create`.
+- Standalone-платёж (`order_id=null`) — доступ не выдаётся. UI-чекбокс «Выдать доступ» отключён до выбора сделки.
 
-Battle preview: HTTP 200, `success=true`, `overall=battle_awaiting_first_order`, `api_reachability=not_verified`, `webhook_runtime=not_verified`.
-Test mode: HTTP 200, `success=true`, `overall=connected`, `api_reachability=ok`, `webhook_runtime=verified` с `event_type=webhook_notification_received`.
+### D9. Идемпотентность и ручной ввод
 
-### Out of scope в этом коммите
+- Внешний dedup через существующие UNIQUE `(provider, provider_payment_id)` работает только когда `provider_payment_id NOT NULL`. Для ручных `bank`-платежей admin может не заполнить `provider_payment_id` — тогда возможен дубль.
+- Решение (add-only, в scope V2): `admin-payment-create` принимает обязательный `idempotency_key`; server-side хранит его в `payments_v2.meta.idempotency_key` и делает предварительный `SELECT ... WHERE meta->>'idempotency_key'=? AND created_by=?` перед INSERT. Возвращает существующую запись, если найдена.
+- UI генерирует ключ при монтировании формы; при повторной отправке — тот же ключ.
 
-- Proof C UI-документация (диапазон дат, filter RR=12, audit order, CSV `provider=rr`, stats parity) — фиксируется отдельным отчётом, без создания заявок.
-- Восстановление ранее затёртой истории `.lovable/plan.md` — отдельный doc-fix.
-- Task 2 (cleanup) и Task 3 (go-live) — заблокированы до завершения Proof C.
+### D10. Ручной RR / Stripe / bePaid не имитирует provider webhook
+
+- В `admin-payment-create` для `provider ∈ {rr, stripe, bepaid}` записываем `payments_v2.meta.manual_entry=true`, `not_provider_confirmed=true`, `rr_mode_at_entry` (для RR) как в правке §12 плана.
+- `provider_events` из этой функции НЕ создаём. RR healthcheck (`event_type='webhook_notification_received'`, guard из PATCH-RR-STATUS-TRUTHFUL-V1) остаётся строго по webhook-событиям.
+
+### D11. Изменения к плану, зафиксированные Diagnose
+
+1. **Partial unique index по `is_deleted=false` не создаём.** Существующие 3 копии `UNIQUE(provider, provider_payment_id)` уже дают глобальную защиту от воскрешения. Recreation guard в reconcile-путях сводится к: «перед upsert проверить существование строки — если найдена и `is_deleted=true`, залогировать orphan и НЕ обновлять».
+2. **`provider` не превращаем в enum и не ужесточаем CHECK в V2.** Только расширение допустимых значений в клиентской модели/фильтрах до `{bepaid, stripe, rr, bank}`; строки `provider='admin'/'admin_test'` (327 шт.) остаются как есть до отдельного backfill-патча — они будут показаны в UI под меткой «legacy manual» (маленький пилюль в бейдже, без нарушения фильтра). В фильтре «провайдер» они группируются под «Прочее (legacy)» вне 4 канонических опций. Это compromise, чтобы миграция не упала и данные не потерялись.
+3. **RBAC:** новые edge используют `has_admin_section_access(uid, 'payments', 'manage')`, не `has_role_v2(...,'super_admin')`.
+4. **`admin-order-delete` (edge) — новый add-only wrapper** над логикой `useDealsBulkDelete`. Клиент вызывает его в режиме `payment_and_order`. Дублировать логику на клиенте запрещено.
+5. **`recalc_order_totals(p_order_id uuid)` — новая SQL-функция**, add-only. Пересчитывает `orders_v2.paid_amount = SUM(amount) WHERE order_id=p_order_id AND status='succeeded' AND amount>0 AND COALESCE(is_deleted,false)=false`. Вызывается из `admin-payment-create` и `admin-payment-delete`.
+6. **Вариант B** удаления («удалить сделку, платежи оставить/переотвязать») — вне scope V2, помечен как известное ограничение и в UI показывается как отключённая опция с подсказкой.
+7. **Backfill `provider='admin'/'admin_test'` → нормальные значения** — отдельный подпатч, не блокирующий V2.
+
+### D12. Открытые вопросы к утверждению перед PLAN
+
+1. Подтверждаем ли «legacy manual» бейдж для 327 строк вместо жёсткой миграции provider? (Да/Нет)
+2. Подтверждаем ли отсутствие варианта B удаления в V2? (Да/Нет)
+3. Подтверждаем ли `recalc_order_totals` как единственный recalc-путь в V2? (Да/Нет)
+4. Подтверждаем ли RBAC через `has_admin_section_access(...,'payments','manage')`? (Да/Нет)
+5. Подтверждаем ли `admin-order-delete` (edge) вместо клиентского `useDealsBulkDelete` в режиме `payment_and_order`? (Да/Нет)
 
 ### Статус
 
 ```
-PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2:
-  WEBHOOK CHECK: FIXED (event_type=webhook_notification_received)
-  BATTLE SUCCESS CONTRACT: FIXED
-  RUNTIME RE-VERIFICATION: PENDING (edge deploy + одиночный прогон в двух режимах)
-Proof C UI/CSV/stats: PENDING (без новых заявок)
-PATCH-RR-TEST-CLEANUP-V1: NOT YET AUTHORIZED
-Cleanup execute / Battle go-live: BLOCKED
+PATCH-PAYMENTS-MANAGEMENT-V2:
+  DIAGNOSE: DELIVERED
+  PLAN: BLOCKED PENDING ANSWERS TO §D12
+  CODE CHANGES: BLOCKED
 ```
 
----
-
-## Отчёт о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2 — pre-deploy fix + runtime re-verification (append-only)
-
-Дата: 2026-07-12
-
-### Diagnose
-В предыдущем коммите вместе с комментарием оказалась удалена открывающая строка `try {` перед запросом `provider_events` для webhook events. Соответствующий `catch (e) { … webhook_lookup_failed … }` оставался на месте, из-за чего блок был синтаксически несбалансированным. Дополнительно требовалось усилить инвариант: `overall = connected` не должен наступать, если `webhook_runtime !== verified`, независимо от mode.
-
-### Fix
-1. `supabase/functions/integration-healthcheck/index.ts`:
-   - Восстановлена `try {` перед запросом `provider_events` (RR webhook_runtime, mode-scoped, event_type = webhook_notification_received). Существующий `catch (e) { webhook_lookup_failed }` не тронут.
-   - Ужесточён инвариант agregation:
-     ```
-     connected  ⇔  credentials.configured
-                 ∧ backend.ok
-                 ∧ api_reachability.ok
-                 ∧ webhook_runtime.verified
-     ```
-     В обоих режимах (test и battle) при `webhook_runtime !== verified` возвращается `battle_awaiting_first_order` — честный промежуточный статус, а не connected.
-   - Побочно уточнён тип `rrGetOrderStatusFn` (RRGetOrderStatusFn), чтобы `deno check` проходил без TS2352/TS2349.
-
-### Build check
-`deno check supabase/functions/integration-healthcheck/index.ts` — PASS, 0 ошибок.
-
-### Deploy
-Задеплоен только `integration-healthcheck` (Lovable-managed).
-
-### Runtime re-verification
-
-**A. Test mode (после deploy)**
-- HTTP 200
-- success = true
-- contract_version = `rr-status-truthful-v1-correction`
-- mode = `test`
-- overall = `connected`
-- checks.backend = `ok`
-- checks.credentials = `configured`
-- checks.api_reachability = `ok`, probed_external_id = `rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c`
-- checks.webhook_endpoint = `configured`
-- checks.webhook_runtime = `verified`, message = `2026-07-12T14:45:20.955227+00:00`
-- error_message = null
-
-Webhook proof (строка БД):
-```
-provider_events.id       = 4615db2d-ed0b-47f6-9907-5ad66a0b64a1
-event_type               = webhook_notification_received
-signature_valid          = true
-related_order_id         = 33119dd5-8a92-4533-ab20-fe0f9163ab8b
-orders_v2.meta.rr.mode   = test
-created_at               = 2026-07-12 14:45:20.955227+00
-```
-`event_type` строго `webhook_notification_received`; иные типы (`create_order_succeeded`, `rr_promoted`, `fulfillment_*`, `reconciliation_*`) в фильтр не входят и в качестве доказательства не используются.
-
-**B. Battle preview (guarded)**
-- Guard: `SELECT count(*) FROM orders_v2 WHERE meta->'rr'->>'mode'='battle' AND status NOT IN (paid,cancelled,failed,refunded,expired,fulfilled)` → 0.
-- Migration flip `config.mode: test → battle` (DO block с проверкой active_battle=0) — успех.
-- Healthcheck battle preview:
-  - HTTP 200
-  - success = true
-  - overall = `battle_awaiting_first_order`
-  - api_reachability = `not_verified` (code `no_battle_order_yet`)
-  - webhook_runtime = `not_verified` (code `no_battle_events_yet`)
-  - error_message = null
-- Немедленный revert `config.mode: battle → test`.
-- Итоговая проверка: `SELECT config->>'mode', status FROM integration_instances WHERE provider='rr'` → `mode=test`.
-- Финальный test healthcheck снова вернул `overall=connected`, `integration_instances.status` восстановлен в `connected` (после промежуточного `disconnected`, записанного battle preview'ом).
-
-Новые RR-заказы не создавались.
-
-### Invariant self-test
-- test + webhook verified + api ok → connected ✅
-- battle без заказа → battle_awaiting_first_order (не connected) ✅
-- test при webhook_runtime=not_verified → битую комбинацию connected больше не возвращает; overall переходит в `battle_awaiting_first_order` (design: любой не-verified webhook блокирует connected).
-
-### Статус
-- PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2:
-    CODE FIXES: DEPLOYED
-    APPEND-ONLY DOC: OK
-    SYNTAX/TRY-CATCH CHECK: PASS
-    RUNTIME RE-VERIFICATION (test + battle preview): PASS
-- Proof C (UI/CSV/stats parity в /admin/payments): PENDING — требует UI-фиксации до cleanup.
-- PATCH-RR-TEST-CLEANUP-V1: NOT YET AUTHORIZED (ждём Proof C).
-- Cleanup execute: BLOCKED.
-- Battle go-live: BLOCKED.
+Следующий шаг — ответы по §D12, затем append-only PLAN-раздел.
