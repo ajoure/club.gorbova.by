@@ -658,13 +658,12 @@ serve(async (req) => {
         // Backend — подтверждаем загрузку RR-модулей.
         let backendCheck: CheckResult = { status: "not_verified" };
         let rrCfgLoaded: unknown = null;
-        let rrGetOrderStatusFn:
-          | ((c: unknown, id: string) => Promise<{ ok: boolean; status: number; errorText?: string }>)
-          | null = null;
+        type RRGetOrderStatusFn = (c: unknown, id: string) => Promise<{ ok: boolean; status: number; errorText?: string }>;
+        let rrGetOrderStatusFn: RRGetOrderStatusFn | null = null;
         try {
           const { loadRRConfig } = await import("../_shared/rr/rr-config.ts");
           const { rrGetOrderStatus } = await import("../_shared/rr/rr-adapter.ts");
-          rrGetOrderStatusFn = rrGetOrderStatus as typeof rrGetOrderStatusFn;
+          rrGetOrderStatusFn = rrGetOrderStatus as RRGetOrderStatusFn;
           if (credentialsCheck.status === "configured") {
             try {
               rrCfgLoaded = await loadRRConfig(supabaseAdmin);
@@ -819,6 +818,7 @@ serve(async (req) => {
           status: "not_verified",
           code: "no_events_yet",
         };
+        try {
           // Только реальные входящие webhook-события; иные типы
           // (create_order_succeeded, rr_promoted, fulfillment, reconciliation)
           // не подтверждают доставку webhook.
@@ -907,10 +907,14 @@ serve(async (req) => {
           (apiReachabilityCheck.status !== "ok" || webhookRuntimeCheck.status !== "verified")
         ) {
           overall = "battle_awaiting_first_order";
-        } else if (apiReachabilityCheck.status === "ok") {
+        } else if (
+          apiReachabilityCheck.status === "ok" &&
+          webhookRuntimeCheck.status === "verified"
+        ) {
           overall = "connected";
         } else {
-          // test без probe-заказа — честный промежуточный статус.
+          // Инвариант: overall=connected требует webhook_runtime=verified.
+          // Test без верифицированного webhook — честный промежуточный статус.
           overall = "battle_awaiting_first_order";
         }
 
