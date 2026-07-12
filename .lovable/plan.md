@@ -350,3 +350,162 @@ Root cause (гипотеза): fire-and-forget из grant-access-for-order об�
 - C. Диагностика текущего `EdgeRuntime.waitUntil` fix: дождаться следующего deploy cycle и повторить smoke.
 
 До явного выбора smoke дальше не запускается. Admin-notify остаётся неверифицированным в рантайме.
+
+---
+
+## Отчет о выполнении — PATCH-ADMIN-PURCHASE-NOTIFY-V1 · AWAIT FIX + FINAL SMOKE (12.07.2026)
+
+### Изоляция root cause (direct service-role probe)
+
+Развёрнута временная диагностическая функция `admin-notify-probe`
+(verify_jwt=true, admin/super_admin-only), которая с service-role JWT
+awaited-вызовом обращалась к уже задеплоенной `notify-order-purchased`
+для оплаченного заказа `ORD-26-00305` (`2ca1f5e4-…`).
+
+Первый probe → **HTTP 403** `{"error":"forbidden","reason":"service_role_required"}`.
+
+**Root cause подтверждён и НЕ совпал с ранее принятой гипотезой:**
+
+- Проблема не в lifecycle caller (fire-and-forget / waitUntil), а в
+  in-function guard `notify-order-purchased`: он валидировал токен
+  через `verifier.auth.getClaims(token)`, который проверяет подпись
+  через JWKS (asymmetric signing keys).
+- Легаси HS256 `SUPABASE_SERVICE_ROLE_KEY`, которым Lovable Cloud
+  подписывает internal-вызовы, в JWKS не входит → `getClaims` не
+  возвращает `role='service_role'` → guard срабатывал 403.
+- Внешний `verify_jwt=true` на gateway для legacy HS256
+  service_role JWT проходит успешно (наблюдалось на probe вызовах).
+- Все прошлые вызовы `notify-order-purchased` из
+  `grant-access-for-order` в prod-логах получали 403 и молча
+  игнорировались (fire-and-forget / waitUntil `.catch()`), из-за чего
+  ни одна delivery не создавалась. Ни fire-and-forget, ни waitUntil
+  здесь не были главной причиной сбоя.
+
+### Fix (аутентификация)
+
+`supabase/functions/notify-order-purchased/index.ts` — service-role guard
+расширен: сначала прямое сравнение `token === SUPABASE_SERVICE_ROLE_KEY`
+(constant equality на длинной секретной строке); только если это не
+service_role token — проверяем через `getClaims` (для будущих
+signing-keys internal callers). Прочая логика функции не тронута.
+
+### Fix (lifecycle · вариант A)
+
+`supabase/functions/grant-access-for-order/index.ts` — post-payment
+notification block переписан:
+
+- убран `EdgeRuntime.waitUntil` и fire-and-forget `.then/.catch`;
+- явный `await fetch(notify-order-purchased, { signal: AbortController(20s) })`;
+- HTTP status/body/elapsed логируются (успех и non-2xx);
+- любые ошибки/timeout ловятся `try/catch` и **не** проваливают
+  grant-access — сохранена контрактная non-fatal семантика.
+
+Обе функции задеплоены явно через `deploy_edge_functions`, а не через
+auto-deploy.
+
+### Проверка 1 — direct service-role probe на ORD-26-00305 (после fix)
+
+Повторный вызов probe для того же заказа `2ca1f5e4-…`:
+
+```
+notify_status: 200
+elapsed_ms:    4840
+deliveries_after: 6
+  - email          → 7500084@gmail.com                sent
+  - telegram       → 66086524   (buyer DM)            sent
+  - telegram_admin → 2087326316                       sent
+  - telegram_admin → 6338908257                       sent
+  - telegram_admin → 99340019                         sent
+  - telegram_admin → 66086524                         sent
+notify_body:
+  email:          delivery_id=f7f20a82-…  sent=true
+  telegram:       delivery_id=a4e9d2ff-…  sent=true
+  telegram_admin: recipients=4, все sent=true
+```
+
+Contract соответствует: 1 email + 1 buyer telegram + 4 telegram_admin
+(по всем `admin`/`super_admin` recipients в
+`user_roles_v2`/`profiles`).
+
+### Проверка 2 — идемпотентность direct probe (тот же заказ, повтор)
+
+```
+notify_status: 200
+elapsed_ms:    1339
+deliveries_after: 6   ← без изменений
+notify_body: все каналы skipped="already_sent"
+  email:          skipped=already_sent
+  telegram:       skipped=already_sent
+  telegram_admin: 4/4 skipped=already_sent
+```
+
+Independent proof: повторный внутренний запуск не рассылает дубли,
+уникальные partial-индексы (`_unique_buyer`, `_unique_admin`) держат.
+
+### Проверка 3 — новый canonical заказ end-to-end
+
+1. `public-rr-installment-initiate` (offer `00000000-c2f0-4e57-0000-300000000001`,
+   applicant `7500084@gmail.com`, `+375291234567`)
+   → `order_id = 31491a7d-2bbc-423d-8fab-b99c6419e35b`, `reused=false`.
+2. `rr-admin-deliver-test-webhook` → authorized:
+   - `promote_state=promoted`, `should_grant_access=true`, `grant_status=200`;
+   - `entitlement_source.status=inserted`, `recalc.status=active`, `active_count=4`;
+   - `crm_stage.applied=true, reason=ok`;
+   - order → `paid`.
+3. Deliveries сразу после webhook:
+
+```
+6 rows for 31491a7d-…
+  email          7500084@gmail.com  sent  14:10:47
+  telegram       66086524           sent  14:10:48   (buyer DM)
+  telegram_admin 66086524           sent  14:10:48
+  telegram_admin 6338908257         sent  14:10:48
+  telegram_admin 99340019           sent  14:10:48
+  telegram_admin 2087326316         sent  14:10:48
+```
+
+Все 4 админа получили DM, buyer получил email+telegram. Awaited notify
+из `grant-access-for-order` **фактически дождался** ответа handler
+(лог `notify-order-purchased status=200 elapsed_ms=…`).
+
+### Проверка 4 — идемпотентность webhook (тот же заказ, `allow_repeat=true`)
+
+- `promote_state=already_promoted`, `should_grant_access=false`,
+  `fulfillment_state=not_needed`;
+- `entitlement_source.status=exists`, `active_count=4` без роста;
+- `crm_stage.applied=false, reason=idempotent`;
+- deliveries after repeat: **6** (без роста);
+- payments/entitlement sources/mirrors — без роста;
+- notify заново не дёргается (grant-access не переисполняется).
+
+### Cleanup
+
+- Временная функция `admin-notify-probe` удалена
+  (`delete_edge_functions` + `rm -rf supabase/functions/admin-notify-probe`,
+  блок в `supabase/config.toml` снят).
+- Stage F definitions уже были `products_v2.status='inactive'` (tariff/offer
+  is_active=true оставлены как были — их состояние не менялось в рамках
+  этого cycle).
+- 4 canonical-заказа (`ORD-26-00305/306/307` + новый
+  `31491a7d-…` без order_number на момент smoke) оставлены в БД как
+  audit proof.
+
+### Итог
+
+```
+PATCH-ADMIN-PURCHASE-NOTIFY-V1: VERIFIED, PASS
+  Root cause (JWKS vs HS256 service_role guard): IDENTIFIED, FIXED
+  Await-based non-fatal notify from grant-access-for-order: DEPLOYED, VERIFIED
+  Security hardening (verify_jwt + service_role guard):    VERIFIED, PASS
+  Buyer + admin unique-index contract:                     VERIFIED, PASS
+  Admin DM enrichment (email/phone/provider):              DEPLOYED (visible in real DMs; content contract PASS)
+  RR canonical order creation + authorized webhook:        VERIFIED, PASS
+  Awaited notify → 1 email + 1 buyer TG + 4 admin TG:      VERIFIED, PASS
+  Direct service-role probe idempotency:                   VERIFIED, PASS
+  Webhook repeat idempotency (no payment/entitlement/delivery/mirror growth): VERIFIED, PASS
+  bePaid duplicate purchase-success removal:               CODE VERIFIED
+  bePaid live observation:                                 FOLLOW-UP, NON-BLOCKING
+
+DB trigger / outbox:              NOT REQUIRED (await path достаточно)
+waitUntil retry-only approach:    REJECTED
+```
