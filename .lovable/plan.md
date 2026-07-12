@@ -4429,3 +4429,349 @@ Runtime proof требует отдельного изолированного �
 - C2 execute: **BLOCKED**
 
 Изменения append-only только в `.lovable/plan.md`. Код и миграции не менялись.
+
+---
+
+# C30 — corrections after C29 review (append-only, doc-only)
+
+Status: DOC-ONLY. No code, no migrations, no DML. Все предыдущие блоки остаются как есть; ниже — исправления и уточнения по итогам review C29.
+
+## C30.1 — C28.7 factual correction (provider precondition)
+
+Ранее в C28.7 было ошибочно указано, что миграция A2-0 проверяла `provider='bepaid'`. Это неверно. Фактические precondition-предикаты миграции A2-0:
+
+```
+v_row.provider = 'admin'      -- guard: v_row.provider <> 'admin' → skip
+v_row.origin   = 'bepaid'     -- guard: v_row.origin   <> 'bepaid' → skip
+v_row.provider_payment_id IS NULL
+v_row.is_deleted = false
+queue.payment_id = v_row.id (or archive fallback)
+queue.bepaid_uid IS NOT NULL
+v_row.amount   = queue.amount        (strict equality, no tolerance)
+v_row.currency IS NOT DISTINCT FROM queue.currency
+v_row.paid_at  = queue.paid_at       (strict equality, no tolerance)
+```
+
+Только после того как все guard-условия прошли, миграция выполняла:
+
+```
+UPDATE payments_v2
+SET provider = 'bepaid',
+    provider_payment_id = queue.bepaid_uid,
+    meta = meta || jsonb_build_object('a2_0_backfill', ...)
+WHERE id = v_row.id;
+```
+
+Т.е. `provider='bepaid'` — это RESULT, а не PRECONDITION. Precondition — `provider='admin' AND origin='bepaid'`.
+
+`order_id` и `profile_id` **сам SQL миграции не проверял вообще**. Их валидация выполнена отдельным read-only анализом A1R2 v2 до миграции. Статус A2-0: **PASS**, без изменения фактического поведения; исправлено только описание.
+
+## C30.2 — C28R scope disclaimer (730 ≠ transition baseline)
+
+Predicate C28R:
+
+```
+net_paid <= 0 AND n_canonical = 0
+```
+
+По конструкции этот predicate выбирает **только** заказы без единого canonical succeeded payment. Следовательно:
+
+- 730 = "paid orders with no canonical succeeded payment"
+- НЕ = "полный raw paid → pending baseline"
+- категории `canonical_payment_not_counted` и `canonical_payment_zero_net` при данном predicate **не могут** иметь ненулевой count по определению (n_canonical=0 их исключает)
+
+Разложение 730 (принято как legacy no-canonical inventory):
+
+```
+421  no canonical + stored paid_amount = 0
+221  no canonical + stored paid_amount > 0
+ 88  admin-only history
+────
+730  total  (SUM = 730 ✓)
+```
+
+Checksum SHA-256 = `ab7e83bd...` относится **только** к этому 730-набору order_id, отсортированному по order_id ASC. Scope checksum'а:
+
+```
+checksum scope   = 730 order IDs from no-canonical-history set
+checksum method  = sha256(concat(order_id::text ORDER BY order_id ASC, chr(10)))
+NOT a baseline   = raw paid→pending transition baseline is NOT yet computed
+```
+
+Фактический SQL вычисления checksum (для приложения в C30.B):
+
+```sql
+SELECT encode(
+  digest(
+    string_agg(order_id::text, chr(10) ORDER BY order_id ASC),
+    'sha256'
+  ),
+  'hex'
+) AS checksum_no_canonical_history
+FROM (
+  -- exact C28R predicate reproduction: net_paid<=0 AND n_canonical=0
+  ... predicate CTE ...
+) s;
+```
+
+## C30.3 — полный raw paid→pending baseline (обязателен в C30.B)
+
+Полный raw transition baseline = A ∪ B, где:
+
+```
+A = no_canonical_history           (текущий C28R set, 730)
+B = canonical_history_but_pending  (n_canonical > 0 AND computed_net_paid <= 0)
+```
+
+Причины попадания в B (не исчерпывающий, но обязательный к покрытию список):
+
+1. canonical succeeded payment полностью возвращён (refund lineage → net=0)
+2. succeeded amount = 0 (technical zero, promo, admin adjustment)
+3. canonical payment исключён из расчёта (валютный mismatch, статусный mismatch)
+4. parent/child refund lineage даёт нулевой net при непустом n_canonical
+
+Требуемая матрица C30.B:
+
+```
+raw paid→pending      = |A| + |B|
+guarded paid→pending  = raw − (guards: manual_offline / dispute / partial / lineage-mismatch / refund_data_conflict)
+actionable paid→pending = guarded − (has_active_entitlement / has_active_subscription / has_recent_admin_grant)
+```
+
+Текущее утверждение `actionable=0` доказано **только для A (730 legacy)**. Утверждение о полном множестве до расчёта B — не делать.
+
+## C30.4 — refunded → paid: обязательное взаимоисключающее разложение
+
+C28R по refunded → paid = 33 использует упрощённый источник (succeeded payments + refunded_amount, без строгой parent/child lineage). Table lineage в C29 приводит parent_only записи, часть которых относится к другим computed transitions, а не строго к 43 refunded orders.
+
+Требуемое разложение (все 43 refunded orders_v2) — взаимоисключающие категории:
+
+```
+orphan_refund              -- refund-row без parent (parent_payment_id IS NULL или parent не найден)
+parent_rows_mismatch       -- есть parent.refunded_amount и child refund-rows, но |Σ child| ≠ parent.refunded_amount
+exact_parent_and_rows      -- есть parent.refunded_amount И child refund-rows, |Σ child| = parent.refunded_amount
+parent_only                -- parent.refunded_amount > 0, child refund-rows отсутствуют
+refund_rows_only           -- child refund-rows есть, но parent.refunded_amount = 0 или NULL
+legacy_no_refund_signal    -- order.status='refunded', но ни parent.refunded_amount, ни refund-rows не найдены
+other                      -- всё, что не попало выше (обязательно = 0 после review)
+```
+
+Контроль:
+
+```
+COUNT(*)                    = 43
+COUNT(DISTINCT order_id)    = 43
+SUM по всем категориям      = 43
+category × order_id         = уникальная пара (каждый order ровно в одной категории)
+```
+
+Дополнительно внутри каждой категории вывести:
+
+```
+computed_status_by_C2_v5    -- (paid|partial|refunded|pending) по канонической формуле
+current_stored_status       -- 'refunded' у всех 43
+transition_required         -- refunded → computed_status
+guard_reason                -- если transition не допускается
+```
+
+Автоматический `refunded → paid` остаётся **запрещённым**. Actionable=0 подтверждается только после этого разложения.
+
+## C30.5 — C29 отзыв FULL DRY-RUN, требуемые артефакты для C30.C
+
+Отзыв: **C29 = design summary + guard/transition/fixture перечень, но НЕ full SQL dry-run.** Отсутствуют:
+
+- полный body `compute_order_financial_state(p_order_id)` (SELECT-only)
+- SQL refund lineage per parent (реализация категорий из C30.4)
+- полный body `_recalc_transition_allowed(...)` (или inline в recalc)
+- полный body `recalc_order_totals(p_order_id, p_actor_id, p_preview_token, p_preview_version, p_reason)`
+- явные блокировки: `SELECT ... FOR UPDATE` на `orders_v2` + relevant `payments_v2`
+- проверка preview_token / preview_version с фактическим SQL сравнения snapshot
+- before-snapshot для `payment_removed` (locked-before-delete)
+- обработка `order_not_found`, `payment_not_found`, `preview_stale`, `invalid_reason` (реальные RAISE или return codes)
+- audit-запись (INSERT в `audit_logs` в той же транзакции)
+- REVOKE/GRANT block
+- фактический VALUES-harness (14 rows) + SELECT-only prover
+- вывод 14 fixture results
+
+Статус: **C29 = DESIGN SUMMARY DELIVERED; FULL SQL DRY-RUN NOT DELIVERED; execute BLOCKED.**
+
+## C30.6 — обязательные исправления C29 (входят в C30.C)
+
+### 6.1 Security
+
+Заменить:
+
+```
+SECURITY INVOKER
+SET search_path = public
+```
+
+на:
+
+```
+SECURITY DEFINER
+SET search_path = public, pg_temp
+
+REVOKE ALL ON FUNCTION public.compute_order_financial_state(uuid)      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid, uuid, text, int, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.compute_order_financial_state(uuid)   TO service_role;
+GRANT EXECUTE ON FUNCTION public.recalc_order_totals(uuid, uuid, text, int, text) TO service_role;
+```
+
+### 6.2 paid → pending при payment_removed
+
+Ранее матрица C29 безусловно запрещала `paid → pending`. Это неверно для payment_removed, когда удалён единственный succeeded payment.
+
+Корректная матрица (по reason):
+
+```
+reason = 'payment_added':
+  paid → pending    : DENY  (добавление не может уменьшить net)
+  paid → partial    : DENY
+  ↑↓ прочие         : по общим guards
+
+reason = 'payment_removed':
+  paid → partial    : ALLOW если locked before-snapshot удаляемого payment подтвердил остаток > 0
+  paid → pending    : ALLOW если locked before-snapshot подтвердил, что удаляемый = единственный succeeded с net>0
+  refunded → *      : DENY (никогда автоматически)
+```
+
+Требование locked before-snapshot: `SELECT ... FROM payments_v2 WHERE id = p_removed_payment_id FOR UPDATE` **до** delete, с фиксацией `amount`, `refunded_amount`, `status`, `currency` в audit meta.
+
+### 6.3 partial_refund в return type
+
+Return `proposed_status order_status` с использованием значения `partial_refund` — только если это значение существует в enum `order_status`. До SQL необходимо:
+
+```sql
+SELECT unnest(enum_range(NULL::order_status)) AS v;
+```
+
+Если `partial_refund` **отсутствует** в enum:
+
+- `proposed_status` возвращать как `partial` (существующее значение)
+- ввести отдельное поле `financial_state text` с допустимыми значениями `('paid','partial','partial_refund','pending','refunded','ambiguous')`
+- **не создавать** enum-value без отдельного approve (это ALTER TYPE, breaking для check-constraints)
+
+### 6.4 Full refund lineage
+
+Запрещено:
+
+```
+refunded_by_order = SUM(amount - refunded_amount)
+```
+
+Требуется, per succeeded parent:
+
+```
+category ∈ {parent_only, child_rows_only, exact_match, mismatch, orphan}
+recognized_refund_amount =
+  CASE category
+    WHEN 'exact_match'  THEN parent.refunded_amount
+    WHEN 'parent_only'  THEN parent.refunded_amount
+    WHEN 'child_rows_only' THEN Σ |child.amount|
+    WHEN 'mismatch'     THEN GREATEST(parent.refunded_amount, Σ |child.amount|)  -- + guard 'refund_data_conflict'
+    WHEN 'orphan'       THEN 0  -- + guard 'orphan_refund'
+  END
+recognized_refund_by_order = Σ recognized_refund_amount per parent, aggregated by order
+net_paid_by_order          = Σ (parent.amount − recognized_refund_amount)
+```
+
+### 6.5 Fixture harness
+
+Требуется SELECT-only SQL вида:
+
+```sql
+WITH fixtures(fx_id, ...) AS (
+  VALUES
+    (1, ...),  -- happy paid
+    (2, ...),  -- partial refund exact_match
+    (3, ...),  -- partial refund mismatch
+    (4, ...),  -- full refund parent_only
+    ...
+    (14, ...)
+),
+computed AS (
+  SELECT fx_id, computed_status, computed_paid_amount, guard_reason,
+         status_transition_allowed, amount_update_allowed, expected_*
+  FROM fixtures f
+  CROSS JOIN LATERAL (
+    SELECT * FROM public.compute_order_financial_state_pure(...)  -- pure inline variant
+  ) c
+)
+SELECT fx_id,
+       (computed_status = expected_status
+        AND computed_paid_amount = expected_paid_amount
+        AND status_transition_allowed IS NOT DISTINCT FROM expected_transition
+        AND amount_update_allowed     IS NOT DISTINCT FROM expected_amount) AS pass,
+       computed_status, computed_paid_amount, guard_reason,
+       status_transition_allowed, amount_update_allowed
+FROM computed
+ORDER BY fx_id;
+```
+
+Ожидаемый результат: `14 rows, 14 PASS, 0 FAIL`. Пока harness и результат не приложены — C29/C30.C = **not delivered**.
+
+## C30.7 — B0a runtime EXECUTE (authorized, требует technical profile_id от оператора)
+
+Authorization: **EXECUTE AUTHORIZED, DO NOT DEFER AGAIN.**
+
+Blocker для запуска в этом коммите: у агента нет предопределённого технического profile_id, изолированного от реальных пользователей. Без него запуск создаст мусор в production `orders_v2/entitlements/telegram_access_*` под случайным реальным контактом, что противоречит требованию "реальные profile/order/entity IDs" в контексте **тестового** профиля.
+
+Запрос оператору (единственная блокировка):
+
+```
+Укажите technical profile_id (не production-контакт), под которым выполнить B0a runtime.
+После этого запускаются оба сценария:
+
+Scenario Grant:
+  before-snapshot: counts orders_v2, payments_v2, entitlements, access_rules, telegram_access_grants (WHERE profile_id = <TEST>)
+  action:          ContactDetailSheet → "Выдать доступ" (admin_grant) на выбранный product_id
+  after-snapshot:  те же counts
+  expected:        orders_v2 +1, payments_v2 +0 (dummy insert удалён), entitlements или access_rules +1, telegram_access_grants ≥ +0 (по продукту)
+  cleanup:         revoke access + delete order + delete entitlement/access_rule + delete telegram_access_grant
+  post-cleanup:    все counts = before
+
+Scenario Deal only:
+  before-snapshot: как выше
+  action:          ContactDetailSheet → "Создать сделку без доступа" (admin_deal_only)
+  after-snapshot:  те же counts
+  expected:        orders_v2 +1, payments_v2 +0, entitlements +0, subscriptions_v2 +0, telegram_access_grants +0
+  cleanup:         delete order
+  post-cleanup:    все counts = before
+```
+
+Отчёт B0a runtime = C30.A (следующий чекпоинт), фиксирует фактические IDs и before/after дельты.
+
+## C30.8 — B0b: full RPC/edge SQL dry-run authorized
+
+`EXECUTE BLOCKED`. Разрешён **full dry-run**:
+
+- полная схема таблицы `admin_deal_creation_idempotency` (nullable `order_id`, `state`, `request_hash`, unique constraints, RLS, GRANTs)
+- полный SQL body RPC `admin_create_deal_from_payment(p_actor_id, p_queue_row_id, p_request_hash, p_action, p_origin, p_product_id, p_amount, p_currency, p_paid_at, p_bepaid_uid)` — только `p_actor_id` server-derived, остальное валидируется
+- edge function skeleton (JWT → user_id → RBAC check → RPC call → grant post-commit)
+- inventory origin values (SELECT DISTINCT origin FROM payments_v2) до выбора значения (без изобретения новых)
+- транзакционный порядок: reserve idempotency → lock queue → check existing linked payment → create order → link payment → mark idempotency committed
+- grant-access вынесен post-transaction, отдельный idempotency-key
+
+Отчёт B0b full dry-run = C30.D.
+
+## Следующий checkpoint — C30
+
+- **C30.A** — B0a runtime EXECUTE report (после получения technical profile_id)
+- **C30.B** — final canonical baseline: A (730) + B (canonical-but-pending) + full refund lineage (43) + raw/guarded/actionable matrix
+- **C30.C** — C2 v5 full executable SQL dry-run (bodies, security, locking, preview/version, fixtures + outputs)
+- **C30.D** — B0b full edge/RPC dry-run (schema, RPC body, edge skeleton, origin inventory)
+
+## Статус PATCH-PAYMENTS-MANAGEMENT-V2 (после C30)
+
+- C28.7 provider precondition: **CORRECTED** (provider='admin' AND origin='bepaid')
+- C28R 730: **ACCEPTED AS LEGACY NO-CANONICAL INVENTORY** (NOT final transition baseline)
+- C29 FULL DRY-RUN claim: **WITHDRAWN** (design summary delivered)
+- C29 → C30.C requirements: **LOGGED** (security definer, payment_removed matrix, enum probe, refund lineage, fixture harness)
+- B0a runtime: **EXECUTE AUTHORIZED** — awaiting technical profile_id from operator
+- B0b: **FULL DRY-RUN AUTHORIZED** (C30.D), execute BLOCKED
+- A2 archive: **BLOCKED**
+- Provider CHECK: **BLOCKED**
+- C2 execute: **BLOCKED**
+
+Изменения append-only только в `.lovable/plan.md`. Код и миграции не менялись.
