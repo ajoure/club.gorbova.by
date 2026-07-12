@@ -15,6 +15,11 @@ import {
   resolveProductAccessRules,
   syncSecondaryProductAccessForUser,
 } from '../_shared/product-access-grants.ts';
+import {
+  resolveGrantAccessCaller,
+  detectBranch,
+  enforceBranchPolicy,
+} from './caller_auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -221,7 +226,43 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const _body = await req.json();
+    const _body = await req.json().catch(() => ({}));
+
+    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A ─────────────────────────────
+    // Caller authorization. MUST run before any orderId parsing, order
+    // lookup, audit write, three_ds_writer delegation, or service-role
+    // DML. Anonymous/invalid → 401. Ordinary user → 403. Branch policy:
+    //   standard / adminManualAccessEdit / legacy_body_alias: service_role OR admin
+    //   3ds_finalize / subscription_renewal:                   service_role only
+    const authResult = await resolveGrantAccessCaller(req, supabase);
+    if (!authResult.ok) {
+      return new Response(
+        JSON.stringify(authResult.body),
+        { status: authResult.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const caller = authResult.caller;
+    const branch = detectBranch(_body);
+    const policy = enforceBranchPolicy(branch, caller);
+    if (policy) {
+      return new Response(
+        JSON.stringify(policy.body),
+        { status: policy.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    // Audit actor derived from resolved caller. Body-provided source/context
+    // are recorded separately as `claimed_*` — never treated as identity.
+    const auditActor = {
+      actor_type: caller.actorType,
+      actor_user_id: caller.actorUserId,
+      actor_label: caller.actorLabel,
+    };
+    const claimedMeta = {
+      claimed_source: _body?.source ?? null,
+      claimed_context: _body?.context ?? null,
+      caller_type: caller.type,
+    };
+
     // PATCH A: accept legacy { order_id } alongside canonical { orderId }
     const orderId: string | undefined = _body.orderId ?? _body.order_id;
     const {
@@ -244,15 +285,16 @@ Deno.serve(async (req) => {
 
     // PATCH H2.1b-i: 3DS finalize context delegates to extended writer.
     // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
+    // SEC-A: branch policy already enforced service_role-only above.
     if (_body.context === '3ds_finalize') {
       const { handleThreeDsFinalize } = await import('./three_ds_writer.ts');
       const audit = async (action: string, meta: Record<string, unknown>) => {
         try {
           await supabase.from('audit_logs').insert({
             action,
-            actor_type: 'system',
+            ...auditActor,
             actor_label: 'grant-access-for-order:3ds_finalize',
-            meta: { ...meta, source: _body.source ?? null },
+            meta: { ...meta, ...claimedMeta },
           });
         } catch (_) { /* non-fatal */ }
       };
@@ -268,9 +310,8 @@ Deno.serve(async (req) => {
       try {
         await supabase.from("audit_logs").insert({
           action: "grant-access-for-order.legacy_body_alias",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
-          meta: { order_id: orderId, source: _body.source ?? null },
+          ...auditActor,
+          meta: { order_id: orderId, ...claimedMeta },
         });
       } catch (_) { /* non-fatal */ }
     }
@@ -326,27 +367,17 @@ Deno.serve(async (req) => {
     // already fulfilled order must not become a no-op. It updates only the primary
     // access window for the order's user/product and writes a server-side audit.
     if (adminManualAccessEdit === true) {
-      const authHeader = req.headers.get("Authorization") || "";
-      const token = authHeader.replace("Bearer ", "");
-      const { data: authData, error: authError } = await supabase.auth.getUser(token);
-      const actor = authData?.user || null;
-      if (authError || !actor) {
+      // SEC-A: caller identity already resolved and branch policy enforced
+      // (service_role OR admin). For the "admin edit" audit we need a real
+      // actor_user_id + email; service_role has none, so we require an admin
+      // JWT here explicitly.
+      if (caller.type !== "admin" || !caller.actor) {
         return new Response(
-          JSON.stringify({ success: false, error: "admin_manual_access_edit_unauthorized" }),
-          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
-      ]);
-      if (!isAdmin && !isSuperAdmin) {
-        return new Response(
-          JSON.stringify({ success: false, error: "admin_manual_access_edit_forbidden" }),
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_requires_admin_jwt" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      const actor = caller.actor;
       if (!customAccessEndAt) {
         return new Response(
           JSON.stringify({ success: false, error: "customAccessEndAt is required for admin manual access edit" }),
@@ -576,9 +607,7 @@ Deno.serve(async (req) => {
       // PATCH 12.2: do NOT skip — write audit and fall through to extend-flow.
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_blocked_stale_access",
-        actor_type: "system",
-        actor_user_id: null,
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -638,9 +667,7 @@ Deno.serve(async (req) => {
 
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
-        actor_type: "system",
-        actor_user_id: null,
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -735,9 +762,7 @@ Deno.serve(async (req) => {
         // STOP. No new subv2. Audit + early return (HTTP 200, skipped).
         await supabase.from('audit_logs').insert({
           action: 'grant-access-for-order.manual_review_provider_linkage_conflict',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -799,9 +824,7 @@ Deno.serve(async (req) => {
 
         await supabase.from('audit_logs').insert({
           action: 'grant-access-for-order.provider_linked_extend',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -903,9 +926,7 @@ Deno.serve(async (req) => {
 
           await supabase.from("audit_logs").insert({
             action: `grant-access-for-order.${skipReason}`,
-            actor_type: "system",
-            actor_user_id: null,
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1148,8 +1169,7 @@ Deno.serve(async (req) => {
       // Audit the collision clearing
       await supabase.from("audit_logs").insert({
         action: "entitlement.order_id_collision_cleared",
-        actor_type: "system",
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -1221,8 +1241,7 @@ Deno.serve(async (req) => {
       if (tariffId && (prevMeta as Record<string, unknown>)?.tariff_id !== tariffId) {
         await supabase.from("audit_logs").insert({
           action: "entitlement.tariff_id_persisted",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1239,8 +1258,7 @@ Deno.serve(async (req) => {
       if (legacyBackfillNeeded) {
         await supabase.from("audit_logs").insert({
           action: "entitlement.legacy_product_id_backfilled",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             entitlement_id: existingEntitlement.id,
@@ -1367,8 +1385,7 @@ Deno.serve(async (req) => {
 
           await supabase.from("audit_logs").insert({
             action: "grant_access.idempotent_replay",
-            actor_type: "system",
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               entitlement_id: dupRow.id,
@@ -1389,8 +1406,7 @@ Deno.serve(async (req) => {
           if (tariffId && (dupPrevMeta as Record<string, unknown>)?.tariff_id !== tariffId) {
             await supabase.from("audit_logs").insert({
               action: "entitlement.tariff_id_persisted",
-              actor_type: "system",
-              actor_label: "grant-access-for-order",
+              ...auditActor,
               target_user_id: userId,
               meta: {
                 order_id: orderId,
@@ -1421,8 +1437,7 @@ Deno.serve(async (req) => {
         if (tariffId && newEntitlement?.id) {
           await supabase.from("audit_logs").insert({
             action: "entitlement.tariff_id_persisted",
-            actor_type: "system",
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1505,9 +1520,7 @@ Deno.serve(async (req) => {
       try {
         const { error: ncAuditError } = await supabase.from('audit_logs').insert({
           action: 'grant.skip_subscription_no_card_trial',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1530,9 +1543,7 @@ Deno.serve(async (req) => {
 
       await supabase.from('audit_logs').insert({
         action: 'grant-access-for-order.subscription_skipped',
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'grant-access-for-order',
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -1566,9 +1577,7 @@ Deno.serve(async (req) => {
         // best-effort audit (race-safe atomic append вынесен в backlog PATCH H2b).
         await supabase.from("audit_logs").insert({
           action: "grant-access-for-order.extend.duplicate_ignored",
-          actor_type: "system",
-          actor_user_id: null,
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             subscription_id: existingProductSub.id,
@@ -1618,9 +1627,7 @@ Deno.serve(async (req) => {
           if (resolved.decision === 'resolved_from_tariff') {
             await supabase.from('audit_logs').insert({
               action: 'subscription.recurring_snapshot_resolved_from_tariff',
-              actor_type: 'system',
-              actor_user_id: null,
-              actor_label: 'grant-access-for-order',
+              ...auditActor,
               target_user_id: userId,
               meta: {
                 subscription_id: existingProductSub.id,
@@ -1634,9 +1641,7 @@ Deno.serve(async (req) => {
           // Real data defect: recurring offer exists but snapshot is incomplete
           await supabase.from('audit_logs').insert({
             action: 'subscription.recurring_snapshot_fallback_used',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               subscription_id: existingProductSub.id,
@@ -1727,9 +1732,7 @@ Deno.serve(async (req) => {
         if (resolved.decision === 'resolved_from_tariff') {
           await supabase.from('audit_logs').insert({
             action: 'subscription.recurring_snapshot_resolved_from_tariff',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1743,9 +1746,7 @@ Deno.serve(async (req) => {
         console.warn(`[grant-access-for-order] recurring offer present but snapshot incomplete for order ${orderId}`);
         await supabase.from('audit_logs').insert({
           action: 'subscription.recurring_snapshot_fallback_used',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1769,9 +1770,7 @@ Deno.serve(async (req) => {
 
         await supabase.from('audit_logs').insert({
           action: 'subscription.stale_date_overridden',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1809,9 +1808,7 @@ Deno.serve(async (req) => {
 
           await supabase.from('audit_logs').insert({
             action: 'grant-access-for-order.insert_blocked_active_overlap',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -2201,8 +2198,7 @@ Deno.serve(async (req) => {
         if (failedCount > 0) {
           console.error(`[grant-access] product_access helper reported ${failedCount} failures for order ${orderId}`);
           await supabase.from('audit_logs').insert({
-            actor_type: 'system',
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             action: 'grant_access.product_access_helper_failures',
             target_user_id: userId,
             meta: {
@@ -2271,8 +2267,7 @@ Deno.serve(async (req) => {
   // 6. Add audit log
   try {
     await supabase.from("audit_logs").insert({
-      actor_type: "admin",
-      actor_label: "grant-access-for-order",
+      ...auditActor,
       action: "admin.grant_access",
       target_user_id: userId,
       meta: {
@@ -2286,6 +2281,7 @@ Deno.serve(async (req) => {
         grant_telegram: grantTelegram,
         grant_getcourse: grantGetcourse,
         preregistrations_converted: results.preregistrations_converted || 0,
+        ...claimedMeta,
       },
     });
   } catch (auditError) {

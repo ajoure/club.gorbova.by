@@ -5427,3 +5427,164 @@ auth guard implement    : 0
 
 EXECUTE                 : BLOCKED (awaiting approve for corrected implementation plan §G)
 ```
+
+---
+
+## Отчет о выполнении: PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A + SEC-B
+
+### SEC-A — Handler auth guard + audit attribution
+
+**Files changed**
+- `supabase/functions/grant-access-for-order/caller_auth.ts` — NEW. `resolveGrantAccessCaller`, `detectBranch`, `enforceBranchPolicy`.
+- `supabase/functions/grant-access-for-order/index.ts` — auth guard в начале `Deno.serve`, удалена дублирующая auth-логика из `adminManualAccessEdit`, `auditActor` + `claimedMeta` заменяют жёстко закодированный `actor_type: 'system' / actor_user_id: null / actor_label: 'grant-access-for-order'` в 21 audit-инсерте.
+- `src/test/grantAccessForOrder.callerAuth.test.ts` — NEW. Unit-тесты helper.
+- `supabase/config.toml` — блок `[functions.grant-access-for-order]` (для SEC-B).
+
+**Auth helper contract**
+
+```
+resolveGrantAccessCaller(req, supabase) →
+  { ok:true, caller: { type, actorUserId, actorLabel, actorType, actor } }
+  | { ok:false, status:401|403, body:{success:false,error} }
+
+type = "service_role" | "admin" | "ordinary_user"
+```
+
+Классификация:
+- Нет `Authorization: Bearer ...` → 401 `unauthorized_no_bearer`.
+- `Bearer <SUPABASE_SERVICE_ROLE_KEY>` (**literal string match** с env-переменной; JWT `role` claim НЕ доверяется) → `service_role`.
+- Иначе `supabase.auth.getUser(token)` → при ошибке 401 `unauthorized_invalid_token`; при успехе `has_role_v2('admin' || 'super_admin')` → `admin`; иначе `ordinary_user`.
+
+Auth-проверка выполняется **до** парсинга `orderId`, lookup заказа, audit-инсертов, `three_ds_writer` и любых service-role DML.
+
+**Branch permission matrix (enforced)**
+
+| Branch | service_role | admin | ordinary_user |
+|---|---|---|---|
+| standard | ✓ | ✓ | ✗ 403 |
+| adminManualAccessEdit | ✓ (branch pass) | ✓ | ✗ 403 |
+| 3ds_finalize | ✓ | ✗ 403 | ✗ 403 |
+| subscription_renewal | ✓ | ✗ 403 | ✗ 403 |
+| legacy_body_alias | ✓ | ✓ | ✗ 403 |
+
+`adminManualAccessEdit` дополнительно требует admin JWT для actor_user_id (service-role проходит branch-политику, но в самой ветке возвращается 403 `admin_manual_access_edit_requires_admin_jwt`, т.к. audit требует реального admin.email).
+
+**Audit attribution matrix**
+
+Все audit-инсерты в handler теперь используют resolved caller:
+- service_role → `actor_type='system', actor_user_id=null, actor_label='service_role'`
+- admin → `actor_type='admin', actor_user_id=<uuid>, actor_label=<email>`
+
+Body-поля `source` и `context` записываются в `meta.claimed_source` / `meta.claimed_context` — **не** доверяются как identity.
+
+**Tests: 30/30 PASS**
+
+```
+$ bunx vitest run src/test/grantAccessForOrder.callerAuth.test.ts
+Test Files  1 passed (1)
+Tests       30 passed (30)
+Duration    1.74s
+```
+
+Покрытие включает все 14 обязательных сценариев + дополнительные (crafted JWT with `role:service_role` claim → correctly classified as ordinary_user, super_admin path, legacy_body_alias matrix).
+
+**Build: PASS** (harness typecheck успешен после фикса TS narrowing).
+
+**Deployment**
+```
+supabase--deploy_edge_functions(["grant-access-for-order"])
+→ Successfully deployed edge functions: grant-access-for-order
+```
+
+**Safe post-deploy probes (SEC-A alone, до SEC-B config)**
+
+| # | Request | HTTP | Body |
+|---|---|---|---|
+| 1a | no headers, `{}` | **401** | `unauthorized_no_bearer` |
+| 2a | anon JWT, `{}` | **401** | `unauthorized_invalid_token` |
+| 3a | anon JWT + random UUID | **401** | `unauthorized_invalid_token` |
+| 4a | anon JWT + `context=3ds_finalize` + random UUID | **401** | `unauthorized_invalid_token` |
+| 5a | invalid bearer | **401** | `unauthorized_invalid_token` |
+| 6a | spoofed `source=stripe_webhook`, no auth | **401** | `unauthorized_no_bearer` |
+
+**Изменение относительно pre-SEC-A:** anon без Authorization ранее возвращал `400 orderId is required` (anonymous reachability). Теперь возвращает `401 unauthorized_no_bearer` — auth-проверка выполняется до валидации orderId. **ANONYMOUS REACHABILITY CLOSED.**
+
+Все токены редактированы из логов.
+
+---
+
+### SEC-B — Gateway JWT wall
+
+**Preconditions (все выполнены):**
+1. SEC-A deployed + probes PASS. ✓
+2. 15 callers перепроверены:
+   - 4 frontend (ContactDetailSheet, GrantAccessFromDealDialog, BulkExtendAccessDialog, EditDealDialog) → браузерный supabase client шлёт user JWT → `admin` (проходит).
+   - 10 internal edge (stripe-webhook, stripe-reconcile-session, stripe-admin-sandbox-checkout, admin-manual-charge, admin-reconcile-processing-payments, bepaid-create-token, bepaid-auto-process, erip-reconcile-pending, payments-reconcile, _shared/stripe-subscription-resolver) → `supabase.functions.invoke` с service-role client шлёт `Bearer <SUPABASE_SERVICE_ROLE_KEY>` → `service_role` (проходит).
+   - 1 test tooling (test-payment-complete) → service_role (проходит).
+3. Service-role JWT валиден для gateway JWT-стены (тот же signing secret). ✓
+4. Frontend admin JWT валиден для gateway. ✓
+5. Build/tests PASS. ✓
+
+**Config diff**
+
+```diff
+ [functions.rr-admin-deliver-test-webhook]
+ verify_jwt = true
++
++# PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-B
++# Platform JWT wall in front of grant-access-for-order.
++# In-code auth guard (SEC-A) remains as defense-in-depth.
++[functions.grant-access-for-order]
++verify_jwt = true
+```
+
+**Deployment**
+```
+supabase--deploy_edge_functions(["grant-access-for-order"])
+→ Successfully deployed edge functions: grant-access-for-order
+```
+
+**Post-deploy safe probes (SEC-B active)**
+
+| # | Request | HTTP | Body | Слой |
+|---|---|---|---|---|
+| P1 | no headers | **401** | `{"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}` | platform gateway |
+| P2 | `apikey: <anon>` only | **401** | `UNAUTHORIZED_NO_AUTH_HEADER` | platform gateway |
+| P3 | anon JWT | **401** | `unauthorized_invalid_token` | in-code handler |
+| P4 | anon JWT + random UUID | **401** | `unauthorized_invalid_token` | in-code handler |
+| P5 | anon JWT + 3ds_finalize + random UUID | **401** | `unauthorized_invalid_token` | in-code handler |
+
+**Оба слоя обороны активны:**
+- Layer 1 (gateway): без валидного Supabase JWT — platform 401, handler не достигается.
+- Layer 2 (in-code): даже с валидным Supabase JWT — anon отклоняется как `unauthorized_invalid_token`, ordinary_user получает 403, non-admin в admin-only ветках получает 403.
+
+Валидный production order не использовался. Admin JWT + random UUID и service_role + random UUID probes не выполнялись (нет безопасного admin-токена/SRK в окружении probes; corresponding paths верифицированы unit-тестами: 30/30 PASS с полной branch matrix).
+
+---
+
+### Security summary
+
+```
+PATCH-GRANT-ACCESS-AUTHZ-V1:
+
+DIAGNOSE                    : VERIFIED/PASS/CLOSED
+SEC-A HANDLER AUTH          : IMPLEMENTED, DEPLOYED, PROBES PASS
+SEC-A TESTS                 : 30/30 PASS (14 required + 16 extended)
+SEC-A BUILD                 : PASS
+SEC-B GATEWAY JWT WALL      : DEPLOYED, PROBES PASS
+Anonymous reachability      : CLOSED (platform layer)
+Anon-JWT reachability       : CLOSED (handler layer)
+Ordinary user grant path    : CLOSED (branch policy)
+Admin-only branch enforce   : CLOSED (3ds_finalize + subscription_renewal → service_role only)
+Audit attribution           : bound to resolved caller in 21+ audit_logs sites
+
+DML caused by probes        : 0
+Valid production order used : NO
+Secrets in logs             : 0 (tokens redacted)
+
+FOLLOW-UPS:
+  PATCH-GRANT-ACCESS-ELIGIBILITY-V1 : REQUIRED (order.status/trial/3DS/GIFT filter)
+  audit attribution in nested helpers (writeLedgerEntry, shared modules) :
+    remaining hardcoded caller labels in shared helpers are out of this
+    patch's scope; documented for follow-up
+```
