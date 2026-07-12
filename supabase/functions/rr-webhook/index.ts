@@ -23,7 +23,10 @@ import {
   createServiceClient,
   loadRRConfig,
 } from "../_shared/rr/rr-config.ts";
-import { verifyNotificationSignature } from "../_shared/rr/rr-adapter.ts";
+import {
+  verifyNotificationSignature,
+  rrGetOrderStatus,
+} from "../_shared/rr/rr-adapter.ts";
 import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
 
 const UUID_RE =
@@ -187,6 +190,7 @@ Deno.serve(async (req: Request) => {
 
   // 6) Sprint C1 promotion path — только для authorize статусов.
   let promotion: unknown = null;
+  let commissionEnrichment: unknown = null;
   if (willPromote) {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -204,7 +208,38 @@ Deno.serve(async (req: Request) => {
       // Non-fatal — reconciler повторит. Webhook возвращает 200 в любом случае.
       promotion = { ok: false, error: (e as Error).message };
     }
+
+    // Sprint C2 D.2 — commission enrichment. Строго non-fatal:
+    // ошибка status API не откатывает уже успешный promote/grant/access.
+    try {
+      const status = await rrGetOrderStatus(cfg, externalId);
+      if (status.ok && status.commissionMinor != null) {
+        const { data: finRes, error: finErr } = await supabaseAdmin.rpc(
+          "rr_update_payment_financials",
+          {
+            _order_id: externalId,
+            _commission_minor: status.commissionMinor,
+            _currency: "BYN",
+            _raw: {
+              commission_minor: status.commissionMinor,
+              rr_status_raw: status.rrStatusRaw ?? null,
+            },
+          },
+        );
+        commissionEnrichment = finErr
+          ? { status: "helper_error", error: finErr.message }
+          : (finRes ?? { status: "unknown" });
+      } else {
+        commissionEnrichment = {
+          status: "status_api_no_commission",
+          http_status: status.status,
+          error_code: status.errorCode ?? null,
+        };
+      }
+    } catch (e) {
+      commissionEnrichment = { status: "status_api_error", error: (e as Error).message };
+    }
   }
 
-  return jsonResponse({ success: true, promotion });
+  return jsonResponse({ success: true, promotion, commission_enrichment: commissionEnrichment });
 });

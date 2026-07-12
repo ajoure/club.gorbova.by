@@ -19474,6 +19474,15 @@ export type Database = {
         }
         Returns: Json
       }
+      rr_update_payment_financials: {
+        Args: {
+          _commission_minor: number
+          _currency: string
+          _order_id: string
+          _raw: Json
+        }
+        Returns: Json
+      }
       safe_delete_document_package: {
         Args: { _package_id: string }
         Returns: Json
