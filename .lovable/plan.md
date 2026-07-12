@@ -754,3 +754,166 @@ Diagnose-отчёт — часть DoD этапа 1.
 - Пересчёт `orders_v2` — через существующий пересчётчик, выявленный на этапе Diagnose. Если такого нет — маленькая SQL-функция `recalc_order_totals(order_id)` add-only.
 - RLS: `admin-payment-create` / `admin-payment-delete` вызывают admin-only проверку `has_role_v2(uid,'admin') OR has_role_v2(uid,'superadmin')` (canonical RBAC v3, как в bepaid-get-receipt).
 - Soft-delete фильтр `is_deleted=false` добавляется в клиентские запросы `payments_v2` и в существующие view.
+---
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — DIAGNOSE
+
+Diagnose-отчёт, append-only. Код не менялся, миграций не создавалось. Все данные получены read-only из БД и репозитория.
+
+### D1. Фактические provider / origin в БД
+
+`select provider, count(*) from payments_v2 group by 1`:
+
+| provider     | count |
+|--------------|-------|
+| bepaid       | 5955  |
+| admin        | 319   |
+| rr           | 12    |
+| admin_test   | 8     |
+| stripe       | 5     |
+
+`select origin, count(*) from payments_v2 group by 1`:
+
+| origin              | count |
+|---------------------|-------|
+| bepaid              | 4315  |
+| statement_sync      | 1672  |
+| card_verification   | 229   |
+| payment_link        | 57    |
+| manual_adjustment   | 13    |
+| rr_installment      | 12    |
+| public_link         | 1     |
+| (NULL)              | остальное |
+
+Выводы:
+1. Целевая модель «4 провайдера {bepaid, stripe, rr, bank}» пока НЕ соответствует данным: 319 строк `provider='admin'` и 8 строк `provider='admin_test'` не входят ни в одну из 4-х корзин. Это унаследованный ручной ввод.
+2. Нужен отдельный шаг backfill/классификация ПЕРЕД включением жёсткого CHECK/enum, иначе миграция упадёт. Backfill не входит в scope V2 и должен быть отдельным подзадачей DIAGNOSE→PLAN до фактической миграции. До backfill CHECK нельзя ужесточать — только расширять список валидных значений допустимо.
+3. `origin='manual_admin'` в БД отсутствует. `manual_adjustment` (13 строк) — семантически близкое legacy-значение, но НЕ равнозначно (использовалось для правок сумм, не для полноценного ручного создания). Не переиспользуем — добавляем новое `manual_admin`.
+4. Никаких `custom / other / manual` в `provider` нет — целевое ограничение не конфликтует с реальными данными за пределами `admin/admin_test`.
+
+### D2. Схема `payments_v2` и уникальные индексы
+
+Провайдер-статус: `provider text` (без enum, без CHECK — легко расширяемо).
+
+Существующие UNIQUE-индексы, критичные для дедупа/tombstone-стратегии:
+
+- `idx_payments_v2_provider_uid` — `UNIQUE (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL`
+- `idx_payments_v2_provider_unique` — дубликат того же (redundant)
+- `uq_payments_v2_provider_payment` — ещё один дубликат
+- `idx_payments_v2_unique_provider_payment_id` — `UNIQUE (provider_payment_id) WHERE provider_payment_id IS NOT NULL AND provider='bepaid'`
+- `payments_v2_rr_one_succeeded_per_order` — `UNIQUE (order_id) WHERE provider='rr' AND status='succeeded'` — важно: не даст создать второй успешный RR-платёж на один order, даже после soft-delete первого.
+
+Вывод по правке пункта 2 плана (глобальная уникальность tombstone):
+- Три копии `UNIQUE(provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL` уже дают требуемый глобальный dedup БЕЗ фильтра `is_deleted=false`. Соответственно, план сохраняем: **partial unique по `is_deleted=false` НЕ вводим**. Tombstone-строка остаётся в общем уникальном индексе и блокирует пересоздание с тем же `(provider, provider_payment_id)`.
+- Ре-инкарнация RR-успеха на тот же order физически заблокирована `payments_v2_rr_one_succeeded_per_order`. Для восстановления после soft-delete нужен явный админский flow (в V2 не входит).
+- Три redundant-индекса стоит унифицировать (drop лишних) отдельным cleanup-патчем; в scope V2 не входит.
+
+### D3. Foreign keys и каскады
+
+`payments_v2` → outbound:
+- `order_id` → `orders_v2(id)` **ON DELETE CASCADE** — критично: удаление ордера физически удаляет все его платежи БД-каскадом. Soft-delete не «переживает» удаление ордера через FK, поэтому в режиме `payment_and_order` фактически будет hard-delete платежей вместе с ордером — это тот же уже используемый путь через `useDealsBulkDelete`.
+- `profile_id` → `profiles(id)` **ON DELETE SET NULL** — контакт можно удалить без сноса платежа. Соответствует инварианту «контакт не удаляется вместе с платежом».
+- `reference_payment_id` → self.
+
+`payments_v2` → inbound (кого сломает hard-delete платежа):
+- `installment_payments.payment_id` — **без ON DELETE**, значит hard-delete упадёт, если есть installment. Для installment-платежей нужен soft-delete (штатный путь V2).
+- `statement_lines.payment_id` — то же, hard-delete упадёт при наличии импорта выписки.
+- `payments_v2.reference_payment_id` — существующий bulk-delete нуллифицирует эти ссылки перед удалением (см. `useDealsBulkDelete`, Step B).
+
+Вывод: soft-delete — единственный безопасный универсальный путь. Hard-delete допустим только через существующий caskadny order-delete flow.
+
+### D4. Recompute / order totals
+
+- Единственная существующая функция расчёта: `public.get_order_expected_paid(order_id)` — возвращает `SUM(amount) WHERE status='succeeded' AND amount>0`. Она НЕ пишет в `orders_v2` и НЕ учитывает `is_deleted` (колонки нет).
+- Триггеров типа `%recalc%`, `%paid_amount%`, `%order_totals%` в БД **нет**.
+- `orders_v2.paid_amount` пишется прикладной логикой (edge-функциями). Явного «canonical recalc» ни в БД, ни среди edge-функций не найдено (по имени; надо будет допройти на этапе PLAN — `payments-reconcile`, `refunds-recompute-order-status`, `admin-fix-payments-integrity` — кандидаты).
+- Существующая функция `refunds-recompute-order-status/index.ts` пересчитывает статус ордера от refund-логики (не общий recalc).
+
+Вывод: canonical recalc-функция отсутствует. В рамках V2 нужен минимальный `recalc_order_totals(order_id)` (SUM по активным успешным платежам с учётом будущего `is_deleted=false`), либо вызов существующего edge, если PLAN подтвердит его пригодность. Это add-only.
+
+### D5. Canonical delete-order helper
+
+Существующий canonical путь удаления сделки — `src/hooks/useDealsBulkDelete.ts`. Он:
+
+1. Отменяет GetCourse для paid orders (`getcourse-cancel-deal`).
+2. Удаляет `installment_schedules` → `subscriptions_v2`.
+3. Отзывает TG-доступ, если у user_id нет других активных сделок/подписок.
+4. Удаляет `access_grant_ledger`, `entitlements`.
+5. Нуллифицирует inbound `payments_v2.reference_payment_id`, затем hard-delete `payments_v2` по `order_id`.
+6. Hard-delete `orders_v2`.
+7. Шлёт `send-access-revoked-notification`.
+
+Дополнительно есть edge `admin-purge-payments-by-uid` (server-side purge). Дублирующего SQL RPC нет.
+
+Оценка для V2:
+- Это тот самый путь, который нужно вызывать в режиме `payment_and_order`.
+- Он смешивает «удалить платёж + удалить сделку». Отдельного варианта «удалить сделку, но платежи оставить/переотвязать» (вариант B из правки §5 плана) НЕТ. В scope V2 расширение canonical helper под вариант B считаем **out of scope**, ограничиваемся вариантами A и C:
+  - **A** — «payment_only»: soft-delete конкретного платежа, order остаётся, recalc.
+  - **C** — «payment_and_order»: вызов `useDealsBulkDelete`-эквивалента (нужно вынести в server-side edge `admin-order-delete`, чтобы не дублировать логику на клиенте). Здесь платежи каскадно удаляются на уровне БД (`ON DELETE CASCADE`) — hard-delete, tombstone НЕ создаётся. Это принятый компромисс, зафиксировать в audit.
+- Вариант B добавляется отдельным патчем; в UI dry-run это состояние помечаем как «недоступно в текущей версии», не молча деградируем.
+
+### D6. RBAC
+
+- Существующая RLS-политика на `payments_v2` использует legacy `has_role(auth.uid(), 'admin' | 'superadmin')` **И** RBAC v3 `has_admin_section_access(auth.uid(), 'payments', 'view'|'manage')`.
+- Enum `app_role` содержит `admin` и `superadmin` (см. политику). Значение `super_admin` (с подчёркиванием) в legacy `has_role` в этой политике **не используется** — это будет ошибкой в edge-функции, повторять паттерн `bepaid-get-receipt` слепо нельзя.
+- `refunds-recompute-order-status` использует прямой `select from user_roles ... in ('super_admin','admin','superadmin')` — оба варианта записаны через ИЛИ.
+
+Вывод: для новых edge (`admin-payment-create`, `admin-payment-delete`) admin-check делаем через `has_admin_section_access(uid, 'payments', 'manage')` (canonical RBAC v3), НЕ через `has_role_v2`. Это соответствует существующей RLS-политике «RBAC v3: manage payments».
+
+### D7. Readers `payments_v2` (частичный inventory)
+
+Компоненты и хуки, читающие `payments_v2` (найдено `rg`), которым нужно скрывать `is_deleted=true` после патча:
+
+- `src/pages/admin/AdminPayments*.tsx`
+- `src/components/admin/payments/PaymentsTable.tsx`, `PaymentsStatsPanel.tsx`, CSV-экспорт
+- `src/components/admin/DealDetailSheet.tsx` (список платежей в сделке)
+- `src/hooks/useUnifiedPayments*` (если есть)
+- Edge: `payments-reconcile`, `refunds-recompute-order-status`, `admin-payments-diagnostics`, `admin-fix-payments-integrity`, `admin-unlinked-payments-report`, `nightly-payments-invariants`, `grant-access-for-order`, `admin-purge-payments-by-uid`, `admin-materialize-queue-payments`, `payment-methods-*`
+
+Полная таблица reader → «учитывает deleted?» → «требуется правка?» будет собрана на этапе PLAN (после утверждения Diagnose). Для V2 обязательным считаем обновление UI-readers + серверных путей, которые пишут `orders_v2.paid_amount` и выдают/отзывают access. Ночные джобы (invariants, diagnostics) — во второй итерации.
+
+### D8. Grant-access
+
+- Canonical выдача — `grant-access-for-order` (edge). Требует полноценный `orders_v2`. Прямых insert в `entitlements`/`access_grant_ledger` из V2-кода не будет.
+- Ручной платёж → доступ только при: выбранной сделке (`order_id NOT NULL`), `status='succeeded'`, суммарные успешные платежи закрывают `orders_v2.paid_amount ≥ order.amount`. Проверка выполняется на сервере в `admin-payment-create`.
+- Standalone-платёж (`order_id=null`) — доступ не выдаётся. UI-чекбокс «Выдать доступ» отключён до выбора сделки.
+
+### D9. Идемпотентность и ручной ввод
+
+- Внешний dedup через существующие UNIQUE `(provider, provider_payment_id)` работает только когда `provider_payment_id NOT NULL`. Для ручных `bank`-платежей admin может не заполнить `provider_payment_id` — тогда возможен дубль.
+- Решение (add-only, в scope V2): `admin-payment-create` принимает обязательный `idempotency_key`; server-side хранит его в `payments_v2.meta.idempotency_key` и делает предварительный `SELECT ... WHERE meta->>'idempotency_key'=? AND created_by=?` перед INSERT. Возвращает существующую запись, если найдена.
+- UI генерирует ключ при монтировании формы; при повторной отправке — тот же ключ.
+
+### D10. Ручной RR / Stripe / bePaid не имитирует provider webhook
+
+- В `admin-payment-create` для `provider ∈ {rr, stripe, bepaid}` записываем `payments_v2.meta.manual_entry=true`, `not_provider_confirmed=true`, `rr_mode_at_entry` (для RR) как в правке §12 плана.
+- `provider_events` из этой функции НЕ создаём. RR healthcheck (`event_type='webhook_notification_received'`, guard из PATCH-RR-STATUS-TRUTHFUL-V1) остаётся строго по webhook-событиям.
+
+### D11. Изменения к плану, зафиксированные Diagnose
+
+1. **Partial unique index по `is_deleted=false` не создаём.** Существующие 3 копии `UNIQUE(provider, provider_payment_id)` уже дают глобальную защиту от воскрешения. Recreation guard в reconcile-путях сводится к: «перед upsert проверить существование строки — если найдена и `is_deleted=true`, залогировать orphan и НЕ обновлять».
+2. **`provider` не превращаем в enum и не ужесточаем CHECK в V2.** Только расширение допустимых значений в клиентской модели/фильтрах до `{bepaid, stripe, rr, bank}`; строки `provider='admin'/'admin_test'` (327 шт.) остаются как есть до отдельного backfill-патча — они будут показаны в UI под меткой «legacy manual» (маленький пилюль в бейдже, без нарушения фильтра). В фильтре «провайдер» они группируются под «Прочее (legacy)» вне 4 канонических опций. Это compromise, чтобы миграция не упала и данные не потерялись.
+3. **RBAC:** новые edge используют `has_admin_section_access(uid, 'payments', 'manage')`, не `has_role_v2(...,'super_admin')`.
+4. **`admin-order-delete` (edge) — новый add-only wrapper** над логикой `useDealsBulkDelete`. Клиент вызывает его в режиме `payment_and_order`. Дублировать логику на клиенте запрещено.
+5. **`recalc_order_totals(p_order_id uuid)` — новая SQL-функция**, add-only. Пересчитывает `orders_v2.paid_amount = SUM(amount) WHERE order_id=p_order_id AND status='succeeded' AND amount>0 AND COALESCE(is_deleted,false)=false`. Вызывается из `admin-payment-create` и `admin-payment-delete`.
+6. **Вариант B** удаления («удалить сделку, платежи оставить/переотвязать») — вне scope V2, помечен как известное ограничение и в UI показывается как отключённая опция с подсказкой.
+7. **Backfill `provider='admin'/'admin_test'` → нормальные значения** — отдельный подпатч, не блокирующий V2.
+
+### D12. Открытые вопросы к утверждению перед PLAN
+
+1. Подтверждаем ли «legacy manual» бейдж для 327 строк вместо жёсткой миграции provider? (Да/Нет)
+2. Подтверждаем ли отсутствие варианта B удаления в V2? (Да/Нет)
+3. Подтверждаем ли `recalc_order_totals` как единственный recalc-путь в V2? (Да/Нет)
+4. Подтверждаем ли RBAC через `has_admin_section_access(...,'payments','manage')`? (Да/Нет)
+5. Подтверждаем ли `admin-order-delete` (edge) вместо клиентского `useDealsBulkDelete` в режиме `payment_and_order`? (Да/Нет)
+
+### Статус
+
+```
+PATCH-PAYMENTS-MANAGEMENT-V2:
+  DIAGNOSE: DELIVERED
+  PLAN: BLOCKED PENDING ANSWERS TO §D12
+  CODE CHANGES: BLOCKED
+```
+
+Следующий шаг — ответы по §D12, затем append-only PLAN-раздел.
