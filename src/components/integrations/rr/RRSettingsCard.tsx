@@ -284,33 +284,36 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   Ресурс Развития
-                  {instance && (
-                    <Badge
-                      variant={
-                        isBackendConnected
-                          ? "default"
-                          : hasError
-                            ? "destructive"
-                            : "secondary"
-                      }
-                    >
-                      {isBackendConnected ? (
-                        <>
+                  {instance && (() => {
+                    const overall = hcMeta?.overall;
+                    if (overall === "connected") {
+                      return (
+                        <Badge variant="default">
                           <Check className="h-3 w-3 mr-1" />
                           Подключено
-                        </>
-                      ) : hasError ? (
-                        <>
+                        </Badge>
+                      );
+                    }
+                    if (overall === "battle_awaiting_first_order") {
+                      return (
+                        <Badge variant="secondary" className="border-amber-400/60 bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                          Боевой режим · ожидает первую заявку
+                        </Badge>
+                      );
+                    }
+                    if (overall === "error" || hasError) {
+                      return (
+                        <Badge variant="destructive">
                           <X className="h-3 w-3 mr-1" />
                           Ошибка
-                        </>
-                      ) : isPartial && credentialsReady ? (
-                        "Настроено частично · backend не подключен"
-                      ) : (
-                        "Настроено"
-                      )}
-                    </Badge>
-                  )}
+                        </Badge>
+                      );
+                    }
+                    if (overall === "not_configured" || !credentialsReady) {
+                      return <Badge variant="secondary">Не настроено</Badge>;
+                    }
+                    return <Badge variant="secondary">Проверка не выполнена</Badge>;
+                  })()}
                   <Badge variant="outline" className="text-xs">
                     {mode === "battle" ? "Боевой" : "Тестовый"}
                   </Badge>
