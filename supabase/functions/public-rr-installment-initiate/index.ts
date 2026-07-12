@@ -519,6 +519,75 @@ Deno.serve(async (req: Request) => {
   }
 
   // ============== NEW ORDER ==============
+  // Sprint C2 / Stage E.1 — materialize universal CRM routing snapshot on new order.
+  // Server-side resolver; snapshot is NEVER accepted from public request body.
+  // Positive → set pipeline_id + pipeline_stage_id (pending) if currently NULL (no manual override).
+  // Negative → still write structural snapshot to meta (B.0 invariant) + audit_logs.
+  try {
+    const routing = await resolveOfferRoutingWithFallback(supabaseAdmin, {
+      offer_id: offerId,
+      tariff_id: tariff.id,
+    });
+    const crmSnapshot = routing.ok && routing.snapshot
+      ? routing.snapshot
+      : buildNegativeSnapshot({
+        reason: routing.reason || "unknown",
+        offer_id: offerId,
+        tariff_id: tariff.id,
+        resolved_via: routing.resolved_via ?? "none",
+        candidates_count: routing.candidates_count ?? 0,
+      });
+
+    const { data: curOrder } = await supabaseAdmin
+      .from("orders_v2")
+      .select("meta, pipeline_id, pipeline_stage_id")
+      .eq("id", externalId)
+      .maybeSingle();
+    const curMeta = (curOrder?.meta && typeof curOrder.meta === "object")
+      ? curOrder.meta as Record<string, unknown>
+      : {};
+    const nextMeta: Record<string, unknown> = {
+      ...curMeta,
+      crm_routing_snapshot: crmSnapshot,
+    };
+    const updatePayload: Record<string, unknown> = { meta: nextMeta };
+    if (routing.ok && routing.snapshot) {
+      if (!curOrder?.pipeline_id) updatePayload.pipeline_id = routing.snapshot.pipeline_id;
+      if (!curOrder?.pipeline_stage_id) {
+        updatePayload.pipeline_stage_id = routing.snapshot.stage_on_pending;
+      }
+    }
+    const { error: upErr } = await supabaseAdmin
+      .from("orders_v2")
+      .update(updatePayload)
+      .eq("id", externalId);
+    if (upErr) {
+      await supabaseAdmin.from("audit_logs").insert({
+        actor_type: "system",
+        actor_label: "public-rr-installment-initiate",
+        action: "rr.create_order.crm_snapshot_persist_failed",
+        meta: { order_id: externalId, error: upErr.message },
+      });
+    } else if (!routing.ok || !routing.snapshot) {
+      await auditNegativeSnapshot(supabaseAdmin, {
+        order_id: externalId,
+        offer_id: offerId,
+        tariff_id: tariff.id,
+        reason: routing.reason || "unknown",
+        resolved_via: routing.resolved_via ?? "none",
+        candidates_count: routing.candidates_count ?? 0,
+      });
+    }
+  } catch (e) {
+    // Non-fatal — payment flow must continue regardless of CRM routing errors.
+    await supabaseAdmin.from("audit_logs").insert({
+      actor_type: "system",
+      actor_label: "public-rr-installment-initiate",
+      action: "rr.create_order.crm_snapshot_error",
+      meta: { order_id: externalId, error: (e as Error).message },
+    });
+  }
+
   // 1. Идемпотентный create_order_requested (fail-fast: 503).
   const reqInsert = await supabaseAdmin.from("provider_events").insert({
     provider: "rr", account_code: "rr", signature_valid: true,
