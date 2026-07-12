@@ -19,6 +19,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createServiceClient, loadRRConfig } from "../_shared/rr/rr-config.ts";
 import { rrGetOrderStatus } from "../_shared/rr/rr-adapter.ts";
+import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
