@@ -1,325 +1,404 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-План правильный. Stage E должен быть минимальным wiring существующего CRM-routing, а Stage F — доказательством универсальности на другом продукте.
+## 1. Не включать admin-уведомления в Sprint C2
 
-## 1. Исторические RR-заказы backfill только с negative snapshot
-
-Для `ORD-26-00296/297/298/300/303/304` на момент создания `meta.crm_routing` отсутствовал. Поэтому их snapshot должен отражать исторический факт:
+Sprint C2 уже закрыт:
 
 ```text
-enabled=false
-reason=routing_disabled_or_missing
-pipeline_id=NULL
-pipeline_stage_id=NULL
+Sprint C2 overall: VERIFIED, PASS — CLOSED
 
 ```
 
-Не пересчитывать исторический snapshot из будущих настроек оффера. Даже если менеджер позже включит routing, старые заказы не должны задним числом получить другую маршрутизацию.
-
-Stage-переходы для этих шести заказов не выполнять.
-
-## 2. E.1 реализовать через существующий TypeScript helper
-
-Не переносить логику `_shared/crm-routing.ts` вручную в SQL: это создаст вторую реализацию правил fallback и валидации.
-
-Предпочтительный путь:
+Admin-уведомления оформить отдельной задачей, например:
 
 ```text
-public-rr-installment-initiate
-→ resolveOfferRoutingWithFallback(offer_id, tariff_id)
-→ передать server-calculated snapshot в rr_get_or_create_pending_order
-→ записать snapshot только при INSERT нового заказа
+PATCH-ADMIN-PURCHASE-NOTIFY-V1
 
 ```
 
-Условия:
+Обновить существующий `.lovable/plan.md`. Новый `docs/audit/*.md` не создавать.
 
-- snapshot вычисляется backend-side, не принимается из публичного request body;
-- positive snapshot заполняет `pipeline_id` и pending stage;
-- negative snapshot также обязательно сохраняется;
-- reuse существующего заказа не изменяет snapshot;
-- остальные вызовы RPC после изменения сигнатуры не ломаются.
+---
 
-Если параметр RPC публично доступен, он не должен позволять клиенту самостоятельно выбрать pipeline или stage.
+## 2. Очистка: сначала только dry-run
 
-## 3. Отказные статусы не определять новым списком вручную
+Текущие критерии слишком широкие. Не использовать самостоятельный `OR` по `test_fixture`, названию продукта или периоду.
 
-Не считать любой статус, отличный от `authorized`, неуспешным.
+Сначала сформировать **точный UUID allowlist**:
 
-Использовать только статусы, которые существующий RR-контур уже классифицирует как terminal и передаёт в:
+- dedicated Stage E/F test product;
+- его tariff и offer;
+- конкретные test-order IDs;
+- связанные payment/source/event/delivery IDs.
 
-- `rr_finalize_order_rejected`;
-- `rr_finalize_order_not_created`;
-- существующую ветку canceled, если она реально есть.
+Отдельно показать:
 
-Для них вызывать:
+
+| Таблица                         | Count  | Примеры ID | Сумма  |
+| ------------------------------- | ------ | ---------- | ------ |
+| `orders_v2`                     | &nbsp; | &nbsp;     | &nbsp; |
+| `payments_v2`                   | &nbsp; | &nbsp;     | amount |
+| `entitlement_sources`           | &nbsp; | &nbsp;     | &nbsp; |
+| `provider_events`               | &nbsp; | &nbsp;     | &nbsp; |
+| `order_notification_deliveries` | &nbsp; | &nbsp;     | &nbsp; |
+| `telegram_messages`             | &nbsp; | &nbsp;     | &nbsp; |
+| CRM-записи                      | &nbsp; | &nbsp;     | &nbsp; |
+
+
+В dry-run обязательно доказать, что ни один target-order:
+
+- не относится к трём действующим CB-офферам;
+- не имеет реального provider transaction ID;
+- не связан с нетестовым продуктом;
+- не входит в ORD-26-00296/297/298 и другие реальные CB-заказы.
+
+### Не удалять автоматически
+
+- `access_grant_ledger` — это immutable audit log;
+- `audit_logs`;
+- реальные CB orders/payments;
+- профили по совпадению email или телефона.
+
+`telegram_messages` сейчас пропущена в cleanup-списке — добавить выборку по `meta.source_order_id`.
+
+### Stop-condition
+
+Для one-off RR test-product ожидается:
 
 ```text
-applyCrmStageOnTerminal(order_id, 'failed', canonical_trigger)
+subscriptions_v2 count = 0
+profiles created by flow = 0
 
 ```
 
-Статусы вроде:
+Если найдены subscription или новый profile/contact, не удалять их автоматически — остановиться и диагностировать причину.
+
+`rr_test_ledger` не очищать целиком. Удалять только строки, однозначно связанные с утверждённым набором тестовых заявок. Полная очистка может удалить доказательства других тестов.
+
+После dry-run требуется отдельное явное подтверждение DELETE.
+
+---
+
+## 3. DELETE выполнять транзакционно и с assertions
+
+Не просто набор последовательных DELETE, а один guarded transaction:
 
 ```text
-outcome_unknown
-operator_required
-partial
-processing
+BEGIN
+→ materialize exact target UUIDs
+→ assert expected order count
+→ assert exact product/offer IDs
+→ delete dependants
+→ recalculate affected entitlements
+→ delete target orders
+→ assert target rows = 0
+→ COMMIT
 
 ```
 
-не переводить в failed — они остаются pending/manual согласно существующему lifecycle.
+Для shared real product агрегат `entitlements` не удалять. После удаления или revoke test-source вызвать `recalculate_entitlement_aggregate`.
 
-Отдельного согласования списка не требуется: сначала взять его из фактического status classifier в `rr-webhook`/`rr-notification`, затем подключить CRM-вызов в уже существующие terminal-ветки.
+Тестовые определения product/tariff/offer оставить деактивированными.
 
-## 4. Настройка routing
+---
 
-Три действующих RR-оффера автоматически не изменять. Настройка их реальных pipeline/stages остаётся решением менеджера продукта.
+## 4. Перед `telegram_admin` требуется закрыть security blocker
 
-Но для Stage F **тестовый non-CB offer обязательно настроить с positive** `meta.crm_routing`, иначе будет проверен только negative snapshot, но не фактический переход:
+Сейчас `notify-order-purchased` настроена как `verify_jwt=false`, а внутри функции отсутствует проверка вызывающей стороны.
+
+После добавления admin-канала публичный вызывающий смог бы:
+
+- повторно запускать уведомления;
+- использовать `force=true`;
+- рассылать сообщения администраторам по известному order ID.
+
+До реализации канала:
+
+1. Установить `verify_jwt=true`.
+2. Разрешить вызов только с service-role JWT либо отдельным internal secret.
+3. Убедиться, что `grant-access-for-order` передаёт service-role Authorization.
+4. Пользовательский authenticated JWT не должен иметь право вызвать функцию.
+
+Операционные ошибки каналов остаются non-fatal, но неавторизованный вызов должен получать `401/403`.
+
+---
+
+## 5. Идемпотентность нужно реализовать отдельно для admin recipients
+
+Сейчас canonical guard рассчитан на одну доставку каждого канала:
 
 ```text
-pending stage
-→ RR paid
-→ success stage
+(order_id, channel, notification_type)
 
 ```
 
-Использовать test-safe pipeline/stages либо существующий pipeline, где тестовый заказ не помешает работе менеджеров.
+И lookup delivery также не учитывает recipient.
 
-## 5. Исправить проверку срока в Stage F
+Простое добавление `telegram_admin` позволит сохранить только одного администратора.
 
-В плане указано:
-
-> `expires_at = paid_at + access_days`
-
-Это не соответствует уже внедрённому canonical resolver.
-
-Проверять нужно:
+Нужна миграция с сохранением текущей семантики:
 
 ```text
-entitlement_source.starts_at = значение canonical resolveAccessWindow
-entitlement_source.expires_at = starts_at + tariffs.access_days
+buyer channels:
+UNIQUE (order_id, channel, notification_type)
+WHERE channel IN ('email', 'telegram')
+
+admin channel:
+UNIQUE (order_id, channel, notification_type, recipient)
+WHERE channel = 'telegram_admin'
 
 ```
 
-Для текущей реализации `starts_at` обычно соответствует `order.created_at`. Не вводить отдельное RR-правило от `paid_at`.
+Также проверить и при необходимости расширить CHECK/enum для `channel`.
 
-Также фактическая таблица:
+`upsertDelivery` должен:
+
+- для email/telegram работать как сейчас;
+- для `telegram_admin` искать строку с обязательным `recipient`;
+- создавать отдельную delivery на каждого Telegram recipient.
+
+---
+
+## 6. Роли не хардкодить как `super_admin`
+
+Сначала прочитать фактический role source. В действующем коде используется значение:
 
 ```text
-entitlements
+admin
+superadmin
 
 ```
 
-а не `entitlements_v2`.
+а не `super_admin`.
 
-## 6. Stage F должен проверить зарегистрированного владельца
+Получателей выбирать из canonical role table/helper:
 
-Для универсального smoke использовать test-safe зарегистрированный профиль, чтобы подтвердить не только payment, но и access:
+- только действующие `admin` и `superadmin`;
+- profile имеет `telegram_user_id`;
+- `DISTINCT` по Telegram ID;
+- пользователь с двумя ролями получает одно сообщение.
 
-- новый non-CB product;
-- новый tariff;
-- `access_days`, например 30;
-- BYN price;
-- `bank_installment` offer;
-- positive CRM routing;
-- зарегистрированный `user_id/profile_id`.
+До discovery не фиксировать `user_roles_v2` как гарантированное имя таблицы.
 
-После webhook проверить:
+---
 
-- отдельный `entitlement_source` именно нового заказа;
-- агрегированный entitlement нового продукта;
-- email/Telegram либо явный допустимый `skipped`;
-- CRM success stage.
+## 7. Патч `notify-order-purchased`
 
-Анонимный заказ с `no_user_id` не будет полным доказательством Stage F.
-
-## 7. Test-product не должен требовать специальной страницы или backend-кода
-
-Использовать существующий универсальный route/component для продуктов и офферов.
-
-Не создавать:
-
-- отдельную RR-страницу;
-- специальную кнопку;
-- условие по product code;
-- временный hardcode UUID.
-
-После теста:
-
-- деактивировать offer;
-- деактивировать тестовый product;
-- сохранить заказ, payment и access-source как audit-историю;
-- не удалять связанные финансовые записи.
-
-## 8. Проверки Stage E
-
-Для нового заказа с positive routing:
-
-1. При создании:
-  - snapshot сохранён;
-  - `pipeline_id` заполнен;
-  - `pipeline_stage_id = stage_on_pending`.
-2. После authorized:
-  - stage изменён на `stage_on_success`;
-  - snapshot не изменён;
-  - повторный webhook не создаёт нового перехода.
-3. Manual override:
-  - оператор меняет stage после создания заказа;
-  - webhook не перезаписывает ручное изменение, если canonical guard именно это предусматривает;
-  - после теста вернуть test-order в ожидаемое состояние только если это безопасно.
-4. Failed status:
-  - проверить минимум одну безопасную terminal failed-ветку test-order;
-  - stage → `stage_on_failed`;
-  - повторное событие — no-op.
-
-## 9. Итоговый порядок
+Расширить order SELECT полями, которых сейчас не хватает для admin message:
 
 ```text
-E.1 server-side CRM snapshot при создании RR-order
-→ E.2 success/failed terminal hooks
-→ E.3 negative historical backfill шести заказов
-→ runtime positive CRM test
-→ runtime failed CRM test
-→ Stage F non-CB product smoke
-→ deactivate test offer/product
-→ компактный отчёт
+provider
+customer_phone
 
 ```
 
-## Статус после выполнения
+Для каждого администратора:
 
-При полном PASS:
+- создать `telegram_admin` delivery;
+- отправить primary bot;
+- отметить `sent` либо `failed`;
+- записать `provider_message_id`;
+- зеркалировать в `telegram_messages`.
+
+Для admin mirror использовать:
 
 ```text
-Sprint C2 Stage E: VERIFIED, PASS
-Sprint C2 Stage F: VERIFIED, PASS
-Sprint C2 overall: VERIFIED, PASS
+user_id = admin profile.user_id
+telegram_user_id = admin telegram_user_id
+meta.event = admin_product_purchased_dm
+meta.source_order_id = order_id
 
 ```
 
-Останавливаться по двум открытым вопросам не требуется:
+Текущий mirror покупателя записывается именно после успешной Telegram-доставки; этот паттерн можно переиспользовать.
 
-- failed statuses взять из уже существующей terminal-классификации RR;
-- реальные три оффера не настраивать автоматически, positive routing проверить на отдельном test-offer.
-- &nbsp;
-- План: Sprint C2 Stage E (Discovery + Wiring) и Stage F (universal button smoke)
+Нужен отдельный unique guard mirror:
 
-## 1. Discovery существующего универсального контура — результат
-
-Найдён один канонический CRM-pipeline модуль `supabase/functions/_shared/crm-routing.ts`. Он уже используется Stripe и bePaid:
-
-- `resolveOfferRoutingWithFallback(offer_id, tariff_id)` — читает `tariff_offers.meta.crm_routing`, валидирует `pipeline_id + stage_on_pending/success/failed`, возвращает positive/negative `CrmRoutingSnapshot`.
-- `buildNegativeSnapshot(...)` + `auditNegativeSnapshot(...)` — B.0 инвариант: snapshot всегда присутствует в `orders_v2.meta.crm_routing_snapshot`.
-- `applyCrmStageOnTerminal(order_id, 'success'|'failed', trigger)` — идемпотентный перевод стадии с manual-override guard; SOT — только `meta.crm_routing_snapshot`, без fallback на текущий offer.
-
-Точки интеграции у существующих провайдеров:
-
-- `stripe-webhook/index.ts`: `applyCrmStageOnTerminal(order_id, 'success')` — на `checkout.session.completed` и `payment_intent.succeeded`; `'failed'` — на `payment_intent.payment_failed`. Строки 432, 557, 615.
-- `bepaid-webhook/index.ts`: `applyCrmStageOnTerminal(...)` — на первичной оплате (success/failed), link-order paid/failed, rebill сохраняет `pipeline_stage_id` родительского заказа. Строки 2520, 4032, 4252, 4722, 5194.
-
-Контакт/сделка:
-
-- Внутренний CRM — универсально через `orders_v2.pipeline_id + pipeline_stage_id + meta.crm_routing_snapshot`. Отдельной сущности «deal» нет: SOT — сам `orders_v2`, привязанный к product/tariff/offer/user и содержащий сумму, комиссию, статус.
-- Внешний AmoCRM (bePaid, строки 390/453) — отдельный, необязательный, non-blocking слой; вне scope этой задачи.
-
-Комиссия — уже в `payments_v2.commission_minor + meta.commission` (D.2, verified). Универсально.
-
-## 2. Что уже переиспользуется в RR полностью
-
-- Universal button `startBankInstallment` + `public-rr-installment-initiate` — без hardcode продукта/UUID. Инициируется из UniversalPricingSection, TariffCard, ProductLanding, SitePageBySlug, LeadRequestDialog.
-- `rr_get_or_create_pending_order` — создаёт `orders_v2` через тот же путь, что Stripe/bePaid (offer_id → tariff_id → product_id, currency, amount).
-- `rr-webhook` промоушен → `payments_v2` (D.1 provider_payment_id=NULL, D.2 commission enrichment, D.3 idempotent, C runtime bridge → entitlement_sources).
-
-## 3. Реальный gap для универсальности (проверено данными)
-
-Все 6 RR-заказов (ORD-26-00296/297/298/300/303/304) имеют:
+```text
+(source_order_id, admin user_id, event='admin_product_purchased_dm')
 
 ```
-pipeline_id            = NULL
-pipeline_stage_id      = NULL
-meta.crm_routing_snapshot = отсутствует
+
+Все interpolated значения экранировать для Telegram HTML:
+
+- product/tariff;
+- email/phone;
+- order number;
+- provider.
+
+Admin sends не запускать как необработанный background `fire-and-forget`. Использовать awaited `Promise.allSettled` с обработкой каждого recipient. Ошибка одного администратора не блокирует покупателя и остальных администраторов.
+
+---
+
+## 8. Устранить дубли bePaid
+
+Нельзя одновременно:
+
+- оставить purchase-вызовы `telegram-notify-admins` в bePaid;
+- добавить canonical `telegram_admin` для bePaid.
+
+Администратор получит два сообщения, а старый вызов не участвует в новом idempotency guard.
+
+Допустимы два варианта:
+
+### Предпочтительный
+
+В этой же задаче удалить **только purchase-success вызовы** `telegram-notify-admins` из `bepaid-webhook`. Диагностические и системные вызовы оставить.
+
+### Временный
+
+Исключить `provider='bepaid'` из нового admin-канала до отдельной миграции.
+
+Публиковать одновременную двойную рассылку нельзя.
+
+---
+
+## 9. Финальный smoke
+
+Использовать только временно реактивированный Stage F test-offer на 50 BYN. Live offer не использовать.
+
+Проверять срок по canonical правилу:
+
+```text
+entitlement_source.expires_at
+= entitlement_source.starts_at + tariffs.access_days
+
 ```
 
-Все 3 активных `bank_installment` оффера имеют `meta.crm_routing = NULL`.
+Не от `paid_at`.
 
-Итог: RR полностью проходит мимо универсального CRM pipeline. `_shared/crm-routing.ts` ни разу не вызывается ни в `rr_get_or_create_pending_order`, ни в `rr-webhook`, ни в `public-rr-installment-initiate`.
+Для каждого admin recipient показать отдельную строку:
 
-Именно здесь Stripe/bePaid и RR расходятся по логике. Никаких других расхождений discovery не выявил.
+```text
+telegram_admin / recipient / sent|failed / provider_message_id
 
-## 4. Минимальный add-only patch (Stage E)
+```
 
-Строго повторить то, что уже делают Stripe/bePaid. Ничего RR-специфичного не создавать.
+Повтор webhook:
 
-E.1 — Snapshot при создании заказа (`rr_get_or_create_pending_order` RPC):
+- payments без роста;
+- entitlement sources без роста;
+- buyer deliveries без роста;
+- admin deliveries без роста;
+- Telegram mirrors без роста.
 
-- В момент INSERT в `orders_v2` (только на новом заказе — reuse-ветки не трогаем) вызвать эквивалент `resolveOfferRoutingWithFallback(offer_id, tariff_id)` и записать в:
-  - `orders_v2.pipeline_id` = snapshot.pipeline_id (positive) / NULL (negative);
-  - `orders_v2.pipeline_stage_id` = snapshot.stage_on_pending / NULL;
-  - `orders_v2.meta.crm_routing_snapshot` = positive или negative snapshot (B.0 инвариант — всегда есть).
-- Реализация — SQL-порт `resolveOfferRoutingWithFallback` внутри RPC (без обращения к edge-функции), либо тонкая обёртка в `public-rr-installment-initiate` перед вызовом RPC, если проще прокинуть уже готовый snapshot параметром.
-- Reuse-ветки (`initiation_status='pending'/'created'` в окне) — snapshot не переписываем, оставляем как есть (идемпотентность).
+После smoke test entities снова деактивировать. Один финальный order можно оставить как явно помеченный canonical proof; если требуется ноль тестовых строк, для него нужен второй отдельный dry-run и подтверждение удаления.
 
-E.2 — Terminal stage в `rr-webhook`:
+---
 
-- После успешной промоции (paid) — `applyCrmStageOnTerminal(supabase, order_id, 'success', 'rr.webhook.paid')`. Non-blocking try/catch, ровно как в Stripe/bePaid.
-- На финальных отказных статусах RR (rejected/canceled — уточнить точный список статусов провайдера) — `applyCrmStageOnTerminal(..., 'failed', 'rr.webhook.<status>')`.
-- Idempotency guard внутри `applyCrmStageOnTerminal` уже реализован (SOT snapshot, manual-override guard) — повторные webhook не двигают стадию.
+## Ответы на открытые вопросы
 
-E.3 — Backfill snapshot для 6 существующих RR-заказов:
+1. **Разово реактивировать тестовый offer.** Действующий live offer не использовать.
+2. **CRM-контакт оставить.** Удалять только если dry-run докажет, что он отдельно создан как test fixture, явно помечен и не имеет ни одной нетестовой связи. По email/phone applicant контакт не удалять.
 
-- Только если оффер получит `meta.crm_routing`. Если менеджер ещё не настроил routing на bank_installment офферах — записать negative snapshot с `reason='routing_disabled_or_missing'` (тот же путь, что и в новом заказе). Никаких stage-переводов на исторических заказах.
+## Уточнённый порядок
 
-Ничего нового не создаём: ни таблиц, ни функций, ни RPC, ни enum. Только вызов существующих `_shared/crm-routing.ts` из RR-пути.
+```text
+закрыть C2 в существующем plan.md
+→ dry-run cleanup
+→ явное подтверждение
+→ guarded cleanup
+→ harden notify-order-purchased auth
+→ migration channel/index/mirror idempotency
+→ telegram_admin patch
+→ устранить bePaid duplicate path
+→ deploy
+→ browser smoke
+→ повтор webhook
+→ deactivate test entities
+→ отчёт PATCH-ADMIN-PURCHASE-NOTIFY-V1
 
-## 5. Stage F — universal button smoke (параллельно)
 
-Discovery подтверждает отсутствие hardcode CB / конкретных UUID в UI-пути RR-кнопки. Проверяем это runtime-тестом:
+План: закрытие Sprint C2 + очистка тестовых данных + admin-уведомления при покупке
+```
 
-F.1 — Setup test-product (add-only, seed через insert-tool):
+### 1. Закрытие Sprint C2 (документация)
 
-- `products_v2`: тестовый продукт (не CB).
-- `tariffs`: 1 тариф с `access_days` (например, 30).
-- `tariff_prices`: BYN-цена.
-- `tariff_offers`: `offer_type='bank_installment'`, `is_active=true`.
+Обновить `.lovable/plan.md` (или создать `docs/audit/2026-07-12-sprint-c2-closed.md`) с итоговой формулировкой пользователя:
 
-F.2 — Runtime probe:
+- Sprint C2 Stage B/C/D/E/F: VERIFIED, PASS
+- Sprint C2 overall: VERIFIED, PASS — CLOSED
+- Оговорка о failed-сценарии: `canonical runtime proof PASS; provider-driven not_created в RR test-mode не воспроизведён; reconciler safe-no-op подтверждён`
+- Реальный REJECTED/CANCELLED/EXPIRED от РР — отдельное production observation, не блокирующее.
 
-- Открыть публичную страницу продукта → нажать RR-кнопку → пройти `public-rr-installment-initiate` → получить `orders_v2` (pending).
-- `rr-admin-deliver-test-webhook` → paid.
+Никаких кодовых изменений в рамках закрытия не требуется.
 
-F.3 — Verify (по чеклисту пользователя):
+### 2. Очистка тестовых данных
 
-- `orders_v2`: определён правильный product/tariff/offer; amount = цена оффера; currency BYN.
-- `payments_v2`: создан 1 платёж, provider_payment_id=NULL, `meta.rr.external_reference` = order_id (D.1/D.2).
-- `entitlements_v2`/`entitlement_sources`: создан источник, `expires_at = paid_at + access_days` (C runtime bridge).
-- CRM: если на тест-оффере включить `meta.crm_routing` — `orders_v2.pipeline_stage_id` перешёл в success через `applyCrmStageOnTerminal`. Если не включать — snapshot negative, `pipeline_id/stage_id=NULL`, но структурные поля продукта/тарифа/цены/срока корректны.
-- Повторный webhook — идемпотентен, дублей нет.
+Инвентаризация тестовых артефактов и удаление через один DELETE-миграционный пакет (в правильном порядке FK).
 
-F.4 — Teardown: soft-deactivate test-product (`is_active=false`) после проверки.
+Критерии тестовых записей (пересекающийся набор):
 
-## 6. Порядок выполнения
+- `orders_v2.meta->>'test_fixture' = 'true'` ИЛИ `meta ? 'test_fixture_run'`
+- `orders_v2` привязанные к деактивированному тестовому product/tariff/offer, созданному в Stage E runtime
+- Соответствующие `payments_v2` (по `order_id`)
+- `entitlement_sources` (по `order_id`)
+- `entitlements` — пересчёт агрегата (не удаляем строки, а вызываем rebuild-RPC или удаляем только те, где не остаётся источников)
+- `access_grant_ledger` (по `order_id`)
+- `provider_events` (по `related_order_id`)
+- `order_notification_deliveries` (по `order_id`)
+- `subscriptions_v2` (по `order_id`)
+- `crm_activity_log` / `crm_tasks` тестовые (по `order_id`)
+- `rr_test_ledger` — очистка полностью (это тестовая таблица по определению)
+- CRM сделки/контакты, созданные под тестового applicant (`profiles`/сделки, помеченные как test — уточняется через SELECT перед удалением)
 
-1. Discovery — сделан выше (этот план).
-2. E.1 add-only: snapshot в RPC / initiate.
-3. E.2 add-only: `applyCrmStageOnTerminal` в `rr-webhook` (success + failed hooks).
-4. E.3 backfill snapshot для 6 существующих RR-заказов (negative или positive в зависимости от того, включит ли менеджер `crm_routing` на офферах — по умолчанию negative).
-5. F.1–F.4 — параллельно с E, после E.1/E.2, но без изменений backend после setup.
-6. Компактный отчёт: order ID, payment ID, entitlement, snapshot, stage, повтор webhook — no dup.
+Порядок работы:
 
-## 7. DoD
+1. **Dry-run SELECT** — вывести все идентификаторы, которые будут затронуты (по каждой таблице count + примеры), пользователю на подтверждение перед DELETE.
+2. **Реальные записи не трогаем** — CB, живые заказы, боевые платежи остаются.
+3. **DELETE-миграция** — только после явного OK пользователя после dry-run.
+4. Продукт/тариф/offer оставляем деактивированными (не удаляем), т.к. это тестовые определения, но без активных ссылок.
 
-- `rr-webhook`, `public-rr-installment-initiate`, `rr_get_or_create_pending_order` не содержат новых RR-специфичных CRM-функций — только вызовы `_shared/crm-routing.ts`.
-- Новые RR-заказы имеют `meta.crm_routing_snapshot` (positive или negative) — B.0 инвариант.
-- Повторный webhook не двигает стадию (idempotency).
-- Manual stage change оператора не перезаписывается webhook'ом (уже гарантировано `applyCrmStageOnTerminal`).
-- Stage F: RR работает на не-CB продукте без изменений backend.
+### 3. Admin/Super-admin уведомление в canonical `notify-order-purchased`
 
-## Открытые вопросы (до Execute)
+Сейчас `notify-order-purchased` шлёт покупателю (email + Telegram DM) и не шлёт админам. bePaid-webhook рассылает админам прямыми `telegram-notify-admins` — нарушает канонику (см. `.lovable/backlog/admin-notify-on-purchase-canonical.md`). RR-заказы админ вообще не видит.
 
-1. Список финальных отказных статусов RR-провайдера для маппинга в `applyCrmStageOnTerminal('failed', ...)` — подтвердить по коду `rr-webhook`/`rr-notification`. Если единственная success-ветка и всё остальное остаётся `pending` до ручной отмены — можно ограничиться только `'success'` вызовом на первом шаге и добавить failed позже.
-2. Настроить ли `meta.crm_routing` на трёх активных bank_installment офферах в рамках этой задачи, или оставить менеджеру (тогда все RR-заказы будут иметь negative snapshot, что тоже валидно и соответствует B.0). По умолчанию — оставить менеджеру, negative snapshot допустим.
+Изменения в `supabase/functions/notify-order-purchased/index.ts`:
 
-Остановиться и уточнить только эти два пункта; в остальном — минимальный add-only patch без риска для Stripe/bePaid путей.
+- Добавить третий канал `telegram_admin` внутри той же функции.
+- Получатели: `user_roles_v2` роли `admin` + `super_admin`, у которых `profiles.telegram_user_id IS NOT NULL`.
+- Идемпотентность: `order_notification_deliveries` строка на пару `(order_id, channel='telegram_admin', recipient=<tg_id>)` — уникальность защищает от дублей при повторных webhook.
+- Шаблон DM админу: продукт, тариф, сумма, email/телефон покупателя, ссылка на заказ в админке, provider (bepaid/rr/stripe).
+- Mirror в `telegram_messages` (по паттерну существующего purchase DM).
+- Ошибка канала админов не блокирует email/DM покупателю.
+
+Ничего не меняем в `telegram-notify-admins` (остаётся для системных/диагностических событий).
+
+Прямые вызовы `telegram-notify-admins` из `bepaid-webhook` в контексте «пришла оплата» — в этот спринт не переносим (отдельная задача из backlog); просто добавляем admin-канал в canonical, и он начинает работать для всех потоков, которые уже вызывают `notify-order-purchased` через `grant-access-for-order` (bepaid, stripe, RR).
+
+### 4. Финальный live smoke run
+
+После пункта 3 (deploy notify-order-purchased):
+
+1. Реактивировать тестовый product/tariff/offer (или использовать существующий недорогой live offer — уточнить у пользователя).
+2. Через реальный browser-flow (universal кнопка на продуктовой странице) создать заявку RR.
+3. Дождаться authorized webhook → показать пользователю:
+  - строку в `orders_v2` (status=paid, pipeline_stage_id, meta.crm_routing_snapshot)
+  - строку в `payments_v2` (provider=rr, status=succeeded, amount, meta.rr, commission)
+  - `entitlement_sources` + агрегат `entitlements` (access_end = paid_at + tariff.access_days)
+  - CRM stage переход
+  - `order_notification_deliveries`: email=sent, telegram (user)=sent, **telegram_admin**=sent (по всем admin/super_admin)
+  - screenshot Telegram-уведомления администратору
+4. Повторный webhook — no-op.
+5. Деактивировать тестовые сущности.
+
+### 5. Порядок выполнения (для build-режима)
+
+1. Dry-run отчёт по тестовым данным → ждём OK.
+2. DELETE-миграция.
+3. Патч `notify-order-purchased` + deploy.
+4. Финальный smoke run.
+5. Закрывающий отчёт Sprint C2.
+
+### Технические детали
+
+- Роли: используем `user_roles_v2` + `has_role(auth.uid(), 'admin')`/`'super_admin'` через SECURITY DEFINER helper, JOIN с `profiles.telegram_user_id`.
+- Уникальный индекс на `order_notification_deliveries(order_id, channel, recipient)` — проверить, что уже существует; если нет — добавить в миграции.
+- Шаблон admin DM — inline в edge-function, без новой записи в `product_notification_templates` (можно оставить override на будущее).
+- Bot: primary Telegram bot (тот же, что и user DM в `notify-order-purchased`).
+- Ретраи: fire-and-forget, ошибки логируются в `order_notification_deliveries.status='failed'` + error.
+
+### Открытые вопросы
+
+1. Использовать существующий live offer для финального smoke (какой?), или разово реактивировать тестовый? Тестовый безопаснее (сумма 50 BYN, известный applicant).
+2. Удалить ли CRM-контакт тестового applicant полностью, или оставить (сделки удалить, контакт оставить)?
