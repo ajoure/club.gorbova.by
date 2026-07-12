@@ -500,15 +500,21 @@ Deno.serve(async (req) => {
       const priceStr = priceRaw > 0
         ? `${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
         : '—'
-      const buyerLine = recipientName
-        ? `${escapeHtml(recipientName)}${recipientEmail ? ' &lt;' + escapeHtml(recipientEmail) + '&gt;' : ''}`
-        : (recipientEmail ? escapeHtml(recipientEmail) : '—')
+      const buyerLine = recipientName ? escapeHtml(recipientName) : '—'
+      const emailLine = recipientEmail ? `📧 <b>Email:</b> ${escapeHtml(recipientEmail)}\n` : ''
+      const phoneRaw = (order as any).customer_phone || null
+      const phoneLine = phoneRaw ? `📱 <b>Телефон:</b> ${escapeHtml(phoneRaw)}\n` : ''
+      const providerRaw = (order as any).provider || null
+      const providerLine = providerRaw ? `💳 <b>Провайдер:</b> ${escapeHtml(providerRaw)}\n` : ''
       const adminText =
         `💰 <b>Новая оплата</b>\n\n` +
         `👤 <b>Клиент:</b> ${buyerLine}\n` +
+        emailLine +
+        phoneLine +
         `📦 <b>Продукт:</b> ${escapeHtml(productName)}\n` +
         (tariffName ? `🏷 <b>Тариф:</b> ${escapeHtml(tariffName)}\n` : '') +
-        `💳 <b>Сумма:</b> ${escapeHtml(priceStr)}\n` +
+        `💵 <b>Сумма:</b> ${escapeHtml(priceStr)}\n` +
+        providerLine +
         (order.order_number ? `🧾 <b>Заказ:</b> ${escapeHtml(order.order_number)}\n` : '') +
         (accessEndAt ? `🗓 <b>Доступ до:</b> ${escapeHtml(fmtRuDate(accessEndAt))}\n` : '') +
         `\n👉 <a href="https://gorbova.by/admin/orders/${escapeHtml(orderId)}">Открыть заказ</a>`
