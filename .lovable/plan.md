@@ -1,404 +1,195 @@
-## да, согласен, с учетом правок:
+# Sprint C2 — CLOSED
 
-## 1. Не включать admin-уведомления в Sprint C2
+## Итоговый статус
 
-Sprint C2 уже закрыт:
-
-```text
+```
+Sprint C2 Stage B: VERIFIED, PASS
+Sprint C2 Stage C: VERIFIED, PASS
+Sprint C2 Stage D: VERIFIED, PASS
+Sprint C2 Stage E: VERIFIED, PASS
+Sprint C2 Stage F: VERIFIED, PASS
 Sprint C2 overall: VERIFIED, PASS — CLOSED
-
 ```
 
-Admin-уведомления оформить отдельной задачей, например:
+## Что подтверждено runtime
 
-```text
-PATCH-ADMIN-PURCHASE-NOTIFY-V1
+- атомарное создание RR-заказа со snapshot и CRM-стадией (Stage E.1 v3, 15-arg RPC, service_role only);
+- positive и negative crm_routing_snapshot;
+- успешная оплата, `payments_v2` строка и независимый `entitlement_source` на каждый заказ;
+- повторные заявки с разными applicant-данными без перезаписи профиля владельца;
+- commission enrichment из `rr.getOrderStatus`;
+- CRM success stage и manual-override guard (`crm_stage_apply_skipped_manual_override`);
+- terminal failed через каноническую локальную финализацию (`rr_finalize_order_rejected`);
+- реальный browser-flow общей кнопки (public-rr-installment-initiate) на non-CB продукте;
+- email и Telegram доставки покупателю;
+- повторная обработка webhook без дублей платежей, sources, deliveries;
+- отсутствие hardcode продукта, тарифа, цены и срока доступа.
+
+## Оговорка формулировки
 
 ```
+Terminal failed: canonical runtime proof PASS.
+Provider-driven not_created response в RR test-mode не воспроизведён;
+reconciler safe-no-op подтверждён, локальная terminal-финализация,
+CRM failed stage и повторный no-op подтверждены.
+```
 
-Обновить существующий `.lovable/plan.md`. Новый `docs/audit/*.md` не создавать.
+Реальный REJECTED/CANCELLED/EXPIRED от РР — неблокирующее production observation, вне рамок Sprint C2.
+
+## Ключевые артефакты
+
+- Миграция `rr_get_or_create_pending_order` (15 arg, атомарный INSERT snapshot+pipeline).
+- `supabase/functions/public-rr-installment-initiate` — snapshot вычисляется до INSERT, post-insert CAS удалён.
+- `supabase/functions/rr-webhook` и `rr-reconcile-order` — canonical `applyCrmStageOnTerminal` через `resolveOfferRoutingWithFallback`.
 
 ---
 
-## 2. Очистка: сначала только dry-run
+# Follow-ups (не запускать без отдельного approval)
 
-Текущие критерии слишком широкие. Не использовать самостоятельный `OR` по `test_fixture`, названию продукта или периоду.
+## FU-1. Cleanup тестовых данных Sprint C2 — блокирован, требуется revised решение
 
-Сначала сформировать **точный UUID allowlist**:
+### Блокеры первого dry-run
 
-- dedicated Stage E/F test product;
-- его tariff и offer;
-- конкретные test-order IDs;
-- связанные payment/source/event/delivery IDs.
+1. **Test product/tariff/offer нельзя удалять** — ранее зафиксировано «оставить деактивированными». Кроме того, вариант B после cleanup предполагал реактивацию того же offer для smoke, что после DELETE невозможно.
+2. **`subscriptions_v2` count = 1 — stop-condition** для one-off `bank_installment`. Ожидалось 0. Требуется diagnose до любого удаления. Полная строка + причина появления зафиксированы в FU-2.
+3. **Нельзя удалить `products_v2`, оставив исторический `entitlements`-агрегат** — агрегат ссылается на product_id. Definitions должны остаться.
+4. **FK-зависимости `orders_v2`** проверены (см. ниже) — блокирующих NO ACTION без 0 нет; SET NULL на `access_grant_ledger.order_id` и `access_grant_ledger.source_order_id` допустим (audit history сохраняется).
 
-Отдельно показать:
+### FK на orders_v2 (проверено)
 
+| Referencing table | Column | Delete rule | Rows на target orders |
+|---|---|---|---|
+| access_grant_ledger | order_id, source_order_id | SET NULL | 4 (audit, сохранить) |
+| crm_tasks | order_id, deal_id | SET NULL | 0 |
+| entitlements | order_id | SET NULL | 1 (агрегат, пересчёт) |
+| generated_documents | order_id | CASCADE | 0 |
+| installment_payments | order_id | CASCADE | 0 |
+| order_notification_deliveries | order_id | CASCADE | 8 |
+| payment_reconcile_queue | matched_order_id / processed_order_id | SET NULL / NO ACTION | 0 / 0 |
+| payments_v2 | order_id | CASCADE | 5 |
+| provider_subscriptions | order_id | SET NULL | 0 |
+| site_form_submissions | order_id | NO ACTION | 0 |
+| statement_lines | order_id | NO ACTION | 0 |
+| **subscriptions_v2** | **order_id** | **NO ACTION** | **1 — блокер до diagnose** |
 
-| Таблица                         | Count  | Примеры ID | Сумма  |
-| ------------------------------- | ------ | ---------- | ------ |
-| `orders_v2`                     | &nbsp; | &nbsp;     | &nbsp; |
-| `payments_v2`                   | &nbsp; | &nbsp;     | amount |
-| `entitlement_sources`           | &nbsp; | &nbsp;     | &nbsp; |
-| `provider_events`               | &nbsp; | &nbsp;     | &nbsp; |
-| `order_notification_deliveries` | &nbsp; | &nbsp;     | &nbsp; |
-| `telegram_messages`             | &nbsp; | &nbsp;     | &nbsp; |
-| CRM-записи                      | &nbsp; | &nbsp;     | &nbsp; |
+Ни одна NO ACTION-таблица не удерживает удаление, кроме `subscriptions_v2` (1 строка). Пока FU-2 не закрыт, `orders_v2` удалять нельзя.
 
+### Revised allowlist для будущего cleanup
 
-В dry-run обязательно доказать, что ни один target-order:
-
-- не относится к трём действующим CB-офферам;
-- не имеет реального provider transaction ID;
-- не связан с нетестовым продуктом;
-- не входит в ORD-26-00296/297/298 и другие реальные CB-заказы.
-
-### Не удалять автоматически
-
-- `access_grant_ledger` — это immutable audit log;
-- `audit_logs`;
-- реальные CB orders/payments;
-- профили по совпадению email или телефона.
-
-`telegram_messages` сейчас пропущена в cleanup-списке — добавить выборку по `meta.source_order_id`.
-
-### Stop-condition
-
-Для one-off RR test-product ожидается:
-
-```text
-subscriptions_v2 count = 0
-profiles created by flow = 0
+**Удалять (после FU-2):**
 
 ```
+payments_v2                   (по order_id, CASCADE)
+entitlement_sources           (по order_id)
+provider_events               (по related_order_id)
+order_notification_deliveries (по order_id, CASCADE)
+telegram_messages             (по meta.source_order_id / meta.order_id)
+subscriptions_v2              — ТОЛЬКО подтверждённая тестовая, только после diagnose
+orders_v2                     (последним)
+```
 
-Если найдены subscription или новый profile/contact, не удалять их автоматически — остановиться и диагностировать причину.
+Затем `recalculate_entitlement_aggregate(user_id, product_id, tariff_id)` для восстановления агрегата entitlement.
 
-`rr_test_ledger` не очищать целиком. Удалять только строки, однозначно связанные с утверждённым набором тестовых заявок. Полная очистка может удалить доказательства других тестов.
+**Не удалять:**
 
-После dry-run требуется отдельное явное подтверждение DELETE.
+```
+products_v2         (тестовый оставить inactive)
+tariffs             (тестовый оставить inactive)
+tariff_offers       (тестовый оставить inactive)
+access_grant_ledger (immutable audit; FK SET NULL сохранит строки без ссылки)
+audit_logs
+profiles            (новых applicant-профилей не создавалось; проверено)
+rr_test_ledger      (external_id ∉ target orders → 0 совпадений; не трогаем)
+```
+
+### Ожидаемое состояние после cleanup
+
+```
+count(orders_v2 WHERE product_id=test)                = 0
+count(payments_v2 WHERE order_id IN target)           = 0
+count(entitlement_sources WHERE order_id IN target)   = 0
+count(subscriptions_v2 WHERE product_id=test)         = 0  (после FU-2)
+count(entitlements WHERE product_id=test)             = 1 (aggregate; recalculated → status='inactive'/expires, детали в FU-3)
+access_grant_ledger                                    без изменений; order_id → NULL
+products_v2/tariffs/tariff_offers                      без изменений, is_active=false
+```
+
+## FU-2. Diagnose: subscription на one-off RR-заказе
+
+### Найденная запись
+
+```
+id                    7c3ecca3-9c55-46cc-b51a-d6816cc843d7
+user_id               05cd3754-d589-4d90-97d1-89ba2bee610b
+order_id              dcef6436-6915-44b5-aba5-55e0e1d9aefc  (первый успешный RR-заказ)
+product_id            00000000-c2f0-4e57-0000-100000000001
+tariff_id             00000000-c2f0-4e57-0000-200000000001
+status                active
+billing_type          mit
+auto_renew            false
+access_start_at       2026-07-12 11:53:20.943+00
+access_end_at         2026-11-09 11:53:20.943+00   (продлена на 4 заказа × 30 дней)
+next_charge_at        2026-11-09 11:53:20.943+00
+payment_method_id     a475823e-a2bf-4d21-bc50-d6fefa315ca4
+meta.recurring_amount 50
+meta.recurring_currency BYN
+meta.recurring_snapshot null
+meta.extended_by_orders [75853a0c…, 5d3bd651…, 6c610097…]
+meta.granted_by       "grant-access-for-order"
+```
+
+### Recurring snapshot offer
+
+Оффер `00000000-c2f0-4e57-0000-300000000001`:
+
+```
+is_installment=true, installment_count=null, requires_card_tokenization=false,
+payment_method='installment'
+meta.recurring          НЕТ (undefined)
+meta.bank_installment   { rr_mode:'payment_url', rr_runtime:{...}, installment_provider:'rr' }
+```
+
+Resolver `resolveRecurring` корректно вернул `is_recurring=false, snapshot=null` (декoreнт «one_time» / «not_resolved»).
+
+### Причина появления подписки
+
+В `supabase/functions/grant-access-for-order/index.ts` подписка создаётся **всегда**, кроме двух исключений:
+
+- `isNoCardTrial` — 0 BYN demo-trial без карты;
+- `products.entitlement_mode = 'order_based_only'`.
+
+Для RR one-off (offer.is_installment=true, meta.recurring отсутствует) ни одно исключение не срабатывает → subscription создаётся с `billing_type='mit'`, `auto_renew=false`, `recurring_snapshot=null`. По коду это **штатный path**, не RR-специфичный defect: любая одноразовая покупка через canonical grant-access-for-order оставляет такую subscription-запись.
+
+### Классификация
+
+- **Не блокер Sprint C2** (relates to canonical grant-access, pre-existing behavior).
+- **Открытый вопрос архитектуры:** должен ли RR one-off (без recurring snapshot и без `is_installment` подписочной семантики) вообще создавать `subscriptions_v2`? Возможные варианты:
+  - расширить exception: `resolvedRecurring.is_recurring === false && !offer.meta?.recurring` → skip subscription (`reason: 'one_time_purchase'`); entitlement + `access_grant_ledger` уже несут срок доступа;
+  - либо создавать subscription только для явных recurring/installment-планов (`payment_method='installment' && installment_count>=1` — не наш случай, count=null).
+- Требует отдельного patch-плана (`PATCH-ONE-OFF-NO-SUBSCRIPTION-V1`?) с обзором всех one-off потоков (bepaid card, stripe, RR), inventory последствий (dashboard-подписки, dunning, rebill), и миграционного backfill для существующих исторических «фиктивных» подписок.
+
+### Что делать сейчас
+
+- Cleanup Sprint C2 test-orders приостановлен до отдельного решения по одному из двух путей:
+  1. **A.** Признать subscription штатной для one-off и удалять её точечно в guarded cleanup (только эту одну, по её id, без изменения общей логики).
+  2. **B.** Сначала пропатчить `grant-access-for-order` (skip subscription for `resolved_recurring=false && !offer.meta?.recurring`), затем повторить runtime Sprint C2 и cleanup.
+- Никаких изменений `subscriptions_v2` до явного approval.
+
+## FU-3. Admin/super_admin уведомление в canonical `notify-order-purchased`
+
+Не запускается до FU-1/FU-2. Отдельная задача `PATCH-ADMIN-PURCHASE-NOTIFY-V1` с:
+
+- discovery ролей: канонические коды **`admin`** и **`super_admin`** (через underscore), 4 уникальных Telegram recipient (список зафиксирован в discovery-запросе);
+- security hardening: `verify_jwt=true` + service-role-only guard;
+- миграция уникальности `(order_id, channel, notification_type, recipient) WHERE channel='telegram_admin'`;
+- awaited `Promise.allSettled` на recipients + HTML escape;
+- удаление purchase-success вызовов `telegram-notify-admins` из `bepaid-webhook` (диагностические оставляем);
+- отдельный browser smoke.
 
 ---
 
-## 3. DELETE выполнять транзакционно и с assertions
-
-Не просто набор последовательных DELETE, а один guarded transaction:
-
-```text
-BEGIN
-→ materialize exact target UUIDs
-→ assert expected order count
-→ assert exact product/offer IDs
-→ delete dependants
-→ recalculate affected entitlements
-→ delete target orders
-→ assert target rows = 0
-→ COMMIT
-
-```
-
-Для shared real product агрегат `entitlements` не удалять. После удаления или revoke test-source вызвать `recalculate_entitlement_aggregate`.
-
-Тестовые определения product/tariff/offer оставить деактивированными.
-
----
-
-## 4. Перед `telegram_admin` требуется закрыть security blocker
-
-Сейчас `notify-order-purchased` настроена как `verify_jwt=false`, а внутри функции отсутствует проверка вызывающей стороны.
-
-После добавления admin-канала публичный вызывающий смог бы:
-
-- повторно запускать уведомления;
-- использовать `force=true`;
-- рассылать сообщения администраторам по известному order ID.
-
-До реализации канала:
-
-1. Установить `verify_jwt=true`.
-2. Разрешить вызов только с service-role JWT либо отдельным internal secret.
-3. Убедиться, что `grant-access-for-order` передаёт service-role Authorization.
-4. Пользовательский authenticated JWT не должен иметь право вызвать функцию.
-
-Операционные ошибки каналов остаются non-fatal, но неавторизованный вызов должен получать `401/403`.
-
----
-
-## 5. Идемпотентность нужно реализовать отдельно для admin recipients
-
-Сейчас canonical guard рассчитан на одну доставку каждого канала:
-
-```text
-(order_id, channel, notification_type)
-
-```
-
-И lookup delivery также не учитывает recipient.
-
-Простое добавление `telegram_admin` позволит сохранить только одного администратора.
-
-Нужна миграция с сохранением текущей семантики:
-
-```text
-buyer channels:
-UNIQUE (order_id, channel, notification_type)
-WHERE channel IN ('email', 'telegram')
-
-admin channel:
-UNIQUE (order_id, channel, notification_type, recipient)
-WHERE channel = 'telegram_admin'
-
-```
-
-Также проверить и при необходимости расширить CHECK/enum для `channel`.
-
-`upsertDelivery` должен:
-
-- для email/telegram работать как сейчас;
-- для `telegram_admin` искать строку с обязательным `recipient`;
-- создавать отдельную delivery на каждого Telegram recipient.
-
----
-
-## 6. Роли не хардкодить как `super_admin`
-
-Сначала прочитать фактический role source. В действующем коде используется значение:
-
-```text
-admin
-superadmin
-
-```
-
-а не `super_admin`.
-
-Получателей выбирать из canonical role table/helper:
-
-- только действующие `admin` и `superadmin`;
-- profile имеет `telegram_user_id`;
-- `DISTINCT` по Telegram ID;
-- пользователь с двумя ролями получает одно сообщение.
-
-До discovery не фиксировать `user_roles_v2` как гарантированное имя таблицы.
-
----
-
-## 7. Патч `notify-order-purchased`
-
-Расширить order SELECT полями, которых сейчас не хватает для admin message:
-
-```text
-provider
-customer_phone
-
-```
-
-Для каждого администратора:
-
-- создать `telegram_admin` delivery;
-- отправить primary bot;
-- отметить `sent` либо `failed`;
-- записать `provider_message_id`;
-- зеркалировать в `telegram_messages`.
-
-Для admin mirror использовать:
-
-```text
-user_id = admin profile.user_id
-telegram_user_id = admin telegram_user_id
-meta.event = admin_product_purchased_dm
-meta.source_order_id = order_id
-
-```
-
-Текущий mirror покупателя записывается именно после успешной Telegram-доставки; этот паттерн можно переиспользовать.
-
-Нужен отдельный unique guard mirror:
-
-```text
-(source_order_id, admin user_id, event='admin_product_purchased_dm')
-
-```
-
-Все interpolated значения экранировать для Telegram HTML:
-
-- product/tariff;
-- email/phone;
-- order number;
-- provider.
-
-Admin sends не запускать как необработанный background `fire-and-forget`. Использовать awaited `Promise.allSettled` с обработкой каждого recipient. Ошибка одного администратора не блокирует покупателя и остальных администраторов.
-
----
-
-## 8. Устранить дубли bePaid
-
-Нельзя одновременно:
-
-- оставить purchase-вызовы `telegram-notify-admins` в bePaid;
-- добавить canonical `telegram_admin` для bePaid.
-
-Администратор получит два сообщения, а старый вызов не участвует в новом idempotency guard.
-
-Допустимы два варианта:
-
-### Предпочтительный
-
-В этой же задаче удалить **только purchase-success вызовы** `telegram-notify-admins` из `bepaid-webhook`. Диагностические и системные вызовы оставить.
-
-### Временный
-
-Исключить `provider='bepaid'` из нового admin-канала до отдельной миграции.
-
-Публиковать одновременную двойную рассылку нельзя.
-
----
-
-## 9. Финальный smoke
-
-Использовать только временно реактивированный Stage F test-offer на 50 BYN. Live offer не использовать.
-
-Проверять срок по canonical правилу:
-
-```text
-entitlement_source.expires_at
-= entitlement_source.starts_at + tariffs.access_days
-
-```
-
-Не от `paid_at`.
-
-Для каждого admin recipient показать отдельную строку:
-
-```text
-telegram_admin / recipient / sent|failed / provider_message_id
-
-```
-
-Повтор webhook:
-
-- payments без роста;
-- entitlement sources без роста;
-- buyer deliveries без роста;
-- admin deliveries без роста;
-- Telegram mirrors без роста.
-
-После smoke test entities снова деактивировать. Один финальный order можно оставить как явно помеченный canonical proof; если требуется ноль тестовых строк, для него нужен второй отдельный dry-run и подтверждение удаления.
-
----
-
-## Ответы на открытые вопросы
-
-1. **Разово реактивировать тестовый offer.** Действующий live offer не использовать.
-2. **CRM-контакт оставить.** Удалять только если dry-run докажет, что он отдельно создан как test fixture, явно помечен и не имеет ни одной нетестовой связи. По email/phone applicant контакт не удалять.
-
-## Уточнённый порядок
-
-```text
-закрыть C2 в существующем plan.md
-→ dry-run cleanup
-→ явное подтверждение
-→ guarded cleanup
-→ harden notify-order-purchased auth
-→ migration channel/index/mirror idempotency
-→ telegram_admin patch
-→ устранить bePaid duplicate path
-→ deploy
-→ browser smoke
-→ повтор webhook
-→ deactivate test entities
-→ отчёт PATCH-ADMIN-PURCHASE-NOTIFY-V1
-
-
-План: закрытие Sprint C2 + очистка тестовых данных + admin-уведомления при покупке
-```
-
-### 1. Закрытие Sprint C2 (документация)
-
-Обновить `.lovable/plan.md` (или создать `docs/audit/2026-07-12-sprint-c2-closed.md`) с итоговой формулировкой пользователя:
-
-- Sprint C2 Stage B/C/D/E/F: VERIFIED, PASS
-- Sprint C2 overall: VERIFIED, PASS — CLOSED
-- Оговорка о failed-сценарии: `canonical runtime proof PASS; provider-driven not_created в RR test-mode не воспроизведён; reconciler safe-no-op подтверждён`
-- Реальный REJECTED/CANCELLED/EXPIRED от РР — отдельное production observation, не блокирующее.
-
-Никаких кодовых изменений в рамках закрытия не требуется.
-
-### 2. Очистка тестовых данных
-
-Инвентаризация тестовых артефактов и удаление через один DELETE-миграционный пакет (в правильном порядке FK).
-
-Критерии тестовых записей (пересекающийся набор):
-
-- `orders_v2.meta->>'test_fixture' = 'true'` ИЛИ `meta ? 'test_fixture_run'`
-- `orders_v2` привязанные к деактивированному тестовому product/tariff/offer, созданному в Stage E runtime
-- Соответствующие `payments_v2` (по `order_id`)
-- `entitlement_sources` (по `order_id`)
-- `entitlements` — пересчёт агрегата (не удаляем строки, а вызываем rebuild-RPC или удаляем только те, где не остаётся источников)
-- `access_grant_ledger` (по `order_id`)
-- `provider_events` (по `related_order_id`)
-- `order_notification_deliveries` (по `order_id`)
-- `subscriptions_v2` (по `order_id`)
-- `crm_activity_log` / `crm_tasks` тестовые (по `order_id`)
-- `rr_test_ledger` — очистка полностью (это тестовая таблица по определению)
-- CRM сделки/контакты, созданные под тестового applicant (`profiles`/сделки, помеченные как test — уточняется через SELECT перед удалением)
-
-Порядок работы:
-
-1. **Dry-run SELECT** — вывести все идентификаторы, которые будут затронуты (по каждой таблице count + примеры), пользователю на подтверждение перед DELETE.
-2. **Реальные записи не трогаем** — CB, живые заказы, боевые платежи остаются.
-3. **DELETE-миграция** — только после явного OK пользователя после dry-run.
-4. Продукт/тариф/offer оставляем деактивированными (не удаляем), т.к. это тестовые определения, но без активных ссылок.
-
-### 3. Admin/Super-admin уведомление в canonical `notify-order-purchased`
-
-Сейчас `notify-order-purchased` шлёт покупателю (email + Telegram DM) и не шлёт админам. bePaid-webhook рассылает админам прямыми `telegram-notify-admins` — нарушает канонику (см. `.lovable/backlog/admin-notify-on-purchase-canonical.md`). RR-заказы админ вообще не видит.
-
-Изменения в `supabase/functions/notify-order-purchased/index.ts`:
-
-- Добавить третий канал `telegram_admin` внутри той же функции.
-- Получатели: `user_roles_v2` роли `admin` + `super_admin`, у которых `profiles.telegram_user_id IS NOT NULL`.
-- Идемпотентность: `order_notification_deliveries` строка на пару `(order_id, channel='telegram_admin', recipient=<tg_id>)` — уникальность защищает от дублей при повторных webhook.
-- Шаблон DM админу: продукт, тариф, сумма, email/телефон покупателя, ссылка на заказ в админке, provider (bepaid/rr/stripe).
-- Mirror в `telegram_messages` (по паттерну существующего purchase DM).
-- Ошибка канала админов не блокирует email/DM покупателю.
-
-Ничего не меняем в `telegram-notify-admins` (остаётся для системных/диагностических событий).
-
-Прямые вызовы `telegram-notify-admins` из `bepaid-webhook` в контексте «пришла оплата» — в этот спринт не переносим (отдельная задача из backlog); просто добавляем admin-канал в canonical, и он начинает работать для всех потоков, которые уже вызывают `notify-order-purchased` через `grant-access-for-order` (bepaid, stripe, RR).
-
-### 4. Финальный live smoke run
-
-После пункта 3 (deploy notify-order-purchased):
-
-1. Реактивировать тестовый product/tariff/offer (или использовать существующий недорогой live offer — уточнить у пользователя).
-2. Через реальный browser-flow (universal кнопка на продуктовой странице) создать заявку RR.
-3. Дождаться authorized webhook → показать пользователю:
-  - строку в `orders_v2` (status=paid, pipeline_stage_id, meta.crm_routing_snapshot)
-  - строку в `payments_v2` (provider=rr, status=succeeded, amount, meta.rr, commission)
-  - `entitlement_sources` + агрегат `entitlements` (access_end = paid_at + tariff.access_days)
-  - CRM stage переход
-  - `order_notification_deliveries`: email=sent, telegram (user)=sent, **telegram_admin**=sent (по всем admin/super_admin)
-  - screenshot Telegram-уведомления администратору
-4. Повторный webhook — no-op.
-5. Деактивировать тестовые сущности.
-
-### 5. Порядок выполнения (для build-режима)
-
-1. Dry-run отчёт по тестовым данным → ждём OK.
-2. DELETE-миграция.
-3. Патч `notify-order-purchased` + deploy.
-4. Финальный smoke run.
-5. Закрывающий отчёт Sprint C2.
-
-### Технические детали
-
-- Роли: используем `user_roles_v2` + `has_role(auth.uid(), 'admin')`/`'super_admin'` через SECURITY DEFINER helper, JOIN с `profiles.telegram_user_id`.
-- Уникальный индекс на `order_notification_deliveries(order_id, channel, recipient)` — проверить, что уже существует; если нет — добавить в миграции.
-- Шаблон admin DM — inline в edge-function, без новой записи в `product_notification_templates` (можно оставить override на будущее).
-- Bot: primary Telegram bot (тот же, что и user DM в `notify-order-purchased`).
-- Ретраи: fire-and-forget, ошибки логируются в `order_notification_deliveries.status='failed'` + error.
-
-### Открытые вопросы
-
-1. Использовать существующий live offer для финального smoke (какой?), или разово реактивировать тестовый? Тестовый безопаснее (сумма 50 BYN, известный applicant).
-2. Удалить ли CRM-контакт тестового applicant полностью, или оставить (сделки удалить, контакт оставить)?
+# Правила ведения плана
+
+- Каждое инженерное сообщение — «План:» или «Отчёт о выполнении:».
+- Diagnose → Plan → Dry run → Execute → Verify. Sprint C2 закрыт по этой цепочке.
+- Cleanup, admin-notify и one-off subscription patch — три независимых follow-up, каждый требует отдельного явного approval.
