@@ -367,27 +367,17 @@ Deno.serve(async (req) => {
     // already fulfilled order must not become a no-op. It updates only the primary
     // access window for the order's user/product and writes a server-side audit.
     if (adminManualAccessEdit === true) {
-      const authHeader = req.headers.get("Authorization") || "";
-      const token = authHeader.replace("Bearer ", "");
-      const { data: authData, error: authError } = await supabase.auth.getUser(token);
-      const actor = authData?.user || null;
-      if (authError || !actor) {
+      // SEC-A: caller identity already resolved and branch policy enforced
+      // (service_role OR admin). For the "admin edit" audit we need a real
+      // actor_user_id + email; service_role has none, so we require an admin
+      // JWT here explicitly.
+      if (caller.type !== "admin" || !caller.actor) {
         return new Response(
-          JSON.stringify({ success: false, error: "admin_manual_access_edit_unauthorized" }),
-          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
-      ]);
-      if (!isAdmin && !isSuperAdmin) {
-        return new Response(
-          JSON.stringify({ success: false, error: "admin_manual_access_edit_forbidden" }),
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_requires_admin_jwt" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      const actor = caller.actor;
       if (!customAccessEndAt) {
         return new Response(
           JSON.stringify({ success: false, error: "customAccessEndAt is required for admin manual access edit" }),
