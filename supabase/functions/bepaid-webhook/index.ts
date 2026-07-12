@@ -4225,41 +4225,9 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
       }
 
-      // 8. Admin notification - lookup product/tariff names
-      let linkV2ProductName: string | undefined;
-      let linkV2TariffName: string | undefined;
-      if (linkOrderV2.product_id) {
-        const { data: lp2 } = await supabase.from('products_v2').select('name').eq('id', linkOrderV2.product_id).maybeSingle();
-        linkV2ProductName = lp2?.name || undefined;
-      }
-      if (linkOrderV2.tariff_id) {
-        const { data: lt2 } = await supabase.from('tariffs').select('name').eq('id', linkOrderV2.tariff_id).maybeSingle();
-        linkV2TariffName = lt2?.name || undefined;
-      }
-      try {
-        await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-            body: JSON.stringify({
-              message: buildAdminNotifyMessage({
-                operation_type: 'link_payment',
-                client_name: linkProfile.full_name,
-                email: linkProfile.email || linkOrderV2.customer_email,
-                product_name: linkV2ProductName,
-                tariff_name: linkV2TariffName,
-                amount: linkPaymentAmount,
-                currency: 'BYN',
-                source_label: 'Оплата по ссылке bePaid',
-              }),
-              source: 'bepaid_link_webhook', order_id: linkOrderV2.id,
-            }),
-          }
-        );
-      } catch (notifyErr) {
-        console.error('[WEBHOOK-LINK] Notification error (non-fatal):', notifyErr);
-      }
+      // 8. Admin purchase notification — moved to canonical `notify-order-purchased`
+      // (invoked by grant-access-for-order). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
+
 
       // 9. Update payment_reconcile_queue → materialized
       try {
