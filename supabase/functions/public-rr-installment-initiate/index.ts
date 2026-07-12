@@ -408,6 +408,9 @@ Deno.serve(async (req: Request) => {
     },
   };
 
+  // Sprint C2 / Stage E.1 v3 — pass CRM snapshot + pipeline columns to RPC so they
+  // are persisted ATOMICALLY within the same INSERT transaction as the order itself.
+  // On was_reused=true the RPC ignores these params (existing snapshot untouched).
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
     "rr_get_or_create_pending_order",
     {
@@ -417,6 +420,9 @@ Deno.serve(async (req: Request) => {
       _amount: amountNumeric, _currency: currency,
       _customer_email: email, _customer_phone: phoneRaw,
       _customer_ip: ip, _meta: initialMeta,
+      _crm_routing_snapshot: crmSnapshot,
+      _pipeline_id: crmRoutingOk ? crmSnapshot.pipeline_id : null,
+      _pipeline_stage_id: crmRoutingOk ? crmSnapshot.stage_on_pending : null,
     },
   );
 
