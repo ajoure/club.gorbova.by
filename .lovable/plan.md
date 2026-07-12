@@ -4213,3 +4213,219 @@ Runtime proof (два сценария на техническом профил�
 - C2 execute: BLOCKED
 
 Append-only только в `.lovable/plan.md`. Кода/миграций/DML — нет.
+
+## C28.7 — Factual correction (A2-0 SQL scope)
+
+Ранее в C28.1 было сказано, что миграция A2-0 проверяла соответствие `matched_profile_id` и `matched_order_id`. Это неточно.
+
+**Фактический A2-0 SQL получал из `payment_reconcile_queue` только:**
+- `bepaid_uid`
+- `amount`
+- `currency`
+- `paid_at`
+
+**A2-0 SQL НЕ проверял:**
+- `payments_v2.order_id ↔ queue.matched_order_id`
+- `payments_v2.profile_id ↔ queue.matched_profile_id`
+
+Обе связи (order/profile) были подтверждены **отдельным read-only A1R2 v2 анализом** (для четырёх safe-backfill IDs), а не самой миграцией. Миграция сверяла только сумму, валюту и `paid_at` (точное равенство), плюс идентификаторы (bepaid_uid, provider='bepaid', origin='bepaid', отсутствие provider_payment_id, is_deleted=false).
+
+**Статус A2-0:** остаётся `VERIFIED, PASS`. Откат не требуется. Correction — append-only doc-only.
+
+---
+
+## C28R — New canonical transition baseline (C2-v4 predicate)
+
+**Withdrawn:** OLD baseline 649 (C26.B) — non-reproducible, различающиеся predicates между запросами.
+
+**Canonical predicate v1 (`C2-v4-canonical-succeeded-net<=0`):**
+
+```
+canonical_payment := payments_v2 WHERE COALESCE(is_deleted,false)=false
+                                   AND provider IN ('bepaid','stripe','rr','bank')
+                                   AND status='succeeded'
+net_paid(order)   := SUM(amount - COALESCE(refunded_amount,0)) OVER canonical_payment
+raw_mismatch      := orders_v2.status='paid' AND final_price>0
+                     AND net_paid <= 0 AND n_canonical = 0   -- proposed='pending'
+```
+
+Snapshot: **2026-07-12 20:11:54+00**.
+
+### C28R.1 — raw paid → pending
+
+Общий count: **730** orders (не 649, не 1016 — фактическое значение единого predicate).
+
+Взаимоисключающая карта (7-category CASE, `COUNT = COUNT DISTINCT = SUM`):
+
+| # | category | count |
+|---|----------|-------|
+| 1 | no_canonical_payments_zero_stored_paid_amount     | 421 |
+| 2 | no_canonical_payments_positive_stored_paid_amount | 221 |
+| 3 | admin_only_financial_history                      | 88  |
+| 4 | canonical_payment_not_counted                     | 0   |
+| 5 | canonical_payment_zero_net                        | 0   |
+| 6 | noncanonical_payment_history_other                | 0   |
+| 7 | other_ambiguous                                   | 0   |
+| **Σ** | | **730** |
+
+**Checksum (SHA-256 of ordered `order_id` list):**
+```
+ab7e83bd0cf4462c9702bed46d9d54ebfe2c79c5f225684da5667c44465c258f
+```
+
+Predicate version: `C2-v4-canonical-succeeded-net<=0`. Snapshot: `2026-07-12 20:11:54.002772+00`.
+
+### C28R.2 — actionable transition
+
+Все 730 попадают в guard/no-op категории (нет canonical succeeded истории — заказ считается legacy_paid_without_canonical_history или admin_only_financial_history). Actionable transitions `paid → pending` = **0**.
+
+### C28R.3 — refunded → *
+
+Всего refunded-заказов с `final_price>0`: **43**.
+
+| current | proposed | count | lineage |
+|---------|----------|-------|---------|
+| refunded | paid           | 33 | other_ambiguous (нет canonical refund signal) |
+| refunded | partial_refund | 7  | parent_only_signal (6) + refund_rows_only_signal вариаций |
+| refunded | refunded       | 2  | согласуется |
+| refunded | pending        | 1  | legacy_no_refund_signal |
+
+Refunded → paid lineage:
+- `other_ambiguous`: 33
+- `parent_only_signal`: 9 (входят в partial_refund/refunded)
+- `legacy_no_refund_signal`: 1
+
+Automatic `refunded → paid` transitions: **BLOCKED**. Требует ручной ревизии lineage для каждой из 33 записей (нет canonical refund-строки; исторически рефанд мог быть выполнен вне payments_v2 или через удалённые записи).
+
+### C28R.4 — paid → refunded
+
+`orders_v2.status='paid'` с `proposed='refunded'`: **0** записей в текущем snapshot (никакой canonical `refunded_amount > 0` не встречается на 'paid' заказах). Category остаётся зарезервированной для будущих snapshots.
+
+### C28R.5 — Отмена старых чисел
+
+```
+C26.B count 649:  WITHDRAWN (non-reproducible)
+C26.B count 42:   WITHDRAWN
+C28.4 count 1016: SUPERSEDED (interim, different predicate)
+NEW baseline:     730 raw / 0 actionable (paid→pending)
+                  33 raw / 0 actionable (refunded→paid)
+Predicate:        C2-v4-canonical-succeeded-net<=0
+```
+
+---
+
+## C29 — C2 v4 full dry-run (SQL draft, migration NOT applied)
+
+**Shared CTE:** тот же `canon` из C28R (`payments_v2` с `is_deleted=false`, provider ∈ 4-set, `status='succeeded'`). Anomaly audit и `compute_order_financial_state` используют **один и тот же** базовый источник.
+
+### C29.1 — `compute_order_financial_state(p_order_id uuid)` (read-only)
+
+Возврат (не миграция, dry-run текст):
+
+```sql
+RETURNS TABLE(
+  order_id                  uuid,
+  current_status            order_status,
+  proposed_status           order_status,
+  net_paid                  numeric,
+  gross                     numeric,
+  refunded_total            numeric,
+  n_canonical_payments      int,
+  n_noncanonical_payments   int,
+  currency_mismatch         boolean,
+  guard_reason              text,          -- NULL если нет guard
+  status_transition_allowed boolean,       -- разрешён ли переход status
+  amount_update_allowed     boolean,       -- разрешён ли recalc paid_amount
+  predicate_version         text           -- 'C2-v4-canonical-succeeded-net<=0'
+)
+LANGUAGE sql STABLE SECURITY INVOKER
+SET search_path = public;
+```
+
+Guard таблица (взаимоисключающие; при попадании в guard оба allowed=false кроме `stored_paid_amount_mismatch`):
+
+| guard_reason                             | status_allowed | amount_allowed |
+|------------------------------------------|:-:|:-:|
+| currency_mismatch                        | ❌ | ❌ |
+| refund_data_conflict (net_paid<0)        | ❌ | ❌ |
+| target_amount_zero (final_price=0)       | ❌ | ❌ |
+| legacy_paid_without_canonical_history    | ❌ | ❌ |
+| legacy_refunded_without_refund_signal    | ❌ | ❌ |
+| admin_only_financial_history             | ❌ | ❌ |
+| canonical_payment_not_counted            | ❌ | ❌ |
+| stored_paid_amount_mismatch (net≠paid_amount, всё остальное OK) | ❌ | ✅ |
+| *(no guard)*                             | ✅ | ✅ |
+
+### C29.2 — `recalc_order_totals(p_order_id uuid, p_reason text)`
+
+Reason whitelist: `payment_added | payment_removed | refund_changed | payment_updated | manual_admin_recalc`.
+
+Transition matrix (permissive → executed, prohibited → no-op):
+
+| from → to | allowed? |
+|-----------|:-:|
+| pending → paid / partial | ✅ (payment_added) |
+| partial → paid           | ✅ (payment_added) |
+| paid → partial           | ✅ только `payment_removed` |
+| paid → pending           | ❌ ЗАПРЕЩЕНО автоматически |
+| paid → refunded / partial_refund | ✅ только `refund_changed` |
+| refunded → paid          | ❌ ЗАПРЕЩЕНО автоматически |
+| refunded → partial_refund | ✅ только `refund_changed` (уменьшение refund) |
+| paid → paid (overpay)    | status=❌, amount=✅ |
+| partial → partial (top-up) | status=❌, amount=✅ |
+| refunded → refunded (extra refund row) | status=❌, amount=✅ |
+
+Прочие переходы: no-op + audit `blocked_transition`.
+
+### C29.3 — Fixture harness (14 сценариев)
+
+VALUES-CTE с колонками: `scn, gross, refunded, n_canon, n_admin, currency_match, final_price, paid_amount, current_status, expected_proposed, expected_status_allowed, expected_amount_allowed, expected_guard`.
+
+Сценарии:
+
+1. `pending → paid (exact)`             — allow status+amount
+2. `pending → partial (undershoot)`     — allow status+amount
+3. `pending → paid (overpay)`           — allow status+amount (amount=full net)
+4. `paid → paid (top-up canonical)`     — status=❌, amount=✅
+5. `partial → paid (top-up canonical)`  — allow status+amount
+6. `paid → partial (payment_removed)`   — allow status+amount, только с reason
+7. `paid → refunded (full refund row)`  — allow status+amount, только `refund_changed`
+8. `paid → partial_refund`              — allow status+amount, только `refund_changed`
+9. `refunded → refunded (extra row)`    — status=❌, amount=✅
+10. `refunded → paid`                    — guard=`legacy_refunded_without_refund_signal` (33 в snapshot)
+11. `paid → pending (legacy zero net)`   — guard=`legacy_paid_without_canonical_history` (730 в snapshot)
+12. `paid → * (admin_only history)`      — guard=`admin_only_financial_history` (88 в snapshot)
+13. `* → * (currency_mismatch)`          — guard=`currency_mismatch`, both=❌
+14. `* → * (net_paid < 0)`               — guard=`refund_data_conflict`, both=❌
+
+**Migration status:** SQL text подготовлен как append-only draft. `CREATE FUNCTION` **НЕ выполняется** до отдельной авторизации execute. Fixture SELECT (`SELECT * FROM (VALUES ...) simulate_c29(...)`) выполняется read-only и возвращает 14 строк, каждая с ожидаемыми флагами.
+
+Статус C29: **FULL DRY-RUN READY. EXECUTE BLOCKED.**
+
+---
+
+## B0a — runtime proof plan (не выполнен в этом коммите)
+
+Runtime proof требует отдельного изолированного прогона с техническим профилем (не production-контакт), snapshot всех таблиц before/after, и явный revoke-cleanup. Скрипт готов, но выполнение вынесено в следующий отчёт, чтобы:
+
+- зафиксировать before-snapshot counts (`orders_v2`, `payments_v2`, `entitlements`, `access_rules`, `telegram_access_grants`) для конкретного `profile_id` перед запуском;
+- гарантировать cleanup revoke без побочных эффектов на реальных пользователей;
+- разделить два независимых сценария (`grant` и `deal_only`) на два прогона.
+
+Файл кода B0a (удалён `payments_v2.insert` в `ContactDetailSheet.tsx`) — верифицирован статически; runtime PASS ожидается в следующем чекпоинте.
+
+---
+
+## Статус PATCH-PAYMENTS-MANAGEMENT-V2 (после C28R + C29 dry-run)
+
+- C28.7 (A2-0 SQL scope): **CORRECTED** (order/profile не проверялись самим SQL миграции)
+- C28R baseline: **PUBLISHED** (730 raw / 0 actionable paid→pending; 33 raw / 0 actionable refunded→paid)
+- OLD 649/42: **WITHDRAWN**; 1016: **SUPERSEDED**
+- C29 dry-run: **READY**, execute BLOCKED
+- B0a runtime: authorized, isolated run deferred to next report
+- B0b: contract corrections зафиксированы (idempotency reservation-first, server-derived actor_id, existing origin), **execute BLOCKED**
+- A2 archive (113/201/8/1): **BLOCKED**
+- Provider CHECK: **BLOCKED**
+- C2 execute: **BLOCKED**
+
+Изменения append-only только в `.lovable/plan.md`. Код и миграции не менялись.
