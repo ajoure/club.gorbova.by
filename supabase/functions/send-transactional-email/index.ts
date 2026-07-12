@@ -1,5 +1,9 @@
 import * as React from 'npm:react@18.3.1'
-import { renderAsync } from 'npm:@react-email/components@0.0.22'
+// PATCH-EMAIL-FOOTER-UTF8-V1: switched from `renderAsync` (0.0.22) to synchronous
+// `render` from @react-email/render@1.0.5. The older renderAsync path used a
+// ReadableStream + TextDecoder pipeline that corrupted multi-byte UTF-8 chars
+// landing on chunk boundaries (observed: `С` → `\uFFFD\uFFFD`, `н` → `\uFFFD\uFFFD`).
+import { render as renderEmail } from 'npm:@react-email/render@1.0.5'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors'
 import { TEMPLATES } from '../_shared/transactional-email-templates/registry.ts'
