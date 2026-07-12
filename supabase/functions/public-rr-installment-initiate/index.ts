@@ -408,6 +408,9 @@ Deno.serve(async (req: Request) => {
     },
   };
 
+  // Sprint C2 / Stage E.1 v3 — pass CRM snapshot + pipeline columns to RPC so they
+  // are persisted ATOMICALLY within the same INSERT transaction as the order itself.
+  // On was_reused=true the RPC ignores these params (existing snapshot untouched).
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
     "rr_get_or_create_pending_order",
     {
@@ -417,6 +420,9 @@ Deno.serve(async (req: Request) => {
       _amount: amountNumeric, _currency: currency,
       _customer_email: email, _customer_phone: phoneRaw,
       _customer_ip: ip, _meta: initialMeta,
+      _crm_routing_snapshot: crmSnapshot,
+      _pipeline_id: crmRoutingOk ? crmSnapshot.pipeline_id : null,
+      _pipeline_stage_id: crmRoutingOk ? crmSnapshot.stage_on_pending : null,
     },
   );
 
@@ -564,40 +570,12 @@ Deno.serve(async (req: Request) => {
   }
 
   // ============== NEW ORDER ==============
-  // Sprint C2 / Stage E.1 v2 — snapshot already atomically embedded in initialMeta above.
-  // Here we perform a DURABLE compare-and-set for pipeline_id + pipeline_stage_id (positive routing only),
-  // BEFORE rrCreateOrder. On failure — fail-closed 503, upstream RR is NOT called.
-  if (crmRoutingOk) {
-    const { data: casRows, error: casErr } = await supabaseAdmin
-      .from("orders_v2")
-      .update({
-        pipeline_id: crmSnapshot.pipeline_id,
-        pipeline_stage_id: crmSnapshot.stage_on_pending,
-      })
-      .eq("id", externalId)
-      .is("pipeline_id", null)
-      .is("pipeline_stage_id", null)
-      .select("id");
-    if (casErr) {
-      await supabaseAdmin.from("audit_logs").insert({
-        actor_type: "system",
-        actor_label: "public-rr-installment-initiate",
-        action: "rr.create_order.crm_pipeline_cas_failed",
-        meta: { order_id: externalId, error: casErr.message },
-      });
-      return errorResponse("crm_pipeline_persist_failed", 503);
-    }
-    // casRows.length === 0 means someone (manual override) already set pipeline_id — acceptable, snapshot is durable.
-    if (!casRows || casRows.length === 0) {
-      await supabaseAdmin.from("audit_logs").insert({
-        actor_type: "system",
-        actor_label: "public-rr-installment-initiate",
-        action: "rr.create_order.crm_pipeline_cas_noop",
-        meta: { order_id: externalId, note: "pipeline_id already set at creation" },
-      });
-    }
-  } else {
-    // Negative snapshot — no pipeline columns to set. Audit for observability.
+  // Sprint C2 / Stage E.1 v3 — snapshot + pipeline_id + pipeline_stage_id уже записаны
+  // АТОМАРНО внутри той же INSERT-транзакции rr_get_or_create_pending_order. Никаких
+  // post-insert CAS/UPDATE не выполняем: успешный возврат RPC ⇒ CRM-маршрутизация
+  // durable для этого заказа.
+  if (!crmRoutingOk) {
+    // Negative snapshot — no pipeline columns were set (both NULL by design). Audit only.
     await auditNegativeSnapshot(supabaseAdmin, {
       order_id: externalId,
       offer_id: offerId,
