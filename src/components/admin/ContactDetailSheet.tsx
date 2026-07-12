@@ -1343,18 +1343,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
       if (orderError) throw orderError;
 
-      // 2. Create payment_v2 as gift/admin (for history and reports)
-      await supabase.from("payments_v2").insert({
-        order_id: orderV2.id,
-        user_id: orderUserId,
-        amount: 0,
-        currency: "BYN",
-        status: "succeeded",
-        provider: "admin",
-        paid_at: accessStart.toISOString(), // Use access start date as payment date
-        created_at: accessStart.toISOString(), // Use access start date as deal date
-        meta: { source: createDealOnly ? "admin_deal_only" : "admin_grant", granted_by: currentUser?.id },
-      });
+      // PATCH-PAYMENTS-MANAGEMENT-V2 / B0a (EXECUTE AUTHORIZED):
+      // admin_grant / admin_deal_only — это НЕ финансовый платёж (final_price=0).
+      // Ранее здесь создавалась фиктивная строка payments_v2 с provider='admin',
+      // что нарушало четырёх-провайдерную модель (bepaid / stripe / rr / bank)
+      // и загрязняло финансовые отчёты. Строка payments_v2 больше не создаётся.
+      // orders_v2 + canonical grant-access-for-order обеспечивают полный доступ
+      // и сохраняют историю в orders_v2.meta.source.
+
+
 
       // Skip subscription, entitlements, and integrations for "deal only" mode
       let subscriptionId: string | null = null;
