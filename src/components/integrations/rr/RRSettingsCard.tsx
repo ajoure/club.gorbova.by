@@ -101,7 +101,7 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const credentialsReady =
     secretConfigured && !!activeLogin && activePasswordConfigured;
   const isBackendConnected = instance?.status === "connected";
-  const isPartial = !!instance && !isBackendConnected && !hasError;
+  // isPartial retired — granular status теперь идёт из hcMeta.overall.
   const testCoreAvailable =
     !!instance && mode === "test" && secretConfigured && !!testLogin && testConfigured;
 
