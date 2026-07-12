@@ -105,6 +105,45 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const testCoreAvailable =
     !!instance && mode === "test" && secretConfigured && !!testLogin && testConfigured;
 
+  // Последний healthcheck — источник granular-статусов для карточки.
+  const { data: lastHealthcheck } = useQuery({
+    queryKey: ["rr-last-healthcheck", instance?.id],
+    queryFn: async () => {
+      if (!instance?.id) return null;
+      const { data } = await supabase
+        .from("integration_logs")
+        .select("payload_meta, created_at")
+        .eq("instance_id", instance.id)
+        .eq("event_type", "healthcheck")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!instance?.id,
+    refetchInterval: 30000,
+  });
+
+  const hcMeta = (lastHealthcheck?.payload_meta ?? null) as
+    | {
+        overall?: string;
+        checks?: {
+          backend?: { status?: string };
+          credentials?: { status?: string };
+          api_reachability?: { status?: string; detail?: string | null };
+          webhook_runtime?: { status?: string; detail?: string | null };
+          webhook_endpoint?: { status?: string };
+        };
+        last_operation?: {
+          at?: string;
+          order_id?: string;
+          external_id?: string | null;
+          amount_minor?: number | null;
+          currency?: string | null;
+        } | null;
+      }
+    | null;
+
   const { data: ledger = [], refetch: refetchLedger } = useQuery({
     queryKey: ["rr_test_ledger"],
     queryFn: async (): Promise<RRTestLedgerRow[]> => {
