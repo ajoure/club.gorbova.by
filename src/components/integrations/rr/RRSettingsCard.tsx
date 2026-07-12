@@ -176,13 +176,40 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
         toast.error(`Ошибка проверки: ${error.message ?? "unknown"}`);
         return;
       }
-      const overall = data?.data?.overall as string | undefined;
+      const payload = data?.data as
+        | {
+            overall?: string;
+            error_message?: string | null;
+            checks?: {
+              api_reachability?: { status?: string; code?: string; message?: string };
+              backend?: { status?: string; code?: string; message?: string };
+              webhook_runtime?: { status?: string; code?: string; message?: string };
+              credentials?: { status?: string; code?: string; message?: string };
+            };
+          }
+        | undefined;
+      const overall = payload?.overall;
       if (overall === "connected") {
         toast.success("«Ресурс Развития» подключён");
       } else if (overall === "battle_awaiting_first_order") {
         toast.info("Боевые реквизиты настроены. Боевой runtime ещё не подтверждён реальным заказом.");
       } else if (overall === "not_configured") {
-        toast.warning("Реквизиты режима не заполнены полностью");
+        const c = payload?.checks?.credentials;
+        toast.warning(`Реквизиты режима не заполнены: ${c?.message ?? c?.code ?? "проверьте настройки"}`);
+      } else if (overall === "error") {
+        // Первое критичное поле — API или backend.
+        const api = payload?.checks?.api_reachability;
+        const be = payload?.checks?.backend;
+        const wh = payload?.checks?.webhook_runtime;
+        const firstErr =
+          api?.status === "error" ? { label: "API режима", c: api }
+          : be?.status === "error" ? { label: "Backend", c: be }
+          : wh?.status === "error" ? { label: "Webhook runtime", c: wh }
+          : null;
+        const detail = firstErr
+          ? `${firstErr.label} — ${firstErr.c.message ?? firstErr.c.code ?? "ошибка"}`
+          : (payload?.error_message ?? data?.error ?? "проверка не пройдена");
+        toast.error(`Проверка РР не пройдена: ${detail}`);
       } else {
         toast.error(`Ошибка: ${data?.error || "проверка не пройдена"}`);
       }
