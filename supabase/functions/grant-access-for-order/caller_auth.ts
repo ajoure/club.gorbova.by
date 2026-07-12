@@ -10,12 +10,12 @@
  *   returned as `claimed_*` only.
  * - Does NOT log tokens (full or partial).
  *
- * Branch matrix:
+ * Branch matrix (CLOSURE-1 correction):
  *
  *   Branch                  service_role  admin  ordinary_user
  *   ----------------------- ------------ ------ --------------
  *   standard                     ✓         ✓         ✗
- *   adminManualAccessEdit        ✓         ✓         ✗
+ *   adminManualAccessEdit        ✗         ✓         ✗   ← admin-only
  *   3ds_finalize                 ✓         ✗         ✗
  *   subscription_renewal         ✓         ✗         ✗
  *   legacy_body_alias            ✓         ✓         ✗
