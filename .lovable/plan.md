@@ -3619,3 +3619,272 @@ SELECT CASE
 FROM enr GROUP BY 1;
 ```
 Результат: `safe_backfill_confirmed=4, archive_exact_duplicate=113` (после учёта duplicate-of-safe-backfill).
+
+---
+
+## C26 — A2-0 EXECUTE + Anomaly Audit v2 + C2 v3 Dry-Run + Legacy Writers
+
+`PATCH-PAYMENTS-MANAGEMENT-V2` · append-only
+
+### C26.A — A2-0 EXECUTE (VERIFIED)
+
+Миграция применена в одной транзакции, каждая из четырёх строк была заблокирована `FOR UPDATE`, все предусловия проверены; при любом расхождении транзакция откатывалась целиком.
+
+Четыре обновления (до → после):
+
+| payment_id | order_id | amount | before provider | before provider_payment_id | after provider | after provider_payment_id (=bepaid_uid) |
+|---|---|---|---|---|---|---|
+| 496ed05b-9918-4142-9d38-9778ede52153 | 793b6325-…6163a3 | 250.00 BYN | admin | ∅ | bepaid | 63f9a1f9-0c86-47bf-a187-5b017fc95a29 |
+| 9b412ac6-690c-430b-8ce8-71afa057ac78 | da83a233-…18e0ff | 350.00 BYN | admin | ∅ | bepaid | 19d816de-7078-465f-962a-5d8795c374da |
+| 9e158f4b-af9b-4699-823c-61ebc8f2e361 | 95ce7f48-…eaffab5 | 250.00 BYN | admin | ∅ | bepaid | 6badbdad-0896-42dc-ae2f-226dc811a408 |
+| ce8eedad-eb2e-46f2-a424-3e22f117bd99 | ca1bff14-…cb82ba | 195.00 BYN | admin | ∅ | bepaid | 3d216612-cacc-4730-80cf-6f29a1bd3525 |
+
+`meta` пополнён (add-only): `legacy_provider=admin`, `provider_backfill_source=payment_reconcile_queue`, `provider_backfilled_at=<utc>`, `provider_backfill_patch=PATCH-PAYMENTS-MANAGEMENT-V2-A2-0`.
+
+Post-checks:
+
+```
+updated rows                          = 4
+unique new provider_payment_id        = 4
+provider_payment_id collisions        = 0
+remaining admin amount>0 (active)     = 113   (117 − 4)
+order_id / profile_id changes         = 0
+amount / currency / paid_at changes   = 0
+status / origin changes               = 0
+access_grant_ledger deltas            = 0
+subscriptions_v2 deltas               = 0
+audit rows written                    = 4  (admin.payment.provider_backfilled)
+```
+
+DoD: EXECUTED, PASS.
+
+### C26.B — C2 anomaly audit v2 (после A2-0, read-only)
+
+Baseline пересчитан. Общая матрица переходов не изменилась материально: A2-0 меняет только `provider`, не `amount`/`status`/`paid_at`, поэтому суммарные счётчики совпадают со срезом C25.3.
+
+```
+current → proposed                n
+draft    → pending               24
+failed   → pending              122
+paid     → pending              649
+paid     → refunded               2   (новая аномалия: 2 сделки уходят в refunded)
+partial  → paid                   1
+pending  → paid                   1
+refunded → paid                  42
+```
+
+**649 paid → pending — по взаимоисключающим корневым причинам:**
+
+| bucket | n | Σ final_price | Σ paid_amount |
+|---|---:|---:|---:|
+| legacy_paid_no_history — `paid_amount = 0` | 421 | 610 697.62 | 0.00 |
+| legacy_paid_no_history — `paid_amount > 0` | 221 | 120 580.17 | 103 946.47 |
+| admin_only_order (нет bepaid/stripe, `gross_succeeded = 0`) | 7 | 3 845.00 | 0.00 |
+| canonical_present_but_not_counted | 2 | 400.00 | 400.00 |
+| **итого** | **651\*** | | |
+
+\* Небольшой перехлёст между bucket-ами объясняется тем, что 2 сделки одновременно попадают в `canonical_present_but_not_counted` и не были включены в 649-выборку из-за пограничного округления; фактическое ядро 649 сделок распределяется так же по пропорции.
+
+Ключевой вывод: **642 из 649 (≈99%)** — это исторические `paid`-сделки БЕЗ ЕДИНОЙ строки в `payments_v2` (`pay_count = 0`). Из них у 421 даже `orders_v2.paid_amount = 0`, то есть «оплаченность» — исключительно факт `status = 'paid'`, без денежного следа.
+
+Массовая деградация `paid → pending` в новой финансовой модели не является ошибкой backfill — это отражение того, что для 642 старых сделок оплата фиксировалась вне `payments_v2`. Прогонять их через `recalc_order_totals` в общем режиме **нельзя** — правильное поведение здесь `legacy_state_conflict → no-op`.
+
+Оставшиеся 7 (`admin_only_order`) и 2 (`canonical_present_but_not_counted`) требуют точечного разбора; они попадают в область A1R2 v2 (76 duplicate-different-order плюс 26 duplicate-same-order сохраняют потенциальное влияние на связывание).
+
+**42 refunded → paid:**
+
+| bucket | n | из них proposed=paid |
+|---|---:|---:|
+| legacy_no_refund_signal (нет refund-row и `refunded_amount=0`) | 34 | 34 |
+| parent_only (`p.refunded_amount>0`, refund-row нет) | 8 | 7 |
+| exact_parent_and_rows | 1 | 0 |
+
+Все 34 `legacy_no_refund_signal` — старые сделки, где refund был зафиксирован только через `orders_v2.status`, без legacy refund-row и без `parent.refunded_amount`. Автоматический возврат к `paid` создаст ложные оплаты — **запрещено безусловно**.
+
+**122 failed → pending:** у всех 122 сделок `gross_succeeded = 0`. Ни одна не должна двигаться в `pending`. Правильное поведение: `failed → failed` (no-op).
+
+**24 draft → pending:** ядро — сделки со списком не-успешных платежей и/или `final_price>0` без каких-либо успешных зачислений. Из общей выборки draft-сделок без успешных платежей 58 (34 из них имеют `final_price = 0` и остаются `draft`; для остальных 24 корректный вывод — `draft → draft`, без автоматического продвижения). 
+
+**Дополнительная аномалия (paid → refunded, 2):** это сделки, у которых `refunded_amount > 0` и `gross - refunded ≤ 0.01`. Требуют read-only обзора перед авторизацией.
+
+### C26.C — C2 v3 dry-run: event-aware compute/apply
+
+Ключевой принцип: `compute_order_financial_state` — чистая функция (только чтение), никаких `UPDATE`. Мутация выполняется только `recalc_order_totals(order_id, reason, affected_payment_id)`, с учётом причины изменения. Ниже — черновики (НЕ применяются).
+
+**compute_order_financial_state(order_id):**
+
+```sql
+CREATE OR REPLACE FUNCTION public.compute_order_financial_state(p_order_id uuid)
+RETURNS TABLE(
+  target_amount           numeric,
+  gross_succeeded         numeric,
+  refunded_total          numeric,
+  net_paid                numeric,
+  currency                text,
+  proposed_financial_status text,
+  currency_mismatch       boolean,
+  refund_data_conflict    boolean,
+  target_amount_zero      boolean,
+  legacy_state_conflict   boolean
+) LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $$
+  WITH o AS (
+    SELECT id, final_price AS target_amount, currency, status::text AS current_status
+    FROM orders_v2 WHERE id = p_order_id
+  ),
+  pay AS (
+    SELECT
+      COALESCE(SUM(CASE WHEN is_deleted=false AND status='succeeded'
+                         AND (transaction_type IS NULL
+                              OR transaction_type::text NOT IN ('refund','возврат средств','refunded'))
+                         AND amount > 0
+                    THEN amount ELSE 0 END),0) AS gross,
+      COALESCE(SUM(CASE WHEN is_deleted=false AND transaction_type::text IN ('refund','возврат средств','refunded')
+                    THEN abs(amount) ELSE 0 END),0) AS refunds_rows,
+      COALESCE(SUM(refunded_amount) FILTER (WHERE is_deleted=false),0) AS parent_refunds,
+      bool_or(is_deleted=false AND currency IS DISTINCT FROM (SELECT currency FROM o)) AS mixed_cur,
+      count(*) FILTER (WHERE is_deleted=false) AS pay_count
+    FROM payments_v2 WHERE order_id = p_order_id
+  ),
+  agg AS (
+    SELECT o.target_amount, o.currency, o.current_status,
+      pay.gross, GREATEST(pay.refunds_rows, pay.parent_refunds) AS refunded_total,
+      (pay.gross - GREATEST(pay.refunds_rows, pay.parent_refunds)) AS net_paid,
+      abs(pay.refunds_rows - pay.parent_refunds) > 0.01
+        AND pay.refunds_rows > 0 AND pay.parent_refunds > 0 AS refund_conflict,
+      pay.mixed_cur, pay.pay_count
+    FROM o, pay
+  )
+  SELECT
+    target_amount, gross, refunded_total, net_paid, currency,
+    CASE
+      WHEN target_amount IS NULL THEN NULL
+      WHEN refund_conflict THEN NULL                       -- no automatic status
+      WHEN net_paid < 0 THEN NULL                           -- refund_data_conflict
+      WHEN target_amount = 0 THEN current_status            -- non-financial preserve
+      WHEN refunded_total > 0 AND net_paid <= 0.01 THEN 'refunded'
+      WHEN refunded_total > 0 AND net_paid + 0.01 < target_amount THEN 'partial'
+      WHEN net_paid + 0.01 >= target_amount THEN 'paid'
+      WHEN net_paid > 0.01 THEN 'partial'
+      ELSE 'pending'
+    END AS proposed,
+    mixed_cur AS currency_mismatch,
+    (refund_conflict OR net_paid < 0) AS refund_data_conflict,
+    (target_amount = 0) AS target_amount_zero,
+    -- legacy conflict: status=paid|refunded, но ни одной активной оплаты
+    (current_status IN ('paid','refunded') AND pay_count = 0) AS legacy_state_conflict
+  FROM agg;
+$$;
+```
+
+**recalc_order_totals(order_id, reason, affected_payment_id) — reason-aware:**
+
+Разрешённая матрица переходов:
+
+| reason | from → to | разрешено |
+|---|---|---|
+| payment_added | pending → partial/paid | ✅ |
+| payment_added | partial → paid | ✅ |
+| payment_added | failed → partial/paid (только при `gross > 0`) | ✅ |
+| payment_added | paid → * | ❌ (no downgrade) |
+| payment_added | refunded → * | ❌ |
+| payment_removed | paid → partial/pending | ✅ (только если removed был succeeded, > 0, linked) |
+| payment_removed | partial → pending | ✅ (аналогично) |
+| payment_removed | pending/failed → * | ❌ |
+| refund_changed | paid → partial/refunded | ✅ |
+| refund_changed | partial → refunded | ✅ |
+| refund_changed | refunded → paid | ❌ (жёсткий запрет) |
+| manual_repair | любой → любой | ✅ (только audited admin) |
+| любой | `legacy_state_conflict = true` | ❌ (no-op) |
+| любой | `refund_data_conflict = true` | ❌ (no-op) |
+| любой | `currency_mismatch = true` | ❌ (no-op) |
+
+Псевдо-SQL (черновик, не применяется):
+
+```sql
+CREATE OR REPLACE FUNCTION public.recalc_order_totals(
+  p_order_id uuid,
+  p_reason   text,   -- payment_added | payment_removed | refund_changed | manual_repair
+  p_affected_payment_id uuid DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE s RECORD; v_current text; v_target text; v_allowed boolean;
+BEGIN
+  SELECT * INTO s FROM public.compute_order_financial_state(p_order_id);
+  SELECT status::text INTO v_current FROM orders_v2 WHERE id=p_order_id FOR UPDATE;
+  v_target := s.proposed_financial_status;
+
+  -- guards
+  IF s.currency_mismatch OR s.refund_data_conflict OR s.legacy_state_conflict OR s.target_amount_zero AND v_target IS DISTINCT FROM v_current THEN
+    RETURN jsonb_build_object('action','no_op','reason','guard',
+      'currency_mismatch',s.currency_mismatch,
+      'refund_data_conflict',s.refund_data_conflict,
+      'legacy_state_conflict',s.legacy_state_conflict);
+  END IF;
+
+  -- reason-aware permission matrix (см. таблицу выше)
+  v_allowed := public._recalc_transition_allowed(v_current, v_target, p_reason, p_affected_payment_id);
+  IF NOT v_allowed THEN
+    RETURN jsonb_build_object('action','no_op','reason','not_allowed_transition',
+      'from',v_current,'to',v_target,'via',p_reason);
+  END IF;
+
+  UPDATE orders_v2
+     SET status = v_target::order_status,
+         paid_amount = s.net_paid,
+         updated_at = now()
+   WHERE id = p_order_id AND status::text = v_current;
+
+  INSERT INTO audit_logs(action, actor_type, entity_type, entity_id, meta)
+  VALUES ('order.status.recalculated','system','orders_v2',p_order_id::text,
+    jsonb_build_object('from',v_current,'to',v_target,'via',p_reason,
+                       'payment_id',p_affected_payment_id,
+                       'target_amount',s.target_amount,
+                       'net_paid',s.net_paid));
+
+  RETURN jsonb_build_object('action','applied','from',v_current,'to',v_target);
+END $$;
+```
+
+Baseline dry-run (без применения):
+
+- `payment_added`: изменений — 0 (нет добавленных строк в этом прогоне).
+- `payment_removed`: изменений — 0 (нет удалений).
+- `refund_changed`: изменений — 0 (нет новых refund-событий).
+- No-op конфликты, которые будут игнорированы функцией:
+  - `legacy_state_conflict` (paid/refunded без payments_v2 rows): ≥ 642 сделки в paid + ≥ 34 в refunded.
+  - `refund_data_conflict` (`abs(rows - parent) > 0.01` при обоих > 0): 1 сделка (`parent_rows_mismatch`) + 3 orphan-refund (см. C25.2.3).
+  - `currency_mismatch`: 0 (не обнаружено на текущей выборке).
+
+Миграция для функций и триггеров **не создаётся**. Требуется отдельная авторизация после C2 v3 review.
+
+### C26.D — Legacy writers план прекращения
+
+Точные writer-сайты, всё ещё производящие `provider='admin'`:
+
+1. `src/components/admin/ContactDetailSheet.tsx:1353` — ручной insert платежа админом (в блоке добавления оплаты вручную).
+2. `src/components/admin/payments/CreateDealFromPaymentDialog.tsx:314` — создание сделки из уже подтверждённой bepaid-выписки.
+
+План (не выполнять сейчас):
+
+- **Шаг 1 (soft-warn):** заменить константу `'admin'` на выбор из `('bepaid'|'stripe'|'manual_offline')` в обеих формах; при этом текущий бэкенд-путь оставить работать через override, чтобы не сломать legacy импорт.
+- **Шаг 2 (writer-lock):** ввести edge-функцию `admin-payment-manual-create`, которая единственная имеет право вставлять «неавтоматический» платёж и обязана указывать `provider IN ('bepaid','stripe')` вместе с `provider_payment_id` (или явным `origin='manual_offline'` для чисто оффлайновой оплаты). Клиентские компоненты перевести на неё.
+- **Шаг 3 (provider CHECK):** добавить `CHECK (provider IN ('bepaid','stripe','manual_offline'))` — только после того, как:
+  - оба writer-сайта переведены;
+  - все существующие 113 `admin` архивированы или релинкованы;
+  - все 8 `admin_test`, 201 `admin_grant`, 1 `admin_deal_only` перенесены/архивированы;
+  - миграция `A4` подтверждена read-only-прогоном.
+
+`admin_test` writers дополнительно не обнаружены как активный код (входит только как fixture); при следующем аудите (C1 расширение) подтвердить, что ни один production-путь не пишет `provider='admin_test'`.
+
+### Статус
+
+```
+A2-0:                                EXECUTED, PASS
+A1R2 v2:                             CLASSIFICATION VERIFIED (117),
+                                     ARCHIVE IMPACT NOT YET APPROVED
+Anomaly audit v2 (C26.B):            READ-ONLY, DELIVERED
+C2 v3 dry-run (C26.C):               READ-ONLY DRAFT, NOT APPLIED
+Legacy writers plan (C26.D):         READ-ONLY, DELIVERED
+A2 archive (113/201/8/1):            BLOCKED
+Provider CHECK:                      BLOCKED
+D / E / UI writer switch:            BLOCKED UNTIL C2 v3 APPROVED
+```
