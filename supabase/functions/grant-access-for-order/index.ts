@@ -2267,8 +2267,7 @@ Deno.serve(async (req) => {
   // 6. Add audit log
   try {
     await supabase.from("audit_logs").insert({
-      actor_type: "admin",
-      actor_label: "grant-access-for-order",
+      ...auditActor,
       action: "admin.grant_access",
       target_user_id: userId,
       meta: {
@@ -2282,6 +2281,7 @@ Deno.serve(async (req) => {
         grant_telegram: grantTelegram,
         grant_getcourse: grantGetcourse,
         preregistrations_converted: results.preregistrations_converted || 0,
+        ...claimedMeta,
       },
     });
   } catch (auditError) {
