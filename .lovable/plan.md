@@ -5247,3 +5247,183 @@ Provider CHECK         : BLOCKED
 ```
 
 Append-only: изменён только `.lovable/plan.md`. Код, миграции и данные не менялись.
+
+---
+
+## Отчет о выполнении: PATCH-GRANT-ACCESS-AUTHZ-V1 — READ-ONLY DIAGNOSE
+
+Ограничения соблюдены: DML=0, valid-order runtime=0, deploy=0, config change=0, verify_jwt change=0, auth guard implementation=0.
+
+### A. Deployed gateway proof (safe live probes)
+
+Endpoint: `https://hdjgkjceownmmnrqqtuz.functions.supabase.co/grant-access-for-order`
+
+| Probe | Headers | Body | HTTP | Body (redacted) |
+|---|---|---|---|---|
+| A1 | none | `{}` | **400** | `{"error":"orderId is required"}` |
+| A2 | `apikey: <anon>` | `{}` | 400 | `{"error":"orderId is required"}` |
+| A3 | `apikey + Authorization: Bearer <anon>` | `{}` | 400 | `{"error":"orderId is required"}` |
+| B  | `apikey + Authorization: Bearer <anon>` | `{"orderId":"<random-nonexistent-UUID>"}` | **404** | `{"error":"Order not found","details":"Cannot coerce the result to a single JSON object"}` |
+
+Все anon/service keys и JWT из вывода редактированы.
+
+**Интерпретация:** Probe A1 показывает, что handler достигается БЕЗ каких-либо заголовков (нет `apikey`, нет `Authorization`). Supabase Functions Gateway JWT-стена НЕ активна. `supabase/config.toml` не содержит блока `[functions.grant-access-for-order]`, но по факту deployed state = `verify_jwt=false` (или gateway пропускает запрос).
+
+Probe B подтверждает: handler отрабатывает без bearer-токена, доходит до Postgres, возвращает 404 для отсутствующего заказа. Живой действительный orderId НЕ использовался. Дальнейшие probes остановлены согласно директиве.
+
+### B. Caller matrix
+
+| # | Caller (file:line) | Context | Credential | Actor sent | Body |
+|---|---|---|---|---|---|
+| 1 | `src/components/admin/ContactDetailSheet.tsx:1366` | frontend / admin UI (`super_admin` route guard) | user JWT (browser) | current admin session | `{orderId, source:"admin_grant"}` |
+| 2 | `src/components/admin/GrantAccessFromDealDialog.tsx:147` | frontend / admin UI | user JWT | admin session | `{orderId, ...}` |
+| 3 | `src/components/admin/BulkExtendAccessDialog.tsx:363` | frontend / admin UI | user JWT | admin session | `{orderId, customAccessEndAt, adminManualAccessEdit:true}` |
+| 4 | `src/components/admin/EditDealDialog.tsx:390` | frontend / admin UI | user JWT | admin session | `{orderId, adminManualAccessEdit:true, ...}` |
+| 5 | `supabase/functions/stripe-webhook/index.ts:417,542` | webhook (public) | service-role internal invoke | system | `{orderId, source:"stripe_webhook"}` |
+| 6 | `supabase/functions/stripe-reconcile-session/index.ts:180` | authenticated edge | service-role | system | `{orderId}` |
+| 7 | `supabase/functions/stripe-admin-sandbox-checkout/index.ts:151` | admin edge | service-role | admin | `{orderId}` |
+| 8 | `supabase/functions/admin-manual-charge/index.ts:437` | admin edge | service-role | admin | `{orderId}` |
+| 9 | `supabase/functions/admin-reconcile-processing-payments/index.ts:81` | admin edge | service-role | system | `{orderId}` |
+| 10 | `supabase/functions/bepaid-create-token/index.ts:572` | authenticated edge (checkout) | service-role | system | `{orderId, ...}` |
+| 11 | `supabase/functions/bepaid-auto-process/index.ts:828` | cron/webhook path | service-role | system | `{orderId, ...}` |
+| 12 | `supabase/functions/erip-reconcile-pending/index.ts:252` | cron/admin | service-role | system | `{orderId}` |
+| 13 | `supabase/functions/payments-reconcile/index.ts:511` | reconcile job | service-role | system | `{orderId}` |
+| 14 | `supabase/functions/_shared/stripe-subscription-resolver.ts:1031` | subscription renewals | service-role | system | `{orderId, context:"subscription_renewal"}` |
+| 15 | `supabase/functions/test-payment-complete/index.ts:369` | test tooling | service-role | admin_test | `{orderId, ...}` |
+
+Отдельные ветки в body (`context`, `source`, `adminManualAccessEdit`) поступают из request body и **не являются доказательством доверенного caller** — любой внешний вызов может выставить те же поля.
+
+### C. Handler branch matrix
+
+Точка входа: `supabase/functions/grant-access-for-order/index.ts:214` (`Deno.serve`).
+
+| Ветка | Строка | Условие | Auth check в handler | Результат |
+|---|---|---|---|---|
+| Init | 220–222 | всегда | нет | service-role client (`SUPABASE_SERVICE_ROLE_KEY`) |
+| orderId required | 238–243 | `!orderId` | нет | 400 |
+| **3ds_finalize** | 247–264 | `_body.context === '3ds_finalize'` | **нет** | делегирует `handleThreeDsFinalize`, audit `actor_type='system'` |
+| legacy alias audit | 267–276 | `order_id && !orderId` | нет | insert audit |
+| load order | 279–294 | всегда | нет | 404 если не найден |
+| no user_id | 297–306 | `!order.user_id` | нет | 200 warning |
+| **adminManualAccessEdit** | 328–503 | `adminManualAccessEdit === true` | **ЕСТЬ:** `supabase.auth.getUser(token)` + `has_role_v2('admin' \|\| 'super_admin')` → 401/403 иначе | обновляет access window; audit `actor_type='admin', actor_user_id, actor_label=email` |
+| **standard grant** | 505–end | всё остальное (в т.ч. `source:"admin_grant"`, `context:"subscription_renewal"`, webhook-вызовы) | **нет** | canonical entitlement + subscription + telegram grant; audit `actor_type='system', actor_user_id=null, actor_label='grant-access-for-order'` |
+
+**Критично:** `adminManualAccessEdit` — единственная ветка с проверкой caller identity. Все остальные ветки, включая **основной путь выдачи доступа по orderId**, работают без какой-либо authorization-проверки.
+
+### D. Replay / idempotency
+
+Read-only, без runtime.
+
+- **Guard 1 (line 505–535):** ищет entitlement с `order_id=orderId` ИЛИ с `orderId ∈ meta.extended_by_orders` для того же user+product. Если найдено И не просрочено относительно `expected_min_end` → `skip_already_fulfilled`, возвращается 200. Побочно запускается `syncSecondaryProductAccessForUser` для bonus grants (может create/extend вторичные entitlements — не идемпотентно на второстепенных продуктах при неполном первичном исполнении).
+- **Guard 2 (line 1116–1133):** pre-insert collision — если `order_id` уже держит entitlement другого продукта, возвращается `order_id_collision_foreign_user` (403 hard stop) при чужом user_id.
+- **Subscription:** ветки SB1 (line ~728) и §F (line ~906) содержат `NO-NEW-SUB` пропуски, но при первом успешном исполнении создаётся новая `subscriptions_v2`; повторный запрос до истечения текущего окна проходит по guard 1 и не создаёт вторую.
+- **Telegram:** grant идёт через `access_rules` → `telegram_access_queue`; повторное включение идемпотентно на уровне queue (unique constraints), но НЕ верифицировано runtime-ом.
+- **Extension через `extended_by_orders`:** повторный вызов с уже применённым orderId попадает в guard 1 → skip. Замена orderId (перезапись body) обходит guard 1 и продлит доступ.
+- **Различия по веткам:**
+  - `standard`: guard 1 + guard 2 работают.
+  - `adminManualAccessEdit`: guard 1 **обходится намеренно** (см. коммент line 325–327) — идемпотентность не гарантируется, каждый вызов перезаписывает access window.
+  - `3ds_finalize`: идемпотентность делегирована `three_ds_writer.ts` (не проверено в этом отчёте).
+- **Ledger:** `access_grant_ledger` пишется через `writeLedgerEntry` (shared helper); при replay создаётся новая ledger-строка с новым `source_event_key` — audit-строк на replay может быть >1.
+
+Runtime replay с реальным order не выполнялся.
+
+### E. Audit attribution
+
+Все audit writers функции (по grep):
+
+| Строки | actor_type | actor_user_id | actor_label | context |
+|---|---|---|---|---|
+| 253–255 | `system` | — | `grant-access-for-order:3ds_finalize` | ветка 3ds_finalize |
+| 271–274 | `system` | — | `grant-access-for-order` | legacy body alias |
+| 464–470 | **`admin`** | **`actor.id`** | `actor.email \|\| "admin"` | adminManualAccessEdit — единственная ветка с настоящим actor |
+| 579–585, 641–647 | `system` | `null` | `grant-access-for-order` | idempotency-skip / resync |
+| 738–743, 802–807, 906–911 | `system` | `null` | `grant-access-for-order` | standard grant paths (SB1, §F) |
+
+**Проблема:** во всех ветках, кроме `adminManualAccessEdit`, actor жёстко помечен как `system` / `actor_user_id=null`, даже если запрос фактически исходит от пользователя (frontend admin invoke, внешний anonymous вызов). Audit не сохраняет:
+- IP / User-Agent / correlation id вызывающего;
+- различие между `stripe-webhook` (реальный webhook) и произвольным anonymous POST с тем же `source:"stripe_webhook"` в body;
+- различие между admin UI grant (`source:"admin_grant"`) и внешним anonymous grant с тем же source.
+
+### F. Threat classification
+
+**Verdict:** `ANONYMOUS REACHABILITY CONFIRMED`.
+
+Deployed handler достигается без bearer-токена (Probe A1). Все ветки, кроме `adminManualAccessEdit`, не проверяют caller identity. Attacker, знающий действительный `orderId` (uuid v4 угадать нереально, но orderId утекают через: email-квитанции, admin screenshots, URL клиентских страниц, логи, browser network tab, сторонние webhook-логи), может:
+
+1. Вызвать `POST /functions/v1/grant-access-for-order` анонимно с `{"orderId":"<real>"}` и получить canonical grant для заказа, даже если тот ещё не оплачен, — handler не проверяет `order.status='paid'` перед стандартной веткой (требует отдельной перепроверки, вне scope этого diagnose).
+2. Продлить доступ уже оплаченного заказа, обойдя idempotency, если orderId ещё не применён к текущему окну (guard 1) — редко, но возможно.
+3. Инициировать `subscription_renewal`-путь с произвольным `context`, подменив actor на `system` в audit-логе.
+
+Impact:
+- Confidentiality: низкий (не читает чужие данные).
+- Integrity/Availability: **высокий** — outbound telegram grants, subscription creation, ledger inflation, entitlement pollution.
+- Attribution: полностью нарушена — все злоупотребления пишутся как `system`.
+
+Escalation profile:
+- Anonymous: **CONFIRMED**.
+- Authenticated ordinary user: тем более достигает (JWT принимается gateway). Не проверялось отдельным probe, так как anonymous уже подтверждено.
+- Ordinary user НЕ ограничен `order.user_id === auth.uid()` — handler игнорирует identity вызывающего.
+
+### G. Corrected implementation plan (proposed, EXECUTE BLOCKED)
+
+Ниже — план исправления; исполнение требует отдельного approve.
+
+1. **Layer 1 — Gateway:**
+   - Добавить в `supabase/config.toml`:
+     ```
+     [functions.grant-access-for-order]
+     verify_jwt = true
+     ```
+   - Все internal service-role callers (stripe-webhook, bepaid-*, admin-*, reconcile jobs) уже вызывают через `supabase.functions.invoke` с service-role client — сохранит доступ. Frontend admin callers также передают user JWT.
+   - Валидация: пре-deploy static check + post-deploy probe (то же, что использовалось выше) должен вернуть 401 platform-level.
+
+2. **Layer 2 — Handler defense-in-depth (обязательно даже при JWT-стене):**
+   - В начале handler после `createClient` и парсинга body: определить caller через `req.headers.get('Authorization')`.
+   - Классифицировать:
+     - `service-role` (validated by JWT `role: service_role` in claims) → доверенный internal caller.
+     - `user JWT` → извлечь `actor.id`, требовать `has_role_v2('admin' || 'super_admin')` для стандартной ветки; иначе разрешить только если `order.user_id === actor.id` И `order.status='paid'` И вызов не выдаёт новый доступ, а лишь finalize/replay.
+     - anon / invalid → 401.
+   - Для `context='3ds_finalize'` ветки — аналогичная проверка: service-role ИЛИ user, чей `order.user_id === actor.id`.
+
+3. **Layer 3 — Audit attribution:**
+   - Заполнять `actor_type = 'user' | 'admin' | 'system'` и `actor_user_id`, `actor_label` из реального caller во всех ветках, не только `adminManualAccessEdit`.
+   - Логировать `caller_context` (service-role name из request body — verifiable — или `user-jwt`) отдельно от `source` из body.
+
+4. **Migration order:**
+   1. Layer 2 (handler check) — обратно совместимо, deploy без JWT-стены.
+   2. Layer 3 (audit) — одновременно с Layer 2.
+   3. Post-deploy probe: `verify_jwt=false` пока — все текущие callers работают.
+   4. Отдельный approve → Layer 1 (config `verify_jwt=true`) → deploy → post-smoke.
+   5. Инвентаризация callers (frontend), которые вызывают `functions.invoke` без сессии — если такие есть, они падают на шаге 4.
+
+5. **Regression tests (source-level):**
+   - anon POST → 401.
+   - user POST c чужим `orderId` → 403.
+   - user POST со своим `orderId` (не admin) → 200 idempotent replay only.
+   - admin POST → 200 полный grant.
+   - service-role POST (webhook) → 200 полный grant.
+
+### Verdict
+
+```
+PATCH-GRANT-ACCESS-AUTHZ-V1:
+
+DIAGNOSE                : COMPLETE
+Gateway state           : verify_jwt effectively FALSE (no config block; anon reaches handler)
+Handler auth            : missing on all branches EXCEPT adminManualAccessEdit
+Audit attribution       : broken outside adminManualAccessEdit
+Idempotency             : partial (order_id + extended_by_orders); bypassable via orderId rotation
+
+VERDICT                 : ANONYMOUS REACHABILITY CONFIRMED
+Authenticated privilege escalation: implicit (JWT tokens accepted, no identity check)
+
+DML                     : 0
+valid production order  : NOT USED
+grant/revoke runtime    : 0
+edge deploy             : 0
+config change           : 0
+verify_jwt change       : 0
+auth guard implement    : 0
+
+EXECUTE                 : BLOCKED (awaiting approve for corrected implementation plan §G)
+```
