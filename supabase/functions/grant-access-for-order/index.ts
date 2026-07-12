@@ -285,15 +285,16 @@ Deno.serve(async (req) => {
 
     // PATCH H2.1b-i: 3DS finalize context delegates to extended writer.
     // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
+    // SEC-A: branch policy already enforced service_role-only above.
     if (_body.context === '3ds_finalize') {
       const { handleThreeDsFinalize } = await import('./three_ds_writer.ts');
       const audit = async (action: string, meta: Record<string, unknown>) => {
         try {
           await supabase.from('audit_logs').insert({
             action,
-            actor_type: 'system',
+            ...auditActor,
             actor_label: 'grant-access-for-order:3ds_finalize',
-            meta: { ...meta, source: _body.source ?? null },
+            meta: { ...meta, ...claimedMeta },
           });
         } catch (_) { /* non-fatal */ }
       };
@@ -309,9 +310,8 @@ Deno.serve(async (req) => {
       try {
         await supabase.from("audit_logs").insert({
           action: "grant-access-for-order.legacy_body_alias",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
-          meta: { order_id: orderId, source: _body.source ?? null },
+          ...auditActor,
+          meta: { order_id: orderId, ...claimedMeta },
         });
       } catch (_) { /* non-fatal */ }
     }
