@@ -90,11 +90,13 @@ Deno.serve(async (req: Request) => {
     order_id?: string;
     bad_signature?: boolean;
     event_type?: string;
+    allow_repeat?: boolean;
   } = {};
   try { payload = await req.json(); } catch { payload = {}; }
 
   const orderId = String(payload.order_id ?? "").trim();
   const badSignature = payload.bad_signature === true;
+  const allowRepeat = payload.allow_repeat === true;
   const eventType = String(payload.event_type ?? "order.updated").trim();
   const newStatus = "authorized"; // жёстко зафиксирован
 
@@ -105,7 +107,6 @@ Deno.serve(async (req: Request) => {
   try {
     cfg = await loadRRTestConfig(supabaseAdmin);
   } catch (e) {
-    // rr_core_only_test_mode_allowed / rr_test_credentials_incomplete
     return errorResponse((e as Error).message, 403);
   }
 
@@ -122,7 +123,9 @@ Deno.serve(async (req: Request) => {
   if (meta?.flow !== "rr_installment") {
     return errorResponse("order_not_rr_installment_flow", 400);
   }
-  if (!badSignature && order.status !== "pending") {
+  // Первичная доставка требует pending. Для повторного идемпотентного прогона
+  // (allow_repeat=true) и для bad_signature — любой статус допустим.
+  if (!badSignature && !allowRepeat && order.status !== "pending") {
     return errorResponse(`order_not_pending_status_${order.status}`, 409);
   }
 
