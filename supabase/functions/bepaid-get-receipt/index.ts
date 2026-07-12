@@ -52,10 +52,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { data: isAdmin } = await supabaseAdmin.rpc('has_any_role', {
-      _user_id: user.id,
-      _role_codes: ['admin', 'super_admin']
-    });
+    // Check admin/super_admin via has_role_v2 (RBAC v3 role codes)
+    const [{ data: isAdminRole }, { data: isSuperAdminRole }] = await Promise.all([
+      supabaseAdmin.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' }),
+      supabaseAdmin.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' }),
+    ]);
+    const isAdmin = !!isAdminRole || !!isSuperAdminRole;
 
     if (!isAdmin) {
       return new Response(
