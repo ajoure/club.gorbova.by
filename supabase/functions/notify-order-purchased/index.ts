@@ -232,7 +232,11 @@ Deno.serve(async (req) => {
 
   // 5. Delivery helpers
   async function upsertDelivery(channel: 'email' | 'telegram' | 'telegram_admin', recipient: string | null) {
-    const recipientKey = recipient ?? ''
+    // Split idempotency semantics (aligned with partial unique indexes):
+    //   buyer channels (email/telegram): unique by (order_id, channel, notification_type)
+    //   telegram_admin:                  unique by (order_id, channel, notification_type, recipient)
+    const isAdmin = channel === 'telegram_admin'
+
     const { data: inserted, error: insErr } = await supabase
       .from('order_notification_deliveries')
       .insert({
@@ -247,14 +251,18 @@ Deno.serve(async (req) => {
 
     if (inserted) return { row: inserted as any, existed: false }
 
-    const { data: existing } = await supabase
+    let query = supabase
       .from('order_notification_deliveries')
       .select('*')
       .eq('order_id', orderId)
       .eq('channel', channel)
       .eq('notification_type', NOTIFICATION_TYPE)
-      .eq('recipient', recipientKey === '' ? null : recipientKey)
-      .maybeSingle()
+
+    if (isAdmin) {
+      query = query.eq('recipient', recipient ?? '')
+    }
+
+    const { data: existing } = await query.maybeSingle()
 
     if (insErr && !existing) {
       console.error('[notify-order-purchased] delivery insert failed', insErr)
