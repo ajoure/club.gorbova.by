@@ -658,13 +658,12 @@ serve(async (req) => {
         // Backend — подтверждаем загрузку RR-модулей.
         let backendCheck: CheckResult = { status: "not_verified" };
         let rrCfgLoaded: unknown = null;
-        let rrGetOrderStatusFn:
-          | ((c: unknown, id: string) => Promise<{ ok: boolean; status: number; errorText?: string }>)
-          | null = null;
+        type RRGetOrderStatusFn = (c: unknown, id: string) => Promise<{ ok: boolean; status: number; errorText?: string }>;
+        let rrGetOrderStatusFn: RRGetOrderStatusFn | null = null;
         try {
           const { loadRRConfig } = await import("../_shared/rr/rr-config.ts");
           const { rrGetOrderStatus } = await import("../_shared/rr/rr-adapter.ts");
-          rrGetOrderStatusFn = rrGetOrderStatus as typeof rrGetOrderStatusFn;
+          rrGetOrderStatusFn = rrGetOrderStatus as RRGetOrderStatusFn;
           if (credentialsCheck.status === "configured") {
             try {
               rrCfgLoaded = await loadRRConfig(supabaseAdmin);
