@@ -175,16 +175,60 @@ Resolver `resolveRecurring` корректно вернул `is_recurring=false,
   2. **B.** Сначала пропатчить `grant-access-for-order` (skip subscription for `resolved_recurring=false && !offer.meta?.recurring`), затем повторить runtime Sprint C2 и cleanup.
 - Никаких изменений `subscriptions_v2` до явного approval.
 
-## FU-3. Admin/super_admin уведомление в canonical `notify-order-purchased`
+## FU-3. Admin/super_admin уведомление в canonical `notify-order-purchased` — PATCH-ADMIN-PURCHASE-NOTIFY-V1
 
-Не запускается до FU-1/FU-2. Отдельная задача `PATCH-ADMIN-PURCHASE-NOTIFY-V1` с:
+**Статус: IMPLEMENTED (build), SMOKE PENDING (runtime).**
 
-- discovery ролей: канонические коды **`admin`** и **`super_admin`** (через underscore), 4 уникальных Telegram recipient (список зафиксирован в discovery-запросе);
-- security hardening: `verify_jwt=true` + service-role-only guard;
-- миграция уникальности `(order_id, channel, notification_type, recipient) WHERE channel='telegram_admin'`;
-- awaited `Promise.allSettled` на recipients + HTML escape;
-- удаление purchase-success вызовов `telegram-notify-admins` из `bepaid-webhook` (диагностические оставляем);
-- отдельный browser smoke.
+### Discovery (подтверждено runtime)
+
+- Уникальность `order_notification_deliveries` до патча: `UNIQUE (order_id, channel, notification_type)`.
+- CHECK на `channel`: `ANY (ARRAY['telegram','email'])` — админ-канал невозможно вставить без миграции.
+- Purchase-success вызовы `telegram-notify-admins` в `bepaid-webhook`: строки **1864 (subscription payment), 3627 & 4327 (link_payment), 5066 (checkout payment)**.
+- Системные/диагностические вызовы: **886, 937 (misconfig), 4469 (orphan_created), 4529 (orphan_failed)** — не трогаем.
+- Внутренний вызов `notify-order-purchased` из `grant-access-for-order` найден (fire-and-forget, service-role JWT, строка 2414).
+- Admin recipients: 4 уникальных `telegram_user_id` через `user_roles_v2 → roles.code IN ('admin','super_admin') → profiles.telegram_user_id`.
+
+### Реализовано
+
+1. **Миграция** (примечание: одна транзакция):
+   - `channel` CHECK расширен до `('telegram','email','telegram_admin')`.
+   - Уникальный constraint `(order_id, channel, notification_type)` заменён на индекс `(order_id, channel, notification_type, COALESCE(recipient,''))` — buyer-каналы остаются идемпотентными, admin получает отдельную строку на каждого telegram_user_id.
+   - Партиальный уникальный индекс `uniq_tg_msg_admin_purchase_dm` на `telegram_messages` по `(source_order_id, admin_telegram_user_id) WHERE event='product_purchased_admin_dm'`.
+2. **`supabase/config.toml`:** `notify-order-purchased.verify_jwt = true`.
+3. **`supabase/functions/notify-order-purchased/index.ts`:**
+   - Guard: `Authorization` header обязателен → `getClaims` → `role === 'service_role'` иначе 403.
+   - `force` и `force_purchase_dm` доступны только service-role (внешний пользователь не проходит guard).
+   - Новый блок `TELEGRAM_ADMIN`:
+     - Список admins получается через `roles → user_roles_v2 → profiles`, DISTINCT по `telegram_user_id`.
+     - Один primary bot, `Promise.allSettled` по recipients, ошибка одного не влияет на других.
+     - HTML escape всех динамических полей (`escapeHtml` применён к продукту, тарифу, сумме, номеру заказа, дате, имени, order_id в ссылке).
+     - Каждому админу — отдельная `order_notification_deliveries` строка (`channel='telegram_admin'`, `recipient=<tg_user_id>`).
+     - Mirror в `telegram_messages` c `event='product_purchased_admin_dm'`, идемпотентный через партиальный индекс.
+   - Buyer-каналы (email/telegram) — поведение не изменено.
+4. **`supabase/functions/bepaid-webhook/index.ts`:** удалены 4 purchase-success вызова `telegram-notify-admins` (subscription payment, link_payment ×2, checkout payment). Остались 4 KEEP-сайта (misconfig ×2, orphan_created, orphan_failed).
+
+### Smoke (PENDING runtime)
+
+Требует reactivation Stage F definitions и запуска RR authorized webhook на новом test-order:
+
+```
+product 00000000-c2f0-4e57-0000-100000000001
+tariff  00000000-c2f0-4e57-0000-200000000001
+offer   00000000-c2f0-4e57-0000-300000000001
+```
+
+**Checklist:**
+- [ ] buyer email delivery: `order_notification_deliveries` row `channel='email', status='sent'`;
+- [ ] buyer Telegram delivery: `channel='telegram', status='sent'`;
+- [ ] **4 отдельных** `telegram_admin` deliveries (по одной на каждого admin recipient) со `status='sent'`;
+- [ ] **4 admin mirror** записи в `telegram_messages` с `meta.event='product_purchased_admin_dm'`;
+- [ ] текст сообщения корректный, ссылка `/admin/orders/{order_id}` работает;
+- [ ] повтор webhook не увеличивает counts (проверка idempotency);
+- [ ] bePaid purchase (если параллельно запустить) не создаёт двойного admin-уведомления — только через canonical path;
+- [ ] unauthorized вызов `notify-order-purchased` (anon JWT или authenticated non-service-role) получает 401/403.
+
+**После smoke:** deactivate product/tariff/offer, новый test-order оставить как audit proof до отдельного cleanup approval.
+
 
 ---
 
