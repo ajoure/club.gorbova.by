@@ -819,6 +819,7 @@ serve(async (req) => {
           status: "not_verified",
           code: "no_events_yet",
         };
+        try {
           // Только реальные входящие webhook-события; иные типы
           // (create_order_succeeded, rr_promoted, fulfillment, reconciliation)
           // не подтверждают доставку webhook.
