@@ -27,7 +27,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.notify-order-purchased]
-verify_jwt = false
+verify_jwt = true
 
 [functions.autoweb-session-heartbeat]
 verify_jwt = true

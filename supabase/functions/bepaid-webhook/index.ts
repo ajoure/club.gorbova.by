@@ -1838,47 +1838,9 @@ Deno.serve(async (req) => {
         // (access_rules / bonuses / telegram) grants. Webhook never writes
         // entitlements directly anymore.
         
-        // 6. Send notifications
-        try {
-          // Full admin notification (same detail level as regular checkout)
-          const { data: customerProfile } = await supabase
-            .from('profiles')
-            .select('full_name, email, telegram_username')
-            .eq('user_id', subV2.user_id)
-            .maybeSingle();
+        // 6. Admin purchase notifications — moved to canonical `notify-order-purchased`
+        // (invoked by grant-access-for-order after STEP A). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
 
-          const notifyMessage = buildAdminNotifyMessage({
-            operation_type: 'bepaid_subscription_payment',
-            client_name: customerProfile?.full_name,
-            email: customerProfile?.email,
-            telegram_username: customerProfile?.telegram_username,
-            product_name: subV2.products_v2?.name,
-            tariff_name: subV2.tariffs?.name,
-            amount: paymentAmount,
-            currency: 'BYN',
-            next_charge_at: renewAt.toISOString(),
-            source_label: 'Подписка bePaid (автосписание)',
-          });
-            
-          const notifyResp = await fetch(
-            `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-              },
-              body: JSON.stringify({
-                message: notifyMessage,
-                source: 'bepaid_subscription_webhook',
-                order_id: orderV2Id,
-              }),
-            }
-          );
-          console.log('[WEBHOOK-SUBSCRIPTION] Full admin notification sent, status:', notifyResp.status);
-        } catch (notifyErr) {
-          console.error('[WEBHOOK-SUBSCRIPTION] Notification error:', notifyErr);
-        }
         
        // 6b. GETCOURSE SYNC for provider-managed subscriptions
        const getcourseOfferId = subV2.tariffs?.getcourse_offer_id;
@@ -3591,57 +3553,9 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 7. PATCH P2: Admin notification with PII masking
-      try {
-        const { data: customerProfile } = await supabase
-          .from('profiles')
-          .select('full_name, email, telegram_username')
-          .eq('user_id', linkOrder.user_id)
-          .maybeSingle();
+      // 7. Admin purchase notification — moved to canonical `notify-order-purchased`
+      // (invoked by grant-access-for-order). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
 
-        // Lookup product and tariff names for link-payment notification
-        let linkProductName: string | undefined;
-        let linkTariffName: string | undefined;
-        if (linkOrder.product_id) {
-          const { data: lp } = await supabase.from('products_v2').select('name').eq('id', linkOrder.product_id).maybeSingle();
-          linkProductName = lp?.name || undefined;
-        }
-        if (linkOrder.tariff_id) {
-          const { data: lt } = await supabase.from('tariffs').select('name').eq('id', linkOrder.tariff_id).maybeSingle();
-          linkTariffName = lt?.name || undefined;
-        }
-
-        const notifyMessage = buildAdminNotifyMessage({
-          operation_type: 'link_payment',
-          client_name: customerProfile?.full_name,
-          email: customerProfile?.email || linkOrder.customer_email,
-          telegram_username: customerProfile?.telegram_username,
-          product_name: linkProductName,
-          tariff_name: linkTariffName,
-          amount: paymentAmount,
-          currency: 'BYN',
-          source_label: 'Оплата по ссылке bePaid',
-        });
-
-        await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-            },
-            body: JSON.stringify({
-              message: notifyMessage,
-              source: 'bepaid_link_order_webhook',
-              order_id: linkOrder.id,
-            }),
-          }
-        );
-        console.log('[WEBHOOK-LINK-ORDER] Admin notification sent');
-      } catch (notifyErr) {
-        console.error('[WEBHOOK-LINK-ORDER] Notification error (non-fatal):', notifyErr);
-      }
 
       // 8. Audit log
       try {
@@ -4311,41 +4225,9 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
       }
 
-      // 8. Admin notification - lookup product/tariff names
-      let linkV2ProductName: string | undefined;
-      let linkV2TariffName: string | undefined;
-      if (linkOrderV2.product_id) {
-        const { data: lp2 } = await supabase.from('products_v2').select('name').eq('id', linkOrderV2.product_id).maybeSingle();
-        linkV2ProductName = lp2?.name || undefined;
-      }
-      if (linkOrderV2.tariff_id) {
-        const { data: lt2 } = await supabase.from('tariffs').select('name').eq('id', linkOrderV2.tariff_id).maybeSingle();
-        linkV2TariffName = lt2?.name || undefined;
-      }
-      try {
-        await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-            body: JSON.stringify({
-              message: buildAdminNotifyMessage({
-                operation_type: 'link_payment',
-                client_name: linkProfile.full_name,
-                email: linkProfile.email || linkOrderV2.customer_email,
-                product_name: linkV2ProductName,
-                tariff_name: linkV2TariffName,
-                amount: linkPaymentAmount,
-                currency: 'BYN',
-                source_label: 'Оплата по ссылке bePaid',
-              }),
-              source: 'bepaid_link_webhook', order_id: linkOrderV2.id,
-            }),
-          }
-        );
-      } catch (notifyErr) {
-        console.error('[WEBHOOK-LINK] Notification error (non-fatal):', notifyErr);
-      }
+      // 8. Admin purchase notification — moved to canonical `notify-order-purchased`
+      // (invoked by grant-access-for-order). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
+
 
       // 9. Update payment_reconcile_queue → materialized
       try {
@@ -5024,78 +4906,9 @@ Deno.serve(async (req) => {
           }
         }
 
-        // === NOTIFY ADMINS UNCONDITIONALLY FOR SUCCESSFUL PAYMENTS ===
-        // This block is OUTSIDE the "status !== 'paid'" check to ensure notifications
-        // are sent even for duplicate webhooks or already-processed orders
-        try {
-          // Re-fetch order data to get latest state
-          const { data: notifyOrderData } = await supabase
-            .from('orders_v2')
-            .select(`
-              id, order_number, is_trial, customer_email, customer_phone, user_id,
-              product_id, tariff_id,
-              products_v2:product_id(name),
-              tariffs:tariff_id(name)
-            `)
-            .eq('id', paymentV2.order_id)
-            .single();
+        // === Admin purchase notification — moved to canonical `notify-order-purchased`
+        // (invoked by grant-access-for-order). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
 
-          if (notifyOrderData) {
-            // Get customer profile for notification
-            const { data: customerProfile } = await supabase
-              .from('profiles')
-              .select('full_name, email, telegram_username')
-              .eq('user_id', notifyOrderData.user_id)
-              .single();
-
-            const notifyMessage = buildAdminNotifyMessage({
-              operation_type: notifyOrderData.is_trial ? 'trial' : 'payment',
-              client_name: customerProfile?.full_name,
-              email: customerProfile?.email || notifyOrderData.customer_email,
-              telegram_username: customerProfile?.telegram_username,
-              product_name: (notifyOrderData.products_v2 as any)?.name,
-              tariff_name: (notifyOrderData.tariffs as any)?.name,
-              amount: paymentV2.amount,
-              currency: paymentV2.currency,
-              source_label: 'Оплата через checkout bePaid',
-            });
-
-            // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
-            try {
-              const notifyResponse = await fetch(
-                `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-                  },
-                  body: JSON.stringify({ 
-                    message: notifyMessage,
-                    source: 'bepaid_webhook',
-                    order_id: notifyOrderData.id,
-                    payment_id: paymentV2.id,
-                  }),
-                }
-              );
-
-              const notifyData = await notifyResponse.json().catch(() => ({}));
-              
-              if (!notifyResponse.ok) {
-                console.error('Admin notification fetch error:', notifyResponse.status, notifyData);
-              } else if (notifyData?.sent === 0) {
-                console.warn('Admin notification sent=0:', notifyData);
-              } else {
-                console.log('Admin notification sent for payment:', paymentV2.id, notifyData);
-              }
-            } catch (fetchError) {
-              console.error('Admin notification fetch exception:', fetchError);
-            }
-          }
-        } catch (notifyError) {
-          console.error('Error notifying super admins:', notifyError);
-          // Don't fail the webhook if notification fails
-        }
 
         // --- Auto-generate documents from templates ---
         // Get fresh order data for document generation (orderV2 may be out of scope)
