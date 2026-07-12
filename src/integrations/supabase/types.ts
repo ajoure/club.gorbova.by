@@ -19483,6 +19483,10 @@ export type Database = {
         }
         Returns: Json
       }
+      rr_upsert_entitlement_source_from_order: {
+        Args: { _order_id: string }
+        Returns: Json
+      }
       safe_delete_document_package: {
         Args: { _package_id: string }
         Returns: Json
