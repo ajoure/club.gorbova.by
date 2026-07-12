@@ -1,0 +1,1 @@
+UPDATE public.orders_v2 SET user_id = '05cd3754-d589-4d90-97d1-89ba2bee610b' WHERE id = 'c28cbb68-8b74-48b0-bbe5-ef6541e2c6a5' AND user_id IS NULL AND customer_email = '7500084@gmail.com' AND status = 'pending';

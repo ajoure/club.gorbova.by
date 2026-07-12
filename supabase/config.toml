@@ -40,3 +40,6 @@ verify_jwt = false
 
 [functions.rr-fulfill-order]
 verify_jwt = true
+
+[functions.rr-admin-deliver-test-webhook]
+verify_jwt = true
