@@ -96,6 +96,7 @@ export function providerDocTypeLabel(type: string): string {
 const PROVIDER_LABEL_RU: Record<string, string> = {
   stripe: "Stripe",
   bepaid: "bePaid",
+  rr: "Ресурс Развития",
 };
 
 export function providerLabel(provider: string): string {
