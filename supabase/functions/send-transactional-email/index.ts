@@ -1,6 +1,6 @@
 import * as React from 'npm:react@18.3.1'
 // PATCH-EMAIL-FOOTER-UTF8-V1: switched from `renderAsync` (0.0.22) to synchronous
-// `render` from @react-email/render@1.0.5. The older renderAsync path used a
+// `render` from @react-email/render@0.0.17. The older renderAsync path used a
 // ReadableStream + TextDecoder pipeline that corrupted multi-byte UTF-8 chars
 // landing on chunk boundaries (observed: `С` → `\uFFFD\uFFFD`, `н` → `\uFFFD\uFFFD`).
 import { render as renderEmail } from 'npm:@react-email/render@0.0.17'
