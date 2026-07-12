@@ -805,21 +805,28 @@ serve(async (req) => {
     }
 
     // Update instance status in database.
-    // Special-case RR pending_backend: не переводим в "connected", т.к. реальный
-    // API-тест ещё не выполнен — иначе будет ложное "Подключено".
-    const isRrPending =
-      provider === "rr" && (responseData as Record<string, unknown>).api_test === "pending_backend";
+    // Для RR используем детальный overall из payload:
+    //   - not_configured / battle_awaiting_first_order → disconnected (без error_message)
+    //   - connected → connected
+    //   - error → error
+    const rrOverall = provider === "rr"
+      ? (responseData as Record<string, unknown>).overall as string | undefined
+      : undefined;
 
     const updatePayload: Record<string, unknown> = {
       last_check_at: new Date().toISOString(),
       error_message: errorMessage,
     };
-    if (isRrPending) {
-      // RR: credentials в порядке, но реальный API-тест ещё не реализован.
-      // Держим статус "disconnected" (не connected и не error) — честный
-      // промежуточный статус до появления backend-адаптера.
-      updatePayload.status = "disconnected";
-      updatePayload.error_message = null;
+    if (provider === "rr") {
+      if (rrOverall === "connected") {
+        updatePayload.status = "connected";
+      } else if (rrOverall === "error") {
+        updatePayload.status = "error";
+      } else {
+        // not_configured | battle_awaiting_first_order — честный промежуточный статус
+        updatePayload.status = "disconnected";
+        updatePayload.error_message = null;
+      }
     } else {
       updatePayload.status = success ? "connected" : "error";
     }
