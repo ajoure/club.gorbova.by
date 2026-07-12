@@ -19383,6 +19383,7 @@ export type Database = {
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
+          _crm_routing_snapshot?: Json
           _currency: string
           _customer_email: string
           _customer_ip: string
@@ -19391,6 +19392,8 @@ export type Database = {
           _meta: Json
           _offer_id: string
           _phone_norm: string
+          _pipeline_id?: string
+          _pipeline_stage_id?: string
           _product_id: string
           _tariff_id: string
           _user_id: string
