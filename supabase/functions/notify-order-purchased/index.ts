@@ -1,15 +1,16 @@
 // notify-order-purchased
 // Canonical post-payment notification for paid orders_v2 rows.
 // Invoked (non-blocking) from grant-access-for-order at the end of the write path.
-// Idempotent by (order_id, channel, notification_type) via public.order_notification_deliveries.
 //
-// Contract:
-//   POST { order_id: uuid, force?: boolean, force_purchase_dm?: boolean }
-// Behaviour:
-//   - Reads orders_v2, refuses when status != 'paid' (returns { skipped: 'not_paid' }).
-//   - Resolves recipient email + telegram_user_id (priority documented in POST_PAYMENT_NOTIFICATIONS.md).
-//   - For each channel: inserts pending delivery row (unique guard = idempotency), sends, marks sent/failed/skipped.
-//   - Never throws to caller — caller (grant-access-for-order) treats this as best-effort.
+// Channels:
+//   - email        (buyer)                — idempotent by (order_id, channel, notification_type, recipient)
+//   - telegram     (buyer DM)             — idempotent
+//   - telegram_admin (per admin/super_admin recipient) — one delivery row per admin telegram_user_id
+//
+// Security (PATCH-ADMIN-PURCHASE-NOTIFY-V1):
+//   - verify_jwt = true в config.toml (Supabase проверяет подпись JWT на границе).
+//   - Внутри дополнительно требуется role='service_role' в claims — обычный authenticated JWT получает 403.
+//   - Параметры `force` и `force_purchase_dm` могут указывать только service-role вызовы (внешний пользователь не имеет доступа к функции вовсе).
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -26,6 +27,16 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
+}
+
+function escapeHtml(input: unknown): string {
+  const s = input == null ? '' : String(input)
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 async function tgSendMessage(botToken: string, chatId: number | string, text: string, html = false) {
@@ -61,6 +72,27 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!
   const svcKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
+
+  // ── Service-role-only guard ─────────────────────────────────────────────
+  // verify_jwt=true уже отсёк неподписанные запросы. Здесь запрещаем всё,
+  // кроме role='service_role' в claims.
+  const authHeader = req.headers.get('Authorization') || ''
+  if (!authHeader.toLowerCase().startsWith('bearer ')) {
+    return json({ error: 'unauthorized' }, 401)
+  }
+  const token = authHeader.slice(7).trim()
+  try {
+    const verifier = createClient(supabaseUrl, anonKey)
+    const { data: claimsRes, error: claimsErr } = await verifier.auth.getClaims(token)
+    const role = (claimsRes as any)?.claims?.role
+    if (claimsErr || role !== 'service_role') {
+      return json({ error: 'forbidden', reason: 'service_role_required' }, 403)
+    }
+  } catch (_e) {
+    return json({ error: 'forbidden', reason: 'service_role_required' }, 403)
+  }
+
   const supabase = createClient(supabaseUrl, svcKey)
 
   let body: any
@@ -82,7 +114,6 @@ Deno.serve(async (req) => {
     .eq('id', orderId)
     .maybeSingle()
 
-
   if (orderErr) return json({ error: 'order_lookup_failed', details: orderErr.message }, 500)
   if (!order) return json({ error: 'order_not_found' }, 404)
 
@@ -103,7 +134,6 @@ Deno.serve(async (req) => {
   const productName = (product as any)?.name || 'Продукт'
   const tariffName = (tariff as any)?.name || null
 
-  // Best-effort: resolve access_end_at from the most recent active subscription for this order/product
   let accessEndAt: string | null = null
   if (order.product_id) {
     const subUserIds = [order.user_id, (order as any).profile_id].filter(Boolean) as string[]
@@ -124,10 +154,7 @@ Deno.serve(async (req) => {
     }
   }
 
-
-  // 3. Recipient resolution — try profile via auth user_id, profile_id, and customer_email.
-  // IMPORTANT: telegram_messages.user_id is the chat/dialog key used by admin UI.
-  // For registered contacts it must be profiles.user_id (auth user id), not profiles.id.
+  // 3. Buyer recipient resolution
   let recipientEmail: string | null = order.customer_email || null
   let telegramUserId: number | null = null
   let recipientName: string | null = null
@@ -165,7 +192,6 @@ Deno.serve(async (req) => {
     applyProfile(profileById)
   }
 
-  // Fallback: lookup by customer_email if still no telegram/name
   if ((!telegramUserId || !recipientName || !mirrorUserId) && recipientEmail) {
     const { data: profileByEmail } = await supabase
       .from('profiles')
@@ -176,8 +202,7 @@ Deno.serve(async (req) => {
     applyProfile(profileByEmail)
   }
 
-
-  // 4. Load per-product overrides (email + telegram)
+  // 4. Load per-product overrides
   const overrides: Record<string, any> = {}
   if (order.product_id) {
     const { data: rows } = await supabase
@@ -190,7 +215,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Detect whether a club-DM was already sent for this order (dedupe purchase-DM by default)
+  // Detect club-DM
   let clubDmSent = false
   if (order.user_id && !forcePurchaseDm) {
     const { data: existingDm } = await supabase
@@ -205,9 +230,9 @@ Deno.serve(async (req) => {
 
   const results: Record<string, any> = { order_id: orderId }
 
-  // 5. Ensure delivery rows (idempotent). Use unique guard on (order_id, channel, notification_type).
-  async function upsertDelivery(channel: 'email' | 'telegram', recipient: string | null) {
-    // Try insert first (pending); if conflict, read existing.
+  // 5. Delivery helpers
+  async function upsertDelivery(channel: 'email' | 'telegram' | 'telegram_admin', recipient: string | null) {
+    const recipientKey = recipient ?? ''
     const { data: inserted, error: insErr } = await supabase
       .from('order_notification_deliveries')
       .insert({
@@ -222,13 +247,13 @@ Deno.serve(async (req) => {
 
     if (inserted) return { row: inserted as any, existed: false }
 
-    // Conflict — fetch existing
     const { data: existing } = await supabase
       .from('order_notification_deliveries')
       .select('*')
       .eq('order_id', orderId)
       .eq('channel', channel)
       .eq('notification_type', NOTIFICATION_TYPE)
+      .eq('recipient', recipientKey === '' ? null : recipientKey)
       .maybeSingle()
 
     if (insErr && !existing) {
@@ -244,7 +269,7 @@ Deno.serve(async (req) => {
       .eq('id', rowId)
   }
 
-  // ---- EMAIL ----
+  // ---- EMAIL (buyer) ----
   const emailEnabled = (overrides.email?.is_enabled ?? true) === true
   if (!emailEnabled) {
     results.email = { skipped: 'disabled_by_product_template' }
@@ -287,7 +312,6 @@ Deno.serve(async (req) => {
         )
         if (sendErr) throw sendErr
 
-        // Compact metadata for audit/display (no personal payload leakage)
         const auditMeta = {
           subject,
           preview_text: previewText,
@@ -313,15 +337,23 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ---- TELEGRAM ----
+  // ---- Primary bot (used by buyer DM and admin DMs) ----
+  const { data: botRow } = await supabase
+    .from('telegram_bots')
+    .select('id, bot_token_encrypted')
+    .eq('status', 'active')
+    .eq('is_primary', true)
+    .maybeSingle()
+  const botToken = (botRow as any)?.bot_token_encrypted || null
+  const botId = (botRow as any)?.id || null
+
+  // ---- TELEGRAM (buyer) ----
   const tgEnabled = (overrides.telegram?.is_enabled ?? true) === true
   if (!tgEnabled) {
     results.telegram = { skipped: 'disabled_by_product_template' }
   } else if (!telegramUserId) {
     results.telegram = { skipped: 'no_telegram_user_id' }
   } else if (clubDmSent) {
-    // Access DM (from telegram-grant-access) already delivered — skip duplicate purchase-DM.
-    // Record 'skipped' row for auditability. Do NOT create a fake telegram_messages mirror.
     const { row } = await upsertDelivery('telegram', String(telegramUserId))
     if (row && row.status !== 'sent') {
       await markDelivery(row.id, {
@@ -344,32 +376,20 @@ Deno.serve(async (req) => {
       results.telegram = { skipped: 'already_sent', delivery_id: row.id }
     } else {
       try {
-        // Load primary bot
-        const { data: bot } = await supabase
-          .from('telegram_bots')
-          .select('id, bot_token_encrypted')
-          .eq('status', 'active')
-          .eq('is_primary', true)
-          .maybeSingle()
-        const botToken = (bot as any)?.bot_token_encrypted
-        const botId = (bot as any)?.id || null
         if (!botToken) throw new Error('primary_bot_not_configured')
 
         const endLine = accessEndAt
-          ? `\n🗓 <b>Доступ до:</b> ${fmtRuDate(accessEndAt)}`
+          ? `\n🗓 <b>Доступ до:</b> ${escapeHtml(fmtRuDate(accessEndAt))}`
           : ''
         const priceRaw = Number(order.paid_amount ?? order.final_price ?? 0)
         const priceLine = priceRaw > 0
-          ? `\n💳 <b>Оплачено:</b> ${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
+          ? `\n💳 <b>Оплачено:</b> ${escapeHtml(priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} ${escapeHtml(order.currency || 'BYN')}`
           : ''
-        const orderLine = order.order_number ? `\n🧾 <b>Заказ:</b> ${order.order_number}` : ''
-        const tariffPart = tariffName ? `\n📦 <b>Тариф:</b> ${tariffName}` : ''
-        const namePrefix = recipientName ? `${recipientName}, ` : ''
-        const extra = overrides.telegram?.intro_text
-          ? `\n\n${overrides.telegram.intro_text}`
-          : ''
-        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${productName}</b>.${tariffPart}${priceLine}${endLine}${orderLine}\n\n👉 <a href="https://gorbova.by/purchases">Открыть личный кабинет</a>${extra}`
-
+        const orderLine = order.order_number ? `\n🧾 <b>Заказ:</b> ${escapeHtml(order.order_number)}` : ''
+        const tariffPart = tariffName ? `\n📦 <b>Тариф:</b> ${escapeHtml(tariffName)}` : ''
+        const namePrefix = recipientName ? `${escapeHtml(recipientName)}, ` : ''
+        const extra = overrides.telegram?.intro_text ? `\n\n${escapeHtml(overrides.telegram.intro_text)}` : ''
+        const text = `✅ <b>Оплата получена!</b>\n\n${namePrefix}вы приобрели <b>${escapeHtml(productName)}</b>.${tariffPart}${priceLine}${endLine}${orderLine}\n\n👉 <a href="https://gorbova.by/purchases">Открыть личный кабинет</a>${extra}`
 
         const { ok, data } = await tgSendMessage(botToken, telegramUserId, text, true)
         if (!ok) throw new Error(`telegram_send_failed: ${JSON.stringify(data).slice(0, 300)}`)
@@ -389,8 +409,6 @@ Deno.serve(async (req) => {
           metadata: tgAuditMeta,
         })
 
-        // Mirror to telegram_messages so it appears in the Telegram tab / dialog.
-        // Idempotent via partial unique index uniq_tg_msg_purchase_dm_order.
         const chatDialogUserId = mirrorUserId || mirrorProfileId
         if (providerMessageId && chatDialogUserId) {
           const { error: mirrorErr } = await supabase
@@ -429,6 +447,118 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ---- TELEGRAM_ADMIN (admin/super_admin recipients) ----
+  const adminResults: any[] = []
+  try {
+    if (!botToken) {
+      results.telegram_admin = { skipped: 'primary_bot_not_configured' }
+    } else {
+      // DISTINCT telegram_user_id across admin/super_admin roles
+      const { data: adminRows, error: adminErr } = await supabase
+        .from('user_roles_v2')
+        .select('user_id, roles!inner(code), profiles:profiles!user_roles_v2_user_id_fkey(id, user_id, telegram_user_id, first_name, full_name)')
+        .in('roles.code', ['admin', 'super_admin'])
+      if (adminErr) throw adminErr
+
+      const seen = new Set<string>()
+      const admins: Array<{ telegramUserId: number; profileId: string | null; profileUserId: string | null }> = []
+      for (const r of (adminRows as any[]) || []) {
+        const prof = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles
+        const tuidRaw = prof?.telegram_user_id
+        if (!tuidRaw) continue
+        const tuid = Number(tuidRaw)
+        if (!tuid || seen.has(String(tuid))) continue
+        seen.add(String(tuid))
+        admins.push({ telegramUserId: tuid, profileId: prof?.id || null, profileUserId: prof?.user_id || null })
+      }
+
+      // Build admin DM text
+      const priceRaw = Number(order.paid_amount ?? order.final_price ?? 0)
+      const priceStr = priceRaw > 0
+        ? `${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
+        : '—'
+      const buyerLine = recipientName
+        ? `${escapeHtml(recipientName)}${recipientEmail ? ' &lt;' + escapeHtml(recipientEmail) + '&gt;' : ''}`
+        : (recipientEmail ? escapeHtml(recipientEmail) : '—')
+      const adminText =
+        `💰 <b>Новая оплата</b>\n\n` +
+        `👤 <b>Клиент:</b> ${buyerLine}\n` +
+        `📦 <b>Продукт:</b> ${escapeHtml(productName)}\n` +
+        (tariffName ? `🏷 <b>Тариф:</b> ${escapeHtml(tariffName)}\n` : '') +
+        `💳 <b>Сумма:</b> ${escapeHtml(priceStr)}\n` +
+        (order.order_number ? `🧾 <b>Заказ:</b> ${escapeHtml(order.order_number)}\n` : '') +
+        (accessEndAt ? `🗓 <b>Доступ до:</b> ${escapeHtml(fmtRuDate(accessEndAt))}\n` : '') +
+        `\n👉 <a href="https://gorbova.by/admin/orders/${escapeHtml(orderId)}">Открыть заказ</a>`
+
+      const sendOne = async (adm: { telegramUserId: number; profileId: string | null; profileUserId: string | null }) => {
+        const { row } = await upsertDelivery('telegram_admin', String(adm.telegramUserId))
+        if (!row) return { admin: adm.telegramUserId, error: 'delivery_row_missing' }
+        if (row.status === 'sent' && !force) {
+          return { admin: adm.telegramUserId, skipped: 'already_sent', delivery_id: row.id }
+        }
+        try {
+          const { ok, data } = await tgSendMessage(botToken, adm.telegramUserId, adminText, true)
+          if (!ok) throw new Error(`telegram_send_failed: ${JSON.stringify(data).slice(0, 200)}`)
+          const providerMessageId = data?.result?.message_id ? Number(data.result.message_id) : null
+          await markDelivery(row.id, {
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            provider_message_id: providerMessageId ? String(providerMessageId) : null,
+            metadata: {
+              template_code: 'product-purchased-admin-dm',
+              parse_mode: 'HTML',
+              product_name: productName,
+              tariff_name: tariffName,
+              message_text: adminText,
+            },
+          })
+
+          // Mirror to telegram_messages (idempotent via uniq_tg_msg_admin_purchase_dm)
+          const chatDialogUserId = adm.profileUserId || adm.profileId
+          if (providerMessageId && chatDialogUserId) {
+            const { error: mirrorErr } = await supabase.from('telegram_messages').insert({
+              user_id: chatDialogUserId,
+              telegram_user_id: adm.telegramUserId,
+              bot_id: botId,
+              direction: 'outgoing',
+              message_text: adminText,
+              message_id: providerMessageId,
+              status: 'sent',
+              meta: {
+                source: 'notify-order-purchased',
+                event: 'product_purchased_admin_dm',
+                source_order_id: orderId,
+                admin_telegram_user_id: String(adm.telegramUserId),
+                template_code: 'product-purchased-admin-dm',
+                parse_mode: 'HTML',
+                order_number: order.order_number || null,
+                product_name: productName,
+                tariff_name: tariffName,
+              },
+            })
+            if (mirrorErr && !/duplicate key|unique/i.test(mirrorErr.message || '')) {
+              console.error('[notify-order-purchased] admin telegram_messages mirror failed', mirrorErr)
+            }
+          }
+          return { admin: adm.telegramUserId, sent: true, delivery_id: row.id }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          await markDelivery(row.id, { status: 'failed', error: msg })
+          return { admin: adm.telegramUserId, error: msg, delivery_id: row.id }
+        }
+      }
+
+      const settled = await Promise.allSettled(admins.map(sendOne))
+      for (const s of settled) {
+        if (s.status === 'fulfilled') adminResults.push(s.value)
+        else adminResults.push({ error: String((s as any).reason) })
+      }
+      results.telegram_admin = { recipients: admins.length, results: adminResults }
+    }
+  } catch (e) {
+    console.error('[notify-order-purchased] telegram_admin block error', e)
+    results.telegram_admin = { error: e instanceof Error ? e.message : String(e) }
+  }
+
   return json({ success: true, ...results })
 })
-
