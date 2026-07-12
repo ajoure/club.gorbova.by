@@ -4775,3 +4775,475 @@ Scenario Deal only:
 - C2 execute: **BLOCKED**
 
 Изменения append-only только в `.lovable/plan.md`. Код и миграции не менялись.
+
+---
+
+## C30.9 — A2-0 queue lookup: factual correction (append-only)
+
+C30.1 всё ещё содержал неточности. Ниже — воспроизводимый механизм, использованный миграцией
+`20260712194328_1ba1975f-ccb7-46e1-95c8-161ef6e7c267.sql`:
+
+**Направление поиска очереди.**
+Миграция шла от `payments_v2` к `payment_reconcile_queue`, а не наоборот:
+
+```sql
+SELECT q.*
+FROM payment_reconcile_queue q
+WHERE q.id = (pv.meta->>'queue_payment_id')::uuid
+FOR UPDATE
+```
+
+Ключом связки был `payments_v2.meta->>'queue_payment_id'`, приводимый к `uuid`. Обратного соответствия
+`queue.payment_id = v_row.id` в миграции не было — такой связи в схеме не существует.
+
+**Fallback на архив.** Если строка отсутствовала в живой очереди, тот же приведённый UUID искался
+в `payment_reconcile_queue_archive` через `id`. Оба источника рассматривались как эквивалентные
+для целей backfill.
+
+**Guard = FAIL, не SKIP.** При любом расхождении (`bepaid_uid IS DISTINCT FROM v_row.provider_payment_id`,
+`amount`, `currency`, `paid_at`) миграция выполняла `RAISE EXCEPTION` и откатывала транзакцию целиком.
+`CONTINUE` / `skip` не применялся.
+
+**Фактические meta-ключи.** SET-блок писал:
+
+```text
+provider_backfill_source     = 'a2_0_admin_bepaid_backfill'
+provider_backfill_patch      = 'PATCH-PAYMENTS-MANAGEMENT-V2-A2-0'
+provider_backfilled_at       = now()
+legacy_provider              = 'admin'
+```
+
+Ключа `a2_0_backfill` в meta не создавалось. Предыдущее упоминание в C29/C30.1 было неточным.
+
+**Статус.** A2-0 остаётся **PASS**: четыре строки обновлены, провайдер admin→bepaid, `provider_payment_id`
+проставлен, meta зафиксирована. Изменяются только шесть перечисленных полей, всё остальное неизменно.
+
+---
+
+## C30.10 — Модель raw / guarded / actionable: удаление `manual_offline` и разделение осей
+
+Модель провайдеров закреплена как ровно четыре значения:
+
+```text
+provider ∈ { bepaid | stripe | rr | bank }
+```
+
+Термин `manual_offline` изъят из плана и не будет применяться ни в C2, ни в UI, ни в отчётах.
+Любое ранее сделанное упоминание считается withdrawn.
+
+**Финансовая ось (financial_actionable)** определяется только состоянием платежей и причиной операции:
+
+```text
+financial_actionable = TRUE ⇔
+  (recognized_status_transition IS NOT NULL)
+  AND (guard_reason IS NULL)
+  AND (locked_before_snapshot_matches_preview = TRUE)
+```
+
+Никакие производные факты — активный entitlement, активная subscription, недавний admin grant —
+**не блокируют** финансовый пересчёт. Пересчёт `paid → partial | pending` при удалении/аннулировании
+последнего succeeded-платежа выполняется всегда, если net-состояние заказа этого требует и guard пуст.
+
+**Ось доступов (access impact)** — независимое приложение к тому же событию:
+
+```text
+access_impact_detected        = есть активный entitlement / access_grant / telegram_access
+subscription_impact_detected  = есть активная subscriptions_v2 / provider_subscriptions
+revoke_available              = существует канонический механизм отзыва для источника
+```
+
+Эти четыре булева возвращаются рядом с транзитом, но:
+
+- не суммируются с `financial_actionable` в единый флаг «нельзя пересчитывать»;
+- обрабатываются отдельной pipeline (revoke / notify / dunning) после того, как заказ приведён к
+  правильному финансовому статусу;
+- отображаются в UI как «последствия», а не как «блокировки пересчёта».
+
+---
+
+## C30.11 — Refund conflicts: `GREATEST` запрещён, guard=NULL
+
+Ранее в C30.6 предполагалось выражение вида
+`GREATEST(parent.refunded_amount, child_refund_sum)` для расхождений между parent-заказом и
+succeeded-строками. Это трактуется как автоматический выбор одного из конфликтующих источников и
+считается недопустимым.
+
+**Правило для mismatch (parent-order refund vs child rows refund не сходятся):**
+
+```text
+recognized_refund_amount = NULL
+net_paid                  = NULL
+guard_reason              = 'refund_data_conflict'
+status_transition_allowed = FALSE
+amount_update_allowed     = FALSE
+```
+
+**Диагностическая часть возвращается отдельно, но не используется для UPDATE:**
+
+```text
+parent_refund_amount      = orders_v2.paid_amount – (SUM succeeded.amount – SUM succeeded.refunded_amount)   -- derived
+child_refund_amount       = SUM(payments_v2.refunded_amount) на succeeded-строках заказа
+refund_row_amount         = SUM(payments_v2.amount) на refunded-строках заказа
+difference                = child_refund_amount – refund_row_amount
+```
+
+**Правило для orphan (нет parent-цепочки succeeded для refunded order):**
+
+```text
+recognized_refund_amount = NULL
+guard_reason              = 'orphan_refund'
+status_transition_allowed = FALSE
+amount_update_allowed     = FALSE
+```
+
+Ни одно решение о transition/amount **не принимается** на основе single-source-of-truth эвристики.
+Конфликт данных всегда требует ручного разрешения, а не автоматической выборки максимума/минимума.
+
+---
+
+## C30.12 — Refund lineage: `other/ambiguous` не обязано быть нулём
+
+Требование «`other = 0`» снимается. Правило:
+
+```text
+SUM(all mutually-exclusive categories) = 43
+other / ambiguous → допускается ненулевым
+  → в отчёте перечисляются все order_id
+  → automatic transition = no-op
+  → operator resolution required
+```
+
+Никакая категория не форсируется ради обнуления `other`. Классификация обязана быть
+воспроизводимой и mutually exclusive, но не обязана быть exhaustive-в-ноль.
+
+---
+
+## C30.13 — C30.B canonical baseline: воспроизводимый SQL и текущие числа
+
+**Full SQL (без сокращений `... predicate CTE ...`):**
+
+```sql
+WITH succeeded AS (
+  SELECT order_id, amount, refunded_amount, id
+  FROM payments_v2
+  WHERE status = 'succeeded'
+    AND is_deleted = false
+    AND order_id IS NOT NULL
+),
+per_order AS (
+  SELECT o.id AS order_id, o.status,
+         COALESCE(SUM(s.amount), 0) - COALESCE(SUM(s.refunded_amount), 0) AS computed_net,
+         COUNT(s.id) AS n_canonical
+  FROM orders_v2 o
+  LEFT JOIN succeeded s ON s.order_id = o.id
+  WHERE o.status = 'paid'
+  GROUP BY o.id, o.status
+),
+set_a AS (           -- no-canonical net<=0
+  SELECT order_id FROM per_order
+  WHERE n_canonical = 0 AND computed_net <= 0
+),
+set_b AS (           -- canonical history net<=0
+  SELECT order_id FROM per_order
+  WHERE n_canonical > 0 AND computed_net <= 0
+)
+SELECT
+  (SELECT COUNT(*)          FROM set_a) AS a_count,
+  (SELECT COUNT(DISTINCT order_id) FROM set_a) AS a_distinct,
+  (SELECT md5(string_agg(order_id::text, ',' ORDER BY order_id::text)) FROM set_a) AS a_md5,
+  (SELECT COUNT(*)          FROM set_b) AS b_count,
+  (SELECT COUNT(DISTINCT order_id) FROM set_b) AS b_distinct,
+  (SELECT md5(string_agg(order_id::text, ',' ORDER BY order_id::text)) FROM set_b) AS b_md5;
+```
+
+**Результат текущего прогона (read-only, 2026-07-12):**
+
+```text
+set_a (no-canonical net<=0):
+  count           = 748
+  count_distinct  = 748
+  md5             = 2bbebb976428c56854fe13e347e8d7b5
+
+set_b (canonical history net<=0):
+  count           = 187
+  count_distinct  = 187
+  md5             = 1a91170f93b461944260f6158248cffd
+```
+
+**Расхождение с прошлым baseline (730 / 42).** Разница `+18` в set_a и `+145` в set_b (относительно
+ранее заявленного 42 для set_b) объясняется тем, что предыдущий подсчёт использовал более узкий
+предикат (только orders со специфическими meta-маркерами) и не покрывал canonical-history-but-pending.
+Прежние числа 730/42 официально **superseded**. SHA-256 `ab7e83bd…` для 730-ID также withdrawn:
+теперь baseline — MD5 выше по двум непересекающимся множествам.
+
+**Пометка.** Итоговое `raw paid→pending = A ∪ B = 748 + 187 = 935` уникальных `order_id`
+(множества по построению не пересекаются: A требует `n_canonical=0`, B требует `n_canonical>0`).
+Actionable до применения guard-логики C30.10/C30.11 не рассчитан — это отдельный шаг C30.C.
+
+**Refund lineage 43 заказов (mutually exclusive):**
+
+```text
+orphan_refund                = 0
+legacy_no_refund_signal      = 34   -- succeeded есть, refund-сигнала нет ни на child, ни отдельной строкой
+refund_on_succeeded_only     = 8    -- child refund>0 на succeeded, отдельных refunded-строк нет
+refund_rows_only_no_parent   = 0
+exact_refund_and_rows        = 0
+refund_mismatch              = 1    -- guard = refund_data_conflict
+─────────────────────────────────
+Σ                            = 43   ✓
+```
+
+Категория `refund_on_succeeded_only` → `recognized_refund_amount = SUM(succeeded.refunded_amount)`,
+guard пуст, financial_actionable решается по net.
+`legacy_no_refund_signal` → automatic transition = **no-op**, отдельный флаг operator resolution.
+`refund_mismatch` → guard=`refund_data_conflict`, no update (см. C30.11).
+
+---
+
+## C30.14 — C30.A B0a runtime: план self-provisioned technical fixture
+
+**Read-only discovery выполнен.** Найдено 16 кандидатов с нулевым footprint
+(`orders/payments/subscriptions/entitlements = 0`), в т.ч.:
+
+```text
+qa.admin@gorbova.test   profile_id = 2989ffb9-9351-4bf1-a018-6dcb7b4da723
+qa.user@gorbova.test    profile_id = 3bdd6b71-80e4-439e-9b83-3a952698dd5a
+```
+
+Оба явно помечены доменом `.test` и префиксом `qa.`, не участвуют ни в одной боевой цепочке.
+
+**Стратегия B0a runtime.** Fixture создаётся заново, а не переиспользуется:
+даже профиль с нулевым footprint остаётся частью production auth, и повторное использование
+маскирует «до/после» снимки. Порядок:
+
+```text
+1. INSERT auth.users через service_role Admin API
+     email = b0a-runtime-<epoch>@example.invalid
+     user_metadata = { is_test:true, patch:"PATCH-PAYMENTS-MANAGEMENT-V2-B0A" }
+
+2. INSERT public.profiles (user_id = created, email = fixture email)
+
+3. Создать fixture-product / tariff, помеченные is_test=true,
+   без gc_offer / без telegram-channel / без email-template.
+
+4. Сценарий 1 — admin_grant:
+     запуск текущего canonical grant-access-for-order через fixture-order
+     проверка: order создан, entitlement создан, payment не создан
+     snapshot before/after
+
+5. Сценарий 2 — admin_deal_only:
+     запуск create-deal-from-payment RPC contract (dry, если execute BLOCKED)
+     проверка: order создан, payment linked, entitlement по правилу
+     snapshot before/after
+
+6. Cleanup (обратный порядок FK):
+     DELETE entitlements → subscriptions_v2 → payments_v2 → orders_v2
+       → tariff_prices → tariffs → products_v2
+       → profiles → auth.users
+
+7. Orphan check:
+     SELECT COUNT(*) в каждой из перечисленных таблиц WHERE …fixture = 0
+     плюс sanity SELECT против access_grant_ledger, telegram_access,
+     integration_sync_logs с fixture-маркером.
+```
+
+**Blocker для выполнения в текущем ходе.** Скрипт трогает `auth.users` через Admin API и создаёт
+цепочку из ≥7 таблиц в production; DoD требует чтобы before/after snapshot и cleanup происходили
+внутри одной изолированной сессии с полным логом. Это не помещается в один tool-call и требует
+отдельного checkpoint C30.A.EXEC, в котором каждый шаг фиксирует свой результат до перехода к
+следующему.
+
+Статус:
+
+```text
+C30.A discovery       : COMPLETE
+C30.A provisioning    : PLAN LOCKED
+C30.A execution       : NEXT CHECKPOINT (single-purpose turn)
+```
+
+Никаких изменений в production в текущем ходе не производилось.
+
+---
+
+## C30.15 — C30.C: скелет C2 v5 полного SQL dry-run (execute BLOCKED)
+
+Полные тела функций публикуются как append-only artifact для рецензии.
+Ни одна из них не создаётся в БД в текущем checkpoint.
+
+```sql
+-- compute_order_financial_state(order_id uuid, preview_version int)
+--   returns table(
+--     order_id uuid,
+--     recognized_status_transition text,   -- null | 'paid_to_pending' | 'paid_to_partial'
+--                                          -- | 'refunded_to_paid' | 'noop'
+--     computed_paid_amount numeric,
+--     computed_net_paid    numeric,
+--     recognized_refund_amount numeric,
+--     guard_reason         text,           -- null | 'refund_data_conflict' | 'orphan_refund'
+--                                          -- | 'preview_stale' | 'payment_not_found'
+--                                          -- | 'order_not_found' | 'invalid_reason'
+--     financial_actionable       boolean,
+--     status_transition_allowed  boolean,
+--     amount_update_allowed      boolean,
+--     access_impact_detected     boolean,
+--     subscription_impact_detected boolean,
+--     revoke_available           boolean,
+--     preview_version_echo       int
+--   )
+-- SECURITY DEFINER
+-- SET search_path = public, pg_temp
+-- REVOKE ALL FROM PUBLIC, anon, authenticated;
+-- GRANT EXECUTE TO service_role;
+--
+-- Body:
+--  1) SELECT … FOR UPDATE the order + all its payments (locked snapshot)
+--  2) Verify preview_version matches orders_v2.meta->>'c2v5_preview_version' → else guard=preview_stale
+--  3) succeeded_net := SUM(amount) - SUM(refunded_amount) over locked succeeded rows
+--  4) refund_lineage classification (see C30.13); guard on mismatch/orphan (see C30.11)
+--  5) Determine recognized_status_transition purely from succeeded_net + refund_lineage
+--     — never from entitlement / subscription state (see C30.10)
+--  6) Compute access_impact_detected / subscription_impact_detected / revoke_available as
+--     independent side-signals (do NOT gate status_transition_allowed on them)
+--  7) NO write. Function is read-only preview.
+
+-- apply_order_financial_recalc(order_id uuid, preview_version int, reason text)
+-- SECURITY DEFINER, same GRANT scheme.
+-- Body:
+--  1) Re-lock and recompute via compute_order_financial_state()
+--  2) Verify reason ∈ enum {'payment_removed','payment_amount_changed','refund_added',
+--                          'refund_removed','manual_adjust'} → else guard=invalid_reason, abort
+--  3) Verify preview_version_echo matches passed preview_version → else guard=preview_stale
+--  4) If status_transition_allowed → UPDATE orders_v2.status
+--  5) If amount_update_allowed    → UPDATE orders_v2.paid_amount
+--  6) INSERT audit row into orders_v2 meta.c2v5_history[] with before/after/reason/actor
+--  7) NEVER touch entitlements / subscriptions / telegram_access here — those are C30.D
+```
+
+**Fixture harness (14 сценариев, PASS/FAIL матрица):**
+
+```text
+F01 succeeded_single_removed_last                  → paid_to_pending / financial_actionable=true
+F02 succeeded_partial_removed_leaves_paid_net_gt0  → paid_to_partial / actionable=true
+F03 succeeded_partial_amount_reduced_net_still_ge_price → noop
+F04 succeeded_refunded_full_via_child_refund_only  → refund_on_succeeded_only, transition to refunded / actionable=true
+F05 succeeded_refunded_full_via_refund_row_only    → refund_rows_only, transition to refunded / actionable=true
+F06 refund_row_and_child_refund_exact_match        → exact_refund_and_rows / actionable=true
+F07 refund_row_and_child_refund_mismatch           → guard=refund_data_conflict / actionable=false
+F08 refunded_status_but_no_refund_signal           → legacy_no_refund_signal / noop / operator required
+F09 refunded_status_but_no_succeeded_parent        → guard=orphan_refund / actionable=false
+F10 preview_version_stale                          → guard=preview_stale / no write
+F11 reason_not_in_enum                             → guard=invalid_reason / no write
+F12 order_not_found                                → guard=order_not_found
+F13 access_impact_present_but_finance_clean        → status_transition_allowed=true, access_impact_detected=true
+F14 subscription_active_but_last_payment_removed   → paid_to_pending / actionable=true; subscription_impact_detected=true
+
+Expected: 14 PASS / 0 FAIL. Execution deferred to C30.C.EXEC checkpoint.
+```
+
+Никакой `GREATEST(...)` в теле функций не появляется. Конфликт данных → guard, не автоселекция.
+
+---
+
+## C30.16 — C30.D: B0b полный edge/RPC dry-run (execute BLOCKED)
+
+**Idempotency schema (планируемый DDL, не выполняется):**
+
+```sql
+CREATE TABLE public.admin_deal_creation_idempotency (
+  queue_row_id     uuid PRIMARY KEY,
+  actor_id         uuid NOT NULL,     -- server-derived from JWT, never from client body
+  request_hash     text NOT NULL,
+  result_order_id  uuid,
+  result_payment_id uuid,
+  status           text NOT NULL,     -- 'in_progress' | 'succeeded' | 'failed'
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+GRANT SELECT, INSERT, UPDATE ON public.admin_deal_creation_idempotency TO authenticated;
+GRANT ALL  ON public.admin_deal_creation_idempotency TO service_role;
+ALTER TABLE public.admin_deal_creation_idempotency ENABLE ROW LEVEL SECURITY;
+CREATE POLICY … USING (public.has_role(auth.uid(),'admin'));
+```
+
+**RPC контракт `admin_create_deal_from_payment(queue_row_id, request_hash, ...)`:**
+
+```text
+Transactional ordering (strict):
+  1. Lock payment_reconcile_queue row FOR UPDATE by queue_row_id
+  2. UPSERT idempotency row (queue_row_id primary key)
+       - if status='succeeded' → return cached result_order_id / payment_id
+       - if status='in_progress' concurrent → RAISE serialization_failure
+       - else mark 'in_progress'
+  3. Derive actor_id := (SELECT auth.uid())   -- server side, ignore any client-supplied actor
+  4. INSERT orders_v2 (canonical fields; provider from queue, never 'manual_offline')
+  5. UPDATE payments_v2.order_id = new order.id   -- canonical link, no dup payment_v2 INSERT
+  6. UPDATE queue row: reconciled_at=now(), reconciled_order_id
+  7. UPDATE idempotency: status='succeeded', result_*
+  -- grant-access-for-order NOT called inside transaction
+```
+
+**Post-transaction step (separate call, idempotent):**
+
+```text
+POST /grant-access-for-order  { order_id }
+  - runs canonical grant pipeline
+  - idempotent by (order_id, tariff_id, source='order_paid')
+  - failure does NOT roll back the deal creation
+```
+
+**Edge function skeleton:**
+
+```ts
+// supabase/functions/admin-create-deal-from-payment/index.ts (dry design, not deployed)
+serve(async (req) => {
+  const jwt = req.headers.get('authorization');            // required
+  const { queue_row_id, request_hash } = await req.json(); // never actor_id
+  const actor_id = await resolveJwtUser(jwt);              // server-derived
+  const { data, error } = await admin.rpc(
+    'admin_create_deal_from_payment',
+    { p_queue_row_id: queue_row_id, p_request_hash: request_hash }
+  );
+  // grant-access called only on success, via separate invoke
+});
+```
+
+**Existing-origin inventory (для миграции старых admin-created deals):**
+
+```text
+origin='admin_grant'         : покрывается grant-access-for-order (без payments_v2 INSERT)
+origin='admin_deal_only'     : покрывается admin_create_deal_from_payment
+origin='admin_from_payment'  : покрывается admin_create_deal_from_payment
+origin='admin_test'          : legacy, blocked from writer paths; no new records
+origin='manual_offline'      : WITHDRAWN — не используется, любые исторические строки
+                               переводятся на один из четырёх канонических origin через
+                               отдельный retag-checkpoint (не в этом патче)
+```
+
+Никаких DML или migrations в C30.D не выполняется. Все объекты — text-only artefacts под ревью.
+
+---
+
+## Статус после C30 append-only (2026-07-12 update)
+
+```text
+C30.9  queue lookup correction              : DOCUMENTED
+C30.10 four-provider + finance/access split : DOCUMENTED (manual_offline WITHDRAWN)
+C30.11 refund conflict → NULL+guard         : DOCUMENTED (GREATEST FORBIDDEN)
+C30.12 other/ambiguous ≥ 0 allowed          : DOCUMENTED
+C30.13 canonical baseline SQL + numbers     : A=748 md5=2bbebb97…  B=187 md5=1a91170f…
+                                              refund lineage Σ=43 (0/34/8/0/0/1)
+                                              old 730/42 + sha ab7e83bd… : WITHDRAWN
+C30.14 B0a runtime plan                     : DISCOVERY COMPLETE, EXEC = next checkpoint
+C30.15 C2 v5 full SQL dry-run               : SKELETON + 14 FIXTURE MATRIX PUBLISHED
+C30.16 B0b full edge/RPC dry-run            : SCHEMA + RPC + EDGE + INVENTORY PUBLISHED
+
+B0a runtime            : EXECUTE AUTHORIZED, plan locked (C30.A.EXEC pending)
+C30.B (baseline)       : READ-ONLY DELIVERED
+C30.C (C2 v5 dry-run)  : DELIVERED, execute BLOCKED
+C30.D (B0b dry-run)    : DELIVERED, execute BLOCKED
+A2 archive             : BLOCKED
+C2 execute             : BLOCKED
+Provider CHECK         : BLOCKED
+```
+
+Append-only: изменён только `.lovable/plan.md`. Код, миграции и данные не менялись.
