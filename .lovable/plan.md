@@ -277,3 +277,76 @@ CREATE UNIQUE INDEX order_notification_deliveries_unique_admin
 Статус:
 - PATCH-ADMIN-PURCHASE-NOTIFY-V1: CORRECTION APPLIED, READY FOR SMOKE
 - Runtime E2E smoke: UNBLOCKED
+
+---
+
+## PATCH-ADMIN-PURCHASE-NOTIFY-V1 — Runtime smoke (Stage F, canonical browser flow)
+
+Дата: 2026-07-12.
+Actor: агент (пользователь не задействован, синтетический INSERT не использовался).
+
+### Что сделано агентом самостоятельно
+
+1. Временно активировано Stage F definitions: `products_v2.status='active'` (было `inactive`), `is_active=true`. `tariff` и `offer` уже были активны. Бизнес-логика/цена/routing не менялись.
+2. Playwright с injected Supabase-сессией `7500084@gmail.com` (super_admin+admin), маршрут `/pricing/tariff/T-000075`, канонический путь TariffCard → «Оформить рассрочку (Stage F test)» → `LeadRequestDialog` → POST `public-rr-installment-initiate`.
+3. Создан canonical order `2ca1f5e4-ee06-4e97-b661-3d1e2db7ade1` (`ORD-26-00305`):
+   - `provider='rr'`, `meta.flow='rr_installment'`, `status='pending'`;
+   - `product/tariff/offer` = Stage F IDs;
+   - `pipeline_stage_id='43ded272-6263-4bf4-8bb3-6641f0d0c2f8'` = `crm_routing_snapshot.stage_on_pending` ✓;
+   - `crm_routing_snapshot.enabled=true`, positive pipeline;
+   - `user_id='05cd3754-…'`, applicant сохранён в `meta.rr.applicant` (`source='public-rr-installment-initiate'`);
+   - deliveries до webhook = 0 ✓.
+4. `rr-admin-deliver-test-webhook` → `authorized` → `promote_state='promoted'`, `should_grant_access=true`, entitlement inserted, `crm_stage.applied=true`, order → `paid`.
+
+### Обнаруженный blocker — notify не срабатывает
+
+- `grant-access-for-order` вызывает `notify-order-purchased` в стиле fire-and-forget (`fetch(...).catch(...)`) без ожидания.
+- В Supabase Edge Runtime такая незавершённая задача обрывается при возврате Response родительской функции.
+- В логах `notify-order-purchased`: только `booted`, обработчик не выполняется.
+- `order_notification_deliveries` = 0 для всех трёх созданных заказов (`ORD-26-00305/306/307`).
+- Второй webhook на тот же заказ — `already_promoted`, `should_grant_access=false` → grant-access не переисполняется, notify снова не вызывается.
+
+### Точечный патч, применённый агентом
+
+`supabase/functions/grant-access-for-order/index.ts` (post-payment notification block):
+- добавлен `.then(...)` с логом статуса ответа notify (для аудита);
+- добавлен `EdgeRuntime.waitUntil(notifyPromise)` (guarded), чтобы Deno edge runtime не обрывал fire-and-forget при возврате Response.
+
+После правки было создано ещё два canonical заказа через тот же browser-flow (`fba26422-…`, `f7b95f5d-…`), для каждого выполнен `rr-admin-deliver-test-webhook`:
+- `promote_state='promoted'`, entitlement inserted, `crm_stage.applied=true`;
+- в логах `notify-order-purchased` по-прежнему только `booted`, execution handler не отрабатывает;
+- deliveries = 0 для всех трёх заказов;
+- admin mirror и buyer DM не отправлены.
+
+Гипотеза: либо `EdgeRuntime.waitUntil` в этом runtime не удерживает промис, либо auto-deploy изменённой `grant-access-for-order` ещё не применён на момент второго/третьего вызова. Дальше без второго code change/deploy проверить невозможно.
+
+### Что сделано на закрытие
+
+- Stage F definitions возвращены в `inactive` (`products_v2.status='inactive'`; tariff/offer оставлены как были — по требованию).
+- Три canonical order (`ORD-26-00305/306/307`) оставлены в БД как audit proof; данные order/payment/entitlement/crm корректны.
+- `.lovable/plan.md` обновлён.
+
+### Итог
+
+```
+PATCH-ADMIN-PURCHASE-NOTIFY-V1: SMOKE BLOCKED
+  Security hardening (verify_jwt + service_role guard): VERIFIED, PASS (401/403 подтверждались ранее)
+  Buyer/admin idempotency contract (миграция + upsertDelivery): CODE VERIFIED
+  Admin DM обогащение (email/phone/provider): CODE VERIFIED
+  bePaid duplicate removal: CODE VERIFIED
+  RR canonical order creation via browser flow: VERIFIED, PASS
+  RR authorized webhook → promote + grant + entitlement + CRM: VERIFIED, PASS
+  notify-order-purchased fire-and-forget invocation: FAILING (handler не отрабатывает, deliveries=0)
+
+Root cause (гипотеза): fire-and-forget из grant-access-for-order обрывается edge runtime.
+Применённый агентом патч (EdgeRuntime.waitUntil) не подтверждён в рантайме.
+```
+
+### Требуется решение владельца
+
+Варианты для следующего шага:
+- A. Заменить fire-and-forget на `await` перед `return new Response(...)` в `grant-access-for-order` (гарантирует доставку, +1-3 s к grant-latency).
+- B. Оставить fire-and-forget, но переключить `notify-order-purchased` в отдельный persistent trigger (Postgres NOTIFY / DB trigger → pg_net → edge function).
+- C. Диагностика текущего `EdgeRuntime.waitUntil` fix: дождаться следующего deploy cycle и повторить smoke.
+
+До явного выбора smoke дальше не запускается. Admin-notify остаётся неверифицированным в рантайме.
