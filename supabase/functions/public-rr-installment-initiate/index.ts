@@ -674,6 +674,15 @@ Deno.serve(async (req: Request) => {
         supabaseAdmin, externalId, correlationId, "reject_finalize_state",
       );
     }
+    // Sprint C2 / Stage E.2 — universal CRM terminal 'failed' on canonical rejection.
+    // Non-fatal: applyCrmStageOnTerminal is idempotent + manual-override guarded.
+    try {
+      await applyCrmStageOnTerminal(
+        supabaseAdmin, externalId, "failed", "rr.initiate.upstream_rejected",
+      );
+    } catch (e) {
+      console.error("[rr-initiate] crm-routing apply failed:", (e as Error).message);
+    }
     return errorResponse("rr_create_order_rejected", 502);
   }
 
