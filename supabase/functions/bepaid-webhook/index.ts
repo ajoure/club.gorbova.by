@@ -3553,57 +3553,9 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 7. PATCH P2: Admin notification with PII masking
-      try {
-        const { data: customerProfile } = await supabase
-          .from('profiles')
-          .select('full_name, email, telegram_username')
-          .eq('user_id', linkOrder.user_id)
-          .maybeSingle();
+      // 7. Admin purchase notification — moved to canonical `notify-order-purchased`
+      // (invoked by grant-access-for-order). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
 
-        // Lookup product and tariff names for link-payment notification
-        let linkProductName: string | undefined;
-        let linkTariffName: string | undefined;
-        if (linkOrder.product_id) {
-          const { data: lp } = await supabase.from('products_v2').select('name').eq('id', linkOrder.product_id).maybeSingle();
-          linkProductName = lp?.name || undefined;
-        }
-        if (linkOrder.tariff_id) {
-          const { data: lt } = await supabase.from('tariffs').select('name').eq('id', linkOrder.tariff_id).maybeSingle();
-          linkTariffName = lt?.name || undefined;
-        }
-
-        const notifyMessage = buildAdminNotifyMessage({
-          operation_type: 'link_payment',
-          client_name: customerProfile?.full_name,
-          email: customerProfile?.email || linkOrder.customer_email,
-          telegram_username: customerProfile?.telegram_username,
-          product_name: linkProductName,
-          tariff_name: linkTariffName,
-          amount: paymentAmount,
-          currency: 'BYN',
-          source_label: 'Оплата по ссылке bePaid',
-        });
-
-        await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-            },
-            body: JSON.stringify({
-              message: notifyMessage,
-              source: 'bepaid_link_order_webhook',
-              order_id: linkOrder.id,
-            }),
-          }
-        );
-        console.log('[WEBHOOK-LINK-ORDER] Admin notification sent');
-      } catch (notifyErr) {
-        console.error('[WEBHOOK-LINK-ORDER] Notification error (non-fatal):', notifyErr);
-      }
 
       // 8. Audit log
       try {
