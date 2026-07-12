@@ -282,13 +282,35 @@ Deno.serve(async (req) => {
   }
 
   // 4. Render React Email template to HTML and plain text
-  const html = await renderAsync(
+  const html = await renderEmail(
     React.createElement(template.component, templateData)
   )
-  const plainText = await renderAsync(
+  const plainText = await renderEmail(
     React.createElement(template.component, templateData),
     { plainText: true }
   )
+
+  // PATCH-EMAIL-FOOTER-UTF8-V1: audit guard — detect residual Unicode replacement
+  // characters (U+FFFD). Non-blocking: we still send the email so the buyer isn't
+  // blocked, but we log a diagnostic record so the corrupted template can be fixed.
+  const REPLACEMENT_CHAR = '\uFFFD'
+  const htmlHasReplacement = html.includes(REPLACEMENT_CHAR)
+  const textHasReplacement = plainText.includes(REPLACEMENT_CHAR)
+  if (htmlHasReplacement || textHasReplacement) {
+    console.error('email_utf8_replacement_detected', {
+      templateName,
+      messageId,
+      recipient: effectiveRecipient,
+      html_replacement_count: (html.match(/\uFFFD/g) || []).length,
+      text_replacement_count: (plainText.match(/\uFFFD/g) || []).length,
+    })
+  }
+
+  // Resolve subject — supports static string or dynamic function
+  const resolvedSubject =
+    typeof template.subject === 'function'
+      ? template.subject(templateData)
+      : template.subject
 
   // Resolve subject — supports static string or dynamic function
   const resolvedSubject =
