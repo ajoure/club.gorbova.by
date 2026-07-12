@@ -312,11 +312,8 @@ Deno.serve(async (req) => {
       ? template.subject(templateData)
       : template.subject
 
-  // Resolve subject — supports static string or dynamic function
-  const resolvedSubject =
-    typeof template.subject === 'function'
-      ? template.subject(templateData)
-      : template.subject
+
+
 
   // 5. Enqueue the pre-rendered email for async processing by the dispatcher.
   // The dispatcher (process-email-queue) handles sending, retries, and rate-limit backoff.
