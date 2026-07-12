@@ -68,10 +68,9 @@ describe("SEC-A / resolveGrantAccessCaller", () => {
   it("1. no Authorization → 401 unauthorized_no_bearer", async () => {
     const r = await resolveGrantAccessCaller(makeReq(), makeSupabase());
     expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.status).toBe(401);
-      expect(r.body.error).toBe("unauthorized_no_bearer");
-    }
+    const f = r as { ok: false; status: number; body: { error: string } };
+    expect(f.status).toBe(401);
+    expect(f.body.error).toBe("unauthorized_no_bearer");
   });
 
   it("2. invalid bearer (getUser error) → 401 unauthorized_invalid_token", async () => {
@@ -81,10 +80,9 @@ describe("SEC-A / resolveGrantAccessCaller", () => {
       sb,
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.status).toBe(401);
-      expect(r.body.error).toBe("unauthorized_invalid_token");
-    }
+    const f = r as { ok: false; status: number; body: { error: string } };
+    expect(f.status).toBe(401);
+    expect(f.body.error).toBe("unauthorized_invalid_token");
   });
 
   it("3. anon JWT (getUser returns no user) → 401 unauthorized_invalid_token", async () => {
@@ -94,7 +92,7 @@ describe("SEC-A / resolveGrantAccessCaller", () => {
       sb,
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.status).toBe(401);
+    expect((r as { ok: false; status: number }).status).toBe(401);
   });
 
   it("4. ordinary authenticated user (no admin/super_admin roles) → resolved as ordinary_user", async () => {
