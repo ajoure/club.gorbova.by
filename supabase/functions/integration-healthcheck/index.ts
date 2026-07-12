@@ -819,12 +819,14 @@ serve(async (req) => {
           status: "not_verified",
           code: "no_events_yet",
         };
-        try {
-          // Ищем последние 20 событий, фильтруем по mode заказа.
+          // Только реальные входящие webhook-события; иные типы
+          // (create_order_succeeded, rr_promoted, fulfillment, reconciliation)
+          // не подтверждают доставку webhook.
           const { data: recentEvents } = await supabaseAdmin
             .from("provider_events")
             .select("id, created_at, signature_valid, related_order_id, event_type")
             .eq("provider", "rr")
+            .eq("event_type", "webhook_notification_received")
             .not("related_order_id", "is", null)
             .order("created_at", { ascending: false })
             .limit(20);
