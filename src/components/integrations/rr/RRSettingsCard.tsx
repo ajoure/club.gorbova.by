@@ -171,21 +171,23 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
         { body: { provider: "rr", instance_id: instance.id } },
       );
       queryClient.invalidateQueries({ queryKey: ["integration-instances"] });
+      queryClient.invalidateQueries({ queryKey: ["rr-last-healthcheck", instance.id] });
       if (error) {
-        toast.warning("Backend-проверка недоступна. Настройки сохранены безопасно.");
+        toast.error(`Ошибка проверки: ${error.message ?? "unknown"}`);
         return;
       }
-      if (data?.success && data?.data?.api_test === "pending_backend") {
-        toast.success(
-          "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
-        );
-      } else if (data?.success) {
+      const overall = data?.data?.overall as string | undefined;
+      if (overall === "connected") {
         toast.success("«Ресурс Развития» подключён");
+      } else if (overall === "battle_awaiting_first_order") {
+        toast.info("Боевые реквизиты настроены. Боевой runtime ещё не подтверждён реальным заказом.");
+      } else if (overall === "not_configured") {
+        toast.warning("Реквизиты режима не заполнены полностью");
       } else {
         toast.error(`Ошибка: ${data?.error || "проверка не пройдена"}`);
       }
-    } catch {
-      toast.warning("Backend-проверка недоступна. Настройки сохранены безопасно.");
+    } catch (e) {
+      toast.error(`Ошибка проверки: ${(e as Error).message}`);
     } finally {
       setIsChecking(false);
     }
