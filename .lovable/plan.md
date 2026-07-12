@@ -917,3 +917,309 @@ PATCH-PAYMENTS-MANAGEMENT-V2:
 ```
 
 Следующий шаг — ответы по §D12, затем append-only PLAN-раздел.
+
+---
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — PLAN (append-only, code changes still blocked)
+
+Все §D12-решения приняты в редакции пользователя. Ниже — полный append-only PLAN, разбитый на безопасные фазы A–I. Ни одна строка кода не пишется до ревью PLAN.
+
+### Инвариант провайдеров (жёсткий)
+
+```
+payments_v2.provider ∈ {bepaid, stripe, rr, bank}
+```
+
+Пятого фильтра "Прочее (legacy)" и legacy-бейджа не будет.
+CHECK на 4 значения добавляется ТОЛЬКО после `noncanonical_provider_count = 0`.
+
+Ручное происхождение — не provider, а признак `origin`:
+
+```
+origin='manual_admin'      → бейдж «Вручную»
+origin='manual_adjustment' → бейдж «Корректировка» (13 существующих строк, не переименовывать)
+все остальные origin       → бейдж «Авто»
+```
+
+---
+
+### PATCH-PAYMENTS-PROVIDER-BACKFILL-V1 (Phase A, обязательный внутри V2)
+
+Фактическое состояние БД (замер сейчас):
+
+| provider   | meta.source          | count | комментарий                                                             |
+|------------|----------------------|-------|-------------------------------------------------------------------------|
+| admin      | admin_from_payment   | 117   | синтезированы из реальной bepaid-оплаты, есть `queue_payment_id`         |
+| admin      | admin_grant          | 201   | админ-выдача доступа без реальных денег                                  |
+| admin      | admin_deal_only      | 1     | требует ручной проверки                                                  |
+| admin_test | (пусто)              | 8     | все с `meta.test_payment=true`                                           |
+
+Все 327 строк имеют `origin='bepaid'` и `status='succeeded'`. Ни у одной нет `external_id` (колонки не существует), классификация ведётся по `meta`, `queue_payment_id`, `order_id`.
+
+Правила классификации (dry-run обязателен, execute — отдельным подпатчем):
+
+1. **admin_from_payment → bepaid.** Если `queue_payment_id` резолвится в `payment_reconcile_queue`/`bepaid_statement_rows` с валидным bepaid ID — установить `provider='bepaid'`, `provider_payment_id` от источника, `origin` оставить как есть. `meta.legacy_provider='admin'`, `meta.provider_backfilled_at=now()`.
+2. **admin_grant → bank + manual_adjustment.** Реальных денег нет — это внутренняя бухгалтерская запись о выдаче доступа. `provider='bank'`, `origin='manual_adjustment'`, `meta.legacy_provider='admin'`, `meta.legacy_source='admin_grant'`. Если строка ссылается на реальный внешний платёж — переводится в п.1 вручную.
+3. **admin_deal_only (1 строка) → manual review.** Одна строка, оставить в отчёте dry-run с фактическими значениями `id`, `order_id`, `amount`, `paid_at` и решить индивидуально (bepaid vs bank).
+4. **admin_test (8 строк) → per-row решение:**
+   - если `meta.test_payment=true` и есть связанный prod-заказ, не помеченный тестовым — эскалировать (возможен реальный платёж, ошибочно помеченный test);
+   - если реальный тестовый fixture — удалить через новый штатный soft-delete механизм V2 (после фазы E);
+   - если техническая корректировка — `provider='bank'`, `origin='manual_adjustment'`.
+
+Ни одна строка не апдейтится без явного решения в dry-run отчёте. CHECK-констрейнт добавляется только после того, как `SELECT provider, count(*) FROM payments_v2 WHERE provider NOT IN ('bepaid','stripe','rr','bank') GROUP BY 1` возвращает 0 строк.
+
+Артефакты Phase A:
+- `docs/audits/2026-07-12-payments-provider-backfill-dryrun.md` — по-строчный отчёт;
+- миграция `..._payments_provider_backfill.sql` (без CHECK);
+- миграция `..._payments_provider_enforce_check.sql` (CHECK, отдельным коммитом после dry-run PASS).
+
+---
+
+### Phase B — Soft-delete schema + Reader/Writer inventory
+
+Add-only миграция `..._payments_v2_soft_delete.sql`:
+
+```sql
+ALTER TABLE payments_v2
+  ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id),
+  ADD COLUMN IF NOT EXISTS deleted_reason text,
+  ADD COLUMN IF NOT EXISTS deletion_context jsonb;
+CREATE INDEX IF NOT EXISTS payments_v2_is_deleted_idx ON payments_v2 (is_deleted) WHERE is_deleted = false;
+```
+
+Существующие 3 уникальных индекса `(provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL` НЕ переопределяются: дедуп/tombstone уже глобально защищены — соответственно webhook, попытавшийся ре-создать soft-deleted строку, получит unique violation и должен интерпретироваться как «повторный webhook на удалённый платёж».
+
+**Reader/Writer inventory (обязательно закончить до Phase C):**
+
+| Место                                          | Роль                | Читает deleted? | Изменение                              |
+|------------------------------------------------|---------------------|-----------------|----------------------------------------|
+| `/admin/payments` list + фильтры               | reader              | нет             | добавить `is_deleted=false`            |
+| `/admin/payments` stats RPC(-ы)                | reader              | нет             | исключить `is_deleted=true`            |
+| CSV export                                     | reader              | нет             | исключить `is_deleted=true`            |
+| `DealDetailSheet` payments panel               | reader              | нет             | исключить `is_deleted=true`            |
+| `grant-access-for-order`                       | reader              | нет             | учитывать только `is_deleted=false`    |
+| refund flows (bepaid/stripe)                   | reader+writer       | да              | tombstone читается, но refund блокируется на deleted parent |
+| `payment-reconcile-*`, `bepaid-sync-*`         | reader+writer       | да              | resurrect-guard: не апдейтить/не воскрешать deleted        |
+| integrity/health jobs                          | reader              | да              | видят deleted для диагностики          |
+| CRM widgets / deals kanban                     | reader              | нет             | исключить `is_deleted=true`            |
+| `statement_lines.payment_id` linking           | reader+writer       | да              | новые линки — только на живые; старые линки на deleted оставить как аудит |
+| `installment_payments.payment_id`              | reader+writer       | нет             | недопустимо soft-удалять платёж с активной installment-строкой без обработки (см. Phase E) |
+| subscription/recurring reconciler              | reader+writer       | нет             | исключить deleted из totals            |
+
+Полный inventory заносится в `docs/audits/2026-07-12-payments-readers-writers.md` перед миграцией. Пока inventory не подписан — Phase C не стартует.
+
+---
+
+### Phase C — `recalc_order_totals(p_order_id uuid)` как единственный canonical recalc V2
+
+Функция создаётся отдельной миграцией. Требования:
+
+- учитывает только `is_deleted=false`;
+- учитывает только финансово успешные статусы (`succeeded`; при наличии — `partially_refunded` с вычетом `refunded_amount`);
+- денежное поле — `payments_v2.amount` (фактическая колонка; поля `paid_amount` в схеме нет);
+- refunds учитываются как `SUM(amount) - SUM(refunded_amount) FILTER (...)`;
+- обновляет в `orders_v2`: сумма зачтённых денег, остаток, переплата, дата последней успешной оплаты, платёжный статус сделки;
+- **список разрешённых значений `orders_v2.status` берётся из фактической enum/CHECK и фиксируется в PLAN до реализации** (не выдумывается);
+- вызывается только через SECURITY DEFINER edge/RPC, никогда напрямую с клиента.
+
+`get_order_expected_paid` обновляется: `WHERE is_deleted = false`.
+
+**Writers, изменяющие `orders_v2.paid_*` напрямую (перечислить до реализации, перевести последовательно, не одним коммитом):**
+`bepaid-webhook`, `stripe-webhook`, `rr-webhook`, `payment-reconcile-*`, `admin-payment-*` (новые), `grant-access-for-order` (только чтение totals), `getcourse-cancel-deal`, миграционные backfill-скрипты. Полный список фиксируется в PLAN файле подпатча Phase C, каждый writer переводится на `recalc_order_totals` отдельным edge-коммитом с smoke.
+
+Новые пути V2 (manual create, payment delete, bulk delete, payment↔order linking) — с первого дня используют только `recalc_order_totals`.
+
+---
+
+### Phase D — `admin-payment-create` (backend)
+
+Edge функция, RBAC `has_admin_section_access(uid, 'payments', 'manage')`.
+
+Тело:
+
+```
+{
+  provider: 'bepaid'|'stripe'|'rr'|'bank',
+  source_kind: 'auto'|'manual',
+  amount, currency, status, paid_at,
+  order_id?: uuid,
+  contact_user_id?: uuid,
+  provider_payment_id?: string,      // required if source_kind='auto'
+  idempotency_key: string,           // MANDATORY (bank без provider_payment_id)
+  meta_extra?: jsonb,
+  grant_access?: boolean             // только с order_id и status='succeeded'
+}
+```
+
+Инварианты:
+- при `source_kind='manual'` → `meta.manual_entry=true`, `meta.not_provider_confirmed=true`, `provider_events` НЕ пишется, RR healthcheck НЕ дёргается;
+- при `provider='rr'` в manual-режиме — тоже без RR healthcheck и без webhook-эмуляции;
+- при `grant_access=true` — только через каноничный `grant-access-for-order`;
+- всегда — запись в `audit_logs`;
+- по завершении — вызов `recalc_order_totals(order_id)` при наличии `order_id`.
+
+---
+
+### Phase E — `admin-payment-delete` + `admin-order-delete` (backend, tombstone-safe)
+
+Два edge, один RBAC (`has_admin_section_access ... 'manage'`).
+
+**`admin-payment-delete`** — mode `payment_only`:
+- soft-delete текущей строки (`is_deleted=true`, `deleted_at`, `deleted_by`, `deleted_reason`, `deletion_context = { mode: 'payment_only', order_id, provider, provider_payment_id, ... }`);
+- запрет на удаление платежа с активной `installment_payments`-строкой (409, требуется предварительная обработка installment);
+- при наличии `subscriptions_v2` — оставить subscription нетронутой; deleted платёж не воскрешается webhook-ом (см. resurrect-guard);
+- `recalc_order_totals(order_id)`;
+- optional `revoke_access` — только через `send-access-revoked-notification` + канонический revoke;
+- `audit_logs`.
+
+**`admin-order-delete`** — mode `payment_and_order` (single canonical server-side путь для удаления сделки):
+
+Порядок (tombstone-safe, обязательный):
+
+```
+1. dry-run: собрать все платежи order_id;
+2. soft-delete всех платежей:
+     UPDATE payments_v2 SET
+       is_deleted=true, deleted_at=..., deleted_by=..., deleted_reason=...,
+       deletion_context = jsonb_build_object(
+         'mode','payment_and_order',
+         'order_id', order_id,
+         'order_number', ...,
+         'contact_user_id', user_id
+       ),
+       order_id = NULL          -- отвязать от order ДО удаления order
+     WHERE order_id = :order_id;
+3. installment_schedules / subscriptions_v2 → как в текущем useDealsBulkDelete;
+4. entitlements / access_grant_ledger → как в текущем;
+5. DELETE FROM orders_v2 WHERE id = :order_id
+    -- ON DELETE CASCADE больше не уничтожит платежи, потому что order_id=NULL;
+6. revoke TG-доступа (только если у user нет других живых деалов/подписок);
+7. audit_logs.
+```
+
+Если конкретный FK не допускает `order_id=NULL` (проверить в Phase B inventory) — вводится отдельная таблица `payment_deletion_tombstones (payment_id, provider, provider_payment_id, order_id_at_deletion, deleted_at, deletion_context)` и запись копируется туда до `DELETE FROM orders_v2`. Просто принять потерю tombstone при CASCADE — недопустимо.
+
+**Resurrect-guard в webhook-ах:**
+- перед `INSERT ... ON CONFLICT` по `(provider, provider_payment_id)` — проверять, что найденная строка не `is_deleted=true`;
+- если deleted — писать в `provider_events` событие `webhook_resurrect_blocked` и возвращать 200 без изменений;
+- этот guard добавляется в `bepaid-webhook`, `stripe-webhook`, `rr-webhook`, `payment-reconcile-*`, `bepaid-sync-*` отдельными edge-коммитами.
+
+**Переход `useDealsBulkDelete` на `admin-order-delete`** — обязательный шаг Phase E. Клиентский helper удаляется/тонкий wrapper вызывает edge. Два конкурирующих пути не оставляем.
+
+---
+
+### Phase F — Filters/Badges/Stats/CSV (frontend, только чтение)
+
+- `PaymentsFilters.tsx`: 4 значения провайдера (`bepaid`, `stripe`, `rr`, `bank`) + Auto/Manual (`origin`) фильтр. Пятого пункта нет.
+- бейдж провайдера — 4 варианта; бейдж происхождения — `Авто | Вручную | Корректировка`.
+- Stats RPC / CSV / list-view — все запросы получают `is_deleted=false`.
+- `is_deleted=true` в основном списке не виден. Отдельный toggle «показать удалённые» — вынесен в V2 backlog.
+
+---
+
+### Phase G — `CreatePaymentDialog` + `DeletePaymentDialog` (frontend UI)
+
+Glass style, соответствует существующему `/admin/payments`.
+
+`CreatePaymentDialog` — 5 блоков A–E:
+A. Provider (4 варианта) + Source kind (Auto/Manual).
+B. Amount / currency / status / paid_at / provider_payment_id (обязателен для Auto).
+C. Привязка: order (search), contact (search) — опционально.
+D. Grant access чекбокс — активен только с order и status=succeeded.
+E. Idempotency key (авто-генерация UUID + видимое поле для ручной подмены при воспроизведении).
+
+`DeletePaymentDialog`:
+- показывает provider / сумму / дату / контакт / компанию / сделку / продукт;
+- радио:
+  - «Удалить только этот платёж» (`payment_only`);
+  - «Удалить сделку и все связанные с ней платежи» (`payment_and_order`) — **точная формулировка обязательна, короткое «Удалить платёж и сделку» не использовать**;
+- если у сделки несколько платежей — под радио разворачивается список платежей со суммами и общей суммой, требуется отдельный чекбокс «Я подтверждаю удаление N платежей на сумму X»;
+- optional `revoke_access` (для `payment_only` — только если у пользователя нет других живых деалов/подписок);
+- обязательное поле `deleted_reason`;
+- запрет на редактирование auto-платежа как manual (только удаление).
+
+---
+
+### Phase H — Runtime fixtures (staging smoke, до prod)
+
+Sequence (все — с логированием):
+
+1. Manual bepaid / stripe / rr / bank — по одной записи, каждая с уникальным `idempotency_key`.
+2. Bank без сделки + bank со сделкой (grant_access on/off).
+3. Частичная оплата → recalc → полная оплата → recalc → доступ.
+4. Standalone delete (`payment_only`) с revoke.
+5. Delete + order (`payment_and_order`) — проверить tombstone, order_id=NULL до DELETE, resurrect-guard срабатывает при повторном webhook.
+6. Idempotency: повтор `admin-payment-create` с тем же ключом → 200 same id.
+7. Webhook tombstone: bepaid re-send на deleted платёж → `webhook_resurrect_blocked`.
+8. Recurring/subscription: живые subscriptions_v2 не ломаются при удалении одиночного платежа.
+
+---
+
+### Phase I — RR test cleanup
+
+Выполняется только после Phase H PASS. Использует общий механизм V2:
+- `admin-payment-delete` (`payment_only`) для RR test-платежей;
+- либо `admin-order-delete` (`payment_and_order`) для тестовых RR-сделок целиком;
+- отдельного legacy-пути для RR test-cleanup не создаётся.
+
+Только после Phase I PASS: RR battle go-live разблокируется отдельным решением.
+
+---
+
+### Контрольные точки и порядок коммитов
+
+```
+A1  provider backfill dry-run report (docs only)
+A2  ..._payments_provider_backfill.sql (data migration via insert-tool, per D12)
+A3  ..._payments_provider_enforce_check.sql (только после A2 PASS)
+B1  reader/writer inventory doc
+B2  ..._payments_v2_soft_delete.sql
+C1  writers list doc
+C2  ..._recalc_order_totals.sql + get_order_expected_paid update
+C3  writers migration (по одному edge за коммит)
+D   admin-payment-create
+E1  admin-payment-delete
+E2  admin-order-delete + resurrect-guard в webhooks
+E3  useDealsBulkDelete → admin-order-delete
+F   filters/badges/stats/CSV
+G1  CreatePaymentDialog
+G2  DeletePaymentDialog
+H   runtime fixtures
+I   RR test cleanup
+```
+
+Ни одна фаза не начинается, пока предыдущая не PASS. Один большой коммит, объединяющий provider migration + order delete + UI, запрещён.
+
+---
+
+### Definition of Done (V2)
+
+- `payments_v2.provider ∈ {bepaid, stripe, rr, bank}` — CHECK enforced;
+- ни одной строки `admin` / `admin_test` в prod;
+- `is_deleted=true` невидим в UI/stats/CSV/deal sheet;
+- ни один webhook/reconciler не может воскресить soft-deleted строку;
+- `useDealsBulkDelete` больше не удаляет платежи и заказы напрямую;
+- `recalc_order_totals` — единственный писатель `orders_v2` платёжных полей на новых путях;
+- RR test cleanup выполнен новым каноническим механизмом;
+- все Phase H fixtures PASS в staging.
+
+---
+
+### Статус
+
+```
+PATCH-PAYMENTS-MANAGEMENT-V2:
+  DIAGNOSE: ACCEPTED
+  D12: RESOLVED
+  PLAN SECTION: SUBMITTED (append-only)
+  PLAN REVIEW: PENDING
+  CODE CHANGES: BLOCKED
+
+PATCH-PAYMENTS-PROVIDER-BACKFILL-V1:
+  SCOPE: INSIDE V2 (Phase A)
+  DRY-RUN: PENDING PLAN REVIEW
+```
+
+Следующий шаг — ревью PLAN. При approve — стартует Phase A1 (dry-run отчёт, без изменений в БД).
