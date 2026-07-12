@@ -3888,3 +3888,218 @@ A2 archive (113/201/8/1):            BLOCKED
 Provider CHECK:                      BLOCKED
 D / E / UI writer switch:            BLOCKED UNTIL C2 v3 APPROVED
 ```
+
+---
+
+# C27 — PATCH-PAYMENTS-MANAGEMENT-V2 append-only (checkpoint after A2-0 verdict)
+
+Отчёт о выполнении.
+
+## C27.1 — A2-0 disclosure correction (VERIFIED, PASS)
+
+Уточнение фактического набора SQL-проверок миграции A2-0 (`20260712194328_*`):
+
+Миграция сверяла:
+- `provider='admin'`, `origin='admin_from_payment'`, `is_deleted IS NOT TRUE`
+- `provider_payment_id IS NULL` до update
+- наличие `queue_payment_id` в `payments_v2.meta`
+- совпадающую строку в `payment_reconcile_queue` ИЛИ в `payment_reconcile_queue_archive`
+- совпадение `amount` (с точностью до 0.01), `currency`, `paid_at` (с допуском)
+- отсутствие уже существующей canonical bepaid-строки с тем же `bepaid_uid`
+- ровно 4 обновления и 4 уникальных `provider_payment_id`
+
+Миграция НЕ сверяла напрямую в SQL (были подтверждены read-only анализом ранее, но не повторно проверены в момент execute):
+- `payments_v2.order_id ↔ queue.matched_order_id`
+- `payments_v2.user_id ↔ profiles(queue.matched_profile_id)`
+
+Это НЕ требует отката: связь `order_id/profile_id` была подтверждена A1R2 v2 и остаётся консистентной. Формулировка «полный набор предусловий» в прошлом отчёте — неточная; фактически это «набор предусловий, достаточный для 4 safe-backfill в контексте A1R2 v2 read-only гарантий».
+
+Верификация: 4 строки обновлены, 113 admin остаются, canonical linkage OK, коллизий нет.
+
+Verdict: **A2-0 VERIFIED, PASS + disclosure fixed.**
+
+## C27.2 — B0a EXECUTE (ContactDetailSheet non-financial writer stopped)
+
+Файл: `src/components/admin/ContactDetailSheet.tsx`, блок `admin_grant` / `admin_deal_only`.
+
+Изменение (frontend-only, no DB):
+- удалён `supabase.from("payments_v2").insert({ provider: "admin", amount: 0, ... })` (строки 1346–1358);
+- `orders_v2` продолжает создаваться с `final_price=0` и `meta.source ∈ {admin_grant, admin_deal_only}`;
+- canonical `grant-access-for-order` продолжает вызываться и создавать entitlements + access_rules + telegram_access;
+- никакая строка `payments_v2` не пишется для non-financial admin_grant.
+
+DoD B0a (runtime proof, ожидает следующую сессию):
+1. Открыть контакт → «Выдать доступ» → создаётся GIFT-order, `payments_v2` не растёт;
+2. entitlements/access_rules корректны, telegram-доступ выдан canonical-path;
+3. любой созданный тестовый GIFT-order очищается canonical способом (soft-delete order + revoke-access).
+
+Provider-model consequence: после B0a новые `provider='admin'` строки от этого writer'а не появляются. Оставшиеся writers: `CreateDealFromPaymentDialog` (B0b, dry-run only ниже).
+
+## C27.3 — B0b PLAN + DRY-RUN (admin-create-deal-from-payment)
+
+**Не execute. Только контракт.**
+
+Новая edge function `admin-create-deal-from-payment`:
+
+Вход:
+```
+{ queue_row_id: uuid, product_id: uuid, tariff_id: uuid,
+  profile_id: uuid, actor_id: uuid, idempotency_key: text }
+```
+
+Логика (одна транзакция через RPC `admin_link_queue_payment_to_new_order`):
+1. RBAC: `has_admin_section_access(actor_id, 'payments', 'manage')` → иначе 403.
+2. `SELECT ... FROM payment_reconcile_queue WHERE id=$1 FOR UPDATE` (или archive).
+3. Проверить: `bepaid_uid IS NOT NULL`, `matched_profile_id = profile_id`, `status IN (paid, succeeded)`.
+4. Проверить дубликат по `idempotency_key` в audit_logs → вернуть существующий `order_id`.
+5. Проверить существование canonical `payments_v2` с этим `bepaid_uid`:
+   - **есть** → только `UPDATE payments_v2 SET order_id=<new_order> WHERE provider_payment_id=bepaid_uid AND order_id IS NULL`;
+   - **нет** → `INSERT payments_v2` с `provider='bepaid'`, `provider_payment_id=bepaid_uid`, `origin='manual_admin'`, `amount=queue.amount`, `paid_at=queue.paid_at`, `status='succeeded'`.
+6. `INSERT orders_v2` c `paid_amount=queue.amount`, `status='paid'`, `meta.source='admin_from_queue'`, `meta.queue_row_id`.
+7. Optional: вызвать `grant-access-for-order`.
+8. Audit `admin.payment.deal_created_from_queue`.
+
+Provider **никогда не выбирается оператором**: он всегда `bepaid` (queue rows приходят из bePaid). Для будущего ручного `stripe/rr/bank` — отдельный `admin-payment-create` с `origin='manual_admin'` (out of scope).
+
+Idempotency:
+- ключ `idempotency_key = sha256(actor||queue_row_id||profile_id||product_id||tariff_id)`;
+- дубликат вызова возвращает существующий `{order_id}` без записи новой строки.
+
+DoD B0b (потребует отдельного execute-approval):
+- server-side only; UI лишь дергает функцию с параметрами;
+- дубликат bepaid-row не создаётся;
+- повторный клик = тот же `order_id`;
+- provider селектор в диалоге удалён.
+
+Status: **PLAN + DRY-RUN ONLY. Execute BLOCKED.**
+
+## C27.4 — C26.B exact partitions (READ-ONLY, REQUIRED)
+
+Планируется отдельный read-only отчёт `C28` со следующей структурой:
+
+### 649 paid → pending (взаимоисключающая карта, приоритет CASE)
+
+Приоритеты (первое совпадение фиксирует категорию):
+1. `canonical_payment_exists_but_excluded` — есть `payments_v2` row с provider ∈ (bepaid, stripe, rr, bank), `status='succeeded'`, `is_deleted=false`, но по каким-то признакам исключён (напр. `paid_at IS NULL`).
+2. `admin_only_financial_history` — все `payments_v2` заказа имеют `provider='admin'`.
+3. `no_payments_positive_paid_amount` — 0 строк payments_v2, но `orders_v2.paid_amount > 0`.
+4. `no_payments_zero_paid_amount` — 0 строк payments_v2 и `paid_amount = 0` (legacy paid).
+5. `other_ambiguous` — не попадает ни в одну из выше.
+
+Ожидание: `Σ = 649`, никакие order_id не повторяются.
+
+Дополнительно: SHA-256 checksum отсортированного списка 642 (`no_payments_*`) IDs.
+
+### 42 refunded → paid
+
+Приоритеты:
+1. `legacy_no_refund_signal` — refunded, но 0 refund-rows и `parent.refunded_amount=0`;
+2. `parent_only_signal`;
+3. `refund_rows_only_signal`;
+4. `exact_parent_and_rows`;
+5. `parent_rows_mismatch`;
+6. `orphan_refund_row`.
+
+Σ = 42.
+
+### 2 paid → refunded (полный дамп)
+
+Для каждого:
+- `order_id`, current `status`, `paid_amount`, `currency`;
+- список payment IDs c `(provider, provider_payment_id, amount, status, refunded_amount)`;
+- gross, refunded_amount total, net, refund rows, parent linkage;
+- наличие entitlements / subscriptions.
+
+До получения этого дампа auto `paid → refunded` остаётся заблокированным.
+
+Status: **AUTHORIZED READ-ONLY. Execute BLOCKED.**
+
+## C27.5 — C2 v4 FULL DRY-RUN checklist (NOT AUTHORIZED for execute)
+
+Требования, зафиксированные для следующей итерации SQL-черновика (полный текст SQL появится в C29, не в этом коммите):
+
+1. `compute_order_financial_state` фильтр:
+   ```
+   WHERE COALESCE(is_deleted,false)=false
+     AND provider IN ('bepaid','stripe','rr','bank')
+   ```
+   `origin='manual_admin'` **не** исключается.
+
+2. Refund lineage: считать по каждому parent payment отдельно, категоризировать:
+   `parent_only | refund_row_only | exact_match | mismatch | orphan`.
+   Никакого `GREATEST(...)`. Orphan обязателен: LEFT JOIN refund-rows на parent через `meta->>'parent_payment_id'` и `meta->>'parent_payment_uid'`; NULL parent → orphan → `refund_data_conflict`.
+
+3. Расширить `legacy_state_conflict` в отдельные флаги:
+   - `legacy_paid_without_canonical_history`
+   - `legacy_refunded_without_refund_signal`
+   - `canonical_payment_not_counted`
+   - `admin_only_financial_history`
+   - `stored_paid_amount_mismatch`
+   
+   Любой из них → default no_op (кроме явного `manual_repair` через admin endpoint).
+
+4. Разделить два флага решения:
+   - `status_transition_allowed`
+   - `amount_update_allowed`
+   
+   `paid → paid` c изменённым `paid_amount` допустим при `amount_update_allowed=true` даже если статус не меняется.
+
+5. `payment_removed`: server-side проверка удаляемого платежа до soft-delete:
+   ```
+   SELECT ... FROM payments_v2
+   WHERE id=affected_payment_id AND order_id=p_order_id
+     AND status IN ('succeeded','refunded') AND COALESCE(is_deleted,false)=false
+   FOR UPDATE;
+   ```
+   Сохранить before-snapshot в `deletion_context`; после soft-delete использовать snapshot, не переданный id.
+
+6. Ordering (строгий):
+   ```
+   BEGIN
+     SELECT orders_v2 FOR UPDATE;
+     SELECT affected payment FOR UPDATE;   -- если применимо
+     verify preview_token / row_version;
+     compute_order_financial_state();
+     apply transition;
+   COMMIT
+   ```
+
+7. Security:
+   ```
+   SECURITY DEFINER
+   SET search_path = public, pg_temp
+   REVOKE ALL FROM PUBLIC; REVOKE ALL FROM anon; REVOKE ALL FROM authenticated;
+   GRANT EXECUTE TO service_role;
+   ```
+   `manual_repair` — только через отдельный audited endpoint с `has_admin_section_access(actor, 'payments', 'manage')`.
+
+8. Полный SQL C29 обязан включать: `compute_order_financial_state`, `_recalc_transition_allowed`, `recalc_order_totals`, все REVOKE, точный return shape, ошибки `order_not_found | payment_not_found | preview_stale | invalid_reason | refund_data_conflict | currency_mismatch | legacy_state_conflict`.
+
+9. Fixture simulation минимум 14 сценариев:
+   partial paid; full paid; overpay; add-payment-to-paid; remove-overpay-still-paid;
+   remove-to-partial; remove-to-pending; partial refund; full refund; duplicate retry;
+   stale preview; currency mismatch; refund mismatch; legacy conflict.
+
+Status: **C2 v3 EXECUTE — NOT AUTHORIZED. C2 v4 FULL DRY-RUN — AUTHORIZED for next checkpoint.**
+
+## C27.6 — C26.D rejection acknowledged
+
+Provider `manual_offline` **отклонён**. Утверждённая модель — ровно четыре provider'а:
+`bepaid | stripe | rr | bank`. Ручное создание в будущем — через `origin='manual_admin'`, не через новый provider. Соответствующий раздел C26.D аннулируется данным C27.6.
+
+Будущий `CHECK` для `payments_v2.provider`: `('bepaid','stripe','rr','bank')`. Плюс отдельно `admin` останется временно допустимым, пока не завершён A2 archive (113 rows). После A2 — `admin` исключается из CHECK, `admin_test` уже удалён.
+
+## Статус PATCH-PAYMENTS-MANAGEMENT-V2 (после C27)
+
+- A2-0: **VERIFIED, PASS** (+ disclosure fixed)
+- B0a: **EXECUTED** (frontend, no DB)
+- B0b: **PLAN + DRY-RUN AUTHORIZED**; execute BLOCKED
+- C26.B: **PARTIALLY ACCEPTED** — точная взаимоисключающая карта запланирована в C28
+- C26.D: **REJECTED** — четырёх-провайдерная модель зафиксирована
+- C2 v3 EXECUTE: **NOT AUTHORIZED**
+- C2 v4 FULL DRY-RUN: **AUTHORIZED** для C29
+- A2 archive (113): **BLOCKED**
+- Provider CHECK: **BLOCKED**
+- General payment create/delete UI: **BLOCKED**
+
+Append-only только в `.lovable/plan.md` + один точечный правку в `ContactDetailSheet.tsx` (удаление 12 строк создания admin payment). Миграций нет.
