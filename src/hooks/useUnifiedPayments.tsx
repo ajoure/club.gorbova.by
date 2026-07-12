@@ -228,20 +228,21 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
           // PATCH-LIVE-2: грузим и bePaid, и Stripe. UI-фильтр "Провайдер" (PaymentsTabContent)
-          // применяется клиентом: all/bepaid/stripe. Stripe-платежи сейчас пишутся с
+          // применяется клиентом: all/bepaid/stripe/rr. Stripe-платежи сейчас пишутся с
           // origin='bepaid' (default колонки), поэтому отдельной нормализации origin не нужно —
           // ниже OR уже включает 'bepaid' и origin IS NULL.
-          .in("provider", ["bepaid", "stripe"]);
+          // PATCH-RR-PAYMENTS-VISIBILITY-V1: added rr (provider='rr', origin='rr_installment').
+          .in("provider", ["bepaid", "stripe", "rr"]);
         
         // PATCH-C1: Removed .not("paid_at", "is", null) to show processing/pending transactions
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
         // Filter by origin based on includeImport toggle (expanded to include all legitimate origins)
         if (includeImport) {
-          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification", "payment_link"]);
+          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification", "payment_link", "rr_installment"]);
         } else {
           // Show all non-import origins (PATCH-F: include card_verification, PATCH-PL: include payment_link)
           // PATCH-LIVE-2: origin IS NULL допустим — на случай если для будущих Stripe-платежей origin не проставится.
-          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.eq.payment_link,origin.is.null");
+          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.eq.payment_link,origin.eq.rr_installment,origin.is.null");
         }
         
         query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
