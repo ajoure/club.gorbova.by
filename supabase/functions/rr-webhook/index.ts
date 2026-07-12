@@ -28,6 +28,7 @@ import {
   rrGetOrderStatus,
 } from "../_shared/rr/rr-adapter.ts";
 import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
+import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -260,10 +261,26 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // Sprint C2 / Stage E.2 — universal CRM terminal 'success' on paid RR order.
+  // Non-fatal: applyCrmStageOnTerminal is idempotent (SOT = meta.crm_routing_snapshot)
+  // + manual-override guarded. If snapshot is negative/missing, helper returns no-op.
+  let crmStage: unknown = null;
+  if (willPromote && promo && promo.ok === true) {
+    try {
+      const res = await applyCrmStageOnTerminal(
+        supabaseAdmin, externalId, "success", "rr.webhook.paid",
+      );
+      crmStage = res;
+    } catch (e) {
+      crmStage = { applied: false, reason: "error", error: (e as Error).message };
+    }
+  }
+
   return jsonResponse({
     success: true,
     promotion,
     commission_enrichment: commissionEnrichment,
     entitlement_source: entitlementSource,
+    crm_stage: crmStage,
   });
 });

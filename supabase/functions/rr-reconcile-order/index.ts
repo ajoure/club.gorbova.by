@@ -19,6 +19,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createServiceClient, loadRRConfig } from "../_shared/rr/rr-config.ts";
 import { rrGetOrderStatus } from "../_shared/rr/rr-adapter.ts";
+import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -149,6 +150,13 @@ Deno.serve(async (req: Request) => {
       },
     );
     if (rejErr) return json(500, { error: "reject_persist_failed", detail: rejErr.message });
+    try {
+      await applyCrmStageOnTerminal(
+        supabaseAdmin, orderId, "failed", "rr.reconcile.not_created",
+      );
+    } catch (e) {
+      console.error("[rr-reconcile] crm-routing apply failed:", (e as Error).message);
+    }
     return json(200, {
       ok: true,
       action: "reconciled_not_created",
@@ -196,6 +204,14 @@ Deno.serve(async (req: Request) => {
       },
     );
     if (rejErr) return json(500, { error: "reject_persist_failed", detail: rejErr.message });
+    try {
+      await applyCrmStageOnTerminal(
+        supabaseAdmin, orderId, "failed",
+        `rr.reconcile.terminal_reject:${status.rrStatusRaw}`,
+      );
+    } catch (e) {
+      console.error("[rr-reconcile] crm-routing apply failed:", (e as Error).message);
+    }
     return json(200, {
       ok: true,
       action: "reconciled_rejected",
