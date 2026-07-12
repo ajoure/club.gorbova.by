@@ -1,5 +1,9 @@
 import * as React from 'npm:react@18.3.1'
-import { renderAsync } from 'npm:@react-email/components@0.0.22'
+// PATCH-EMAIL-FOOTER-UTF8-V1: switched from `renderAsync` (0.0.22) to synchronous
+// `render` from @react-email/render@1.0.5. The older renderAsync path used a
+// ReadableStream + TextDecoder pipeline that corrupted multi-byte UTF-8 chars
+// landing on chunk boundaries (observed: `С` → `\uFFFD\uFFFD`, `н` → `\uFFFD\uFFFD`).
+import { render as renderEmail } from 'npm:@react-email/render@0.0.17'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors'
 import { TEMPLATES } from '../_shared/transactional-email-templates/registry.ts'
@@ -278,19 +282,38 @@ Deno.serve(async (req) => {
   }
 
   // 4. Render React Email template to HTML and plain text
-  const html = await renderAsync(
+  const html = await renderEmail(
     React.createElement(template.component, templateData)
   )
-  const plainText = await renderAsync(
+  const plainText = await renderEmail(
     React.createElement(template.component, templateData),
     { plainText: true }
   )
+
+  // PATCH-EMAIL-FOOTER-UTF8-V1: audit guard — detect residual Unicode replacement
+  // characters (U+FFFD). Non-blocking: we still send the email so the buyer isn't
+  // blocked, but we log a diagnostic record so the corrupted template can be fixed.
+  const REPLACEMENT_CHAR = '\uFFFD'
+  const htmlHasReplacement = html.includes(REPLACEMENT_CHAR)
+  const textHasReplacement = plainText.includes(REPLACEMENT_CHAR)
+  if (htmlHasReplacement || textHasReplacement) {
+    console.error('email_utf8_replacement_detected', {
+      templateName,
+      messageId,
+      recipient: effectiveRecipient,
+      html_replacement_count: (html.match(/\uFFFD/g) || []).length,
+      text_replacement_count: (plainText.match(/\uFFFD/g) || []).length,
+    })
+  }
 
   // Resolve subject — supports static string or dynamic function
   const resolvedSubject =
     typeof template.subject === 'function'
       ? template.subject(templateData)
       : template.subject
+
+
+
 
   // 5. Enqueue the pre-rendered email for async processing by the dispatcher.
   // The dispatcher (process-email-queue) handles sending, retries, and rate-limit backoff.
