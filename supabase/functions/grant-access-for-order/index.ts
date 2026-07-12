@@ -2411,14 +2411,25 @@ Deno.serve(async (req) => {
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
         const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
         if (supabaseUrl && serviceKey) {
-          fetch(`${supabaseUrl}/functions/v1/notify-order-purchased`, {
+          const notifyPromise = fetch(`${supabaseUrl}/functions/v1/notify-order-purchased`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${serviceKey}`,
             },
             body: JSON.stringify({ order_id: orderId }),
-          }).catch((e) => console.warn('[grant-access-for-order] notify-order-purchased fire-and-forget error:', (e as Error)?.message || e));
+          })
+            .then(async (r) => {
+              const t = await r.text().catch(() => '');
+              console.log('[grant-access-for-order] notify-order-purchased status=' + r.status + ' body_short=' + t.slice(0, 300));
+            })
+            .catch((e) => console.warn('[grant-access-for-order] notify-order-purchased fire-and-forget error:', (e as Error)?.message || e));
+          // Keep the fire-and-forget alive after the response returns.
+          // Without waitUntil, Deno edge runtime may abort in-flight fetches at response return.
+          try {
+            const er = (globalThis as any).EdgeRuntime;
+            if (er && typeof er.waitUntil === 'function') er.waitUntil(notifyPromise);
+          } catch (_) { /* noop */ }
         }
       } catch (notifyErr) {
         console.warn('[grant-access-for-order] notify-order-purchased scheduling error (ignored):', notifyErr);
