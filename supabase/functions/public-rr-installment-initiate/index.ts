@@ -328,6 +328,48 @@ Deno.serve(async (req: Request) => {
 
   const correlationId = crypto.randomUUID();
 
+  // Sprint C2 / Stage E.1 v2 — DURABLE CRM routing snapshot BEFORE order INSERT.
+  // B.0 invariant: every new RR order must carry crm_routing_snapshot atomically at INSERT time.
+  // We resolve routing server-side and embed positive/negative snapshot into initialMeta.
+  // If resolver itself throws (network/DB), we fail-closed: rrCreateOrder is NOT called.
+  let crmSnapshot: any;
+  let crmRoutingOk = false;
+  let crmRoutingContext: {
+    reason?: string; resolved_via?: string; candidates_count?: number;
+  } = {};
+  try {
+    const routing = await resolveOfferRoutingWithFallback(supabaseAdmin, {
+      offer_id: offerId,
+      tariff_id: tariff.id,
+    });
+    crmRoutingContext = {
+      reason: routing.reason,
+      resolved_via: routing.resolved_via ?? "none",
+      candidates_count: routing.candidates_count ?? 0,
+    };
+    if (routing.ok && routing.snapshot) {
+      crmSnapshot = routing.snapshot;
+      crmRoutingOk = true;
+    } else {
+      crmSnapshot = buildNegativeSnapshot({
+        reason: routing.reason || "unknown",
+        offer_id: offerId,
+        tariff_id: tariff.id,
+        resolved_via: routing.resolved_via ?? "none",
+        candidates_count: routing.candidates_count ?? 0,
+      });
+    }
+  } catch (e) {
+    // Fail-closed: cannot guarantee B.0 invariant → do not call RR.
+    await supabaseAdmin.from("audit_logs").insert({
+      actor_type: "system",
+      actor_label: "public-rr-installment-initiate",
+      action: "rr.create_order.crm_snapshot_resolver_error",
+      meta: { offer_id: offerId, tariff_id: tariff.id, error: (e as Error).message },
+    });
+    return errorResponse("crm_snapshot_resolver_failed", 503);
+  }
+
   // Sprint C2 / Этап C: разделение владельца аккаунта и заявителя.
   // - Владелец покупки и получатель доступа = auth user (user_id / profile).
   // - Заявитель РР — данные из формы; могут отличаться (супруг/родственник).
@@ -341,6 +383,8 @@ Deno.serve(async (req: Request) => {
     grant_access_skip: true,
     notification_skip: true,
     crm_success_skip: true,
+    // B.0 invariant: snapshot embedded atomically at INSERT.
+    crm_routing_snapshot: crmSnapshot,
     rr: {
       runtime: "sprintB",
       mode: cfg.mode,
@@ -382,6 +426,7 @@ Deno.serve(async (req: Request) => {
     );
   }
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
+
 
   // ============== REUSE ==============
   if (wasReused) {
