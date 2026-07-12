@@ -291,8 +291,20 @@ export function LeadRequestDialog({
                   opacity: 0,
                 }}
               />
+              {bankInstallmentRuntime?.enabled && (
+                <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-1">
+                  <p className="text-sm font-medium text-foreground">
+                    Данные заявителя
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Укажите данные лица, которое подаёт заявку на рассрочку в
+                    банк. Это можете быть вы, супруг(а) или другой родственник.
+                    Доступ к продукту всё равно откроется вашему аккаунту{session?.user?.email ? ` (${session.user.email})` : ""}.
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
-                <Label htmlFor="lead-name">Имя *</Label>
+                <Label htmlFor="lead-name">Имя заявителя *</Label>
                 <Input
                   id="lead-name"
                   value={details.name}
@@ -305,7 +317,7 @@ export function LeadRequestDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lead-phone">Телефон *</Label>
+                <Label htmlFor="lead-phone">Телефон заявителя *</Label>
                 <Input
                   id="lead-phone"
                   type="tel"
@@ -332,10 +344,12 @@ export function LeadRequestDialog({
                   placeholder={commentPlaceholder}
                 />
               </div>
-              <p className="text-xs text-muted-foreground">
-                Email <strong>{session?.user?.email}</strong> уже привязан к
-                вашему аккаунту и будет использован для связи.
-              </p>
+              {!bankInstallmentRuntime?.enabled && (
+                <p className="text-xs text-muted-foreground">
+                  Email <strong>{session?.user?.email}</strong> уже привязан к
+                  вашему аккаунту и будет использован для связи.
+                </p>
+              )}
               <Button
                 type="submit"
                 disabled={!canSubmit || submitting}
