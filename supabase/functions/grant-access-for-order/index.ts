@@ -20,6 +20,7 @@ import {
   detectBranch,
   enforceBranchPolicy,
 } from './caller_auth.ts';
+import { evaluateGrantEligibility } from '../_shared/grant-eligibility.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
