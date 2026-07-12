@@ -5588,3 +5588,322 @@ FOLLOW-UPS:
     remaining hardcoded caller labels in shared helpers are out of this
     patch's scope; documented for follow-up
 ```
+
+---
+
+# Отчет о выполнении: PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / READ-ONLY DIAGNOSE
+
+Дата: 2026-07-12. Режим: read-only. DML=0. Deploy=0. Config-change=0.
+Источник данных: `supabase/functions/grant-access-for-order/index.ts` (2465 строк),
+`caller_auth.ts`, статический grep по callers, SELECT-запросы к production БД.
+
+## A. Current behaviour — фактические eligibility-checks
+
+Handler `grant-access-for-order` в момент диагноза выполняет следующие проверки
+до первого side effect (subscriptions_v2 / entitlements / access_grant_ledger /
+telegram-grant-access / notify-order-purchased):
+
+1. AUTHZ (SEC-A/SEC-B, closed): `resolveGrantAccessCaller` → `detectBranch` →
+   `enforceBranchPolicy`. 401/403 если caller не подходит бранчу.
+2. Body validation: `orderId` обязателен (400 иначе).
+3. Order lookup: `orders_v2` по id → 404 если нет.
+4. `user_id != null` — иначе HTTP 200 warning `no_user_id` (side-effects не пишутся,
+   grant отложен до регистрации).
+5. `isNoCardTrial` — вычисляется только для ветвления логики (пропуск subv2),
+   но НЕ блокирует grant.
+6. `adminManualAccessEdit`-ветка: требует admin JWT + `customAccessEndAt`.
+   Патчит existing subv2/entitlement, но НЕ проверяет order.status /
+   canonical payment.
+7. Idempotency guard (`existingEntByOrder` + `existingSubByOrder`) — skip если
+   доступ уже выдан по этому order_id и даты не устарели.
+8. Provider-linked subscription resolver (SB1) — управляет target-подпиской
+   для bePaid rebill, включая `manual_review_provider_linkage_conflict`.
+
+### Ключевой результат A
+
+**Нет ни одной проверки** на:
+- `order.status` (paid / pending / failed / draft / refunded / partial)
+- `order.final_price` / `order.paid_amount` / net paid vs required
+- наличие canonical succeeded `payments_v2` для этого order_id
+- `order.currency` конфликт
+- `meta.deal_only` / `meta.is_gift` / `meta.source`
+- `provider` allowlist
+- trial-contract подтверждение
+
+grep-подтверждение (see diagnostic exec):
+`order.status`, `order.payment_status`, `payments_v2` — 0 попаданий в файле handler
+в контексте guard/deny перед side-effects. Единственные попадания
+`order.paid_amount` / `order.final_price` — расчёт `recurring_amount` для trial и
+проверка `isNoCardTrial`, обе — только для маршрутизации, не для отказа.
+
+Вывод: **единственный фактический eligibility-фильтр сегодня — это branch-authz.**
+Любой authorized caller, передавший существующий `orderId`, получит доступ,
+включая orders со `status IN ('pending','failed','draft','refunded','partial')`.
+
+## B. Caller → branch → eligibility matrix
+
+Все текущие писатели `grant-access-for-order` (grep, без .md/.test):
+
+| Caller (файл) | Кто | Branch | Идёт после чего | Ожидаемая бизнес-причина |
+|---|---|---|---|---|
+| `bepaid-webhook/index.ts` (STEP A, ~L1677/L2800/L2898) | service_role | standard / subscription_renewal | подтверждён `payment.succeeded` в webhook | оплата по карте / rebill |
+| `bepaid-webhook/rebill_flow.ts` | service_role | subscription_renewal | recurring charge | продление |
+| `stripe-webhook/index.ts` (L417, L542) | service_role | standard | `checkout.session.completed` или PI success | оплата Stripe |
+| `subscription-charge/index.ts` | service_role | standard / subscription_renewal | MIT charge succeeded | продление MIT |
+| `public-charge-saved-card/index.ts` | service_role (через webhook fulfillment) | standard | saved-card charge succeeded | разовая оплата |
+| `erip-reconcile-pending/index.ts` (L252) | service_role | standard | matched ERIP payment | оплата через ЕРИП |
+| `admin-manual-charge/index.ts` (L437) | service_role | standard | результат ручного charge | ручной charge админом |
+| `admin-reconcile-processing-payments/index.ts` (L81) | service_role | standard | ПОСЛЕ manual UPDATE `orders_v2.status='paid'` | ручной reconcile |
+| `payments-reconcile/index.ts` (L511) | service_role | standard | matched payment→order | автосверка |
+| `bepaid-auto-process/index.ts` (L828) | service_role | standard | statement-line auto-match | автосверка bePaid |
+| `rr-fulfill-order/index.ts` | service_role | standard | RR promote | RR ретрай |
+| `test-payment-complete/index.ts` (L369) | service_role | standard | симуляция | тест |
+| `stripe-reconcile-session/index.ts` | service_role | standard | reconcile session | Stripe reconcile |
+| `_shared/stripe-subscription-resolver.ts` | service_role | subscription_renewal | Stripe subscription cycle | продление Stripe |
+| `_shared/rr/rr-promote-order.ts` | service_role | standard | RR promote | RR |
+| `ContactDetailSheet.tsx` (L1365) | admin JWT | standard | клик "Выдать доступ" | admin_grant / GIFT |
+| `BulkExtendAccessDialog.tsx` | admin JWT | standard | bulk продление | admin bulk |
+| `GrantAccessFromDealDialog.tsx` | admin JWT | standard | grant по сделке | admin |
+| `EditDealDialog.tsx` | admin JWT | adminManualAccessEdit | правка дат | admin |
+| `payments/CreateDealFromPaymentDialog.tsx` | admin JWT | standard | сделка из payment | admin_from_payment |
+| `payments/BulkCreateDealsDialog.tsx` | admin JWT | standard | bulk из payments | admin_bulk_from_payments |
+| `three_ds_writer` (внутри handler) | — (внутренний) | 3ds_finalize | подтверждён 3DS | завершение 3DS |
+| `notify-order-purchased/index.ts` | (не invoker, только reader) | — | — | — |
+
+Наблюдения:
+- Ни один service-role caller не гарантирует в коде, что order имеет `status='paid'`
+  на момент вызова. Некоторые (bepaid-webhook, stripe-webhook, subscription-charge,
+  public-charge-saved-card) выставляют его в тот же transaction blob, но
+  порядок операций различается по путям, и handler не защищён от ошибок upstream.
+- Admin UI callers идут через branch=standard, но семантика бывает
+  `admin_grant` (обычная выдача) / `admin_deal_only` (сделка без доступа —
+  ожидается, что grant НЕ вызовется, что уже гарантировано B0a-firewall).
+- `EditDealDialog` использует единственный branch `adminManualAccessEdit` —
+  admin-only после CLOSURE-1.
+
+## C. Матрица допустимости (proposed)
+
+| Сценарий | Branch | order.status | Canonical payment | Ожидание | Предлагаемая eligibility_reason |
+|---|---|---|---|---|---|
+| Оплаченный заказ | standard | paid | ≥1 succeeded, net_paid≥final_price | allow | `allow_paid_canonical` |
+| Оплаченный free (final=0, paid=0), явный admin/gift | standard | paid | any | allow (исключение) | `allow_admin_gift` |
+| Trial (is_trial=true, подтверждён) | standard | paid | may be 0 | allow | `allow_verified_trial` |
+| 3DS pending | 3ds_finalize | pending/paid | 3DS proof required | allow (только эта ветка) | `allow_3ds_finalize` |
+| Renewal (rebill/MIT) | subscription_renewal | paid | linked recurring succeeded | allow | `allow_subscription_renewal` |
+| Unpaid | standard | pending / draft | none | deny | `deny_unpaid` |
+| Failed | standard | failed | none | deny | `deny_failed` |
+| Failed с payments succ | standard | failed | 1+ succ | manual_review | `manual_review_failed_with_payment` |
+| Refunded | standard | refunded | historical succ | deny **new** grant | `deny_refunded` |
+| Partial | standard | partial | net_paid<final_price | deny (или explicit rule) | `deny_amount_insufficient` |
+| Deal-only | standard | paid | none | deny (grant не должен вызываться) | `deny_deal_only` |
+| Currency mismatch | standard | paid | succ но currency≠order.currency | manual_review | `deny_currency_conflict` |
+| Legacy provider (`getcourse`/`historical_import`) без canonical payment | standard | paid | none | allow только для админского backfill | `allow_legacy_backfill` (по meta.source allowlist) |
+| Ordinary user / self-replay | любой | — | — | deny (уже закрыто authz) | `forbidden_ordinary_user` |
+
+Единая колонка `status` НЕ используется как SoT: eligibility решается
+парой `(order.status, canonical_payment_evidence)` + explicit-exception по
+`meta.source`.
+
+## D. Canonical payment truth (read-only)
+
+- Успешный статус `payments_v2.status` = `'succeeded'` (см. distribution ниже).
+- Валидные providers, встречающиеся в orders_v2: `bepaid`, `getcourse`,
+  `historical_import`, `stripe`, NULL. Актуальный allowlist для canonical
+  succeeded truth = `{bepaid, stripe}`. `getcourse` и `historical_import` —
+  legacy backfill, не имеют canonical payment.
+- Refunded payments представлены отдельным статусом `payments_v2.status='refunded'`
+  (25 строк) — при подсчёте net_paid их надо исключать.
+- Один succeeded payment достаточен только если `sum(succeeded amount) >= order.final_price`
+  (наблюдаемое расхождение см. anomaly для `partial` orders).
+- Currency conflict в handler не проверяется, но данные однородны: BYN 3637 /
+  RUB 17 / USD 1. Рекомендация: matching по `orders_v2.currency = payments_v2.currency`.
+- Legacy admin/admin_test orders → payment отсутствует. Должны идти через
+  explicit-exception, а не через canonical truth.
+- SoT для eligibility SoT-хелпера: **новый** `supabase/functions/_shared/grant-eligibility.ts`
+  (helper планируется в C2; используется только handler-ом и его тестами).
+  Существующий `_shared/canonical-writer-enforcement.ts` / `record_refund_atomic_multi` не подходят —
+  они про refund/writer, не про eligibility.
+
+## E. Production baseline (read-only, SELECT only)
+
+Общий подсчёт orders_v2 (все время):
+```
+paid     3655
+pending   242
+failed    122
+draft      58
+refunded   43
+lead        3
+partial     1
+total    4124
+```
+payments_v2.status:
+```
+succeeded  4973
+failed     1283
+refunded     25
+processing   12
+canceled      6
+```
+Взаимоисключающие eligibility-категории (посчитаны в одном запросе):
+
+| Категория | Count |
+|---|---|
+| paid_with_canonical (`status=paid` ∧ ≥1 succ payment) | **2907** |
+| paid_no_canonical, admin/gift (allowlist meta.source) | **26** |
+| paid_no_canonical, other (legacy/getcourse/historical) | **722** |
+| pending_total | 242 (из них 1 с succ payment) |
+| failed_total | 122 (из них 1 с succ payment) |
+| refunded_total | 43 |
+| draft_total | 58 |
+| partial_total | 1 |
+| deal_only_flag (`meta.deal_only='true'`) | 1426 |
+| trial_flag (`is_trial=true`) | 39 |
+| free_paid (`final_price=0 AND status=paid`) | 287 |
+| currency BYN / RUB / USD (paid) | 3637 / 17 / 1 |
+
+Пояснения:
+- `paid_no_canonical, other = 722` — это `provider IN ('getcourse','historical_import',NULL)` без succeeded payment.
+  Это исторический бэкфилл до внедрения payments_v2. Требуют explicit-exception
+  `allow_legacy_backfill` по allowlist providers/meta.source.
+- `deal_only_flag=1426` — большая часть unrelated к вызову canonical grant
+  (это флаг сделок в `admin_bulk_from_payments`/`admin_from_payment`). Только
+  1 order имеет `meta.source='admin_deal_only'` (B0a firewall уже гарантирует,
+  что grant для него не вызывается).
+- Pending/Failed **с succeeded payment** — 2 подтверждённых case-а inconsistency
+  (recovery-кандидаты).
+
+## E'. Anomalies (representative IDs, ≤20, no DML)
+
+### E'.1 — `status IN ('pending','failed','partial')` с ≥1 succeeded payments_v2 (recovery/manual_review)
+```
+7c1bff7d-3106-4a81-8256-71ac4b4aeea7  pending   final=250   paid=0     src=<null>
+d5aca9de-218a-416a-9c9d-b35f9dbaf899  partial   final=1035  paid=345   src=admin_from_payment (3 succ payments по 345)
+13ba55b1-40c4-40cf-a664-e421e8db98cf  failed    final=250   paid=0     src=admin_grant (succ payment amount=0)
+```
+### E'.2 — `status=refunded` с исторически succeeded payments_v2 (deny new grant, но исторический доступ мог быть выдан)
+```
+a8489e5b-051d-40e4-830c-012bfd565aef  refunded  src=bepaid_rebill
+abdb9c54-c8a2-4d17-8d1b-014c8f66ee26  refunded  src=saved_card_public_pay
+c2ec5bbd-8b4e-4afd-a856-7194fb4a865d  refunded  src=admin_from_payment
+00549b49-89fa-4d4e-93c4-aaadff559038  refunded  src=bepaid-create-subscription-checkout
+20523d7d-496e-492f-b473-ad83e7f28899  refunded  src=admin_from_payment
+b55f96eb-15a7-4474-90b0-5cb06bbc8740  refunded  src=admin_from_payment
+d4487c38-ff88-46e0-9343-56a2a2963588  refunded  final=1 (probe)
+a32338b0-8180-4d12-ad89-5771a6fcfa59  refunded  src=bepaid-create-subscription-checkout
+09058c05-3dff-4e26-a152-b568fa6da1a5  refunded  src=rebill_materialization_repair
+```
+Активных entitlements по refunded/failed/draft: refunded=1, failed=2 (cross-check).
+
+### E'.3 — `status=paid` без canonical succeeded payment (legacy backfill; НЕ аномалии, а explicit-exception cohort)
+```
+3a97ea08-be9f-4752-bc09-21d28502cf66  trial_no_card
+e26b2b19-...  ... (19 IDs; все provider=NULL/getcourse, meta.source=NULL/review_safe_import/cb2s_followup_final_8)
+```
+
+Итог: `currently_grantable_but_should_be_denied` ≈ 3 immediate (E'.1 без allowlist),
+плюс 43 refunded (E'.2) — при повторном вызове handler они прошли бы. `currently_denied_but_should_be_allowed` = 0 наблюдаемых, `ambiguous/manual_review` = 3 (E'.1) + 1 partial.
+
+## F. Proposed eligibility helper (не реализовано)
+
+Signature:
+```ts
+export interface EligibilityInput {
+  branch: Branch;
+  order: OrderRow;                 // orders_v2 row incl. meta
+  canonicalPayments: PaymentRow[]; // payments_v2 WHERE order_id=X AND status='succeeded'
+  callerType: CallerType;
+}
+export interface EligibilityResult {
+  allowed: boolean;
+  reason: string;                  // enum from list below
+  evidence: {
+    branch: string;
+    order_status: string;
+    canonical_payment_ids: string[];
+    net_paid: number | null;
+    required_amount: number | null;
+    exception_type: string | null;
+  };
+}
+export function evaluateGrantEligibility(input: EligibilityInput): EligibilityResult;
+```
+Enum reasons:
+```
+allow_paid_canonical
+allow_admin_gift
+allow_verified_trial
+allow_3ds_finalize
+allow_subscription_renewal
+allow_legacy_backfill
+
+deny_unpaid
+deny_failed
+deny_refunded
+deny_deal_only
+deny_payment_missing
+deny_amount_insufficient
+deny_currency_conflict
+deny_legacy_provider
+
+manual_review_ambiguous
+manual_review_failed_with_payment
+```
+Место в handler: сразу после AUTHZ + branch-policy + orderId lookup, ДО
+adminManualAccessEdit-ветки, ДО provider-linked resolver, ДО idempotency guard.
+
+Каждый deny должен писать audit `grant-access-for-order.eligibility_deny` со
+структурой `{ order_id, branch, eligibility_reason, caller_type, actor_user_id,
+claimed_source, claimed_context, request_id }`. Токены/JWT НЕ логируются.
+
+Каждый manual_review — audit `.eligibility_manual_review` + `orders_v2.meta.manual_review*` (add-only merge).
+
+## G. Rollout / test plan (implementation phase, авторизации на CODE CHANGE ещё нет)
+
+1. C1: add `_shared/grant-eligibility.ts` + AST-level unit tests (сценарии из C).
+2. C2: integrate helper in handler в shadow-mode (compute + audit, но не блокировать).
+3. C3: `grantAccessForOrder.eligibilityShadow.test.ts` — invariant: helper вызывается ДО side-effects.
+4. C4: 48ч shadow-observation + сравнение audit-выборки с ожидаемой матрицей.
+5. C5: switch to enforce mode (deny/manual_review), single deploy.
+6. C6: post-deploy read-only probe (как в SEC-A).
+
+## H. Rollback plan
+
+- Enforce-mode → shadow-mode: одна константа `ELIGIBILITY_ENFORCE=false` в handler,
+  повторный deploy. Никаких DML/rollback миграций не требуется — helper add-only.
+- Shadow-mode → полное удаление: реверт двух файлов (`grant-eligibility.ts`,
+  ~30 строк в `index.ts`) + deploy. Историю audit-log не трогать.
+- Anomalies (E'.1–E'.2): выполнять отдельными approved patch-ами, НЕ в scope
+  eligibility patch.
+
+---
+
+Финальный статус блока:
+
+```
+PATCH-GRANT-ACCESS-ELIGIBILITY-V1:
+
+READ-ONLY DIAGNOSE:
+  EXECUTED / VERIFIED
+  handler behaviour        = documented (Section A)
+  caller matrix            = documented (Section B)
+  scenario matrix          = documented (Section C)
+  canonical payment truth  = documented (Section D)
+  production baseline      = documented (Section E)
+  anomalies (≤20 IDs)      = listed (Section E')
+  proposed helper          = drafted (Section F)
+  rollout/test plan        = drafted (Section G)
+  rollback                 = drafted (Section H)
+
+SQL SELECT:
+  EXECUTED / DML=0
+
+CODE CHANGE:
+  NOT PERFORMED / BLOCKED
+
+DEPLOY:
+  NOT PERFORMED / BLOCKED
+
+DML:
+  0
+```
