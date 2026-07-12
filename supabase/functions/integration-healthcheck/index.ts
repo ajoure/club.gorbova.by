@@ -914,7 +914,11 @@ serve(async (req) => {
           overall = "battle_awaiting_first_order";
         }
 
-        success = overall === "connected";
+        // success контракта healthcheck:
+        //   connected / battle_awaiting_first_order → true
+        //   not_configured / error                  → false
+        // Семантика integration_instances.status обрабатывается отдельно ниже.
+        success = overall === "connected" || overall === "battle_awaiting_first_order";
 
         responseData = {
           provider: "rr",
