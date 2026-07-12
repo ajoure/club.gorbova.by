@@ -6380,6 +6380,63 @@ export type Database = {
           },
         ]
       }
+      entitlement_sources: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          meta: Json
+          order_id: string | null
+          product_id: string
+          profile_id: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          source_ref: string
+          source_type: string
+          starts_at: string
+          status: string
+          tariff_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          meta?: Json
+          order_id?: string | null
+          product_id: string
+          profile_id?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          source_ref: string
+          source_type: string
+          starts_at: string
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          meta?: Json
+          order_id?: string | null
+          product_id?: string
+          profile_id?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          source_ref?: string
+          source_type?: string
+          starts_at?: string
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       entitlements: {
         Row: {
           created_at: string
@@ -19165,6 +19222,10 @@ export type Database = {
           msg_id: number
           read_ct: number
         }[]
+      }
+      recalculate_entitlement_aggregate: {
+        Args: { p_product_id: string; p_user_id: string }
+        Returns: Json
       }
       receipt_backfill_candidates: {
         Args: {
