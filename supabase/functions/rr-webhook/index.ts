@@ -241,5 +241,29 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return jsonResponse({ success: true, promotion, commission_enrichment: commissionEnrichment });
+  // Sprint C2 / Этап C — runtime bridge: paid RR order → entitlement_source + aggregate recalc.
+  // Строго non-fatal и идемпотентно (ON CONFLICT DO NOTHING внутри RPC). Ошибка здесь
+  // не откатывает уже успешный promote/grant/access и не должна возвращать 5xx.
+  let entitlementSource: unknown = null;
+  const promo = promotion as { ok?: boolean } | null;
+  if (willPromote && promo && promo.ok === true) {
+    try {
+      const { data: esRes, error: esErr } = await supabaseAdmin.rpc(
+        "rr_upsert_entitlement_source_from_order",
+        { _order_id: externalId },
+      );
+      entitlementSource = esErr
+        ? { status: "helper_error", error: esErr.message }
+        : (esRes ?? { status: "unknown" });
+    } catch (e) {
+      entitlementSource = { status: "bridge_error", error: (e as Error).message };
+    }
+  }
+
+  return jsonResponse({
+    success: true,
+    promotion,
+    commission_enrichment: commissionEnrichment,
+    entitlement_source: entitlementSource,
+  });
 });
