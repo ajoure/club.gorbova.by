@@ -1838,47 +1838,9 @@ Deno.serve(async (req) => {
         // (access_rules / bonuses / telegram) grants. Webhook never writes
         // entitlements directly anymore.
         
-        // 6. Send notifications
-        try {
-          // Full admin notification (same detail level as regular checkout)
-          const { data: customerProfile } = await supabase
-            .from('profiles')
-            .select('full_name, email, telegram_username')
-            .eq('user_id', subV2.user_id)
-            .maybeSingle();
+        // 6. Admin purchase notifications — moved to canonical `notify-order-purchased`
+        // (invoked by grant-access-for-order after STEP A). PATCH-ADMIN-PURCHASE-NOTIFY-V1.
 
-          const notifyMessage = buildAdminNotifyMessage({
-            operation_type: 'bepaid_subscription_payment',
-            client_name: customerProfile?.full_name,
-            email: customerProfile?.email,
-            telegram_username: customerProfile?.telegram_username,
-            product_name: subV2.products_v2?.name,
-            tariff_name: subV2.tariffs?.name,
-            amount: paymentAmount,
-            currency: 'BYN',
-            next_charge_at: renewAt.toISOString(),
-            source_label: 'Подписка bePaid (автосписание)',
-          });
-            
-          const notifyResp = await fetch(
-            `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-              },
-              body: JSON.stringify({
-                message: notifyMessage,
-                source: 'bepaid_subscription_webhook',
-                order_id: orderV2Id,
-              }),
-            }
-          );
-          console.log('[WEBHOOK-SUBSCRIPTION] Full admin notification sent, status:', notifyResp.status);
-        } catch (notifyErr) {
-          console.error('[WEBHOOK-SUBSCRIPTION] Notification error:', notifyErr);
-        }
         
        // 6b. GETCOURSE SYNC for provider-managed subscriptions
        const getcourseOfferId = subV2.tariffs?.getcourse_offer_id;
