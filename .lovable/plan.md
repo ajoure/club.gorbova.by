@@ -1815,3 +1815,491 @@ PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1:
   PHASE A2 / B2 / EXECUTE: BLOCKED UNTIL A1 REVIEW APPROVED
   ALL CODE CHANGES: BLOCKED
 ```
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1R (read-only recheck)
+
+Дата: 2026-07-12. Только SELECT. Изменений в БД нет.
+
+Все сравнения ниже выполнены по полному контракту:
+`legacy.order`, `legacy.amount`, `legacy.currency`, `legacy.profile`,
+`legacy.paid_at` против `payment_reconcile_queue.*` и/или существующего
+canonical `payments_v2 (provider='bepaid', provider_payment_id = bepaid_uid)`.
+
+### A1R.0 Уточнённая карта (117 admin_from_payment)
+
+Reclassification без совмещения ord+fin:
+
+```
+a_safe_backfill                                  5
+b_archive_full_match  (ord+amt+ccy+prof совпали) 24
+b_full_match_ord_but_fin_conflict                 2  (order совпал, но profile/amt отличаются)
+c_legacy_null_order_archive (fin match, order пусто) 10
+d_legacy_order_correct_relink_canonical          52  (canonical привязан к неверному order)
+e_canonical_correct_archive_legacy               14
+f_both_wrong_ambiguous                            1
+z_other (без queue match)                         2
+missing_source (queue-строки нет вовсе)           9
+────────────────────────────────────────────────────
+итого                                           117
+```
+
+`b_archive_full_match` уменьшилось с 26 до **24** — 2 строки, при совпадающем
+`order_id`, имеют расхождение по `profile` или `amount`. Они уходят в
+подкатегорию `b_full_match_ord_but_fin_conflict` и требуют ручного review до
+archive.
+
+`z_other` (2 строки) — canonical bepaid найден, но legacy имеет одинаковый
+`order` и одинаковые фин.поля (эта ветка попала мимо предыдущих case-веток).
+Требуется точечный review (легенда: строка попала в SELECT WHERE
+`bepaid_uid IS NOT NULL` без явной ветки — вероятно, `legacy_order` равен
+`canon_order`, но `canon_order IS NULL`). Подробности будут при execute-review.
+
+### A1R.1 safe_backfill (5) — детально
+
+| legacy_id | bepaid_uid | ord | amt | ccy | prof | l_paid | q_paid | заметка |
+|---|---|---|---|---|---|---|---|---|
+| 496ed05b… | 63f9a1f9… | ✅ | ✅ | ✅ | ✅ | 2025-12-30 | 2025-12-30 | ok |
+| ce8eedad… | 3d216612… | ✅ | ✅ | ✅ | ✅ | 2025-12-31 | 2025-12-31 | ok |
+| 9e158f4b… | 6badbdad… | ✅ | ✅ | ✅ | legacy=NULL | 2026-07-08 | 2026-07-08 | tracking=subv2:… (subscription) |
+| 9b412ac6… | 19d816de… | ✅ | ✅ | ✅ | legacy=NULL | 2025-12-30 | 2025-12-30 | ok |
+| ca7cde79… | **19d816de…** | ❌ (l_order=NULL) | ✅ | ✅ | legacy=NULL | **2026-03-16** | 2025-12-30 | **collision с 9b412ac6, дата отличается на 2.5 мес** |
+
+Критическая находка: `9b412ac6` и `ca7cde79` указывают на ОДИН и тот же
+`bepaid_uid=19d816de-…` (`tracking_id=lead_3836274`, `rrn=019950035920`).
+`ca7cde79` имеет `paid_at=2026-03-16`, `legacy_order=NULL`; `9b412ac6` имеет
+`paid_at=2025-12-30` (совпадает с queue), `legacy_order` задан. Одновременный
+backfill невозможен из-за `uq_payments_v2_provider_payment`. Правильный
+разбор:
+
+```
+9b412ac6 → safe_backfill_confirmed  (paid_at, order совпадают с очередью)
+ca7cde79 → archive_duplicate_of_9b412ac6  (тот же bepaid_uid, вторичная копия)
+```
+
+Итог A1R.1:
+
+```
+safe_backfill_confirmed          4  (496ed05b, ce8eedad, 9e158f4b, 9b412ac6)
+duplicate_of_safe_backfill       1  (ca7cde79 → archive)
+```
+
+### A1R.2a full_match (24) — детали
+
+```
+archive_exact_duplicate                         14
+archive_exact_but_legacy_prof_null (canon set)  10  ← ок для архива
+amount_mismatch                                  0
+currency_mismatch                                0
+profile_mismatch                                 2  ← вынесены в b_full_match_ord_but_fin_conflict
+```
+
+24 идут в архив (`reason='admin_from_payment_duplicate'`). Full ID list —
+см. агрегат `b_archive_full_match` выше.
+
+2 конфликтных full-match:
+
+```
+{00956264-cafc-4522-a7a8-2f9feb551aae, eda63b40-b5ab-4a44-860c-218af7ac927a}
+```
+
+помечены как `z_other`; поведение уточнить в execute-review.
+
+### A1R.2b legacy_null_order (10) — детали
+
+```
+amount_match          10 / 10
+currency_match        10 / 10
+profile_match         7 / 10   (все три с NULL legacy + set canon → допустимо)
+canonical_has_order  10 / 10
+archive_ok_candidate 10 / 10
+```
+
+Все 10 → архив (`reason='admin_from_payment_duplicate_legacy_null_order'`).
+
+### A1R.2c conflicting_order (67) — приоритетный разбор
+
+Через `queue.matched_order_id` определяем правильную связь:
+
+```
+legacy_order_correct   → legacy.order = queue.order ≠ canonical.order
+canonical_order_correct → canonical.order = queue.order ≠ legacy.order
+both_wrong_vs_queue    → ни legacy, ни canonical не совпадают с queue
+```
+
+Результат:
+
+```
+legacy_order_correct     52    ← canonical привязан к НЕВЕРНОМУ order
+canonical_order_correct  14
+both_wrong_vs_queue       1    (897ea700-44ff-4f93-bd7d-2d20ec8d6ae5)
+```
+
+Финансовые поля vs canonical:
+
+```
+amount_match_canon   67 / 67
+currency_match_canon 67 / 67
+profile_match_canon  48 / 67
+```
+
+Действия:
+
+```
+14 canonical_order_correct → legacy → archive
+                              (reason='admin_from_payment_duplicate_conflict_canonical_wins')
+52 legacy_order_correct   → RELINK canonical.order_id → queue.order_id
+                              (это исправление ошибки старого matcher-а)
+                              legacy-строка после этого → archive
+                              (reason='admin_from_payment_duplicate_after_canonical_relink')
+                              !!! ATTENTION: relink затрагивает 52 существующих bepaid платежа,
+                                  меняет привязку к сделке
+                                  → обязательный пересчёт paid_amount и статуса
+                                    обеих сделок (старой и новой)
+                                  → отдельный, guarded этап Phase A2b
+                                  → отдельный revoke/re-grant анализ для доступов
+ 1 both_wrong_vs_queue    → ambiguous_keep_blocked  (897ea700…)
+                              обработка вручную в execute-review
+```
+
+Полный ID list (52 legacy_order_correct):
+```
+023c6051 06d7e36a 08acc0cb 123b56e9 12ff2996 1711a2dd 18e93d7a 1922bc40
+1e2abdb7 25c216dd 2e8ee000 2eca335a 3ab53ea9 3fd5c095 412fd764 4a073c49
+4f2cb48f 564b7392 5cf9e21c 5ded2798 644f27e5 6491944f 676a15fb 71361253
+73b8f176 740bcafa 76f05a4f 7e953bc7 80cfe2bf 8cbc5122 9318eb82 941c52bc
+94fda5b8 9692a501 9d262108 a127ace1 a386f607 ad0cf694 b074afef b0b8758a
+b5c3cb43 b5e9f845 bc2c6bb3 bc89dcc9 c0f28878 d313bcb9 d5c21bb7 d9238ee3
+e452e784 e93ff9fe ec774ffb f68582b0
+```
+
+14 canonical_order_correct:
+```
+24791a62 33bdeca9 43282ffb 578f7efa 6005ece7 72b673a9 7fd564d1 ae5ac541
+d37310a4 dc144342 dcd47045 e301fabb e7a320bc e7e8aad4
+```
+
+### A1R.3 missing_source (9) — recovery search
+
+Для всех 9 `payment_reconcile_queue.id = qpid` отсутствует. Дополнительный
+поиск по `bepaid_statement_rows(amount, currency, paid_at ±2 дня)` и
+`payments_v2(bepaid, order_id, amount)`:
+
+```
+legacy_id      | l_paid     | bsr_by_amt_date | bepaid_same_ord_amt | any_bepaid_same_ord
+4afe1a0c…      | 2025-09-10 |    4            | 0                    | 0
+e3412120…      | 2025-10-10 |    4            | 0                    | 0
+86546dfe…      | 2026-01-04 |   26            | 0                    | 0
+07f997a5…      | 2026-01-06 |   99            | 0                    | 0     (amt=1.00)
+66657c81…      | 2026-01-06 |   99            | 0                    | 0     (amt=1.00)
+4e349305…      | 2026-01-09 |   47            | 0                    | 0     (amt=1.00)
+144441b1…      | 2026-01-11 |   40            | 0                    | 0
+f60ed2f0…      | 2026-01-12 |   23            | 1                    | 1     ← duplicate_recovered
+948f33b1…      | 2026-01-14 |   31            | 0                    | 0
+```
+
+Категории:
+
+```
+duplicate_recovered   1  (f60ed2f0…) → archive
+                           (reason='admin_from_payment_missing_source_bepaid_covers')
+ambiguous_bsr         8  → в bepaid_statement_rows много candidates по (amt,date);
+                           точная привязка требует profile/email match.
+                           Промежуточное решение: до execute-review держать
+                           заблокированными; при отсутствии дополнительной связи
+                           отправить в archive с
+                           reason='admin_from_payment_missing_source_unrecoverable'.
+                           Три строки с amt=1.00 BYN и 47-99 candidates почти
+                           наверняка технические тесты (нет provider_events, нет
+                           statement_lines, нет других bepaid на том же order).
+```
+
+### A1R.4 admin_deal_only (1) — access lineage
+
+```
+legacy_id     : 59fb8249-94f0-4f66-b23c-a7fcb9472505
+order_id      : df97b9ad-fb7d-4bbd-8122-46871ce611da
+order_number  : GIFT-26-MO9PD7A5           ← подарочная сделка
+order.status  : paid
+order.paid_amount : 0.00
+order.final_price : 0.00
+succeeded_payments (excl. этой) : 0
+subs / entitlement_sources / entitlements / access_grant_ledger by order : 0
+```
+
+`GIFT-*` сделка на 0 BYN. Payment-строка — это marker выдачи подарка, но
+lineage-таблицы (`entitlement_sources`, `access_grant_ledger`) пусты. Значит
+доступ выдавался вне payments_v2. Итог:
+
+```
+59fb8249… → archive
+              (reason='admin_deal_only_nonfinancial_gift')
+              order.status='paid' оставить как есть
+                (это подарок, а не платёж; правило
+                 admin_grant OR order_number LIKE 'GIFT-%' уже используется
+                 в миграции 20260506115211 при grant-логике)
+```
+
+### A1R.5 Итоговое решение по 327 legacy
+
+```
+admin_from_payment  4   → provider='bepaid' backfill (safe_backfill_confirmed)
+                   112  → payments_legacy_archive
+                          (24 full_match + 10 null_order + 52 relink-then-archive +
+                           14 canonical-correct + 1 both_wrong + 1 dup_of_safe +
+                           2 z_other + 8 ambiguous_recovered)
+                          из них 52 требуют предварительного canonical relink
+                          + 2 (z_other) + 8 (ambiguous) + 1 (f_both_wrong)
+                          → execute-review перед архивом
+                    1   → archive (duplicate_recovered f60ed2f0…)
+
+admin_grant       201   → payments_legacy_archive (reason='admin_grant_nonfinancial')
+                          нет FK-ссылок из access_grant_ledger к payment_id (проверено)
+                          нет entitlement_sources.payment_id column
+                          → чистое удаление после архива безопасно
+
+admin_test          8   → payments_legacy_archive (reason='admin_test_fixture')
+                          + удаление ORD-TEST-* заказов через canonical V2
+                          + revoke 5 access_grant_ledger записей
+                          (обработка в Phase I после Phase E)
+
+admin_deal_only     1   → archive (reason='admin_deal_only_nonfinancial_gift')
+────────────────────────────────────────────────────
+итого:  4 backfill + 322 archive + 1 execute-review deferred (both_wrong)
+        + 8 ambiguous_recovered в execute-review
+```
+
+---
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — B1 READER/WRITER INVENTORY
+
+Дата: 2026-07-12. Только чтение схемы и кода. Изменений нет.
+
+### B1.1 Writers `payments_v2` (INSERT/UPDATE/UPSERT/DELETE)
+
+Edge functions:
+
+```
+supabase/functions/bepaid-webhook/index.ts
+  L109  UPDATE by id (existing bepaid row)
+  L116  INSERT (new bepaid)
+  L123  UPDATE race
+  L2769 INSERT (race path)
+  L5866 INSERT (auxiliary)
+supabase/functions/bepaid-auto-process/index.ts             L774  INSERT
+supabase/functions/admin-bepaid-full-reconcile/index.ts     L160/186/232 UPDATE, L239 INSERT
+supabase/functions/bepaid-receipts-2026-backfill-cron/index.ts   L139/174 UPDATE (receipt_url)
+supabase/functions/admin-reconcile-processing-payments/index.ts  L75/86 UPDATE
+supabase/functions/erip-reconcile-pending/index.ts               L227/281 UPDATE
+supabase/functions/payment-method-verify-recurring/index.ts      L755/831/944/1128 UPDATE, L984 INSERT
+supabase/functions/payments-reconcile/index.ts                   L458 INSERT
+supabase/functions/stripe-admin-sandbox-checkout/index.ts        L123 INSERT
+supabase/functions/sync-payments-with-statement/index.ts         L862 INSERT
+supabase/functions/stripe-webhook/index.ts                       (grep hits, upsert paths)
+supabase/functions/test-installment-flow/index.ts                L458 DELETE by order_id
+supabase/functions/admin-repair-missing-payments/index.ts        (INSERT paths)
+supabase/functions/bepaid-uid-resync/index.ts                    (UPDATE provider_payment_id)
+supabase/functions/bepaid-reconcile-file/index.ts                (INSERT/UPDATE)
+supabase/functions/bepaid-sync-orchestrator/index.ts             (delegations)
+supabase/functions/admin-manual-charge/index.ts                  (INSERT admin)
+supabase/functions/public-charge-saved-card/index.ts             (INSERT)
+supabase/functions/bepaid-webhook/rebill_deps_adapter.ts         (INSERT)
+supabase/functions/admin-payments-diagnostics/index.ts           (metadata UPDATE)
+supabase/functions/nightly-payments-invariants/index.ts          (repair paths)
+```
+
+Клиентские writers (обязательный refactor):
+
+```
+src/components/admin/ContactDetailSheet.tsx        L1347 INSERT provider='admin'  ← производит admin_grant / admin_deal_only
+                                                                                       last row: 2026-07-07 (АКТИВНЫЙ)
+src/components/admin/payments/CreateDealFromPaymentDialog.tsx
+                                                  L299 UPDATE, L308 INSERT provider='admin' meta.source='admin_from_payment'
+                                                                                       last row: 2026-07-08 (АКТИВНЫЙ)
+src/pages/admin/AdminContacts.tsx                  L1001 DELETE .in('order_id', orderIds)
+                                                                                       обход canonical delete
+src/pages/admin/AdminDeals.tsx                     (bulk delete uses useDealsBulkDelete)
+src/hooks/useDealsBulkDelete.ts                    DELETE payments_v2 → канонический hard-delete
+supabase/functions/test-payment-complete/index.ts  L337 INSERT provider='admin_test'
+                                                                                       last row: 2026-06-06 (используется тестами)
+```
+
+**Критический вывод:** admin_grant/admin_from_payment/admin_deal_only
+продолжают писаться из UI (`ContactDetailSheet`, `CreateDealFromPaymentDialog`)
+буквально ежедневно. Provider CHECK `IN (bepaid,stripe,rr,bank)` НЕВОЗМОЖНО
+включить, пока эти write-paths не переведены на новый контракт. Порядок:
+
+```
+B0 (новый) : остановить legacy writers (feature flag)
+             ContactDetailSheet.tsx → invoke admin-payment-create (после D1)
+             CreateDealFromPaymentDialog.tsx → invoke admin-payment-create
+             test-payment-complete → отдельная logic вне payments_v2 либо
+                                     provider='bepaid' meta.test_payment=true
+                                     (не 'admin_test')
+             AdminContacts.tsx L1001 → invoke admin-order-delete (после E3)
+```
+
+### B1.2 Readers — SQL функции (27)
+
+```
+public.admin_get_payments_page_v1     — RPC для списка платежей UI /admin/payments
+public.admin_get_payments_stats_v1    — RPC для статистики; допускает
+                                        provider IN ('all','bepaid','stripe').
+                                        RR + bank + is_deleted НЕ поддержаны →
+                                        F/E-фазы должны обновить сигнатуру.
+public.get_order_expected_paid        — WHERE status='succeeded' AND amount>0.
+                                        admin_grant (amt=0) и admin_deal_only (amt=0)
+                                        НЕ влияют на сумму. Ок.
+                                        Нужно расширить: AND is_deleted=false.
+public.get_payments_stats  (×2 сигнатуры)
+public.get_payment_duplicates         — group by (provider, provider_payment_id).
+                                        Может обнаружить наши будущие
+                                        merged rows — не критично.
+public.check_payment_status_for_deal
+public.find_unlinked_payments         — читает payment_reconcile_queue vs payments_v2
+public.get_business_orphan_payments
+public.get_my_requisites_status
+public.receipt_backfill_candidates
+public.record_refund_atomic / _multi
+public.rr_promote_authorized_order
+public.rr_update_payment_financials
+public.search_deal_rows
+public.tariff_delete_safety_check
+public.offer_delete_safety_check
+public.admin_unlinked_cards_report / _details
+public.backfill_payments_by_card / _by_card_token
+public.inv20_paid_orders_actionable / _without_payments
+public.cleanup_demo_safeguard_check
+public.admin_safe_delete_profile
+public.fill_order_from_queue
+```
+
+Все SQL-readers необходимо в Phase F расширить фильтром `AND is_deleted=false`
+(либо через WHERE, либо через partial index) — иначе после Phase B2
+soft-deleted строки продолжат учитываться в статистике/поисках.
+
+Views ссылающихся на `payments_v2` — 0 (проверено `pg_views`).
+Triggers на `payments_v2` — 1 (`update_updated_at_column`). Никаких
+audit/recompute-триггеров нет; вся логика — в edge-функциях.
+
+### B1.3 FK-топология
+
+```
+payments_v2.order_id        → orders_v2(id)   ON DELETE CASCADE
+payments_v2.profile_id      → profiles(id)    ON DELETE SET NULL
+payments_v2.reference_payment_id → payments_v2(id)   (без cascade)
+
+installment_payments.payment_id  → payments_v2(id)  (nullable=YES, без cascade)
+statement_lines.payment_id       → payments_v2(id)  (nullable=YES, без cascade)
+```
+
+Следствия:
+
+```
+1. Hard-delete payments_v2 напрямую заблокирован installment_payments/statement_lines
+   → soft-delete универсален. C11 подтверждён.
+2. Hard-delete orders_v2 каскадно удаляет payments_v2 (CASCADE).
+   → admin-order-delete (Phase E3) должен обрабатывать
+     installment_payments/statement_lines ПЕРЕД удалением order,
+     чтобы FK не блокировали каскад.
+   → E3 будет читать список payments_v2 для order, для каждого
+     обнулять installment_payments.payment_id и statement_lines.payment_id
+     (или архивировать), затем удалять order.
+3. profile ON DELETE SET NULL — удаление профиля не блокируется историей платежей. Ок.
+```
+
+### B1.4 CHECK и UNIQUE
+
+CHECK-констрейнтов на `payments_v2` СЕЙЧАС НЕТ (`pg_constraint` пусто для
+`contype='c'` на этой таблице). Ранее упоминавшийся CHECK из миграции
+20260602205106 был снят/не применён.
+
+Unique indexes:
+
+```
+payments_v2_pkey                              (id)
+uq_payments_v2_provider_payment               UNIQUE (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL
+idx_payments_v2_unique_provider_payment_id    UNIQUE (provider_payment_id) WHERE provider_payment_id IS NOT NULL AND provider='bepaid'   ← дубль по назначению
+idx_payments_v2_provider_unique               UNIQUE (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL   ← дубль uq_payments_v2_provider_payment
+idx_payments_v2_provider_uid                  UNIQUE (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL   ← ещё один дубль
+payments_v2_rr_one_succeeded_per_order        UNIQUE (order_id) WHERE provider='rr' AND status='succeeded'
+```
+
+Три дубля unique-индекса по `(provider, provider_payment_id)`. Не блокируют
+V2, но избыточны — clean-up в Phase F/backlog.
+
+### B1.5 Access lineage — access_grant_ledger
+
+`access_grant_ledger` НЕ имеет колонки `payment_id` (проверено). Связь с
+платежом — только через `order_id` (и `source_subject_ref`, что-то похожее).
+Значит:
+
+```
+- soft-delete/archive admin_grant не порвёт FK к ledger.
+- revoke-lineage payment → ledger возможен только через order.
+  Это означает: C12 (revoke по payment_id → entitlement_source) требует
+  сначала проверить, есть ли column entitlement_sources.payment_id.
+```
+
+`entitlement_sources.payment_id` — по grep-у отсутствует в SELECT-путях;
+столбец нужно проверить в Phase E2 отдельно. Если column нет — точная
+lineage от payment невозможна и `revoke_access` в `payment_only` mode
+должен быть отключён (revoke_access_available=false, reason='no_payment_id_column').
+
+### B1.6 Провайдер `rr` — данные без CHECK
+
+12 rows `provider='rr'` уже существуют без CHECK. `admin_get_payments_stats_v1`
+допускает только `'all','bepaid','stripe'` — стата по RR не отдаётся
+через этот RPC. Bank / rr вернуть в статистику должна Phase F.
+
+### B1.7 Финальная последовательность фаз (уточнённая)
+
+```
+B0 (новый)  остановить legacy-writers (feature flag + refactor вызовов)
+              — БЕЗ этого archive не имеет смысла: writers продолжат создавать admin/admin_test строки
+A1R         READ-ONLY (текущий)                     ← DONE
+B1          READ-ONLY inventory                     ← DONE
+B2          soft-delete schema + payments_legacy_archive schema
+D1          admin-payment-create (manual-only)      ← нужен ДО B0-refactor UI
+E1..E6      delete/order paths, resurrect-guard, useDealsBulkDelete → edge
+B0          UI-refactor: ContactDetailSheet, CreateDealFromPaymentDialog,
+              AdminContacts.tsx, test-payment-complete → канонические пути
+A2          guarded backfill/archive execute
+              A2a  4 safe_backfill_confirmed → provider='bepaid'
+              A2b  52 canonical relink (order_id fix) — отдельный execute
+              A2c  архив 322 строк
+A3          verify counts / checksum / duplicates
+A4          CHECK provider IN (bepaid,stripe,rr,bank)
+C1..C3      recalc_order_totals + writer migration
+F           readers/filters/stats/CSV (is_deleted, RR+bank)
+G1/G2       CreatePaymentDialog / DeletePaymentDialog
+H           runtime fixtures
+I           RR test cleanup + admin_test ORD-TEST-* cleanup
+```
+
+Порядок изменён: D1/E1 переезжают перед B0, потому что новые UI-writers
+должны вызывать уже существующие canonical endpoints; иначе refactor UI
+пришлось бы делать дважды.
+
+### B1.8 Решение
+
+```
+PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1R + B1:
+  READ-ONLY EXECUTION: VERIFIED
+  CLASSIFICATION: REFINED (safe_backfill 5→4; full_match 26→24;
+                            conflicting 67 → 14 canonical+52 relink+1 both_wrong;
+                            missing 9 → 1 recovered + 8 ambiguous)
+  ACTIVE LEGACY WRITERS: IDENTIFIED (ContactDetailSheet, CreateDealFromPaymentDialog,
+                            AdminContacts, test-payment-complete)
+  FK/CHECK/UNIQUE INVENTORY: DONE
+  PHASE B0 NEEDED BEFORE A2
+  PHASE B2 / A2 / DB CHANGES: STILL BLOCKED
+  EXECUTE-REVIEW REQUIRED FOR:
+    - 52 canonical_order_relink (financial impact на 52 сделки-приёмника
+      и 52 сделки-донора: paid_amount пересчёт + возможные revoke/re-grant)
+    - 1 f_both_wrong (897ea700…)
+    - 2 z_other (00956264…, eda63b40…)
+    - 8 missing_source_ambiguous (07f997a5…, 144441b1…, 4afe1a0c…,
+                                   4e349305…, 66657c81…, 86546dfe…,
+                                   948f33b1…, e3412120…)
+    - 5 admin_test с access_grant_ledger привязкой
+```
