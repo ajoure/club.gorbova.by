@@ -454,16 +454,31 @@ Deno.serve(async (req) => {
       results.telegram_admin = { skipped: 'primary_bot_not_configured' }
     } else {
       // DISTINCT telegram_user_id across admin/super_admin roles
-      const { data: adminRows, error: adminErr } = await supabase
-        .from('user_roles_v2')
-        .select('user_id, roles!inner(code), profiles:profiles!user_roles_v2_user_id_fkey(id, user_id, telegram_user_id, first_name, full_name)')
-        .in('roles.code', ['admin', 'super_admin'])
-      if (adminErr) throw adminErr
+      const { data: roleRows, error: roleErr } = await supabase
+        .from('roles')
+        .select('id, code')
+        .in('code', ['admin', 'super_admin'])
+      if (roleErr) throw roleErr
+      const roleIds = (roleRows as any[] || []).map((r) => r.id)
+
+      const { data: urRows, error: urErr } = roleIds.length
+        ? await supabase.from('user_roles_v2').select('user_id').in('role_id', roleIds)
+        : { data: [], error: null } as any
+      if (urErr) throw urErr
+      const adminUserIds = Array.from(new Set(((urRows as any[]) || []).map((r) => r.user_id).filter(Boolean)))
+
+      const { data: profRows, error: profErr } = adminUserIds.length
+        ? await supabase
+            .from('profiles')
+            .select('id, user_id, telegram_user_id')
+            .in('user_id', adminUserIds)
+            .not('telegram_user_id', 'is', null)
+        : { data: [], error: null } as any
+      if (profErr) throw profErr
 
       const seen = new Set<string>()
       const admins: Array<{ telegramUserId: number; profileId: string | null; profileUserId: string | null }> = []
-      for (const r of (adminRows as any[]) || []) {
-        const prof = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles
+      for (const prof of (profRows as any[]) || []) {
         const tuidRaw = prof?.telegram_user_id
         if (!tuidRaw) continue
         const tuid = Number(tuidRaw)
