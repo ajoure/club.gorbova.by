@@ -11667,6 +11667,7 @@ export type Database = {
           original_payment_id: string
           original_row: Json
           provider_at_archive: string | null
+          row_checksum: string
         }
         Insert: {
           amount_at_archive?: number | null
@@ -11684,6 +11685,7 @@ export type Database = {
           original_payment_id: string
           original_row: Json
           provider_at_archive?: string | null
+          row_checksum: string
         }
         Update: {
           amount_at_archive?: number | null
@@ -11701,6 +11703,7 @@ export type Database = {
           original_payment_id?: string
           original_row?: Json
           provider_at_archive?: string | null
+          row_checksum?: string
         }
         Relationships: []
       }
