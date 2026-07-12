@@ -76,7 +76,11 @@ export async function resolveGrantAccessCaller(
     return { ok: false, status: 401, body: { success: false, error: "unauthorized_no_bearer" } };
   }
 
-  const serviceRoleKey = (typeof Deno !== "undefined" ? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") : undefined) || "";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const denoGlobal: any = (globalThis as any).Deno;
+  const serviceRoleKey = (denoGlobal && typeof denoGlobal.env?.get === "function"
+    ? denoGlobal.env.get("SUPABASE_SERVICE_ROLE_KEY")
+    : undefined) || "";
   if (serviceRoleKey && token === serviceRoleKey) {
     return {
       ok: true,
