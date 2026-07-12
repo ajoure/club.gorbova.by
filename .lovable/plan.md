@@ -4103,3 +4103,113 @@ Provider `manual_offline` **отклонён**. Утверждённая мод�
 - General payment create/delete UI: **BLOCKED**
 
 Append-only только в `.lovable/plan.md` + один точечный правку в `ContactDetailSheet.tsx` (удаление 12 строк создания admin payment). Миграций нет.
+
+## C28 — factual corrections & scope re-alignment (append-only, doc)
+
+### C28.1 — C27.1 factual correction (A2-0 preconditions)
+
+Ранее в C27.1 неверно перечислены фактические SQL-предикаты миграции `20260712194328_*`. Действительный набор был:
+
+- `origin = 'bepaid'` (НЕ `'admin_from_payment'` — это post-condition цели, а не pre-condition источника);
+- `amount` — **точное равенство** (без допуска 0.01);
+- `currency IS DISTINCT FROM` — жёсткое равенство;
+- `paid_at IS DISTINCT FROM` — жёсткое равенство (без допуска);
+- `payments_v2.profile_id ↔ queue.matched_profile_id` — сверка через `profile_id`, НЕ через `user_id ↔ profiles(id)`.
+
+Формулировки «с допуском 0.01», «с допуском» и «`user_id ↔ profiles(...)`» из C27.1 — фактически неверны. Verdict A2-0 = PASS не меняется (все четыре строки прошли строгую сверку). Откат не требуется. Данная запись — append-only исправление документации.
+
+### C28.2 — admin_test factual correction
+
+C27.6 утверждал «admin_test уже удалён». Фактические counts на момент C28:
+
+```
+provider='admin'       active = 315   (в т.ч. 113 admin_from_payment amount>0 + 202 остальных)
+provider='admin_test'  active = 8      -- НЕ удалён
+provider='admin_test'  total  = 8
+provider='bepaid'      active = 5959
+payments_legacy_archive        = 0
+payments_v2.is_deleted=true    = 0
+```
+
+Ошибка: `admin_test` fixtures (8 rows) не удалялись ни одной миграцией в этой ветке. Утверждение C27.6 «admin_test уже удалён» аннулируется. Provider CHECK всё ещё блокирован — active count > 0 для `admin` и `admin_test`.
+
+### C28.3 — B0b contract corrections (execute остаётся BLOCKED)
+
+Правки к контракту `admin-create-deal-from-payment` (C27.3):
+
+1. **`actor_id` не принимается от клиента.** Функция извлекает `auth.uid()` из JWT; параметр `actor_id` удаляется из input.
+2. **Идемпотентность — отдельная таблица**, не `audit_logs`. Требуется:
+   ```sql
+   CREATE TABLE public.admin_deal_creation_idempotency (
+     idempotency_key text PRIMARY KEY,
+     queue_row_id uuid NOT NULL,
+     order_id uuid NOT NULL,
+     created_by uuid NOT NULL,
+     created_at timestamptz DEFAULT now(),
+     UNIQUE (queue_row_id)
+   );
+   ```
+   с GRANT service_role only, RLS enabled, no anon/authenticated access.
+3. **Порядок операций:**
+   ```
+   BEGIN
+     SELECT ... FROM payment_reconcile_queue WHERE id=$1 FOR UPDATE;
+     INSERT INTO admin_deal_creation_idempotency(...) ON CONFLICT DO NOTHING RETURNING order_id;
+     -- если конфликт: SELECT order_id из idempotency и вернуть без DML;
+     INSERT INTO orders_v2 (...) RETURNING id AS new_order_id;
+     -- linkage: bepaid payment проверяется/создаётся ПОСЛЕ появления order.id;
+     IF EXISTS canonical bepaid_uid: UPDATE payments_v2 SET order_id=new_order_id
+        WHERE provider_payment_id=queue.bepaid_uid AND order_id IS NULL;
+     ELSE INSERT INTO payments_v2 (...);
+     UPDATE admin_deal_creation_idempotency SET order_id=new_order_id ...;
+   COMMIT
+   ```
+4. **`origin` для canonical bepaid payment — не `manual_admin`.** Queue-строка приходит из bePaid reconciliation, поэтому `origin='bepaid_reconciliation'` (или иной согласованный `import/reconciliation` origin из существующей номенклатуры). `manual_admin` резервируется под будущий ручной ввод `stripe/rr/bank`.
+5. **Conflict guard:** если canonical bepaid payment с `bepaid_uid` уже связан с другим `order_id` (не NULL) — вернуть `{error:'payment_already_linked', existing_order_id}` без записи новой сделки.
+6. **`paid_amount` и `status` — через approved C2.** Нельзя жёстко ставить `paid_amount=queue.amount`, `status='paid'`. После INSERT/link платежа функция вызывает утверждённую версию `recalc_order_totals(new_order_id, reason='payment_added')`, которая рассчитывает partial/full/overpayment.
+7. **`grant-access-for-order`** — отдельный идемпотентный шаг после финансовой транзакции. Не в той же SQL-транзакции. Возвращает `{granted:bool, entitlement_ids, access_rule_ids}` явно; ошибка вызова НЕ откатывает order (order уже создан), но фиксируется в audit как `admin.deal_from_queue.grant_pending`.
+8. **Дополнительные обязательные поля контракта:**
+   - `grant_access: boolean` — вызывать ли `grant-access-for-order`;
+   - `access_starts_at?: timestamptz`, `access_ends_at?: timestamptz` — если применимо;
+   - `target_amount: numeric` — согласованная целевая цена сделки (обычно `queue.amount`, но операционно может отличаться при частичной оплате; функция валидирует `target_amount >= queue.amount` и пишет в `orders_v2.final_price`).
+
+Статус B0b: **PLAN REQUIRES C28.3 REVISION. EXECUTE BLOCKED.**
+
+### C28.4 — C28 exact partitions (SQL scaffold, execution deferred)
+
+Полный read-only classifier для 649/42/2 требует согласования базового определения "anomaly" (какой предикат в C26 отделил 649 из общего пула paid orders). Reproduced count `would_be_pending` под текущим read-only classifier = **1016**, что не совпадает с 649 из C26. Расхождение ⇒ нужно зафиксировать канонический predicate до генерации взаимоисключающей карты и checksum.
+
+Действие: следующим шагом — воспроизвести точный C26.B predicate (вероятно, включал дополнительные фильтры `paid_amount>0` и/или дату), выровнять 649 = Σ категорий, только затем публиковать checksum 642 legacy IDs.
+
+### C28.5 — C29 (C2 v4 full dry-run SQL)
+
+Полный текст SQL `compute_order_financial_state` + `_recalc_transition_allowed` + `recalc_order_totals` + 14-scenario VALUES/CTE harness будет опубликован отдельным append-only блоком C29 после согласования predicate C28.4. Требования из C27.5 остаются в силе; дополнительно фиксируется:
+
+- Возврат `{status_transition_allowed, amount_update_allowed}` как **два независимых boolean** в return shape.
+- Явные сценарии `paid→paid (overpay)`, `partial→partial (top-up)`, `refunded→refunded (extra refund row)` — где `status_transition_allowed=false`, `amount_update_allowed=true`.
+
+Статус C29: **AUTHORIZED FULL DRY-RUN, pending C28.4 predicate alignment.**
+
+### C28.6 — B0a runtime proof
+
+Runtime proof (два сценария на техническом профиле) — **AUTHORIZED**, но выполняется отдельным изолированным прогоном, чтобы:
+- избежать mutations в production-контактах;
+- дать явный revoke-cleanup для grant-сценария;
+- получить чистый before/after snapshot всех связанных таблиц.
+
+Не запускается в этом коммите. Будет выполнен и приложен в следующем отчёте: реальные IDs, counts delta, cleanup verdict.
+
+## Статус PATCH-PAYMENTS-MANAGEMENT-V2 (после C28)
+
+- C27.1: **CORRECTED** (C28.1 — фактические предикаты A2-0)
+- C27.6: **CORRECTED** (C28.2 — admin_test = 8 active, не удалён)
+- B0b: **PLAN REVISION REQUIRED** (C28.3); execute BLOCKED
+- C28 partitions: **PREDICATE ALIGNMENT PENDING** (reproduced=1016 ≠ 649)
+- C29 SQL draft: **PENDING C28.4**
+- B0a runtime proof: **AUTHORIZED, deferred to next isolated run**
+- A2-0: PASS (verified)
+- A2 archive (113): BLOCKED
+- Provider CHECK: BLOCKED (admin=315, admin_test=8 active)
+- C2 execute: BLOCKED
+
+Append-only только в `.lovable/plan.md`. Кода/миграций/DML — нет.
