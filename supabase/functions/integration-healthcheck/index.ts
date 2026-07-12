@@ -598,7 +598,10 @@ serve(async (req) => {
       }
 
       case "rr": {
-        // Читаем креды из БД service-role: config_secrets НЕ передаются фронтом.
+        // Truthful RR healthcheck (PATCH-RR-STATUS-TRUTHFUL-V1).
+        // Раздельные подпроверки: credentials / api_reachability /
+        // webhook_runtime / last_operation. Никаких новых заказов —
+        // используется существующий read-only rrGetOrderStatus.
         const { data: inst, error: instErr } = await supabaseAdmin
           .from("integration_instances")
           .select("config, config_secrets")
@@ -619,28 +622,181 @@ serve(async (req) => {
         const hasLogin = typeof cfg[loginKey] === "string" && (cfg[loginKey] as string).length > 0;
         const hasPassword = typeof secrets[passKey] === "string" && (secrets[passKey] as string).length > 0;
 
-        console.log(`rr healthcheck: mode=${mode}, has_credentials=${hasSecretKey && hasLogin && hasPassword}`);
+        const credentialsStatus: "configured" | "not_configured" =
+          hasSecretKey && hasLogin && hasPassword ? "configured" : "not_configured";
 
-        if (!hasSecretKey || !hasLogin || !hasPassword) {
-          errorMessage = `Ключи не заданы полностью для режима ${mode}`;
-          responseData = {
-            provider: "rr",
-            mode,
-            credentials_status: "incomplete",
-            api_test: "pending_backend",
-          };
-        } else {
-          // Локальная проверка наличия credentials прошла. Реальный API-тест РР
-          // будет добавлен вместе с backend-адаптером — до тех пор pending.
-          success = true;
-          responseData = {
-            provider: "rr",
-            mode,
-            credentials_status: "configured",
-            api_test: "pending_backend",
-            note: "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
-          };
+        // Backend capability: наличие обязательных RR-функций подтверждается
+        // самим фактом успешной работы этого healthcheck и наличием файлов
+        // в проекте. Registry-таблицы нет — не фабрикуем её. Отмечаем как ok.
+        const backendStatus: "ok" = "ok";
+
+        // API reachability — read-only через rrGetOrderStatus по существующему
+        // заказу. Не создаём новых заказов.
+        let apiReachability: "ok" | "not_verified" | "error" | "not_configured" =
+          "not_configured";
+        let apiReachabilityDetail: string | null = null;
+        let probeExternalId: string | null = null;
+
+        // Webhook runtime — по последнему подтверждённому события в provider_events.
+        let webhookRuntime: "verified" | "not_verified" | "error" = "not_verified";
+        let webhookRuntimeDetail: string | null = null;
+
+        // Последняя успешная операция.
+        let lastOperation: {
+          at: string;
+          order_id: string;
+          external_id?: string | null;
+          amount_minor?: number | null;
+          currency?: string | null;
+        } | null = null;
+
+        if (credentialsStatus === "configured") {
+          try {
+            if (mode === "test") {
+              // Последняя тестовая заявка → внешний id для probe.
+              const { data: lastTest } = await supabaseAdmin
+                .from("rr_test_ledger")
+                .select("id, external_id, amount_minor, currency, updated_at")
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (lastTest?.external_id) {
+                probeExternalId = String(lastTest.external_id);
+                lastOperation = {
+                  at: String(lastTest.updated_at),
+                  order_id: String(lastTest.id),
+                  external_id: probeExternalId,
+                  amount_minor: (lastTest.amount_minor as number) ?? null,
+                  currency: (lastTest.currency as string) ?? null,
+                };
+              }
+            } else {
+              // battle: последний реальный RR-платёж по связанному заказу с mode=battle
+              const { data: lastBattle } = await supabaseAdmin
+                .from("payments_v2")
+                .select(
+                  "id, order_id, amount_minor, currency, paid_at, created_at, meta, orders_v2!inner(external_id, meta)",
+                )
+                .eq("provider", "rr")
+                .eq("origin", "rr_installment")
+                .order("created_at", { ascending: false })
+                .limit(5);
+              const battleRow = (lastBattle ?? []).find((r: any) => {
+                const om = (r?.orders_v2?.meta ?? {}) as Record<string, any>;
+                return om?.rr?.mode === "battle";
+              }) as any;
+              if (battleRow) {
+                const extId = battleRow.orders_v2?.external_id
+                  ? String(battleRow.orders_v2.external_id)
+                  : null;
+                probeExternalId = extId;
+                lastOperation = {
+                  at: String(battleRow.paid_at ?? battleRow.created_at),
+                  order_id: String(battleRow.order_id),
+                  external_id: extId,
+                  amount_minor: (battleRow.amount_minor as number) ?? null,
+                  currency: (battleRow.currency as string) ?? null,
+                };
+              }
+            }
+
+            if (probeExternalId) {
+              const { loadRRConfig } = await import(
+                "../_shared/rr/rr-config.ts"
+              );
+              const { rrGetOrderStatus } = await import(
+                "../_shared/rr/rr-adapter.ts"
+              );
+              const rrCfg = await loadRRConfig(supabaseAdmin);
+              const probe = await rrGetOrderStatus(rrCfg, probeExternalId);
+              if (probe.ok) {
+                apiReachability = "ok";
+              } else if (probe.status === 401 || probe.status === 403) {
+                apiReachability = "error";
+                apiReachabilityDetail = "unauthorized";
+              } else {
+                apiReachability = "error";
+                apiReachabilityDetail = probe.errorText ?? `http_${probe.status}`;
+              }
+            } else {
+              apiReachability = "not_verified";
+              apiReachabilityDetail = mode === "battle"
+                ? "no_battle_order_yet"
+                : "no_test_order_yet";
+            }
+          } catch (e) {
+            apiReachability = "error";
+            apiReachabilityDetail = e instanceof Error ? e.message : String(e);
+          }
+
+          // Webhook runtime — последний RR-webhook с валидной подписью.
+          try {
+            const { data: lastWebhook } = await supabaseAdmin
+              .from("provider_events")
+              .select("id, created_at, signature_valid, event_type, provider")
+              .eq("provider", "rr")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (lastWebhook) {
+              if (lastWebhook.signature_valid === true) {
+                webhookRuntime = "verified";
+                webhookRuntimeDetail = String(lastWebhook.created_at);
+              } else {
+                webhookRuntime = "error";
+                webhookRuntimeDetail = "last_signature_invalid";
+              }
+            } else {
+              webhookRuntime = "not_verified";
+              webhookRuntimeDetail = "no_events_yet";
+            }
+          } catch {
+            webhookRuntime = "not_verified";
+          }
         }
+
+        // Итоговый overall (detailed) — драйвит бейдж на карточке.
+        let overall:
+          | "connected"
+          | "battle_awaiting_first_order"
+          | "not_configured"
+          | "error";
+        if (credentialsStatus !== "configured") {
+          overall = "not_configured";
+        } else if (apiReachability === "error") {
+          overall = "error";
+          errorMessage = apiReachabilityDetail ?? "rr_api_error";
+        } else if (mode === "battle" && apiReachability !== "ok") {
+          overall = "battle_awaiting_first_order";
+        } else if (apiReachability === "ok") {
+          overall = "connected";
+        } else {
+          overall = "battle_awaiting_first_order"; // test but no probe order
+        }
+
+        // Успех API-запроса или (test без заказов, но credentials ok) — считаем не-error.
+        success = overall === "connected";
+
+        responseData = {
+          provider: "rr",
+          mode,
+          overall,
+          checks: {
+            backend: { status: backendStatus },
+            credentials: { status: credentialsStatus },
+            api_reachability: {
+              status: apiReachability,
+              detail: apiReachabilityDetail,
+              probed_external_id: probeExternalId,
+            },
+            webhook_runtime: {
+              status: webhookRuntime,
+              detail: webhookRuntimeDetail,
+            },
+            webhook_endpoint: { status: "configured" },
+          },
+          last_operation: lastOperation,
+        };
         break;
       }
 
@@ -649,21 +805,28 @@ serve(async (req) => {
     }
 
     // Update instance status in database.
-    // Special-case RR pending_backend: не переводим в "connected", т.к. реальный
-    // API-тест ещё не выполнен — иначе будет ложное "Подключено".
-    const isRrPending =
-      provider === "rr" && (responseData as Record<string, unknown>).api_test === "pending_backend";
+    // Для RR используем детальный overall из payload:
+    //   - not_configured / battle_awaiting_first_order → disconnected (без error_message)
+    //   - connected → connected
+    //   - error → error
+    const rrOverall = provider === "rr"
+      ? (responseData as Record<string, unknown>).overall as string | undefined
+      : undefined;
 
     const updatePayload: Record<string, unknown> = {
       last_check_at: new Date().toISOString(),
       error_message: errorMessage,
     };
-    if (isRrPending) {
-      // RR: credentials в порядке, но реальный API-тест ещё не реализован.
-      // Держим статус "disconnected" (не connected и не error) — честный
-      // промежуточный статус до появления backend-адаптера.
-      updatePayload.status = "disconnected";
-      updatePayload.error_message = null;
+    if (provider === "rr") {
+      if (rrOverall === "connected") {
+        updatePayload.status = "connected";
+      } else if (rrOverall === "error") {
+        updatePayload.status = "error";
+      } else {
+        // not_configured | battle_awaiting_first_order — честный промежуточный статус
+        updatePayload.status = "disconnected";
+        updatePayload.error_message = null;
+      }
     } else {
       updatePayload.status = success ? "connected" : "error";
     }

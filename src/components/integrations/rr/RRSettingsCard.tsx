@@ -101,9 +101,48 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
   const credentialsReady =
     secretConfigured && !!activeLogin && activePasswordConfigured;
   const isBackendConnected = instance?.status === "connected";
-  const isPartial = !!instance && !isBackendConnected && !hasError;
+  // isPartial retired — granular status теперь идёт из hcMeta.overall.
   const testCoreAvailable =
     !!instance && mode === "test" && secretConfigured && !!testLogin && testConfigured;
+
+  // Последний healthcheck — источник granular-статусов для карточки.
+  const { data: lastHealthcheck } = useQuery({
+    queryKey: ["rr-last-healthcheck", instance?.id],
+    queryFn: async () => {
+      if (!instance?.id) return null;
+      const { data } = await supabase
+        .from("integration_logs")
+        .select("payload_meta, created_at")
+        .eq("instance_id", instance.id)
+        .eq("event_type", "healthcheck")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!instance?.id,
+    refetchInterval: 30000,
+  });
+
+  const hcMeta = (lastHealthcheck?.payload_meta ?? null) as
+    | {
+        overall?: string;
+        checks?: {
+          backend?: { status?: string };
+          credentials?: { status?: string };
+          api_reachability?: { status?: string; detail?: string | null };
+          webhook_runtime?: { status?: string; detail?: string | null };
+          webhook_endpoint?: { status?: string };
+        };
+        last_operation?: {
+          at?: string;
+          order_id?: string;
+          external_id?: string | null;
+          amount_minor?: number | null;
+          currency?: string | null;
+        } | null;
+      }
+    | null;
 
   const { data: ledger = [], refetch: refetchLedger } = useQuery({
     queryKey: ["rr_test_ledger"],
@@ -132,21 +171,23 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
         { body: { provider: "rr", instance_id: instance.id } },
       );
       queryClient.invalidateQueries({ queryKey: ["integration-instances"] });
+      queryClient.invalidateQueries({ queryKey: ["rr-last-healthcheck", instance.id] });
       if (error) {
-        toast.warning("Backend-проверка недоступна. Настройки сохранены безопасно.");
+        toast.error(`Ошибка проверки: ${error.message ?? "unknown"}`);
         return;
       }
-      if (data?.success && data?.data?.api_test === "pending_backend") {
-        toast.success(
-          "Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.",
-        );
-      } else if (data?.success) {
+      const overall = data?.data?.overall as string | undefined;
+      if (overall === "connected") {
         toast.success("«Ресурс Развития» подключён");
+      } else if (overall === "battle_awaiting_first_order") {
+        toast.info("Боевые реквизиты настроены. Боевой runtime ещё не подтверждён реальным заказом.");
+      } else if (overall === "not_configured") {
+        toast.warning("Реквизиты режима не заполнены полностью");
       } else {
         toast.error(`Ошибка: ${data?.error || "проверка не пройдена"}`);
       }
-    } catch {
-      toast.warning("Backend-проверка недоступна. Настройки сохранены безопасно.");
+    } catch (e) {
+      toast.error(`Ошибка проверки: ${(e as Error).message}`);
     } finally {
       setIsChecking(false);
     }
@@ -243,33 +284,36 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   Ресурс Развития
-                  {instance && (
-                    <Badge
-                      variant={
-                        isBackendConnected
-                          ? "default"
-                          : hasError
-                            ? "destructive"
-                            : "secondary"
-                      }
-                    >
-                      {isBackendConnected ? (
-                        <>
+                  {instance && (() => {
+                    const overall = hcMeta?.overall;
+                    if (overall === "connected") {
+                      return (
+                        <Badge variant="default">
                           <Check className="h-3 w-3 mr-1" />
                           Подключено
-                        </>
-                      ) : hasError ? (
-                        <>
+                        </Badge>
+                      );
+                    }
+                    if (overall === "battle_awaiting_first_order") {
+                      return (
+                        <Badge variant="secondary" className="border-amber-400/60 bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                          Боевой режим · ожидает первую заявку
+                        </Badge>
+                      );
+                    }
+                    if (overall === "error" || hasError) {
+                      return (
+                        <Badge variant="destructive">
                           <X className="h-3 w-3 mr-1" />
                           Ошибка
-                        </>
-                      ) : isPartial && credentialsReady ? (
-                        "Настроено частично · backend не подключен"
-                      ) : (
-                        "Настроено"
-                      )}
-                    </Badge>
-                  )}
+                        </Badge>
+                      );
+                    }
+                    if (overall === "not_configured" || !credentialsReady) {
+                      return <Badge variant="secondary">Не настроено</Badge>;
+                    }
+                    return <Badge variant="secondary">Проверка не выполнена</Badge>;
+                  })()}
                   <Badge variant="outline" className="text-xs">
                     {mode === "battle" ? "Боевой" : "Тестовый"}
                   </Badge>
@@ -336,6 +380,53 @@ export function RRSettingsCard({ instance }: RRSettingsCardProps) {
                   </div>
                 )}
               </div>
+
+              {/* Granular health status (PATCH-RR-STATUS-TRUTHFUL-V1) */}
+              {hcMeta && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
+                  {[
+                    { key: "backend", label: "Backend", value: hcMeta.checks?.backend?.status, ok: ["ok"], neutral: [] },
+                    { key: "credentials", label: `Реквизиты режима (${mode === "battle" ? "боевой" : "тестовый"})`, value: hcMeta.checks?.credentials?.status, ok: ["configured"], neutral: [] },
+                    { key: "api", label: "API режима", value: hcMeta.checks?.api_reachability?.status, ok: ["ok"], neutral: ["not_verified"] },
+                    { key: "wh_ep", label: "Webhook endpoint", value: hcMeta.checks?.webhook_endpoint?.status, ok: ["configured"], neutral: [] },
+                    { key: "wh_rt", label: "Webhook runtime", value: hcMeta.checks?.webhook_runtime?.status, ok: ["verified"], neutral: ["not_verified"] },
+                  ].map((row) => {
+                    const v = row.value ?? "—";
+                    const cls = row.ok.includes(v)
+                      ? "text-primary"
+                      : row.neutral.includes(v)
+                        ? "text-muted-foreground"
+                        : "text-destructive";
+                    const ru: Record<string, string> = {
+                      ok: "проверен",
+                      configured: "настроены",
+                      verified: "проверен",
+                      not_verified: "ещё не проверен",
+                      not_configured: "не настроено",
+                      error: "ошибка",
+                    };
+                    return (
+                      <div key={row.key} className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">{row.label}:</span>
+                        <span className={`font-medium ${cls}`}>{ru[v] ?? v}</span>
+                      </div>
+                    );
+                  })}
+                  {hcMeta.last_operation && (
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t mt-1">
+                      <span className="text-muted-foreground">Последняя операция:</span>
+                      <span className="text-xs">
+                        {new Date(hcMeta.last_operation.at!).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {hcMeta.last_operation.external_id && (
+                          <span className="ml-1 font-mono">· {hcMeta.last_operation.external_id}</span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
 
               {hasError && instance.error_message && (
                 <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
