@@ -228,12 +228,13 @@ Deno.serve(async (req) => {
 
     const _body = await req.json().catch(() => ({}));
 
-    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A ─────────────────────────────
+    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A (CLOSURE-1) ────────────────
     // Caller authorization. MUST run before any orderId parsing, order
     // lookup, audit write, three_ds_writer delegation, or service-role
     // DML. Anonymous/invalid → 401. Ordinary user → 403. Branch policy:
-    //   standard / adminManualAccessEdit / legacy_body_alias: service_role OR admin
-    //   3ds_finalize / subscription_renewal:                   service_role only
+    //   standard / legacy_body_alias:          service_role OR admin
+    //   adminManualAccessEdit:                 admin only (service_role → 403)
+    //   3ds_finalize / subscription_renewal:   service_role only
     const authResult = await resolveGrantAccessCaller(req, supabase);
     if (!authResult.ok) {
       return new Response(
