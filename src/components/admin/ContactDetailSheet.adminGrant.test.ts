@@ -102,22 +102,68 @@ describe("B0a-UI · ContactDetailSheet.handleGrantNewAccess — payments_v2 fire
     expect(HANDLER_BODY).toMatch(/deal_only:\s*createDealOnly\b/);
   });
 
-  it("canonical grant-access-for-order is called ONLY inside `if (!createDealOnly && !isGhostContact)`", () => {
-    const guardIdx = HANDLER_BODY.search(
-      /if\s*\(\s*!\s*createDealOnly\s*&&\s*!\s*isGhostContact\s*\)/
+  it("canonical grant-access-for-order is called ONLY inside `if (!createDealOnly && !isGhostContact) { ... }` (brace-matched)", () => {
+    // Locate the specific IfStatement guard.
+    const guardMatch = HANDLER_BODY.match(
+      /if\s*\(\s*!\s*createDealOnly\s*&&\s*!\s*isGhostContact\s*\)\s*\{/
     );
-    expect(guardIdx).toBeGreaterThan(-1);
+    expect(guardMatch).not.toBeNull();
+    const guardStart = HANDLER_BODY.indexOf(guardMatch![0]);
+    const braceOpen = HANDLER_BODY.indexOf("{", guardStart);
+
+    // Brace-match to find the exact end of the guarded block, respecting
+    // strings and single-line comments so we don't miscount inside them.
+    let i = braceOpen;
+    let depth = 0;
+    let inSingle = false;
+    let inDouble = false;
+    let inTemplate = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+    for (; i < HANDLER_BODY.length; i++) {
+      const ch = HANDLER_BODY[i];
+      const next = HANDLER_BODY[i + 1];
+      const prev = HANDLER_BODY[i - 1];
+      if (inLineComment) {
+        if (ch === "\n") inLineComment = false;
+        continue;
+      }
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") { inBlockComment = false; i++; }
+        continue;
+      }
+      if (inSingle) { if (ch === "'" && prev !== "\\") inSingle = false; continue; }
+      if (inDouble) { if (ch === '"' && prev !== "\\") inDouble = false; continue; }
+      if (inTemplate) { if (ch === "`" && prev !== "\\") inTemplate = false; continue; }
+      if (ch === "/" && next === "/") { inLineComment = true; i++; continue; }
+      if (ch === "/" && next === "*") { inBlockComment = true; i++; continue; }
+      if (ch === "'") { inSingle = true; continue; }
+      if (ch === '"') { inDouble = true; continue; }
+      if (ch === "`") { inTemplate = true; continue; }
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    expect(depth).toBe(0);
+    const braceClose = i;
+    expect(braceClose).toBeGreaterThan(braceOpen);
+
+    const guardedBlock = HANDLER_BODY.slice(braceOpen, braceClose + 1);
+    const outsideBefore = HANDLER_BODY.slice(0, braceOpen);
+    const outsideAfter = HANDLER_BODY.slice(braceClose + 1);
 
     const invokeRe = /supabase\.functions\.invoke\(\s*["']grant-access-for-order["']/g;
-    // Every invoke of grant-access-for-order in the handler must appear AFTER the guard.
-    let m: RegExpExecArray | null;
-    let invocations = 0;
-    while ((m = invokeRe.exec(HANDLER_BODY)) !== null) {
-      invocations++;
-      expect(m.index).toBeGreaterThan(guardIdx);
-    }
-    // Exactly one canonical fulfillment call in the handler.
-    expect(invocations).toBe(1);
+
+    const insideCount = (guardedBlock.match(invokeRe) || []).length;
+    const outsideCount =
+      (outsideBefore.match(invokeRe) || []).length +
+      (outsideAfter.match(invokeRe) || []).length;
+
+    // Exactly one canonical invocation, and it must live inside the guarded block.
+    expect(insideCount).toBe(1);
+    expect(outsideCount).toBe(0);
   });
 
   it("passes `source: \"admin_grant\"` (not \"admin_deal_only\") to grant-access-for-order body", () => {
