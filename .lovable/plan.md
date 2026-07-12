@@ -535,3 +535,173 @@ waitUntil retry-only approach:    REJECTED
 **Транспорт.** `<meta charset="UTF-8">` и `Content-Type: text/html; charset=UTF-8` уже присутствуют в шаблоне — не меняли.
 
 **Статус:** PATCH-EMAIL-FOOTER-UTF8-V1: VERIFIED, PASS. Non-blocking, не переоткрывает Sprint C2.
+
+---
+
+## PATCH-ONE-OFF-NO-SUBSCRIPTION-V1 — Diagnose report (код не менялся)
+
+Микроправка сопутствующая: комментарий в `send-transactional-email/index.ts` строка 3 приведён к фактической версии `@react-email/render@0.0.17` (было ошибочно `@1.0.5`). Никакой логики не затронуто, smoke не переоткрывается.
+
+### 1. Инвентаризация writers → grant-access-for-order
+
+| Поток                                                       | One-off | Recurring | Trial | Installment | Точка вызова |
+| ----------------------------------------------------------- | :-----: | :-------: | :---: | :---------: | ------------ |
+| RR (rr-fulfill-order → rr-promote-order)                    |   ✔    |     —     |   —   |     ✔ (внутренние installments учитываются как один oneoff RR-заказ) | `_shared/rr/rr-promote-order.ts:122` |
+| bePaid webhook — purchase-success (первый success)           |   ✔    |     ✔    |   —   |     —      | `bepaid-webhook/index.ts:1677, 2914, 4208, 4701, 2800` |
+| bePaid webhook — REBILL (provider_managed rebill)            |    —    |     ✔    |   —   |     —      | `bepaid-webhook/rebill_flow.ts` (через grant-access) |
+| bePaid create-token (MIT tokenization → charge)              |   ✔    |     ✔    |   —   |     —      | `bepaid-create-token/index.ts` |
+| bePaid create-subscription-checkout (provider_managed)       |    —    |     ✔    |   —   |     —      | `bepaid-create-subscription-checkout/index.ts` |
+| Stripe webhook (checkout.session.completed, invoice.paid)    |   ✔    |     ✔    |   ✔  |     —      | `stripe-webhook/index.ts:417, 542` |
+| public-charge-saved-card (MIT списание сохранённой картой)    |    —    |     ✔    |   —   |     —      | через bepaid-webhook |
+| subscription-charge (job) — canonical renewal, идёт через WH |    —    |     ✔    |   —   |     —      | не вызывает напрямую, комментарий на 1868 |
+| test-payment-complete / admin-reconcile / erip-reconcile     | mixed   | mixed     |   —   |     —      | сервисные ре-fulfil |
+| admin-manual-charge                                          |   ✔    |     ✔    |   —   |     —      | `admin-manual-charge/index.ts:437` |
+| Manual/admin (BulkExtend, GrantAccessFromDeal, EditDeal)     |   ✔    |    —     |   ✔  |     —      | UI-кнопки, вызовы `grant-access-for-order` из клиента |
+
+Итого: **все успешные оплаты и все административные grant-и** идут через один writer, и он безусловно создаёт/продлевает `subscriptions_v2` (за двумя исключениями — `no_card_trial` и `entitlement_mode='order_based_only'`).
+
+### 2. Canonical recurring predicate (предлагаемый)
+
+Сейчас в `grant-access-for-order/index.ts:46-133` уже есть SOT-резолвер `resolveRecurringFromOrderOrTariff(order.offer_id, tariff_id)` со значениями `from_order_offer | resolved_from_tariff | one_time | not_resolved`. Он **не используется как гейт на создание подписки** — используется только чтобы прикрепить `recurring_snapshot`. В строках 1544-1699 create/extend выполняется всегда.
+
+Предлагаемый предикат `isRecurringForSubscription(order, tariff, ctx)` — истинно при **любом** из:
+
+- `resolveRecurringFromOrderOrTariff(...).is_recurring === true` (SOT: `tariff_offers.meta.recurring.is_recurring`), либо
+- `ctx` указывает на явный provider-managed subscription flow (`bepaid-create-subscription-checkout`, `stripe-create-subscription-checkout`, `admin-manual-charge` с `is_subscription_flow=true`, `subscription_renewal` context), либо
+- у пользователя+продукта уже существует `subscriptions_v2` с `EXISTS provider_subscriptions ps WHERE state IN ('active','pending','past_due')` — тогда это extend уже настоящей подписки.
+
+Всё остальное — one-off. `provider`, `is_installment`, `hasPaymentMethod`, `requires_card_tokenization`, `payment_flow='mit_tokenization'`, `flow_tag`, наличие карты — **не** классификаторы.
+
+### 3. Инвентаризация данных `subscriptions_v2`
+
+Всего строк: **1335**.
+
+|                              | count |
+| ---------------------------- | ----: |
+| `recurring_snapshot` != null | 339   |
+| provider_subscriptions active/pending/past_due | 192 |
+| `auto_renew=true`            | 238   |
+| **one-off shaped** (no snapshot + no provider_sub + auto_renew=false) | **896** |
+| — из них `status='active'`  | 178   |
+| `extended_by_orders`>1       | 92    |
+
+Разбивка one-off shaped по `billing_type × status`:
+
+| billing_type      | status       |   n |
+| ----------------- | ------------ | --: |
+| mit               | expired      | 320 |
+| mit               | active       | 176 |
+| mit               | superseded   | 141 |
+| provider_managed  | past_due     | 119 |
+| mit               | canceled     |  85 |
+| provider_managed  | expired      |  58 |
+| provider_managed  | active       |  55 |
+| provider_managed  | superseded   |  27 |
+| provider_managed  | canceled     |  12 |
+| provider_managed  | pending      |   3 |
+
+Разбивка активных one-off shaped по источнику (по `orders_v2.provider` и `offer.meta.recurring`):
+
+| provider          | offer.is_recurring | payment_flow                | n |
+| ----------------- | ------------------ | --------------------------- | -: |
+| getcourse         | null               | —                           | 318 |
+| null              | null               | —                           | 165 |
+| null              | true               | —                           | 122 |
+| null              | true               | provider_managed_checkout   | 90 |
+| historical_import | null               | —                           | 63 |
+| null              | false              | —                           | 56 |
+| null              | true               | renewal_subscription        | 32 |
+| null              | null               | renewal_subscription        | 21 |
+| null              | false              | renewal_one_time            | 9 |
+| null              | true               | admin_subscription          | 5 |
+| stripe            | false              | public_one_time             | 2 |
+| bepaid            | true               | provider_managed_checkout   | 1 |
+| rr                | false              | —                           | 1 |
+| …прочее           |                    |                             | ≤3 каждая |
+
+Наблюдения:
+
+- Огромный хвост — исторический импорт из GetCourse и raw imports (`provider=null`, `provider=historical_import`, `provider=getcourse` — 546 строк). Это **legacy access containers**, не «покупки» в текущем коде. Их источник — не `grant-access-for-order`, а backfill-скрипты; исключены из scope V1.
+- Реальные фиктивные one-off subscriptions от текущего writer-а — это в основном строки, где `offer.is_recurring=true` но карта не привязана / карта отозвана → `auto_renew=false` и `provider_subscriptions` пустой. Классификация уже сейчас **корректно** называет их recurring по SOT — но по факту дальнейших списаний не будет. То есть pure «одноразовые non-recurring» в свежих данных — **stripe public_one_time (2) и rr (1)**. Остальное — «recurring контракт, у которого нет действующего provider-механизма списания».
+- Активные one-off shaped: 178. У 44 из них — платёж только по «исходному» заказу; multi-payment (rebill-подобных) — **18** из 178 (≈10%). Т.е. ~90% активных one-off shaped-подписок никогда не будут списаны повторно.
+
+### 4. Readers `subscriptions_v2` (не тронуть без миграции)
+
+DB-side: views/materialized views нет; RPC, зависящие от `subscriptions_v2` (25 функций, среди них `cascade_order_cancellation`, `align_billing_dates`, `find_misaligned_subscriptions`, `sync_payment_method_revocation`, `has_valid_access_for_club`, `user_has_access_to_rule`, `user_has_live_event_access`, `get_user_section_access`, `resolve_broadcast_audience_*`, `handle_new_user`, `admin_reset_user_trial`, `subscription_has_payment_token`).
+
+App-side: **34 UI-файла** читают `subscriptions_v2` напрямую. Ключевые:
+
+- **Личный кабинет и статусы:** `src/pages/Purchases.tsx`, `src/pages/Products.tsx`, `src/pages/Learning.tsx`, `src/components/user/UserSubscriptions.tsx`, `src/components/purchases/SubscriptionDetailSheet.tsx`, `src/components/onboarding/WelcomeOnboardingModal.tsx`
+- **Доступ к обучению:** `useTrainingModules`, `useTrainingContentRules`, `useContainerLessons`, `useSidebarModules`, `useMonthGate`, `pages/BusinessTrainingContent.tsx`
+- **Payment/rebill:** `pages/settings/PaymentMethods.tsx`, `lib/subscriptionReplacement.ts`, `hooks/useBillingReport.ts`, `hooks/admin/useStripeSubscriptionsList.ts`, `hooks/admin/usePaymentIssues*`
+- **CRM / админка:** `pages/admin/AdminDeals.tsx`, `AdminContacts.tsx`, `ContactDetailSheet`, `EditSubscriptionDialog`, `EditDealDialog`, `DealDetailSheet`, `GrantAccessFromDealDialog`, `BulkExtendAccessDialog`, `AdminPaymentLinkDialog`, `LinkSubscription{Contact,Deal}Dialog`
+- **Telegram/access:** `useTelegramIntegration`, `telegram-process-access-queue` (edge), `access-rules-nightly-reconcile`
+- **Broadcast/email:** `BroadcastSendDialog`, `SendNotificationDialog`, `communication/InboxTabContent`
+
+Вывод: `subscriptions_v2` в UI используется как источник **срока доступа**, **billing-статуса** и **CRM-состояния сделки одновременно**. Просто перестать создавать строку one-off нельзя — минимум `Purchases.tsx`, `Products.tsx`, `Learning.tsx` и CRM (`AdminDeals`, `DealDetailSheet`) сейчас показывают "до какой даты открыт продукт" именно оттуда, а не из `entitlements`.
+
+### 5. Целевая модель (proposal, к согласованию)
+
+```
+one-off purchase (RR, bePaid one-off, Stripe one-off, admin_one_time, renewal_one_time)
+  → payments_v2 (+ entitlement_sources) + orders_v2 переходит в 'paid'
+  → aggregate entitlement обновляется
+  → subscriptions_v2 НЕ создаётся
+
+recurring purchase (provider_managed_checkout, admin_subscription, subscription_renewal,
+                    offer.meta.recurring.is_recurring=true И есть механизм списания)
+  → payments_v2 (+ entitlement_sources) + orders_v2 → 'paid'
+  → aggregate entitlement обновляется
+  → subscriptions_v2 живёт как billing lifecycle
+    (provider_subscription linkage ИЛИ MIT payment_method + auto_renew)
+```
+
+Гейт в `grant-access-for-order`:
+
+```
+if (!isRecurringForSubscription(order, tariff, ctx)) {
+  results.subscription = { action: 'skipped', reason: 'one_off_no_subscription' };
+  // audit: grant-access-for-order.subscription_skipped reason=one_off
+} else {
+  // текущая CREATE/EXTEND ветка, начиная с existingProductSub-lookup
+}
+```
+
+Все три существующих `SKIP`-ветки (`no_card_trial`, `order_based_only`, новая `one_off`) сохраняют идемпотентность notify-order-purchased и entitlement grant.
+
+### 6. Prerequisite для перехода — миграция читателей
+
+Blocker для code-change: UI/CRM/edge-функции читают `access_end_at` и `auto_renew` из `subscriptions_v2`. Порядок:
+
+1. Ввести SoT-хелпер `getAccessWindowForUserProduct(userId, productId)` → читает из `entitlements` (или aggregate view), НЕ из `subscriptions_v2`.
+2. Мигрировать читатели (34 файла + 25 RPC + edge access-resolver) на этот хелпер / view. Отдельными PR-ами, ranked по риску: сначала UI display, потом access enforcement (`access-rules-nightly-reconcile`, `telegram-process-access-queue`, `has_valid_access_for_club`, `user_has_access_to_rule`).
+3. Только после того как ни один reader не завязан на `subscriptions_v2` для one-off → включить гейт в writer.
+4. Backfill — как обсуждается ниже.
+
+### 7. Варианты по существующим one-off рядам
+
+Пока не выполнять; на выбор к следующему шагу:
+
+- **A. Freeze legacy.** Оставить 896 one-off shaped строк как есть. Новых one-off subv2 больше не создаётся. Плюс: нулевой риск на исторические доступы. Минус: `subscriptions_v2` навсегда содержит смесь.
+- **B. Soft-mark.** Проставить `meta.legacy_one_off_container=true`, скрыть в billing-UI, оставить как источник срока доступа для миграционного периода. Плюс: явный маркер, можно постепенно чистить. Минус: доп. состояние.
+- **C. Hard-migrate.** После пункта 6 — удалить one-off shaped строки (или перевести в `status='expired', meta.superseded_by='entitlement'`), т.к. entitlement уже несёт срок. Плюс: чистая модель. Минус: требует полного покрытия читателей и rollback-плана.
+
+Рекомендация Diagnose-этапа: **B на переходный период, C — как цель**, при условии полного завершения (6).
+
+### 8. Наблюдения (не блокирующие)
+
+Следующий естественный bePaid-платёж (без принудительного smoke) проверим по логам на:
+
+- ровно 4 admin-DM через `notify-order-purchased` (`channel=telegram_admin`);
+- отсутствие вызова `telegram-notify-admins` в purchase-success-ветке `bepaid-webhook`;
+- UTF-8 подпись в email (нет `\uFFFD` в rendered_html/text; отсутствие лога `email_utf8_replacement_detected`).
+
+Артефакт: свободный monitoring-заход, отдельного тестового платежа не создаём.
+
+### Статус
+
+```
+PATCH-ONE-OFF-NO-SUBSCRIPTION-V1: DIAGNOSE COMPLETE, awaits proposal approval
+Code changes:                     NONE (кроме микрофикса комментария версии @react-email/render)
+Data changes:                     NONE
+```
