@@ -1223,3 +1223,595 @@ PATCH-PAYMENTS-PROVIDER-BACKFILL-V1:
 ```
 
 Следующий шаг — ревью PLAN. При approve — стартует Phase A1 (dry-run отчёт, без изменений в БД).
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — PLAN CORRECTIONS (accepted)
+
+Приняты правки к PLAN от 12.07.2026. Ниже — append-only список изменений
+контракта, которые заменяют соответствующие пункты ранее записанного PLAN.
+При любом расхождении с более ранними разделами приоритет — за этими
+правками.
+
+### C1. Legacy классификация без ложных зачислений в bank
+
+```
+admin_from_payment  → bepaid, ТОЛЬКО при доказанной исходной оплате
+                     (safe_backfill без коллизий)
+admin_grant         → non-financial legacy artifact  → payments_legacy_archive
+admin_test          → test fixture / non-financial   → payments_legacy_archive
+                     + удаление тест-заказов через V2 mechanism (Phase I)
+admin_deal_only     → индивидуальная проверка         → архив либо merge вручную
+```
+
+Перевод admin_grant → bank ЗАПРЕЩЁН: банковский платёж означает реальное
+поступление денег на банковский счёт, административная выдача доступа без
+оплаты банковским платежом не является.
+
+### C2. `payments_legacy_archive` (add-only)
+
+Schema (создаётся в Phase B2):
+
+```
+id                 uuid PK
+source_payment_id  uuid NOT NULL   -- исходный payments_v2.id
+original_row       jsonb NOT NULL  -- полная копия строки
+provider           text
+origin             text
+order_id           uuid
+profile_id         uuid
+amount             numeric
+currency           text
+meta               jsonb
+reason             text NOT NULL   -- 'admin_grant' | 'admin_test' | 'admin_from_payment_duplicate' | 'admin_from_payment_conflict' | 'admin_deal_only'
+row_checksum       text NOT NULL   -- md5(original_row::text)
+archived_at        timestamptz NOT NULL DEFAULT now()
+archived_by        uuid REFERENCES auth.users(id) ON DELETE SET NULL
+```
+
+Удаление legacy-строки из `payments_v2` допустимо ТОЛЬКО после доказательства
+`archive_count = source_count` и совпадения checksum для каждой строки.
+
+### C3. Исправленный порядок фаз
+
+```
+A1  read-only provider dry-run
+B1  reader/writer inventory
+B2  soft-delete + legacy archive schema
+A2  guarded backfill/archive execute
+A3  verify provider counts/collisions
+A4  provider CHECK (bepaid, stripe, rr, bank)
+
+C1  фиксация точных writer-ов orders_v2 (paid_amount/status)
+C2  recalc_order_totals()
+C3  миграция критичных writer-ов
+
+D1  admin-payment-create manual-only
+D2  active-manual → provider-confirmed merge contract
+
+E1  admin-payment-delete preview/execute
+E2  exact access-revoke lineage
+E3  admin-order-delete preview/execute
+E4  bulk delete
+E5  resurrect guards
+E6  useDealsBulkDelete → thin edge wrapper
+
+F   readers / filters / stats / CSV
+G1  glass CreatePaymentDialog
+G2  glass DeletePaymentDialog
+H   runtime fixtures
+I   RR test cleanup
+```
+
+CHECK на 4 провайдера добавляется ТОЛЬКО после Phase A3.
+
+### C4. Dry-run admin_from_payment — обязательные классы
+
+Для каждой строки:
+
+```
+source payment ID найден
+existing payments_v2 с таким bepaid ID
+order match
+amount match
+currency match
+profile match
+```
+
+Категории:
+
+```
+safe_backfill
+duplicate_of_existing_payment
+conflicting_payment
+missing_source
+ambiguous_source
+```
+
+При `duplicate_of_existing_payment` / `conflicting_payment` legacy-строка НЕ
+превращается в bepaid и НЕ увеличивает выручку — она уходит в
+`payments_legacy_archive`.
+
+### C5. Никаких новых `docs/audits/*.md` для V2
+
+Все Diagnose/Dry-run/Reader-Writer/Execute-разделы пишутся append-only в
+`.lovable/plan.md`. Для 327 legacy-строк в файл идут только:
+агрегаты, SQL-критерии, counts, checksum, список ambiguous/conflicting IDs,
+примеры по каждой категории.
+
+### C6. Backfill — не автоматически повторяемая data migration
+
+`_..._payments_provider_backfill.sql` не должен повторно классифицировать
+production-данные в другом окружении. Execute — guarded, идемпотентный,
+транзакционный, привязан к A1-результату, с проверкой expected count/checksum
+и rollback при любом несовпадении. Schema-migration содержит только: archive
+table, soft-delete columns, CHECK после завершения backfill.
+
+### C7. `admin-payment-create` — только ручная запись
+
+Убрать `source_kind: auto | manual` и Auto/Manual выбор в UI.
+`admin-payment-create` всегда создаёт:
+
+```
+origin = 'manual_admin'
+meta.manual_entry = true
+```
+
+Автоматические записи создаются только webhook/API/file_import/reconciliation.
+
+Payload:
+
+```ts
+{
+  provider: 'bepaid' | 'stripe' | 'rr' | 'bank';
+  amount: number;
+  currency: string;
+  status: AllowedPaymentStatus;
+  paid_at: string;
+
+  order_id?: string;
+  profile_id?: string;
+  company_id?: string;
+
+  provider_payment_id?: string;
+  idempotency_key: string;   // генерируется UI, не редактируется
+
+  grant_access?: boolean;
+
+  provider_details: BepaidDetails | StripeDetails | RrDetails | BankDetails;
+}
+```
+
+`meta_extra?: jsonb` из frontend НЕ принимается. Сервер собирает `meta`
+только из валидированных типизированных полей.
+
+Типизированные details:
+
+```
+bePaid : provider_payment_id, tracking, reference, commission
+Stripe : payment_intent_id, charge_id, commission
+RR     : rr_order_id, rr_mode_at_entry (сервер),
+         not_provider_confirmed=true
+Банк   : bank_name, payment_order_number, bank_reference, payer_name,
+         payer_unp, payment_purpose, invoice_number,
+         recipient_account, commission
+```
+
+### C8. Idempotency key скрыт от оператора
+
+Генерируется UI автоматически, хранится во внутреннем state, повторно
+используется при retry, не отображается в форме, не редактируется. Показ —
+только в технических деталях результата для диагностики.
+
+### C9. Manual → webhook merge contract
+
+Активная ручная строка с реальным `provider_payment_id` (`is_deleted=false`,
+`meta.not_provider_confirmed=true`) при получении настоящего webhook:
+
+```
+- webhook НЕ создаёт дубль
+- webhook находит существующую строку по (provider, provider_payment_id)
+- подтверждает provider data
+- сохраняет origin='manual_admin'
+- пишет meta.provider_confirmed_at, provider_confirmed_by='webhook'
+- пишет provider_events
+- НЕ увеличивает сумму сделки повторно
+```
+
+Удалённая строка (`is_deleted=true`) — webhook блокируется как
+`webhook_resurrect_blocked` и пишет в provider_events без ресурректа.
+
+### C10. `payment_only` реально отвязывает связи
+
+```
+1. сохранить (old_order_id, old_profile_id, old_company_id) в deletion_context
+2. is_deleted = true
+3. order_id = NULL
+4. profile_id = NULL
+5. отвязать прямую company-связь, если есть
+6. recalc_order_totals(old_order_id)
+```
+
+Пересчёт делать ПОСЛЕ обнуления, используя `old_order_id` из deletion_context.
+
+### C11. installment_payments не блокирует удаление
+
+Штатное удаление НЕ должно быть навсегда заблокировано installment-связью.
+В Phase B выбирается один безопасный вариант:
+
+```
+installment_payments.payment_id = NULL
+      | installment payment relation soft-delete / archive
+      | tombstone-link
+```
+
+Dry-run показывает последствия, execute применяет выбранный механизм. HTTP 409
+для installment-связи заменяется на явное действие по одному из вариантов.
+
+### C12. `revoke_access` только по точной связи
+
+`send-access-revoked-notification` НЕ является revoke-функцией. Точный
+server-side путь фиксируется в Phase E2:
+
+```
+payment_id → entitlement_source → entitlement / access_grant_ledger
+                                → telegram_access / subscription lineage
+```
+
+Правило:
+
+```
+revoke_access разрешён ТОЛЬКО если payment_id → entitlement_source точный
+```
+
+Иначе:
+
+```
+revoke_access_available = false
+reason = 'ambiguous_access_lineage'
+```
+
+Отзыв доступа целиком по факту «нет других живых сделок» — запрещён.
+
+### C13. Preview / execute для admin-payment-delete и admin-order-delete
+
+Обе функции принимают:
+
+```
+action = 'preview' | 'execute'
+```
+
+Preview возвращает:
+
+```
+payment (или order),
+old order/profile/company,
+other payments of the order,
+installment_payments links,
+statement_lines links,
+access lineage,
+subscriptions,
+что будет отвязано,
+что будет удалено,
+blocked / warnings,
+preview_token (hash от графа связей + updated_at всех участников)
+```
+
+Execute требует preview_token и повторно валидирует updated_at
+payment/order/access-source-ids. При расхождении — HTTP 409
+`preview_stale`, оператор перезапрашивает preview.
+
+### C14. `admin-payment-bulk-delete` (Phase E4)
+
+```
+mode = 'payment_only'   // по умолчанию
+revoke_access = false   // по умолчанию
+```
+
+Результат построчно: `deleted | already_deleted | blocked | failed`.
+UI: чекбоксы → «Удалить выбранные» → общий dry-run → подтверждение → execute.
+`payment_and_order` в bulk-режиме V2 запрещён либо требует отдельного
+подтверждения по каждой сделке.
+
+### C15. Company + полный банковский блок в UI
+
+`CreatePaymentDialog` содержит:
+
+```
+- контакт
+- компания
+- сделка
+- автозаполнение контакта/компании из сделки
+- standalone bank payment (без сделки)
+```
+
+Банковская секция:
+
+```
+bank_name (свободный ввод / combobox)
+payment_date
+payer_name
+payer_unp
+payment_purpose
+payment_order_number
+bank_reference
+invoice_number
+recipient_account
+commission
+comment
+```
+
+`provider` для банковской записи всегда `bank`.
+
+### C16. SQL-security
+
+Для `recalc_order_totals` и admin RPC:
+
+```
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM anon;
+```
+
+RBAC — внутри функции (server-side) или вызов только из защищённой
+edge-функции с service-role. `deleted_by uuid REFERENCES auth.users(id) ON
+DELETE SET NULL`.
+
+### C17. Индекс `is_deleted`
+
+Не создавать `ix (is_deleted) WHERE is_deleted=false` автоматически. Сначала
+Phase F/H: реальные запросы + EXPLAIN. При необходимости — расширить
+существующие составные индексы `payments_v2`(provider, created_at/paid_at,
+status, order_id) добавлением `is_deleted` как условия или колонки.
+
+---
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1 DRY RUN (read-only)
+
+Дата: 2026-07-12. SQL выполнялся только на чтение, изменений в БД нет.
+Метод: см. запросы ниже. Все counts перепроверяемы.
+
+### A1.1 Категоризация 327 legacy-строк
+
+Критерий: `provider IN ('admin','admin_test')` в `payments_v2`.
+
+```sql
+CASE
+  WHEN provider='admin_test' THEN 'admin_test'
+  WHEN provider='admin' AND meta->>'source'='admin_grant'        THEN 'admin_grant'
+  WHEN provider='admin' AND meta->>'source'='admin_from_payment' THEN 'admin_from_payment'
+  WHEN provider='admin' AND meta->>'source'='admin_deal_only'    THEN 'admin_deal_only'
+END
+```
+
+Результаты:
+
+```
+admin_from_payment  117   sum=24518.00 BYN   with_qpid=117   with_order=106
+admin_grant         201   sum=0.00     BYN   with_granted_by=201  with_order=189
+admin_deal_only       1   sum=0.00     BYN   with_order=1
+admin_test            8   sum=1340.00  BYN   with_order=7 (все ORD-TEST-*)
+────────────────────────────────────
+TOTAL               327
+```
+
+Ответ на вопрос №3 (admin_grant): подтверждено. Все 201 строки имеют
+`amount=0`, `meta.granted_by IS NOT NULL`, provider_payment_id отсутствует —
+денежных поступлений нет. Все 201 идут в `payments_legacy_archive`
+(`reason='admin_grant'`), НЕ переводятся в `bank`.
+
+### A1.2 admin_from_payment — коллизии с существующими bePaid
+
+Метод: для каждой строки берём `meta.queue_payment_id → payment_reconcile_queue.id`,
+сравниваем `bepaid_uid` с существующими `payments_v2.provider_payment_id`
+при `provider='bepaid'`.
+
+```
+Всего                                   117
+missing_source (нет строки в очереди)     9
+safe_backfill (bepaid UID свободен)       5
+duplicate_full_match (order+amount совп.) 26
+duplicate_legacy_null_order (legacy без order) 10
+duplicate_conflicting_order (legacy.order ≠ existing) 67
+────────────────────────────────────
+duplicate_of_existing_payment (совокупно) 103
+conflicting_payment (подкласс duplicate)   67
+```
+
+Ответ на вопрос №1: 5 из 117 admin_from_payment можно безопасно бэкфилить
+как bepaid без дублей. Ответ на вопрос №2: 103 из 117 уже имеют настоящий
+bePaid-платёж в системе (из них 67 — с расхождением по order_id).
+
+Действия:
+```
+safe_backfill (5)  → UPDATE provider='bepaid', provider_payment_id=<bepaid_uid>,
+                     meta.legacy_provider='admin', meta.legacy_source='admin_from_payment',
+                     ЗАПРЕТ на увеличение выручки (order уже paid),
+                     recalc через C2 после Phase B/C.
+duplicates (103)   → payments_legacy_archive, reason='admin_from_payment_duplicate'
+                     (26 full_match + 10 null_order + 67 conflicting_order).
+                     Для 67 conflicting_order — reason='admin_from_payment_conflict',
+                     сверху ручное подтверждение в A1-review.
+missing_source (9) → индивидуальный review в Phase A1 review,
+                     по умолчанию → archive reason='admin_from_payment_missing_source'.
+```
+
+Полные списки IDs — ниже в A1.5.
+
+### A1.3 admin_test — 8 строк
+
+Ответ на вопрос №4:
+
+```
+1 orphan (order_id=NULL, ORD-TEST-* удалён)                  — pure fixture
+7 связаны с ORD-TEST-* заказами (status=paid)                — все fixture
+    из них 5 имеют access_grant_ledger записи (нужен V2 revoke в Phase I)
+все 8 имеют meta.test_payment=true, meta.test_payment_by
+```
+
+Реальных production-заказов среди них нет. Все 8 → архив
+(`reason='admin_test'`) + удаление привязанных ORD-TEST-* заказов через
+canonical V2 mechanism (Phase I после Phase E).
+
+### A1.4 admin_deal_only — 1 строка
+
+`id=59fb8249-94f0-4f66-b23c-a7fcb9472505`, amount=0 BYN,
+`meta.source='admin_deal_only'`, `granted_by=f1a79dd0-...`,
+`order_id=df97b9ad-...`. Индивидуальный review в A1-review: скорее всего
+архив (`reason='admin_deal_only'`) без денежного эффекта.
+
+### A1.5 Полные списки IDs
+
+`safe_backfill` (5):
+```
+9b412ac6-690c-430b-8ce8-71afa057ac78
+ce8eedad-eb2e-46f2-a424-3e22f117bd99
+ca7cde79-9b1d-4d54-8942-64b24139014c
+496ed05b-9918-4142-9d38-9778ede52153
+9e158f4b-af9b-4699-823c-61ebc8f2e361
+```
+
+`missing_source` (9):
+```
+144441b1-107d-4013-b077-88a1661905bb
+948f33b1-a6ef-4d08-8c92-fd685f876794
+66657c81-aefb-4c13-b856-efff8c17fc30
+4afe1a0c-7fd6-4643-9152-d1d6d60258c7
+07f997a5-0b82-4f56-a0b7-b7c8796ee51b
+f60ed2f0-277c-4f28-ae26-b7f05c2c05a7
+4e349305-b73d-4b92-a3ed-9628e34e8420
+86546dfe-b036-40de-a97b-c4a21a7dfabc
+e3412120-7843-4ce9-9033-5052bc26759a
+```
+
+`duplicate_legacy_null_order` (10):
+```
+748686b3-48b8-44e6-b1ca-e721c7797a34
+3e656276-541f-461f-ae55-e818cbdabee9
+95c7ca95-42ec-4d5e-8569-f177728276a4
+bc4a12cd-b983-4761-adcd-34c590eb02d3
+b921d5e0-f527-43f2-af7b-71796a239455
+ce737f06-7bc9-4a29-8c19-0c109a979069
+9909e5cb-b1aa-4c6d-9bb1-08a8b220bf7f
+1cc9c88c-70e9-4481-9cb3-ee3de1b24b5c
+1435dd26-0df4-4145-bf4a-f01fb2f44f80
+7aadddc4-b2af-477a-ba2b-5b6fccb7e98b
+```
+
+`duplicate_full_match` (26): архивируются без ручного review.
+```
+eda63b40-b5ab-4a44-860c-218af7ac927a  0bde9709-9a89-4629-b364-a3b8758fcd18
+6d6a1568-30e8-4aad-8513-e263af3216b8  3d8aecbd-4491-41ab-8116-7020e099b60e
+20c22102-23e8-4ac5-8c7e-37ef57ed2102  6bd8c9bc-d219-47db-b982-0d07c75d8ee7
+2cfe171a-ccf5-46e5-82a8-c6f4180efab2  5444b49f-11e5-4a2c-a09d-ef373a1661e8
+cd60358c-7efb-4b71-b62f-1e4692e36f26  58305ecb-3180-4e90-af73-85164e98b74b
+9f32cba5-9769-4719-96a8-d9cb608e3096  00956264-cafc-4522-a7a8-2f9feb551aae
+ae7767ce-fd18-4219-bbf3-2e64e0fc9b38  2ea9172f-d88a-4150-a2ea-8d119818f8e3
+3ddbc394-f69e-447e-b084-89991852a7a0  ddefcdc9-3711-4998-a726-4ab1f8899983
+d9491361-20b2-4af3-8059-0e38e45458d6  114e9b93-bb19-4a3e-984e-02f5ea37c3e7
+af065c3e-18a8-4152-a91f-7af3290c13f1  9862aae2-dd85-4e2a-8ecb-d9ff8e192f44
+d1575dfa-6a05-42c4-937a-8fca8da28725  e254b80d-38c5-4b75-9a22-5b5c709994b3
+8bf8cb4b-71bf-4bfb-bb0e-bc94c9daff49  2e4e465b-deba-4744-8426-7fa7a0ab642e
+953cedd1-4132-4cda-8b97-644dac628268  461bbd97-fc56-4aba-be40-f4838c3d6e13
+```
+
+`duplicate_conflicting_order` (67): требуют ручного подтверждения (legacy.order_id
+не совпадает с order_id уже существующего bepaid-платежа с тем же bepaid_uid).
+Полный список сохранён в результатах запроса A1.2 (см. классификацию выше);
+IDs выведены в дампе dry-run и доступны для точечного review.
+
+```
+564b7392-0a64-4fa9-8b34-42bfd8aa7eb7  897ea700-44ff-4f93-bd7d-2d20ec8d6ae5
+4a073c49-8412-41a7-9ed1-1453a62d9fca  9692a501-78b8-42fa-93d9-d508361fb3d3
+1711a2dd-bd50-4889-baf4-5b4a13c1bb97  123b56e9-2544-4d5f-ab1b-c26886dbda11
+5cf9e21c-86f5-4d96-ae6b-4b9154e2eb90  18e93d7a-3d3f-4e73-a34d-8f3c627d1716
+2eca335a-7bf9-4359-9854-7cb6561ea47c  7e953bc7-f619-420c-91b5-9908a8b7578f
+43282ffb-4e48-4621-9dc4-9ef27589cca6  8cbc5122-fd6a-44d7-9cde-d1cad95c8c75
+4f2cb48f-7f3f-455e-b2c1-7f7d5d47e356  b5c3cb43-1d57-4594-b378-65f9536a3090
+a127ace1-3c97-474b-beea-f93dc654eec6  a386f607-4da8-4df4-94af-a2c095150b20
+3fd5c095-9a44-4dda-9880-1358c53be7e6  9d262108-73b0-4a3c-b7ec-5693b0e412b5
+71361253-c457-46b5-be95-e9d66a8494a0  b074afef-2649-48ce-9c3d-f028932c3f8c
+06d7e36a-58fa-4a0c-820a-5041f9e42d7c  d313bcb9-02cf-470a-9db5-06cb6c5d5a59
+c0f28878-24c8-4af8-979c-077a7fdceb5c  9318eb82-efea-4ba1-a979-5fe8b7e3ba59
+e452e784-65dc-48c4-9456-da0bc15032a5  1922bc40-5b86-4dbd-a0aa-a660d67889b8
+e7e8aad4-c59c-4d66-8882-052f7545a885  76f05a4f-eedc-4d61-bfe7-3e035d2b5ce1
+5ded2798-9b61-4aa9-bd5a-592ed2c1438e  578f7efa-3fed-4540-895c-c70086262efc
+2e8ee000-ed66-4be4-9ae2-60364976be88  ad0cf694-b3fc-4ef7-97e5-9604235dfa4d
+941c52bc-9fee-4171-96a7-6cc6d59a75df  bc2c6bb3-26e4-4058-b44d-138bcd5c420f
+08acc0cb-c1f5-4b0c-838b-76d0125546e7  94fda5b8-1a65-4fd5-a3fe-ff2413054aa7
+1e2abdb7-50b3-4b80-8b00-1a7a32a7dc85  dcd47045-7963-4556-ae57-e2d0b0c2476e
+412fd764-e227-4410-b218-70c630b82b78  3ab53ea9-dc11-4658-a356-a3673ad1df3c
+dc144342-6461-4999-bdd7-17c2a5ccb592  7fd564d1-a1d8-4658-a025-b5318e6354f8
+e7a320bc-ce96-4b70-ba57-158ae7c06cd7  ae5ac541-1d39-4302-9844-522e92b64748
+72b673a9-df4c-4de1-8044-a012e75e5f10  d9238ee3-9909-4fd8-88a2-9df8dc6a83dd
+b5e9f845-c71e-404e-81a1-4dbd294e1106  644f27e5-fcfb-4ef7-b8b5-687b6b9f6156
+f68582b0-516d-42e8-9045-b89f8d96f367  e93ff9fe-97f4-4a27-8770-d55fef78e5da
+73b8f176-015c-45e3-aba0-b62354b3fa19  12ff2996-8496-473e-8fe6-d6ccfb2a0efb
+ec774ffb-a257-47b5-95c2-1e4ee4bb719a  24791a62-b57f-4222-a498-d2321017e139
+023c6051-eb1e-4b5a-a55d-1ef519ca7a1c  bc89dcc9-cc4b-4adf-99df-d72cc05e5b97
+740bcafa-104d-47cf-9bd9-06e419087f05  6491944f-bd9e-4764-9709-a54df2ad6ad9
+25c216dd-53ae-4ada-9466-1910d3e06999  d5c21bb7-af98-453e-a332-59d80d60d1aa
+33bdeca9-4e3e-4840-b27e-e69746c25916  b0b8758a-d1b6-412f-b823-45de1b3bb83c
+6005ece7-badf-44be-bea0-a08594d69e16  d37310a4-1a9b-42c3-83fc-9de2d2fb6acc
+80cfe2bf-9b61-46f1-903f-1874b1903f41  676a15fb-baf8-4b49-bf14-3155b5894671
+e301fabb-7aff-416a-b339-518205861114
+```
+
+`admin_test` (8), `admin_deal_only` (1), `admin_grant` (201) — списки не
+инлайнятся (агрегаты в A1.1 достаточны, критерий SQL воспроизводим).
+
+### A1.6 SQL-критерии
+
+```sql
+-- admin_from_payment классификация
+WITH src AS (
+  SELECT p.id, p.order_id, p.amount, p.currency, p.meta->>'queue_payment_id' AS qpid
+  FROM payments_v2 p
+  WHERE p.provider='admin' AND p.meta->>'source'='admin_from_payment'
+), q AS (
+  SELECT s.*, prq.bepaid_uid AS q_ppid, prq.matched_order_id AS q_order
+  FROM src s LEFT JOIN payment_reconcile_queue prq ON prq.id::text = s.qpid
+), m AS (
+  SELECT q.*,
+    (SELECT count(*) FROM payments_v2 p2
+      WHERE p2.provider='bepaid' AND p2.provider_payment_id = q.q_ppid) AS ex_cnt,
+    (SELECT p2.order_id FROM payments_v2 p2
+      WHERE p2.provider='bepaid' AND p2.provider_payment_id = q.q_ppid LIMIT 1) AS ex_order
+  FROM q
+)
+SELECT
+  CASE
+    WHEN q_ppid IS NULL                             THEN 'missing_source'
+    WHEN ex_cnt=0                                   THEN 'safe_backfill'
+    WHEN ex_cnt=1 AND order_id = ex_order           THEN 'duplicate_full_match'
+    WHEN ex_cnt=1 AND order_id IS NULL              THEN 'duplicate_legacy_null_order'
+    WHEN ex_cnt=1 AND order_id IS DISTINCT FROM ex_order THEN 'duplicate_conflicting_order'
+  END AS classification,
+  count(*)
+FROM m GROUP BY 1;
+```
+
+### A1.7 Ответы на 4 обязательных вопроса
+
+```
+Q1 safe merge admin_from_payment → bepaid без дублей : 5
+Q2 admin_from_payment в конфликте с существующим bepaid : 103
+      full_match:               26  → archive
+      legacy_null_order:        10  → archive
+      conflicting_order:        67  → archive с флагом conflict, ручное review
+Q3 admin_grant подтверждено не денежные                 : 201 (sum=0.00)
+Q4 admin_test — production связей нет                   : 0
+      все 8 — fixtures (ORD-TEST-*, meta.test_payment=true)
+```
+
+### A1.8 Решение по A1
+
+```
+PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1:
+  DRY-RUN COMPLETED
+  NO DB CHANGES
+  REVIEW OF 67 conflicting_order + 9 missing_source + 1 admin_deal_only: REQUIRED
+  PHASE A2 / B2 / EXECUTE: BLOCKED UNTIL A1 REVIEW APPROVED
+  ALL CODE CHANGES: BLOCKED
+```
