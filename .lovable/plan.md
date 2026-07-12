@@ -600,3 +600,89 @@ Proof C UI/CSV/stats: PENDING (без новых заявок)
 PATCH-RR-TEST-CLEANUP-V1: NOT YET AUTHORIZED
 Cleanup execute / Battle go-live: BLOCKED
 ```
+
+---
+
+## Отчёт о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2 — pre-deploy fix + runtime re-verification (append-only)
+
+Дата: 2026-07-12
+
+### Diagnose
+В предыдущем коммите вместе с комментарием оказалась удалена открывающая строка `try {` перед запросом `provider_events` для webhook events. Соответствующий `catch (e) { … webhook_lookup_failed … }` оставался на месте, из-за чего блок был синтаксически несбалансированным. Дополнительно требовалось усилить инвариант: `overall = connected` не должен наступать, если `webhook_runtime !== verified`, независимо от mode.
+
+### Fix
+1. `supabase/functions/integration-healthcheck/index.ts`:
+   - Восстановлена `try {` перед запросом `provider_events` (RR webhook_runtime, mode-scoped, event_type = webhook_notification_received). Существующий `catch (e) { webhook_lookup_failed }` не тронут.
+   - Ужесточён инвариант agregation:
+     ```
+     connected  ⇔  credentials.configured
+                 ∧ backend.ok
+                 ∧ api_reachability.ok
+                 ∧ webhook_runtime.verified
+     ```
+     В обоих режимах (test и battle) при `webhook_runtime !== verified` возвращается `battle_awaiting_first_order` — честный промежуточный статус, а не connected.
+   - Побочно уточнён тип `rrGetOrderStatusFn` (RRGetOrderStatusFn), чтобы `deno check` проходил без TS2352/TS2349.
+
+### Build check
+`deno check supabase/functions/integration-healthcheck/index.ts` — PASS, 0 ошибок.
+
+### Deploy
+Задеплоен только `integration-healthcheck` (Lovable-managed).
+
+### Runtime re-verification
+
+**A. Test mode (после deploy)**
+- HTTP 200
+- success = true
+- contract_version = `rr-status-truthful-v1-correction`
+- mode = `test`
+- overall = `connected`
+- checks.backend = `ok`
+- checks.credentials = `configured`
+- checks.api_reachability = `ok`, probed_external_id = `rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c`
+- checks.webhook_endpoint = `configured`
+- checks.webhook_runtime = `verified`, message = `2026-07-12T14:45:20.955227+00:00`
+- error_message = null
+
+Webhook proof (строка БД):
+```
+provider_events.id       = 4615db2d-ed0b-47f6-9907-5ad66a0b64a1
+event_type               = webhook_notification_received
+signature_valid          = true
+related_order_id         = 33119dd5-8a92-4533-ab20-fe0f9163ab8b
+orders_v2.meta.rr.mode   = test
+created_at               = 2026-07-12 14:45:20.955227+00
+```
+`event_type` строго `webhook_notification_received`; иные типы (`create_order_succeeded`, `rr_promoted`, `fulfillment_*`, `reconciliation_*`) в фильтр не входят и в качестве доказательства не используются.
+
+**B. Battle preview (guarded)**
+- Guard: `SELECT count(*) FROM orders_v2 WHERE meta->'rr'->>'mode'='battle' AND status NOT IN (paid,cancelled,failed,refunded,expired,fulfilled)` → 0.
+- Migration flip `config.mode: test → battle` (DO block с проверкой active_battle=0) — успех.
+- Healthcheck battle preview:
+  - HTTP 200
+  - success = true
+  - overall = `battle_awaiting_first_order`
+  - api_reachability = `not_verified` (code `no_battle_order_yet`)
+  - webhook_runtime = `not_verified` (code `no_battle_events_yet`)
+  - error_message = null
+- Немедленный revert `config.mode: battle → test`.
+- Итоговая проверка: `SELECT config->>'mode', status FROM integration_instances WHERE provider='rr'` → `mode=test`.
+- Финальный test healthcheck снова вернул `overall=connected`, `integration_instances.status` восстановлен в `connected` (после промежуточного `disconnected`, записанного battle preview'ом).
+
+Новые RR-заказы не создавались.
+
+### Invariant self-test
+- test + webhook verified + api ok → connected ✅
+- battle без заказа → battle_awaiting_first_order (не connected) ✅
+- test при webhook_runtime=not_verified → битую комбинацию connected больше не возвращает; overall переходит в `battle_awaiting_first_order` (design: любой не-verified webhook блокирует connected).
+
+### Статус
+- PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION-2:
+    CODE FIXES: DEPLOYED
+    APPEND-ONLY DOC: OK
+    SYNTAX/TRY-CATCH CHECK: PASS
+    RUNTIME RE-VERIFICATION (test + battle preview): PASS
+- Proof C (UI/CSV/stats parity в /admin/payments): PENDING — требует UI-фиксации до cleanup.
+- PATCH-RR-TEST-CLEANUP-V1: NOT YET AUTHORIZED (ждём Proof C).
+- Cleanup execute: BLOCKED.
+- Battle go-live: BLOCKED.
