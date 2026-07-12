@@ -15,6 +15,11 @@ import {
   resolveProductAccessRules,
   syncSecondaryProductAccessForUser,
 } from '../_shared/product-access-grants.ts';
+import {
+  resolveGrantAccessCaller,
+  detectBranch,
+  enforceBranchPolicy,
+} from './caller_auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
