@@ -2402,37 +2402,46 @@ Deno.serve(async (req) => {
 
     // ──────────────────────────────────────────────────────────────────────
     // Canonical post-payment notification (Telegram DM + Email).
-    // Fire-and-forget: notification failures MUST NOT block access grant.
-    // Idempotency is enforced downstream via order_notification_deliveries
-    // unique(order_id, channel, notification_type).
+    // AWAITED but non-fatal: notification failures MUST NOT block access grant,
+    // но мы дожидаемся ответа notify-order-purchased, чтобы гарантировать
+    // фактический вызов handler (Deno edge runtime раньше прерывал
+    // fire-and-forget/waitUntil до реального сетевого вызова).
+    // Idempotency гарантируется downstream через уникальные индексы
+    // order_notification_deliveries (buyer / telegram_admin).
     // ──────────────────────────────────────────────────────────────────────
     if (orderId) {
-      try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL');
-        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-        if (supabaseUrl && serviceKey) {
-          const notifyPromise = fetch(`${supabaseUrl}/functions/v1/notify-order-purchased`, {
+      const notifyUrl = Deno.env.get('SUPABASE_URL');
+      const notifyKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (notifyUrl && notifyKey) {
+        const NOTIFY_TIMEOUT_MS = 20000;
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), NOTIFY_TIMEOUT_MS);
+        const startedAt = Date.now();
+        try {
+          const r = await fetch(`${notifyUrl}/functions/v1/notify-order-purchased`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${serviceKey}`,
+              'Authorization': `Bearer ${notifyKey}`,
             },
             body: JSON.stringify({ order_id: orderId }),
-          })
-            .then(async (r) => {
-              const t = await r.text().catch(() => '');
-              console.log('[grant-access-for-order] notify-order-purchased status=' + r.status + ' body_short=' + t.slice(0, 300));
-            })
-            .catch((e) => console.warn('[grant-access-for-order] notify-order-purchased fire-and-forget error:', (e as Error)?.message || e));
-          // Keep the fire-and-forget alive after the response returns.
-          // Without waitUntil, Deno edge runtime may abort in-flight fetches at response return.
-          try {
-            const er = (globalThis as any).EdgeRuntime;
-            if (er && typeof er.waitUntil === 'function') er.waitUntil(notifyPromise);
-          } catch (_) { /* noop */ }
+            signal: ctrl.signal,
+          });
+          const text = await r.text().catch(() => '');
+          const elapsed = Date.now() - startedAt;
+          if (r.ok) {
+            console.log('[grant-access-for-order] notify-order-purchased status=' + r.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
+          } else {
+            console.warn('[grant-access-for-order] notify-order-purchased non-2xx status=' + r.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
+          }
+        } catch (notifyErr) {
+          const elapsed = Date.now() - startedAt;
+          console.warn('[grant-access-for-order] notify-order-purchased await error (ignored, grant OK) elapsed_ms=' + elapsed + ' msg=' + ((notifyErr as Error)?.message || String(notifyErr)));
+        } finally {
+          clearTimeout(timer);
         }
-      } catch (notifyErr) {
-        console.warn('[grant-access-for-order] notify-order-purchased scheduling error (ignored):', notifyErr);
+      } else {
+        console.warn('[grant-access-for-order] notify-order-purchased skipped: SUPABASE_URL/SERVICE_ROLE_KEY missing');
       }
     }
 
