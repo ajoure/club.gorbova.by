@@ -509,3 +509,29 @@ PATCH-ADMIN-PURCHASE-NOTIFY-V1: VERIFIED, PASS
 DB trigger / outbox:              NOT REQUIRED (await path достаточно)
 waitUntil retry-only approach:    REJECTED
 ```
+
+---
+
+## PATCH-EMAIL-FOOTER-UTF8-V1 — Отчёт о выполнении
+
+**Diagnose.** Diff rendered_html двух писем (ORD-26-00305 vs ORD-26-00308):
+- 305: байты `С` (D0 A1) в подписи заменены на `EF BF BD EF BF BD` (два U+FFFD) → отображается `�� уважением,`
+- 308: те же байты в подписи целы → `С уважением,`
+- В обоих письмах preview-текст содержал `(��е CB)` вместо `(не CB)` — байт `н` (D0 BD) корраптился.
+
+**Root cause.** `renderAsync` из `@react-email/components@0.0.22` использует `ReadableStream + TextDecoder` без stream-mode; многобайтные UTF-8 символы, попадающие на границу chunk-а, декодируются как невалидные и заменяются на U+FFFD. Из-за нестабильных границ chunk-ов подпись повреждалась только на некоторых рендерах.
+
+**Fix (`supabase/functions/send-transactional-email/index.ts`).**
+1. `renderAsync` → синхронный `render` из `npm:@react-email/render@0.0.17` (не использует streaming pipeline).
+2. Post-render guard: считает `\uFFFD` в HTML и plain-text; при обнаружении пишет `console.error('email_utf8_replacement_detected', …)` с `messageId`, `templateName`, `recipient`, counts. **Non-blocking** — письмо всё равно уходит покупателю.
+3. `renderEmail` вызывается через `await` — совместимо и с sync, и с Promise-возвратом.
+
+**Verify (preview send без нового заказа).**
+- Идемпотентный тестовый вызов `send-transactional-email` (`utf8-hotfix-preview-3`, product-purchased, тем же контентом что в 305) → `success: true`.
+- В response `rendered_html`: подпись `С уважением,<br/>команда Екатерины Горбовой` — без U+FFFD.
+- В `rendered_html` preview: `(не CB)` — без U+FFFD.
+- В `rendered_text`: `С уважением,` — без U+FFFD.
+
+**Транспорт.** `<meta charset="UTF-8">` и `Content-Type: text/html; charset=UTF-8` уже присутствуют в шаблоне — не меняли.
+
+**Статус:** PATCH-EMAIL-FOOTER-UTF8-V1: VERIFIED, PASS. Non-blocking, не переоткрывает Sprint C2.
