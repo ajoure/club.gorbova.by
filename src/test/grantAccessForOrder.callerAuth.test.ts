@@ -259,8 +259,10 @@ describe("SEC-A / enforceBranchPolicy — permission matrix", () => {
   it("12. service-role subscription_renewal → allow", () => {
     expect(enforceBranchPolicy("subscription_renewal", svc)).toBeNull();
   });
-  it("service-role adminManualAccessEdit → allow (handler still requires admin JWT for actor)", () => {
-    expect(enforceBranchPolicy("adminManualAccessEdit", svc)).toBeNull();
+  it("service-role adminManualAccessEdit → 403 forbidden_admin_only (CLOSURE-1 contract correction)", () => {
+    const r = enforceBranchPolicy("adminManualAccessEdit", svc);
+    expect(r?.status).toBe(403);
+    expect(r?.body.error).toBe("forbidden_admin_only");
   });
   it("service-role legacy_body_alias → allow", () => {
     expect(enforceBranchPolicy("legacy_body_alias", svc)).toBeNull();

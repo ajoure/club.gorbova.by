@@ -228,12 +228,13 @@ Deno.serve(async (req) => {
 
     const _body = await req.json().catch(() => ({}));
 
-    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A ─────────────────────────────
+    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A (CLOSURE-1) ────────────────
     // Caller authorization. MUST run before any orderId parsing, order
     // lookup, audit write, three_ds_writer delegation, or service-role
     // DML. Anonymous/invalid → 401. Ordinary user → 403. Branch policy:
-    //   standard / adminManualAccessEdit / legacy_body_alias: service_role OR admin
-    //   3ds_finalize / subscription_renewal:                   service_role only
+    //   standard / legacy_body_alias:          service_role OR admin
+    //   adminManualAccessEdit:                 admin only (service_role → 403)
+    //   3ds_finalize / subscription_renewal:   service_role only
     const authResult = await resolveGrantAccessCaller(req, supabase);
     if (!authResult.ok) {
       return new Response(
@@ -367,10 +368,11 @@ Deno.serve(async (req) => {
     // already fulfilled order must not become a no-op. It updates only the primary
     // access window for the order's user/product and writes a server-side audit.
     if (adminManualAccessEdit === true) {
-      // SEC-A: caller identity already resolved and branch policy enforced
-      // (service_role OR admin). For the "admin edit" audit we need a real
-      // actor_user_id + email; service_role has none, so we require an admin
-      // JWT here explicitly.
+      // SEC-A / CLOSURE-1: caller identity already resolved and branch policy
+      // enforced (admin only for adminManualAccessEdit). This inner guard is
+      // defense-in-depth: if the matrix ever regresses, a service_role or
+      // non-admin caller reaching here still cannot proceed without a real
+      // admin actor for audit attribution.
       if (caller.type !== "admin" || !caller.actor) {
         return new Response(
           JSON.stringify({ success: false, error: "admin_manual_access_edit_requires_admin_jwt" }),

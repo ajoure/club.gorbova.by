@@ -10,12 +10,12 @@
  *   returned as `claimed_*` only.
  * - Does NOT log tokens (full or partial).
  *
- * Branch matrix:
+ * Branch matrix (CLOSURE-1 correction):
  *
  *   Branch                  service_role  admin  ordinary_user
  *   ----------------------- ------------ ------ --------------
  *   standard                     ✓         ✓         ✗
- *   adminManualAccessEdit        ✓         ✓         ✗
+ *   adminManualAccessEdit        ✗         ✓         ✗   ← admin-only
  *   3ds_finalize                 ✓         ✗         ✗
  *   subscription_renewal         ✓         ✗         ✗
  *   legacy_body_alias            ✓         ✓         ✗
@@ -154,11 +154,17 @@ export function enforceBranchPolicy(branch: Branch, caller: ResolvedCaller): Aut
 
   switch (branch) {
     case "standard":
-    case "adminManualAccessEdit":
     case "legacy_body_alias":
       // service_role OR admin
       if (t === "service_role" || t === "admin") return null;
       return { ok: false, status: 403, body: { success: false, error: "forbidden_branch" } };
+
+    case "adminManualAccessEdit":
+      // admin-only (CLOSURE-1 contract correction: service_role denied here;
+      // callers of this branch are frontend admin UI paths and require a
+      // real admin actor for audit attribution).
+      if (t === "admin") return null;
+      return { ok: false, status: 403, body: { success: false, error: "forbidden_admin_only" } };
 
     case "3ds_finalize":
     case "subscription_renewal":
