@@ -908,10 +908,14 @@ serve(async (req) => {
           (apiReachabilityCheck.status !== "ok" || webhookRuntimeCheck.status !== "verified")
         ) {
           overall = "battle_awaiting_first_order";
-        } else if (apiReachabilityCheck.status === "ok") {
+        } else if (
+          apiReachabilityCheck.status === "ok" &&
+          webhookRuntimeCheck.status === "verified"
+        ) {
           overall = "connected";
         } else {
-          // test без probe-заказа — честный промежуточный статус.
+          // Инвариант: overall=connected требует webhook_runtime=verified.
+          // Test без верифицированного webhook — честный промежуточный статус.
           overall = "battle_awaiting_first_order";
         }
 
