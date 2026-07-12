@@ -43,3 +43,9 @@ verify_jwt = true
 
 [functions.rr-admin-deliver-test-webhook]
 verify_jwt = true
+
+# PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-B
+# Platform JWT wall in front of grant-access-for-order.
+# In-code auth guard (SEC-A) remains as defense-in-depth.
+[functions.grant-access-for-order]
+verify_jwt = true
