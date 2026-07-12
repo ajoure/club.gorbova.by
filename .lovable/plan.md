@@ -2744,3 +2744,335 @@ RR cleanup (Phase I): BLOCKED
 
 Никакие DML/DDL/edge/UI изменения в текущем ответе не производятся.
 
+
+---
+
+## C23. APPEND-ONLY CORRECTION — arithmetic fix + revised B2/C2/A1R2 gates (2026-07-12)
+
+Этот раздел append-only. C18–C22 не переписываются; настоящий C23 переопределяет только те пункты, которые в нём явно перечислены. При конфликте с C18/C19/C20/C21 приоритет — C23.
+
+### C23.1. Исправление арифметики C18 (117 admin_from_payment)
+
+В C18.1 была пропущена отдельная категория `duplicate_of_safe_backfill = 1` (строка `ca7cde79…`, дублирующая один из четырёх подтверждённых safe-backfill). Корректная взаимно исключающаяся карта:
+
+```text
+admin_from_payment — 117:
+  safe_backfill                            4
+  full_match_duplicate                    24
+  canonical_order_correct_duplicate       14
+  duplicate_recovered                      1
+  duplicate_of_safe_backfill               1   ← пропущено в C18
+  legacy_null_order                       10
+  canonical_order_relink_candidate        52
+  both_wrong_review                        1
+  z_other_financial_conflict               2
+  missing_source_ambiguous                 8
+  ---------------------------------------------
+  total                                  117
+```
+
+Сводная карта 327:
+
+```text
+A2a backfill                              4
+
+A2a archive:
+  admin_from_payment archive candidates  50   (24 + 14 + 1 + 1 + 10 = 50)
+  admin_grant                           201
+  admin_test                              8
+  admin_deal_only                         1
+  ---------------------------------------------
+A2a archive total                       260
+
+A2b relink review                        52
+hard HOLD                                11   (1 + 2 + 8)
+  ---------------------------------------------
+total                                   327
+```
+
+Прежняя фраза «archive/review candidates = 323» — некорректна. Правильно: archive = 260, relink review = 52, HOLD = 11, backfill = 4.
+
+Формулировка `legacy_null_order` в C18 уточняется: не «суммарно 0 денег», а **«дополнительный денежный эффект = 0, поскольку canonical payment уже существует»**. Сами legacy-строки при этом могут иметь ненулевую `amount`.
+
+### C23.2. B2 — обязательные правки перед EXECUTE
+
+C19 SQL корректируется по трём пунктам. Только после этих правок B2 разрешена к применению как schema-only.
+
+**(a) Не использовать `GRANT ALL` для архива.** Архив после вставки — неизменяем.
+
+```sql
+REVOKE ALL ON TABLE public.payments_legacy_archive FROM PUBLIC;
+REVOKE ALL ON TABLE public.payments_legacy_archive FROM anon;
+REVOKE ALL ON TABLE public.payments_legacy_archive FROM authenticated;
+
+GRANT SELECT, INSERT
+  ON TABLE public.payments_legacy_archive
+  TO service_role;
+-- UPDATE / DELETE / TRUNCATE / TRIGGER для service_role не выдаём.
+```
+
+RLS остаётся включённой, политик для anon/authenticated нет (write-only через service_role).
+
+**(b) Обязательная проверка привилегий post-migration:**
+
+```sql
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema = 'public'
+  AND table_name = 'payments_legacy_archive'
+ORDER BY grantee, privilege_type;
+```
+
+Ожидание: только `service_role` c `SELECT` и `INSERT`. Для `anon` и `authenticated` — 0 строк.
+
+**(c) B2 остаётся строго schema-only.** Запрещено в этой миграции:
+- любые `INSERT` в `payments_legacy_archive`;
+- любые `UPDATE` legacy-строк `payments_v2`;
+- soft-delete существующих строк;
+- изменение `provider`;
+- любое удаление данных.
+
+Post-check после применения:
+
+```text
+payments_v2 WHERE is_deleted IS DISTINCT FROM false    = 0
+payments_v2 WHERE deleted_at   IS NOT NULL             = 0
+payments_v2 WHERE deleted_by   IS NOT NULL             = 0
+payments_legacy_archive count                          = 0
+```
+
+Состав колонок soft-delete из C19 — принят без изменений: `is_deleted`, `deleted_at`, `deleted_by (ON DELETE SET NULL)`, `deleted_reason`, `deletion_context`. Отдельного индекса только на `is_deleted` не создаётся.
+
+**Статус B2:** AUTHORIZED — SCHEMA ONLY, после применения (a)+(b)+(c).
+
+### C23.3. C2 — NOT AUTHORIZED, требуется revised dry-run
+
+C20-контракт `recalc_order_totals` пересматривается. До SQL-миграции подрядчик обязан представить revised dry-run со следующими пунктами:
+
+**(1) SoT суммы сделки.** До кода — установить фактическую canonical-колонку. Проверить `orders_v2.amount`, `final_price`, `base_price` на реальных данных. Разрешённый порядок (пример; финальный — после инвентаризации):
+
+```text
+target_amount := COALESCE(final_price, amount, base_price)
+```
+
+Запрещено: `COALESCE(final_price, paid_sum)` — при `final_price IS NULL` статус `partial` становится недостижимым.
+
+**(2) Currency guard.** Запрещено суммировать `BYN`, `EUR`, `PLN` в одной сделке. Функция:
+- берёт `orders_v2.currency`;
+- учитывает только платежи с той же currency;
+- при обнаружении активного платежа другой валюты — не выполняет молчаливый пересчёт, возвращает/логирует `currency_mismatch`, `orders_v2` не меняет.
+
+**(3) Refund representation matrix — read-only до кода.** Обязательный отчёт по фактической модели refund в БД:
+
+```text
+Для каждого refund-случая зафиксировать:
+  status
+  transaction_type
+  reference_payment_id / meta.parent_payment_id / meta.parent_payment_uid
+  amount (знак)
+  refunded_amount на родителе
+  refunds jsonb (если есть)
+```
+
+Цель — доказать, хранится ли refund:
+- только в `refunded_amount` родителя;
+- или отдельной refund-строкой (`amount < 0` / `transaction_type='refund'` / `meta.type='refund'`);
+- или одновременно обоими способами (canonical writer — см. mem: partial-refund-state).
+
+Без этой матрицы функция может вычесть возврат дважды или не вычесть совсем.
+
+**(4) Исправленный status algorithm.** Считать отдельно:
+
+```text
+gross_succeeded  := Σ amount по non-refund payments со статусом paid/succeeded/refunded, amount > 0, same currency
+refunded_total   := Σ p.refunded_amount по non-refund payments  (canonical)
+                    + Σ |amount| по refund-rows, у которых parent не найден
+                                                  или parent.refunded_amount <= 0
+                    (правило см. mem: partial-refund-state — без double-count)
+net_paid         := gross_succeeded − refunded_total
+target_amount    := см. (1)
+```
+
+Ветки (в этом порядке):
+
+```text
+if gross_succeeded > 0 AND net_paid = 0
+    → refunded
+elsif net_paid >= target_amount − 0.01
+    → paid
+elsif net_paid > 0 AND net_paid < target_amount − 0.01
+    → partial
+elsif gross_succeeded = 0
+    → keep допустимый non-financial статус, иначе pending
+```
+
+Порядок «сначала `paid_sum = 0 → pending`, потом refund» из C20 — запрещён.
+
+**(5) Глобальный AFTER INSERT/UPDATE/DELETE trigger — не создавать в C2.** Слишком широкий runtime-риск для webhook/recurring/refund/reconciliation до их поэтапной миграции. В первой версии C2:
+
+```text
+- создать только функцию recalc_order_totals(p_order_id uuid)
+- НЕ создавать глобальный trigger на payments_v2
+- явные вызовы из: admin-payment-create, admin-payment-delete,
+                    admin-order-delete, bulk delete,
+                    последовательно мигрируемых writer-ов
+```
+
+Глобальный trigger — отдельный этап после C3 и runtime-smoke всех старых writer-ов.
+
+**(6) refunded_amount invariant — через CHECK, не trigger.** Сначала read-only проверка:
+
+```sql
+SELECT id, amount, refunded_amount
+FROM payments_v2
+WHERE COALESCE(refunded_amount, 0) < 0
+   OR COALESCE(refunded_amount, 0) > amount;
+```
+
+При 0 нарушений — добавить:
+
+```sql
+ALTER TABLE public.payments_v2
+  ADD CONSTRAINT payments_v2_refunded_amount_bounds
+  CHECK (
+    refunded_amount IS NULL
+    OR refunded_amount BETWEEN 0 AND amount
+  ) NOT VALID;
+
+ALTER TABLE public.payments_v2
+  VALIDATE CONSTRAINT payments_v2_refunded_amount_bounds;
+```
+
+Отдельный trigger для этой проверки не нужен.
+
+**(7) SQL security функции.** Обязательно:
+
+```sql
+CREATE OR REPLACE FUNCTION public.recalc_order_totals(p_order_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$ ... $$;
+
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.recalc_order_totals(uuid) FROM authenticated;
+-- вызов только через service_role / SECURITY DEFINER server-side пути
+```
+
+**(8) Baseline simulation.** До применения — прогнать функцию в read-only mode (SELECT-only симуляция) по всем существующим `orders_v2` и приложить сводку:
+
+```text
+paid    → paid       : N
+paid    → partial    : N
+paid    → refunded   : N
+partial → paid       : N
+... и т.д. по всем переходам
+currency_mismatch    : N
+unchanged            : N
+```
+
+**Статус C2:** NOT AUTHORIZED. Требуется revised dry-run со всеми пунктами (1)–(8). Только после ревью — миграция.
+
+### C23.4. A1R2 — авторизован независимо от C2
+
+Read-only анализ 52 relink-кандидатов можно выполнять параллельно с B2. Ждать `recalc_order_totals` не нужно.
+
+Правило «≥ 2 независимых доказательств» уточняется:
+
+**Сильное доказательство (обязательно минимум одно):**
+- provider tracking/reference id;
+- statement row с точным reference;
+- invoice/order reference от провайдера;
+- однозначный идентификатор платежа в metadata.
+
+**Второе доказательство (любое из):**
+- profile/contact match;
+- email/phone match;
+- product/tariff/offer match;
+- amount + currency + date match;
+- order metadata match.
+
+**НЕ считать независимыми** (созданы одним старым matcher-процессом):
+
+```text
+legacy.order_id
+payment_reconcile_queue.matched_order_id
+```
+
+**Категории результата:**
+
+```text
+relink_confirmed         — сильное + второе, оба независимы
+canonical_link_confirmed — доказательства подтверждают ТЕКУЩУЮ связь; relink не нужен
+ambiguous_no_change      — доказательств недостаточно
+```
+
+Для каждой `relink_confirmed` строки — показать impact для старой и новой сделки (какие payments перепривязываются, какой был бы пересчёт `target_amount`, статусы). Никаких `UPDATE`, `access_grant_ledger` grant/revoke на этом этапе не выполнять.
+
+Итог отчёта: `52 = relink_confirmed + canonical_link_confirmed + ambiguous_no_change`.
+
+### C23.5. Следующий checkpoint — три независимых блока
+
+**Блок 1. B2 — EXECUTE report**
+- migration SHA;
+- список применённых колонок (`is_deleted`, `deleted_at`, `deleted_by`, `deleted_reason`, `deletion_context`);
+- создание `payments_legacy_archive` (RLS on, no policies);
+- итог `information_schema.role_table_grants` (только service_role: SELECT, INSERT);
+- четыре post-check из C23.2(c);
+- подтверждение: 0 DML по legacy-строкам.
+
+**Блок 2. C2 — revised dry-run (не применять)**
+- фактический `target_amount` SoT по (1);
+- refund representation matrix по (3);
+- currency guard по (2);
+- исправленный status algorithm по (4);
+- SQL функции по (5), (7);
+- явное отсутствие глобального trigger;
+- security/grants;
+- baseline simulation по (8).
+
+**Блок 3. A1R2 — read-only report**
+- `52 = relink_confirmed + canonical_link_confirmed + ambiguous_no_change`;
+- список независимых доказательств для каждой строки;
+- impact dry-run;
+- список `ambiguous_no_change` IDs;
+- 0 `UPDATE`.
+
+### C23.6. Итоговый статус
+
+```text
+PATCH-PAYMENTS-MANAGEMENT-V2:
+
+C18:
+  SUPERSEDED BY C23.1 (arithmetic fixed; legacy_null_order wording fixed)
+
+B2:
+  AUTHORIZED — SCHEMA ONLY
+  после применения C23.2 (a) GRANT/REVOKE, (b) grants post-check,
+                   (c) no-DML invariants
+
+C1 inventory:
+  PARTIALLY ACCEPTED (target_amount SoT требует подтверждения в C2 dry-run)
+
+C2 migration:
+  NOT AUTHORIZED
+  REVISED DRY-RUN REQUIRED (пункты 1..8 из C23.3)
+
+A1R2:
+  AUTHORIZED — READ-ONLY ONLY, независимо от C2
+
+A2 / provider backfill / archive execute:
+  BLOCKED
+
+A4 provider CHECK:
+  BLOCKED
+
+D / E payment management:
+  BLOCKED UNTIL C2 APPROVED
+
+CODE CHANGES:
+  STILL BLOCKED
+```
+
