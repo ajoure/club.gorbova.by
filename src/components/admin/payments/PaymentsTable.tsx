@@ -675,6 +675,13 @@ export default function PaymentsTable({
             </Badge>
           );
         }
+        if (prov === 'rr') {
+          return (
+            <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600 dark:border-amber-400 dark:text-amber-300">
+              Ресурс Развития
+            </Badge>
+          );
+        }
         return <Badge variant="outline" className="text-[10px]">{payment.provider || '—'}</Badge>;
       }
 
