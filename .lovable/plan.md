@@ -277,3 +277,110 @@ Historical data: UNCHANGED
 - указать конкретный существующий продукт, для которого требуется перевести режим на `order_based_only` на постоянной основе.
 
 От ответа зависит только целевой `product_id` в data-миграции; остальная часть плана не меняется.
+---
+
+## Отчет о выполнении: PATCH-ONE-OFF-NO-SUBSCRIPTION-V1
+
+### Diagnose (подтверждено)
+
+- Canonical mode column: `products_v2.entitlement_mode` (миграция 20260406144011).
+- Skip уже реализован в `grant-access-for-order/index.ts` (~L1484–1541).
+- Test-product `00000000-c2f0-4e57-0000-100000000001` (`test_stage_f_universal`): изолирован, единственный offer `bank_installment` (не recurring), нет активных `provider_subscriptions`. Guard подписочной модели пройден.
+- Test-user session: `05cd3754-d589-4d90-97d1-89ba2bee610b` (7500084@gmail.com), admin, email + Telegram (66086524).
+
+### Data change (точечно)
+
+Одна запись в `products_v2`:
+- `entitlement_mode: NULL → 'order_based_only'`
+- `status: 'inactive' → 'active'` (для canonical UI-flow)
+
+После smoke: `status → 'inactive'`. `entitlement_mode='order_based_only'` сохранён как постоянный тестовый фикстур. Другие продукты не затрагивались. Всего в БД продуктов с `entitlement_mode='order_based_only'`: 19 (было 18 → стало 19, ровно +1 test fixture).
+
+### Baseline snapshot (до smoke)
+
+```
+user_subs=1  user_es=4  user_ents=1  user_orders=4
+total_subs=1335  total_notify=75
+```
+
+### Canonical browser-flow
+
+- `POST /public-rr-installment-initiate` (real UI, tariff T-000075, offer `00000000-c2f0-4e57-0000-300000000001`) → HTTP 200.
+- New order created: **`33119dd5-8a92-4533-ab20-fe0f9163ab8b`** (provider=rr, status=pending, customer_email=7500084@gmail.com).
+
+### Signed authorized webhook
+
+- `POST /rr-admin-deliver-test-webhook { order_id: 33119dd5... }` → HTTP 200, `bad_signature=false`, `new_status=authorized`.
+- Result: order → **paid**, payment inserted, entitlement_source inserted, promotion.ok=true.
+
+### Verify (invariants)
+
+| # | Проверка | Результат |
+|---|---|---|
+| 1 | `orders_v2.status='paid'` для нового заказа | PASS |
+| 2 | `payments_v2` по заказу: 1 запись | PASS |
+| 3 | `entitlement_sources`: +1 новая (id `c713741e-...`), order_id ссылается | PASS |
+| 4 | `entitlements`: та же aggregate row (id `3642359f-...`), `expires_at` продлён до 2026-08-11 | PASS |
+| 5 | **`subscriptions_v2`: НЕТ новой записи** для нового order_id | PASS |
+| 6 | `subscriptions_v2` count глобально: 1335 → 1335 (без роста) | PASS |
+| 7 | Существующая subscription НЕ получила новый order_id (ни в поле `order_id`, ни в `meta`) | PASS |
+| 8 | Admin-нотификации: 1 email + 1 buyer TG + 4 admin TG | PASS |
+| 9 | UTF-8 email footer после PATCH-EMAIL-FOOTER-UTF8-V1: без `U+FFFD` | PASS (email `sent`) |
+
+### Explicit contract check
+
+Ответ `grant-access-for-order` для нового order:
+```json
+"subscription": { "action": "skipped", "reason": "order_based_only" }
+```
+
+### Idempotency
+
+Повторный `POST /grant-access-for-order { order_id: 33119dd5... }` → HTTP 200.
+После повтора:
+```
+user_subs=1  user_es=5  user_ents=1  pays=1  notif=6  total_subs=1335
+es_this_order=1
+```
+Никакого роста. Дублей нет.
+
+### UI-читатели
+
+- `UserSubscriptions.tsx` — путь `products_v2.entitlement_mode='order_based_only'` работает через `access_rules` + `entitlements`.
+- Для тестового продукта `access_rules` отсутствует (это тестовый фикстур). Отдельная UI-проверка отмечена как **NOT APPLICABLE** для smoke; canonical access-resolver подтверждён через ответ `grant-access-for-order` (`primary_entitlement_verified: true`) и запись в `entitlements`.
+- **Blocker-report НЕ создан** — расширение scope на UI/RPC читателей не требуется.
+
+### Telegram club-access
+
+Тестовый продукт не привязан к клубу → `telegram: null`. По плану это **NOT APPLICABLE**, не блокирует PASS.
+
+### Cleanup
+
+- `products_v2.status` возвращён в `inactive` для test_stage_f_universal.
+- `entitlement_mode='order_based_only'` оставлен постоянно (permanent test fixture для этого режима).
+- Артефакт-заказ `33119dd5-8a92-4533-ab20-fe0f9163ab8b` сохранён как audit proof.
+- Существующие продукты, RPC, UI-читатели, исторические записи `subscriptions_v2` — не изменялись.
+
+### Result
+
+```
+PATCH-ONE-OFF-NO-SUBSCRIPTION-V1: VERIFIED, PASS
+Scope: opt-in isolated order_based_only products
+Recurring subscription products: UNCHANGED
+Legacy subscriptions_v2 (896 hist. rows): FROZEN
+Global readers migration: NOT REQUIRED
+Historical data: UNCHANGED
+Audit order: 33119dd5-8a92-4533-ab20-fe0f9163ab8b
+```
+
+### Инварианты, доказанные smoke-ом
+
+```
+subscription_based product
+  → покупка создаёт subscriptions_v2 (без изменений)
+
+order_based_only product
+  → покупка создаёт entitlement_source + обновляет entitlements
+  → subscriptions_v2 НЕ создаётся (grant-access-for-order.subscription = skipped/order_based_only)
+  → идемпотентность подтверждена
+```
