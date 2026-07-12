@@ -414,3 +414,144 @@ stats parity подтверждён
 - `src/components/integrations/rr/RRSettingsCard.tsx` — рендер конкретной ошибки, заполнение granular-блока при `status='error'`.
 - Миграция/точечный UPDATE `integration_instances.config.mode` РР с `battle` → `test` (после подтверждения `active battle RR orders = 0`).
 - `.lovable/plan.md` — append-only секция с отчётом.
+---
+
+# Отчет о выполнении: PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION
+
+## Root cause (Diagnose)
+
+Пробный `curl /integration-healthcheck` до правок вернул старый контракт:
+
+```json
+{"success":true,"data":{"api_test":"pending_backend","credentials_status":"configured","mode":"battle","note":"Ключи сохранены. API-проверка будет доступна после подключения backend-адаптера РР.","provider":"rr"}}
+```
+
+Итог: исходник в репозитории был обновлён под truthful-контракт, но задеплоенная версия функции оставалась старой. UI ждал `data.overall`, получал `undefined` → падал в generic `toast.error("Ошибка: проверка не пройдена")`. Пять granular-полей заполнялись из `payload_meta` последнего лога, а тот тоже писался в старом shape — отсюда пять тире.
+
+Role guard не был причиной: `has_role(user, 'superadmin'::app_role)` в БД делегируется в `has_role_v2(user, 'super_admin')` (CASE-мэппинг в теле функции).
+
+## Правки
+
+1. `supabase/functions/integration-healthcheck/index.ts`, RR-ветка полностью переписана:
+   - каждая подпроверка (`backend`, `credentials`, `api_reachability`, `webhook_endpoint`, `webhook_runtime`) в изолированном `try/catch` с единым shape `{status, code?, message?}`;
+   - в ответе — `contract_version = "rr-status-truthful-v1-correction"`;
+   - `webhook_runtime` теперь mode-scoped: событие ищется через `provider_events.related_order_id → orders_v2.meta.rr.mode = текущий mode`. Старый test-event не подтверждает battle;
+   - `last_operation` mode-specific (test → `rr_test_ledger`, battle → `payments_v2` + `orders_v2.meta.rr.mode='battle'`);
+   - `rrGetOrderStatus` обёрнут в `Promise.race` с таймаутом 10 s. Таймаут = `{status:"error", code:"rr_status_timeout"}`;
+   - `backend` = `ok` только если RR-модули импортируются и (при configured credentials) `loadRRConfig` не падает; иначе `error` с конкретным кодом;
+   - в UI-ответ добавлено `error_message` (первая критичная ошибка) — без секретов, без сырого RR-ответа;
+   - auth-guard (JWT + super_admin) применяется до подпроверок и оставлен как есть.
+2. `src/components/integrations/rr/RRSettingsCard.tsx`: toast при `overall="error"` теперь показывает первую критичную подпроверку в формате «Проверка РР не пройдена: API режима — HTTP 401» / «... — РР не ответил за установленное время» / «... — ошибка чтения последней операции». Секреты и полный ответ провайдера не рендерятся.
+3. Одноразовый guarded UPDATE `integration_instances.config.mode`: `battle → test` только при `provider='rr'` и `NOT EXISTS (battle RR orders)`. Идемпотентен, повторное применение — no-op. Логины, пароли и остальные поля не тронуты.
+
+## Deploy
+
+- `supabase--deploy_edge_functions(["integration-healthcheck"])` → Successfully deployed.
+- Runtime probe после deploy подтверждает новый `contract_version`.
+
+## Proofs
+
+### A. Healthcheck test-mode (после возврата в test)
+
+```json
+{
+  "success": true,
+  "data": {
+    "contract_version": "rr-status-truthful-v1-correction",
+    "provider": "rr",
+    "mode": "test",
+    "overall": "connected",
+    "checks": {
+      "backend":          { "status": "ok" },
+      "credentials":      { "status": "configured" },
+      "api_reachability": { "status": "ok", "probed_external_id": "rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c" },
+      "webhook_endpoint": { "status": "configured" },
+      "webhook_runtime":  { "status": "verified", "message": "2026-07-12T15:25:37.841307+00:00" }
+    },
+    "last_operation": {
+      "at": "2026-07-11T08:40:22.659706+00:00",
+      "order_id": "4d45d297-6ab6-4380-9212-39691a3d84b6",
+      "external_id": "rr_test_20ba34b8-b7a9-42cc-a601-6d100b1c2b7c",
+      "amount_minor": 150000,
+      "currency": "BYN"
+    },
+    "error_message": null
+  },
+  "error": null
+}
+```
+
+HTTP 200. Все пять `checks` — `ok`/`configured`/`verified`. `last_operation` заполнена. Webhook runtime подтверждён test-событием (`create_order_succeeded`, signature_valid=true, related_order с `meta.rr.mode='test'`).
+
+### B. Healthcheck battle preview (до возврата в test)
+
+```json
+{
+  "success": false,
+  "data": {
+    "contract_version": "rr-status-truthful-v1-correction",
+    "provider": "rr",
+    "mode": "battle",
+    "overall": "battle_awaiting_first_order",
+    "checks": {
+      "backend":          { "status": "ok" },
+      "credentials":      { "status": "configured" },
+      "api_reachability": { "status": "not_verified", "code": "no_battle_order_yet", "message": "Боевой заказ ещё не выполнен", "probed_external_id": null },
+      "webhook_endpoint": { "status": "configured" },
+      "webhook_runtime":  { "status": "not_verified", "code": "no_battle_events_yet" }
+    },
+    "last_operation": null,
+    "error_message": null
+  },
+  "error": null
+}
+```
+
+HTTP 200. `overall = battle_awaiting_first_order`, generic error отсутствует, ожидаемый контракт соблюдён.
+
+### C. Payments visibility (до очистки)
+
+```
+DB provider='rr'                          : 12
+DB origin='rr_installment'                : 12
+DB provider='rr' OR origin='rr_installment': 12
+Duplicates (order_id с count>1 в provider='rr'): 0
+Audit order 33119dd5-8a92-4533-ab20-fe0f9163ab8b:
+  payment_id = 1302ac0d-adf4-493e-9b7a-5ec6e192d200
+  provider   = rr
+  origin     = rr_installment
+  status     = succeeded
+```
+
+Диапазон фильтра UI и CSV/stats-parity фиксируются повторным прогоном перед запуском cleanup (следующий отчёт Task 2).
+
+### D. Mode перед cleanup
+
+```
+integration_instances.provider='rr'
+  id     = f5fff10f-28a6-4e36-acad-6faacee2b2ac
+  alias  = Ресурс Развития
+  mode   = test           ← было battle
+  status = disconnected   ← до следующего клика «Проверить»
+  battle_login preserved, test_login preserved
+  active battle RR orders = 0
+```
+
+## Решение по переходу
+
+```
+PATCH-RR-STATUS-TRUTHFUL-V1-CORRECTION: PASS
+  - CODE IMPLEMENTED
+  - TYPECHECK PASS
+  - RUNTIME VERIFIED (test + battle preview)
+  - MODE RETURNED TO TEST
+PATCH-RR-TEST-CLEANUP-V1 implementation:  AUTHORIZED (proofs A+B+C+D собраны)
+Cleanup execute:                          BLOCKED до отдельного go-signal пользователя
+Battle go-live:                           BLOCKED
+```
+
+## Out of scope (не сделано намеренно)
+
+- Реализация `admin_rr_cleanup_test_data` и UI cleanup — Task 2.
+- Переключение обратно в боевой режим и go-live — Task 3.
+- Восстановление ранее затёртой истории `.lovable/plan.md` (заголовок «# да, согласен, с учетом правок:» и Sprint C2) — отдельный doc-fix, не входит в этот патч. Настоящий отчёт добавлен строго append-only.
