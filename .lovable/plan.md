@@ -1,421 +1,221 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-План можно запускать после следующих уточнений.
+## 1. Этим этапом нельзя закрыть весь Sprint C2
 
-**1. Не блокировать повторную покупку после**
+После PASS можно закрыть только:
 
-**paid**
+```text
+Sprint C2 — Этап D: VERIFIED, PASS
 
-Сейчас раздел C.4 формулирует:
+```
 
-authorized/paid + те же данные → без дубля
+Общий статус `Sprint C2: VERIFIED, PASS` возможен только после завершения и проверки Этапов B, C, E и F:
 
-Это нельзя трактовать как вечный запрет.
+- самостоятельные основания доступа и revoke/recalculation;
+- повторные заявки с разными данными;
+- CRM contact/deal lifecycle;
+- универсальная кнопка на другом продукте.
 
-Правильное правило:
+Исправить итоговую метку DoD.
 
-- пока заявка обрабатывается (pending, created, outcome_unknown, operator_required) — повтор с теми же данными возвращает существующий заказ;
-- быстрый повтор в пределах 60–120 секунд — dedup;
-- после rejected, canceled, not_created — новая заявка разрешена;
-- после paid — новая самостоятельная покупка того же оффера также разрешена после короткого cooldown;
-- другой email или телефон заявителя — новая заявка разрешена сразу.
+## 2. Исправить ожидание по `commission_history`
 
-Иначе пользователь никогда не сможет повторно купить тот же продукт.
+При первом заполнении комиссии:
 
-**2. Не превращать**
+```text
+commission отсутствует → commission записана
 
-**access_grant_ledger**
+```
 
-**в изменяемую таблицу, если это audit-ledger**
+`commission_history` не должна обязательно получать запись. История нужна при **замене уже существовавшего значения**.
 
-Discovery должен сначала установить его семантику.
+Ожидаемая последовательность:
 
-Если access_grant_ledger — неизменяемый журнал событий, нельзя добавлять в него изменяемые status/revoked_at и использовать его как единственный source of truth.
+1. Первое значение → `updated`, актуальная `meta.commission`, history пустая или отсутствует.
+2. То же значение → `unchanged`, history не растёт.
+3. Другое значение → старое значение добавляется в history, актуальное заменяется.
 
-Тогда нужен минимальный add-only объект вроде:
+Не считать отсутствие history после первого enrichment ошибкой.
 
-entitlement_sources
+## 3. Failure isolation — не менять secrets и endpoint
 
-с одной записью на основание доступа и уникальным ключом:
+Запрещено временно:
 
-source_type + source_id
+- портить `test_password` или `secret_key`;
+- менять общий RR endpoint;
+- затрагивать integration instance, который может использоваться другими запросами.
 
-Для покупки:
+Использовать существующий изолированный test-only механизм. Если его нет, не добавлять новый механизм только ради этой проверки без отдельного плана.
 
-source_type='order'
+Допустимый вариант без изменения кода:
 
-source_id=orders_[v2.id](http://v2.id)
+- вызвать canonical helper после недоступного/пустого status-result;
+- либо использовать заведомо отсутствующий test-order в отдельном admin-only вызове;
+- подтвердить по уже реализованной обработке, что exception после promotion не меняет paid/access.
 
-Для ручной выдачи order_id может отсутствовать, поэтому он не должен быть обязательным универсальным ключом.
+Если физически воспроизвести сбой безопасно невозможно, зафиксировать `NOT REPRODUCED`, но проверить код и успешный последующий retry. Это не должно блокировать остальные runtime-тесты.
 
-**3. Разделить разовые доступы и автопродлеваемые подписки**
+## 4. Новый заказ должен быть действительно новым
 
-Покупка через банковскую рассрочку не должна автоматически создавать автопродлеваемую subscriptions_v2.
+Не использовать существующий профиль с уже активным entitlement, если это мешает увидеть фактический срок новой покупки.
 
-Правило:
+Предпочтительно:
 
-- разовый bank_installment → отдельное основание доступа на срок тарифа;
-- recurring offer → существующий subscription flow;
-- upgrade/downgrade Gorbova Club → только через уже реализованный механизм отмены старой и создания новой подписки.
+- отдельный тестовый пользователь;
+- либо другой тестовый продукт/профиль без действующего доступа.
 
-Не переносить механизм MAX(expires_at) разовых источников на billing lifecycle подписок без discovery.
+Если используется прежний пользователь, отдельно проверить созданный `entitlement_source` конкретного нового заказа, а не только агрегированный `entitlements.expires_at`.
 
-**4. До миграции четырёх заказов выполнить dry run**
+## 5. Проверять canonical таблицу уведомлений
 
-Для ORD-26-00296/297/298/300 сначала показать ожидаемые самостоятельные основания:
+Использовать фактическую таблицу проекта:
 
+```text
+order_notification_deliveries
 
-|           |                   |             |           |            |
-| --------- | ----------------- | ----------- | --------- | ---------- |
-| **Order** | **Tariff**        | **Start**   | **End**   | **Status** |
-| 296       | Бухгалтер         | дата заказа | +90 дней  | active     |
-| 297       | Главный бухгалтер | дата заказа | +180 дней | active     |
-| 298       | Бизнес-леди       | дата заказа | +270 дней | active     |
-| 300       | Бухгалтер         | дата заказа | +90 дней  | active     |
+```
 
+Не писать `notification_outbox`, если такой таблицы в этом flow нет.
 
-Затем показать ожидаемый агрегированный entitlement. Только после совпадения dry run с бизнес-правилом применять backfill.
+Проверить:
 
-**5. Не предполагать поля**
+- одна email delivery;
+- одна Telegram delivery либо явный `skipped`;
+- после повторного webhook количество не увеличилось.
 
-**payments_v2**
+## 6. Комиссию брать только из фактического RR status
 
-Перед D.1 проверить фактическую схему. Не добавлять в план как уже существующие поля:
+`rr-admin-deliver-test-webhook` создаёт synthetic authorized webhook, но комиссия должна поступить именно из ответа `rrGetOrderStatus`.
 
-contact/profile_id
+Если test API для созданного заказа не возвращает status/commission, не подставлять значение вручную ради PASS:
 
-commission
+```text
+commission = unavailable
 
-net_amount
+```
 
-Переиспользовать реальные общие поля Stripe/bePaid.
+Helper можно отдельно проверить контролируемым вызовом, но это будет unit/runtime proof helper, а не доказательство фактической комиссии РР.
 
-Особенно:
+## 7. Legacy enrichment — stop-on-failure
 
-- provider_payment_id — только настоящий ID РР;
-- если РР не дал provider ID — значение остаётся NULL;
-- локальный [orders_v2.id](http://v2.id) туда не подставлять.
+После PASS pilot `ORD-26-00300` последовательно проверить 296 → 297 → 298.
 
-Также проверить уже созданные RR payments и при необходимости подготовить безопасное исправление неправильного provider_payment_id.
+Остановиться, если:
 
-**6. Комиссию не рассчитывать предположительно**
+- изменились amount/currency;
+- появился второй payment;
+- helper обновил не тот заказ;
+- status API вернул противоречивую валюту;
+- произошла ошибка, способная затронуть остальные строки.
 
-Если РР не передаёт комиссию:
+`unavailable` для конкретного старого заказа не является failure и не требует записи нулевой комиссии.
 
-commission_amount = NULL
+## Правильный итоговый статус
 
-net_amount = NULL
+После успешного выполнения этого плана:
 
-Не вычислять её по предполагаемому проценту.
+```text
+Sprint C2 Stage D: VERIFIED, PASS
+Sprint C2 overall: IN PROGRESS
 
-Если комиссия приходит позже через status API — обновлять существующий payment идемпотентно.
+```
 
-**7. Applicant не должен автоматически становиться владельцем покупки**
-
-Зафиксировать:
-
-- account_user_id/profile_id — владелец покупки и получатель доступа;
-- applicant — лицо, подающее заявку в РР;
-- данные applicant не меняют профиль владельца;
-- отдельный CRM-контакт applicant создаётся только если существующая CRM-модель это поддерживает и есть корректный dedup;
-- иначе applicant хранится как связанный участник или в meta.rr.applicant.
-
-**8. Сделку не создавать повторно**
-
-До реализации CRM определить существующую сделку, созданную на этапе заявки.
-
-Правило:
-
-одна RR-заявка → одна сделка
-
-Webhook/status должны обновлять эту сделку, а не создавать новую:
-
-- pending;
-- authorized/paid;
-- rejected;
-- fulfilled;
-- manual review.
-
-Если отдельной связи deal↔order сейчас нет, нужен add-only relation, а не поиск по имени или телефону.
-
-**9. Универсальная кнопка должна использовать UUID оффера**
-
-Не возвращаться к выбору по regex имени тарифа.
-
-Для новых кнопок canonical binding:
-
-tariff_offer_id UUID
-
-Tariff key допустим только для legacy HTML страницы cb.
-
-В общем конструкторе пользователь должен выбирать конкретный offer, а при его отсутствии/неактивности backend возвращает controlled error.
-
-**10. Тест на «подписочном продукте» уточнить**
-
-Для bank installment на продукте, который обычно продаётся по подписке, заранее определить ожидаемую семантику:
-
-- фиксированный доступ на access_days;
-- либо создание подписки без автосписания;
-- либо такой тип сочетания запрещён.
-
-Не считать, что RR-покупка автоматически должна создавать recurring subscription.
-
-**11. Порядок реализации**
-
-Оставить утверждённый порядок, но с точками решения:
-
-A Discovery
-
-→ утвердить модель access sources
-
-→ B Access sources + dry run + migration
-
-→ C Reapplication
-
-→ D Payments/commission
-
-→ E CRM
-
-→ F Generic button
-
-→ практические тесты
-
-После Discovery дать только короткий отчёт:
-
-1. Что уже существует.
-2. Что переиспользуется.
-3. Нужна ли отдельная entitlement_sources.
-4. Фактическая схема payment/commission.
-5. Фактическая CRM-связь order/contact/deal.
-6. Минимальный список изменений.
-
-После этих уточнений план полный. Начинать с **Этапа A — только read-only discovery**, без преждевременного изменения модели доступов.
+После этих правок план можно выполнять.
 
 &nbsp;
 
-# Sprint C2 — универсальная модель доступа, повторные заявки РР и полноценный платёжный контур
+План: Sprint C2 — Runtime-верификация D.1–D.3 на новом RR-заказе, затем D.4 pilot
 
-## 0. Цель
+## Порядок
 
-Завершить интеграцию РР как универсальный механизм для любых продуктов и тарифов:
+```text
+новый RR test-order
+  → runtime D.1–D.3 (структура payment)
+  → commission enrichment (успех)
+  → повтор webhook (идемпотентность)
+  → failure isolation (сбой rrGetOrderStatus)
+  → D.4 pilot (ORD-26-00300)
+  → backfill остальных трёх legacy payments
+  → компактный отчёт
+```
 
-кнопка любого продукта → `tariff_offer_id` → заявка РР с данными заявителя → одобрение → `payments_v2` → контакт → сделка → комиссия РР → корректный доступ по тарифу.
-
-Одновременно исправить две бизнес-логики:
-
-- доступы разных покупок/тарифов не должны необратимо сливаться в одну постоянно растущую дату;
-- пользователь должен иметь возможность повторно подать заявку РР с другими данными либо после разумного интервала.
-
-Никакого hardcode для `cb`, конкретных тарифов, цен, UUID или срока 90 дней.
-
----
-
-## Этап A — Discovery (без изменений кода)
-
-Цель — понять, что уже есть, и не дублировать.
-
-**A.1 Подписочная модель (Gorbova Club):**
-
-- `subscriptions_v2`, `provider_subscriptions`, `entitlements`, `access_grant_ledger`
-- как реализованы: активная подписка, upgrade, downgrade, отмена старой, создание новой, расчёт срока, revoke/refund
-- источник истины для активного тарифа
-- как хранится история
-
-**A.2 Разовые продукты:**
-
-- одна ли строка `entitlements` на user+product или несколько оснований
-- ведётся ли отдельная запись основания на каждый order (`access_grant_ledger` уже есть — уточнить semantics)
-- как ручная выдача влияет на срок
-- как удаляется доступ конкретной покупки, как работает refund/revoke
-
-**A.3 Комиссии:**
-
-- как Stripe/bePaid хранят commission_amount / net_amount / meta
-- какие поля есть в `payments_v2`
-
-**A.4 CRM:**
-
-- модель `contact` / applicant / deal (`crm_pipelines`, `crm_pipeline_stages`, `crm_pipeline_product_bindings`)
-- есть ли участники/связанные контакты
-- как избежать дублей по email/phone
-
-**A.5 Повторные заявки РР:**
-
-- текущий identity-key и reuse RPC в `public-rr-installment-initiate`
-- текущий cooldown/блокировки
-
-**A.6 Комиссия РР:**
-
-- фактический ответ RR API/webhook: передаётся ли комиссия, поле, валюта, этапы
-- решение: переиспользовать общие поля `payments_v2` или расширить
-
-**Результат A:** короткая записка «что переиспользуем, чего не хватает, минимальный add-only patch». Без новых больших `.md`.
+Никаких новых миграций и правок кода на этом шаге не планируется — все структурные фиксы уже применены в D.1–D.3. Только runtime observations + один вызов `rr_update_payment_financials` на pilot.
 
 ---
 
-## Этап B — Access sources (каноническая модель доступа)
+## Шаг 1. Новый RR test-order (D.1–D.3 runtime)
 
-**B.1 Отдельное основание на каждую покупку.**
-Если модель уже покрыта `access_grant_ledger` — переиспользуем; иначе — минимальный add-only patch к существующей таблице.
+1. Через публичный RR flow в `mode=test` инициировать новый заказ (реальным профилем или через `LeadRequestDialog` с test-tariff).
+2. Зафиксировать `order_id`, `initiation_status`, отсутствие `payments_v2` до webhook.
+3. Выполнить `rr-admin-deliver-test-webhook` (test-only guards уже проверены в предыдущем спринте).
+4. Проверить в БД по order_id:
 
-Поля основания:
-`source_id, order_id, user_id, product_id, tariff_id, source_type, starts_at, expires_at, status, revoked_at, revocation_reason`
 
-`source_type ∈ { purchase, subscription, manual_grant, upgrade, migration }`
+| Инвариант                        | Ожидание                 |
+| -------------------------------- | ------------------------ |
+| `orders_v2.status`               | `paid`                   |
+| `payments_v2` count              | ровно 1                  |
+| `provider_payment_id`            | `NULL`                   |
+| `meta.rr.external_reference`     | `= orders_v2.id`         |
+| `meta.rr.reference_semantics`    | `merchant_order_id_echo` |
+| `meta.promotion.source`          | `rr-webhook`             |
+| `meta.fulfillment.status`        | `completed`              |
+| `entitlements`                   | доступ выдан             |
+| `notification_outbox` / telegram | уведомления отправлены   |
 
-**B.2 Итоговый доступ.**
-`entitlements` остаётся агрегатом:
-`effective_expires_at = MAX(expires_at активных оснований для user+product)`.
-Основания не сливаются необратимо.
 
-**B.3 Поведение разовых тарифов** — по спецификации из плана (меньший после большего, больший после меньшего, возврат, ручная выдача).
+## Шаг 2. Commission enrichment (тот же новый заказ)
 
-**B.4 Подписки** — оставить существующее правило: одна активная автопродлеваемая подписка, canonical flow смены тарифа сохраняется.
+### 2a. Успешный enrichment
 
-**B.5 Универсальный resolver срока.**
-Одна функция `resolveAccessWindow(order, tariff, source)` → `{ starts_at, expires_at, access_days, source_rule }`. Единый источник — `tariffs.access_days`. Провайдер-специфичный hardcode запрещён. Fallback 30 дней — только legacy; для нового RR-flow без `access_days` активация запрещена (UI validation + backend warning).
+- rr-webhook при успешном auth вызывает `rrGetOrderStatus` → `rr_update_payment_financials`.
+- Проверить: `meta.commission.amount_minor`, `meta.commission.currency` заполнены, `commission_history` содержит 1 запись.
+- Второй вызов helper с тем же значением → `status='unchanged'`, `commission_history` без роста, `payments_v2` count не изменился.
 
-**B.6 Canonical recalculation.**
-Одна функция `recalculate_entitlement(user_id, product_id)`:
+### 2b. Повторный webhook
 
-- берёт активные основания, вычисляет MAX(expires_at), обновляет агрегат
-- нет оснований → закрывает entitlement
-- не удаляет историю, идемпотентна
-- вызывается после: покупки, ручной выдачи, refund, revoke, отмены подписки, upgrade/downgrade, восстановления
+- Повторно доставить тот же signed test webhook.
+- Ожидание: `already_promoted`, `entitlements` не расширяются, `notification_outbox` не дублируется, `meta.commission` остаётся одной актуальной записью.
 
-**B.7 Миграция уже выданных доступов** для ORD-26-00296/297/298/300:
+### 2c. Failure isolation (без ломки production secrets)
 
-- убедиться, что у каждого есть собственное основание с order_id, tariff_id, access_days, starts_at, expires_at, status=active
-- пересчитать агрегат
-- итоговая дата пользователя не должна измениться, если расчёт даёт то же
+- Контролируемый test-mode сценарий: временно вернуть ошибку из `rrGetOrderStatus` (test-hook или временно неверный test-endpoint в secret, только для одного вызова).
+- Ожидание:
+  - webhook возвращает 200;
+  - `orders_v2.status='paid'`, `payments_v2` создан, access/notifications выданы;
+  - `meta.commission` отсутствует ИЛИ помечен диагностическим `unavailable`-состоянием (без записи `0`);
+  - последующий успешный вызов enrichment позже дозаполняет commission через `rr_update_payment_financials` (status `updated`).
 
----
+Точный механизм имитации ошибки согласую перед выполнением, чтобы не задеть production secrets.
 
-## Этап C — Reapplication (повторные заявки РР)
+## Шаг 3. D.4 pilot — ORD-26-00300
 
-**C.1 Разделить пользователя и заявителя.**
-Владелец аккаунта (`account_user_id`) — получатель доступа. Заявитель РР — отдельно:
-`applicant_name, applicant_email, applicant_phone` (в `orders_v2.meta.rr.applicant` или связанной сущности).
-Доступ всегда владельцу аккаунта, если UI явно не задаёт иное.
+Только если Шаги 1–2 PASS.
 
-**C.2 Identity заявки.**
-Нельзя блокировать пользователя навсегда по `user_id + offer_id`.
-Ключ dedup: `offer_id + account_user_id + applicant_email_norm + applicant_phone_norm` (имя — вспомогательное).
+1. Получить RR status для `external_reference` ORD-26-00300 через существующий helper.
+2. Если commission доступна:
+  - вызвать `rr_update_payment_financials` → `status='updated'`;
+  - повторить с тем же значением → `status='unchanged'`;
+  - подтвердить: `amount_minor`/`currency` неизменны, `payments_v2` count не изменился, `commission_history` содержит одну запись.
+3. Если status недоступен:
+  - зафиксировать `unavailable` в отчёте;
+  - НЕ писать `0`;
+  - не считать это регрессией D.1–D.3.
 
-**C.3 Cooldown / reuse.**
+## Шаг 4. Backfill остальных трёх legacy payments
 
-- Активная заявка (`pending/created/authorized/outcome_unknown/operator_required`) с теми же данными и оффером → возвращает существующую.
-- Другой email/телефон заявителя → новая заявка разрешена.
-- Terminal (`rejected/declined/canceled/not_created`) → новая заявка разрешена сразу либо после короткого cooldown.
-- Cooldown только против случайного двойного submit: 60–120 секунд для одинаковых `user + offer + applicant contact`. Без вечных запретов.
+ORD-26-00296 / 297 / 298 — тем же helper-вызовом, идемпотентно. Каждый — отдельная строка в отчёте (updated / unchanged / unavailable).
 
-**C.4 Повтор после одобрения.**
+## Отчёт
 
-- authorized/paid + те же данные → без дубля.
-- Другой заявитель → допускается только если бизнес разрешает вторую покупку того же оффера; доступы/платежи идут как отдельные покупки.
+Компактный: новый order_id, payment_id, commission (или unavailable), результат повтора webhook, результат failure-isolation, D.4 pilot + 3 legacy строки. Без правок кода/миграций если все инварианты выполняются.
 
-**C.5 UI.**
-Явный заголовок «Данные заявителя» + подсказка «Можно указать данные другого лица». Данные из профиля — только как pre-fill, без автоматической перезаписи.
+## DoD
 
----
-
-## Этап D — Payments (полный платёжный контур РР)
-
-**D.1** После `authorized` создаётся полная строка `payments_v2`:
-`order_id, contact/profile_id, provider='rr', status='succeeded', amount, currency, provider_payment_id, paid_at, origin='rr_installment', commission, net_amount, meta`.
-
-**D.2 Сумма** = `orders_v2.final_price / amount` (из выбранного `tariff_offer`, не из HTML).
-
-**D.3 Комиссия РР.**
-Если API передаёт — писать в общие поля `commission_amount / net_amount / meta.rr.commission_raw` (та же схема, что у Stripe/bePaid; RR-only поля не создавать без discovery). Комиссия, приходящая позже, — идемпотентный update того же payment.
-
-**D.4 Provider payment ID** — только реальный ID РР; локальный `order_id` не подставляем как provider ID.
-
----
-
-## Этап E — CRM
-
-**E.1 Contact.**
-Платёж и сделка привязаны к canonical `contact/profile` владельца аккаунта.
-
-**E.2 Applicant.**
-Данные другого заявителя — в `orders_v2.meta.rr.applicant` или в существующей participant-модели. Профиль владельца не перезаписывается.
-
-**E.3 Отдельный contact заявителя.**
-Только после discovery: должен ли applicant становиться отдельным contact, как связать с владельцем, как избежать дублей по email/phone. Если CRM уже поддерживает — переиспользовать.
-
-**E.4 Сделка.**
-
-- При создании заявки: создать или обновить сделку, привязать владельца, applicant (если отдельный), product, tariff, offer, сумму, provider; статус отражает RR lifecycle.
-- Переиспользовать существующий pipeline/статусы.
-- Не создавать новую сделку на каждый webhook.
-- После `authorized` — обновить существующую (payment, сумма, комиссия, net, доступ выдан, timestamp).
-
----
-
-## Этап F — Универсальность кнопки
-
-Любой продукт: создать продукт → тариф → `access_days` → `tariff_offer(offer_type='bank_installment')` → включить RR runtime → кнопка на любой странице.
-
-Кнопка передаёт только `tariff_offer_id`. Backend сам определяет продукт, тариф, цену, валюту, срок, провайдера, доступ, CRM, уведомления.
-
-Запрещён hardcode: `cb`, `buh/gl_buh/biz-l`, UUID, цены, сроки, product ID.
-
-Проверить минимум на: текущем `cb`, другом продукте/тестовом оффере, разовом, подписочном.
-
----
-
-## Практические тесты
-
-**Access**
-
-- Тариф 90 + тариф 270 → MAX=270; удаление 270 → возврат к 90; удаление последнего → закрытие.
-
-**Upgrade/downgrade subscription**
-
-- Смена тарифа: старая прекращена по canonical flow, новая активна, история сохранена.
-
-**Reapplication RR**
-
-- Двойной клик теми же данными → один order.
-- Повтор через 2 минуты теми же данными → controlled reuse или новая по правилу.
-- Другой email/телефон → новая заявка.
-- После rejected → новая разрешена.
-- После authorized → без дубля.
-- Applicant не перезаписывает профиль.
-
-**Payment**
-
-- authorized → один payment; сумма, комиссия, net корректные; contact/deal связаны; повтор webhook → без дублей.
-
-**Generic product**
-
-- Другой продукт: `bank_installment` → RR → payment → `access_days` тарифа → contact → deal, без правок backend-кода.
-
----
-
-## Definition of Done
-
-- Существующая подписочная логика переиспользована там, где подходит.
-- Каждая покупка имеет самостоятельное основание доступа.
-- Entitlement пересчитывается из активных оснований.
-- Refund/revoke одного заказа корректно уменьшает срок.
-- Повторная заявка с другими данными разрешена.
-- Случайный дубль в коротком окне блокируется.
-- Payment содержит amount, commission, net, привязан к contact и deal.
-- Applicant не перезаписывает профиль владельца.
-- Решение работает для любого продукта и кнопки; нет hardcode `cb` и текущих тарифов.
-- Практические тесты пройдены.
-
-Статусы:
-
-- До фактической проверки: **Sprint C2: IMPLEMENTED, NOT VERIFIED**
-- После полного PASS: **Sprint C2: VERIFIED, PASS**
-
----
-
-## Порядок исполнения
-
-A (discovery, read-only) → B (access sources + миграция 296/297/298/300) → C (reapplication) → D (payments+commission) → E (CRM) → F (generic button) → практические тесты → отчёт.
-
-Никаких новых больших `.md`-отчётов; итоговый отчёт компактный: факты, ID, суммы, статусы, отсутствие дублей.
+- Новый RR payment имеет `provider_payment_id=NULL` и корректный `meta.rr.external_reference`.
+- Commission enrichment idempotent (updated → unchanged).
+- Повтор webhook = `already_promoted`, ноль дублей.
+- Сбой status API не ломает paid/access/notifications.
+- D.4 pilot прошёл или зафиксирован как `unavailable` без записи `0`.
+- Legacy backfill завершён по всем 4 заказам.
+- Итоговая метка спринта после полного PASS: **Sprint C2: VERIFIED, PASS**; до этого — **IMPLEMENTED, NOT VERIFIED**.
