@@ -204,6 +204,14 @@ Deno.serve(async (req: Request) => {
       },
     );
     if (rejErr) return json(500, { error: "reject_persist_failed", detail: rejErr.message });
+    try {
+      await applyCrmStageOnTerminal(
+        supabaseAdmin, orderId, "failed",
+        `rr.reconcile.terminal_reject:${status.rrStatusRaw}`,
+      );
+    } catch (e) {
+      console.error("[rr-reconcile] crm-routing apply failed:", (e as Error).message);
+    }
     return json(200, {
       ok: true,
       action: "reconciled_rejected",
